@@ -31,6 +31,7 @@ function StoryItem({ story }: { story: Story; index: number }) {
             borderRadius: 36,
             borderWidth: 2,
             borderColor: ringColor,
+            overflow: 'visible',
           }}
         >
           <Avatar emoji={story.userEmoji} name={story.userName} size="md" />
