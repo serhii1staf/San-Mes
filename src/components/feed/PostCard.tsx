@@ -169,14 +169,12 @@ export function PostCard({ post, onLike, onComment, onShare, onBookmark }: PostC
       {/* Action Bar */}
       <View style={actionBarStyle}>
         <AnimatedPressable onPress={handleLike} style={[actionButtonStyle, heartAnimatedStyle]}>
-          {/* Issue 5: Feather icons do not have a filled heart variant.
-              We use color to indicate liked state and apply fill via style.
-              The filled visual is achieved by rendering the icon in the accent color. */}
+          {/* Feather icons render as font glyphs, not SVG elements.
+              The color prop is the sole mechanism for indicating liked state. */}
           <Feather
             name="heart"
             size={20}
             color={post.isLiked ? theme.colors.accent.primary : theme.colors.text.secondary}
-            style={post.isLiked ? { fill: theme.colors.accent.primary } as TextStyle : undefined}
           />
           <Text
             variant="caption"

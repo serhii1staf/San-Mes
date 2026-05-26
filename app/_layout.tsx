@@ -9,11 +9,13 @@ import { useAuthStore } from '../src/store';
 SplashScreen.preventAutoHideAsync();
 
 function AuthNavigationGuard({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated } = useAuthStore();
+  const { isAuthenticated, hasHydrated } = useAuthStore();
   const segments = useSegments();
   const router = useRouter();
 
   useEffect(() => {
+    if (!hasHydrated) return;
+
     const inAuthGroup = segments[0] === '(auth)';
 
     if (!isAuthenticated && !inAuthGroup) {
@@ -21,7 +23,11 @@ function AuthNavigationGuard({ children }: { children: React.ReactNode }) {
     } else if (isAuthenticated && inAuthGroup) {
       router.replace('/(tabs)');
     }
-  }, [isAuthenticated, segments]);
+  }, [isAuthenticated, segments, hasHydrated]);
+
+  if (!hasHydrated) {
+    return null;
+  }
 
   return <>{children}</>;
 }

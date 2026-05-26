@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, ScrollView, Pressable, Image, ViewStyle, FlatList, Dimensions } from 'react-native';
+import { View, ScrollView, Pressable, Image, ViewStyle, FlatList, Dimensions, ActivityIndicator } from 'react-native';
 import Animated, {
   FadeIn,
   FadeInUp,
@@ -102,22 +102,20 @@ function ProfileTabs({ activeTab, onTabChange }: { activeTab: TabName; onTabChan
 export default function ProfileScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
-  const { user, login } = useAuthStore();
+  const { user } = useAuthStore();
   const [activeTab, setActiveTab] = useState<TabName>('posts');
 
-  useEffect(() => {
-    if (!user) {
-      login({
-        id: currentUser.id,
-        username: currentUser.username,
-        displayName: currentUser.displayName,
-        avatar: currentUser.avatar,
-        bio: currentUser.bio,
-      });
-    }
-  }, []);
+  // The auth guard guarantees the user is authenticated before this screen renders.
+  // If user is somehow null, show a loading state as a safe fallback.
+  if (!user) {
+    return (
+      <View style={{ flex: 1, backgroundColor: theme.colors.background.primary, alignItems: 'center', justifyContent: 'center' }}>
+        <ActivityIndicator size="large" color={theme.colors.accent.primary} />
+      </View>
+    );
+  }
 
-  const displayUser = user || currentUser;
+  const displayUser = user;
   const userPosts = mockPosts.filter((p) => p.imageUrl).slice(0, 6);
 
   const containerStyle: ViewStyle = {

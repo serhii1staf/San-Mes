@@ -30,6 +30,8 @@ interface AuthStoreState {
   token: string | null;
   isAuthenticated: boolean;
   isLoading: boolean;
+  hasHydrated: boolean;
+  setHasHydrated: (hydrated: boolean) => void;
   login: (user: User, token?: string) => void;
   logout: () => void;
   setLoading: (loading: boolean) => void;
@@ -43,6 +45,8 @@ export const useAuthStore = create<AuthStoreState>()(
       token: null,
       isAuthenticated: false,
       isLoading: false,
+      hasHydrated: false,
+      setHasHydrated: (hydrated) => set({ hasHydrated: hydrated }),
       login: (user, token) => set({ user, token: token || 'mock-token', isAuthenticated: true }),
       logout: () => set({ user: null, token: null, isAuthenticated: false }),
       setLoading: (isLoading) => set({ isLoading }),
@@ -59,6 +63,9 @@ export const useAuthStore = create<AuthStoreState>()(
         token: state.token,
         isAuthenticated: state.isAuthenticated,
       }),
+      onRehydrateStorage: () => (state) => {
+        state?.setHasHydrated(true);
+      },
     }
   )
 );
