@@ -1,10 +1,11 @@
 import React, { useState, useRef } from 'react';
-import { View, ViewStyle, Pressable, ScrollView, TextInput, Animated } from 'react-native';
+import { View, ViewStyle, Pressable, ScrollView, TextInput, Animated, Alert } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
 import { useAuthStore } from '../../src/store';
+import { registerUser } from '../../src/lib/supabase';
 
 const EMOJIS = [
   '😊', '😎', '🥰', '🤩', '😇', '🦊', '🐱', '🐶',
@@ -165,7 +166,7 @@ export default function RegisterScreen() {
     return false;
   };
 
-  const handleNext = () => {
+  const handleNext = async () => {
     setError('');
     if (step === 0 && emoji) {
       setStep(1);
@@ -186,19 +187,37 @@ export default function RegisterScreen() {
         deviceKey += chars[Math.floor(Math.random() * chars.length)];
       }
 
-      const username = name.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
-      login(
-        {
-          id: 'user-' + Date.now(),
-          username: username || 'user',
-          displayName: name.trim(),
-          emoji,
-          pin,
-          deviceKey,
-        },
-        'token-' + Date.now()
-      );
-      router.replace('/(tabs)');
+      const username = name.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '') || 'user';
+
+      // Register in Supabase
+      const { profile, error: regError } = await registerUser({
+        username,
+        displayName: name.trim(),
+        emoji,
+        pin,
+        deviceKey,
+      });
+
+      if (regError) {
+        setError(regError);
+        return;
+      }
+
+      if (profile) {
+        login(
+          {
+            id: profile.id,
+            username: profile.username,
+            displayName: profile.display_name,
+            emoji: profile.emoji,
+            pin,
+            deviceKey: profile.device_key,
+            bio: '',
+          },
+          'token-' + Date.now()
+        );
+        router.replace('/(tabs)');
+      }
     }
   };
 
