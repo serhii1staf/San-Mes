@@ -37,7 +37,7 @@ function EmojiStep({ selected, onSelect }: { selected: string; onSelect: (e: str
         borderWidth: 2,
         borderColor: selected ? theme.colors.accent.primary : theme.colors.border.light,
       }}>
-        <Text style={{ fontSize: 48 }}>{selected || '?'}</Text>
+        <Text style={{ fontSize: 40 }}>{selected || '?'}</Text>
       </View>
 
       {/* Emoji grid */}
@@ -57,7 +57,7 @@ function EmojiStep({ selected, onSelect }: { selected: string; onSelect: (e: str
               borderColor: theme.colors.accent.primary,
             }}
           >
-            <Text style={{ fontSize: 28 }}>{emoji}</Text>
+            <Text style={{ fontSize: 24 }}>{emoji}</Text>
           </Pressable>
         ))}
       </View>

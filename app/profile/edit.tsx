@@ -189,31 +189,12 @@ export default function EditProfileScreen() {
                   <View style={{ width: 22 }} />
                 </View>
 
-                {/* Avatar */}
+                {/* Emoji Avatar */}
                 <View style={{ alignItems: 'center', marginVertical: 20 }}>
-                  <View style={{ position: 'relative' }}>
-                    <Avatar source={displayUser.avatar} name={displayUser.displayName} size="xl" />
-                    <Pressable
-                      style={{
-                        position: 'absolute',
-                        bottom: 0,
-                        right: 0,
-                        width: 32,
-                        height: 32,
-                        borderRadius: 16,
-                        backgroundColor: theme.colors.accent.primary,
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        borderWidth: 2,
-                        borderColor: theme.isDark ? 'rgba(30,30,30,0.75)' : 'rgba(255,255,255,0.78)',
-                      }}
-                    >
-                      <Feather name="camera" size={16} color={theme.colors.text.inverse} />
-                    </Pressable>
-                  </View>
-                  <Pressable style={{ marginTop: 12 }}>
+                  <Avatar emoji={displayUser.emoji} size="xl" />
+                  <Pressable style={{ marginTop: 12 }} onPress={() => {}}>
                     <Text variant="body" weight="medium" color={theme.colors.accent.primary}>
-                      Изменить фото
+                      Изменить эмодзи
                     </Text>
                   </Pressable>
                 </View>
@@ -247,18 +228,10 @@ export default function EditProfileScreen() {
                   <Text
                     variant="caption"
                     color={theme.colors.text.tertiary}
-                    style={{ marginBottom: 16 }}
+                    style={{ marginBottom: 28 }}
                   >
                     {150 - bio.length} символов осталось
                   </Text>
-
-                  <Input
-                    label="Сайт"
-                    value={website}
-                    onChangeText={setWebsite}
-                    placeholder="https://yourwebsite.com"
-                    style={{ marginBottom: 28 }}
-                  />
 
                   <Pressable
                     onPress={handleSave}

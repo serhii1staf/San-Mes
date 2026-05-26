@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { View, Pressable, Image, ViewStyle, Dimensions, ActivityIndicator, StyleSheet, Animated, NativeSyntheticEvent, NativeScrollEvent } from 'react-native';
+import { View, Pressable, ViewStyle, ActivityIndicator, StyleSheet, Animated } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -7,10 +7,6 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar, Button } from '../../src/components/ui';
 import { useAuthStore } from '../../src/store';
-import { currentUser, mockPosts } from '../../src/utils/mockData';
-
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const GRID_SIZE = (SCREEN_WIDTH - 48 - 8) / 3;
 
 type TabName = 'posts' | 'saved' | 'tagged';
 
@@ -85,7 +81,6 @@ export default function ProfileScreen() {
   }
 
   const displayUser = user;
-  const userPosts = mockPosts.filter((p) => p.imageUrl).slice(0, 6);
 
   const containerStyle: ViewStyle = {
     flex: 1,
@@ -170,9 +165,9 @@ export default function ProfileScreen() {
 
         {/* Stats */}
         <View style={{ flexDirection: 'row', marginTop: 24, paddingHorizontal: 32 }}>
-          <StatItem label="Posts" value={currentUser.postsCount} />
-          <StatItem label="Followers" value={currentUser.followersCount} />
-          <StatItem label="Following" value={currentUser.followingCount} />
+          <StatItem label="Posts" value={0} />
+          <StatItem label="Followers" value={0} />
+          <StatItem label="Following" value={0} />
         </View>
 
         {/* Edit Profile Button */}
@@ -180,33 +175,12 @@ export default function ProfileScreen() {
           <Button title="Edit Profile" variant="outline" onPress={() => router.push('/profile/edit')} />
         </View>
 
-        {/* Tabs */}
-        <View style={{ paddingHorizontal: 24 }}>
-          <ProfileTabs activeTab={activeTab} onTabChange={setActiveTab} />
-        </View>
-
-        {/* Post Grid */}
-        <View
-          style={{
-            flexDirection: 'row',
-            flexWrap: 'wrap',
-            paddingHorizontal: 24,
-            marginTop: 16,
-            gap: 4,
-          }}
-        >
-          {userPosts.map((post) => (
-            <View key={post.id}>
-              <Image
-                source={{ uri: post.imageUrl }}
-                style={{
-                  width: GRID_SIZE,
-                  height: GRID_SIZE,
-                  borderRadius: 8,
-                }}
-              />
-            </View>
-          ))}
+        {/* Post Grid - Empty State */}
+        <View style={{ alignItems: 'center', paddingVertical: 40 }}>
+          <Text style={{ fontSize: 32 }}>📷</Text>
+          <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginTop: 8 }}>
+            Ещё нет публикаций
+          </Text>
         </View>
       </Animated.ScrollView>
     </View>

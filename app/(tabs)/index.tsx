@@ -74,10 +74,14 @@ function StoriesRow() {
 }
 
 function FeedHeader() {
+  const theme = useTheme();
   return (
-    <View>
-      <StoriesRow />
-      <TrendingSection />
+    <View style={{ alignItems: 'center', paddingVertical: 40 }}>
+      <Text style={{ fontSize: 40 }}>📝</Text>
+      <Text variant="body" weight="semibold" style={{ marginTop: 12 }}>Пока нет публикаций</Text>
+      <Text variant="caption" color={theme.colors.text.secondary} align="center" style={{ marginTop: 4, paddingHorizontal: 32 }}>
+        Подпишись на людей или создай свой первый пост
+      </Text>
     </View>
   );
 }
@@ -120,18 +124,19 @@ export default function FeedScreen() {
   useEffect(() => {
     setLoading(true);
     const timer = setTimeout(() => {
-      setPosts(mockPosts);
+      // Load from Supabase - for now show empty until real posts exist
+      setPosts([]);
       setLoading(false);
-    }, 800);
+    }, 500);
     return () => clearTimeout(timer);
   }, []);
 
   const handleRefresh = useCallback(() => {
     setRefreshing(true);
     setTimeout(() => {
-      setPosts(mockPosts);
+      setPosts([]);
       setRefreshing(false);
-    }, 1000);
+    }, 500);
   }, []);
 
   const renderPost = ({ item }: { item: Post; index: number }) => (
