@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, FlatList, Pressable, ViewStyle, ScrollView } from 'react-native';
+import { View, FlatList, Pressable, ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -22,7 +22,7 @@ interface Notification {
   timeGroup: 'current' | 'today' | 'yesterday';
 }
 
-const FILTER_OPTIONS = ['All', 'Likes', 'Comments', 'Reposts'] as const;
+const FILTER_OPTIONS = ['Все', 'Лайки', 'Комменты', 'Репосты'] as const;
 
 const mockNotifications: Notification[] = [
   {
@@ -154,8 +154,9 @@ function NotificationItem({ notification }: { notification: Notification }) {
     <View
       style={{
         flexDirection: 'row',
-        paddingVertical: theme.spacing.md,
-        paddingHorizontal: theme.spacing.base,
+        alignItems: 'center',
+        paddingVertical: 12,
+        paddingHorizontal: 20,
       }}
     >
       <View style={{ position: 'relative' }}>
@@ -178,30 +179,16 @@ function NotificationItem({ notification }: { notification: Notification }) {
           <Feather name={iconMap[notification.type]} size={9} color="#FFFFFF" />
         </View>
       </View>
-      <View style={{ flex: 1, marginLeft: theme.spacing.md }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' }}>
-          <Text variant="body" weight="semibold">
+      <View style={{ flex: 1, marginLeft: 12 }}>
+        <Text variant="caption" numberOfLines={2}>
+          <Text variant="caption" weight="semibold">
             {notification.userName}
           </Text>
-          {notification.isVerified && (
-            <View
-              style={{
-                width: 14,
-                height: 14,
-                borderRadius: 7,
-                backgroundColor: theme.colors.accent.secondary,
-                alignItems: 'center',
-                justifyContent: 'center',
-                marginLeft: 4,
-              }}
-            >
-              <Feather name="check" size={8} color="#FFFFFF" />
-            </View>
-          )}
-          <Text variant="body" color={theme.colors.text.secondary}>
-            {' '}{notification.actionText}
+          {'  '}
+          <Text variant="caption" color={theme.colors.text.secondary}>
+            {notification.actionText}
           </Text>
-        </View>
+        </Text>
         {notification.contentPreview && (
           <Text
             variant="caption"
@@ -212,10 +199,10 @@ function NotificationItem({ notification }: { notification: Notification }) {
             {notification.contentPreview}
           </Text>
         )}
-        <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginTop: 2 }}>
-          {notification.timestamp}
-        </Text>
       </View>
+      <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginLeft: 8 }}>
+        {notification.timestamp}
+      </Text>
     </View>
   );
 }
@@ -225,12 +212,12 @@ function SectionHeader({ title }: { title: string }) {
   return (
     <View
       style={{
-        paddingHorizontal: theme.spacing.base,
-        paddingTop: theme.spacing.lg,
-        paddingBottom: theme.spacing.sm,
+        paddingHorizontal: 20,
+        paddingTop: 20,
+        paddingBottom: 8,
       }}
     >
-      <Text variant="body" weight="semibold" color={theme.colors.text.secondary}>
+      <Text variant="caption" weight="semibold" color={theme.colors.text.tertiary}>
         {title}
       </Text>
     </View>
@@ -240,13 +227,13 @@ function SectionHeader({ title }: { title: string }) {
 export default function NotificationsScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
-  const [activeFilter, setActiveFilter] = useState<string>('All');
+  const [activeFilter, setActiveFilter] = useState<string>('Все');
 
   const filteredNotifications = mockNotifications.filter((n) => {
-    if (activeFilter === 'All') return true;
-    if (activeFilter === 'Likes') return n.type === 'like';
-    if (activeFilter === 'Comments') return n.type === 'comment';
-    if (activeFilter === 'Reposts') return n.type === 'repost';
+    if (activeFilter === 'Все') return true;
+    if (activeFilter === 'Лайки') return n.type === 'like';
+    if (activeFilter === 'Комменты') return n.type === 'comment';
+    if (activeFilter === 'Репосты') return n.type === 'repost';
     return true;
   });
 
@@ -259,52 +246,54 @@ export default function NotificationsScreen() {
     backgroundColor: theme.colors.background.primary,
   };
 
-  const headerStyle: ViewStyle = {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: theme.spacing.lg,
-    paddingTop: insets.top,
-    paddingBottom: theme.spacing.md,
-  };
-
-  const filterContainerStyle: ViewStyle = {
-    flexDirection: 'row',
-    paddingHorizontal: theme.spacing.base,
-    paddingBottom: theme.spacing.md,
-  };
-
   return (
     <View style={containerStyle}>
       {/* Header */}
-      <View style={headerStyle}>
-        <Pressable onPress={() => router.back()} style={{ marginRight: theme.spacing.base }}>
-          <Feather name="arrow-left" size={22} color={theme.colors.text.primary} />
+      <View
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'center',
+          paddingHorizontal: theme.spacing.lg,
+          paddingTop: insets.top + 8,
+          paddingBottom: 16,
+          position: 'relative',
+        }}
+      >
+        <Pressable
+          onPress={() => router.back()}
+          style={{ position: 'absolute', left: theme.spacing.lg, top: insets.top + 8 }}
+        >
+          <Feather name="chevron-left" size={24} color={theme.colors.text.primary} />
         </Pressable>
-        <Text variant="subheading" weight="bold">Notifications</Text>
+        <Text variant="subheading" weight="bold">Уведомления</Text>
       </View>
 
-      {/* Filter Tabs */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={filterContainerStyle}
+      {/* Filter Tabs - centered, fixed width buttons */}
+      <View
+        style={{
+          flexDirection: 'row',
+          justifyContent: 'center',
+          alignItems: 'center',
+          paddingHorizontal: 20,
+          paddingBottom: 12,
+          gap: 8,
+        }}
       >
         {FILTER_OPTIONS.map((filter) => {
           const isActive = activeFilter === filter;
-          const pillStyle: ViewStyle = {
-            paddingVertical: 8,
-            paddingHorizontal: 16,
-            borderRadius: 20,
-            marginRight: theme.spacing.sm,
-            backgroundColor: isActive ? theme.colors.accent.primary : theme.colors.background.elevated,
-            borderWidth: isActive ? 0 : 1,
-            borderColor: theme.colors.border.light,
-          };
           return (
             <Pressable
               key={filter}
               onPress={() => setActiveFilter(filter)}
-              style={pillStyle}
+              style={{
+                paddingVertical: 8,
+                paddingHorizontal: 16,
+                borderRadius: 20,
+                backgroundColor: isActive ? theme.colors.accent.primary : theme.colors.background.elevated,
+                borderWidth: isActive ? 0 : 1,
+                borderColor: theme.colors.border.light,
+              }}
             >
               <Text
                 variant="caption"
@@ -316,16 +305,16 @@ export default function NotificationsScreen() {
             </Pressable>
           );
         })}
-      </ScrollView>
+      </View>
 
       {/* Notification List */}
       <FlatList
         data={[
-          ...(currentNotifs.length > 0 ? [{ type: 'header', title: 'Current', id: 'h-current' }] : []),
+          ...(currentNotifs.length > 0 ? [{ type: 'header', title: 'Сейчас', id: 'h-current' }] : []),
           ...currentNotifs.map((n) => ({ ...n, type: 'item' })),
-          ...(todayNotifs.length > 0 ? [{ type: 'header', title: 'Today', id: 'h-today' }] : []),
+          ...(todayNotifs.length > 0 ? [{ type: 'header', title: 'Сегодня', id: 'h-today' }] : []),
           ...todayNotifs.map((n) => ({ ...n, type: 'item' })),
-          ...(yesterdayNotifs.length > 0 ? [{ type: 'header', title: 'Yesterday', id: 'h-yesterday' }] : []),
+          ...(yesterdayNotifs.length > 0 ? [{ type: 'header', title: 'Вчера', id: 'h-yesterday' }] : []),
           ...yesterdayNotifs.map((n) => ({ ...n, type: 'item' })),
         ]}
         keyExtractor={(item) => item.id}

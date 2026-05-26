@@ -93,8 +93,8 @@ export default function RootLayout() {
             name="profile/edit"
             options={{
               presentation: 'transparentModal',
-              animation: 'fade',
-              contentStyle: { backgroundColor: 'rgba(0,0,0,0.5)' },
+              animation: 'none',
+              contentStyle: { backgroundColor: 'transparent' },
             }}
           />
           <Stack.Screen name="notifications" />

@@ -4,27 +4,8 @@ import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../src/theme';
-import { Text, Card } from '../../src/components/ui';
-import { useThemeStore, useAuthStore } from '../../src/store';
-
-function SettingsSection({ title, children }: { title: string; children: React.ReactNode }) {
-  const theme = useTheme();
-  return (
-    <View style={{ marginBottom: theme.spacing.lg }}>
-      <Text
-        variant="caption"
-        weight="semibold"
-        color={theme.colors.text.secondary}
-        style={{ marginBottom: theme.spacing.sm, paddingHorizontal: theme.spacing.xs }}
-      >
-        {title.toUpperCase()}
-      </Text>
-      <Card padding="sm" shadow="sm">
-        {children}
-      </Card>
-    </View>
-  );
-}
+import { Text } from '../../src/components/ui';
+import { useAuthStore } from '../../src/store';
 
 function SettingsRow({
   icon,
@@ -33,6 +14,8 @@ function SettingsRow({
   onPress,
   showChevron = true,
   rightElement,
+  isFirst,
+  isLast,
 }: {
   icon: string;
   label: string;
@@ -40,6 +23,8 @@ function SettingsRow({
   onPress?: () => void;
   showChevron?: boolean;
   rightElement?: React.ReactNode;
+  isFirst?: boolean;
+  isLast?: boolean;
 }) {
   const theme = useTheme();
   return (
@@ -48,25 +33,31 @@ function SettingsRow({
       style={{
         flexDirection: 'row',
         alignItems: 'center',
-        paddingVertical: theme.spacing.md,
-        paddingHorizontal: theme.spacing.md,
+        paddingVertical: 14,
+        paddingHorizontal: 16,
+        borderBottomWidth: isLast ? 0 : 0.5,
+        borderBottomColor: theme.colors.border.light,
       }}
     >
       <View
         style={{
-          width: 32,
-          height: 32,
-          borderRadius: 8,
+          width: 36,
+          height: 36,
+          borderRadius: 10,
           backgroundColor: theme.colors.background.secondary,
           alignItems: 'center',
           justifyContent: 'center',
-          marginRight: theme.spacing.md,
+          marginRight: 14,
         }}
       >
-        <Feather name={icon as keyof typeof Feather.glyphMap} size={16} color={theme.colors.accent.primary} />
+        <Feather name={icon as keyof typeof Feather.glyphMap} size={18} color={theme.colors.text.secondary} />
       </View>
       <Text variant="body" style={{ flex: 1 }}>{label}</Text>
-      {value && <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginRight: theme.spacing.sm }}>{value}</Text>}
+      {value && (
+        <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginRight: 8 }}>
+          {value}
+        </Text>
+      )}
       {rightElement}
       {showChevron && !rightElement && (
         <Feather name="chevron-right" size={18} color={theme.colors.text.tertiary} />
@@ -75,45 +66,17 @@ function SettingsRow({
   );
 }
 
-function ThemeToggle() {
-  const theme = useTheme();
-  const { mode, toggle } = useThemeStore();
-
-  return (
-    <Pressable
-      onPress={toggle}
-      style={{
-        width: 44,
-        height: 44,
-        borderRadius: 22,
-        backgroundColor: mode === 'dark' ? theme.colors.accent.tertiary : theme.colors.accent.primary,
-        alignItems: 'center',
-        justifyContent: 'center',
-      }}
-    >
-      <Feather
-        name={mode === 'dark' ? 'moon' : 'sun'}
-        size={20}
-        color={theme.colors.text.inverse}
-      />
-    </Pressable>
-  );
-}
-
 export default function SettingsScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
-  const { mode } = useThemeStore();
   const { logout } = useAuthStore();
-  const [notifications, setNotifications] = useState(true);
-  const [activityStatus, setActivityStatus] = useState(true);
-  const [privateAccount, setPrivateAccount] = useState(false);
+  const [faceId, setFaceId] = useState(true);
 
   const handleLogout = () => {
-    Alert.alert('Logout', 'Are you sure you want to log out?', [
-      { text: 'Cancel', style: 'cancel' },
+    Alert.alert('Выход', 'Вы уверены, что хотите выйти?', [
+      { text: 'Отмена', style: 'cancel' },
       {
-        text: 'Logout',
+        text: 'Выйти',
         style: 'destructive',
         onPress: () => {
           logout();
@@ -128,6 +91,18 @@ export default function SettingsScreen() {
     backgroundColor: theme.colors.background.primary,
   };
 
+  const sectionCardStyle: ViewStyle = {
+    backgroundColor: theme.colors.background.elevated,
+    borderRadius: 16,
+    marginBottom: 24,
+    overflow: 'hidden',
+  };
+
+  const sectionTitleStyle: ViewStyle = {
+    marginBottom: 8,
+    paddingHorizontal: 4,
+  };
+
   return (
     <ScrollView style={containerStyle} contentContainerStyle={{ paddingBottom: 100 }} showsVerticalScrollIndicator={false}>
       {/* Header */}
@@ -135,111 +110,119 @@ export default function SettingsScreen() {
         style={{
           flexDirection: 'row',
           alignItems: 'center',
+          justifyContent: 'center',
           paddingHorizontal: theme.spacing.lg,
-          paddingTop: insets.top,
-          paddingBottom: theme.spacing.md,
+          paddingTop: insets.top + 8,
+          paddingBottom: theme.spacing.lg,
+          position: 'relative',
         }}
       >
-        <Pressable onPress={() => router.back()} style={{ marginRight: theme.spacing.md }}>
-          <Feather name="arrow-left" size={22} color={theme.colors.text.primary} />
+        <Pressable
+          onPress={() => router.back()}
+          style={{ position: 'absolute', left: theme.spacing.lg, top: insets.top + 8 }}
+        >
+          <Feather name="chevron-left" size={24} color={theme.colors.text.primary} />
         </Pressable>
-        <Text variant="subheading" weight="bold">Settings</Text>
+        <Text variant="subheading" weight="bold">Настройки</Text>
       </View>
 
       <View style={{ paddingHorizontal: theme.spacing.lg }}>
-        {/* Account */}
-        <SettingsSection title="Account">
-          <SettingsRow icon="user" label="Edit Profile" onPress={() => router.push('/profile/edit')} />
-          <SettingsRow icon="lock" label="Password & Security" />
-          <SettingsRow icon="mail" label="Email" value="you@email.com" />
-        </SettingsSection>
-
-        {/* Appearance */}
-        <SettingsSection title="Appearance">
+        {/* Общие */}
+        <View style={sectionTitleStyle}>
+          <Text variant="body" weight="semibold" color={theme.colors.text.secondary}>
+            Общие
+          </Text>
+        </View>
+        <View style={sectionCardStyle}>
           <SettingsRow
-            icon={mode === 'dark' ? 'moon' : 'sun'}
-            label="Theme"
-            value={mode === 'dark' ? 'Dark' : 'Light'}
-            showChevron={false}
-            rightElement={<ThemeToggle />}
+            icon="user"
+            label="Профиль"
+            onPress={() => router.push('/profile/edit')}
+            isFirst
           />
-        </SettingsSection>
-
-        {/* Notifications */}
-        <SettingsSection title="Notifications">
           <SettingsRow
             icon="bell"
-            label="Push Notifications"
-            showChevron={false}
-            rightElement={
-              <Switch
-                value={notifications}
-                onValueChange={setNotifications}
-                trackColor={{ true: theme.colors.accent.primary, false: theme.colors.border.light }}
-                thumbColor={theme.colors.text.inverse}
-              />
-            }
-          />
-          <SettingsRow icon="message-circle" label="Message Notifications" />
-          <SettingsRow icon="heart" label="Like Notifications" />
-        </SettingsSection>
-
-        {/* Privacy */}
-        <SettingsSection title="Privacy">
-          <SettingsRow
-            icon="eye-off"
-            label="Private Account"
-            showChevron={false}
-            rightElement={
-              <Switch
-                value={privateAccount}
-                onValueChange={setPrivateAccount}
-                trackColor={{ true: theme.colors.accent.primary, false: theme.colors.border.light }}
-                thumbColor={theme.colors.text.inverse}
-              />
-            }
+            label="Уведомления"
+            onPress={() => router.push('/notifications')}
           />
           <SettingsRow
-            icon="activity"
-            label="Show Activity Status"
+            icon="sun"
+            label="Внешний вид"
+          />
+          <SettingsRow
+            icon="database"
+            label="Данные и память"
+          />
+          <SettingsRow
+            icon="folder"
+            label="Папки с чатами"
+            isLast
+          />
+        </View>
+
+        {/* Безопасность */}
+        <View style={sectionTitleStyle}>
+          <Text variant="body" weight="semibold" color={theme.colors.text.secondary}>
+            Безопасность
+          </Text>
+        </View>
+        <View style={sectionCardStyle}>
+          <SettingsRow
+            icon="shield"
+            label="Face ID"
             showChevron={false}
             rightElement={
               <Switch
-                value={activityStatus}
-                onValueChange={setActivityStatus}
-                trackColor={{ true: theme.colors.accent.primary, false: theme.colors.border.light }}
-                thumbColor={theme.colors.text.inverse}
+                value={faceId}
+                onValueChange={setFaceId}
+                trackColor={{ true: '#4CD964', false: theme.colors.border.light }}
+                thumbColor="#FFFFFF"
               />
             }
+            isFirst
           />
-          <SettingsRow icon="shield" label="Blocked Accounts" />
-        </SettingsSection>
+          <SettingsRow
+            icon="lock"
+            label="Конфиденциальность"
+          />
+          <SettingsRow
+            icon="smartphone"
+            label="Устройства"
+            value="2"
+            isLast
+          />
+        </View>
 
-        {/* About */}
-        <SettingsSection title="About">
-          <SettingsRow icon="info" label="App Version" value="1.0.0" showChevron={false} />
-          <SettingsRow icon="file-text" label="Terms of Service" />
-          <SettingsRow icon="shield" label="Privacy Policy" />
-        </SettingsSection>
+        {/* Платежи */}
+        <View style={sectionTitleStyle}>
+          <Text variant="body" weight="semibold" color={theme.colors.text.secondary}>
+            Платежи
+          </Text>
+        </View>
+        <View style={sectionCardStyle}>
+          <SettingsRow
+            icon="file-text"
+            label="Квитанции"
+            isFirst
+            isLast
+          />
+        </View>
 
         {/* Logout */}
-        <View>
-          <Pressable
-            onPress={handleLogout}
-            style={{
-              paddingVertical: theme.spacing.base,
-              alignItems: 'center',
-              backgroundColor: theme.colors.background.elevated,
-              borderRadius: theme.borderRadius.lg,
-              borderWidth: 1,
-              borderColor: theme.colors.status.error,
-            }}
-          >
-            <Text variant="body" weight="semibold" color={theme.colors.status.error}>
-              Log Out
-            </Text>
-          </Pressable>
-        </View>
+        <Pressable
+          onPress={handleLogout}
+          style={{
+            paddingVertical: 16,
+            alignItems: 'center',
+            backgroundColor: theme.colors.background.elevated,
+            borderRadius: 16,
+            marginTop: 8,
+          }}
+        >
+          <Text variant="body" weight="semibold" color={theme.colors.status.error}>
+            Выйти
+          </Text>
+        </Pressable>
       </View>
     </ScrollView>
   );
