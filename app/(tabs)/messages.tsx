@@ -3,6 +3,7 @@ import { View, FlatList, Pressable, ViewStyle, TextInput } from 'react-native';
 import Animated, { FadeInDown, FadeIn, useSharedValue, useAnimatedStyle, withSpring } from 'react-native-reanimated';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { useChatStore } from '../../src/store';
@@ -89,6 +90,7 @@ function ConversationItem({ item, index }: { item: Conversation; index: number }
 
 export default function MessagesScreen() {
   const theme = useTheme();
+  const insets = useSafeAreaInsets();
   const { conversations, setConversations } = useChatStore();
   const [searchQuery, setSearchQuery] = useState('');
   const fabScale = useSharedValue(1);
@@ -98,19 +100,19 @@ export default function MessagesScreen() {
   }));
 
   useEffect(() => {
-    setConversations(mockConversations as unknown as import('../../src/store/chatStore').Conversation[]);
+    setConversations(mockConversations);
   }, []);
 
   const filtered = searchQuery
-    ? (conversations as unknown as Conversation[]).filter((c) =>
+    ? conversations.filter((c) =>
         c.participantName.toLowerCase().includes(searchQuery.toLowerCase())
       )
-    : (conversations as unknown as Conversation[]);
+    : conversations;
 
   const containerStyle: ViewStyle = {
     flex: 1,
     backgroundColor: theme.colors.background.primary,
-    paddingTop: theme.spacing['2xl'],
+    paddingTop: insets.top,
   };
 
   return (

@@ -17,13 +17,19 @@ export default function LoginScreen() {
   const login = useAuthStore((s) => s.login);
 
   const handleLogin = () => {
-    login({
-      id: currentUser.id,
-      username: currentUser.username,
-      displayName: currentUser.displayName,
-      avatar: currentUser.avatar,
-      bio: currentUser.bio,
-    });
+    // Simulate API call to /api/auth/login
+    // In production this would be: fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) })
+    const mockToken = 'mock-jwt-token-' + Date.now();
+    login(
+      {
+        id: currentUser.id,
+        username: currentUser.username,
+        displayName: currentUser.displayName,
+        avatar: currentUser.avatar,
+        bio: currentUser.bio,
+      },
+      mockToken
+    );
     router.replace('/(tabs)');
   };
 

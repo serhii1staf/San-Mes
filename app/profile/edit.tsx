@@ -3,6 +3,7 @@ import { View, ScrollView, Pressable, ViewStyle, Alert, Platform, KeyboardAvoidi
 import Animated, { FadeInUp, useSharedValue, useAnimatedStyle, withSpring } from 'react-native-reanimated';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../src/theme';
 import { Text, Input, Avatar } from '../../src/components/ui';
 import { useAuthStore } from '../../src/store';
@@ -12,6 +13,7 @@ const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
 export default function EditProfileScreen() {
   const theme = useTheme();
+  const insets = useSafeAreaInsets();
   const { user, updateProfile } = useAuthStore();
   const displayUser = user || currentUser;
 
@@ -56,7 +58,7 @@ export default function EditProfileScreen() {
             alignItems: 'center',
             justifyContent: 'space-between',
             paddingHorizontal: theme.spacing.lg,
-            paddingTop: theme.spacing['2xl'],
+            paddingTop: insets.top,
             paddingBottom: theme.spacing.md,
           }}
         >

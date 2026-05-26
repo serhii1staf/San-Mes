@@ -3,6 +3,7 @@ import { View, ScrollView, Pressable, Switch, ViewStyle, Alert } from 'react-nat
 import Animated, { FadeInDown, useSharedValue, useAnimatedStyle, withSpring } from 'react-native-reanimated';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../src/theme';
 import { Text, Card } from '../../src/components/ui';
 import { useThemeStore, useAuthStore } from '../../src/store';
@@ -117,6 +118,7 @@ function ThemeToggle() {
 
 export default function SettingsScreen() {
   const theme = useTheme();
+  const insets = useSafeAreaInsets();
   const { mode } = useThemeStore();
   const { logout } = useAuthStore();
   const [notifications, setNotifications] = useState(true);
@@ -150,7 +152,7 @@ export default function SettingsScreen() {
           flexDirection: 'row',
           alignItems: 'center',
           paddingHorizontal: theme.spacing.lg,
-          paddingTop: theme.spacing['2xl'],
+          paddingTop: insets.top,
           paddingBottom: theme.spacing.md,
         }}
       >

@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'http';
+import { verifyToken, sendUnauthorized } from '../_middleware';
 
 const mockUsers: Record<string, object> = {
   '1': {
@@ -24,6 +25,12 @@ const mockUsers: Record<string, object> = {
 };
 
 export default function handler(req: IncomingMessage, res: ServerResponse) {
+  const { authorized } = verifyToken(req);
+  if (!authorized) {
+    sendUnauthorized(res);
+    return;
+  }
+
   const url = new URL(req.url || '', `http://${req.headers.host}`);
   const segments = url.pathname.split('/');
   const id = segments[segments.length - 1];
@@ -47,7 +54,14 @@ export default function handler(req: IncomingMessage, res: ServerResponse) {
     req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
     req.on('end', () => {
       try {
-        const updates = JSON.parse(body);
+        const data = JSON.parse(body);
+        // Whitelist fields for user update
+        const updates: Record<string, string> = {};
+        if (typeof data.displayName === 'string') updates.displayName = data.displayName;
+        if (typeof data.username === 'string') updates.username = data.username;
+        if (typeof data.bio === 'string') updates.bio = data.bio;
+        if (typeof data.website === 'string') updates.website = data.website;
+        if (typeof data.avatar === 'string') updates.avatar = data.avatar;
         res.statusCode = 200;
         res.end(JSON.stringify({ success: true, data: { id, ...updates } }));
       } catch {

@@ -11,6 +11,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar, Button } from '../../src/components/ui';
 import { useAuthStore } from '../../src/store';
@@ -100,6 +101,7 @@ function ProfileTabs({ activeTab, onTabChange }: { activeTab: TabName; onTabChan
 
 export default function ProfileScreen() {
   const theme = useTheme();
+  const insets = useSafeAreaInsets();
   const { user, login } = useAuthStore();
   const [activeTab, setActiveTab] = useState<TabName>('posts');
 
@@ -121,7 +123,7 @@ export default function ProfileScreen() {
   const containerStyle: ViewStyle = {
     flex: 1,
     backgroundColor: theme.colors.background.primary,
-    paddingTop: theme.spacing['2xl'],
+    paddingTop: insets.top,
   };
 
   return (

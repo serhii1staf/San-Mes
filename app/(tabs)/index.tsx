@@ -1,6 +1,7 @@
 import React, { useEffect, useCallback } from 'react';
 import { View, FlatList, RefreshControl, ViewStyle, Pressable } from 'react-native';
 import Animated, { FadeInDown, FadeIn } from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { PostCard } from '../../src/components/feed/PostCard';
@@ -93,12 +94,13 @@ function SkeletonCard() {
 
 export default function FeedScreen() {
   const theme = useTheme();
+  const insets = useSafeAreaInsets();
   const { posts, isLoading, isRefreshing, setPosts, setLoading, setRefreshing, toggleLike } = useFeedStore();
 
   useEffect(() => {
     setLoading(true);
     const timer = setTimeout(() => {
-      setPosts(mockPosts as unknown as import('../../src/store/feedStore').Post[]);
+      setPosts(mockPosts);
       setLoading(false);
     }, 800);
     return () => clearTimeout(timer);
@@ -107,7 +109,7 @@ export default function FeedScreen() {
   const handleRefresh = useCallback(() => {
     setRefreshing(true);
     setTimeout(() => {
-      setPosts(mockPosts as unknown as import('../../src/store/feedStore').Post[]);
+      setPosts(mockPosts);
       setRefreshing(false);
     }, 1000);
   }, []);
@@ -115,7 +117,7 @@ export default function FeedScreen() {
   const renderPost = ({ item, index }: { item: Post; index: number }) => (
     <Animated.View entering={FadeInDown.delay(index * 100).duration(400)}>
       <PostCard
-        post={item as unknown as import('../../src/types').Post}
+        post={item}
         onLike={toggleLike}
       />
     </Animated.View>
@@ -131,7 +133,7 @@ export default function FeedScreen() {
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: theme.spacing.lg,
-    paddingTop: theme.spacing['2xl'],
+    paddingTop: insets.top,
     paddingBottom: theme.spacing.md,
   };
 
@@ -168,7 +170,7 @@ export default function FeedScreen() {
         </Pressable>
       </View>
       <FlatList
-        data={posts as unknown as Post[]}
+        data={posts}
         keyExtractor={(item) => item.id}
         renderItem={renderPost}
         ListHeaderComponent={StoriesRow}

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { View, Image, Pressable, ViewStyle, TextStyle, Dimensions } from 'react-native';
 import Animated, {
   useSharedValue,
@@ -35,7 +35,8 @@ export function PostCard({ post, onLike, onComment, onShare, onBookmark }: PostC
   const heartScale = useSharedValue(1);
   const heartOpacity = useSharedValue(0);
   const bookmarkScale = useSharedValue(1);
-  const lastTap = useSharedValue(0);
+  // Issue 6: Use useRef instead of useSharedValue for JS-thread double-tap detection
+  const lastTap = useRef<number>(0);
 
   const heartAnimatedStyle = useAnimatedStyle(() => ({
     transform: [{ scale: heartScale.value }],
@@ -60,8 +61,8 @@ export function PostCard({ post, onLike, onComment, onShare, onBookmark }: PostC
 
   const handleDoubleTap = () => {
     const now = Date.now();
-    const lastTapValue = lastTap.value;
-    lastTap.value = now;
+    const lastTapValue = lastTap.current;
+    lastTap.current = now;
 
     if (now - lastTapValue < 300) {
       heartOpacity.value = withSequence(
@@ -70,7 +71,7 @@ export function PostCard({ post, onLike, onComment, onShare, onBookmark }: PostC
         withTiming(0, { duration: 300 })
       );
       if (!post.isLiked) {
-        runOnJS(onLike)(post.id);
+        onLike(post.id);
       }
     }
   };
@@ -168,10 +169,14 @@ export function PostCard({ post, onLike, onComment, onShare, onBookmark }: PostC
       {/* Action Bar */}
       <View style={actionBarStyle}>
         <AnimatedPressable onPress={handleLike} style={[actionButtonStyle, heartAnimatedStyle]}>
+          {/* Issue 5: Feather icons do not have a filled heart variant.
+              We use color to indicate liked state and apply fill via style.
+              The filled visual is achieved by rendering the icon in the accent color. */}
           <Feather
-            name={post.isLiked ? 'heart' : 'heart'}
+            name="heart"
             size={20}
             color={post.isLiked ? theme.colors.accent.primary : theme.colors.text.secondary}
+            style={post.isLiked ? { fill: theme.colors.accent.primary } as TextStyle : undefined}
           />
           <Text
             variant="caption"
@@ -205,8 +210,9 @@ export function PostCard({ post, onLike, onComment, onShare, onBookmark }: PostC
         <View style={{ flex: 1 }} />
 
         <AnimatedPressable onPress={handleBookmark} style={bookmarkAnimatedStyle}>
+          {/* Issue 5: Feather does not have a filled bookmark. Color change indicates state. */}
           <Feather
-            name={isBookmarked ? 'bookmark' : 'bookmark'}
+            name="bookmark"
             size={20}
             color={isBookmarked ? theme.colors.accent.tertiary : theme.colors.text.secondary}
           />

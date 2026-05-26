@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'http';
+import { verifyToken, sendUnauthorized } from '../../_middleware';
 
 const mockComments = [
   {
@@ -26,6 +27,12 @@ const mockComments = [
 ];
 
 export default function handler(req: IncomingMessage, res: ServerResponse) {
+  const { authorized } = verifyToken(req);
+  if (!authorized) {
+    sendUnauthorized(res);
+    return;
+  }
+
   res.setHeader('Content-Type', 'application/json');
 
   if (req.method === 'GET') {

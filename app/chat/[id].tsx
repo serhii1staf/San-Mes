@@ -11,6 +11,7 @@ import {
 import Animated, { FadeInUp, FadeIn } from 'react-native-reanimated';
 import { Feather } from '@expo/vector-icons';
 import { useLocalSearchParams, router } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { useChatStore } from '../../src/store';
@@ -109,6 +110,7 @@ function DateSeparator({ date }: { date: string }) {
 
 export default function ChatScreen() {
   const theme = useTheme();
+  const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
   const [inputText, setInputText] = useState('');
   const [showTyping, setShowTyping] = useState(false);
@@ -116,11 +118,11 @@ export default function ChatScreen() {
   const { messages: storeMessages, setMessages, addMessage } = useChatStore();
 
   const conversation = mockConversations.find((c) => c.id === id);
-  const chatMessages = (storeMessages[id || ''] || []) as unknown as ChatMessage[];
+  const chatMessages = (storeMessages[id || ''] || []) as ChatMessage[];
 
   useEffect(() => {
     if (id && mockMessages[id]) {
-      setMessages(id, mockMessages[id] as unknown as import('../../src/store/chatStore').Message[]);
+      setMessages(id, mockMessages[id]);
     }
   }, [id]);
 
@@ -134,7 +136,7 @@ export default function ChatScreen() {
       createdAt: new Date().toISOString(),
       isRead: true,
     };
-    addMessage(id, newMessage as unknown as import('../../src/store/chatStore').Message);
+    addMessage(id, newMessage);
     setInputText('');
     setShowTyping(true);
     setTimeout(() => setShowTyping(false), 2000);
@@ -149,7 +151,7 @@ export default function ChatScreen() {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: theme.spacing.base,
-    paddingTop: theme.spacing['2xl'],
+    paddingTop: insets.top,
     paddingBottom: theme.spacing.md,
     backgroundColor: theme.colors.background.elevated,
     borderBottomWidth: 0.5,

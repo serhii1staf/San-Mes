@@ -1,23 +1,7 @@
 import { create } from 'zustand';
+import { ChatMessage as Message, Conversation } from '../types';
 
-export interface Message {
-  id: string;
-  conversationId: string;
-  senderId: string;
-  text: string;
-  createdAt: string;
-  isRead: boolean;
-}
-
-export interface Conversation {
-  id: string;
-  participantId: string;
-  participantName: string;
-  participantAvatar?: string;
-  lastMessage?: string;
-  lastMessageAt?: string;
-  unreadCount: number;
-}
+export type { ChatMessage as Message, Conversation } from '../types';
 
 interface ChatStoreState {
   conversations: Conversation[];

@@ -8,6 +8,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { Feather } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
 import { trendingTags, discoverCategories, mockPosts } from '../../src/utils/mockData';
@@ -162,13 +163,14 @@ function TrendingTags() {
 
 export default function SearchScreen() {
   const theme = useTheme();
+  const insets = useSafeAreaInsets();
 
   const discoverPosts = mockPosts.filter((p) => p.imageUrl);
 
   const containerStyle: ViewStyle = {
     flex: 1,
     backgroundColor: theme.colors.background.primary,
-    paddingTop: theme.spacing['2xl'],
+    paddingTop: insets.top,
   };
 
   return (

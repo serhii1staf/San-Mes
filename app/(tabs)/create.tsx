@@ -9,6 +9,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import * as ImagePicker from 'expo-image-picker';
 import { Feather } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../src/theme';
 import { Text, Button } from '../../src/components/ui';
 
@@ -18,6 +19,7 @@ const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
 export default function CreateScreen() {
   const theme = useTheme();
+  const insets = useSafeAreaInsets();
   const [content, setContent] = useState('');
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [audience, setAudience] = useState<'public' | 'friends'>('public');
@@ -64,7 +66,7 @@ export default function CreateScreen() {
   const containerStyle: ViewStyle = {
     flex: 1,
     backgroundColor: theme.colors.background.primary,
-    paddingTop: theme.spacing['2xl'],
+    paddingTop: insets.top,
   };
 
   return (

@@ -1,3 +1,7 @@
+// TODO: Add unit tests for stores (auth, feed, chat, theme Zustand logic),
+// utility functions (formatTimeAgo, formatMessageTime, formatMessageDate),
+// and snapshot tests for core UI components once the MVP UI is stable.
+
 export { useAuthStore } from './authStore';
 export type { User } from './authStore';
 export { useFeedStore } from './feedStore';

@@ -19,13 +19,19 @@ export default function RegisterScreen() {
 
   const handleRegister = () => {
     const username = name.toLowerCase().replace(/\s+/g, '_');
-    login({
-      id: 'user-new',
-      username,
-      displayName: name || 'New User',
-      avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(name || 'New User')}&background=FF6B6B&color=fff&size=200`,
-      bio: '',
-    });
+    // Simulate API call to /api/auth/register
+    // In production this would be: fetch('/api/auth/register', { method: 'POST', body: JSON.stringify({ name, email, password }) })
+    const mockToken = 'mock-jwt-token-' + Date.now();
+    login(
+      {
+        id: 'user-new',
+        username,
+        displayName: name || 'New User',
+        avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(name || 'New User')}&background=FF6B6B&color=fff&size=200`,
+        bio: '',
+      },
+      mockToken
+    );
     router.replace('/(tabs)');
   };
 

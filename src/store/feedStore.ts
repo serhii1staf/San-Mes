@@ -1,17 +1,7 @@
 import { create } from 'zustand';
+import { Post } from '../types';
 
-export interface Post {
-  id: string;
-  authorId: string;
-  authorName: string;
-  authorAvatar?: string;
-  content: string;
-  imageUrl?: string;
-  likesCount: number;
-  commentsCount: number;
-  isLiked: boolean;
-  createdAt: string;
-}
+export type { Post } from '../types';
 
 interface FeedStoreState {
   posts: Post[];

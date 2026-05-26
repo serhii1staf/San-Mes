@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'http';
+import { verifyToken, sendUnauthorized } from '../_middleware';
 
 const mockPosts = [
   {
@@ -34,6 +35,12 @@ const mockPosts = [
 ];
 
 export default function handler(req: IncomingMessage, res: ServerResponse) {
+  const { authorized } = verifyToken(req);
+  if (!authorized) {
+    sendUnauthorized(res);
+    return;
+  }
+
   res.setHeader('Content-Type', 'application/json');
 
   if (req.method === 'GET') {
@@ -48,19 +55,23 @@ export default function handler(req: IncomingMessage, res: ServerResponse) {
     req.on('end', () => {
       try {
         const postData = JSON.parse(body);
+        // Issue 4: Whitelist specific fields instead of spreading untrusted input
+        const content = typeof postData.content === 'string' ? postData.content : '';
+        const imageUrl = typeof postData.imageUrl === 'string' ? postData.imageUrl : undefined;
         const newPost = {
           id: 'p-' + Date.now(),
           authorId: 'current',
           authorName: 'Your Name',
           authorUsername: 'you_here',
           authorAvatar: 'https://ui-avatars.com/api/?name=Your+Name&background=FF6B6B&color=fff&size=200',
+          content,
+          imageUrl,
           likesCount: 0,
           commentsCount: 0,
           sharesCount: 0,
           isLiked: false,
           isBookmarked: false,
           createdAt: new Date().toISOString(),
-          ...postData,
         };
         res.statusCode = 201;
         res.end(JSON.stringify({ success: true, data: newPost }));
