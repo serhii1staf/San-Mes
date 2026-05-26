@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Pressable, StyleSheet, ViewStyle } from 'react-native';
 import { BottomTabBarProps } from '@react-navigation/bottom-tabs';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../../theme';
 
@@ -76,30 +77,44 @@ function TabBarButton({
 export function CustomTabBar({ state, navigation }: BottomTabBarProps) {
   const theme = useTheme();
 
+  // Colors for the gradient fade underneath the tab bar
+  const bgColor = theme.isDark ? 'rgba(26,26,26,1)' : 'rgba(255,248,240,1)';
+  const bgTransparent = theme.isDark ? 'rgba(26,26,26,0)' : 'rgba(255,248,240,0)';
+
   const wrapperStyle: ViewStyle = {
     position: 'absolute',
-    bottom: 24,
-    left: 16,
-    right: 16,
+    bottom: 0,
+    left: 0,
+    right: 0,
   };
 
   const containerStyle: ViewStyle = {
     flexDirection: 'row',
-    backgroundColor: theme.isDark ? '#1E1E1E' : theme.colors.background.elevated,
     paddingVertical: 12,
     paddingHorizontal: 8,
+    marginHorizontal: 16,
+    marginBottom: 24,
     borderRadius: 32,
+    backgroundColor: theme.isDark ? '#1E1E1E' : theme.colors.background.elevated,
     shadowColor: '#000000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.15,
     shadowRadius: 12,
     elevation: 8,
-    borderWidth: theme.isDark ? 1 : 0,
-    borderColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'transparent',
+    borderWidth: theme.isDark ? 1 : 0.5,
+    borderColor: theme.isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)',
   };
 
   return (
-    <View style={wrapperStyle}>
+    <View style={wrapperStyle} pointerEvents="box-none">
+      {/* Gradient fade UNDERNEATH the navigation - dissolves content into background */}
+      <LinearGradient
+        colors={[bgTransparent, bgColor]}
+        locations={[0, 0.6]}
+        style={styles.bottomGradient}
+        pointerEvents="none"
+      />
+      {/* Tab bar itself */}
       <View style={containerStyle}>
         {state.routes.map((route, index) => {
           const isFocused = state.index === index;
@@ -154,5 +169,12 @@ const styles = StyleSheet.create({
     height: 4,
     borderRadius: 2,
     marginTop: 4,
+  },
+  bottomGradient: {
+    height: 60,
+    position: 'absolute',
+    top: -60,
+    left: 0,
+    right: 0,
   },
 });

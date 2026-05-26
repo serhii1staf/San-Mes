@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { View, ScrollView, Pressable, Image, ViewStyle, Dimensions, ActivityIndicator } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -88,104 +88,117 @@ export default function ProfileScreen() {
   const containerStyle: ViewStyle = {
     flex: 1,
     backgroundColor: theme.colors.background.primary,
-    paddingTop: insets.top,
   };
 
   return (
-    <ScrollView style={containerStyle} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
-      {/* Header */}
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: theme.spacing.lg, paddingTop: theme.spacing.base }}>
+    <View style={containerStyle}>
+      {/* Sticky Header - username + settings */}
+      <View
+        style={{
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          paddingHorizontal: theme.spacing.lg,
+          paddingTop: insets.top + 8,
+          paddingBottom: theme.spacing.md,
+          backgroundColor: theme.colors.background.primary,
+          zIndex: 10,
+        }}
+      >
         <Text variant="subheading" weight="bold">@{displayUser.username}</Text>
         <Pressable onPress={() => router.push('/settings')}>
           <Feather name="settings" size={22} color={theme.colors.text.primary} />
         </Pressable>
       </View>
 
-      {/* Avatar & Stats */}
-      <View style={{ alignItems: 'center', marginTop: theme.spacing.lg }}>
-        <View style={{ position: 'relative' }}>
-          <Avatar source={displayUser.avatar} name={displayUser.displayName} size="xl" />
-          <Pressable
-            onPress={() => router.push('/profile/edit')}
-            style={{
-              position: 'absolute',
-              bottom: 0,
-              right: 0,
-              width: 28,
-              height: 28,
-              borderRadius: 14,
-              backgroundColor: theme.colors.accent.primary,
-              alignItems: 'center',
-              justifyContent: 'center',
-              borderWidth: 2,
-              borderColor: theme.colors.background.primary,
-            }}
-          >
-            <Feather name="camera" size={14} color={theme.colors.text.inverse} />
-          </Pressable>
+      {/* Scrollable Content */}
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
+        {/* Avatar & Stats */}
+        <View style={{ alignItems: 'center', marginTop: theme.spacing.base }}>
+          <View style={{ position: 'relative' }}>
+            <Avatar source={displayUser.avatar} name={displayUser.displayName} size="xl" />
+            <Pressable
+              onPress={() => router.push('/profile/edit')}
+              style={{
+                position: 'absolute',
+                bottom: 0,
+                right: 0,
+                width: 28,
+                height: 28,
+                borderRadius: 14,
+                backgroundColor: theme.colors.accent.primary,
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderWidth: 2,
+                borderColor: theme.colors.background.primary,
+              }}
+            >
+              <Feather name="camera" size={14} color={theme.colors.text.inverse} />
+            </Pressable>
+          </View>
+
+          <Text variant="subheading" weight="bold" style={{ marginTop: theme.spacing.md }}>
+            {displayUser.displayName}
+          </Text>
+          {displayUser.bio && (
+            <Text
+              variant="body"
+              color={theme.colors.text.secondary}
+              align="center"
+              style={{ marginTop: theme.spacing.xs, paddingHorizontal: theme.spacing.xl }}
+            >
+              {displayUser.bio}
+            </Text>
+          )}
         </View>
 
-        <Text variant="subheading" weight="bold" style={{ marginTop: theme.spacing.md }}>
-          {displayUser.displayName}
-        </Text>
-        {displayUser.bio && (
-          <Text
-            variant="body"
-            color={theme.colors.text.secondary}
-            align="center"
-            style={{ marginTop: theme.spacing.xs, paddingHorizontal: theme.spacing.xl }}
-          >
-            {displayUser.bio}
-          </Text>
-        )}
-      </View>
+        {/* Stats */}
+        <View
+          style={{
+            flexDirection: 'row',
+            marginTop: theme.spacing.lg,
+            paddingHorizontal: theme.spacing.xl,
+          }}
+        >
+          <StatItem label="Posts" value={currentUser.postsCount} />
+          <StatItem label="Followers" value={currentUser.followersCount} />
+          <StatItem label="Following" value={currentUser.followingCount} />
+        </View>
 
-      {/* Stats */}
-      <View
-        style={{
-          flexDirection: 'row',
-          marginTop: theme.spacing.lg,
-          paddingHorizontal: theme.spacing.xl,
-        }}
-      >
-        <StatItem label="Posts" value={currentUser.postsCount} />
-        <StatItem label="Followers" value={currentUser.followersCount} />
-        <StatItem label="Following" value={currentUser.followingCount} />
-      </View>
+        {/* Edit Profile Button */}
+        <View style={{ paddingHorizontal: theme.spacing.lg, marginTop: theme.spacing.lg }}>
+          <Button title="Edit Profile" variant="outline" onPress={() => router.push('/profile/edit')} />
+        </View>
 
-      {/* Edit Profile Button */}
-      <View style={{ paddingHorizontal: theme.spacing.lg, marginTop: theme.spacing.lg }}>
-        <Button title="Edit Profile" variant="outline" onPress={() => router.push('/profile/edit')} />
-      </View>
+        {/* Tabs */}
+        <View style={{ paddingHorizontal: theme.spacing.lg }}>
+          <ProfileTabs activeTab={activeTab} onTabChange={setActiveTab} />
+        </View>
 
-      {/* Tabs */}
-      <View style={{ paddingHorizontal: theme.spacing.lg }}>
-        <ProfileTabs activeTab={activeTab} onTabChange={setActiveTab} />
-      </View>
-
-      {/* Post Grid */}
-      <View
-        style={{
-          flexDirection: 'row',
-          flexWrap: 'wrap',
-          paddingHorizontal: theme.spacing.lg,
-          marginTop: theme.spacing.base,
-          gap: 4,
-        }}
-      >
-        {userPosts.map((post) => (
-          <View key={post.id}>
-            <Image
-              source={{ uri: post.imageUrl }}
-              style={{
-                width: GRID_SIZE,
-                height: GRID_SIZE,
-                borderRadius: theme.borderRadius.sm,
-              }}
-            />
-          </View>
-        ))}
-      </View>
-    </ScrollView>
+        {/* Post Grid */}
+        <View
+          style={{
+            flexDirection: 'row',
+            flexWrap: 'wrap',
+            paddingHorizontal: theme.spacing.lg,
+            marginTop: theme.spacing.base,
+            gap: 4,
+          }}
+        >
+          {userPosts.map((post) => (
+            <View key={post.id}>
+              <Image
+                source={{ uri: post.imageUrl }}
+                style={{
+                  width: GRID_SIZE,
+                  height: GRID_SIZE,
+                  borderRadius: theme.borderRadius.sm,
+                }}
+              />
+            </View>
+          ))}
+        </View>
+      </ScrollView>
+    </View>
   );
 }

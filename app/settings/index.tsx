@@ -14,7 +14,6 @@ function SettingsRow({
   onPress,
   showChevron = true,
   rightElement,
-  isFirst,
   isLast,
 }: {
   icon: string;
@@ -104,8 +103,8 @@ export default function SettingsScreen() {
   };
 
   return (
-    <ScrollView style={containerStyle} contentContainerStyle={{ paddingBottom: 100 }} showsVerticalScrollIndicator={false}>
-      {/* Header */}
+    <View style={containerStyle}>
+      {/* Sticky Header */}
       <View
         style={{
           flexDirection: 'row',
@@ -113,8 +112,10 @@ export default function SettingsScreen() {
           justifyContent: 'center',
           paddingHorizontal: theme.spacing.lg,
           paddingTop: insets.top + 8,
-          paddingBottom: theme.spacing.lg,
+          paddingBottom: theme.spacing.md,
+          backgroundColor: theme.colors.background.primary,
           position: 'relative',
+          zIndex: 10,
         }}
       >
         <Pressable
@@ -126,7 +127,8 @@ export default function SettingsScreen() {
         <Text variant="subheading" weight="bold">Настройки</Text>
       </View>
 
-      <View style={{ paddingHorizontal: theme.spacing.lg }}>
+      {/* Scrollable Content */}
+      <ScrollView contentContainerStyle={{ paddingBottom: 100, paddingHorizontal: theme.spacing.lg }} showsVerticalScrollIndicator={false}>
         {/* Общие */}
         <View style={sectionTitleStyle}>
           <Text variant="body" weight="semibold" color={theme.colors.text.secondary}>
@@ -223,7 +225,7 @@ export default function SettingsScreen() {
             Выйти
           </Text>
         </Pressable>
-      </View>
-    </ScrollView>
+      </ScrollView>
+    </View>
   );
 }

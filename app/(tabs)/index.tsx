@@ -1,6 +1,7 @@
 import React, { useEffect, useCallback } from 'react';
-import { View, FlatList, RefreshControl, ViewStyle, Pressable } from 'react-native';
+import { View, FlatList, RefreshControl, ViewStyle, Pressable, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useTheme } from '../../src/theme';
@@ -69,8 +70,6 @@ function StoriesRow() {
 }
 
 function FeedHeader() {
-  const theme = useTheme();
-
   return (
     <View>
       <StoriesRow />
@@ -110,6 +109,10 @@ export default function FeedScreen() {
   const insets = useSafeAreaInsets();
   const { posts, isLoading, isRefreshing, setPosts, setLoading, setRefreshing, toggleLike } = useFeedStore();
 
+  // Background color for gradient
+  const bgColor = theme.isDark ? 'rgba(26,26,26,1)' : 'rgba(255,248,240,1)';
+  const bgTransparent = theme.isDark ? 'rgba(26,26,26,0)' : 'rgba(255,248,240,0)';
+
   useEffect(() => {
     setLoading(true);
     const timer = setTimeout(() => {
@@ -141,27 +144,28 @@ export default function FeedScreen() {
     backgroundColor: theme.colors.background.primary,
   };
 
-  const headerStyle: ViewStyle = {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: theme.spacing.lg,
-    paddingTop: insets.top,
-    paddingBottom: theme.spacing.md,
-  };
+  // The gradient extends taller than the header content to create dissolve effect
+  const headerContentHeight = insets.top + 48;
+  const headerGradientHeight = headerContentHeight + 28;
 
   if (isLoading) {
     return (
       <View style={containerStyle}>
-        <View style={headerStyle}>
-          <Text variant="subheading" weight="bold">San</Text>
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <Pressable style={{ marginLeft: theme.spacing.base }}>
+        {/* Gradient header that dissolves */}
+        <View style={[styles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">
+          <LinearGradient
+            colors={[bgColor, bgColor, bgTransparent]}
+            locations={[0, 0.6, 1]}
+            style={StyleSheet.absoluteFill}
+          />
+          <View style={[styles.headerContent, { paddingTop: insets.top }]}>
+            <Text variant="subheading" weight="bold">San</Text>
+            <Pressable>
               <Feather name="bell" size={22} color={theme.colors.text.primary} />
             </Pressable>
           </View>
         </View>
-        <View style={{ paddingHorizontal: theme.spacing.base }}>
+        <View style={{ paddingHorizontal: theme.spacing.base, paddingTop: headerContentHeight }}>
           <SkeletonCard />
           <SkeletonCard />
         </View>
@@ -171,9 +175,15 @@ export default function FeedScreen() {
 
   return (
     <View style={containerStyle}>
-      <View style={headerStyle}>
-        <Text variant="subheading" weight="bold">San</Text>
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+      {/* Gradient header - solid at top, dissolves at bottom */}
+      <View style={[styles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">
+        <LinearGradient
+          colors={[bgColor, bgColor, bgTransparent]}
+          locations={[0, 0.55, 1]}
+          style={StyleSheet.absoluteFill}
+        />
+        <View style={[styles.headerContent, { paddingTop: insets.top }]} pointerEvents="auto">
+          <Text variant="subheading" weight="bold">San</Text>
           <Pressable
             onPress={() => router.push('/notifications')}
             style={{ position: 'relative' }}
@@ -193,21 +203,40 @@ export default function FeedScreen() {
           </Pressable>
         </View>
       </View>
+
       <FlatList
         data={posts}
         keyExtractor={(item) => item.id}
         renderItem={renderPost}
         ListHeaderComponent={FeedHeader}
-        contentContainerStyle={{ paddingHorizontal: theme.spacing.base, paddingBottom: 100 }}
+        contentContainerStyle={{ paddingHorizontal: theme.spacing.base, paddingBottom: 100, paddingTop: headerContentHeight }}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl
             refreshing={isRefreshing}
             onRefresh={handleRefresh}
             tintColor={theme.colors.accent.primary}
+            progressViewOffset={headerContentHeight}
           />
         }
       />
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  headerWrapper: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 100,
+  },
+  headerContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 24,
+    paddingBottom: 8,
+  },
+});
