@@ -22,7 +22,7 @@ function AuthNavigationGuard({ children }: { children: React.ReactNode }) {
     const inAuthGroup = segments[0] === '(auth)';
 
     if (!isAuthenticated && !inAuthGroup) {
-      router.replace('/(auth)/login');
+      router.replace('/(auth)/register');
     } else if (isAuthenticated && inAuthGroup) {
       router.replace('/(tabs)');
     }
