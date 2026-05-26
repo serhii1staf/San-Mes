@@ -1,156 +1,270 @@
-import React, { useState } from 'react';
-import { View, ViewStyle, Pressable, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
+import React, { useState, useRef } from 'react';
+import { View, ViewStyle, Pressable, ScrollView, TextInput, Animated } from 'react-native';
 import { router } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../src/theme';
-import { Text, Input, Button, Avatar } from '../../src/components/ui';
+import { Text } from '../../src/components/ui';
 import { useAuthStore } from '../../src/store';
+
+const EMOJIS = [
+  '😊', '😎', '🥰', '🤩', '😇', '🦊', '🐱', '🐶',
+  '🦁', '🐼', '🐨', '🦋', '🌸', '🌺', '🍀', '✨',
+  '🔥', '💎', '🎭', '🎨', '🎵', '🌙', '☀️', '🌈',
+  '🍄', '🪷', '🫧', '🧿', '💫', '🪐', '🌊', '🍂',
+];
+
+function EmojiStep({ selected, onSelect }: { selected: string; onSelect: (e: string) => void }) {
+  const theme = useTheme();
+  return (
+    <View style={{ alignItems: 'center' }}>
+      <Text variant="heading" weight="bold" align="center">
+        Выбери аватар
+      </Text>
+      <Text variant="body" color={theme.colors.text.secondary} align="center" style={{ marginTop: 8, marginBottom: 32 }}>
+        Это твоя эмодзи-аватарка
+      </Text>
+
+      {/* Selected emoji preview */}
+      <View style={{
+        width: 96,
+        height: 96,
+        borderRadius: 48,
+        backgroundColor: theme.colors.background.elevated,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 32,
+        borderWidth: 2,
+        borderColor: selected ? theme.colors.accent.primary : theme.colors.border.light,
+      }}>
+        <Text style={{ fontSize: 48 }}>{selected || '?'}</Text>
+      </View>
+
+      {/* Emoji grid */}
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 12 }}>
+        {EMOJIS.map((emoji) => (
+          <Pressable
+            key={emoji}
+            onPress={() => onSelect(emoji)}
+            style={{
+              width: 52,
+              height: 52,
+              borderRadius: 16,
+              backgroundColor: selected === emoji ? theme.colors.accent.primary + '20' : theme.colors.background.elevated,
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderWidth: selected === emoji ? 2 : 0,
+              borderColor: theme.colors.accent.primary,
+            }}
+          >
+            <Text style={{ fontSize: 28 }}>{emoji}</Text>
+          </Pressable>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function NameStep({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const theme = useTheme();
+  return (
+    <View style={{ alignItems: 'center' }}>
+      <Text variant="heading" weight="bold" align="center">
+        Как тебя зовут?
+      </Text>
+      <Text variant="body" color={theme.colors.text.secondary} align="center" style={{ marginTop: 8, marginBottom: 40 }}>
+        Это имя увидят другие
+      </Text>
+
+      <TextInput
+        value={value}
+        onChangeText={onChange}
+        placeholder="Твоё имя"
+        placeholderTextColor={theme.colors.text.tertiary}
+        style={{
+          width: '100%',
+          fontSize: 20,
+          fontWeight: '600',
+          textAlign: 'center',
+          color: theme.colors.text.primary,
+          paddingVertical: 16,
+          borderBottomWidth: 2,
+          borderBottomColor: value ? theme.colors.accent.primary : theme.colors.border.light,
+        }}
+        autoFocus
+      />
+    </View>
+  );
+}
+
+function PinStep({ value, onChange, title, subtitle }: { value: string; onChange: (v: string) => void; title: string; subtitle: string }) {
+  const theme = useTheme();
+  const inputRef = useRef<TextInput>(null);
+
+  return (
+    <View style={{ alignItems: 'center' }}>
+      <Text variant="heading" weight="bold" align="center">
+        {title}
+      </Text>
+      <Text variant="body" color={theme.colors.text.secondary} align="center" style={{ marginTop: 8, marginBottom: 40 }}>
+        {subtitle}
+      </Text>
+
+      {/* PIN dots display */}
+      <Pressable onPress={() => inputRef.current?.focus()} style={{ flexDirection: 'row', gap: 16, marginBottom: 32 }}>
+        {[0, 1, 2, 3].map((i) => (
+          <View
+            key={i}
+            style={{
+              width: 56,
+              height: 56,
+              borderRadius: 16,
+              backgroundColor: theme.colors.background.elevated,
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderWidth: 2,
+              borderColor: i < value.length ? theme.colors.accent.primary : theme.colors.border.light,
+            }}
+          >
+            {i < value.length && (
+              <View style={{ width: 16, height: 16, borderRadius: 8, backgroundColor: theme.colors.accent.primary }} />
+            )}
+          </View>
+        ))}
+      </Pressable>
+
+      {/* Hidden input */}
+      <TextInput
+        ref={inputRef}
+        value={value}
+        onChangeText={(t) => onChange(t.replace(/[^0-9]/g, '').slice(0, 4))}
+        keyboardType="number-pad"
+        maxLength={4}
+        style={{ position: 'absolute', opacity: 0, height: 0 }}
+        autoFocus
+      />
+    </View>
+  );
+}
 
 export default function RegisterScreen() {
   const theme = useTheme();
+  const insets = useSafeAreaInsets();
+  const [step, setStep] = useState(0);
+  const [emoji, setEmoji] = useState('');
   const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
+  const [pin, setPin] = useState('');
+  const [confirmPin, setConfirmPin] = useState('');
+  const [error, setError] = useState('');
   const login = useAuthStore((s) => s.login);
 
-  const handleRegister = () => {
-    const username = name.toLowerCase().replace(/\s+/g, '_');
-    const mockToken = 'mock-jwt-token-' + Date.now();
-    login(
-      {
-        id: 'user-new',
-        username,
-        displayName: name || 'New User',
-        avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(name || 'New User')}&background=FF6B6B&color=fff&size=200`,
-        bio: '',
-      },
-      mockToken
-    );
-    router.replace('/(tabs)');
+  const canContinue = () => {
+    if (step === 0) return emoji !== '';
+    if (step === 1) return name.trim().length >= 2;
+    if (step === 2) return pin.length === 4;
+    if (step === 3) return confirmPin.length === 4;
+    return false;
+  };
+
+  const handleNext = () => {
+    setError('');
+    if (step === 0 && emoji) {
+      setStep(1);
+    } else if (step === 1 && name.trim().length >= 2) {
+      setStep(2);
+    } else if (step === 2 && pin.length === 4) {
+      setStep(3);
+    } else if (step === 3) {
+      if (confirmPin !== pin) {
+        setError('Коды не совпадают');
+        setConfirmPin('');
+        return;
+      }
+      // Generate device key (12 chars)
+      const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+      let deviceKey = '';
+      for (let i = 0; i < 12; i++) {
+        deviceKey += chars[Math.floor(Math.random() * chars.length)];
+      }
+
+      const username = name.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+      login(
+        {
+          id: 'user-' + Date.now(),
+          username: username || 'user',
+          displayName: name.trim(),
+          emoji,
+          pin,
+          deviceKey,
+        },
+        'token-' + Date.now()
+      );
+      router.replace('/(tabs)');
+    }
   };
 
   const containerStyle: ViewStyle = {
     flex: 1,
     backgroundColor: theme.colors.background.primary,
-  };
-
-  const contentStyle: ViewStyle = {
-    flexGrow: 1,
-    justifyContent: 'center',
-    paddingHorizontal: theme.spacing.xl,
-    paddingVertical: theme.spacing['2xl'],
-  };
-
-  const avatarContainerStyle: ViewStyle = {
-    alignItems: 'center',
-    marginBottom: theme.spacing.lg,
+    paddingTop: insets.top + 16,
   };
 
   return (
-    <KeyboardAvoidingView
-      style={containerStyle}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-    >
+    <View style={containerStyle}>
+      {/* Step indicator */}
+      <View style={{ flexDirection: 'row', paddingHorizontal: 32, marginBottom: 32, gap: 8 }}>
+        {[0, 1, 2, 3].map((i) => (
+          <View
+            key={i}
+            style={{
+              flex: 1,
+              height: 3,
+              borderRadius: 2,
+              backgroundColor: i <= step ? theme.colors.accent.primary : theme.colors.border.light,
+            }}
+          />
+        ))}
+      </View>
+
       <ScrollView
-        contentContainerStyle={contentStyle}
+        contentContainerStyle={{ flexGrow: 1, paddingHorizontal: 32, paddingBottom: 32 }}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        <View>
-          <Text variant="heading" weight="bold" align="center">
-            Create Account
+        {step === 0 && <EmojiStep selected={emoji} onSelect={setEmoji} />}
+        {step === 1 && <NameStep value={name} onChange={setName} />}
+        {step === 2 && <PinStep value={pin} onChange={setPin} title="Придумай код" subtitle="4 цифры для входа" />}
+        {step === 3 && <PinStep value={confirmPin} onChange={setConfirmPin} title="Повтори код" subtitle="Введи код ещё раз" />}
+
+        {error ? (
+          <Text variant="body" color={theme.colors.status.error} align="center" style={{ marginTop: 16 }}>
+            {error}
           </Text>
-          <Text
-            variant="body"
-            color={theme.colors.text.secondary}
-            align="center"
-            style={{ marginTop: theme.spacing.xs, marginBottom: theme.spacing.lg }}
-          >
-            Join the community
-          </Text>
-        </View>
-
-        <View style={avatarContainerStyle}>
-          <Pressable>
-            <Avatar name={name || 'U'} size="xl" />
-            <View
-              style={{
-                position: 'absolute',
-                bottom: 0,
-                right: 0,
-                width: 28,
-                height: 28,
-                borderRadius: 14,
-                backgroundColor: theme.colors.accent.primary,
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <Text variant="caption" color={theme.colors.text.inverse}>+</Text>
-            </View>
-          </Pressable>
-        </View>
-
-        <View>
-          <Input
-            label="Full Name"
-            value={name}
-            onChangeText={setName}
-            placeholder="Your full name"
-            style={{ marginBottom: theme.spacing.base }}
-          />
-        </View>
-
-        <View>
-          <Input
-            label="Email"
-            value={email}
-            onChangeText={setEmail}
-            placeholder="your@email.com"
-            style={{ marginBottom: theme.spacing.base }}
-          />
-        </View>
-
-        <View>
-          <Input
-            label="Password"
-            value={password}
-            onChangeText={setPassword}
-            placeholder="Create a password"
-            secureTextEntry
-            style={{ marginBottom: theme.spacing.base }}
-          />
-        </View>
-
-        <View>
-          <Input
-            label="Confirm Password"
-            value={confirmPassword}
-            onChangeText={setConfirmPassword}
-            placeholder="Confirm your password"
-            secureTextEntry
-            style={{ marginBottom: theme.spacing.lg }}
-          />
-        </View>
-
-        <View>
-          <Button title="Create Account" onPress={handleRegister} size="lg" />
-        </View>
-
-        <View>
-          <Pressable
-            onPress={() => router.back()}
-            style={{ alignItems: 'center', marginTop: theme.spacing.lg }}
-          >
-            <Text variant="body" color={theme.colors.text.secondary}>
-              Already have an account?{' '}
-              <Text variant="body" weight="semibold" color={theme.colors.accent.primary}>
-                Sign In
-              </Text>
-            </Text>
-          </Pressable>
-        </View>
+        ) : null}
       </ScrollView>
-    </KeyboardAvoidingView>
+
+      {/* Bottom buttons */}
+      <View style={{ paddingHorizontal: 32, paddingBottom: insets.bottom + 16, gap: 12 }}>
+        <Pressable
+          onPress={handleNext}
+          disabled={!canContinue()}
+          style={{
+            paddingVertical: 16,
+            borderRadius: 16,
+            backgroundColor: canContinue() ? theme.colors.accent.primary : theme.colors.border.light,
+            alignItems: 'center',
+          }}
+        >
+          <Text variant="body" weight="semibold" color={canContinue() ? '#FFFFFF' : theme.colors.text.tertiary}>
+            {step === 3 ? 'Готово' : 'Далее'}
+          </Text>
+        </Pressable>
+
+        {step > 0 && (
+          <Pressable onPress={() => { setStep(step - 1); setError(''); }} style={{ alignItems: 'center', paddingVertical: 8 }}>
+            <Text variant="body" color={theme.colors.text.secondary}>Назад</Text>
+          </Pressable>
+        )}
+      </View>
+    </View>
   );
 }

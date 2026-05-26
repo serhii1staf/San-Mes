@@ -2,6 +2,7 @@ export interface User {
   id: string;
   username: string;
   displayName: string;
+  emoji?: string;
   avatar?: string;
   bio?: string;
   website?: string;

@@ -1,107 +1,120 @@
-import React, { useState } from 'react';
-import { View, ViewStyle, Pressable, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
+import React, { useState, useRef } from 'react';
+import { View, ViewStyle, Pressable, TextInput } from 'react-native';
 import { router } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../src/theme';
-import { Text, Input, Button, Logo } from '../../src/components/ui';
+import { Text } from '../../src/components/ui';
 import { useAuthStore } from '../../src/store';
 import { currentUser } from '../../src/utils/mockData';
 
 export default function LoginScreen() {
   const theme = useTheme();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const insets = useSafeAreaInsets();
+  const [pin, setPin] = useState('');
+  const inputRef = useRef<TextInput>(null);
   const login = useAuthStore((s) => s.login);
 
   const handleLogin = () => {
-    const mockToken = 'mock-jwt-token-' + Date.now();
-    login(
-      {
-        id: currentUser.id,
-        username: currentUser.username,
-        displayName: currentUser.displayName,
-        avatar: currentUser.avatar,
-        bio: currentUser.bio,
-      },
-      mockToken
-    );
-    router.replace('/(tabs)');
+    if (pin.length === 4) {
+      // Mock login with default user
+      login(
+        {
+          id: currentUser.id,
+          username: currentUser.username,
+          displayName: currentUser.displayName,
+          emoji: '😊',
+          bio: currentUser.bio,
+          pin,
+          deviceKey: 'DEMO12345678',
+        },
+        'token-' + Date.now()
+      );
+      router.replace('/(tabs)');
+    }
   };
+
+  // Auto-submit when 4 digits entered
+  if (pin.length === 4) {
+    setTimeout(handleLogin, 300);
+  }
 
   const containerStyle: ViewStyle = {
     flex: 1,
     backgroundColor: theme.colors.background.primary,
-  };
-
-  const contentStyle: ViewStyle = {
-    flex: 1,
+    paddingTop: insets.top,
     justifyContent: 'center',
-    paddingHorizontal: theme.spacing.xl,
-  };
-
-  const logoContainerStyle: ViewStyle = {
     alignItems: 'center',
-    marginBottom: theme.spacing['2xl'],
+    paddingHorizontal: 32,
   };
 
   return (
-    <KeyboardAvoidingView
-      style={containerStyle}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-    >
-      <ScrollView
-        contentContainerStyle={contentStyle}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-      >
-        <View style={logoContainerStyle}>
-          <Logo size={90} color={theme.colors.accent.primary} />
-          <Text variant="heading" weight="bold" style={{ marginTop: theme.spacing.base }}>
-            San
-          </Text>
-          <Text variant="body" color={theme.colors.text.secondary} style={{ marginTop: theme.spacing.xs }}>
-            Freedom to connect
-          </Text>
-        </View>
+    <View style={containerStyle}>
+      {/* Logo emoji */}
+      <View style={{
+        width: 80,
+        height: 80,
+        borderRadius: 40,
+        backgroundColor: theme.colors.background.elevated,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 24,
+      }}>
+        <Text style={{ fontSize: 40 }}>🔐</Text>
+      </View>
 
-        <View>
-          <Input
-            label="Email"
-            value={email}
-            onChangeText={setEmail}
-            placeholder="your@email.com"
-            style={{ marginBottom: theme.spacing.base }}
-          />
-        </View>
+      <Text variant="heading" weight="bold" align="center">
+        Вход
+      </Text>
+      <Text variant="body" color={theme.colors.text.secondary} align="center" style={{ marginTop: 8, marginBottom: 40 }}>
+        Введи свой 4-значный код
+      </Text>
 
-        <View>
-          <Input
-            label="Password"
-            value={password}
-            onChangeText={setPassword}
-            placeholder="Enter your password"
-            secureTextEntry
-            style={{ marginBottom: theme.spacing.lg }}
-          />
-        </View>
-
-        <View>
-          <Button title="Sign In" onPress={handleLogin} size="lg" />
-        </View>
-
-        <View>
-          <Pressable
-            onPress={() => router.push('/(auth)/register')}
-            style={{ alignItems: 'center', marginTop: theme.spacing.lg }}
+      {/* PIN dots */}
+      <Pressable onPress={() => inputRef.current?.focus()} style={{ flexDirection: 'row', gap: 16, marginBottom: 40 }}>
+        {[0, 1, 2, 3].map((i) => (
+          <View
+            key={i}
+            style={{
+              width: 56,
+              height: 56,
+              borderRadius: 16,
+              backgroundColor: theme.colors.background.elevated,
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderWidth: 2,
+              borderColor: i < pin.length ? theme.colors.accent.primary : theme.colors.border.light,
+            }}
           >
-            <Text variant="body" color={theme.colors.text.secondary}>
-              Don't have an account?{' '}
-              <Text variant="body" weight="semibold" color={theme.colors.accent.primary}>
-                Sign Up
-              </Text>
-            </Text>
-          </Pressable>
-        </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+            {i < pin.length && (
+              <View style={{ width: 16, height: 16, borderRadius: 8, backgroundColor: theme.colors.accent.primary }} />
+            )}
+          </View>
+        ))}
+      </Pressable>
+
+      {/* Hidden input */}
+      <TextInput
+        ref={inputRef}
+        value={pin}
+        onChangeText={(t) => setPin(t.replace(/[^0-9]/g, '').slice(0, 4))}
+        keyboardType="number-pad"
+        maxLength={4}
+        style={{ position: 'absolute', opacity: 0, height: 0 }}
+        autoFocus
+      />
+
+      {/* Register link */}
+      <Pressable
+        onPress={() => router.push('/(auth)/register')}
+        style={{ marginTop: 32 }}
+      >
+        <Text variant="body" color={theme.colors.text.secondary}>
+          Нет аккаунта?{' '}
+          <Text variant="body" weight="semibold" color={theme.colors.accent.primary}>
+            Создать
+          </Text>
+        </Text>
+      </Pressable>
+    </View>
   );
 }

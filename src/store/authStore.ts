@@ -31,8 +31,11 @@ export interface User {
   id: string;
   username: string;
   displayName: string;
+  emoji: string;
   avatar?: string;
   bio?: string;
+  pin?: string;
+  deviceKey?: string;
 }
 
 interface AuthStoreState {

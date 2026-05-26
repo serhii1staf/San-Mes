@@ -162,10 +162,12 @@ export default function SettingsScreen() {
           <SettingsRow
             icon="sun"
             label="Внешний вид"
+            onPress={() => router.push('/settings/appearance')}
           />
           <SettingsRow
             icon="database"
             label="Данные и память"
+            onPress={() => router.push('/settings/storage')}
           />
           <SettingsRow
             icon="folder"
@@ -203,6 +205,7 @@ export default function SettingsScreen() {
             icon="smartphone"
             label="Устройства"
             value="2"
+            onPress={() => router.push('/settings/device-key')}
             isLast
           />
         </View>

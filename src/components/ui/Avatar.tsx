@@ -3,11 +3,12 @@ import { View, Image, ViewStyle, TextStyle } from 'react-native';
 import { useTheme } from '../../theme';
 import { Text } from './Text';
 
-type AvatarSize = 'sm' | 'md' | 'lg' | 'xl';
+type AvatarSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
 
 interface AvatarProps {
   source?: string;
   name?: string;
+  emoji?: string;
   size?: AvatarSize;
   style?: ViewStyle;
 }
@@ -15,19 +16,30 @@ interface AvatarProps {
 export function Avatar({
   source,
   name,
+  emoji,
   size = 'md',
   style,
 }: AvatarProps) {
   const theme = useTheme();
 
   const sizeMap: Record<AvatarSize, number> = {
+    xs: 24,
     sm: 32,
     md: 44,
     lg: 64,
     xl: 96,
   };
 
+  const emojiSizeMap: Record<AvatarSize, number> = {
+    xs: 14,
+    sm: 18,
+    md: 24,
+    lg: 36,
+    xl: 52,
+  };
+
   const fontSizeMap: Record<AvatarSize, number> = {
+    xs: 10,
     sm: theme.typography.sizes.xs,
     md: theme.typography.sizes.base,
     lg: theme.typography.sizes.lg,
@@ -41,10 +53,30 @@ export function Avatar({
     height: dimension,
     borderRadius: dimension / 2,
     overflow: 'hidden',
-    backgroundColor: theme.colors.accent.secondary,
+    backgroundColor: theme.colors.background.elevated,
     alignItems: 'center',
     justifyContent: 'center',
   };
+
+  // Emoji avatar takes priority
+  if (emoji) {
+    return (
+      <View style={[containerStyle, style]}>
+        <Text style={{ fontSize: emojiSizeMap[size] } as TextStyle}>{emoji}</Text>
+      </View>
+    );
+  }
+
+  if (source) {
+    return (
+      <View style={[containerStyle, { backgroundColor: theme.colors.accent.secondary }, style]}>
+        <Image
+          source={{ uri: source }}
+          style={{ width: dimension, height: dimension }}
+        />
+      </View>
+    );
+  }
 
   const getInitials = (name?: string): string => {
     if (!name) return '?';
@@ -55,19 +87,8 @@ export function Avatar({
     return name[0].toUpperCase();
   };
 
-  if (source) {
-    return (
-      <View style={[containerStyle, style]}>
-        <Image
-          source={{ uri: source }}
-          style={{ width: dimension, height: dimension }}
-        />
-      </View>
-    );
-  }
-
   return (
-    <View style={[containerStyle, style]}>
+    <View style={[containerStyle, { backgroundColor: theme.colors.accent.secondary }, style]}>
       <Text
         weight="semibold"
         color={theme.colors.text.inverse}

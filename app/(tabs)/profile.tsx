@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { View, ScrollView, Pressable, Image, ViewStyle, Dimensions, ActivityIndicator, StyleSheet } from 'react-native';
+import React, { useState, useRef } from 'react';
+import { View, Pressable, Image, ViewStyle, Dimensions, ActivityIndicator, StyleSheet, Animated, NativeSyntheticEvent, NativeScrollEvent } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -38,13 +38,13 @@ function ProfileTabs({ activeTab, onTabChange }: { activeTab: TabName; onTabChan
   const tabWidth = (SCREEN_WIDTH - 48) / 3;
 
   return (
-    <View style={{ marginTop: theme.spacing.lg }}>
+    <View style={{ marginTop: 24 }}>
       <View style={{ flexDirection: 'row', position: 'relative' }}>
         {tabs.map((tab) => (
           <Pressable
             key={tab.key}
             onPress={() => onTabChange(tab.key)}
-            style={{ flex: 1, alignItems: 'center', paddingVertical: theme.spacing.md }}
+            style={{ flex: 1, alignItems: 'center', paddingVertical: 12 }}
           >
             <Feather
               name={tab.icon as keyof typeof Feather.glyphMap}
@@ -74,6 +74,7 @@ export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const { user } = useAuthStore();
   const [activeTab, setActiveTab] = useState<TabName>('posts');
+  const scrollY = useRef(new Animated.Value(0)).current;
 
   if (!user) {
     return (
@@ -96,9 +97,21 @@ export default function ProfileScreen() {
   const headerContentHeight = insets.top + 48;
   const headerGradientHeight = headerContentHeight + 28;
 
+  // Avatar appears in header after scrolling past 120px
+  const headerEmojiOpacity = scrollY.interpolate({
+    inputRange: [80, 140],
+    outputRange: [0, 1],
+    extrapolate: 'clamp',
+  });
+
+  const handleScroll = Animated.event(
+    [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+    { useNativeDriver: false }
+  );
+
   return (
     <View style={containerStyle}>
-      {/* Gradient fade header - username + settings */}
+      {/* Gradient fade header - username + settings + animated emoji */}
       <View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100, height: headerGradientHeight }} pointerEvents="box-none">
         <LinearGradient
           colors={[bgColor, bgColor, bgTransparent]}
@@ -110,13 +123,19 @@ export default function ProfileScreen() {
             flexDirection: 'row',
             justifyContent: 'space-between',
             alignItems: 'center',
-            paddingHorizontal: theme.spacing.lg,
+            paddingHorizontal: 24,
             paddingTop: insets.top + 8,
             paddingBottom: 8,
           }}
           pointerEvents="auto"
         >
-          <Text variant="subheading" weight="bold">@{displayUser.username}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            {/* Emoji that fades in on scroll */}
+            <Animated.View style={{ opacity: headerEmojiOpacity, marginRight: 8 }}>
+              <Avatar emoji={displayUser.emoji} size="xs" />
+            </Animated.View>
+            <Text variant="subheading" weight="bold">@{displayUser.username}</Text>
+          </View>
           <Pressable onPress={() => router.push('/settings')}>
             <Feather name="settings" size={22} color={theme.colors.text.primary} />
           </Pressable>
@@ -124,32 +143,17 @@ export default function ProfileScreen() {
       </View>
 
       {/* Scrollable Content */}
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100, paddingTop: headerContentHeight }}>
-        {/* Avatar & Stats */}
-        <View style={{ alignItems: 'center', marginTop: theme.spacing.base }}>
-          <View style={{ position: 'relative' }}>
-            <Avatar source={displayUser.avatar} name={displayUser.displayName} size="xl" />
-            <Pressable
-              onPress={() => router.push('/profile/edit')}
-              style={{
-                position: 'absolute',
-                bottom: 0,
-                right: 0,
-                width: 28,
-                height: 28,
-                borderRadius: 14,
-                backgroundColor: theme.colors.accent.primary,
-                alignItems: 'center',
-                justifyContent: 'center',
-                borderWidth: 2,
-                borderColor: theme.colors.background.primary,
-              }}
-            >
-              <Feather name="camera" size={14} color={theme.colors.text.inverse} />
-            </Pressable>
-          </View>
+      <Animated.ScrollView
+        onScroll={handleScroll}
+        scrollEventThrottle={16}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: 100, paddingTop: headerContentHeight }}
+      >
+        {/* Emoji Avatar & Info */}
+        <View style={{ alignItems: 'center', marginTop: 16 }}>
+          <Avatar emoji={displayUser.emoji} size="xl" />
 
-          <Text variant="subheading" weight="bold" style={{ marginTop: theme.spacing.md }}>
+          <Text variant="subheading" weight="bold" style={{ marginTop: 12 }}>
             {displayUser.displayName}
           </Text>
           {displayUser.bio && (
@@ -157,7 +161,7 @@ export default function ProfileScreen() {
               variant="body"
               color={theme.colors.text.secondary}
               align="center"
-              style={{ marginTop: theme.spacing.xs, paddingHorizontal: theme.spacing.xl }}
+              style={{ marginTop: 4, paddingHorizontal: 32 }}
             >
               {displayUser.bio}
             </Text>
@@ -165,25 +169,19 @@ export default function ProfileScreen() {
         </View>
 
         {/* Stats */}
-        <View
-          style={{
-            flexDirection: 'row',
-            marginTop: theme.spacing.lg,
-            paddingHorizontal: theme.spacing.xl,
-          }}
-        >
+        <View style={{ flexDirection: 'row', marginTop: 24, paddingHorizontal: 32 }}>
           <StatItem label="Posts" value={currentUser.postsCount} />
           <StatItem label="Followers" value={currentUser.followersCount} />
           <StatItem label="Following" value={currentUser.followingCount} />
         </View>
 
         {/* Edit Profile Button */}
-        <View style={{ paddingHorizontal: theme.spacing.lg, marginTop: theme.spacing.lg }}>
+        <View style={{ paddingHorizontal: 24, marginTop: 24 }}>
           <Button title="Edit Profile" variant="outline" onPress={() => router.push('/profile/edit')} />
         </View>
 
         {/* Tabs */}
-        <View style={{ paddingHorizontal: theme.spacing.lg }}>
+        <View style={{ paddingHorizontal: 24 }}>
           <ProfileTabs activeTab={activeTab} onTabChange={setActiveTab} />
         </View>
 
@@ -192,8 +190,8 @@ export default function ProfileScreen() {
           style={{
             flexDirection: 'row',
             flexWrap: 'wrap',
-            paddingHorizontal: theme.spacing.lg,
-            marginTop: theme.spacing.base,
+            paddingHorizontal: 24,
+            marginTop: 16,
             gap: 4,
           }}
         >
@@ -204,13 +202,13 @@ export default function ProfileScreen() {
                 style={{
                   width: GRID_SIZE,
                   height: GRID_SIZE,
-                  borderRadius: theme.borderRadius.sm,
+                  borderRadius: 8,
                 }}
               />
             </View>
           ))}
         </View>
-      </ScrollView>
+      </Animated.ScrollView>
     </View>
   );
 }
