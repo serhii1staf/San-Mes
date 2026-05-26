@@ -33,7 +33,7 @@ function StoryItem({ story }: { story: Story; index: number }) {
             borderColor: ringColor,
           }}
         >
-          <Avatar source={story.userAvatar} name={story.userName} size="md" />
+          <Avatar emoji={story.userEmoji} name={story.userName} size="md" />
         </View>
         <Text
           variant="caption"

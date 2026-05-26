@@ -25,7 +25,7 @@ function ConversationItem({ item }: { item: Conversation; index: number }) {
         }}
       >
         <View style={{ position: 'relative' }}>
-          <Avatar source={item.participantAvatar} name={item.participantName} size="md" />
+          <Avatar emoji={item.participantEmoji} name={item.participantName} size="md" />
           {item.isOnline && (
             <View
               style={{

@@ -79,7 +79,7 @@ export function PostCard({ post, onLike, onComment, onShare, onBookmark }: PostC
     <Card style={containerStyle} padding="sm" shadow="sm">
       {/* Header */}
       <View style={headerStyle}>
-        <Avatar source={post.authorAvatar} name={post.authorName} size="sm" />
+        <Avatar emoji={post.authorEmoji} name={post.authorName} size="sm" />
         <View style={{ marginLeft: theme.spacing.md, flex: 1 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
             <Text weight="semibold" variant="body">

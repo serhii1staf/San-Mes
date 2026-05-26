@@ -19,6 +19,7 @@ export interface Post {
   authorName: string;
   authorUsername: string;
   authorAvatar?: string;
+  authorEmoji?: string;
   content: string;
   imageUrl?: string;
   likesCount: number;
@@ -56,6 +57,7 @@ export interface Conversation {
   participantName: string;
   participantUsername: string;
   participantAvatar?: string;
+  participantEmoji?: string;
   lastMessage?: string;
   lastMessageAt?: string;
   unreadCount: number;
@@ -67,6 +69,7 @@ export interface Story {
   userId: string;
   userName: string;
   userAvatar?: string;
+  userEmoji?: string;
   isSeen: boolean;
 }
 

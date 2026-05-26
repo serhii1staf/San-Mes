@@ -31,7 +31,7 @@ function TrendingUserCard({ user }: { user: User }) {
 
   return (
     <View style={cardStyle}>
-      <Avatar source={user.avatar} name={user.displayName} size="md" />
+      <Avatar emoji={user.emoji} name={user.displayName} size="md" />
       <Text
         variant="caption"
         weight="semibold"

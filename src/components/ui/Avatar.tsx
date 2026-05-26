@@ -31,11 +31,11 @@ export function Avatar({
   };
 
   const emojiSizeMap: Record<AvatarSize, number> = {
-    xs: 14,
-    sm: 18,
-    md: 24,
-    lg: 36,
-    xl: 52,
+    xs: 16,
+    sm: 22,
+    md: 30,
+    lg: 44,
+    xl: 64,
   };
 
   const fontSizeMap: Record<AvatarSize, number> = {
@@ -48,28 +48,28 @@ export function Avatar({
 
   const dimension = sizeMap[size];
 
-  const containerStyle: ViewStyle = {
-    width: dimension,
-    height: dimension,
-    borderRadius: dimension / 2,
-    overflow: 'hidden',
-    backgroundColor: theme.colors.background.elevated,
-    alignItems: 'center',
-    justifyContent: 'center',
-  };
-
-  // Emoji avatar takes priority
+  // Emoji avatar - NO container, NO background, NO clipping
   if (emoji) {
     return (
-      <View style={[containerStyle, style]}>
+      <View style={[{ width: dimension, height: dimension, alignItems: 'center', justifyContent: 'center' }, style]}>
         <Text style={{ fontSize: emojiSizeMap[size] } as TextStyle}>{emoji}</Text>
       </View>
     );
   }
 
+  const containerStyle: ViewStyle = {
+    width: dimension,
+    height: dimension,
+    borderRadius: dimension / 2,
+    overflow: 'hidden',
+    backgroundColor: theme.colors.accent.secondary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  };
+
   if (source) {
     return (
-      <View style={[containerStyle, { backgroundColor: theme.colors.accent.secondary }, style]}>
+      <View style={[containerStyle, style]}>
         <Image
           source={{ uri: source }}
           style={{ width: dimension, height: dimension }}
@@ -88,7 +88,7 @@ export function Avatar({
   };
 
   return (
-    <View style={[containerStyle, { backgroundColor: theme.colors.accent.secondary }, style]}>
+    <View style={[containerStyle, style]}>
       <Text
         weight="semibold"
         color={theme.colors.text.inverse}

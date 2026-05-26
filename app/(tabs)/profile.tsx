@@ -130,11 +130,11 @@ export default function ProfileScreen() {
           pointerEvents="auto"
         >
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            {/* Emoji that fades in on scroll */}
-            <Animated.View style={{ opacity: headerEmojiOpacity, marginRight: 8 }}>
+            <Text variant="subheading" weight="bold">@{displayUser.username}</Text>
+            {/* Emoji that fades in on scroll - RIGHT side of username */}
+            <Animated.View style={{ opacity: headerEmojiOpacity, marginLeft: 8 }}>
               <Avatar emoji={displayUser.emoji} size="xs" />
             </Animated.View>
-            <Text variant="subheading" weight="bold">@{displayUser.username}</Text>
           </View>
           <Pressable onPress={() => router.push('/settings')}>
             <Feather name="settings" size={22} color={theme.colors.text.primary} />
