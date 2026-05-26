@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
-import { View, TextInput, Pressable, ViewStyle, ScrollView, Alert } from 'react-native';
+import { View, TextInput, Pressable, ViewStyle, ScrollView, Alert, Image } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
 import { useAuthStore } from '../../src/store/authStore';
-import { createPost } from '../../src/lib/supabase';
+import { useFeedStore } from '../../src/store/feedStore';
+import { createPost, supabase } from '../../src/lib/supabase';
 
 const MAX_CHARS = 500;
 
@@ -15,12 +17,82 @@ export default function CreateScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const { user } = useAuthStore();
+  const { addPost } = useFeedStore();
   const [content, setContent] = useState('');
   const [isPosting, setIsPosting] = useState(false);
   const [audience, setAudience] = useState<Audience>('public');
+  const [imageUri, setImageUri] = useState<string | null>(null);
+  const [imageUploading, setImageUploading] = useState(false);
+
+  const pickImage = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Доступ', 'Нужен доступ к галерее для выбора изображения');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      quality: 0.8,
+      aspect: [4, 3],
+    });
+
+    if (!result.canceled && result.assets[0]) {
+      setImageUri(result.assets[0].uri);
+    }
+  };
+
+  const takePhoto = async () => {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Доступ', 'Нужен доступ к камере');
+      return;
+    }
+
+    const result = await ImagePicker.launchCameraAsync({
+      allowsEditing: true,
+      quality: 0.8,
+      aspect: [4, 3],
+    });
+
+    if (!result.canceled && result.assets[0]) {
+      setImageUri(result.assets[0].uri);
+    }
+  };
+
+  const uploadImage = async (uri: string): Promise<string | null> => {
+    try {
+      const filename = `post_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.jpg`;
+      const response = await fetch(uri);
+      const blob = await response.blob();
+
+      const { data, error } = await supabase.storage
+        .from('post-images')
+        .upload(filename, blob, {
+          contentType: 'image/jpeg',
+          cacheControl: '3600',
+        });
+
+      if (error) {
+        console.log('Upload error:', error.message);
+        // If storage bucket doesn't exist, return the local uri as fallback
+        return uri;
+      }
+
+      const { data: urlData } = supabase.storage
+        .from('post-images')
+        .getPublicUrl(data.path);
+
+      return urlData.publicUrl;
+    } catch (e) {
+      console.log('Upload failed, using local URI');
+      return uri;
+    }
+  };
 
   const handlePost = async () => {
-    if (!content.trim()) return;
+    if (!content.trim() && !imageUri) return;
     if (!user) {
       Alert.alert('Ошибка', 'Необходимо войти в аккаунт');
       return;
@@ -28,18 +100,53 @@ export default function CreateScreen() {
 
     setIsPosting(true);
     try {
-      const { error } = await createPost(user.id, content.trim());
+      let imageUrl: string | undefined;
+
+      if (imageUri) {
+        setImageUploading(true);
+        const uploadedUrl = await uploadImage(imageUri);
+        setImageUploading(false);
+        if (uploadedUrl) {
+          imageUrl = uploadedUrl;
+        }
+      }
+
+      const { post, error } = await createPost(user.id, content.trim() || '', imageUrl);
       if (error) {
         Alert.alert('Ошибка', error);
       } else {
+        // Add to local feed store
+        if (post) {
+          addPost({
+            id: post.id,
+            authorId: user.id,
+            authorName: user.displayName,
+            authorUsername: user.username,
+            authorEmoji: user.emoji,
+            content: post.content,
+            imageUrl: post.image_url || undefined,
+            likesCount: 0,
+            commentsCount: 0,
+            sharesCount: 0,
+            isLiked: false,
+            isBookmarked: false,
+            createdAt: post.created_at,
+          });
+        }
         setContent('');
+        setImageUri(null);
         Alert.alert('Готово', 'Пост опубликован!');
       }
     } catch (e) {
       Alert.alert('Ошибка', 'Не удалось опубликовать пост');
     } finally {
       setIsPosting(false);
+      setImageUploading(false);
     }
+  };
+
+  const removeImage = () => {
+    setImageUri(null);
   };
 
   const charsRemaining = MAX_CHARS - content.length;
@@ -48,6 +155,8 @@ export default function CreateScreen() {
     : charsRemaining < 100
       ? theme.colors.status.warning
       : theme.colors.text.tertiary;
+
+  const canPost = content.trim() || imageUri;
 
   const containerStyle: ViewStyle = {
     flex: 1,
@@ -85,11 +194,54 @@ export default function CreateScreen() {
                 fontSize: theme.typography.sizes.base,
                 fontFamily: theme.fontFamily.regular,
                 color: theme.colors.text.primary,
-                minHeight: 120,
+                minHeight: 100,
                 textAlignVertical: 'top',
               }}
             />
-            <View style={{ flexDirection: 'row', justifyContent: 'flex-end' }}>
+
+            {/* Image preview */}
+            {imageUri && (
+              <View style={{ marginTop: 12, position: 'relative' }}>
+                <Image
+                  source={{ uri: imageUri }}
+                  style={{
+                    width: '100%',
+                    height: 200,
+                    borderRadius: 12,
+                    backgroundColor: theme.colors.background.secondary,
+                  }}
+                  resizeMode="cover"
+                />
+                <Pressable
+                  onPress={removeImage}
+                  style={{
+                    position: 'absolute',
+                    top: 8,
+                    right: 8,
+                    width: 28,
+                    height: 28,
+                    borderRadius: 14,
+                    backgroundColor: 'rgba(0,0,0,0.6)',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Feather name="x" size={16} color="#fff" />
+                </Pressable>
+              </View>
+            )}
+
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}>
+              {/* Media buttons */}
+              <View style={{ flexDirection: 'row', gap: 16 }}>
+                <Pressable onPress={pickImage} style={{ padding: 4 }}>
+                  <Feather name="image" size={22} color={theme.colors.accent.primary} />
+                </Pressable>
+                <Pressable onPress={takePhoto} style={{ padding: 4 }}>
+                  <Feather name="camera" size={22} color={theme.colors.accent.primary} />
+                </Pressable>
+              </View>
+              {/* Char counter */}
               <Text variant="caption" color={charColor}>
                 {charsRemaining}
               </Text>
@@ -175,17 +327,17 @@ export default function CreateScreen() {
           <Pressable
             onPress={handlePost}
             style={{
-              backgroundColor: content.trim()
+              backgroundColor: canPost
                 ? theme.colors.accent.primary
                 : theme.colors.border.light,
               borderRadius: theme.borderRadius.pill,
               paddingVertical: theme.spacing.base,
               alignItems: 'center',
             }}
-            disabled={isPosting || !content.trim()}
+            disabled={isPosting || !canPost}
           >
             <Text variant="body" weight="semibold" color={theme.colors.text.inverse}>
-              {isPosting ? 'Публикация...' : 'Опубликовать'}
+              {imageUploading ? 'Загрузка фото...' : isPosting ? 'Публикация...' : 'Опубликовать'}
             </Text>
           </Pressable>
         </View>

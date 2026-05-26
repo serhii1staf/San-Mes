@@ -27,6 +27,11 @@ try {
   };
 }
 
+export interface UserLink {
+  type: string;
+  url: string;
+}
+
 export interface User {
   id: string;
   username: string;
@@ -36,6 +41,7 @@ export interface User {
   bio?: string;
   pin?: string;
   deviceKey?: string;
+  links?: UserLink[];
 }
 
 interface AuthStoreState {

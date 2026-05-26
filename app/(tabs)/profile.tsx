@@ -15,7 +15,7 @@ type TabName = 'posts' | 'saved' | 'tagged';
 function StatItem({ label, value }: { label: string; value: number }) {
   const theme = useTheme();
   return (
-    <View style={{ alignItems: 'center', flex: 1 }}>
+    <View style={{ alignItems: 'center' }}>
       <Text variant="subheading" weight="bold" align="center">
         {value.toLocaleString()}
       </Text>
@@ -24,45 +24,32 @@ function StatItem({ label, value }: { label: string; value: number }) {
   );
 }
 
-function ProfileTabs({ activeTab, onTabChange }: { activeTab: TabName; onTabChange: (tab: TabName) => void }) {
+// Link icon component for displaying user's social links
+function LinkIcon({ type, url }: { type: string; url: string }) {
   const theme = useTheme();
-  const tabs: { key: TabName; icon: string }[] = [
-    { key: 'posts', icon: 'grid' },
-    { key: 'saved', icon: 'bookmark' },
-    { key: 'tagged', icon: 'tag' },
-  ];
-
-  const activeIndex = tabs.findIndex((t) => t.key === activeTab);
-  const tabWidth = (SCREEN_WIDTH - 48) / 3;
+  const iconMap: Record<string, string> = {
+    github: 'github',
+    twitter: 'twitter',
+    instagram: 'instagram',
+    website: 'globe',
+    youtube: 'youtube',
+    telegram: 'send',
+    default: 'link',
+  };
+  const iconName = iconMap[type] || iconMap.default;
 
   return (
-    <View style={{ marginTop: 24 }}>
-      <View style={{ flexDirection: 'row', position: 'relative' }}>
-        {tabs.map((tab) => (
-          <Pressable
-            key={tab.key}
-            onPress={() => onTabChange(tab.key)}
-            style={{ flex: 1, alignItems: 'center', paddingVertical: 12 }}
-          >
-            <Feather
-              name={tab.icon as keyof typeof Feather.glyphMap}
-              size={20}
-              color={activeTab === tab.key ? theme.colors.accent.primary : theme.colors.text.tertiary}
-            />
-          </Pressable>
-        ))}
-        <View
-          style={{
-            position: 'absolute',
-            bottom: 0,
-            height: 2,
-            backgroundColor: theme.colors.accent.primary,
-            borderRadius: 1,
-            width: tabWidth,
-            left: activeIndex * tabWidth,
-          }}
-        />
-      </View>
+    <View
+      style={{
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        backgroundColor: theme.colors.background.secondary,
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+    >
+      <Feather name={iconName as any} size={15} color={theme.colors.text.secondary} />
     </View>
   );
 }
@@ -83,6 +70,9 @@ export default function ProfileScreen() {
   }
 
   const displayUser = user;
+
+  // Parse links from user profile (stored as JSON string in bio metadata or separate field)
+  const userLinks: { type: string; url: string }[] = (user as any).links || [];
 
   const containerStyle: ViewStyle = {
     flex: 1,
@@ -133,7 +123,6 @@ export default function ProfileScreen() {
               <Avatar emoji={displayUser.emoji} size="xs" />
             </Animated.View>
           </View>
-          {/* Task 4: Edit icon next to settings */}
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
             <Pressable onPress={() => router.push('/profile/edit')}>
               <Feather name="edit-2" size={20} color={theme.colors.text.primary} />
@@ -152,41 +141,77 @@ export default function ProfileScreen() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 100, paddingTop: headerContentHeight }}
       >
-        {/* Task 5: Discord-style layout - Avatar RIGHT, Name/Bio LEFT */}
-        <View style={{ flexDirection: 'row', alignItems: 'flex-start', paddingHorizontal: 24, marginTop: 16 }}>
-          {/* Left side: name, bio */}
-          <View style={{ flex: 1, paddingRight: 16 }}>
-            <Text variant="subheading" weight="bold">
-              {displayUser.displayName}
-            </Text>
-            {displayUser.bio && (
-              <Text
-                variant="body"
-                color={theme.colors.text.secondary}
-                style={{ marginTop: 4 }}
-              >
-                {displayUser.bio}
-              </Text>
-            )}
-            {/* Links section placeholder */}
-            <View style={{ marginTop: 12 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                <Feather name="link" size={14} color={theme.colors.text.tertiary} />
-                <Text variant="caption" color={theme.colors.text.tertiary}>
-                  Добавить ссылки
-                </Text>
-              </View>
-            </View>
-          </View>
-          {/* Right side: avatar emoji */}
+        {/* Discord-style layout: Avatar + Stats on same row */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 24, marginTop: 16 }}>
+          {/* Avatar emoji */}
           <Avatar emoji={displayUser.emoji} size="xl" />
+          {/* Stats next to avatar */}
+          <View style={{ flex: 1, flexDirection: 'row', justifyContent: 'space-around', marginLeft: 20 }}>
+            <StatItem label="Посты" value={0} />
+            <StatItem label="Подписчики" value={0} />
+            <StatItem label="Подписки" value={0} />
+          </View>
         </View>
 
-        {/* Stats */}
-        <View style={{ flexDirection: 'row', marginTop: 24, paddingHorizontal: 32 }}>
-          <StatItem label="Posts" value={0} />
-          <StatItem label="Followers" value={0} />
-          <StatItem label="Following" value={0} />
+        {/* Display name */}
+        <View style={{ paddingHorizontal: 24, marginTop: 16 }}>
+          <Text variant="subheading" weight="bold">
+            {displayUser.displayName}
+          </Text>
+        </View>
+
+        {/* Bio */}
+        {displayUser.bio ? (
+          <View style={{ paddingHorizontal: 24, marginTop: 4 }}>
+            <Text variant="body" color={theme.colors.text.secondary}>
+              {displayUser.bio}
+            </Text>
+          </View>
+        ) : null}
+
+        {/* Link icons (shown only if user has links) */}
+        {userLinks.length > 0 && (
+          <View style={{ flexDirection: 'row', paddingHorizontal: 24, marginTop: 10, gap: 8 }}>
+            {userLinks.map((link, idx) => (
+              <LinkIcon key={idx} type={link.type} url={link.url} />
+            ))}
+          </View>
+        )}
+
+        {/* Tabs */}
+        <View style={{ marginTop: 24, borderTopWidth: 1, borderTopColor: theme.colors.border.light }}>
+          <View style={{ flexDirection: 'row' }}>
+            {([
+              { key: 'posts' as TabName, icon: 'grid' },
+              { key: 'saved' as TabName, icon: 'bookmark' },
+              { key: 'tagged' as TabName, icon: 'tag' },
+            ]).map((tab) => (
+              <Pressable
+                key={tab.key}
+                onPress={() => setActiveTab(tab.key)}
+                style={{ flex: 1, alignItems: 'center', paddingVertical: 12 }}
+              >
+                <Feather
+                  name={tab.icon as any}
+                  size={20}
+                  color={activeTab === tab.key ? theme.colors.accent.primary : theme.colors.text.tertiary}
+                />
+              </Pressable>
+            ))}
+          </View>
+          {/* Active tab indicator */}
+          <View
+            style={{
+              position: 'absolute',
+              bottom: 0,
+              height: 2,
+              backgroundColor: theme.colors.accent.primary,
+              borderRadius: 1,
+              width: (SCREEN_WIDTH - 48) / 3,
+              left: (['posts', 'saved', 'tagged'].indexOf(activeTab)) * ((SCREEN_WIDTH - 48) / 3),
+              marginLeft: 24,
+            }}
+          />
         </View>
 
         {/* Post Grid - Empty State */}
