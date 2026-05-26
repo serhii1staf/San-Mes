@@ -1,9 +1,5 @@
 import React, { useState } from 'react';
 import { View, ViewStyle, Pressable, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
-import Animated, {
-  FadeInDown,
-  FadeInUp,
-} from 'react-native-reanimated';
 import { router } from 'expo-router';
 import { useTheme } from '../../src/theme';
 import { Text, Input, Button } from '../../src/components/ui';
@@ -17,8 +13,6 @@ export default function LoginScreen() {
   const login = useAuthStore((s) => s.login);
 
   const handleLogin = () => {
-    // Simulate API call to /api/auth/login
-    // In production this would be: fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) })
     const mockToken = 'mock-jwt-token-' + Date.now();
     login(
       {
@@ -69,7 +63,7 @@ export default function LoginScreen() {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        <Animated.View entering={FadeInDown.duration(600).delay(100)} style={logoContainerStyle}>
+        <View style={logoContainerStyle}>
           <View style={logoCircleStyle}>
             <Text variant="heading" weight="bold" color={theme.colors.text.inverse}>
               S
@@ -81,9 +75,9 @@ export default function LoginScreen() {
           <Text variant="body" color={theme.colors.text.secondary} style={{ marginTop: theme.spacing.xs }}>
             Connect with warmth
           </Text>
-        </Animated.View>
+        </View>
 
-        <Animated.View entering={FadeInUp.duration(500).delay(300)}>
+        <View>
           <Input
             label="Email"
             value={email}
@@ -91,9 +85,9 @@ export default function LoginScreen() {
             placeholder="your@email.com"
             style={{ marginBottom: theme.spacing.base }}
           />
-        </Animated.View>
+        </View>
 
-        <Animated.View entering={FadeInUp.duration(500).delay(400)}>
+        <View>
           <Input
             label="Password"
             value={password}
@@ -102,13 +96,13 @@ export default function LoginScreen() {
             secureTextEntry
             style={{ marginBottom: theme.spacing.lg }}
           />
-        </Animated.View>
+        </View>
 
-        <Animated.View entering={FadeInUp.duration(500).delay(500)}>
+        <View>
           <Button title="Sign In" onPress={handleLogin} size="lg" />
-        </Animated.View>
+        </View>
 
-        <Animated.View entering={FadeInUp.duration(500).delay(600)}>
+        <View>
           <Pressable
             onPress={() => router.push('/(auth)/register')}
             style={{ alignItems: 'center', marginTop: theme.spacing.lg }}
@@ -120,7 +114,7 @@ export default function LoginScreen() {
               </Text>
             </Text>
           </Pressable>
-        </Animated.View>
+        </View>
       </ScrollView>
     </KeyboardAvoidingView>
   );

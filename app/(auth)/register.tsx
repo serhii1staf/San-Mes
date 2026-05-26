@@ -1,9 +1,5 @@
 import React, { useState } from 'react';
 import { View, ViewStyle, Pressable, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
-import Animated, {
-  FadeInDown,
-  FadeInUp,
-} from 'react-native-reanimated';
 import { router } from 'expo-router';
 import { useTheme } from '../../src/theme';
 import { Text, Input, Button, Avatar } from '../../src/components/ui';
@@ -19,8 +15,6 @@ export default function RegisterScreen() {
 
   const handleRegister = () => {
     const username = name.toLowerCase().replace(/\s+/g, '_');
-    // Simulate API call to /api/auth/register
-    // In production this would be: fetch('/api/auth/register', { method: 'POST', body: JSON.stringify({ name, email, password }) })
     const mockToken = 'mock-jwt-token-' + Date.now();
     login(
       {
@@ -62,7 +56,7 @@ export default function RegisterScreen() {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        <Animated.View entering={FadeInDown.duration(600).delay(100)}>
+        <View>
           <Text variant="heading" weight="bold" align="center">
             Create Account
           </Text>
@@ -74,9 +68,9 @@ export default function RegisterScreen() {
           >
             Join the community
           </Text>
-        </Animated.View>
+        </View>
 
-        <Animated.View entering={FadeInDown.duration(500).delay(200)} style={avatarContainerStyle}>
+        <View style={avatarContainerStyle}>
           <Pressable>
             <Avatar name={name || 'U'} size="xl" />
             <View
@@ -95,9 +89,9 @@ export default function RegisterScreen() {
               <Text variant="caption" color={theme.colors.text.inverse}>+</Text>
             </View>
           </Pressable>
-        </Animated.View>
+        </View>
 
-        <Animated.View entering={FadeInUp.duration(500).delay(300)}>
+        <View>
           <Input
             label="Full Name"
             value={name}
@@ -105,9 +99,9 @@ export default function RegisterScreen() {
             placeholder="Your full name"
             style={{ marginBottom: theme.spacing.base }}
           />
-        </Animated.View>
+        </View>
 
-        <Animated.View entering={FadeInUp.duration(500).delay(350)}>
+        <View>
           <Input
             label="Email"
             value={email}
@@ -115,9 +109,9 @@ export default function RegisterScreen() {
             placeholder="your@email.com"
             style={{ marginBottom: theme.spacing.base }}
           />
-        </Animated.View>
+        </View>
 
-        <Animated.View entering={FadeInUp.duration(500).delay(400)}>
+        <View>
           <Input
             label="Password"
             value={password}
@@ -126,9 +120,9 @@ export default function RegisterScreen() {
             secureTextEntry
             style={{ marginBottom: theme.spacing.base }}
           />
-        </Animated.View>
+        </View>
 
-        <Animated.View entering={FadeInUp.duration(500).delay(450)}>
+        <View>
           <Input
             label="Confirm Password"
             value={confirmPassword}
@@ -137,13 +131,13 @@ export default function RegisterScreen() {
             secureTextEntry
             style={{ marginBottom: theme.spacing.lg }}
           />
-        </Animated.View>
+        </View>
 
-        <Animated.View entering={FadeInUp.duration(500).delay(500)}>
+        <View>
           <Button title="Create Account" onPress={handleRegister} size="lg" />
-        </Animated.View>
+        </View>
 
-        <Animated.View entering={FadeInUp.duration(500).delay(600)}>
+        <View>
           <Pressable
             onPress={() => router.back()}
             style={{ alignItems: 'center', marginTop: theme.spacing.lg }}
@@ -155,7 +149,7 @@ export default function RegisterScreen() {
               </Text>
             </Text>
           </Pressable>
-        </Animated.View>
+        </View>
       </ScrollView>
     </KeyboardAvoidingView>
   );

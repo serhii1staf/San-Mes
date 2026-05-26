@@ -1,6 +1,5 @@
 import React, { useEffect, useCallback } from 'react';
 import { View, FlatList, RefreshControl, ViewStyle, Pressable } from 'react-native';
-import Animated, { FadeInDown, FadeIn } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
@@ -9,12 +8,12 @@ import { useFeedStore } from '../../src/store';
 import { mockPosts, mockStories } from '../../src/utils/mockData';
 import { Post, Story } from '../../src/types';
 
-function StoryItem({ story, index }: { story: Story; index: number }) {
+function StoryItem({ story }: { story: Story; index: number }) {
   const theme = useTheme();
   const ringColor = story.isSeen ? theme.colors.border.light : theme.colors.accent.primary;
 
   return (
-    <Animated.View entering={FadeIn.delay(index * 80).duration(400)}>
+    <View>
       <Pressable
         style={{
           alignItems: 'center',
@@ -41,7 +40,7 @@ function StoryItem({ story, index }: { story: Story; index: number }) {
           {story.userName}
         </Text>
       </Pressable>
-    </Animated.View>
+    </View>
   );
 }
 
@@ -114,13 +113,13 @@ export default function FeedScreen() {
     }, 1000);
   }, []);
 
-  const renderPost = ({ item, index }: { item: Post; index: number }) => (
-    <Animated.View entering={FadeInDown.delay(index * 100).duration(400)}>
+  const renderPost = ({ item }: { item: Post; index: number }) => (
+    <View>
       <PostCard
         post={item}
         onLike={toggleLike}
       />
-    </Animated.View>
+    </View>
   );
 
   const containerStyle: ViewStyle = {

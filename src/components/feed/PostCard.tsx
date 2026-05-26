@@ -1,13 +1,5 @@
 import React, { useState, useRef } from 'react';
 import { View, Image, Pressable, ViewStyle, TextStyle, Dimensions } from 'react-native';
-import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  withSpring,
-  withSequence,
-  withTiming,
-  runOnJS,
-} from 'react-native-reanimated';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../../theme';
 import { Text } from '../ui/Text';
@@ -26,36 +18,12 @@ interface PostCardProps {
   onBookmark?: (postId: string) => void;
 }
 
-const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
-
 export function PostCard({ post, onLike, onComment, onShare, onBookmark }: PostCardProps) {
   const theme = useTheme();
   const [isBookmarked, setIsBookmarked] = useState(post.isBookmarked);
-
-  const heartScale = useSharedValue(1);
-  const heartOpacity = useSharedValue(0);
-  const bookmarkScale = useSharedValue(1);
-  // Issue 6: Use useRef instead of useSharedValue for JS-thread double-tap detection
   const lastTap = useRef<number>(0);
 
-  const heartAnimatedStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: heartScale.value }],
-  }));
-
-  const doubleTapHeartStyle = useAnimatedStyle(() => ({
-    opacity: heartOpacity.value,
-    transform: [{ scale: heartOpacity.value }],
-  }));
-
-  const bookmarkAnimatedStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: bookmarkScale.value }],
-  }));
-
   const handleLike = () => {
-    heartScale.value = withSequence(
-      withSpring(1.3, { damping: 10, stiffness: 400 }),
-      withSpring(1, { damping: 15, stiffness: 300 })
-    );
     onLike(post.id);
   };
 
@@ -65,11 +33,6 @@ export function PostCard({ post, onLike, onComment, onShare, onBookmark }: PostC
     lastTap.current = now;
 
     if (now - lastTapValue < 300) {
-      heartOpacity.value = withSequence(
-        withTiming(1, { duration: 100 }),
-        withTiming(1, { duration: 600 }),
-        withTiming(0, { duration: 300 })
-      );
       if (!post.isLiked) {
         onLike(post.id);
       }
@@ -77,10 +40,6 @@ export function PostCard({ post, onLike, onComment, onShare, onBookmark }: PostC
   };
 
   const handleBookmark = () => {
-    bookmarkScale.value = withSequence(
-      withSpring(1.3, { damping: 10, stiffness: 400 }),
-      withSpring(1, { damping: 15, stiffness: 300 })
-    );
     setIsBookmarked(!isBookmarked);
     onBookmark?.(post.id);
   };
@@ -149,28 +108,12 @@ export function PostCard({ post, onLike, onComment, onShare, onBookmark }: PostC
             style={{ width: '100%', height: '100%', borderRadius: theme.borderRadius.md }}
             resizeMode="cover"
           />
-          <Animated.View
-            style={[
-              doubleTapHeartStyle,
-              {
-                position: 'absolute',
-                top: '50%',
-                left: '50%',
-                marginTop: -40,
-                marginLeft: -40,
-              },
-            ]}
-          >
-            <Feather name="heart" size={80} color={theme.colors.accent.primary} />
-          </Animated.View>
         </Pressable>
       )}
 
       {/* Action Bar */}
       <View style={actionBarStyle}>
-        <AnimatedPressable onPress={handleLike} style={[actionButtonStyle, heartAnimatedStyle]}>
-          {/* Feather icons render as font glyphs, not SVG elements.
-              The color prop is the sole mechanism for indicating liked state. */}
+        <Pressable onPress={handleLike} style={actionButtonStyle}>
           <Feather
             name="heart"
             size={20}
@@ -184,7 +127,7 @@ export function PostCard({ post, onLike, onComment, onShare, onBookmark }: PostC
           >
             {post.likesCount}
           </Text>
-        </AnimatedPressable>
+        </Pressable>
 
         <Pressable
           style={actionButtonStyle}
@@ -207,14 +150,13 @@ export function PostCard({ post, onLike, onComment, onShare, onBookmark }: PostC
 
         <View style={{ flex: 1 }} />
 
-        <AnimatedPressable onPress={handleBookmark} style={bookmarkAnimatedStyle}>
-          {/* Issue 5: Feather does not have a filled bookmark. Color change indicates state. */}
+        <Pressable onPress={handleBookmark}>
           <Feather
             name="bookmark"
             size={20}
             color={isBookmarked ? theme.colors.accent.tertiary : theme.colors.text.secondary}
           />
-        </AnimatedPressable>
+        </Pressable>
       </View>
     </Card>
   );

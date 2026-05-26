@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { View, FlatList, Pressable, ViewStyle, TextInput } from 'react-native';
-import Animated, { FadeInDown, FadeIn, useSharedValue, useAnimatedStyle, withSpring } from 'react-native-reanimated';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -10,13 +9,11 @@ import { useChatStore } from '../../src/store';
 import { mockConversations, formatTimeAgo } from '../../src/utils/mockData';
 import { Conversation } from '../../src/types';
 
-const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
-
-function ConversationItem({ item, index }: { item: Conversation; index: number }) {
+function ConversationItem({ item }: { item: Conversation; index: number }) {
   const theme = useTheme();
 
   return (
-    <Animated.View entering={FadeInDown.delay(index * 60).duration(300)}>
+    <View>
       <Pressable
         onPress={() => router.push(`/chat/${item.id}`)}
         style={{
@@ -84,7 +81,7 @@ function ConversationItem({ item, index }: { item: Conversation; index: number }
           </View>
         </View>
       </Pressable>
-    </Animated.View>
+    </View>
   );
 }
 
@@ -93,11 +90,6 @@ export default function MessagesScreen() {
   const insets = useSafeAreaInsets();
   const { conversations, setConversations } = useChatStore();
   const [searchQuery, setSearchQuery] = useState('');
-  const fabScale = useSharedValue(1);
-
-  const fabAnimatedStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: fabScale.value }],
-  }));
 
   useEffect(() => {
     setConversations(mockConversations);
@@ -121,7 +113,7 @@ export default function MessagesScreen() {
         <Text variant="subheading" weight="bold">Messages</Text>
       </View>
 
-      <Animated.View entering={FadeIn.duration(300)} style={{ paddingHorizontal: theme.spacing.base, marginBottom: theme.spacing.sm }}>
+      <View style={{ paddingHorizontal: theme.spacing.base, marginBottom: theme.spacing.sm }}>
         <View
           style={{
             flexDirection: 'row',
@@ -150,7 +142,7 @@ export default function MessagesScreen() {
             }}
           />
         </View>
-      </Animated.View>
+      </View>
 
       <FlatList
         data={filtered}
@@ -160,31 +152,26 @@ export default function MessagesScreen() {
         showsVerticalScrollIndicator={false}
       />
 
-      <AnimatedPressable
-        onPressIn={() => { fabScale.value = withSpring(0.9, { damping: 15, stiffness: 300 }); }}
-        onPressOut={() => { fabScale.value = withSpring(1, { damping: 15, stiffness: 300 }); }}
-        style={[
-          fabAnimatedStyle,
-          {
-            position: 'absolute',
-            bottom: 100,
-            right: theme.spacing.lg,
-            width: 56,
-            height: 56,
-            borderRadius: 28,
-            backgroundColor: theme.colors.accent.primary,
-            alignItems: 'center',
-            justifyContent: 'center',
-            elevation: 4,
-            shadowColor: '#000',
-            shadowOffset: { width: 0, height: 2 },
-            shadowOpacity: 0.2,
-            shadowRadius: 4,
-          },
-        ]}
+      <Pressable
+        style={{
+          position: 'absolute',
+          bottom: 100,
+          right: theme.spacing.lg,
+          width: 56,
+          height: 56,
+          borderRadius: 28,
+          backgroundColor: theme.colors.accent.primary,
+          alignItems: 'center',
+          justifyContent: 'center',
+          elevation: 4,
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.2,
+          shadowRadius: 4,
+        }}
       >
         <Feather name="edit" size={22} color={theme.colors.text.inverse} />
-      </AnimatedPressable>
+      </Pressable>
     </View>
   );
 }

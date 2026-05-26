@@ -1,11 +1,5 @@
 import React, { useState } from 'react';
 import { TextInput, View, ViewStyle, TextStyle } from 'react-native';
-import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  withTiming,
-  interpolateColor,
-} from 'react-native-reanimated';
 import { useTheme } from '../../theme';
 import { Text } from './Text';
 
@@ -19,8 +13,6 @@ interface InputProps {
   style?: ViewStyle;
 }
 
-const AnimatedView = Animated.createAnimatedComponent(View);
-
 export function Input({
   value,
   onChangeText,
@@ -32,25 +24,13 @@ export function Input({
 }: InputProps) {
   const theme = useTheme();
   const [isFocused, setIsFocused] = useState(false);
-  const focusProgress = useSharedValue(0);
-
-  const animatedContainerStyle = useAnimatedStyle(() => {
-    const borderColor = interpolateColor(
-      focusProgress.value,
-      [0, 1],
-      [theme.colors.border.light, theme.colors.accent.primary]
-    );
-    return { borderColor };
-  });
 
   const handleFocus = () => {
     setIsFocused(true);
-    focusProgress.value = withTiming(1, theme.animations.timing.fast);
   };
 
   const handleBlur = () => {
     setIsFocused(false);
-    focusProgress.value = withTiming(0, theme.animations.timing.fast);
   };
 
   const containerStyle: ViewStyle = {
@@ -59,6 +39,7 @@ export function Input({
     paddingHorizontal: theme.spacing.base,
     paddingVertical: theme.spacing.md,
     backgroundColor: theme.colors.background.elevated,
+    borderColor: isFocused ? theme.colors.accent.primary : theme.colors.border.light,
   };
 
   const inputStyle: TextStyle = {
@@ -82,7 +63,7 @@ export function Input({
           {label}
         </Text>
       )}
-      <AnimatedView style={[containerStyle, animatedContainerStyle]}>
+      <View style={containerStyle}>
         <TextInput
           value={value}
           onChangeText={onChangeText}
@@ -94,7 +75,7 @@ export function Input({
           onBlur={handleBlur}
           style={inputStyle}
         />
-      </AnimatedView>
+      </View>
     </View>
   );
 }

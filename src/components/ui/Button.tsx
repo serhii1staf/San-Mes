@@ -1,14 +1,7 @@
 import React from 'react';
-import { Pressable, StyleSheet, ViewStyle, TextStyle } from 'react-native';
-import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  withSpring,
-} from 'react-native-reanimated';
+import { Pressable, ViewStyle, TextStyle } from 'react-native';
 import { useTheme } from '../../theme';
 import { Text } from './Text';
-
-const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
 type ButtonVariant = 'primary' | 'secondary' | 'outline' | 'ghost';
 type ButtonSize = 'sm' | 'md' | 'lg';
@@ -31,19 +24,6 @@ export function Button({
   style,
 }: ButtonProps) {
   const theme = useTheme();
-  const scale = useSharedValue(1);
-
-  const animatedStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: scale.value }],
-  }));
-
-  const handlePressIn = () => {
-    scale.value = withSpring(0.95, theme.animations.spring.snappy);
-  };
-
-  const handlePressOut = () => {
-    scale.value = withSpring(1, theme.animations.spring.snappy);
-  };
 
   const getBackgroundColor = (): string => {
     if (disabled) return theme.colors.border.light;
@@ -94,12 +74,10 @@ export function Button({
   const textVariant: 'body' | 'caption' = size === 'sm' ? 'caption' : 'body';
 
   return (
-    <AnimatedPressable
+    <Pressable
       onPress={onPress}
-      onPressIn={handlePressIn}
-      onPressOut={handlePressOut}
       disabled={disabled}
-      style={[animatedStyle, containerStyle, style]}
+      style={[containerStyle, style]}
     >
       <Text
         variant={textVariant}
@@ -108,6 +86,6 @@ export function Button({
       >
         {title}
       </Text>
-    </AnimatedPressable>
+    </Pressable>
   );
 }

@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { View, ScrollView, Pressable, Switch, ViewStyle, Alert } from 'react-native';
-import Animated, { FadeInDown, useSharedValue, useAnimatedStyle, withSpring } from 'react-native-reanimated';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -8,10 +7,10 @@ import { useTheme } from '../../src/theme';
 import { Text, Card } from '../../src/components/ui';
 import { useThemeStore, useAuthStore } from '../../src/store';
 
-function SettingsSection({ title, children, delay }: { title: string; children: React.ReactNode; delay: number }) {
+function SettingsSection({ title, children }: { title: string; children: React.ReactNode }) {
   const theme = useTheme();
   return (
-    <Animated.View entering={FadeInDown.duration(400).delay(delay)} style={{ marginBottom: theme.spacing.lg }}>
+    <View style={{ marginBottom: theme.spacing.lg }}>
       <Text
         variant="caption"
         weight="semibold"
@@ -23,7 +22,7 @@ function SettingsSection({ title, children, delay }: { title: string; children: 
       <Card padding="sm" shadow="sm">
         {children}
       </Card>
-    </Animated.View>
+    </View>
   );
 }
 
@@ -79,40 +78,25 @@ function SettingsRow({
 function ThemeToggle() {
   const theme = useTheme();
   const { mode, toggle } = useThemeStore();
-  const toggleScale = useSharedValue(1);
-
-  const animatedStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: toggleScale.value }],
-  }));
-
-  const handleToggle = () => {
-    toggleScale.value = withSpring(0.8, { damping: 10, stiffness: 300 });
-    setTimeout(() => {
-      toggleScale.value = withSpring(1, { damping: 10, stiffness: 300 });
-    }, 150);
-    toggle();
-  };
 
   return (
-    <Animated.View style={animatedStyle}>
-      <Pressable
-        onPress={handleToggle}
-        style={{
-          width: 44,
-          height: 44,
-          borderRadius: 22,
-          backgroundColor: mode === 'dark' ? theme.colors.accent.tertiary : theme.colors.accent.primary,
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
-      >
-        <Feather
-          name={mode === 'dark' ? 'moon' : 'sun'}
-          size={20}
-          color={theme.colors.text.inverse}
-        />
-      </Pressable>
-    </Animated.View>
+    <Pressable
+      onPress={toggle}
+      style={{
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        backgroundColor: mode === 'dark' ? theme.colors.accent.tertiary : theme.colors.accent.primary,
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+    >
+      <Feather
+        name={mode === 'dark' ? 'moon' : 'sun'}
+        size={20}
+        color={theme.colors.text.inverse}
+      />
+    </Pressable>
   );
 }
 
@@ -164,14 +148,14 @@ export default function SettingsScreen() {
 
       <View style={{ paddingHorizontal: theme.spacing.lg }}>
         {/* Account */}
-        <SettingsSection title="Account" delay={100}>
+        <SettingsSection title="Account">
           <SettingsRow icon="user" label="Edit Profile" onPress={() => router.push('/profile/edit')} />
           <SettingsRow icon="lock" label="Password & Security" />
           <SettingsRow icon="mail" label="Email" value="you@email.com" />
         </SettingsSection>
 
         {/* Appearance */}
-        <SettingsSection title="Appearance" delay={200}>
+        <SettingsSection title="Appearance">
           <SettingsRow
             icon={mode === 'dark' ? 'moon' : 'sun'}
             label="Theme"
@@ -182,7 +166,7 @@ export default function SettingsScreen() {
         </SettingsSection>
 
         {/* Notifications */}
-        <SettingsSection title="Notifications" delay={300}>
+        <SettingsSection title="Notifications">
           <SettingsRow
             icon="bell"
             label="Push Notifications"
@@ -201,7 +185,7 @@ export default function SettingsScreen() {
         </SettingsSection>
 
         {/* Privacy */}
-        <SettingsSection title="Privacy" delay={400}>
+        <SettingsSection title="Privacy">
           <SettingsRow
             icon="eye-off"
             label="Private Account"
@@ -232,14 +216,14 @@ export default function SettingsScreen() {
         </SettingsSection>
 
         {/* About */}
-        <SettingsSection title="About" delay={500}>
+        <SettingsSection title="About">
           <SettingsRow icon="info" label="App Version" value="1.0.0" showChevron={false} />
           <SettingsRow icon="file-text" label="Terms of Service" />
           <SettingsRow icon="shield" label="Privacy Policy" />
         </SettingsSection>
 
         {/* Logout */}
-        <Animated.View entering={FadeInDown.duration(400).delay(600)}>
+        <View>
           <Pressable
             onPress={handleLogout}
             style={{
@@ -255,7 +239,7 @@ export default function SettingsScreen() {
               Log Out
             </Text>
           </Pressable>
-        </Animated.View>
+        </View>
       </View>
     </ScrollView>
   );

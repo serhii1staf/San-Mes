@@ -1,12 +1,5 @@
 import React, { useState } from 'react';
 import { View, FlatList, Image, Pressable, ViewStyle, TextInput, ScrollView, Dimensions } from 'react-native';
-import Animated, {
-  FadeIn,
-  FadeInDown,
-  useSharedValue,
-  useAnimatedStyle,
-  withTiming,
-} from 'react-native-reanimated';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../src/theme';
@@ -22,21 +15,6 @@ function SearchHeader() {
   const theme = useTheme();
   const [isFocused, setIsFocused] = useState(false);
   const [query, setQuery] = useState('');
-  const inputWidth = useSharedValue(1);
-
-  const animatedInputStyle = useAnimatedStyle(() => ({
-    flex: inputWidth.value,
-  }));
-
-  const handleFocus = () => {
-    setIsFocused(true);
-    inputWidth.value = withTiming(1, { duration: 200 });
-  };
-
-  const handleBlur = () => {
-    setIsFocused(false);
-    inputWidth.value = withTiming(1, { duration: 200 });
-  };
 
   const containerStyle: ViewStyle = {
     flexDirection: 'row',
@@ -52,7 +30,7 @@ function SearchHeader() {
   };
 
   return (
-    <Animated.View style={animatedInputStyle}>
+    <View>
       <View style={containerStyle}>
         <Feather
           name="search"
@@ -64,8 +42,8 @@ function SearchHeader() {
           onChangeText={setQuery}
           placeholder="Search people, posts, tags..."
           placeholderTextColor={theme.colors.text.tertiary}
-          onFocus={handleFocus}
-          onBlur={handleBlur}
+          onFocus={() => setIsFocused(true)}
+          onBlur={() => setIsFocused(false)}
           style={{
             flex: 1,
             marginLeft: theme.spacing.sm,
@@ -81,7 +59,7 @@ function SearchHeader() {
           </Pressable>
         )}
       </View>
-    </Animated.View>
+    </View>
   );
 }
 
@@ -98,10 +76,10 @@ function CategoryChips() {
         paddingVertical: theme.spacing.md,
       }}
     >
-      {discoverCategories.map((cat, index) => {
+      {discoverCategories.map((cat) => {
         const isActive = selected === cat;
         return (
-          <Animated.View key={cat} entering={FadeIn.delay(index * 50).duration(300)}>
+          <View key={cat}>
             <Pressable
               onPress={() => setSelected(cat)}
               style={{
@@ -122,7 +100,7 @@ function CategoryChips() {
                 {cat}
               </Text>
             </Pressable>
-          </Animated.View>
+          </View>
         );
       })}
     </ScrollView>
@@ -138,8 +116,8 @@ function TrendingTags() {
         Trending
       </Text>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: theme.spacing.sm }}>
-        {trendingTags.map((tag, index) => (
-          <Animated.View key={tag} entering={FadeInDown.delay(index * 60).duration(300)}>
+        {trendingTags.map((tag) => (
+          <View key={tag}>
             <Pressable
               style={{
                 paddingHorizontal: theme.spacing.md,
@@ -154,7 +132,7 @@ function TrendingTags() {
                 #{tag}
               </Text>
             </Pressable>
-          </Animated.View>
+          </View>
         ))}
       </View>
     </View>
@@ -196,8 +174,8 @@ export default function SearchScreen() {
             <TrendingTags />
           </>
         }
-        renderItem={({ item, index }) => (
-          <Animated.View entering={FadeInDown.delay(index * 100).duration(400)}>
+        renderItem={({ item }) => (
+          <View>
             <Pressable
               style={{
                 width: COLUMN_WIDTH,
@@ -226,7 +204,7 @@ export default function SearchScreen() {
                 </Text>
               </View>
             </Pressable>
-          </Animated.View>
+          </View>
         )}
       />
     </View>

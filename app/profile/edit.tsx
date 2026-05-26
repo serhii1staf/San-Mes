@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { View, ScrollView, Pressable, ViewStyle, Alert, Platform, KeyboardAvoidingView } from 'react-native';
-import Animated, { FadeInUp, useSharedValue, useAnimatedStyle, withSpring } from 'react-native-reanimated';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -8,8 +7,6 @@ import { useTheme } from '../../src/theme';
 import { Text, Input, Avatar } from '../../src/components/ui';
 import { useAuthStore } from '../../src/store';
 import { currentUser } from '../../src/utils/mockData';
-
-const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
 export default function EditProfileScreen() {
   const theme = useTheme();
@@ -23,16 +20,9 @@ export default function EditProfileScreen() {
   const [website, setWebsite] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
-  const saveScale = useSharedValue(1);
-  const saveAnimatedStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: saveScale.value }],
-  }));
-
   const handleSave = () => {
     setIsSaving(true);
-    saveScale.value = withSpring(0.95, { damping: 15, stiffness: 300 });
     setTimeout(() => {
-      saveScale.value = withSpring(1, { damping: 15, stiffness: 300 });
       updateProfile({ displayName: name, username, bio });
       setIsSaving(false);
       Alert.alert('Saved!', 'Your profile has been updated.');
@@ -70,7 +60,7 @@ export default function EditProfileScreen() {
         </View>
 
         {/* Avatar */}
-        <Animated.View entering={FadeInUp.duration(400)} style={{ alignItems: 'center', marginVertical: theme.spacing.lg }}>
+        <View style={{ alignItems: 'center', marginVertical: theme.spacing.lg }}>
           <View style={{ position: 'relative' }}>
             <Avatar source={displayUser.avatar} name={displayUser.displayName} size="xl" />
             <Pressable
@@ -96,11 +86,11 @@ export default function EditProfileScreen() {
               Change Photo
             </Text>
           </Pressable>
-        </Animated.View>
+        </View>
 
         {/* Fields */}
         <View style={{ paddingHorizontal: theme.spacing.lg }}>
-          <Animated.View entering={FadeInUp.duration(400).delay(100)}>
+          <View>
             <Input
               label="Display Name"
               value={name}
@@ -108,9 +98,9 @@ export default function EditProfileScreen() {
               placeholder="Your display name"
               style={{ marginBottom: theme.spacing.base }}
             />
-          </Animated.View>
+          </View>
 
-          <Animated.View entering={FadeInUp.duration(400).delay(150)}>
+          <View>
             <Input
               label="Username"
               value={username}
@@ -118,9 +108,9 @@ export default function EditProfileScreen() {
               placeholder="your_username"
               style={{ marginBottom: theme.spacing.base }}
             />
-          </Animated.View>
+          </View>
 
-          <Animated.View entering={FadeInUp.duration(400).delay(200)}>
+          <View>
             <Input
               label="Bio"
               value={bio}
@@ -136,9 +126,9 @@ export default function EditProfileScreen() {
             >
               {150 - bio.length} characters remaining
             </Text>
-          </Animated.View>
+          </View>
 
-          <Animated.View entering={FadeInUp.duration(400).delay(250)}>
+          <View>
             <Input
               label="Website"
               value={website}
@@ -146,27 +136,24 @@ export default function EditProfileScreen() {
               placeholder="https://yourwebsite.com"
               style={{ marginBottom: theme.spacing.xl }}
             />
-          </Animated.View>
+          </View>
 
-          <Animated.View entering={FadeInUp.duration(400).delay(300)}>
-            <AnimatedPressable
+          <View>
+            <Pressable
               onPress={handleSave}
-              style={[
-                saveAnimatedStyle,
-                {
-                  backgroundColor: theme.colors.accent.primary,
-                  borderRadius: theme.borderRadius.pill,
-                  paddingVertical: theme.spacing.base,
-                  alignItems: 'center',
-                },
-              ]}
+              style={{
+                backgroundColor: theme.colors.accent.primary,
+                borderRadius: theme.borderRadius.pill,
+                paddingVertical: theme.spacing.base,
+                alignItems: 'center',
+              }}
               disabled={isSaving}
             >
               <Text variant="body" weight="semibold" color={theme.colors.text.inverse}>
                 {isSaving ? 'Saving...' : 'Save Changes'}
               </Text>
-            </AnimatedPressable>
-          </Animated.View>
+            </Pressable>
+          </View>
         </View>
       </ScrollView>
     </KeyboardAvoidingView>

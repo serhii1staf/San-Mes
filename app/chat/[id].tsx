@@ -8,7 +8,6 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
-import Animated, { FadeInUp, FadeIn } from 'react-native-reanimated';
 import { Feather } from '@expo/vector-icons';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -21,8 +20,7 @@ import { ChatMessage } from '../../src/types';
 function TypingIndicator() {
   const theme = useTheme();
   return (
-    <Animated.View
-      entering={FadeIn.duration(300)}
+    <View
       style={{
         flexDirection: 'row',
         alignItems: 'center',
@@ -48,7 +46,7 @@ function TypingIndicator() {
           />
         ))}
       </View>
-    </Animated.View>
+    </View>
   );
 }
 
@@ -70,7 +68,7 @@ function MessageBubble({ message, isOwn }: { message: ChatMessage; isOwn: boolea
   };
 
   return (
-    <Animated.View entering={FadeInUp.duration(200)}>
+    <View>
       <View style={bubbleStyle}>
         <Text
           variant="body"
@@ -86,7 +84,7 @@ function MessageBubble({ message, isOwn }: { message: ChatMessage; isOwn: boolea
           {formatMessageTime(message.createdAt)}
         </Text>
       </View>
-    </Animated.View>
+    </View>
   );
 }
 

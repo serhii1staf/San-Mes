@@ -1,11 +1,5 @@
 import React from 'react';
 import { View, Pressable, StyleSheet, ViewStyle } from 'react-native';
-import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  withSpring,
-  withTiming,
-} from 'react-native-reanimated';
 import { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../../theme';
@@ -30,20 +24,6 @@ function TabBarButton({
   routeName: string;
 }) {
   const theme = useTheme();
-  const scale = useSharedValue(1);
-
-  const animatedStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: scale.value }],
-  }));
-
-  const handlePressIn = () => {
-    scale.value = withSpring(0.85, theme.animations.spring.snappy);
-  };
-
-  const handlePressOut = () => {
-    scale.value = withSpring(1, theme.animations.spring.snappy);
-  };
-
   const iconName = ICON_NAMES[routeName] || 'circle';
   const color = isFocused ? theme.colors.accent.primary : theme.colors.text.tertiary;
 
@@ -51,11 +31,9 @@ function TabBarButton({
     <Pressable
       onPress={onPress}
       onLongPress={onLongPress}
-      onPressIn={handlePressIn}
-      onPressOut={handlePressOut}
       style={styles.tabButton}
     >
-      <Animated.View style={[styles.tabIconContainer, animatedStyle]}>
+      <View style={styles.tabIconContainer}>
         <Feather name={iconName} size={22} color={color} />
         {isFocused && (
           <View
@@ -65,7 +43,7 @@ function TabBarButton({
             ]}
           />
         )}
-      </Animated.View>
+      </View>
     </Pressable>
   );
 }

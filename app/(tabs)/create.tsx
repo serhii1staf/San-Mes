@@ -1,21 +1,12 @@
 import React, { useState } from 'react';
-import { View, TextInput, Image, Pressable, ViewStyle, ScrollView, Alert, Platform } from 'react-native';
-import Animated, {
-  FadeIn,
-  FadeInUp,
-  useSharedValue,
-  useAnimatedStyle,
-  withSpring,
-} from 'react-native-reanimated';
+import { View, TextInput, Image, Pressable, ViewStyle, ScrollView, Alert } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../src/theme';
-import { Text, Button } from '../../src/components/ui';
+import { Text } from '../../src/components/ui';
 
 const MAX_CHARS = 500;
-
-const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
 export default function CreateScreen() {
   const theme = useTheme();
@@ -24,11 +15,6 @@ export default function CreateScreen() {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [audience, setAudience] = useState<'public' | 'friends'>('public');
   const [isPosting, setIsPosting] = useState(false);
-
-  const buttonScale = useSharedValue(1);
-  const buttonAnimatedStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: buttonScale.value }],
-  }));
 
   const pickImage = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -46,9 +32,7 @@ export default function CreateScreen() {
   const handlePost = () => {
     if (!content.trim() && !selectedImage) return;
     setIsPosting(true);
-    buttonScale.value = withSpring(0.95, { damping: 15, stiffness: 300 });
     setTimeout(() => {
-      buttonScale.value = withSpring(1, { damping: 15, stiffness: 300 });
       setIsPosting(false);
       setContent('');
       setSelectedImage(null);
@@ -72,13 +56,13 @@ export default function CreateScreen() {
   return (
     <ScrollView style={containerStyle} contentContainerStyle={{ paddingBottom: 100 }}>
       <View style={{ paddingHorizontal: theme.spacing.lg, paddingTop: theme.spacing.base }}>
-        <Animated.View entering={FadeIn.duration(400)}>
+        <View>
           <Text variant="subheading" weight="bold" style={{ marginBottom: theme.spacing.lg }}>
             Create Post
           </Text>
-        </Animated.View>
+        </View>
 
-        <Animated.View entering={FadeInUp.duration(400).delay(100)}>
+        <View>
           <View
             style={{
               backgroundColor: theme.colors.background.elevated,
@@ -109,13 +93,10 @@ export default function CreateScreen() {
               </Text>
             </View>
           </View>
-        </Animated.View>
+        </View>
 
         {selectedImage && (
-          <Animated.View
-            entering={FadeInUp.duration(300)}
-            style={{ marginTop: theme.spacing.base, position: 'relative' }}
-          >
+          <View style={{ marginTop: theme.spacing.base, position: 'relative' }}>
             <Image
               source={{ uri: selectedImage }}
               style={{
@@ -141,10 +122,10 @@ export default function CreateScreen() {
             >
               <Feather name="x" size={16} color="#fff" />
             </Pressable>
-          </Animated.View>
+          </View>
         )}
 
-        <Animated.View entering={FadeInUp.duration(400).delay(200)}>
+        <View>
           <View
             style={{
               flexDirection: 'row',
@@ -194,29 +175,26 @@ export default function CreateScreen() {
               </Text>
             </Pressable>
           </View>
-        </Animated.View>
+        </View>
 
-        <Animated.View entering={FadeInUp.duration(400).delay(300)} style={{ marginTop: theme.spacing.xl }}>
-          <AnimatedPressable
+        <View style={{ marginTop: theme.spacing.xl }}>
+          <Pressable
             onPress={handlePost}
-            style={[
-              buttonAnimatedStyle,
-              {
-                backgroundColor: (content.trim() || selectedImage)
-                  ? theme.colors.accent.primary
-                  : theme.colors.border.light,
-                borderRadius: theme.borderRadius.pill,
-                paddingVertical: theme.spacing.base,
-                alignItems: 'center',
-              },
-            ]}
+            style={{
+              backgroundColor: (content.trim() || selectedImage)
+                ? theme.colors.accent.primary
+                : theme.colors.border.light,
+              borderRadius: theme.borderRadius.pill,
+              paddingVertical: theme.spacing.base,
+              alignItems: 'center',
+            }}
             disabled={isPosting}
           >
             <Text variant="body" weight="semibold" color={theme.colors.text.inverse}>
               {isPosting ? 'Posting...' : 'Share Post'}
             </Text>
-          </AnimatedPressable>
-        </Animated.View>
+          </Pressable>
+        </View>
       </View>
     </ScrollView>
   );

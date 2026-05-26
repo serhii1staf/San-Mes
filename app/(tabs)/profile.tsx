@@ -1,14 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, ScrollView, Pressable, Image, ViewStyle, FlatList, Dimensions, ActivityIndicator } from 'react-native';
-import Animated, {
-  FadeIn,
-  FadeInUp,
-  useSharedValue,
-  useAnimatedStyle,
-  withTiming,
-  withSpring,
-  interpolate,
-} from 'react-native-reanimated';
+import { View, ScrollView, Pressable, Image, ViewStyle, Dimensions, ActivityIndicator } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -22,22 +13,13 @@ const GRID_SIZE = (SCREEN_WIDTH - 48 - 8) / 3;
 
 type TabName = 'posts' | 'saved' | 'tagged';
 
-function AnimatedCounter({ value }: { value: number }) {
-  const theme = useTheme();
-  return (
-    <Animated.View entering={FadeInUp.duration(500)}>
-      <Text variant="subheading" weight="bold" align="center">
-        {value.toLocaleString()}
-      </Text>
-    </Animated.View>
-  );
-}
-
 function StatItem({ label, value }: { label: string; value: number }) {
   const theme = useTheme();
   return (
     <View style={{ alignItems: 'center', flex: 1 }}>
-      <AnimatedCounter value={value} />
+      <Text variant="subheading" weight="bold" align="center">
+        {value.toLocaleString()}
+      </Text>
       <Text variant="caption" color={theme.colors.text.secondary}>{label}</Text>
     </View>
   );
@@ -51,20 +33,8 @@ function ProfileTabs({ activeTab, onTabChange }: { activeTab: TabName; onTabChan
     { key: 'tagged', icon: 'tag' },
   ];
 
-  const indicatorPosition = useSharedValue(0);
-
-  useEffect(() => {
-    const index = tabs.findIndex((t) => t.key === activeTab);
-    indicatorPosition.value = withTiming(index, { duration: 250 });
-  }, [activeTab]);
-
-  const indicatorStyle = useAnimatedStyle(() => {
-    const tabWidth = (SCREEN_WIDTH - 48) / 3;
-    return {
-      transform: [{ translateX: interpolate(indicatorPosition.value, [0, 1, 2], [0, tabWidth, tabWidth * 2]) }],
-      width: tabWidth,
-    };
-  });
+  const activeIndex = tabs.findIndex((t) => t.key === activeTab);
+  const tabWidth = (SCREEN_WIDTH - 48) / 3;
 
   return (
     <View style={{ marginTop: theme.spacing.lg }}>
@@ -82,17 +52,16 @@ function ProfileTabs({ activeTab, onTabChange }: { activeTab: TabName; onTabChan
             />
           </Pressable>
         ))}
-        <Animated.View
-          style={[
-            indicatorStyle,
-            {
-              position: 'absolute',
-              bottom: 0,
-              height: 2,
-              backgroundColor: theme.colors.accent.primary,
-              borderRadius: 1,
-            },
-          ]}
+        <View
+          style={{
+            position: 'absolute',
+            bottom: 0,
+            height: 2,
+            backgroundColor: theme.colors.accent.primary,
+            borderRadius: 1,
+            width: tabWidth,
+            left: activeIndex * tabWidth,
+          }}
         />
       </View>
     </View>
@@ -105,8 +74,6 @@ export default function ProfileScreen() {
   const { user } = useAuthStore();
   const [activeTab, setActiveTab] = useState<TabName>('posts');
 
-  // The auth guard guarantees the user is authenticated before this screen renders.
-  // If user is somehow null, show a loading state as a safe fallback.
   if (!user) {
     return (
       <View style={{ flex: 1, backgroundColor: theme.colors.background.primary, alignItems: 'center', justifyContent: 'center' }}>
@@ -135,7 +102,7 @@ export default function ProfileScreen() {
       </View>
 
       {/* Avatar & Stats */}
-      <Animated.View entering={FadeIn.duration(500)} style={{ alignItems: 'center', marginTop: theme.spacing.lg }}>
+      <View style={{ alignItems: 'center', marginTop: theme.spacing.lg }}>
         <View style={{ position: 'relative' }}>
           <Avatar source={displayUser.avatar} name={displayUser.displayName} size="xl" />
           <Pressable
@@ -171,11 +138,10 @@ export default function ProfileScreen() {
             {displayUser.bio}
           </Text>
         )}
-      </Animated.View>
+      </View>
 
       {/* Stats */}
-      <Animated.View
-        entering={FadeInUp.duration(500).delay(200)}
+      <View
         style={{
           flexDirection: 'row',
           marginTop: theme.spacing.lg,
@@ -185,7 +151,7 @@ export default function ProfileScreen() {
         <StatItem label="Posts" value={currentUser.postsCount} />
         <StatItem label="Followers" value={currentUser.followersCount} />
         <StatItem label="Following" value={currentUser.followingCount} />
-      </Animated.View>
+      </View>
 
       {/* Edit Profile Button */}
       <View style={{ paddingHorizontal: theme.spacing.lg, marginTop: theme.spacing.lg }}>
@@ -207,8 +173,8 @@ export default function ProfileScreen() {
           gap: 4,
         }}
       >
-        {userPosts.map((post, index) => (
-          <Animated.View key={post.id} entering={FadeIn.delay(index * 80).duration(300)}>
+        {userPosts.map((post) => (
+          <View key={post.id}>
             <Image
               source={{ uri: post.imageUrl }}
               style={{
@@ -217,7 +183,7 @@ export default function ProfileScreen() {
                 borderRadius: theme.borderRadius.sm,
               }}
             />
-          </Animated.View>
+          </View>
         ))}
       </View>
     </ScrollView>
