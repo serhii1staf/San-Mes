@@ -30,13 +30,13 @@ export function Avatar({
     xl: 96,
   };
 
-  // Keep emoji at ~40% of container to guarantee no clipping on any device
+  // Emoji fontSize — very conservative, ~30% of container
   const emojiSizeMap: Record<AvatarSize, number> = {
-    xs: 10,
-    sm: 14,
-    md: 18,
-    lg: 26,
-    xl: 40,
+    xs: 8,
+    sm: 11,
+    md: 15,
+    lg: 22,
+    xl: 34,
   };
 
   const fontSizeMap: Record<AvatarSize, number> = {
@@ -49,16 +49,30 @@ export function Avatar({
 
   const dimension = sizeMap[size];
 
-  // Emoji avatar — use RNText directly, no borderRadius on parent
+  // Emoji avatar — render WITHOUT any overflow constraint
+  // The View has NO borderRadius (which causes clipping on both platforms)
   if (emoji) {
     return (
-      <View style={[{ width: dimension, height: dimension, alignItems: 'center', justifyContent: 'center' }, style]}>
+      <View
+        style={[
+          {
+            width: dimension,
+            height: dimension,
+            alignItems: 'center',
+            justifyContent: 'center',
+            overflow: 'visible',
+          },
+          style,
+        ]}
+      >
         <RNText
           style={{
             fontSize: emojiSizeMap[size],
             textAlign: 'center',
+            lineHeight: emojiSizeMap[size] * 1.4,
           }}
           allowFontScaling={false}
+          numberOfLines={1}
         >
           {emoji}
         </RNText>

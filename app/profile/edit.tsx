@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, ScrollView, Pressable, ViewStyle, Alert, Platform, KeyboardAvoidingView, Animated, Dimensions, PanResponder } from 'react-native';
+import { View, ScrollView, Pressable, ViewStyle, Alert, Platform, KeyboardAvoidingView, Animated, Dimensions, PanResponder, Text as RNText } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -11,6 +11,13 @@ import { currentUser } from '../../src/utils/mockData';
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 const DISMISS_THRESHOLD = 120;
 
+const EMOJIS = [
+  '😊', '😎', '🥰', '🤩', '😇', '🦊', '🐱', '🐶',
+  '🦁', '🐼', '🐨', '🦋', '🌸', '🌺', '🍀', '✨',
+  '🔥', '💎', '🎭', '🎨', '🎵', '🌙', '☀️', '🌈',
+  '🍄', '🪷', '🫧', '🧿', '💫', '🪐', '🌊', '🍂',
+];
+
 export default function EditProfileScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
@@ -20,7 +27,8 @@ export default function EditProfileScreen() {
   const [name, setName] = useState(displayUser.displayName);
   const [username, setUsername] = useState(displayUser.username);
   const [bio, setBio] = useState(displayUser.bio || '');
-  const [website, setWebsite] = useState('');
+  const [selectedEmoji, setSelectedEmoji] = useState(displayUser.emoji || '😊');
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
   // Animation
@@ -91,7 +99,7 @@ export default function EditProfileScreen() {
   const handleSave = () => {
     setIsSaving(true);
     setTimeout(() => {
-      updateProfile({ displayName: name, username, bio });
+      updateProfile({ displayName: name, username, bio, emoji: selectedEmoji });
       setIsSaving(false);
       Alert.alert('Сохранено!', 'Ваш профиль обновлён.');
       handleClose();
@@ -191,13 +199,39 @@ export default function EditProfileScreen() {
 
                 {/* Emoji Avatar */}
                 <View style={{ alignItems: 'center', marginVertical: 20 }}>
-                  <Avatar emoji={displayUser.emoji} size="xl" />
-                  <Pressable style={{ marginTop: 12 }} onPress={() => {}}>
+                  <Avatar emoji={selectedEmoji} size="xl" />
+                  <Pressable style={{ marginTop: 12 }} onPress={() => setShowEmojiPicker(!showEmojiPicker)}>
                     <Text variant="body" weight="medium" color={theme.colors.accent.primary}>
-                      Изменить эмодзи
+                      {showEmojiPicker ? 'Закрыть' : 'Изменить эмодзи'}
                     </Text>
                   </Pressable>
                 </View>
+
+                {/* Emoji Picker */}
+                {showEmojiPicker && (
+                  <View style={{ paddingHorizontal: 20, marginBottom: 20 }}>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 10 }}>
+                      {EMOJIS.map((e) => (
+                        <Pressable
+                          key={e}
+                          onPress={() => { setSelectedEmoji(e); setShowEmojiPicker(false); }}
+                          style={{
+                            width: 44,
+                            height: 44,
+                            borderRadius: 12,
+                            backgroundColor: selectedEmoji === e ? theme.colors.accent.primary + '30' : theme.colors.background.secondary,
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            borderWidth: selectedEmoji === e ? 2 : 0,
+                            borderColor: theme.colors.accent.primary,
+                          }}
+                        >
+                          <RNText style={{ fontSize: 20 }} allowFontScaling={false}>{e}</RNText>
+                        </Pressable>
+                      ))}
+                    </View>
+                  </View>
+                )}
 
                 {/* Fields */}
                 <View style={{ paddingHorizontal: 20 }}>

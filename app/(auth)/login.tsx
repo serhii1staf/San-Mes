@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { View, ViewStyle, Pressable, TextInput, ActivityIndicator } from 'react-native';
+import { View, ViewStyle, Pressable, TextInput, ActivityIndicator, Keyboard, TouchableWithoutFeedback } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../src/theme';
@@ -61,6 +61,7 @@ export default function LoginScreen() {
   };
 
   return (
+    <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
     <View style={containerStyle}>
       {/* Logo */}
       <View style={{ alignItems: 'center', marginBottom: 32 }}>
@@ -177,5 +178,6 @@ export default function LoginScreen() {
         </Text>
       </Pressable>
     </View>
+    </TouchableWithoutFeedback>
   );
 }

@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { View, ViewStyle, Pressable, ScrollView, TextInput, Animated, Alert } from 'react-native';
+import { View, ViewStyle, Pressable, ScrollView, TextInput, Animated, Alert, Keyboard, TouchableWithoutFeedback, Text as RNText } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../src/theme';
@@ -37,7 +37,7 @@ function EmojiStep({ selected, onSelect }: { selected: string; onSelect: (e: str
         borderWidth: 2,
         borderColor: selected ? theme.colors.accent.primary : theme.colors.border.light,
       }}>
-        <Text style={{ fontSize: 32 }}>{selected || '?'}</Text>
+        <RNText style={{ fontSize: 36 }} allowFontScaling={false}>{selected || '?'}</RNText>
       </View>
 
       {/* Emoji grid */}
@@ -57,7 +57,7 @@ function EmojiStep({ selected, onSelect }: { selected: string; onSelect: (e: str
               borderColor: theme.colors.accent.primary,
             }}
           >
-            <Text style={{ fontSize: 20 }}>{emoji}</Text>
+            <RNText style={{ fontSize: 22 }} allowFontScaling={false}>{emoji}</RNText>
           </Pressable>
         ))}
       </View>
@@ -67,19 +67,20 @@ function EmojiStep({ selected, onSelect }: { selected: string; onSelect: (e: str
 
 function NameStep({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const theme = useTheme();
+  const isValid = value.length >= 4 && /^[a-zA-Z0-9_ ]+$/.test(value);
   return (
     <View style={{ alignItems: 'center' }}>
       <Text variant="heading" weight="bold" align="center">
         Как тебя зовут?
       </Text>
       <Text variant="body" color={theme.colors.text.secondary} align="center" style={{ marginTop: 8, marginBottom: 40 }}>
-        Это имя увидят другие
+        Только английские буквы, от 4 символов
       </Text>
 
       <TextInput
         value={value}
         onChangeText={onChange}
-        placeholder="Твоё имя"
+        placeholder="Your name"
         placeholderTextColor={theme.colors.text.tertiary}
         style={{
           width: '100%',
@@ -89,10 +90,21 @@ function NameStep({ value, onChange }: { value: string; onChange: (v: string) =>
           color: theme.colors.text.primary,
           paddingVertical: 16,
           borderBottomWidth: 2,
-          borderBottomColor: value ? theme.colors.accent.primary : theme.colors.border.light,
+          borderBottomColor: isValid ? theme.colors.accent.primary : value.length > 0 ? theme.colors.status.error : theme.colors.border.light,
         }}
         autoFocus
+        autoCapitalize="words"
       />
+      {value.length > 0 && value.length < 4 && (
+        <Text variant="caption" color={theme.colors.status.error} style={{ marginTop: 8 }}>
+          Минимум 4 символа
+        </Text>
+      )}
+      {value.length > 0 && !/^[a-zA-Z0-9_ ]*$/.test(value) && (
+        <Text variant="caption" color={theme.colors.status.error} style={{ marginTop: 8 }}>
+          Только английские буквы и цифры
+        </Text>
+      )}
     </View>
   );
 }
@@ -158,9 +170,26 @@ export default function RegisterScreen() {
   const [error, setError] = useState('');
   const login = useAuthStore((s) => s.login);
 
+  const BANNED_WORDS = [
+    'fuck', 'shit', 'ass', 'bitch', 'dick', 'cock', 'pussy', 'nigger', 'nigga',
+    'faggot', 'retard', 'whore', 'slut', 'cunt', 'rape', 'pedo', 'nazi',
+    'hitler', 'kill', 'murder', 'terrorist', 'bomb', 'slave',
+  ];
+
+  const isValidUsername = (val: string): boolean => {
+    const cleaned = val.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+    if (cleaned.length < 4) return false;
+    if (!/^[a-zA-Z0-9_ ]+$/.test(val)) return false;
+    const lower = val.toLowerCase();
+    for (const word of BANNED_WORDS) {
+      if (lower.includes(word)) return false;
+    }
+    return true;
+  };
+
   const canContinue = () => {
     if (step === 0) return emoji !== '';
-    if (step === 1) return name.trim().length >= 2;
+    if (step === 1) return isValidUsername(name);
     if (step === 2) return pin.length === 4;
     if (step === 3) return confirmPin.length === 4;
     return false;
@@ -170,7 +199,19 @@ export default function RegisterScreen() {
     setError('');
     if (step === 0 && emoji) {
       setStep(1);
-    } else if (step === 1 && name.trim().length >= 2) {
+    } else if (step === 1 && isValidUsername(name)) {
+      // Additional validation message
+      if (!/^[a-zA-Z0-9_ ]+$/.test(name)) {
+        setError('Только английские буквы и цифры');
+        return;
+      }
+      const lower = name.toLowerCase();
+      for (const word of BANNED_WORDS) {
+        if (lower.includes(word)) {
+          setError('Это имя недопустимо');
+          return;
+        }
+      }
       setStep(2);
     } else if (step === 2 && pin.length === 4) {
       setStep(3);
