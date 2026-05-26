@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Image, ViewStyle, TextStyle, Platform, Text as RNText } from 'react-native';
+import { View, Image, ViewStyle, TextStyle, Text as RNText } from 'react-native';
 import { useTheme } from '../../theme';
 import { Text } from './Text';
 
@@ -30,13 +30,13 @@ export function Avatar({
     xl: 96,
   };
 
-  // Emoji sizes significantly SMALLER than container to prevent any clipping
+  // Keep emoji at ~40% of container to guarantee no clipping on any device
   const emojiSizeMap: Record<AvatarSize, number> = {
-    xs: 12,
-    sm: 16,
-    md: 22,
-    lg: 32,
-    xl: 48,
+    xs: 10,
+    sm: 14,
+    md: 18,
+    lg: 26,
+    xl: 40,
   };
 
   const fontSizeMap: Record<AvatarSize, number> = {
@@ -49,28 +49,16 @@ export function Avatar({
 
   const dimension = sizeMap[size];
 
-  // Emoji avatar — use RNText directly to avoid any wrapper issues
+  // Emoji avatar — use RNText directly, no borderRadius on parent
   if (emoji) {
     return (
-      <View
-        style={[
-          {
-            width: dimension,
-            height: dimension,
-            alignItems: 'center',
-            justifyContent: 'center',
-          },
-          style,
-        ]}
-      >
+      <View style={[{ width: dimension, height: dimension, alignItems: 'center', justifyContent: 'center' }, style]}>
         <RNText
           style={{
             fontSize: emojiSizeMap[size],
-            lineHeight: dimension,
             textAlign: 'center',
-            includeFontPadding: false,
-            textAlignVertical: 'center',
           }}
+          allowFontScaling={false}
         >
           {emoji}
         </RNText>

@@ -1,43 +1,41 @@
 import React, { useState } from 'react';
-import { View, TextInput, Image, Pressable, ViewStyle, ScrollView, Alert } from 'react-native';
-import * as ImagePicker from 'expo-image-picker';
-import { Feather } from '@expo/vector-icons';
+import { View, TextInput, Pressable, ViewStyle, ScrollView, Alert } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
+import { useAuthStore } from '../../src/store/authStore';
+import { createPost } from '../../src/lib/supabase';
 
 const MAX_CHARS = 500;
 
 export default function CreateScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const { user } = useAuthStore();
   const [content, setContent] = useState('');
-  const [selectedImage, setSelectedImage] = useState<string | null>(null);
-  const [audience, setAudience] = useState<'public' | 'friends'>('public');
   const [isPosting, setIsPosting] = useState(false);
 
-  const pickImage = async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [4, 3],
-      quality: 0.8,
-    });
-
-    if (!result.canceled) {
-      setSelectedImage(result.assets[0].uri);
+  const handlePost = async () => {
+    if (!content.trim()) return;
+    if (!user) {
+      Alert.alert('Ошибка', 'Необходимо войти в аккаунт');
+      return;
     }
-  };
 
-  const handlePost = () => {
-    if (!content.trim() && !selectedImage) return;
     setIsPosting(true);
-    setTimeout(() => {
+    try {
+      const { error } = await createPost(user.id, content.trim());
+      if (error) {
+        Alert.alert('Ошибка', error);
+      } else {
+        setContent('');
+        Alert.alert('Готово', 'Пост опубликован!');
+      }
+    } catch (e) {
+      Alert.alert('Ошибка', 'Не удалось опубликовать пост');
+    } finally {
       setIsPosting(false);
-      setContent('');
-      setSelectedImage(null);
-      Alert.alert('Posted!', 'Your post has been shared.');
-    }, 1000);
+    }
   };
 
   const charsRemaining = MAX_CHARS - content.length;
@@ -58,7 +56,7 @@ export default function CreateScreen() {
       <View style={{ paddingHorizontal: theme.spacing.lg, paddingTop: theme.spacing.base }}>
         <View>
           <Text variant="subheading" weight="bold" style={{ marginBottom: theme.spacing.lg }}>
-            Create Post
+            Новый пост
           </Text>
         </View>
 
@@ -76,7 +74,7 @@ export default function CreateScreen() {
             <TextInput
               value={content}
               onChangeText={(text) => setContent(text.slice(0, MAX_CHARS))}
-              placeholder="What's on your mind?"
+              placeholder="Что у вас нового?"
               placeholderTextColor={theme.colors.text.tertiary}
               multiline
               style={{
@@ -95,103 +93,21 @@ export default function CreateScreen() {
           </View>
         </View>
 
-        {selectedImage && (
-          <View style={{ marginTop: theme.spacing.base, position: 'relative' }}>
-            <Image
-              source={{ uri: selectedImage }}
-              style={{
-                width: '100%',
-                height: 200,
-                borderRadius: theme.borderRadius.lg,
-              }}
-              resizeMode="cover"
-            />
-            <Pressable
-              onPress={() => setSelectedImage(null)}
-              style={{
-                position: 'absolute',
-                top: theme.spacing.sm,
-                right: theme.spacing.sm,
-                width: 28,
-                height: 28,
-                borderRadius: 14,
-                backgroundColor: 'rgba(0,0,0,0.6)',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <Feather name="x" size={16} color="#fff" />
-            </Pressable>
-          </View>
-        )}
-
-        <View>
-          <View
-            style={{
-              flexDirection: 'row',
-              marginTop: theme.spacing.lg,
-              gap: theme.spacing.sm,
-            }}
-          >
-            <Pressable
-              onPress={pickImage}
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                paddingHorizontal: theme.spacing.base,
-                paddingVertical: theme.spacing.md,
-                borderRadius: theme.borderRadius.pill,
-                backgroundColor: theme.colors.background.elevated,
-                borderWidth: 1,
-                borderColor: theme.colors.border.light,
-              }}
-            >
-              <Feather name="image" size={18} color={theme.colors.accent.secondary} />
-              <Text variant="caption" weight="medium" style={{ marginLeft: theme.spacing.xs }}>
-                Photo
-              </Text>
-            </Pressable>
-
-            <Pressable
-              onPress={() => setAudience(audience === 'public' ? 'friends' : 'public')}
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                paddingHorizontal: theme.spacing.base,
-                paddingVertical: theme.spacing.md,
-                borderRadius: theme.borderRadius.pill,
-                backgroundColor: theme.colors.background.elevated,
-                borderWidth: 1,
-                borderColor: theme.colors.border.light,
-              }}
-            >
-              <Feather
-                name={audience === 'public' ? 'globe' : 'users'}
-                size={18}
-                color={theme.colors.accent.tertiary}
-              />
-              <Text variant="caption" weight="medium" style={{ marginLeft: theme.spacing.xs }}>
-                {audience === 'public' ? 'Public' : 'Friends'}
-              </Text>
-            </Pressable>
-          </View>
-        </View>
-
         <View style={{ marginTop: theme.spacing.xl }}>
           <Pressable
             onPress={handlePost}
             style={{
-              backgroundColor: (content.trim() || selectedImage)
+              backgroundColor: content.trim()
                 ? theme.colors.accent.primary
                 : theme.colors.border.light,
               borderRadius: theme.borderRadius.pill,
               paddingVertical: theme.spacing.base,
               alignItems: 'center',
             }}
-            disabled={isPosting}
+            disabled={isPosting || !content.trim()}
           >
             <Text variant="body" weight="semibold" color={theme.colors.text.inverse}>
-              {isPosting ? 'Posting...' : 'Share Post'}
+              {isPosting ? 'Публикация...' : 'Опубликовать'}
             </Text>
           </Pressable>
         </View>

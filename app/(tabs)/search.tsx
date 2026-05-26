@@ -1,37 +1,43 @@
 import React, { useState } from 'react';
-import { View, FlatList, Image, Pressable, ViewStyle, TextInput, ScrollView, Dimensions } from 'react-native';
+import { View, Pressable, ViewStyle, TextInput } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
-import { trendingTags, discoverCategories, mockPosts } from '../../src/utils/mockData';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const GRID_GAP = 8;
-const GRID_PADDING = 16;
-const COLUMN_WIDTH = (SCREEN_WIDTH - GRID_PADDING * 2 - GRID_GAP) / 2;
-
-function SearchHeader() {
+export default function SearchScreen() {
   const theme = useTheme();
+  const insets = useSafeAreaInsets();
   const [isFocused, setIsFocused] = useState(false);
   const [query, setQuery] = useState('');
 
   const containerStyle: ViewStyle = {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: theme.spacing.base,
-    paddingVertical: theme.spacing.sm,
-    backgroundColor: theme.colors.background.elevated,
-    borderRadius: theme.borderRadius.pill,
-    marginHorizontal: theme.spacing.base,
-    marginTop: theme.spacing.sm,
-    borderWidth: isFocused ? 1.5 : 1,
-    borderColor: isFocused ? theme.colors.accent.primary : theme.colors.border.light,
+    flex: 1,
+    backgroundColor: theme.colors.background.primary,
+    paddingTop: insets.top,
   };
 
   return (
-    <View>
-      <View style={containerStyle}>
+    <View style={containerStyle}>
+      <View style={{ paddingHorizontal: theme.spacing.base, paddingBottom: theme.spacing.sm }}>
+        <Text variant="subheading" weight="bold">Discover</Text>
+      </View>
+
+      {/* Search Input */}
+      <View
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          paddingHorizontal: theme.spacing.base,
+          paddingVertical: theme.spacing.sm,
+          backgroundColor: theme.colors.background.elevated,
+          borderRadius: theme.borderRadius.pill,
+          marginHorizontal: theme.spacing.base,
+          marginTop: theme.spacing.sm,
+          borderWidth: isFocused ? 1.5 : 1,
+          borderColor: isFocused ? theme.colors.accent.primary : theme.colors.border.light,
+        }}
+      >
         <Feather
           name="search"
           size={18}
@@ -59,154 +65,18 @@ function SearchHeader() {
           </Pressable>
         )}
       </View>
-    </View>
-  );
-}
 
-function CategoryChips() {
-  const theme = useTheme();
-  const [selected, setSelected] = useState('All');
-
-  return (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      contentContainerStyle={{
-        paddingHorizontal: theme.spacing.base,
-        paddingVertical: theme.spacing.md,
-      }}
-    >
-      {discoverCategories.map((cat) => {
-        const isActive = selected === cat;
-        return (
-          <View key={cat}>
-            <Pressable
-              onPress={() => setSelected(cat)}
-              style={{
-                paddingHorizontal: theme.spacing.base,
-                paddingVertical: theme.spacing.sm,
-                borderRadius: theme.borderRadius.pill,
-                backgroundColor: isActive ? theme.colors.accent.primary : theme.colors.background.elevated,
-                marginRight: theme.spacing.sm,
-                borderWidth: isActive ? 0 : 1,
-                borderColor: theme.colors.border.light,
-              }}
-            >
-              <Text
-                variant="caption"
-                weight={isActive ? 'semibold' : 'regular'}
-                color={isActive ? theme.colors.text.inverse : theme.colors.text.secondary}
-              >
-                {cat}
-              </Text>
-            </Pressable>
-          </View>
-        );
-      })}
-    </ScrollView>
-  );
-}
-
-function TrendingTags() {
-  const theme = useTheme();
-
-  return (
-    <View style={{ paddingHorizontal: theme.spacing.base, marginBottom: theme.spacing.base }}>
-      <Text variant="body" weight="semibold" style={{ marginBottom: theme.spacing.md }}>
-        Trending
-      </Text>
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: theme.spacing.sm }}>
-        {trendingTags.map((tag) => (
-          <View key={tag}>
-            <Pressable
-              style={{
-                paddingHorizontal: theme.spacing.md,
-                paddingVertical: theme.spacing.sm,
-                borderRadius: theme.borderRadius.pill,
-                backgroundColor: theme.colors.background.tertiary,
-                borderWidth: 1,
-                borderColor: theme.colors.border.light,
-              }}
-            >
-              <Text variant="caption" color={theme.colors.accent.primary}>
-                #{tag}
-              </Text>
-            </Pressable>
-          </View>
-        ))}
+      {/* Empty state */}
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingBottom: 100 }}>
+        <Feather name="search" size={48} color={theme.colors.text.tertiary} />
+        <Text
+          variant="body"
+          color={theme.colors.text.tertiary}
+          style={{ marginTop: theme.spacing.base, textAlign: 'center' }}
+        >
+          Начните вводить для поиска
+        </Text>
       </View>
-    </View>
-  );
-}
-
-export default function SearchScreen() {
-  const theme = useTheme();
-  const insets = useSafeAreaInsets();
-
-  const discoverPosts = mockPosts.filter((p) => p.imageUrl);
-
-  const containerStyle: ViewStyle = {
-    flex: 1,
-    backgroundColor: theme.colors.background.primary,
-    paddingTop: insets.top,
-  };
-
-  return (
-    <View style={containerStyle}>
-      <View style={{ paddingHorizontal: theme.spacing.base, paddingBottom: theme.spacing.sm }}>
-        <Text variant="subheading" weight="bold">Discover</Text>
-      </View>
-      <SearchHeader />
-      <FlatList
-        data={discoverPosts}
-        keyExtractor={(item) => item.id}
-        numColumns={2}
-        columnWrapperStyle={{ gap: GRID_GAP }}
-        contentContainerStyle={{
-          paddingHorizontal: GRID_PADDING,
-          paddingBottom: 100,
-          gap: GRID_GAP,
-        }}
-        showsVerticalScrollIndicator={false}
-        ListHeaderComponent={
-          <>
-            <CategoryChips />
-            <TrendingTags />
-          </>
-        }
-        renderItem={({ item }) => (
-          <View>
-            <Pressable
-              style={{
-                width: COLUMN_WIDTH,
-                height: COLUMN_WIDTH * 1.2,
-                borderRadius: theme.borderRadius.md,
-                overflow: 'hidden',
-              }}
-            >
-              <Image
-                source={{ uri: item.imageUrl }}
-                style={{ width: '100%', height: '100%' }}
-                resizeMode="cover"
-              />
-              <View
-                style={{
-                  position: 'absolute',
-                  bottom: 0,
-                  left: 0,
-                  right: 0,
-                  padding: theme.spacing.sm,
-                  backgroundColor: 'rgba(0,0,0,0.3)',
-                }}
-              >
-                <Text variant="caption" color="#fff" numberOfLines={1}>
-                  {item.authorName}
-                </Text>
-              </View>
-            </Pressable>
-          </View>
-        )}
-      />
     </View>
   );
 }

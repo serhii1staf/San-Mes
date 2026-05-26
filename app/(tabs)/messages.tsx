@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { View, FlatList, Pressable, ViewStyle, TextInput, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -7,7 +7,6 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { useChatStore } from '../../src/store';
-import { mockConversations, formatTimeAgo } from '../../src/utils/mockData';
 import { Conversation } from '../../src/types';
 
 function ConversationItem({ item }: { item: Conversation; index: number }) {
@@ -48,9 +47,6 @@ function ConversationItem({ item }: { item: Conversation; index: number }) {
             <Text variant="body" weight={item.unreadCount > 0 ? 'semibold' : 'regular'}>
               {item.participantName}
             </Text>
-            <Text variant="caption" color={theme.colors.text.tertiary}>
-              {item.lastMessageAt ? formatTimeAgo(item.lastMessageAt) : ''}
-            </Text>
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
             <Text
@@ -89,12 +85,8 @@ function ConversationItem({ item }: { item: Conversation; index: number }) {
 export default function MessagesScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
-  const { conversations, setConversations } = useChatStore();
+  const { conversations } = useChatStore();
   const [searchQuery, setSearchQuery] = useState('');
-
-  useEffect(() => {
-    setConversations(mockConversations);
-  }, []);
 
   const filtered = searchQuery
     ? conversations.filter((c) =>
@@ -157,13 +149,26 @@ export default function MessagesScreen() {
         </View>
       </View>
 
-      <FlatList
-        data={filtered}
-        keyExtractor={(item) => item.id}
-        renderItem={({ item, index }) => <ConversationItem item={item} index={index} />}
-        contentContainerStyle={{ paddingBottom: 100 }}
-        showsVerticalScrollIndicator={false}
-      />
+      {filtered.length === 0 ? (
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingBottom: 100 }}>
+          <Feather name="message-circle" size={48} color={theme.colors.text.tertiary} />
+          <Text
+            variant="body"
+            color={theme.colors.text.tertiary}
+            style={{ marginTop: theme.spacing.base, textAlign: 'center' }}
+          >
+            Пока нет сообщений
+          </Text>
+        </View>
+      ) : (
+        <FlatList
+          data={filtered}
+          keyExtractor={(item) => item.id}
+          renderItem={({ item, index }) => <ConversationItem item={item} index={index} />}
+          contentContainerStyle={{ paddingBottom: 100 }}
+          showsVerticalScrollIndicator={false}
+        />
+      )}
 
       <Pressable
         style={{

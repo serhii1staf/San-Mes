@@ -37,7 +37,7 @@ function EmojiStep({ selected, onSelect }: { selected: string; onSelect: (e: str
         borderWidth: 2,
         borderColor: selected ? theme.colors.accent.primary : theme.colors.border.light,
       }}>
-        <Text style={{ fontSize: 40 }}>{selected || '?'}</Text>
+        <Text style={{ fontSize: 32 }}>{selected || '?'}</Text>
       </View>
 
       {/* Emoji grid */}
@@ -57,7 +57,7 @@ function EmojiStep({ selected, onSelect }: { selected: string; onSelect: (e: str
               borderColor: theme.colors.accent.primary,
             }}
           >
-            <Text style={{ fontSize: 24 }}>{emoji}</Text>
+            <Text style={{ fontSize: 20 }}>{emoji}</Text>
           </Pressable>
         ))}
       </View>
@@ -278,9 +278,18 @@ export default function RegisterScreen() {
           </Text>
         </Pressable>
 
-        {step > 0 && (
+        {step > 0 ? (
           <Pressable onPress={() => { setStep(step - 1); setError(''); }} style={{ alignItems: 'center', paddingVertical: 8 }}>
             <Text variant="body" color={theme.colors.text.secondary}>Назад</Text>
+          </Pressable>
+        ) : (
+          <Pressable onPress={() => router.push('/(auth)/login')} style={{ alignItems: 'center', paddingVertical: 8 }}>
+            <Text variant="body" color={theme.colors.text.secondary}>
+              Уже есть аккаунт?{' '}
+              <Text variant="body" weight="semibold" color={theme.colors.accent.primary}>
+                Войти
+              </Text>
+            </Text>
           </Pressable>
         )}
       </View>
