@@ -25,15 +25,18 @@ function StoryItem({ story }: { story: Story; index: number }) {
           width: 72,
         }}
       >
-        <View
-          style={{
-            padding: 2,
-            borderRadius: 36,
-            borderWidth: 2,
-            borderColor: ringColor,
-            overflow: 'visible',
-          }}
-        >
+        <View style={{ width: 48, height: 48, alignItems: 'center', justifyContent: 'center' }}>
+          {/* Ring behind emoji */}
+          <View
+            style={{
+              position: 'absolute',
+              width: 48,
+              height: 48,
+              borderRadius: 24,
+              borderWidth: 2,
+              borderColor: ringColor,
+            }}
+          />
           <Avatar emoji={story.userEmoji} name={story.userName} size="md" />
         </View>
         <Text
@@ -110,9 +113,9 @@ export default function FeedScreen() {
   const insets = useSafeAreaInsets();
   const { posts, isLoading, isRefreshing, setPosts, setLoading, setRefreshing, toggleLike } = useFeedStore();
 
-  // Background color for gradient
-  const bgColor = theme.isDark ? 'rgba(26,26,26,1)' : 'rgba(255,248,240,1)';
-  const bgTransparent = theme.isDark ? 'rgba(26,26,26,0)' : 'rgba(255,248,240,0)';
+  // Background color for gradient — uses theme color dynamically
+  const bgColor = theme.colors.background.primary;
+  const bgTransparent = theme.colors.background.primary + '00';
 
   useEffect(() => {
     setLoading(true);

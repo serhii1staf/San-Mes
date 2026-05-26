@@ -33,17 +33,65 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
   const isDark = mode === 'dark';
   const baseColors = isDark ? darkTheme : lightTheme;
 
-  // Apply accent color from store
+  // Find accent config
   const accentConfig = ACCENT_COLORS.find((c) => c.key === accent);
   const accentColor = accentConfig?.color || baseColors.accent.primary;
 
-  const themeColors: ThemeColors = {
-    ...baseColors,
-    accent: {
-      ...baseColors.accent,
-      primary: accentColor,
-    },
-  };
+  // Build theme colors — override backgrounds with accent-tinted colors
+  let themeColors: ThemeColors;
+
+  if (isDark && accentConfig) {
+    // Dark mode: apply accent-tinted backgrounds
+    themeColors = {
+      background: {
+        primary: accentConfig.darkBg,
+        secondary: accentConfig.darkSecondary,
+        tertiary: accentConfig.darkElevated,
+        elevated: accentConfig.darkElevated,
+      },
+      text: baseColors.text,
+      accent: {
+        primary: accentColor,
+        secondary: accentConfig.color + '80', // 50% opacity version
+        tertiary: baseColors.accent.tertiary,
+      },
+      border: {
+        light: accentConfig.darkBorder,
+        medium: accentConfig.darkBorder,
+        strong: baseColors.border.strong,
+      },
+      status: baseColors.status,
+    };
+  } else if (!isDark && accentConfig) {
+    // Light mode: apply accent-tinted light backgrounds
+    themeColors = {
+      background: {
+        primary: accentConfig.light,
+        secondary: '#FFFFFF',
+        tertiary: '#FFFFFF',
+        elevated: '#FFFFFF',
+      },
+      text: baseColors.text,
+      accent: {
+        primary: accentColor,
+        secondary: accentConfig.color + '80',
+        tertiary: baseColors.accent.tertiary,
+      },
+      border: {
+        ...baseColors.border,
+        light: accentConfig.color + '20',
+      },
+      status: baseColors.status,
+    };
+  } else {
+    themeColors = {
+      ...baseColors,
+      accent: {
+        ...baseColors.accent,
+        primary: accentColor,
+      },
+    };
+  }
 
   const theme: Theme = {
     colors: themeColors,

@@ -19,6 +19,7 @@ function TrendingUserCard({ user }: { user: User }) {
     alignItems: 'center',
     borderWidth: 1,
     borderColor: theme.colors.border.light,
+    overflow: 'visible',
   };
 
   const followButtonStyle: ViewStyle = {

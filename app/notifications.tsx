@@ -247,8 +247,8 @@ export default function NotificationsScreen() {
     backgroundColor: theme.colors.background.primary,
   };
 
-  const bgColor = theme.isDark ? 'rgba(26,26,26,1)' : 'rgba(255,248,240,1)';
-  const bgTransparent = theme.isDark ? 'rgba(26,26,26,0)' : 'rgba(255,248,240,0)';
+  const bgColor = theme.colors.background.primary;
+  const bgTransparent = theme.colors.background.primary + '00';
   const headerContentHeight = insets.top + 48;
   const headerGradientHeight = headerContentHeight + 28;
 

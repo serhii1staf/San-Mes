@@ -46,7 +46,6 @@ export function PostCard({ post, onLike, onComment, onShare, onBookmark }: PostC
 
   const containerStyle: ViewStyle = {
     marginBottom: theme.spacing.base,
-    overflow: 'hidden',
   };
 
   const headerStyle: ViewStyle = {

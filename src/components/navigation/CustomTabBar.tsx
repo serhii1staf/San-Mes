@@ -78,8 +78,8 @@ export function CustomTabBar({ state, navigation }: BottomTabBarProps) {
   const theme = useTheme();
 
   // Colors for the gradient fade below the tab bar
-  const bgColor = theme.isDark ? 'rgba(26,26,26,1)' : 'rgba(255,248,240,1)';
-  const bgTransparent = theme.isDark ? 'rgba(26,26,26,0)' : 'rgba(255,248,240,0)';
+  const bgColor = theme.colors.background.primary;
+  const bgTransparent = theme.colors.background.primary + '00';
 
   const wrapperStyle: ViewStyle = {
     position: 'absolute',
