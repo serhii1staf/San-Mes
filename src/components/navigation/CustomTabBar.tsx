@@ -77,7 +77,7 @@ function TabBarButton({
 export function CustomTabBar({ state, navigation }: BottomTabBarProps) {
   const theme = useTheme();
 
-  // Colors for the gradient fade underneath the tab bar
+  // Colors for the gradient fade below the tab bar
   const bgColor = theme.isDark ? 'rgba(26,26,26,1)' : 'rgba(255,248,240,1)';
   const bgTransparent = theme.isDark ? 'rgba(26,26,26,0)' : 'rgba(255,248,240,0)';
 
@@ -93,7 +93,6 @@ export function CustomTabBar({ state, navigation }: BottomTabBarProps) {
     paddingVertical: 12,
     paddingHorizontal: 8,
     marginHorizontal: 16,
-    marginBottom: 24,
     borderRadius: 32,
     backgroundColor: theme.isDark ? '#1E1E1E' : theme.colors.background.elevated,
     shadowColor: '#000000',
@@ -107,48 +106,51 @@ export function CustomTabBar({ state, navigation }: BottomTabBarProps) {
 
   return (
     <View style={wrapperStyle} pointerEvents="box-none">
-      {/* Gradient fade UNDERNEATH the navigation - dissolves content into background */}
+      {/* Tab bar */}
+      <View style={{ marginBottom: 24 }}>
+        <View style={containerStyle}>
+          {state.routes.map((route, index) => {
+            const isFocused = state.index === index;
+
+            const onPress = () => {
+              const event = navigation.emit({
+                type: 'tabPress',
+                target: route.key,
+                canPreventDefault: true,
+              });
+
+              if (!isFocused && !event.defaultPrevented) {
+                navigation.navigate(route.name);
+              }
+            };
+
+            const onLongPress = () => {
+              navigation.emit({
+                type: 'tabLongPress',
+                target: route.key,
+              });
+            };
+
+            return (
+              <TabBarButton
+                key={route.key}
+                isFocused={isFocused}
+                onPress={onPress}
+                onLongPress={onLongPress}
+                routeName={route.name}
+              />
+            );
+          })}
+        </View>
+      </View>
+
+      {/* Gradient fade BELOW the tab bar - from transparent to solid at the very bottom */}
       <LinearGradient
         colors={[bgTransparent, bgColor]}
-        locations={[0, 0.6]}
+        locations={[0, 1]}
         style={styles.bottomGradient}
         pointerEvents="none"
       />
-      {/* Tab bar itself */}
-      <View style={containerStyle}>
-        {state.routes.map((route, index) => {
-          const isFocused = state.index === index;
-
-          const onPress = () => {
-            const event = navigation.emit({
-              type: 'tabPress',
-              target: route.key,
-              canPreventDefault: true,
-            });
-
-            if (!isFocused && !event.defaultPrevented) {
-              navigation.navigate(route.name);
-            }
-          };
-
-          const onLongPress = () => {
-            navigation.emit({
-              type: 'tabLongPress',
-              target: route.key,
-            });
-          };
-
-          return (
-            <TabBarButton
-              key={route.key}
-              isFocused={isFocused}
-              onPress={onPress}
-              onLongPress={onLongPress}
-              routeName={route.name}
-            />
-          );
-        })}
-      </View>
     </View>
   );
 }
@@ -171,9 +173,9 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   bottomGradient: {
-    height: 60,
+    height: 24,
     position: 'absolute',
-    top: -60,
+    bottom: 0,
     left: 0,
     right: 0,
   },

@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { View, ScrollView, Pressable, Switch, ViewStyle, Alert } from 'react-native';
+import { View, ScrollView, Pressable, Switch, ViewStyle, Alert, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
 import { useAuthStore } from '../../src/store';
@@ -90,6 +91,11 @@ export default function SettingsScreen() {
     backgroundColor: theme.colors.background.primary,
   };
 
+  const bgColor = theme.isDark ? 'rgba(26,26,26,1)' : 'rgba(255,248,240,1)';
+  const bgTransparent = theme.isDark ? 'rgba(26,26,26,0)' : 'rgba(255,248,240,0)';
+  const headerContentHeight = insets.top + 48;
+  const headerGradientHeight = headerContentHeight + 28;
+
   const sectionCardStyle: ViewStyle = {
     backgroundColor: theme.colors.background.elevated,
     borderRadius: 16,
@@ -104,31 +110,37 @@ export default function SettingsScreen() {
 
   return (
     <View style={containerStyle}>
-      {/* Sticky Header */}
-      <View
-        style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: 'center',
-          paddingHorizontal: theme.spacing.lg,
-          paddingTop: insets.top + 8,
-          paddingBottom: theme.spacing.md,
-          backgroundColor: theme.colors.background.primary,
-          position: 'relative',
-          zIndex: 10,
-        }}
-      >
-        <Pressable
-          onPress={() => router.back()}
-          style={{ position: 'absolute', left: theme.spacing.lg, top: insets.top + 8 }}
+      {/* Gradient fade header */}
+      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100, height: headerGradientHeight }} pointerEvents="box-none">
+        <LinearGradient
+          colors={[bgColor, bgColor, bgTransparent]}
+          locations={[0, 0.55, 1]}
+          style={StyleSheet.absoluteFill}
+        />
+        <View
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'center',
+            paddingHorizontal: theme.spacing.lg,
+            paddingTop: insets.top + 8,
+            paddingBottom: 8,
+            position: 'relative',
+          }}
+          pointerEvents="auto"
         >
-          <Feather name="chevron-left" size={24} color={theme.colors.text.primary} />
-        </Pressable>
-        <Text variant="subheading" weight="bold">Настройки</Text>
+          <Pressable
+            onPress={() => router.back()}
+            style={{ position: 'absolute', left: theme.spacing.lg, top: insets.top + 8 }}
+          >
+            <Feather name="chevron-left" size={24} color={theme.colors.text.primary} />
+          </Pressable>
+          <Text variant="subheading" weight="bold">Настройки</Text>
+        </View>
       </View>
 
       {/* Scrollable Content */}
-      <ScrollView contentContainerStyle={{ paddingBottom: 100, paddingHorizontal: theme.spacing.lg }} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={{ paddingBottom: 100, paddingHorizontal: theme.spacing.lg, paddingTop: headerContentHeight }} showsVerticalScrollIndicator={false}>
         {/* Общие */}
         <View style={sectionTitleStyle}>
           <Text variant="body" weight="semibold" color={theme.colors.text.secondary}>

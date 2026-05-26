@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { View, FlatList, Pressable, ViewStyle, TextInput } from 'react-native';
+import { View, FlatList, Pressable, ViewStyle, TextInput, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { useChatStore } from '../../src/store';
@@ -104,16 +105,28 @@ export default function MessagesScreen() {
   const containerStyle: ViewStyle = {
     flex: 1,
     backgroundColor: theme.colors.background.primary,
-    paddingTop: insets.top,
   };
+
+  const bgColor = theme.isDark ? 'rgba(26,26,26,1)' : 'rgba(255,248,240,1)';
+  const bgTransparent = theme.isDark ? 'rgba(26,26,26,0)' : 'rgba(255,248,240,0)';
+  const headerContentHeight = insets.top + 48;
+  const headerGradientHeight = headerContentHeight + 28;
 
   return (
     <View style={containerStyle}>
-      <View style={{ paddingHorizontal: theme.spacing.lg, paddingTop: theme.spacing.base, paddingBottom: theme.spacing.sm }}>
-        <Text variant="subheading" weight="bold">Messages</Text>
+      {/* Gradient fade header */}
+      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100, height: headerGradientHeight }} pointerEvents="box-none">
+        <LinearGradient
+          colors={[bgColor, bgColor, bgTransparent]}
+          locations={[0, 0.55, 1]}
+          style={StyleSheet.absoluteFill}
+        />
+        <View style={{ paddingHorizontal: theme.spacing.lg, paddingTop: insets.top + 8, paddingBottom: 8 }} pointerEvents="auto">
+          <Text variant="subheading" weight="bold">Messages</Text>
+        </View>
       </View>
 
-      <View style={{ paddingHorizontal: theme.spacing.base, marginBottom: theme.spacing.sm }}>
+      <View style={{ paddingHorizontal: theme.spacing.base, marginBottom: theme.spacing.sm, marginTop: headerContentHeight }}>
         <View
           style={{
             flexDirection: 'row',

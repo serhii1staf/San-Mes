@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { View, ScrollView, Pressable, Image, ViewStyle, Dimensions, ActivityIndicator } from 'react-native';
+import { View, ScrollView, Pressable, Image, ViewStyle, Dimensions, ActivityIndicator, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar, Button } from '../../src/components/ui';
 import { useAuthStore } from '../../src/store';
@@ -90,29 +91,40 @@ export default function ProfileScreen() {
     backgroundColor: theme.colors.background.primary,
   };
 
+  const bgColor = theme.isDark ? 'rgba(26,26,26,1)' : 'rgba(255,248,240,1)';
+  const bgTransparent = theme.isDark ? 'rgba(26,26,26,0)' : 'rgba(255,248,240,0)';
+  const headerContentHeight = insets.top + 48;
+  const headerGradientHeight = headerContentHeight + 28;
+
   return (
     <View style={containerStyle}>
-      {/* Sticky Header - username + settings */}
-      <View
-        style={{
-          flexDirection: 'row',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          paddingHorizontal: theme.spacing.lg,
-          paddingTop: insets.top + 8,
-          paddingBottom: theme.spacing.md,
-          backgroundColor: theme.colors.background.primary,
-          zIndex: 10,
-        }}
-      >
-        <Text variant="subheading" weight="bold">@{displayUser.username}</Text>
-        <Pressable onPress={() => router.push('/settings')}>
-          <Feather name="settings" size={22} color={theme.colors.text.primary} />
-        </Pressable>
+      {/* Gradient fade header - username + settings */}
+      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100, height: headerGradientHeight }} pointerEvents="box-none">
+        <LinearGradient
+          colors={[bgColor, bgColor, bgTransparent]}
+          locations={[0, 0.55, 1]}
+          style={StyleSheet.absoluteFill}
+        />
+        <View
+          style={{
+            flexDirection: 'row',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            paddingHorizontal: theme.spacing.lg,
+            paddingTop: insets.top + 8,
+            paddingBottom: 8,
+          }}
+          pointerEvents="auto"
+        >
+          <Text variant="subheading" weight="bold">@{displayUser.username}</Text>
+          <Pressable onPress={() => router.push('/settings')}>
+            <Feather name="settings" size={22} color={theme.colors.text.primary} />
+          </Pressable>
+        </View>
       </View>
 
       {/* Scrollable Content */}
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100, paddingTop: headerContentHeight }}>
         {/* Avatar & Stats */}
         <View style={{ alignItems: 'center', marginTop: theme.spacing.base }}>
           <View style={{ position: 'relative' }}>
