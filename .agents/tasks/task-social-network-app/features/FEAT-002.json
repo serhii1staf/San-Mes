@@ -2,7 +2,7 @@
   "id": "FEAT-002",
   "type": "feat",
   "description": "Implement all application screens with full UI: Authentication (login/register), Feed with posts, Search/Discover, Post Creation, Chat/Messaging system, User Profile with customization, and Settings with theme switching. Also implement the complete backend API structure for Vercel serverless deployment.",
-  "status": "pending",
+  "status": "in_progress",
   "steps": [
     "Create Authentication screens at app/(auth)/_layout.tsx, app/(auth)/login.tsx, app/(auth)/register.tsx. Login screen: minimalist form with email/password inputs using the custom Input component, animated logo/brand mark at top, soft gradient background, 'Sign In' button with haptic feedback animation, link to register. Register screen: name, email, password, confirm password fields, avatar upload placeholder, animated transitions between fields. Both screens use Reanimated for entrance animations (fade + slide up). Wire up to authStore.",
     "Implement the Feed/Home screen at app/(tabs)/index.tsx: Scrollable feed with FlatList, pull-to-refresh with custom animated refresh indicator, PostCard component showing author avatar + name + timestamp + post text + optional image + like button (animated heart with scale bounce) + comment count + share button. Use skeleton loading placeholders with shimmer animation while loading. Include a stories/highlights horizontal scroll at top with circular avatars. Wire to feedStore with mock data.",
