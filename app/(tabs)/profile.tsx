@@ -1,12 +1,14 @@
 import React, { useState, useRef } from 'react';
-import { View, Pressable, ViewStyle, ActivityIndicator, StyleSheet, Animated } from 'react-native';
+import { View, Pressable, ViewStyle, ActivityIndicator, StyleSheet, Animated, Dimensions } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../src/theme';
-import { Text, Avatar, Button } from '../../src/components/ui';
+import { Text, Avatar } from '../../src/components/ui';
 import { useAuthStore } from '../../src/store';
+
+const SCREEN_WIDTH = Dimensions.get('window').width;
 
 type TabName = 'posts' | 'saved' | 'tagged';
 
@@ -106,7 +108,7 @@ export default function ProfileScreen() {
 
   return (
     <View style={containerStyle}>
-      {/* Gradient fade header - username + settings + animated emoji */}
+      {/* Gradient fade header - username + settings + edit icon + animated emoji */}
       <View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100, height: headerGradientHeight }} pointerEvents="box-none">
         <LinearGradient
           colors={[bgColor, bgColor, bgTransparent]}
@@ -131,9 +133,15 @@ export default function ProfileScreen() {
               <Avatar emoji={displayUser.emoji} size="xs" />
             </Animated.View>
           </View>
-          <Pressable onPress={() => router.push('/settings')}>
-            <Feather name="settings" size={22} color={theme.colors.text.primary} />
-          </Pressable>
+          {/* Task 4: Edit icon next to settings */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
+            <Pressable onPress={() => router.push('/profile/edit')}>
+              <Feather name="edit-2" size={20} color={theme.colors.text.primary} />
+            </Pressable>
+            <Pressable onPress={() => router.push('/settings')}>
+              <Feather name="settings" size={22} color={theme.colors.text.primary} />
+            </Pressable>
+          </View>
         </View>
       </View>
 
@@ -144,23 +152,34 @@ export default function ProfileScreen() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 100, paddingTop: headerContentHeight }}
       >
-        {/* Emoji Avatar & Info */}
-        <View style={{ alignItems: 'center', marginTop: 16 }}>
-          <Avatar emoji={displayUser.emoji} size="xl" />
-
-          <Text variant="subheading" weight="bold" style={{ marginTop: 12 }}>
-            {displayUser.displayName}
-          </Text>
-          {displayUser.bio && (
-            <Text
-              variant="body"
-              color={theme.colors.text.secondary}
-              align="center"
-              style={{ marginTop: 4, paddingHorizontal: 32 }}
-            >
-              {displayUser.bio}
+        {/* Task 5: Discord-style layout - Avatar RIGHT, Name/Bio LEFT */}
+        <View style={{ flexDirection: 'row', alignItems: 'flex-start', paddingHorizontal: 24, marginTop: 16 }}>
+          {/* Left side: name, bio */}
+          <View style={{ flex: 1, paddingRight: 16 }}>
+            <Text variant="subheading" weight="bold">
+              {displayUser.displayName}
             </Text>
-          )}
+            {displayUser.bio && (
+              <Text
+                variant="body"
+                color={theme.colors.text.secondary}
+                style={{ marginTop: 4 }}
+              >
+                {displayUser.bio}
+              </Text>
+            )}
+            {/* Links section placeholder */}
+            <View style={{ marginTop: 12 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Feather name="link" size={14} color={theme.colors.text.tertiary} />
+                <Text variant="caption" color={theme.colors.text.tertiary}>
+                  Добавить ссылки
+                </Text>
+              </View>
+            </View>
+          </View>
+          {/* Right side: avatar emoji */}
+          <Avatar emoji={displayUser.emoji} size="xl" />
         </View>
 
         {/* Stats */}
@@ -168,11 +187,6 @@ export default function ProfileScreen() {
           <StatItem label="Posts" value={0} />
           <StatItem label="Followers" value={0} />
           <StatItem label="Following" value={0} />
-        </View>
-
-        {/* Edit Profile Button */}
-        <View style={{ paddingHorizontal: 24, marginTop: 24 }}>
-          <Button title="Edit Profile" variant="outline" onPress={() => router.push('/profile/edit')} />
         </View>
 
         {/* Post Grid - Empty State */}

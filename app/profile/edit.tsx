@@ -111,10 +111,10 @@ export default function EditProfileScreen() {
     backgroundColor: 'transparent',
   };
 
-  // Modal is lower (more top margin), very rounded corners, glass effect
+  // Task 2: Modal positioned lower (insets.top + 60)
   const cardStyle: ViewStyle = {
     marginHorizontal: 6,
-    marginTop: insets.top + 40,
+    marginTop: insets.top + 60,
     marginBottom: insets.bottom + 6,
     flex: 1,
     borderRadius: 32,
@@ -200,38 +200,12 @@ export default function EditProfileScreen() {
                 {/* Emoji Avatar */}
                 <View style={{ alignItems: 'center', marginVertical: 20 }}>
                   <Avatar emoji={selectedEmoji} size="xl" />
-                  <Pressable style={{ marginTop: 12 }} onPress={() => setShowEmojiPicker(!showEmojiPicker)}>
+                  <Pressable style={{ marginTop: 12 }} onPress={() => setShowEmojiPicker(true)}>
                     <Text variant="body" weight="medium" color={theme.colors.accent.primary}>
-                      {showEmojiPicker ? 'Закрыть' : 'Изменить эмодзи'}
+                      Изменить эмодзи
                     </Text>
                   </Pressable>
                 </View>
-
-                {/* Emoji Picker */}
-                {showEmojiPicker && (
-                  <View style={{ paddingHorizontal: 20, marginBottom: 20 }}>
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 10 }}>
-                      {EMOJIS.map((e) => (
-                        <Pressable
-                          key={e}
-                          onPress={() => { setSelectedEmoji(e); setShowEmojiPicker(false); }}
-                          style={{
-                            width: 44,
-                            height: 44,
-                            borderRadius: 12,
-                            backgroundColor: selectedEmoji === e ? theme.colors.accent.primary + '30' : theme.colors.background.secondary,
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            borderWidth: selectedEmoji === e ? 2 : 0,
-                            borderColor: theme.colors.accent.primary,
-                          }}
-                        >
-                          <RNText style={{ fontSize: 20 }} allowFontScaling={false}>{e}</RNText>
-                        </Pressable>
-                      ))}
-                    </View>
-                  </View>
-                )}
 
                 {/* Fields */}
                 <View style={{ paddingHorizontal: 20 }}>
@@ -286,6 +260,83 @@ export default function EditProfileScreen() {
           </View>
         </Animated.View>
       </KeyboardAvoidingView>
+
+      {/* Task 1: Emoji Picker as separate modal overlay */}
+      {showEmojiPicker && (
+        <View
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            zIndex: 999,
+          }}
+        >
+          {/* Dark backdrop */}
+          <Pressable
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: 'rgba(0,0,0,0.5)',
+            }}
+            onPress={() => setShowEmojiPicker(false)}
+          />
+          {/* Bottom sheet card */}
+          <View
+            style={{
+              position: 'absolute',
+              bottom: 0,
+              left: 0,
+              right: 0,
+              backgroundColor: theme.isDark ? '#1e1e1e' : '#ffffff',
+              borderTopLeftRadius: 24,
+              borderTopRightRadius: 24,
+              paddingTop: 16,
+              paddingBottom: insets.bottom + 20,
+              paddingHorizontal: 20,
+            }}
+          >
+            {/* Handle */}
+            <View style={{ alignItems: 'center', marginBottom: 16 }}>
+              <View
+                style={{
+                  width: 36,
+                  height: 5,
+                  borderRadius: 3,
+                  backgroundColor: theme.colors.border.medium,
+                }}
+              />
+            </View>
+            <Text variant="body" weight="semibold" align="center" style={{ marginBottom: 16 }}>
+              Выберите эмодзи
+            </Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 10 }}>
+              {EMOJIS.map((e) => (
+                <Pressable
+                  key={e}
+                  onPress={() => { setSelectedEmoji(e); setShowEmojiPicker(false); }}
+                  style={{
+                    width: 44,
+                    height: 44,
+                    borderRadius: 12,
+                    backgroundColor: selectedEmoji === e ? theme.colors.accent.primary + '30' : theme.colors.background.secondary,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    borderWidth: selectedEmoji === e ? 2 : 0,
+                    borderColor: theme.colors.accent.primary,
+                  }}
+                >
+                  <RNText style={{ fontSize: 20 }} allowFontScaling={false}>{e}</RNText>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+        </View>
+      )}
     </View>
   );
 }
