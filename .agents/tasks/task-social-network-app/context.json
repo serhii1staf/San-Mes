@@ -1,0 +1,26 @@
+{
+  "project_type": "React Native + Expo social network mobile app with Node.js serverless backend",
+  "language": "TypeScript",
+  "build_system": "Expo managed workflow with npm. Backend uses Vercel serverless functions.",
+  "test_framework": "Jest (bundled with Expo)",
+  "build_command": "npx expo export --platform web",
+  "test_command": "npx jest --passWithNoTests",
+  "verification_instructions": "1. Run npm install to install deps. 2. Run npx expo export --platform web to verify build. 3. Run npx jest --passWithNoTests to run tests. 4. TypeScript check with npx tsc --noEmit.",
+  "snapshot_or_generated_files": null,
+  "setup_instructions": "1. cd /projects/sandbox/San-Mes 2. npm install 3. npx expo start (for development)",
+  "environment_constraints": "Node.js v22 available. OPEN_INTERNET mode - full package install access. No physical iOS/Android device for testing but can verify build/compilation. Expo Go will be used by user on real iPhone for testing.",
+  "contribution_requirements": "All code goes to the repository. Must be immediately runnable with npm install && npx expo start.",
+  "key_patterns": "Expo Router for file-based routing in app/ directory. Zustand for state management. React Native Reanimated for animations. Custom design system with tokens. Serverless API functions in api/ directory for Vercel deployment.",
+  "relevant_files": [
+    "app.json",
+    "package.json",
+    "tsconfig.json",
+    "app/_layout.tsx",
+    "app/(tabs)/_layout.tsx",
+    "src/theme/",
+    "src/components/",
+    "src/store/",
+    "api/"
+  ],
+  "directory_structure": "app/ - Expo Router pages and layouts. src/theme/ - design system tokens and theme provider. src/components/ - reusable UI components. src/store/ - Zustand stores. api/ - Vercel serverless functions. assets/ - fonts and images."
+}

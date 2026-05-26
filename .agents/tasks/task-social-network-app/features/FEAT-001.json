@@ -1,0 +1,42 @@
+{
+  "id": "FEAT-001",
+  "type": "feat",
+  "description": "Initialize the Expo project with full configuration, design system, theme provider, and navigation structure. This is the foundation feature that sets up the entire project skeleton including all dependencies, the custom design system with unique visual identity, dark/light theme support, Expo Router navigation with tab layout, and Zustand store scaffolding.",
+  "status": "in_progress",
+  "steps": [
+    "Initialize the project at /projects/sandbox/San-Mes with package.json including all dependencies: expo ~52, expo-router, react-native, react-native-reanimated, react-native-gesture-handler, react-native-safe-area-context, expo-font, expo-image-picker, expo-linear-gradient, @expo/vector-icons, zustand, react-native-mmkv (for storage), typescript, @types/react. Use expo-compatible versions.",
+    "Create app.json with full Expo configuration: app name 'San', slug 'san-mes', scheme 'sanmes', iOS and Android bundle identifiers, splash screen config, icon placeholders, orientation portrait, plugins for expo-router and expo-font. Include EAS build config references.",
+    "Create tsconfig.json extending expo/tsconfig.base with strict mode and path aliases (@ -> src/).",
+    "Create babel.config.js with babel-preset-expo and react-native-reanimated/plugin.",
+    "Create the design system in src/theme/: tokens.ts (colors - use a unique warm palette with soft coral, muted sage, cream whites, deep charcoal NOT blue/purple like Instagram or green like Telegram; spacing scale 4-8-12-16-24-32-48; border radius using pill shapes and soft rounds; typography scale), fonts.ts (configure Inter font family via expo-font with weights 300,400,500,600,700), animations.ts (shared reanimated timing configs and spring configs for micro-interactions), shadows.ts (soft elevation system).",
+    "Create ThemeProvider in src/theme/ThemeProvider.tsx using React Context that manages dark/light mode state persisted with MMKV storage. Export useTheme hook. Light theme: cream/warm white backgrounds, charcoal text, coral accents. Dark theme: deep warm gray backgrounds, soft white text, muted coral accents.",
+    "Create src/theme/index.ts barrel export for all theme utilities.",
+    "Create the root layout at app/_layout.tsx: wraps app in ThemeProvider, loads Inter fonts with expo-font useFonts hook, shows splash screen until fonts load, sets up Stack navigator from expo-router.",
+    "Create tab layout at app/(tabs)/_layout.tsx with 5 tabs: Home (feed), Search, Create (post), Messages, Profile. Use custom tab bar component with smooth animated indicator, not default tab bar. Tab icons from @expo/vector-icons/Feather.",
+    "Create placeholder screens for each tab: app/(tabs)/index.tsx (Home/Feed), app/(tabs)/search.tsx, app/(tabs)/create.tsx, app/(tabs)/messages.tsx, app/(tabs)/profile.tsx. Each should render a styled container with the screen name using the theme.",
+    "Create Zustand stores skeleton: src/store/authStore.ts (user auth state, login/logout actions), src/store/feedStore.ts (posts array, loading state), src/store/chatStore.ts (conversations, messages), src/store/themeStore.ts (theme mode persisted with MMKV).",
+    "Create base UI components in src/components/ui/: Button.tsx (pressable with scale animation on press using Reanimated), Text.tsx (themed text with variant prop for heading/body/caption), Card.tsx (themed card container with soft shadow), Avatar.tsx (circular image with fallback initials), Input.tsx (styled text input with animated focus state).",
+    "Create assets/ directory with a placeholder app icon (can be a simple SVG-based component) and configure expo-font to load Inter from Google Fonts or @expo-google-fonts/inter.",
+    "Create metro.config.js if needed for custom resolver settings.",
+    "Create .gitignore for React Native/Expo project (node_modules, .expo, dist, etc.).",
+    "Create vercel.json at project root configuring serverless functions from api/ directory with rewrites.",
+    "Create api/ directory with a health check endpoint: api/health.ts that returns { status: 'ok', timestamp }."
+  ],
+  "acceptance_criteria": [
+    "npm install completes without errors",
+    "npx tsc --noEmit passes with no TypeScript errors",
+    "npx expo export --platform web completes successfully",
+    "The theme system supports both dark and light modes with the unique warm color palette",
+    "Tab navigation is configured with 5 tabs and custom animated tab bar",
+    "All Zustand stores are properly typed and exported",
+    "Base UI components use Reanimated for micro-interactions",
+    "vercel.json and api/health.ts are present for backend deployment"
+  ],
+  "verification": [
+    "cd /projects/sandbox/San-Mes && npm install",
+    "cd /projects/sandbox/San-Mes && npx tsc --noEmit",
+    "cd /projects/sandbox/San-Mes && npx expo export --platform web"
+  ],
+  "blocked_reason": null,
+  "findings": ""
+}

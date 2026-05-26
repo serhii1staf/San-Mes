@@ -1,0 +1,43 @@
+{
+  "id": "FEAT-002",
+  "type": "feat",
+  "description": "Implement all application screens with full UI: Authentication (login/register), Feed with posts, Search/Discover, Post Creation, Chat/Messaging system, User Profile with customization, and Settings with theme switching. Also implement the complete backend API structure for Vercel serverless deployment.",
+  "status": "pending",
+  "steps": [
+    "Create Authentication screens at app/(auth)/_layout.tsx, app/(auth)/login.tsx, app/(auth)/register.tsx. Login screen: minimalist form with email/password inputs using the custom Input component, animated logo/brand mark at top, soft gradient background, 'Sign In' button with haptic feedback animation, link to register. Register screen: name, email, password, confirm password fields, avatar upload placeholder, animated transitions between fields. Both screens use Reanimated for entrance animations (fade + slide up). Wire up to authStore.",
+    "Implement the Feed/Home screen at app/(tabs)/index.tsx: Scrollable feed with FlatList, pull-to-refresh with custom animated refresh indicator, PostCard component showing author avatar + name + timestamp + post text + optional image + like button (animated heart with scale bounce) + comment count + share button. Use skeleton loading placeholders with shimmer animation while loading. Include a stories/highlights horizontal scroll at top with circular avatars. Wire to feedStore with mock data.",
+    "Create PostCard component at src/components/feed/PostCard.tsx: Rounded card with author info row, text content, optional image (with zoom gesture), action bar (like with animated fill, comment, share, bookmark). Like animation should be a satisfying scale + color change using Reanimated. Double-tap to like on the image area.",
+    "Implement Search/Discover screen at app/(tabs)/search.tsx: Search input at top with animated focus expansion, trending tags section with pill-shaped tags, grid layout of discover posts (2-column masonry-style), category filters as horizontal scrolling chips. Use Reanimated for smooth transitions.",
+    "Implement Post Creation screen at app/(tabs)/create.tsx: Full-screen modal-style creation flow. Text area with character count, image picker integration (using expo-image-picker), preview of selected image, tag/mention autocomplete, location toggle, audience selector (public/friends), animated 'Post' button with loading state. Smooth keyboard-aware layout.",
+    "Implement Messages/Chat list screen at app/(tabs)/messages.tsx: List of conversations with avatar, name, last message preview, timestamp, unread badge (animated dot). Search bar at top to filter chats. Floating action button to start new conversation with spring animation on press.",
+    "Create individual Chat screen at app/chat/[id].tsx: Message bubbles (sent = coral accent on right, received = light gray on left), input bar at bottom with attachment button + text input + send button, auto-scroll to bottom, animated message appearance (slide in from bottom), typing indicator animation (three bouncing dots). Date separators between message groups.",
+    "Implement Profile screen at app/(tabs)/profile.tsx: Large avatar with edit overlay, display name + username + bio, stats row (posts/followers/following with animated number counters), tab switcher (Posts/Saved/Tagged) with animated indicator, grid of user posts. Edit profile button that navigates to edit screen.",
+    "Create Edit Profile screen at app/profile/edit.tsx: Avatar change with camera/gallery picker, editable name, username, bio (with character limit), website URL field, animated save button.",
+    "Implement Settings screen at app/settings/index.tsx: Grouped settings sections (Account, Appearance, Notifications, Privacy, About). Appearance section has theme toggle (dark/light/system) with animated switch that shows sun/moon icon morph. Notification toggles, privacy options (private account, show activity status). Each section is a Card with dividers. Logout button at bottom with confirmation.",
+    "Create all backend API serverless functions in api/ directory: api/auth/login.ts (validate credentials, return mock JWT), api/auth/register.ts (create user, return mock JWT), api/users/[id].ts (get/update user profile), api/posts/index.ts (GET list posts, POST create post), api/posts/[id].ts (GET single post, DELETE), api/posts/[id]/like.ts (POST toggle like), api/posts/[id]/comments.ts (GET/POST comments), api/chats/index.ts (GET conversations list), api/chats/[id].ts (GET messages in conversation, POST send message), api/search.ts (GET search users/posts). Each function should have proper TypeScript types, error handling, and return realistic mock data structures.",
+    "Create shared types at src/types/index.ts: User, Post, Comment, Message, Conversation, ChatMessage interfaces used by both frontend stores and API responses.",
+    "Add mock data generators in src/utils/mockData.ts for realistic demo content (users with avatars from ui-avatars.com, posts with lorem text, chat messages).",
+    "Wire up all screens to their respective Zustand stores and populate with mock data so the app looks complete and functional in demo mode.",
+    "Add smooth screen transition animations in the Stack navigator configuration: custom slide transitions for push/pop, fade for modals."
+  ],
+  "acceptance_criteria": [
+    "All screens render with themed styling and the unique warm color palette",
+    "Authentication flow navigates between login/register with animated transitions",
+    "Feed shows scrollable posts with working like animations and pull-to-refresh",
+    "Chat screens show message bubbles with proper alignment and input bar",
+    "Profile screen displays user info with animated stats and post grid",
+    "Settings screen has working theme toggle that switches dark/light mode across the app",
+    "Search screen has animated input and discover grid layout",
+    "Post creation screen has image picker integration and character count",
+    "All API endpoints in api/ directory return properly structured mock data",
+    "TypeScript compilation passes with no errors (npx tsc --noEmit)",
+    "npx expo export --platform web builds successfully",
+    "Reanimated animations are used for micro-interactions throughout the app"
+  ],
+  "verification": [
+    "cd /projects/sandbox/San-Mes && npx tsc --noEmit",
+    "cd /projects/sandbox/San-Mes && npx expo export --platform web"
+  ],
+  "blocked_reason": null,
+  "findings": ""
+}
