@@ -519,14 +519,14 @@ export default function EditProfileScreen() {
             {/* Scrollable emoji categories */}
             <ScrollView
               showsVerticalScrollIndicator={false}
-              contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 32 }}
+              contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 32 }}
             >
               {MOOD_CATEGORIES.map((category) => (
                 <View key={category.title} style={{ marginBottom: 20 }}>
-                  <Text variant="caption" weight="semibold" color={theme.colors.text.secondary} style={{ marginBottom: 10 }}>
+                  <Text variant="caption" weight="semibold" color={theme.colors.text.secondary} style={{ marginBottom: 10, paddingHorizontal: 4 }}>
                     {category.title}
                   </Text>
-                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 8 }}>
                     {category.emojis.map((e) => (
                       <Pressable
                         key={e}
@@ -576,88 +576,94 @@ export default function EditProfileScreen() {
             }}
             onPress={() => setShowLinkPicker(false)}
           />
-          <View
-            style={{
-              position: 'absolute',
-              bottom: 0,
-              left: 0,
-              right: 0,
-              backgroundColor: theme.isDark ? '#1e1e1e' : '#ffffff',
-              borderTopLeftRadius: 24,
-              borderTopRightRadius: 24,
-              paddingTop: 16,
-              paddingBottom: insets.bottom + 20,
-              paddingHorizontal: 20,
-            }}
+          <KeyboardAvoidingView
+            style={{ flex: 1, justifyContent: 'center' }}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           >
-            <View style={{ alignItems: 'center', marginBottom: 16 }}>
-              <View
-                style={{
-                  width: 36,
-                  height: 5,
-                  borderRadius: 3,
-                  backgroundColor: theme.colors.border.medium,
-                }}
-              />
-            </View>
-            <Text variant="body" weight="semibold" align="center" style={{ marginBottom: 16 }}>
-              {editingLinkIndex !== null ? 'Редактировать ссылку' : 'Добавить ссылку'}
-            </Text>
-
-            {/* Link type selector */}
-            <Text variant="caption" weight="medium" color={theme.colors.text.secondary} style={{ marginBottom: 8 }}>
-              Тип
-            </Text>
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
-              {LINK_TYPES.map((lt) => (
-                <Pressable
-                  key={lt.key}
-                  onPress={() => setLinkType(lt.key)}
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    gap: 6,
-                    paddingHorizontal: 12,
-                    paddingVertical: 8,
-                    borderRadius: 10,
-                    backgroundColor: linkType === lt.key
-                      ? theme.colors.accent.primary + '20'
-                      : theme.colors.background.secondary,
-                    borderWidth: linkType === lt.key ? 1.5 : 0,
-                    borderColor: theme.colors.accent.primary,
-                  }}
-                >
-                  <Feather name={lt.icon as any} size={14} color={linkType === lt.key ? theme.colors.accent.primary : theme.colors.text.tertiary} />
-                  <Text variant="caption" weight={linkType === lt.key ? 'semibold' : 'regular'} color={linkType === lt.key ? theme.colors.accent.primary : theme.colors.text.secondary}>
-                    {lt.label}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
-
-            {/* URL input */}
-            <Input
-              label="URL"
-              value={linkUrl}
-              onChangeText={setLinkUrl}
-              placeholder="https://..."
-              style={{ marginBottom: 20 }}
-            />
-
-            <Pressable
-              onPress={handleSaveLink}
+            <View
               style={{
-                backgroundColor: theme.colors.accent.primary,
-                borderRadius: 14,
-                paddingVertical: 14,
-                alignItems: 'center',
+                marginHorizontal: 16,
+                backgroundColor: theme.isDark ? '#1e1e1e' : '#ffffff',
+                borderRadius: 24,
+                paddingTop: 16,
+                paddingBottom: 24,
+                paddingHorizontal: 20,
+                shadowColor: '#000',
+                shadowOffset: { width: 0, height: 12 },
+                shadowOpacity: 0.3,
+                shadowRadius: 32,
+                elevation: 20,
               }}
             >
-              <Text variant="body" weight="semibold" color={theme.colors.text.inverse}>
-                {editingLinkIndex !== null ? 'Сохранить' : 'Добавить'}
+              <View style={{ alignItems: 'center', marginBottom: 16 }}>
+                <View
+                  style={{
+                    width: 36,
+                    height: 5,
+                    borderRadius: 3,
+                    backgroundColor: theme.colors.border.medium,
+                  }}
+                />
+              </View>
+              <Text variant="body" weight="semibold" align="center" style={{ marginBottom: 16 }}>
+                {editingLinkIndex !== null ? 'Редактировать ссылку' : 'Добавить ссылку'}
               </Text>
-            </Pressable>
-          </View>
+
+              {/* Link type selector */}
+              <Text variant="caption" weight="medium" color={theme.colors.text.secondary} style={{ marginBottom: 8 }}>
+                Тип
+              </Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
+                {LINK_TYPES.map((lt) => (
+                  <Pressable
+                    key={lt.key}
+                    onPress={() => setLinkType(lt.key)}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 6,
+                      paddingHorizontal: 12,
+                      paddingVertical: 8,
+                      borderRadius: 10,
+                      backgroundColor: linkType === lt.key
+                        ? theme.colors.accent.primary + '20'
+                        : theme.colors.background.secondary,
+                      borderWidth: linkType === lt.key ? 1.5 : 0,
+                      borderColor: theme.colors.accent.primary,
+                    }}
+                  >
+                    <Feather name={lt.icon as any} size={14} color={linkType === lt.key ? theme.colors.accent.primary : theme.colors.text.tertiary} />
+                    <Text variant="caption" weight={linkType === lt.key ? 'semibold' : 'regular'} color={linkType === lt.key ? theme.colors.accent.primary : theme.colors.text.secondary}>
+                      {lt.label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+
+              {/* URL input */}
+              <Input
+                label="URL"
+                value={linkUrl}
+                onChangeText={setLinkUrl}
+                placeholder="https://..."
+                style={{ marginBottom: 20 }}
+              />
+
+              <Pressable
+                onPress={handleSaveLink}
+                style={{
+                  backgroundColor: theme.colors.accent.primary,
+                  borderRadius: 14,
+                  paddingVertical: 14,
+                  alignItems: 'center',
+                }}
+              >
+                <Text variant="body" weight="semibold" color={theme.colors.text.inverse}>
+                  {editingLinkIndex !== null ? 'Сохранить' : 'Добавить'}
+                </Text>
+              </Pressable>
+            </View>
+          </KeyboardAvoidingView>
         </View>
       )}
     </View>
