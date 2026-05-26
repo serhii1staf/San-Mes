@@ -1,9 +1,12 @@
 import React, { useEffect, useCallback } from 'react';
 import { View, FlatList, RefreshControl, ViewStyle, Pressable } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Feather } from '@expo/vector-icons';
+import { router } from 'expo-router';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { PostCard } from '../../src/components/feed/PostCard';
+import { TrendingSection } from '../../src/components/feed/TrendingSection';
 import { useFeedStore } from '../../src/store';
 import { mockPosts, mockStories } from '../../src/utils/mockData';
 import { Post, Story } from '../../src/types';
@@ -61,6 +64,17 @@ function StoriesRow() {
         renderItem={({ item, index }) => <StoryItem story={item} index={index} />}
         showsHorizontalScrollIndicator={false}
       />
+    </View>
+  );
+}
+
+function FeedHeader() {
+  const theme = useTheme();
+
+  return (
+    <View>
+      <StoriesRow />
+      <TrendingSection />
     </View>
   );
 }
@@ -141,6 +155,11 @@ export default function FeedScreen() {
       <View style={containerStyle}>
         <View style={headerStyle}>
           <Text variant="subheading" weight="bold">San</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Pressable style={{ marginLeft: theme.spacing.base }}>
+              <Feather name="bell" size={22} color={theme.colors.text.primary} />
+            </Pressable>
+          </View>
         </View>
         <View style={{ paddingHorizontal: theme.spacing.base }}>
           <SkeletonCard />
@@ -154,25 +173,31 @@ export default function FeedScreen() {
     <View style={containerStyle}>
       <View style={headerStyle}>
         <Text variant="subheading" weight="bold">San</Text>
-        <Pressable>
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <Pressable
+            onPress={() => router.push('/notifications')}
+            style={{ position: 'relative' }}
+          >
+            <Feather name="bell" size={22} color={theme.colors.text.primary} />
             <View
               style={{
+                position: 'absolute',
+                top: -2,
+                right: -2,
                 width: 8,
                 height: 8,
                 borderRadius: 4,
                 backgroundColor: theme.colors.accent.primary,
-                marginRight: theme.spacing.xs,
               }}
             />
-          </View>
-        </Pressable>
+          </Pressable>
+        </View>
       </View>
       <FlatList
         data={posts}
         keyExtractor={(item) => item.id}
         renderItem={renderPost}
-        ListHeaderComponent={StoriesRow}
+        ListHeaderComponent={FeedHeader}
         contentContainerStyle={{ paddingHorizontal: theme.spacing.base, paddingBottom: 100 }}
         showsVerticalScrollIndicator={false}
         refreshControl={

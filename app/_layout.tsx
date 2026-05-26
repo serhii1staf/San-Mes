@@ -89,7 +89,15 @@ export default function RootLayout() {
           <Stack.Screen name="(tabs)" />
           <Stack.Screen name="(auth)" />
           <Stack.Screen name="chat/[id]" />
-          <Stack.Screen name="profile/edit" options={{ presentation: 'modal' }} />
+          <Stack.Screen
+            name="profile/edit"
+            options={{
+              presentation: 'transparentModal',
+              animation: 'fade',
+              contentStyle: { backgroundColor: 'rgba(0,0,0,0.5)' },
+            }}
+          />
+          <Stack.Screen name="notifications" />
           <Stack.Screen name="settings/index" />
         </Stack>
       </AuthNavigationGuard>

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { View, ViewStyle, Pressable, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
 import { router } from 'expo-router';
 import { useTheme } from '../../src/theme';
-import { Text, Input, Button } from '../../src/components/ui';
+import { Text, Input, Button, Logo } from '../../src/components/ui';
 import { useAuthStore } from '../../src/store';
 import { currentUser } from '../../src/utils/mockData';
 
@@ -43,16 +43,6 @@ export default function LoginScreen() {
     marginBottom: theme.spacing['2xl'],
   };
 
-  const logoCircleStyle: ViewStyle = {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: theme.colors.accent.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: theme.spacing.base,
-  };
-
   return (
     <KeyboardAvoidingView
       style={containerStyle}
@@ -64,16 +54,12 @@ export default function LoginScreen() {
         showsVerticalScrollIndicator={false}
       >
         <View style={logoContainerStyle}>
-          <View style={logoCircleStyle}>
-            <Text variant="heading" weight="bold" color={theme.colors.text.inverse}>
-              S
-            </Text>
-          </View>
-          <Text variant="heading" weight="bold">
+          <Logo size={90} color={theme.colors.accent.primary} />
+          <Text variant="heading" weight="bold" style={{ marginTop: theme.spacing.base }}>
             San
           </Text>
           <Text variant="body" color={theme.colors.text.secondary} style={{ marginTop: theme.spacing.xs }}>
-            Connect with warmth
+            Freedom to connect
           </Text>
         </View>
 

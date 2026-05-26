@@ -81,11 +81,26 @@ export function PostCard({ post, onLike, onComment, onShare, onBookmark }: PostC
       <View style={headerStyle}>
         <Avatar source={post.authorAvatar} name={post.authorName} size="sm" />
         <View style={{ marginLeft: theme.spacing.md, flex: 1 }}>
-          <Text weight="semibold" variant="body">
-            {post.authorName}
-          </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Text weight="semibold" variant="body">
+              {post.authorName}
+            </Text>
+            <View
+              style={{
+                width: 16,
+                height: 16,
+                borderRadius: 8,
+                backgroundColor: theme.colors.accent.secondary,
+                alignItems: 'center',
+                justifyContent: 'center',
+                marginLeft: 4,
+              }}
+            >
+              <Feather name="check" size={10} color="#FFFFFF" />
+            </View>
+          </View>
           <Text variant="caption" color={theme.colors.text.secondary}>
-            {formatTimeAgo(post.createdAt)}
+            @{post.authorUsername} · {formatTimeAgo(post.createdAt)}
           </Text>
         </View>
         <Pressable>
@@ -116,7 +131,7 @@ export function PostCard({ post, onLike, onComment, onShare, onBookmark }: PostC
         <Pressable onPress={handleLike} style={actionButtonStyle}>
           <Feather
             name="heart"
-            size={20}
+            size={18}
             color={post.isLiked ? theme.colors.accent.primary : theme.colors.text.secondary}
           />
           <Text
@@ -133,7 +148,7 @@ export function PostCard({ post, onLike, onComment, onShare, onBookmark }: PostC
           style={actionButtonStyle}
           onPress={() => onComment?.(post.id)}
         >
-          <Feather name="message-circle" size={20} color={theme.colors.text.secondary} />
+          <Feather name="message-circle" size={18} color={theme.colors.text.secondary} />
           <Text
             variant="caption"
             weight="medium"
@@ -145,7 +160,19 @@ export function PostCard({ post, onLike, onComment, onShare, onBookmark }: PostC
         </Pressable>
 
         <Pressable style={actionButtonStyle} onPress={() => onShare?.(post.id)}>
-          <Feather name="send" size={18} color={theme.colors.text.secondary} />
+          <Feather name="repeat" size={18} color={theme.colors.text.secondary} />
+          <Text
+            variant="caption"
+            weight="medium"
+            color={theme.colors.text.secondary}
+            style={{ marginLeft: theme.spacing.xs } as TextStyle}
+          >
+            {post.sharesCount}
+          </Text>
+        </Pressable>
+
+        <Pressable style={actionButtonStyle} onPress={() => onShare?.(post.id)}>
+          <Feather name="share" size={18} color={theme.colors.text.secondary} />
         </Pressable>
 
         <View style={{ flex: 1 }} />
@@ -153,7 +180,7 @@ export function PostCard({ post, onLike, onComment, onShare, onBookmark }: PostC
         <Pressable onPress={handleBookmark}>
           <Feather
             name="bookmark"
-            size={20}
+            size={18}
             color={isBookmarked ? theme.colors.accent.tertiary : theme.colors.text.secondary}
           />
         </Pressable>

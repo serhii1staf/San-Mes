@@ -8,7 +8,7 @@ const ICON_NAMES: Record<string, keyof typeof Feather.glyphMap> = {
   index: 'home',
   search: 'search',
   create: 'plus-circle',
-  messages: 'message-circle',
+  messages: 'send',
   profile: 'user',
 };
 
@@ -25,6 +25,31 @@ function TabBarButton({
 }) {
   const theme = useTheme();
   const iconName = ICON_NAMES[routeName] || 'circle';
+  const isCreate = routeName === 'create';
+
+  if (isCreate) {
+    return (
+      <Pressable
+        onPress={onPress}
+        onLongPress={onLongPress}
+        style={styles.tabButton}
+      >
+        <View
+          style={{
+            width: 44,
+            height: 44,
+            borderRadius: 22,
+            backgroundColor: theme.colors.accent.secondary,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <Feather name="plus" size={22} color="#FFFFFF" />
+        </View>
+      </Pressable>
+    );
+  }
+
   const color = isFocused ? theme.colors.accent.primary : theme.colors.text.tertiary;
 
   return (
@@ -51,50 +76,64 @@ function TabBarButton({
 export function CustomTabBar({ state, navigation }: BottomTabBarProps) {
   const theme = useTheme();
 
+  const wrapperStyle: ViewStyle = {
+    position: 'absolute',
+    bottom: 24,
+    left: 16,
+    right: 16,
+  };
+
   const containerStyle: ViewStyle = {
     flexDirection: 'row',
-    backgroundColor: theme.colors.background.elevated,
-    paddingBottom: 28,
-    paddingTop: 12,
-    borderTopWidth: 0.5,
-    borderTopColor: theme.colors.border.light,
-    ...theme.getShadow('sm'),
+    backgroundColor: theme.isDark ? '#1E1E1E' : theme.colors.background.elevated,
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+    borderRadius: 32,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 8,
+    borderWidth: theme.isDark ? 1 : 0,
+    borderColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'transparent',
   };
 
   return (
-    <View style={containerStyle}>
-      {state.routes.map((route, index) => {
-        const isFocused = state.index === index;
+    <View style={wrapperStyle}>
+      <View style={containerStyle}>
+        {state.routes.map((route, index) => {
+          const isFocused = state.index === index;
 
-        const onPress = () => {
-          const event = navigation.emit({
-            type: 'tabPress',
-            target: route.key,
-            canPreventDefault: true,
-          });
+          const onPress = () => {
+            const event = navigation.emit({
+              type: 'tabPress',
+              target: route.key,
+              canPreventDefault: true,
+            });
 
-          if (!isFocused && !event.defaultPrevented) {
-            navigation.navigate(route.name);
-          }
-        };
+            if (!isFocused && !event.defaultPrevented) {
+              navigation.navigate(route.name);
+            }
+          };
 
-        const onLongPress = () => {
-          navigation.emit({
-            type: 'tabLongPress',
-            target: route.key,
-          });
-        };
+          const onLongPress = () => {
+            navigation.emit({
+              type: 'tabLongPress',
+              target: route.key,
+            });
+          };
 
-        return (
-          <TabBarButton
-            key={route.key}
-            isFocused={isFocused}
-            onPress={onPress}
-            onLongPress={onLongPress}
-            routeName={route.name}
-          />
-        );
-      })}
+          return (
+            <TabBarButton
+              key={route.key}
+              isFocused={isFocused}
+              onPress={onPress}
+              onLongPress={onLongPress}
+              routeName={route.name}
+            />
+          );
+        })}
+      </View>
     </View>
   );
 }
