@@ -7,7 +7,7 @@
     "icon": "./assets/icon.png",
     "scheme": "sanmes",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
@@ -35,6 +35,19 @@
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "router": {
+        "origin": false
+      },
+      "eas": {
+        "projectId": "9d37a5f0-54d8-4d17-8b7f-37ce6256ae06"
+      }
+    },
+    "owner": "odserser",
+    "runtimeVersion": "54.0.0",
+    "updates": {
+      "url": "https://u.expo.dev/9d37a5f0-54d8-4d17-8b7f-37ce6256ae06"
     }
   }
 }

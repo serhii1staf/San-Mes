@@ -1,4 +1,5 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
+import { View, ActivityIndicator, StyleSheet } from 'react-native';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
@@ -6,7 +7,9 @@ import { ThemeProvider } from '../src/theme';
 import { fontAssets } from '../src/theme/fonts';
 import { useAuthStore } from '../src/store';
 
-SplashScreen.preventAutoHideAsync();
+SplashScreen.preventAutoHideAsync().catch(() => {
+  // If preventAutoHideAsync fails (e.g., called too late), ignore the error
+});
 
 function AuthNavigationGuard({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, hasHydrated } = useAuthStore();
@@ -26,23 +29,53 @@ function AuthNavigationGuard({ children }: { children: React.ReactNode }) {
   }, [isAuthenticated, segments, hasHydrated]);
 
   if (!hasHydrated) {
-    return null;
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#E8856C" />
+      </View>
+    );
   }
 
   return <>{children}</>;
 }
 
 export default function RootLayout() {
-  const [fontsLoaded] = useFonts(fontAssets);
+  const [fontsLoaded, fontError] = useFonts(fontAssets);
+  const [fontTimeout, setFontTimeout] = useState(false);
+
+  // Safety timeout: if fonts take more than 3 seconds, proceed without them
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setFontTimeout(true);
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, []);
+
+  const ready = fontsLoaded || fontError !== null || fontTimeout;
 
   useEffect(() => {
-    if (fontsLoaded) {
-      SplashScreen.hideAsync();
+    if (ready) {
+      SplashScreen.hideAsync().catch(() => {});
     }
-  }, [fontsLoaded]);
+  }, [ready]);
 
-  if (!fontsLoaded) {
-    return null;
+  // Also force hasHydrated after a timeout in case persist middleware fails
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const state = useAuthStore.getState();
+      if (!state.hasHydrated) {
+        useAuthStore.setState({ hasHydrated: true });
+      }
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, []);
+
+  if (!ready) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#E8856C" />
+      </View>
+    );
   }
 
   return (
@@ -64,3 +97,12 @@ export default function RootLayout() {
     </ThemeProvider>
   );
 }
+
+const styles = StyleSheet.create({
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#FFF8F0',
+  },
+});

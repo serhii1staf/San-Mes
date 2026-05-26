@@ -1,21 +1,31 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage, StateStorage } from 'zustand/middleware';
-import { MMKV } from 'react-native-mmkv';
 
-const storage = new MMKV({ id: 'theme-storage' });
+let mmkvStorage: StateStorage;
 
-const mmkvStorage: StateStorage = {
-  setItem: (name, value) => {
-    storage.set(name, value);
-  },
-  getItem: (name) => {
-    const value = storage.getString(name);
-    return value ?? null;
-  },
-  removeItem: (name) => {
-    storage.delete(name);
-  },
-};
+try {
+  const { MMKV } = require('react-native-mmkv');
+  const storage = new MMKV({ id: 'theme-storage' });
+  mmkvStorage = {
+    setItem: (name: string, value: string) => {
+      storage.set(name, value);
+    },
+    getItem: (name: string) => {
+      const value = storage.getString(name);
+      return value ?? null;
+    },
+    removeItem: (name: string) => {
+      storage.delete(name);
+    },
+  };
+} catch {
+  // Fallback to no-op storage if MMKV is not available (e.g., Expo Go)
+  mmkvStorage = {
+    setItem: () => {},
+    getItem: () => null,
+    removeItem: () => {},
+  };
+}
 
 export type ThemeMode = 'light' | 'dark';
 

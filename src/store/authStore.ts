@@ -1,21 +1,31 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage, StateStorage } from 'zustand/middleware';
-import { MMKV } from 'react-native-mmkv';
 
-const storage = new MMKV({ id: 'auth-storage' });
+let mmkvStorage: StateStorage;
 
-const mmkvStorage: StateStorage = {
-  setItem: (name, value) => {
-    storage.set(name, value);
-  },
-  getItem: (name) => {
-    const value = storage.getString(name);
-    return value ?? null;
-  },
-  removeItem: (name) => {
-    storage.delete(name);
-  },
-};
+try {
+  const { MMKV } = require('react-native-mmkv');
+  const storage = new MMKV({ id: 'auth-storage' });
+  mmkvStorage = {
+    setItem: (name: string, value: string) => {
+      storage.set(name, value);
+    },
+    getItem: (name: string) => {
+      const value = storage.getString(name);
+      return value ?? null;
+    },
+    removeItem: (name: string) => {
+      storage.delete(name);
+    },
+  };
+} catch {
+  // Fallback to no-op storage if MMKV is not available (e.g., Expo Go)
+  mmkvStorage = {
+    setItem: () => {},
+    getItem: () => null,
+    removeItem: () => {},
+  };
+}
 
 export interface User {
   id: string;
@@ -63,8 +73,14 @@ export const useAuthStore = create<AuthStoreState>()(
         token: state.token,
         isAuthenticated: state.isAuthenticated,
       }),
-      onRehydrateStorage: () => (state) => {
-        state?.setHasHydrated(true);
+      onRehydrateStorage: () => (state, error) => {
+        // Always mark as hydrated, even if rehydration fails
+        if (state) {
+          state.setHasHydrated(true);
+        } else {
+          // If state is undefined (error case), force hydration via direct store update
+          useAuthStore.setState({ hasHydrated: true });
+        }
       },
     }
   )
