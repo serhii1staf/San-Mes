@@ -3,7 +3,6 @@ import { View, Pressable, ActivityIndicator, ScrollView, Image, Dimensions } fro
 import { Feather, FontAwesome5 } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
@@ -165,11 +164,9 @@ export default function UserProfileScreen() {
 
         {/* Profile info */}
         <View style={{ paddingHorizontal: 16, marginTop: -36 }}>
-          {/* Avatar with glass container */}
-          <View style={{ width: 72, height: 72, borderRadius: 36, overflow: 'hidden', borderWidth: 3, borderColor: theme.colors.background.primary }}>
-            <BlurView intensity={80} tint={theme.isDark ? 'dark' : 'light'} style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.isDark ? 'rgba(30,30,30,0.6)' : 'rgba(255,255,255,0.6)' }}>
-              <Avatar emoji={profile.emoji || '😊'} size="lg" />
-            </BlurView>
+          {/* Avatar with frosted container */}
+          <View style={{ width: 72, height: 72, borderRadius: 36, overflow: 'hidden', borderWidth: 3, borderColor: theme.colors.background.primary, backgroundColor: theme.isDark ? 'rgba(30,30,30,0.85)' : 'rgba(255,255,255,0.85)', alignItems: 'center', justifyContent: 'center' }}>
+            <Avatar emoji={profile.emoji || '😊'} size="lg" />
           </View>
 
           {/* Name row */}

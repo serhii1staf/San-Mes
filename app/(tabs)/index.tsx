@@ -132,6 +132,12 @@ export default function FeedScreen() {
             await toggleLikeAPI(user.id, postId);
           }
         }}
+        onShare={async (postId) => {
+          try {
+            const { Share } = require('react-native');
+            await Share.share({ message: `https://san-mes.vercel.app/post/${postId}` });
+          } catch {}
+        }}
         onMenu={(post) => setMenuPost(post)}
       />
     </View>

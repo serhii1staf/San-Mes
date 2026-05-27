@@ -194,8 +194,8 @@ export async function sendMessage(conversationId: string, senderId: string, text
   return { error: error?.message || null };
 }
 
-// Update profile (basic fields in DB)
-export async function updateProfile(userId: string, updates: Partial<{ display_name: string; emoji: string; bio: string }>): Promise<{ error: string | null }> {
+// Update profile (basic fields in DB — including banner_url and links)
+export async function updateProfile(userId: string, updates: Partial<{ display_name: string; emoji: string; bio: string; banner_url: string; links: any }>): Promise<{ error: string | null }> {
   const payload: any = { ...updates, updated_at: new Date().toISOString() };
   try {
     const { error } = await supabase
@@ -208,36 +208,41 @@ export async function updateProfile(userId: string, updates: Partial<{ display_n
   }
 }
 
-// ---- Profile Meta (banner_url, links) via Supabase Storage ----
+// ---- Profile Meta — now stored directly in profiles table ----
 
 export interface ProfileMeta {
   banner_url?: string;
   links?: { type: string; url: string }[];
 }
 
-// Save profile meta (links, banner_url) as JSON file in storage
+// Save profile meta (writes banner_url and links to profiles table)
 export async function saveProfileMeta(userId: string, meta: ProfileMeta): Promise<{ error: string | null }> {
+  const payload: any = { updated_at: new Date().toISOString() };
+  if (meta.banner_url !== undefined) payload.banner_url = meta.banner_url;
+  if (meta.links !== undefined) payload.links = meta.links;
   try {
-    const blob = new Blob([JSON.stringify(meta)], { type: 'application/json' });
-    const { error } = await storageClient.storage
-      .from('profile-meta')
-      .upload(`${userId}.json`, blob, { upsert: true, contentType: 'application/json' });
+    const { error } = await supabase
+      .from('profiles')
+      .update(payload)
+      .eq('id', userId);
     return { error: error?.message || null };
   } catch (e: any) {
     return { error: e?.message || 'Unknown error' };
   }
 }
 
-// Load profile meta from storage
+// Load profile meta from profiles table
 export async function loadProfileMeta(userId: string): Promise<{ meta: ProfileMeta | null; error: string | null }> {
   try {
-    const { data } = supabase.storage.from('profile-meta').getPublicUrl(`${userId}.json`);
-    const response = await fetch(data.publicUrl + '?t=' + Date.now());
-    if (!response.ok) return { meta: null, error: null }; // No meta yet
-    const meta = await response.json();
-    return { meta, error: null };
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('banner_url, links')
+      .eq('id', userId)
+      .single();
+    if (error || !data) return { meta: null, error: null };
+    return { meta: { banner_url: data.banner_url || undefined, links: data.links || undefined }, error: null };
   } catch (e: any) {
-    return { meta: null, error: null }; // Silently fail - meta is optional
+    return { meta: null, error: null };
   }
 }
 

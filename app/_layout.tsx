@@ -92,11 +92,9 @@ export default function RootLayout() {
           <Stack.Screen
             name="profile/edit"
             options={{
-              presentation: 'formSheet',
+              presentation: 'transparentModal',
               animation: 'slide_from_bottom',
               headerShown: false,
-              sheetGrabberVisible: true,
-              sheetCornerRadius: 32,
               contentStyle: { backgroundColor: 'transparent' },
             }}
           />

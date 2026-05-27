@@ -3,6 +3,8 @@
   "outputDirectory": ".",
   "rewrites": [
     { "source": "/", "destination": "/api/index" },
+    { "source": "/post/:id", "destination": "/api/index" },
+    { "source": "/profile/:id", "destination": "/api/index" },
     { "source": "/api/(.*)", "destination": "/api/$1" }
   ]
 }
