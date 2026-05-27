@@ -45,3 +45,7 @@ jobs:
         if: success()
         run: |
           eas submit --platform ios --profile production --latest --non-interactive
+        env:
+          EXPO_ASC_API_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          EXPO_ASC_API_KEY_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          EXPO_ASC_API_KEY_PATH: ./AuthKey_PN7B743Y4X.p8
