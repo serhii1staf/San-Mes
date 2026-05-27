@@ -8,10 +8,10 @@ import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { PostCard } from '../../src/components/feed/PostCard';
 import { TrendingSection } from '../../src/components/feed/TrendingSection';
-import { useFeedStore } from '../../src/store';
+import { useFeedStore, useAuthStore } from '../../src/store';
 import { mockStories } from '../../src/utils/mockData';
 import { Post, Story } from '../../src/types';
-import { getPosts } from '../../src/lib/supabase';
+import { getPosts, toggleLike as toggleLikeAPI } from '../../src/lib/supabase';
 
 function StoryItem({ story }: { story: Story; index: number }) {
   const theme = useTheme();
@@ -117,6 +117,7 @@ export default function FeedScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const { posts, isLoading, isRefreshing, setPosts, setLoading, setRefreshing, toggleLike } = useFeedStore();
+  const { user } = useAuthStore();
 
   // Background color for gradient — uses theme color dynamically
   const bgColor = theme.colors.background.primary;
@@ -183,7 +184,12 @@ export default function FeedScreen() {
     <View>
       <PostCard
         post={item}
-        onLike={toggleLike}
+        onLike={async (postId) => {
+          toggleLike(postId);
+          if (user?.id) {
+            await toggleLikeAPI(user.id, postId);
+          }
+        }}
       />
     </View>
   );
@@ -257,7 +263,7 @@ export default function FeedScreen() {
         data={posts}
         keyExtractor={(item) => item.id}
         renderItem={renderPost}
-        ListHeaderComponent={FeedHeader}
+        ListHeaderComponent={posts.length === 0 ? FeedHeader : StoriesRow}
         contentContainerStyle={{ paddingHorizontal: theme.spacing.base, paddingBottom: 100, paddingTop: headerContentHeight }}
         showsVerticalScrollIndicator={false}
         refreshControl={

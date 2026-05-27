@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { View, Image, Pressable, ViewStyle, TextStyle, Dimensions } from 'react-native';
+import { View, Image, Pressable, ViewStyle, TextStyle, Dimensions, Share } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../../theme';
 import { Text } from '../ui/Text';
@@ -21,6 +21,7 @@ interface PostCardProps {
 export function PostCard({ post, onLike, onComment, onShare, onBookmark }: PostCardProps) {
   const theme = useTheme();
   const [isBookmarked, setIsBookmarked] = useState(post.isBookmarked);
+  const [showMenu, setShowMenu] = useState(false);
   const lastTap = useRef<number>(0);
 
   const handleLike = () => {
@@ -102,7 +103,7 @@ export function PostCard({ post, onLike, onComment, onShare, onBookmark }: PostC
             @{post.authorUsername} · {formatTimeAgo(post.createdAt)}
           </Text>
         </View>
-        <Pressable>
+        <Pressable onPress={() => setShowMenu(!showMenu)}>
           <Feather name="more-horizontal" size={20} color={theme.colors.text.secondary} />
         </Pressable>
       </View>
@@ -184,6 +185,34 @@ export function PostCard({ post, onLike, onComment, onShare, onBookmark }: PostC
           />
         </Pressable>
       </View>
+
+      {showMenu && (
+        <View style={{
+          position: 'absolute',
+          top: 50,
+          right: 16,
+          backgroundColor: theme.colors.background.elevated,
+          borderRadius: 12,
+          padding: 4,
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 4 },
+          shadowOpacity: 0.15,
+          shadowRadius: 12,
+          elevation: 8,
+          zIndex: 100,
+          borderWidth: 1,
+          borderColor: theme.colors.border.light,
+        }}>
+          <Pressable onPress={() => { setShowMenu(false); }} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 14 }}>
+            <Feather name="link" size={16} color={theme.colors.text.secondary} />
+            <Text variant="caption" style={{ marginLeft: 10 }}>Скопировать ссылку</Text>
+          </Pressable>
+          <Pressable onPress={() => { setShowMenu(false); }} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 14 }}>
+            <Feather name="flag" size={16} color={theme.colors.text.secondary} />
+            <Text variant="caption" style={{ marginLeft: 10 }}>Пожаловаться</Text>
+          </Pressable>
+        </View>
+      )}
     </Card>
   );
 }

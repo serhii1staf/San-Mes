@@ -16,7 +16,16 @@ export default function BrowserScreen() {
   const [canGoBack, setCanGoBack] = useState(false);
   const webViewRef = useRef<WebView>(null);
 
-  const decodedUrl = decodeURIComponent(url || '');
+  const decodedUrl = (() => {
+    try {
+      const decoded = decodeURIComponent(url || '');
+      // Validate it's a proper URL
+      if (decoded.startsWith('http://') || decoded.startsWith('https://')) return decoded;
+      return `https://${decoded}`;
+    } catch {
+      return url || 'https://google.com';
+    }
+  })();
 
   // Extract domain for display
   const displayDomain = (() => {

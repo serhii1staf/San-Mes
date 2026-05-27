@@ -1,9 +1,11 @@
 import React from 'react';
 import { View, Pressable, StyleSheet, ViewStyle } from 'react-native';
 import { BottomTabBarProps } from '@react-navigation/bottom-tabs';
+import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../../theme';
+import { triggerHaptic } from '../../utils/haptics';
 
 const ICON_NAMES: Record<string, keyof typeof Feather.glyphMap> = {
   index: 'home',
@@ -94,25 +96,21 @@ export function CustomTabBar({ state, navigation }: BottomTabBarProps) {
     paddingHorizontal: 8,
     marginHorizontal: 16,
     borderRadius: 32,
-    backgroundColor: theme.isDark ? '#1E1E1E' : theme.colors.background.elevated,
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
-    elevation: 8,
+    overflow: 'hidden',
     borderWidth: theme.isDark ? 1 : 0.5,
-    borderColor: theme.isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)',
+    borderColor: theme.isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)',
   };
 
   return (
     <View style={wrapperStyle} pointerEvents="box-none">
       {/* Tab bar */}
       <View style={{ marginBottom: 24 }}>
-        <View style={containerStyle}>
+        <BlurView intensity={80} tint={theme.isDark ? 'dark' : 'light'} style={containerStyle}>
           {state.routes.map((route, index) => {
             const isFocused = state.index === index;
 
             const onPress = () => {
+              triggerHaptic('light');
               const event = navigation.emit({
                 type: 'tabPress',
                 target: route.key,
@@ -141,7 +139,7 @@ export function CustomTabBar({ state, navigation }: BottomTabBarProps) {
               />
             );
           })}
-        </View>
+        </BlurView>
       </View>
 
       {/* Gradient fade BELOW the tab bar - from transparent to solid at the very bottom */}

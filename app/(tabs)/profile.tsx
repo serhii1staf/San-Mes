@@ -165,7 +165,7 @@ export default function ProfileScreen() {
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
             <Text variant="subheading" weight="bold">@{displayUser.username}</Text>
             <Animated.View style={{ opacity: headerEmojiOpacity, marginLeft: 8 }}>
-              <Avatar emoji={displayUser.emoji} size="xs" />
+              <Avatar emoji={displayUser.emoji} size="sm" />
             </Animated.View>
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
@@ -186,6 +186,11 @@ export default function ProfileScreen() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 100, paddingTop: headerContentHeight }}
       >
+        {/* Profile banner */}
+        <View style={{ height: 100, marginHorizontal: 20, borderRadius: 16, backgroundColor: theme.colors.accent.primary + '25', marginTop: 8, alignItems: 'center', justifyContent: 'center' }}>
+          <Text style={{ fontSize: 40 }}>{displayUser.emoji}</Text>
+        </View>
+
         {/* Profile row: LEFT = stats, RIGHT = avatar */}
         <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, marginTop: 16 }}>
           {/* Left side: compact stats */}
