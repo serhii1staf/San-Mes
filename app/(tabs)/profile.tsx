@@ -67,9 +67,9 @@ export default function ProfileScreen() {
       const { posts: dbPosts } = await getPosts();
       const myPosts = dbPosts.filter((p: any) => p.author_id === user?.id).map((p: any) => ({
         id: p.id, authorId: p.author_id,
-        authorName: p.profiles?.display_name || user?.displayName || '',
-        authorUsername: p.profiles?.username || user?.username || '',
-        authorEmoji: p.profiles?.emoji || user?.emoji || '😊',
+        authorName: (Array.isArray(p.profiles) ? p.profiles[0]?.display_name : p.profiles?.display_name) || user?.displayName || '',
+        authorUsername: (Array.isArray(p.profiles) ? p.profiles[0]?.username : p.profiles?.username) || user?.username || '',
+        authorEmoji: (Array.isArray(p.profiles) ? p.profiles[0]?.emoji : p.profiles?.emoji) || user?.emoji || '😊',
         content: p.content, imageUrl: p.image_url || undefined,
         likesCount: p.likes_count || 0, commentsCount: p.comments_count || 0,
         sharesCount: p.shares_count || 0, isLiked: false, isBookmarked: false, createdAt: p.created_at,

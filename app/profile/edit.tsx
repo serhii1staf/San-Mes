@@ -11,7 +11,7 @@ import { updateProfile as updateSupabaseProfile, supabase } from '../../src/lib/
 import { currentUser } from '../../src/utils/mockData';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
-const DISMISS_THRESHOLD = 180;
+const DISMISS_THRESHOLD = 200;
 
 const LINK_TYPES = [
   { key: 'github', label: 'GitHub', icon: 'github' },
@@ -152,8 +152,10 @@ export default function EditProfileScreen() {
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => false,
-      onMoveShouldSetPanResponder: (_, gestureState) => {
-        return gestureState.dy > 30 && Math.abs(gestureState.dx) * 2 < Math.abs(gestureState.dy);
+      onMoveShouldSetPanResponder: (evt, gestureState) => {
+        // Only allow swipe-to-dismiss from top 60px of the modal
+        const touchY = evt.nativeEvent.locationY;
+        return touchY < 60 && gestureState.dy > 20 && Math.abs(gestureState.dx) * 2 < Math.abs(gestureState.dy);
       },
       onPanResponderMove: (_, gestureState) => {
         if (gestureState.dy > 0) {
@@ -254,7 +256,7 @@ export default function EditProfileScreen() {
 
   const cardStyle: ViewStyle = {
     marginHorizontal: 6,
-    marginTop: insets.top + 60,
+    marginTop: insets.top + 80,
     marginBottom: insets.bottom + 6,
     flex: 1,
     borderRadius: 32,
@@ -485,7 +487,7 @@ export default function EditProfileScreen() {
           <View
             style={{
               marginHorizontal: 6,
-              marginTop: insets.top + 60,
+              marginTop: insets.top + 80,
               marginBottom: insets.bottom + 6,
               flex: 1,
               borderRadius: 32,
