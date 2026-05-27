@@ -188,14 +188,31 @@ export async function sendMessage(conversationId: string, senderId: string, text
   return { error: error?.message || null };
 }
 
-// Update profile
-export async function updateProfile(userId: string, updates: Partial<{ display_name: string; emoji: string; bio: string }>): Promise<{ error: string | null }> {
+// Update profile (including links as jsonb)
+export async function updateProfile(userId: string, updates: Partial<{ display_name: string; emoji: string; bio: string; links: any }>): Promise<{ error: string | null }> {
+  const payload: any = { ...updates, updated_at: new Date().toISOString() };
+  // Ensure links is stored as JSON
+  if (payload.links && typeof payload.links !== 'string') {
+    payload.links = JSON.stringify(payload.links);
+  }
   const { error } = await supabase
     .from('profiles')
-    .update({ ...updates, updated_at: new Date().toISOString() })
+    .update(payload)
     .eq('id', userId);
 
   return { error: error?.message || null };
+}
+
+// Get profile by ID (for sync)
+export async function getProfile(userId: string): Promise<{ profile: DBProfile | null; error: string | null }> {
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('id', userId)
+    .single();
+
+  if (error || !data) return { profile: null, error: error?.message || 'Not found' };
+  return { profile: data, error: null };
 }
 
 // Toggle like

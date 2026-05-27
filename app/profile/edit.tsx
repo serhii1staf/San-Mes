@@ -1,11 +1,12 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, ScrollView, Pressable, ViewStyle, Alert, Platform, KeyboardAvoidingView, Animated, Dimensions, PanResponder, Text as RNText } from 'react-native';
+import { View, ScrollView, Pressable, ViewStyle, Platform, KeyboardAvoidingView, Animated, Dimensions, PanResponder, Text as RNText } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../src/theme';
 import { Text, Input, Avatar } from '../../src/components/ui';
 import { useAuthStore, UserLink } from '../../src/store/authStore';
+import { updateProfile as updateSupabaseProfile } from '../../src/lib/supabase';
 import { currentUser } from '../../src/utils/mockData';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -172,19 +173,29 @@ export default function EditProfileScreen() {
     })
   ).current;
 
-  const handleSave = () => {
+  const handleSave = async () => {
     setIsSaving(true);
-    setTimeout(() => {
+    try {
+      // Update local state immediately
       updateProfile({ displayName: name, username, bio, emoji: selectedEmoji, links });
-      setIsSaving(false);
-      Alert.alert('Сохранено!', 'Ваш профиль обновлён.');
-      handleClose();
-    }, 800);
+
+      // Sync to Supabase (name, bio, emoji)
+      if (user?.id) {
+        await updateSupabaseProfile(user.id, {
+          display_name: name,
+          bio,
+          emoji: selectedEmoji,
+        });
+      }
+    } catch (e) {
+      // Local save always works, Supabase sync is best-effort
+    }
+    setIsSaving(false);
+    handleClose();
   };
 
   const handleAddLink = () => {
     if (links.length >= 3) {
-      Alert.alert('Максимум', 'Можно добавить не более 3 ссылок');
       return;
     }
     setEditingLinkIndex(null);
