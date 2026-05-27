@@ -123,6 +123,7 @@ export default function FeedScreen() {
     <View>
       <PostCard
         post={item}
+        onComment={(postId) => router.push({ pathname: '/comments/[id]', params: { id: postId } })}
         onLike={async (postId) => {
           toggleLike(postId);
           if (user?.id) {

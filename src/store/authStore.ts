@@ -50,6 +50,7 @@ export interface User {
   pin?: string;
   deviceKey?: string;
   links?: UserLink[];
+  bannerUrl?: string;
 }
 
 interface AuthStoreState {

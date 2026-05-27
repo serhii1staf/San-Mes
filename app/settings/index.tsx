@@ -234,6 +234,11 @@ export default function SettingsScreen() {
             label="Устройства"
             value="2"
             onPress={() => router.push('/settings/device-key')}
+          />
+          <SettingsRow
+            icon="shield"
+            label="Политика конфиденциальности"
+            onPress={() => router.push('/settings/privacy')}
             isLast
           />
         </View>

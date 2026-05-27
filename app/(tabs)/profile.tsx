@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, Pressable, ViewStyle, ActivityIndicator, StyleSheet, Animated, Dimensions } from 'react-native';
+import { View, Pressable, ViewStyle, ActivityIndicator, StyleSheet, Animated, Dimensions, Image } from 'react-native';
 import { Feather, FontAwesome5 } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -187,9 +187,15 @@ export default function ProfileScreen() {
         contentContainerStyle={{ paddingBottom: 100, paddingTop: headerContentHeight }}
       >
         {/* Profile banner */}
-        <View style={{ height: 100, marginHorizontal: 20, borderRadius: 16, backgroundColor: theme.colors.accent.primary + '25', marginTop: 8, alignItems: 'center', justifyContent: 'center' }}>
-          <Text style={{ fontSize: 40 }}>{displayUser.emoji}</Text>
-        </View>
+        <Pressable onPress={() => router.push('/profile/edit')} style={{ height: 100, marginHorizontal: 20, borderRadius: 16, overflow: 'hidden', backgroundColor: theme.colors.accent.primary + '20', marginTop: 8 }}>
+          {(user as any)?.bannerUrl ? (
+            <Image source={{ uri: (user as any).bannerUrl }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+          ) : (
+            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+              <Text style={{ fontSize: 40 }}>{displayUser.emoji}</Text>
+            </View>
+          )}
+        </Pressable>
 
         {/* Profile row: LEFT = stats, RIGHT = avatar */}
         <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, marginTop: 16 }}>

@@ -1,12 +1,13 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, ScrollView, Pressable, ViewStyle, Platform, KeyboardAvoidingView, Animated, Dimensions, PanResponder, Text as RNText } from 'react-native';
+import { View, ScrollView, Pressable, ViewStyle, Platform, KeyboardAvoidingView, Animated, Dimensions, PanResponder, Text as RNText, Image } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as ImagePicker from 'expo-image-picker';
 import { useTheme } from '../../src/theme';
 import { Text, Input, Avatar } from '../../src/components/ui';
 import { useAuthStore, UserLink } from '../../src/store/authStore';
-import { updateProfile as updateSupabaseProfile } from '../../src/lib/supabase';
+import { updateProfile as updateSupabaseProfile, supabase } from '../../src/lib/supabase';
 import { currentUser } from '../../src/utils/mockData';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -107,6 +108,7 @@ export default function EditProfileScreen() {
   const [linkUrl, setLinkUrl] = useState('');
   const [linkType, setLinkType] = useState('website');
   const [isSaving, setIsSaving] = useState(false);
+  const [bannerUri, setBannerUri] = useState<string | null>((user as any)?.bannerUrl || null);
 
   // Animation
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
@@ -173,11 +175,25 @@ export default function EditProfileScreen() {
     })
   ).current;
 
+  const pickBanner = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') return;
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      aspect: [3, 1],
+      quality: 0.7,
+    });
+    if (!result.canceled && result.assets[0]) {
+      setBannerUri(result.assets[0].uri);
+    }
+  };
+
   const handleSave = async () => {
     setIsSaving(true);
     try {
       // Update local state immediately
-      updateProfile({ displayName: name, username, bio, emoji: selectedEmoji, links });
+      updateProfile({ displayName: name, username, bio, emoji: selectedEmoji, links, bannerUrl: bannerUri || undefined });
 
       // Sync to Supabase (name, bio, emoji)
       if (user?.id) {
@@ -320,6 +336,20 @@ export default function EditProfileScreen() {
                   <Text variant="body" weight="semibold">Редактировать</Text>
                   <View style={{ width: 22 }} />
                 </View>
+
+                {/* Banner */}
+                <Pressable onPress={pickBanner} style={{ marginHorizontal: 20, marginBottom: 16 }}>
+                  <View style={{ height: 100, borderRadius: 16, overflow: 'hidden', backgroundColor: theme.colors.background.secondary }}>
+                    {bannerUri ? (
+                      <Image source={{ uri: bannerUri }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                    ) : (
+                      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+                        <Feather name="image" size={24} color={theme.colors.text.tertiary} />
+                        <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginTop: 4 }}>Добавить баннер</Text>
+                      </View>
+                    )}
+                  </View>
+                </Pressable>
 
                 {/* Emoji Avatar */}
                 <View style={{ alignItems: 'center', marginVertical: 20 }}>

@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { View, Pressable, ActivityIndicator, ScrollView } from 'react-native';
+import { View, Pressable, ActivityIndicator, ScrollView, Image } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
-import { supabase } from '../../src/lib/supabase';
+import { supabase, followUser, unfollowUser, isFollowing as checkIsFollowing, getFollowCounts } from '../../src/lib/supabase';
+import { useAuthStore } from '../../src/store';
+import { triggerHaptic } from '../../src/utils/haptics';
 
 export default function UserProfileScreen() {
   const theme = useTheme();
@@ -13,6 +15,9 @@ export default function UserProfileScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const [profile, setProfile] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const { user: currentUser } = useAuthStore();
+  const [isFollowingState, setIsFollowingState] = useState(false);
+  const [followCounts, setFollowCounts] = useState({ followers: 0, following: 0 });
 
   useEffect(() => {
     loadProfile();
@@ -22,7 +27,27 @@ export default function UserProfileScreen() {
     setIsLoading(true);
     const { data } = await supabase.from('profiles').select('*').eq('id', id).single();
     setProfile(data);
+    if (data && currentUser?.id) {
+      const following = await checkIsFollowing(currentUser.id, data.id);
+      setIsFollowingState(following);
+      const counts = await getFollowCounts(data.id);
+      setFollowCounts(counts);
+    }
     setIsLoading(false);
+  };
+
+  const handleFollow = async () => {
+    if (!currentUser?.id || !profile?.id) return;
+    triggerHaptic('medium');
+    if (isFollowingState) {
+      await unfollowUser(currentUser.id, profile.id);
+      setIsFollowingState(false);
+      setFollowCounts(c => ({ ...c, followers: Math.max(0, c.followers - 1) }));
+    } else {
+      await followUser(currentUser.id, profile.id);
+      setIsFollowingState(true);
+      setFollowCounts(c => ({ ...c, followers: c.followers + 1 }));
+    }
   };
 
   if (isLoading) {
@@ -53,7 +78,15 @@ export default function UserProfileScreen() {
 
       <ScrollView contentContainerStyle={{ paddingBottom: 100 }}>
         {/* Banner placeholder */}
-        <View style={{ height: 120, backgroundColor: theme.colors.accent.primary + '30', marginHorizontal: 20, borderRadius: 16 }} />
+        <View style={{ height: 120, marginHorizontal: 20, borderRadius: 16, overflow: 'hidden', backgroundColor: theme.colors.accent.primary + '20' }}>
+          {profile.banner_url ? (
+            <Image source={{ uri: profile.banner_url }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+          ) : (
+            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+              <Text style={{ fontSize: 48 }}>{profile.emoji}</Text>
+            </View>
+          )}
+        </View>
 
         {/* Avatar */}
         <View style={{ alignItems: 'center', marginTop: -30 }}>
@@ -80,19 +113,21 @@ export default function UserProfileScreen() {
             <Text variant="caption" color={theme.colors.text.tertiary}>Посты</Text>
           </View>
           <View style={{ alignItems: 'center' }}>
-            <Text variant="body" weight="bold">0</Text>
+            <Text variant="body" weight="bold">{followCounts.followers}</Text>
             <Text variant="caption" color={theme.colors.text.tertiary}>Подписчики</Text>
           </View>
           <View style={{ alignItems: 'center' }}>
-            <Text variant="body" weight="bold">0</Text>
+            <Text variant="body" weight="bold">{followCounts.following}</Text>
             <Text variant="caption" color={theme.colors.text.tertiary}>Подписки</Text>
           </View>
         </View>
 
         {/* Follow button */}
         <View style={{ paddingHorizontal: 20, marginTop: 20 }}>
-          <Pressable style={{ backgroundColor: theme.colors.accent.primary, borderRadius: 14, paddingVertical: 14, alignItems: 'center' }}>
-            <Text variant="body" weight="semibold" color="#FFFFFF">Подписаться</Text>
+          <Pressable onPress={handleFollow} style={{ backgroundColor: isFollowingState ? theme.colors.background.secondary : theme.colors.accent.primary, borderRadius: 14, paddingVertical: 14, alignItems: 'center', borderWidth: isFollowingState ? 1 : 0, borderColor: theme.colors.border.light }}>
+            <Text variant="body" weight="semibold" color={isFollowingState ? theme.colors.text.primary : '#FFFFFF'}>
+              {isFollowingState ? 'Отписаться' : 'Подписаться'}
+            </Text>
           </Pressable>
         </View>
 
