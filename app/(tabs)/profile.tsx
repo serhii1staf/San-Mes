@@ -1,19 +1,19 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, Pressable, ViewStyle, ActivityIndicator, StyleSheet, Animated, Dimensions, Image } from 'react-native';
+import { View, Pressable, ViewStyle, ActivityIndicator, Animated, Dimensions, Image, ScrollView } from 'react-native';
 import { Feather, FontAwesome5 } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { useAuthStore } from '../../src/store';
 import { supabase, getPosts } from '../../src/lib/supabase';
 import { openUrl } from '../../src/utils/openUrl';
 import { Post } from '../../src/types';
+import { triggerHaptic } from '../../src/utils/haptics';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 
-type TabName = 'posts' | 'saved' | 'tagged';
+type TabName = 'posts' | 'replies' | 'media' | 'likes';
 
 // Auto-detect link type from URL
 function detectLinkType(url: string): string {
@@ -31,11 +31,8 @@ function detectLinkType(url: string): string {
   return 'website';
 }
 
-// Clickable social link icon
 function SocialLinkIcon({ type, url }: { type: string; url: string }) {
   const theme = useTheme();
-
-  // Map to FontAwesome5 brand icons (real logos)
   const brandIcons: Record<string, { name: string; color: string; isBrand: boolean }> = {
     github: { name: 'github', color: theme.isDark ? '#FFFFFF' : '#333333', isBrand: true },
     twitter: { name: 'twitter', color: '#1DA1F2', isBrand: true },
@@ -49,26 +46,18 @@ function SocialLinkIcon({ type, url }: { type: string; url: string }) {
     discord: { name: 'discord', color: '#5865F2', isBrand: true },
     website: { name: 'globe', color: '#2563EB', isBrand: false },
   };
-
   const detected = detectLinkType(url);
   const icon = brandIcons[detected] || brandIcons[type] || brandIcons.website;
 
   return (
     <Pressable
-      onPress={() => { openUrl(url); }}
-      style={{
-        width: 36,
-        height: 36,
-        borderRadius: 18,
-        backgroundColor: icon.color + '15',
-        alignItems: 'center',
-        justifyContent: 'center',
-      }}
+      onPress={() => { triggerHaptic('light'); openUrl(url); }}
+      style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: icon.color + '18', alignItems: 'center', justifyContent: 'center' }}
     >
       {icon.isBrand ? (
-        <FontAwesome5 name={icon.name} size={17} color={icon.color} brand />
+        <FontAwesome5 name={icon.name} size={15} color={icon.color} brand />
       ) : (
-        <Feather name={icon.name as any} size={18} color={icon.color} />
+        <Feather name={icon.name as any} size={16} color={icon.color} />
       )}
     </Pressable>
   );
@@ -79,63 +68,46 @@ export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const { user, updateProfile: updateLocalProfile } = useAuthStore();
   const [activeTab, setActiveTab] = useState<TabName>('posts');
-  const scrollY = useRef(new Animated.Value(0)).current;
   const [userPosts, setUserPosts] = useState<Post[]>([]);
 
-  // Sync profile from Supabase on mount
   useEffect(() => {
     if (user?.id) {
       syncProfileFromSupabase();
-    }
-  }, [user?.id]);
-
-  useEffect(() => {
-    if (user?.id) {
       loadUserPosts();
     }
   }, [user?.id]);
 
   const loadUserPosts = async () => {
-    const { posts: dbPosts } = await getPosts();
-    const myPosts = dbPosts.filter((p: any) => p.author_id === user?.id).map((p: any) => ({
-      id: p.id,
-      authorId: p.author_id,
-      authorName: p.profiles?.display_name || user?.displayName || '',
-      authorUsername: p.profiles?.username || user?.username || '',
-      authorEmoji: p.profiles?.emoji || user?.emoji || '😊',
-      content: p.content,
-      imageUrl: p.image_url || undefined,
-      likesCount: p.likes_count || 0,
-      commentsCount: p.comments_count || 0,
-      sharesCount: p.shares_count || 0,
-      isLiked: false,
-      isBookmarked: false,
-      createdAt: p.created_at,
-    }));
-    setUserPosts(myPosts);
+    try {
+      const { posts: dbPosts } = await getPosts();
+      const myPosts = dbPosts.filter((p: any) => p.author_id === user?.id).map((p: any) => ({
+        id: p.id,
+        authorId: p.author_id,
+        authorName: p.profiles?.display_name || user?.displayName || '',
+        authorUsername: p.profiles?.username || user?.username || '',
+        authorEmoji: p.profiles?.emoji || user?.emoji || '😊',
+        content: p.content,
+        imageUrl: p.image_url || undefined,
+        likesCount: p.likes_count || 0,
+        commentsCount: p.comments_count || 0,
+        sharesCount: p.shares_count || 0,
+        isLiked: false,
+        isBookmarked: false,
+        createdAt: p.created_at,
+      }));
+      setUserPosts(myPosts);
+    } catch (e) {}
   };
 
   const syncProfileFromSupabase = async () => {
     if (!user?.id) return;
     try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', user.id)
-        .single();
-
+      const { data, error } = await supabase.from('profiles').select('*').eq('id', user.id).single();
       if (data && !error) {
         const links = data.links ? (typeof data.links === 'string' ? JSON.parse(data.links) : data.links) : [];
-        updateLocalProfile({
-          displayName: data.display_name,
-          emoji: data.emoji,
-          bio: data.bio || '',
-          links,
-        });
+        updateLocalProfile({ displayName: data.display_name, emoji: data.emoji, bio: data.bio || '', links });
       }
-    } catch (e) {
-      // Silent fail — use local data
-    }
+    } catch (e) {}
   };
 
   if (!user) {
@@ -148,146 +120,117 @@ export default function ProfileScreen() {
 
   const displayUser = user;
   const userLinks: { type: string; url: string }[] = (user as any).links || [];
+  const bannerUrl = (user as any)?.bannerUrl;
 
-  const containerStyle: ViewStyle = {
-    flex: 1,
-    backgroundColor: theme.colors.background.primary,
-  };
-
-  const bgColor = theme.colors.background.primary;
-  const bgTransparent = theme.colors.background.primary + '00';
-  const headerContentHeight = insets.top + 48;
-  const headerGradientHeight = headerContentHeight + 28;
-
-  const headerEmojiOpacity = scrollY.interpolate({
-    inputRange: [80, 140],
-    outputRange: [0, 1],
-    extrapolate: 'clamp',
-  });
-
-  const handleScroll = Animated.event(
-    [{ nativeEvent: { contentOffset: { y: scrollY } } }],
-    { useNativeDriver: false }
-  );
+  const tabs: { key: TabName; label: string }[] = [
+    { key: 'posts', label: 'Посты' },
+    { key: 'replies', label: 'Ответы' },
+    { key: 'media', label: 'Медиа' },
+    { key: 'likes', label: 'Лайки' },
+  ];
 
   return (
-    <View style={containerStyle}>
-      {/* Header */}
-      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100, height: headerGradientHeight }} pointerEvents="box-none">
-        <LinearGradient
-          colors={[bgColor, bgColor, bgTransparent]}
-          locations={[0, 0.55, 1]}
-          style={StyleSheet.absoluteFill}
-        />
-        <View
-          style={{
-            flexDirection: 'row',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            paddingHorizontal: 20,
-            paddingTop: insets.top + 8,
-            paddingBottom: 8,
-          }}
-          pointerEvents="auto"
-        >
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <Text variant="subheading" weight="bold">@{displayUser.username}</Text>
-            <Animated.View style={{ opacity: headerEmojiOpacity, marginLeft: 8 }}>
-              <Avatar emoji={displayUser.emoji} size="sm" />
-            </Animated.View>
+    <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
+        {/* Banner */}
+        <Pressable onPress={() => router.push('/profile/edit')}>
+          <View style={{ height: 140, backgroundColor: bannerUrl ? undefined : theme.colors.accent.primary + '30' }}>
+            {bannerUrl ? (
+              <Image source={{ uri: bannerUrl }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+            ) : (
+              <View style={{ flex: 1, backgroundColor: theme.colors.accent.primary + '20' }} />
+            )}
           </View>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
-            <Pressable onPress={() => router.push('/profile/edit')}>
-              <Feather name="edit-2" size={20} color={theme.colors.text.primary} />
-            </Pressable>
-            <Pressable onPress={() => router.push('/settings')}>
-              <Feather name="settings" size={22} color={theme.colors.text.primary} />
-            </Pressable>
+        </Pressable>
+
+        {/* Avatar overlapping banner */}
+        <View style={{ alignItems: 'center', marginTop: -40 }}>
+          <View style={{ borderWidth: 4, borderColor: theme.colors.background.primary, borderRadius: 44, overflow: 'hidden' }}>
+            <Avatar emoji={displayUser.emoji} size="xl" />
           </View>
         </View>
-      </View>
 
-      {/* Scrollable Content */}
-      <Animated.ScrollView
-        onScroll={handleScroll}
-        scrollEventThrottle={16}
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 100, paddingTop: headerContentHeight }}
-      >
-        {/* Profile banner - only show if set */}
-        {(user as any)?.bannerUrl ? (
-          <Pressable onPress={() => router.push('/profile/edit')} style={{ height: 100, marginHorizontal: 20, borderRadius: 16, overflow: 'hidden', marginTop: 8 }}>
-            <Image source={{ uri: (user as any).bannerUrl }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
-          </Pressable>
-        ) : null}
-
-        {/* Profile row: LEFT = stats, RIGHT = avatar */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, marginTop: 16 }}>
-          {/* Left side: compact stats */}
-          <View style={{ flex: 1, flexDirection: 'row', gap: 16 }}>
-            <View style={{ alignItems: 'center' }}>
-              <Text variant="body" weight="bold">0</Text>
-              <Text variant="caption" color={theme.colors.text.tertiary}>Посты</Text>
-            </View>
-            <View style={{ alignItems: 'center' }}>
-              <Text variant="body" weight="bold">0</Text>
-              <Text variant="caption" color={theme.colors.text.tertiary}>Подписчики</Text>
-            </View>
-            <View style={{ alignItems: 'center' }}>
-              <Text variant="body" weight="bold">0</Text>
-              <Text variant="caption" color={theme.colors.text.tertiary}>Подписки</Text>
-            </View>
-          </View>
-          {/* Right side: avatar */}
-          <Avatar emoji={displayUser.emoji} size="xl" />
+        {/* Name & username */}
+        <View style={{ alignItems: 'center', marginTop: 10 }}>
+          <Text variant="subheading" weight="bold">{displayUser.displayName}</Text>
+          <Text variant="caption" color={theme.colors.text.secondary} style={{ marginTop: 2 }}>@{displayUser.username}</Text>
         </View>
 
-        {/* Name */}
-        <View style={{ paddingHorizontal: 20, marginTop: 12 }}>
-          <Text variant="body" weight="bold">
-            {displayUser.displayName}
-          </Text>
+        {/* Stats row */}
+        <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 24, marginTop: 14 }}>
+          <View style={{ alignItems: 'center' }}>
+            <Text variant="body" weight="bold">{userPosts.length}</Text>
+            <Text variant="caption" color={theme.colors.text.tertiary}>посты</Text>
+          </View>
+          <View style={{ alignItems: 'center' }}>
+            <Text variant="body" weight="bold">0</Text>
+            <Text variant="caption" color={theme.colors.text.tertiary}>подписки</Text>
+          </View>
+          <View style={{ alignItems: 'center' }}>
+            <Text variant="body" weight="bold">0</Text>
+            <Text variant="caption" color={theme.colors.text.tertiary}>подписчики</Text>
+          </View>
         </View>
 
         {/* Bio */}
         {displayUser.bio ? (
-          <View style={{ paddingHorizontal: 20, marginTop: 2 }}>
-            <Text variant="caption" color={theme.colors.text.secondary}>
-              {displayUser.bio}
-            </Text>
+          <View style={{ paddingHorizontal: 24, marginTop: 12 }}>
+            <Text variant="body" color={theme.colors.text.secondary} align="center">{displayUser.bio}</Text>
           </View>
         ) : null}
 
-        {/* Clickable social link icons */}
+        {/* Social links */}
         {userLinks.length > 0 && (
-          <View style={{ flexDirection: 'row', paddingHorizontal: 20, marginTop: 10, gap: 10 }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'center', marginTop: 10, gap: 10 }}>
             {userLinks.map((link, idx) => (
               <SocialLinkIcon key={idx} type={link.type} url={link.url} />
             ))}
           </View>
         )}
 
+        {/* Edit profile button */}
+        <View style={{ paddingHorizontal: 20, marginTop: 16 }}>
+          <Pressable
+            onPress={() => { triggerHaptic('light'); router.push('/profile/edit'); }}
+            style={{
+              borderWidth: 1.5,
+              borderColor: theme.colors.border.medium,
+              borderRadius: 12,
+              paddingVertical: 10,
+              alignItems: 'center',
+            }}
+          >
+            <Text variant="body" weight="semibold">Редактировать</Text>
+          </Pressable>
+        </View>
+
+        {/* Settings row */}
+        <View style={{ flexDirection: 'row', justifyContent: 'center', marginTop: 12, gap: 12 }}>
+          <Pressable onPress={() => { triggerHaptic('light'); router.push('/settings'); }} style={{ padding: 8 }}>
+            <Feather name="settings" size={20} color={theme.colors.text.secondary} />
+          </Pressable>
+        </View>
+
         {/* Tabs */}
-        <View style={{ marginTop: 20, borderTopWidth: 1, borderTopColor: theme.colors.border.light }}>
+        <View style={{ marginTop: 16, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border.light }}>
           <View style={{ flexDirection: 'row' }}>
-            {([
-              { key: 'posts' as TabName, icon: 'grid' },
-              { key: 'saved' as TabName, icon: 'bookmark' },
-              { key: 'tagged' as TabName, icon: 'tag' },
-            ]).map((tab) => (
+            {tabs.map((tab) => (
               <Pressable
                 key={tab.key}
-                onPress={() => setActiveTab(tab.key)}
+                onPress={() => { triggerHaptic('selection'); setActiveTab(tab.key); }}
                 style={{ flex: 1, alignItems: 'center', paddingVertical: 12 }}
               >
-                <Feather
-                  name={tab.icon as any}
-                  size={20}
-                  color={activeTab === tab.key ? theme.colors.accent.primary : theme.colors.text.tertiary}
-                />
+                <Text
+                  variant="caption"
+                  weight={activeTab === tab.key ? 'bold' : 'regular'}
+                  color={activeTab === tab.key ? theme.colors.text.primary : theme.colors.text.tertiary}
+                >
+                  {tab.label}
+                </Text>
               </Pressable>
             ))}
           </View>
+          {/* Indicator */}
           <View
             style={{
               position: 'absolute',
@@ -295,36 +238,60 @@ export default function ProfileScreen() {
               height: 2,
               backgroundColor: theme.colors.accent.primary,
               borderRadius: 1,
-              width: (SCREEN_WIDTH - 40) / 3,
-              left: (['posts', 'saved', 'tagged'].indexOf(activeTab)) * ((SCREEN_WIDTH - 40) / 3),
-              marginLeft: 20,
+              width: SCREEN_WIDTH / 4,
+              left: tabs.findIndex(t => t.key === activeTab) * (SCREEN_WIDTH / 4),
             }}
           />
         </View>
 
-        {/* Posts / Empty state */}
-        {userPosts.length === 0 ? (
-          <View style={{ alignItems: 'center', paddingVertical: 40 }}>
-            <View style={{ width: 50, height: 50, alignItems: 'center', justifyContent: 'center' }}>
-              <Text style={{ fontSize: 32 }}>📷</Text>
-            </View>
-            <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginTop: 8 }}>
-              Ещё нет публикаций
-            </Text>
-          </View>
-        ) : (
-          <View style={{ paddingHorizontal: 20, paddingTop: 12 }}>
-            {userPosts.map(post => (
-              <View key={post.id} style={{ backgroundColor: theme.colors.background.elevated, borderRadius: 14, padding: 14, marginBottom: 10 }}>
-                <Text variant="body">{post.content}</Text>
-                <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginTop: 6 }}>
-                  ❤️ {post.likesCount}  💬 {post.commentsCount}
-                </Text>
+        {/* Content */}
+        {activeTab === 'posts' && (
+          userPosts.length === 0 ? (
+            <View style={{ alignItems: 'center', paddingVertical: 40 }}>
+              <View style={{ width: 50, height: 50, alignItems: 'center', justifyContent: 'center' }}>
+                <Text style={{ fontSize: 32 }}>📷</Text>
               </View>
-            ))}
+              <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginTop: 8 }}>Ещё нет публикаций</Text>
+            </View>
+          ) : (
+            <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
+              {userPosts.map(post => (
+                <Pressable
+                  key={post.id}
+                  onPress={() => router.push({ pathname: '/comments/[id]', params: { id: post.id } })}
+                  style={{
+                    backgroundColor: theme.colors.background.elevated,
+                    borderRadius: 14,
+                    padding: 14,
+                    marginBottom: 10,
+                  }}
+                >
+                  {post.imageUrl && (
+                    <Image source={{ uri: post.imageUrl }} style={{ width: '100%', height: 160, borderRadius: 10, marginBottom: 10 }} resizeMode="cover" />
+                  )}
+                  {post.content ? <Text variant="body">{post.content}</Text> : null}
+                  <View style={{ flexDirection: 'row', marginTop: 8, gap: 14 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                      <Feather name="heart" size={14} color={theme.colors.text.tertiary} />
+                      <Text variant="caption" color={theme.colors.text.tertiary}>{post.likesCount}</Text>
+                    </View>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                      <Feather name="message-circle" size={14} color={theme.colors.text.tertiary} />
+                      <Text variant="caption" color={theme.colors.text.tertiary}>{post.commentsCount}</Text>
+                    </View>
+                  </View>
+                </Pressable>
+              ))}
+            </View>
+          )
+        )}
+
+        {activeTab !== 'posts' && (
+          <View style={{ alignItems: 'center', paddingVertical: 40 }}>
+            <Text variant="caption" color={theme.colors.text.tertiary}>Пока пусто</Text>
           </View>
         )}
-      </Animated.ScrollView>
+      </ScrollView>
     </View>
   );
 }
