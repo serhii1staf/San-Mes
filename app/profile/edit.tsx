@@ -206,32 +206,32 @@ export default function EditProfileScreen() {
       // Update local state immediately
       updateProfile({ displayName: name, username, bio, emoji: selectedEmoji, links, bannerUrl: bannerUri || undefined });
 
-      // Sync to Supabase (name, bio, emoji)
       if (user?.id) {
+        // Try to upload banner to Storage first
+        let finalBannerUrl = bannerUri;
+        if (bannerUri && bannerUri.startsWith('file://')) {
+          try {
+            const { url } = await uploadBanner(user.id, bannerUri);
+            if (url) finalBannerUrl = url;
+          } catch {}
+        }
+
+        // Save everything to DB in one call
         await updateSupabaseProfile(user.id, {
           display_name: name,
           bio,
           emoji: selectedEmoji,
-        });
-
-        // Upload banner to Storage if changed
-        let finalBannerUrl = bannerUri;
-        if (bannerUri && !bannerUri.startsWith('https://ycwadqglcykcpucembjn.supabase.co')) {
-          const { url } = await uploadBanner(user.id, bannerUri);
-          if (url) {
-            finalBannerUrl = url;
-            updateProfile({ bannerUrl: url });
-          }
-        }
-
-        // Save links and banner_url to profile-meta storage
-        await saveProfileMeta(user.id, {
           banner_url: finalBannerUrl || undefined,
-          links: links.length > 0 ? links : undefined,
+          links: links.length > 0 ? links : [],
         });
+
+        // Update local with remote URL
+        if (finalBannerUrl && finalBannerUrl !== bannerUri) {
+          updateProfile({ bannerUrl: finalBannerUrl });
+        }
       }
     } catch (e) {
-      // Local save always works, Supabase sync is best-effort
+      // Local save always works
     }
     setIsSaving(false);
     handleClose();
