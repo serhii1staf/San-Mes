@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, Pressable, ViewStyle, ActivityIndicator, StyleSheet, Animated, Dimensions, Linking } from 'react-native';
-import { Feather } from '@expo/vector-icons';
+import { View, Pressable, ViewStyle, ActivityIndicator, StyleSheet, Animated, Dimensions } from 'react-native';
+import { Feather, FontAwesome5 } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -8,6 +8,7 @@ import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { useAuthStore } from '../../src/store';
 import { supabase } from '../../src/lib/supabase';
+import { openUrl } from '../../src/utils/openUrl';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 
@@ -33,40 +34,41 @@ function detectLinkType(url: string): string {
 function SocialLinkIcon({ type, url }: { type: string; url: string }) {
   const theme = useTheme();
 
-  const iconMap: Record<string, { name: string; color: string }> = {
-    github: { name: 'github', color: '#333333' },
-    twitter: { name: 'twitter', color: '#1DA1F2' },
-    instagram: { name: 'instagram', color: '#E4405F' },
-    youtube: { name: 'youtube', color: '#FF0000' },
-    telegram: { name: 'send', color: '#0088CC' },
-    linkedin: { name: 'linkedin', color: '#0A66C2' },
-    twitch: { name: 'tv', color: '#9146FF' },
-    spotify: { name: 'music', color: '#1DB954' },
-    tiktok: { name: 'play-circle', color: '#000000' },
-    discord: { name: 'message-circle', color: '#5865F2' },
-    website: { name: 'globe', color: '#2563EB' },
+  // Map to FontAwesome5 brand icons (real logos)
+  const brandIcons: Record<string, { name: string; color: string; isBrand: boolean }> = {
+    github: { name: 'github', color: theme.isDark ? '#FFFFFF' : '#333333', isBrand: true },
+    twitter: { name: 'twitter', color: '#1DA1F2', isBrand: true },
+    instagram: { name: 'instagram', color: '#E4405F', isBrand: true },
+    youtube: { name: 'youtube', color: '#FF0000', isBrand: true },
+    telegram: { name: 'telegram-plane', color: '#0088CC', isBrand: true },
+    linkedin: { name: 'linkedin-in', color: '#0A66C2', isBrand: true },
+    twitch: { name: 'twitch', color: '#9146FF', isBrand: true },
+    spotify: { name: 'spotify', color: '#1DB954', isBrand: true },
+    tiktok: { name: 'tiktok', color: theme.isDark ? '#FFFFFF' : '#000000', isBrand: true },
+    discord: { name: 'discord', color: '#5865F2', isBrand: true },
+    website: { name: 'globe', color: '#2563EB', isBrand: false },
   };
 
   const detected = detectLinkType(url);
-  const icon = iconMap[detected] || iconMap[type] || iconMap.website;
-  const displayColor = theme.isDark && icon.color === '#333333' ? '#FFFFFF' : icon.color;
+  const icon = brandIcons[detected] || brandIcons[type] || brandIcons.website;
 
   return (
     <Pressable
-      onPress={() => {
-        const fullUrl = url.startsWith('http') ? url : `https://${url}`;
-        Linking.openURL(fullUrl);
-      }}
+      onPress={() => { openUrl(url); }}
       style={{
         width: 36,
         height: 36,
         borderRadius: 18,
-        backgroundColor: displayColor + '15',
+        backgroundColor: icon.color + '15',
         alignItems: 'center',
         justifyContent: 'center',
       }}
     >
-      <Feather name={icon.name as any} size={18} color={displayColor} />
+      {icon.isBrand ? (
+        <FontAwesome5 name={icon.name} size={17} color={icon.color} brand />
+      ) : (
+        <Feather name={icon.name as any} size={18} color={icon.color} />
+      )}
     </Pressable>
   );
 }
