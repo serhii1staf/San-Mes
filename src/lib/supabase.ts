@@ -188,14 +188,47 @@ export async function sendMessage(conversationId: string, senderId: string, text
   return { error: error?.message || null };
 }
 
-// Update profile
-export async function updateProfile(userId: string, updates: Partial<{ display_name: string; emoji: string; bio: string }>): Promise<{ error: string | null }> {
-  const { error } = await supabase
-    .from('profiles')
-    .update({ ...updates, updated_at: new Date().toISOString() })
-    .eq('id', userId);
+// Update profile (including links as jsonb)
+export async function updateProfile(userId: string, updates: Partial<{ display_name: string; emoji: string; bio: string; links: any; banner_url: string }>): Promise<{ error: string | null }> {
+  const payload: any = { ...updates, updated_at: new Date().toISOString() };
+  // Ensure links is stored as JSON
+  if (payload.links && typeof payload.links !== 'string') {
+    payload.links = JSON.stringify(payload.links);
+  }
+  try {
+    const { error } = await supabase
+      .from('profiles')
+      .update(payload)
+      .eq('id', userId);
 
-  return { error: error?.message || null };
+    if (error) {
+      // If banner_url column doesn't exist, retry without it
+      if (error.message?.includes('banner_url')) {
+        const { banner_url, ...rest } = payload;
+        const { error: retryError } = await supabase
+          .from('profiles')
+          .update(rest)
+          .eq('id', userId);
+        return { error: retryError?.message || null };
+      }
+      return { error: error.message };
+    }
+    return { error: null };
+  } catch (e: any) {
+    return { error: e?.message || 'Unknown error' };
+  }
+}
+
+// Get profile by ID (for sync)
+export async function getProfile(userId: string): Promise<{ profile: DBProfile | null; error: string | null }> {
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('id', userId)
+    .single();
+
+  if (error || !data) return { profile: null, error: error?.message || 'Not found' };
+  return { profile: data, error: null };
 }
 
 // Toggle like
@@ -231,4 +264,90 @@ export async function getProfiles(): Promise<{ profiles: DBProfile[]; error: str
 
   if (error) return { profiles: [], error: error.message };
   return { profiles: data || [], error: null };
+}
+
+
+
+// Get comments for a post
+export async function getComments(postId: string): Promise<{ comments: any[]; error: string | null }> {
+  try {
+    const { data, error } = await supabase
+      .from('comments')
+      .select(`*, profiles:author_id (id, username, display_name, emoji)`)
+      .eq('post_id', postId)
+      .order('created_at', { ascending: true });
+    if (error) return { comments: [], error: error.message };
+    return { comments: data || [], error: null };
+  } catch (e: any) {
+    return { comments: [], error: e?.message || 'Unknown error' };
+  }
+}
+
+// Create a comment
+export async function createComment(postId: string, authorId: string, content: string): Promise<{ error: string | null }> {
+  try {
+    const { error } = await supabase
+      .from('comments')
+      .insert({ post_id: postId, author_id: authorId, content });
+    if (error) return { error: error.message };
+    // Increment comment count on post
+    await supabase.rpc('increment_comments', { post_id: postId }).catch(() => {});
+    return { error: null };
+  } catch (e: any) {
+    return { error: e?.message || 'Unknown error' };
+  }
+}
+
+// Follow a user
+export async function followUser(followerId: string, followingId: string): Promise<{ error: string | null }> {
+  try {
+    const { error } = await supabase
+      .from('follows')
+      .insert({ follower_id: followerId, following_id: followingId });
+    return { error: error?.message || null };
+  } catch (e: any) {
+    return { error: e?.message || 'Unknown error' };
+  }
+}
+
+// Unfollow a user
+export async function unfollowUser(followerId: string, followingId: string): Promise<{ error: string | null }> {
+  try {
+    const { error } = await supabase
+      .from('follows')
+      .delete()
+      .eq('follower_id', followerId)
+      .eq('following_id', followingId);
+    return { error: error?.message || null };
+  } catch (e: any) {
+    return { error: e?.message || 'Unknown error' };
+  }
+}
+
+// Check if following
+export async function isFollowing(followerId: string, followingId: string): Promise<boolean> {
+  try {
+    const { data } = await supabase
+      .from('follows')
+      .select('id')
+      .eq('follower_id', followerId)
+      .eq('following_id', followingId)
+      .single();
+    return !!data;
+  } catch {
+    return false;
+  }
+}
+
+// Get follower/following counts
+export async function getFollowCounts(userId: string): Promise<{ followers: number; following: number }> {
+  try {
+    const [{ count: followers }, { count: following }] = await Promise.all([
+      supabase.from('follows').select('*', { count: 'exact', head: true }).eq('following_id', userId),
+      supabase.from('follows').select('*', { count: 'exact', head: true }).eq('follower_id', userId),
+    ]);
+    return { followers: followers || 0, following: following || 0 };
+  } catch {
+    return { followers: 0, following: 0 };
+  }
 }

@@ -1,7 +1,0 @@
-{
-  "buildCommand": "echo 'skip'",
-  "outputDirectory": ".",
-  "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api/$1" }
-  ]
-}

@@ -1,12 +1,14 @@
 import React, { useState, useRef } from 'react';
 import { View, Image, Pressable, ViewStyle, TextStyle, Dimensions } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import { router } from 'expo-router';
 import { useTheme } from '../../theme';
 import { Text } from '../ui/Text';
 import { Avatar } from '../ui/Avatar';
 import { Card } from '../ui/Card';
 import { Post } from '../../types';
 import { formatTimeAgo } from '../../utils/mockData';
+import { triggerHaptic } from '../../utils/haptics';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -16,14 +18,16 @@ interface PostCardProps {
   onComment?: (postId: string) => void;
   onShare?: (postId: string) => void;
   onBookmark?: (postId: string) => void;
+  onMenu?: (post: Post) => void;
 }
 
-export function PostCard({ post, onLike, onComment, onShare, onBookmark }: PostCardProps) {
+export function PostCard({ post, onLike, onComment, onShare, onBookmark, onMenu }: PostCardProps) {
   const theme = useTheme();
   const [isBookmarked, setIsBookmarked] = useState(post.isBookmarked);
   const lastTap = useRef<number>(0);
 
   const handleLike = () => {
+    triggerHaptic('light');
     onLike(post.id);
   };
 
@@ -40,6 +44,7 @@ export function PostCard({ post, onLike, onComment, onShare, onBookmark }: PostC
   };
 
   const handleBookmark = () => {
+    triggerHaptic('light');
     setIsBookmarked(!isBookmarked);
     onBookmark?.(post.id);
   };
@@ -78,31 +83,23 @@ export function PostCard({ post, onLike, onComment, onShare, onBookmark }: PostC
     <Card style={containerStyle} padding="sm" shadow="sm">
       {/* Header */}
       <View style={headerStyle}>
-        <Avatar emoji={post.authorEmoji} name={post.authorName} size="sm" />
-        <View style={{ marginLeft: theme.spacing.md, flex: 1 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <Text weight="semibold" variant="body">
-              {post.authorName}
-            </Text>
-            <View
-              style={{
-                width: 16,
-                height: 16,
-                borderRadius: 8,
-                backgroundColor: theme.colors.accent.secondary,
-                alignItems: 'center',
-                justifyContent: 'center',
-                marginLeft: 4,
-              }}
-            >
-              <Feather name="check" size={10} color="#FFFFFF" />
+        <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: post.authorId } })} style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+          <Avatar emoji={post.authorEmoji} name={post.authorName} size="sm" />
+          <View style={{ marginLeft: theme.spacing.md, flex: 1 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Text weight="semibold" variant="body">
+                {post.authorName}
+              </Text>
             </View>
+            <Text variant="caption" color={theme.colors.text.secondary}>
+              @{post.authorUsername} · {formatTimeAgo(post.createdAt)}
+            </Text>
           </View>
-          <Text variant="caption" color={theme.colors.text.secondary}>
-            @{post.authorUsername} · {formatTimeAgo(post.createdAt)}
-          </Text>
-        </View>
-        <Pressable>
+        </Pressable>
+        <Pressable onPress={() => {
+          triggerHaptic('light');
+          onMenu?.(post);
+        }}>
           <Feather name="more-horizontal" size={20} color={theme.colors.text.secondary} />
         </Pressable>
       </View>

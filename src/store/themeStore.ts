@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage, StateStorage } from 'zustand/middleware';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 let mmkvStorage: StateStorage;
 
@@ -20,9 +21,15 @@ try {
   };
 } catch {
   mmkvStorage = {
-    setItem: () => {},
-    getItem: () => null,
-    removeItem: () => {},
+    setItem: async (name: string, value: string) => {
+      await AsyncStorage.setItem(name, value);
+    },
+    getItem: async (name: string) => {
+      return await AsyncStorage.getItem(name);
+    },
+    removeItem: async (name: string) => {
+      await AsyncStorage.removeItem(name);
+    },
   };
 }
 

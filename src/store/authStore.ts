@@ -1,12 +1,14 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage, StateStorage } from 'zustand/middleware';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-let mmkvStorage: StateStorage;
+// Use AsyncStorage as reliable fallback that works in Expo Go
+let appStorage: StateStorage;
 
 try {
   const { MMKV } = require('react-native-mmkv');
   const storage = new MMKV({ id: 'auth-storage' });
-  mmkvStorage = {
+  appStorage = {
     setItem: (name: string, value: string) => {
       storage.set(name, value);
     },
@@ -19,12 +21,23 @@ try {
     },
   };
 } catch {
-  // Fallback to no-op storage if MMKV is not available (e.g., Expo Go)
-  mmkvStorage = {
-    setItem: () => {},
-    getItem: () => null,
-    removeItem: () => {},
+  // Fallback to AsyncStorage for Expo Go
+  appStorage = {
+    setItem: async (name: string, value: string) => {
+      await AsyncStorage.setItem(name, value);
+    },
+    getItem: async (name: string) => {
+      return await AsyncStorage.getItem(name);
+    },
+    removeItem: async (name: string) => {
+      await AsyncStorage.removeItem(name);
+    },
   };
+}
+
+export interface UserLink {
+  type: string;
+  url: string;
 }
 
 export interface User {
@@ -36,6 +49,8 @@ export interface User {
   bio?: string;
   pin?: string;
   deviceKey?: string;
+  links?: UserLink[];
+  bannerUrl?: string;
 }
 
 interface AuthStoreState {
@@ -70,18 +85,16 @@ export const useAuthStore = create<AuthStoreState>()(
     }),
     {
       name: 'auth-state',
-      storage: createJSONStorage(() => mmkvStorage),
+      storage: createJSONStorage(() => appStorage),
       partialize: (state) => ({
         user: state.user,
         token: state.token,
         isAuthenticated: state.isAuthenticated,
       }),
       onRehydrateStorage: () => (state, error) => {
-        // Always mark as hydrated, even if rehydration fails
         if (state) {
           state.setHasHydrated(true);
         } else {
-          // If state is undefined (error case), force hydration via direct store update
           useAuthStore.setState({ hasHydrated: true });
         }
       },

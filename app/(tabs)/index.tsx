@@ -1,77 +1,18 @@
-import React, { useEffect, useCallback } from 'react';
+import React, { useEffect, useCallback, useState } from 'react';
 import { View, FlatList, RefreshControl, ViewStyle, Pressable, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useTheme } from '../../src/theme';
-import { Text, Avatar } from '../../src/components/ui';
+import { Text } from '../../src/components/ui';
 import { PostCard } from '../../src/components/feed/PostCard';
+import { PostMenuModal } from '../../src/components/feed/PostMenuModal';
 import { TrendingSection } from '../../src/components/feed/TrendingSection';
-import { useFeedStore } from '../../src/store';
-import { mockPosts, mockStories } from '../../src/utils/mockData';
-import { Post, Story } from '../../src/types';
+import { useFeedStore, useAuthStore } from '../../src/store';
+import { Post } from '../../src/types';
+import { getPosts, toggleLike as toggleLikeAPI } from '../../src/lib/supabase';
 
-function StoryItem({ story }: { story: Story; index: number }) {
-  const theme = useTheme();
-  const ringColor = story.isSeen ? theme.colors.border.light : theme.colors.accent.primary;
-
-  return (
-    <View>
-      <Pressable
-        style={{
-          alignItems: 'center',
-          marginRight: theme.spacing.base,
-          width: 72,
-        }}
-      >
-        <View style={{ width: 48, height: 48, alignItems: 'center', justifyContent: 'center' }}>
-          {/* Ring behind emoji */}
-          <View
-            style={{
-              position: 'absolute',
-              width: 48,
-              height: 48,
-              borderRadius: 24,
-              borderWidth: 2,
-              borderColor: ringColor,
-            }}
-          />
-          <Avatar emoji={story.userEmoji} name={story.userName} size="md" />
-        </View>
-        <Text
-          variant="caption"
-          numberOfLines={1}
-          align="center"
-          style={{ marginTop: theme.spacing.xs, width: 64 }}
-        >
-          {story.userName}
-        </Text>
-      </Pressable>
-    </View>
-  );
-}
-
-function StoriesRow() {
-  const theme = useTheme();
-
-  return (
-    <View
-      style={{
-        paddingVertical: theme.spacing.base,
-        paddingLeft: theme.spacing.base,
-      }}
-    >
-      <FlatList
-        horizontal
-        data={mockStories}
-        keyExtractor={(item) => item.id}
-        renderItem={({ item, index }) => <StoryItem story={item} index={index} />}
-        showsHorizontalScrollIndicator={false}
-      />
-    </View>
-  );
-}
 
 function FeedHeader() {
   const theme = useTheme();
@@ -116,34 +57,82 @@ export default function FeedScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const { posts, isLoading, isRefreshing, setPosts, setLoading, setRefreshing, toggleLike } = useFeedStore();
+  const { user } = useAuthStore();
+  const [menuPost, setMenuPost] = useState<Post | null>(null);
 
   // Background color for gradient — uses theme color dynamically
   const bgColor = theme.colors.background.primary;
   const bgTransparent = theme.colors.background.primary + '00';
 
   useEffect(() => {
-    setLoading(true);
-    const timer = setTimeout(() => {
-      // Load from Supabase - for now show empty until real posts exist
-      setPosts([]);
-      setLoading(false);
-    }, 500);
-    return () => clearTimeout(timer);
+    const fetchPosts = async () => {
+      setLoading(true);
+      try {
+        const { posts: dbPosts } = await getPosts();
+        const mapped = dbPosts.map(p => ({
+          id: p.id,
+          authorId: p.author_id,
+          authorName: (Array.isArray(p.profiles) ? p.profiles[0]?.display_name : p.profiles?.display_name) || 'User',
+          authorUsername: (Array.isArray(p.profiles) ? p.profiles[0]?.username : p.profiles?.username) || 'user',
+          authorEmoji: (Array.isArray(p.profiles) ? p.profiles[0]?.emoji : p.profiles?.emoji) || '😊',
+          content: p.content,
+          imageUrl: p.image_url || undefined,
+          likesCount: p.likes_count || 0,
+          commentsCount: p.comments_count || 0,
+          sharesCount: p.shares_count || 0,
+          isLiked: false,
+          isBookmarked: false,
+          createdAt: p.created_at,
+        }));
+        setPosts(mapped);
+      } catch (e) {
+        setPosts([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchPosts();
   }, []);
 
-  const handleRefresh = useCallback(() => {
+  const handleRefresh = useCallback(async () => {
     setRefreshing(true);
-    setTimeout(() => {
+    try {
+      const { posts: dbPosts } = await getPosts();
+      const mapped = dbPosts.map(p => ({
+        id: p.id,
+        authorId: p.author_id,
+        authorName: (Array.isArray(p.profiles) ? p.profiles[0]?.display_name : p.profiles?.display_name) || 'User',
+        authorUsername: (Array.isArray(p.profiles) ? p.profiles[0]?.username : p.profiles?.username) || 'user',
+        authorEmoji: (Array.isArray(p.profiles) ? p.profiles[0]?.emoji : p.profiles?.emoji) || '😊',
+        content: p.content,
+        imageUrl: p.image_url || undefined,
+        likesCount: p.likes_count || 0,
+        commentsCount: p.comments_count || 0,
+        sharesCount: p.shares_count || 0,
+        isLiked: false,
+        isBookmarked: false,
+        createdAt: p.created_at,
+      }));
+      setPosts(mapped);
+    } catch (e) {
       setPosts([]);
+    } finally {
       setRefreshing(false);
-    }, 500);
+    }
   }, []);
 
   const renderPost = ({ item }: { item: Post; index: number }) => (
     <View>
       <PostCard
         post={item}
-        onLike={toggleLike}
+        onComment={(postId) => router.push({ pathname: '/comments/[id]', params: { id: postId } })}
+        onLike={async (postId) => {
+          toggleLike(postId);
+          if (user?.id) {
+            await toggleLikeAPI(user.id, postId);
+          }
+        }}
+        onMenu={(post) => setMenuPost(post)}
       />
     </View>
   );
@@ -217,7 +206,7 @@ export default function FeedScreen() {
         data={posts}
         keyExtractor={(item) => item.id}
         renderItem={renderPost}
-        ListHeaderComponent={FeedHeader}
+        ListHeaderComponent={posts.length === 0 ? FeedHeader : undefined}
         contentContainerStyle={{ paddingHorizontal: theme.spacing.base, paddingBottom: 100, paddingTop: headerContentHeight }}
         showsVerticalScrollIndicator={false}
         refreshControl={
@@ -229,6 +218,8 @@ export default function FeedScreen() {
           />
         }
       />
+
+      <PostMenuModal visible={!!menuPost} post={menuPost} onClose={() => setMenuPost(null)} />
     </View>
   );
 }

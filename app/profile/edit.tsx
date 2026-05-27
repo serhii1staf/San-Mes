@@ -1,22 +1,95 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, ScrollView, Pressable, ViewStyle, Alert, Platform, KeyboardAvoidingView, Animated, Dimensions, PanResponder, Text as RNText } from 'react-native';
+import { View, ScrollView, Pressable, ViewStyle, Platform, KeyboardAvoidingView, Animated, Dimensions, PanResponder, Text as RNText, Image } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as ImagePicker from 'expo-image-picker';
 import { useTheme } from '../../src/theme';
 import { Text, Input, Avatar } from '../../src/components/ui';
-import { useAuthStore } from '../../src/store';
+import { useAuthStore, UserLink } from '../../src/store/authStore';
+import { updateProfile as updateSupabaseProfile, supabase } from '../../src/lib/supabase';
 import { currentUser } from '../../src/utils/mockData';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
-const DISMISS_THRESHOLD = 120;
+const DISMISS_THRESHOLD = 200;
 
-const EMOJIS = [
-  '😊', '😎', '🥰', '🤩', '😇', '🦊', '🐱', '🐶',
-  '🦁', '🐼', '🐨', '🦋', '🌸', '🌺', '🍀', '✨',
-  '🔥', '💎', '🎭', '🎨', '🎵', '🌙', '☀️', '🌈',
-  '🍄', '🪷', '🫧', '🧿', '💫', '🪐', '🌊', '🍂',
+const LINK_TYPES = [
+  { key: 'github', label: 'GitHub', icon: 'github' },
+  { key: 'twitter', label: 'Twitter', icon: 'twitter' },
+  { key: 'instagram', label: 'Instagram', icon: 'instagram' },
+  { key: 'youtube', label: 'YouTube', icon: 'youtube' },
+  { key: 'telegram', label: 'Telegram', icon: 'send' },
+  { key: 'website', label: 'Сайт', icon: 'globe' },
 ];
+
+const MOOD_CATEGORIES: { title: string; emojis: string[] }[] = [
+  {
+    title: 'Настроение',
+    emojis: [
+      '😊', '😄', '😁', '🥰', '😍', '🤩', '😎', '🥳',
+      '😇', '🤗', '😌', '😏', '🤔', '😴', '🥱', '😢',
+      '😭', '😤', '🤬', '😱', '🤯', '😵‍💫', '🫠', '🥺',
+      '😈', '👻', '💀', '🤡', '😷', '🤒', '🤕', '🤑',
+    ],
+  },
+  {
+    title: 'Животные',
+    emojis: [
+      '🦊', '🐱', '🐶', '🐺', '🦁', '🐯', '🐼', '🐨',
+      '🐸', '🐙', '🦋', '🐝', '🐞', '🦄', '🐰', '🐻',
+      '🦈', '🐬', '🐳', '🦉', '🦅', '🐦', '🦜', '🐧',
+      '🐢', '🦎', '🐍', '🦔', '🐹', '🐿️', '🦩', '🐾',
+    ],
+  },
+  {
+    title: 'Природа',
+    emojis: [
+      '🌸', '🌺', '🌻', '🌹', '🌷', '💐', '🍀', '🌿',
+      '🍃', '🍂', '🍁', '🌾', '🌵', '🎋', '🪷', '🌊',
+      '☀️', '🌙', '⭐', '🌈', '☁️', '⚡', '❄️', '🔥',
+      '🍄', '🪨', '💎', '🪐', '🌍', '🌋', '🏔️', '🌅',
+    ],
+  },
+  {
+    title: 'Еда',
+    emojis: [
+      '🍕', '🍔', '🍟', '🌮', '🍣', '🍜', '🍩', '🍪',
+      '🎂', '🍰', '🧁', '🍫', '🍬', '🍭', '🍿', '🥤',
+      '☕', '🍵', '🧋', '🍺', '🍷', '🥂', '🍹', '🧃',
+      '🍎', '🍓', '🍑', '🥑', '🌽', '🥕', '🍉', '🥥',
+    ],
+  },
+  {
+    title: 'Активности',
+    emojis: [
+      '🎮', '🎯', '🎲', '🎸', '🎵', '🎤', '🎬', '🎨',
+      '🎭', '🎪', '🎢', '🏀', '⚽', '🏈', '🎾', '🏓',
+      '🎳', '🛹', '🏄', '🚴', '🏋️', '🧘', '💃', '🕺',
+      '🎧', '📷', '🎥', '💻', '📚', '✍️', '🎓', '🔬',
+    ],
+  },
+  {
+    title: 'Символы',
+    emojis: [
+      '✨', '💫', '⚡', '💥', '🫧', '🧿', '🪬', '🔮',
+      '💝', '💖', '💗', '💓', '💕', '❤️‍🔥', '🖤', '💜',
+      '💙', '💚', '💛', '🧡', '❤️', '🤍', '🩷', '🩵',
+      '☮️', '✝️', '☯️', '♾️', '🏳️‍🌈', '🎀', '👑', '🦴',
+    ],
+  },
+  {
+    title: 'Объекты',
+    emojis: [
+      '🚀', '✈️', '🛸', '🏎️', '🚗', '🛵', '⛵', '🚂',
+      '🏠', '🏰', '⛩️', '🗼', '🎡', '🌉', '💡', '🔑',
+      '🗝️', '💰', '💸', '🎁', '🎈', '🎊', '🎉', '🪩',
+      '🛡️', '⚔️', '🏹', '🪄', '🧲', '💊', '🩹', '🧸',
+    ],
+  },
+];
+
+// Flat list for quick access
+const ALL_EMOJIS = MOOD_CATEGORIES.flatMap(c => c.emojis);
 
 export default function EditProfileScreen() {
   const theme = useTheme();
@@ -28,8 +101,14 @@ export default function EditProfileScreen() {
   const [username, setUsername] = useState(displayUser.username);
   const [bio, setBio] = useState(displayUser.bio || '');
   const [selectedEmoji, setSelectedEmoji] = useState(displayUser.emoji || '😊');
+  const [links, setLinks] = useState<UserLink[]>((user as any)?.links || []);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [showLinkPicker, setShowLinkPicker] = useState(false);
+  const [editingLinkIndex, setEditingLinkIndex] = useState<number | null>(null);
+  const [linkUrl, setLinkUrl] = useState('');
+  const [linkType, setLinkType] = useState('website');
   const [isSaving, setIsSaving] = useState(false);
+  const [bannerUri, setBannerUri] = useState<string | null>((user as any)?.bannerUrl || null);
 
   // Animation
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
@@ -73,8 +152,10 @@ export default function EditProfileScreen() {
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => false,
-      onMoveShouldSetPanResponder: (_, gestureState) => {
-        return gestureState.dy > 10 && Math.abs(gestureState.dx) < Math.abs(gestureState.dy);
+      onMoveShouldSetPanResponder: (evt, gestureState) => {
+        // Only allow swipe-to-dismiss from top 60px of the modal
+        const touchY = evt.nativeEvent.locationY;
+        return touchY < 60 && gestureState.dy > 20 && Math.abs(gestureState.dx) * 2 < Math.abs(gestureState.dy);
       },
       onPanResponderMove: (_, gestureState) => {
         if (gestureState.dy > 0) {
@@ -96,14 +177,76 @@ export default function EditProfileScreen() {
     })
   ).current;
 
-  const handleSave = () => {
+  const pickBanner = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') return;
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      aspect: [3, 1],
+      quality: 0.7,
+    });
+    if (!result.canceled && result.assets[0]) {
+      setBannerUri(result.assets[0].uri);
+    }
+  };
+
+  const handleSave = async () => {
     setIsSaving(true);
-    setTimeout(() => {
-      updateProfile({ displayName: name, username, bio, emoji: selectedEmoji });
-      setIsSaving(false);
-      Alert.alert('Сохранено!', 'Ваш профиль обновлён.');
-      handleClose();
-    }, 800);
+    try {
+      // Update local state immediately
+      updateProfile({ displayName: name, username, bio, emoji: selectedEmoji, links, bannerUrl: bannerUri || undefined });
+
+      // Sync to Supabase (name, bio, emoji)
+      if (user?.id) {
+        await updateSupabaseProfile(user.id, {
+          display_name: name,
+          bio,
+          emoji: selectedEmoji,
+        });
+      }
+    } catch (e) {
+      // Local save always works, Supabase sync is best-effort
+    }
+    setIsSaving(false);
+    handleClose();
+  };
+
+  const handleAddLink = () => {
+    if (links.length >= 3) {
+      return;
+    }
+    setEditingLinkIndex(null);
+    setLinkUrl('');
+    setLinkType('website');
+    setShowLinkPicker(true);
+  };
+
+  const handleEditLink = (index: number) => {
+    setEditingLinkIndex(index);
+    setLinkUrl(links[index].url);
+    setLinkType(links[index].type);
+    setShowLinkPicker(true);
+  };
+
+  const handleSaveLink = () => {
+    if (!linkUrl.trim()) {
+      setShowLinkPicker(false);
+      return;
+    }
+    const newLink: UserLink = { type: linkType, url: linkUrl.trim() };
+    if (editingLinkIndex !== null) {
+      const updated = [...links];
+      updated[editingLinkIndex] = newLink;
+      setLinks(updated);
+    } else {
+      setLinks([...links, newLink]);
+    }
+    setShowLinkPicker(false);
+  };
+
+  const handleRemoveLink = (index: number) => {
+    setLinks(links.filter((_, i) => i !== index));
   };
 
   const outerStyle: ViewStyle = {
@@ -111,10 +254,9 @@ export default function EditProfileScreen() {
     backgroundColor: 'transparent',
   };
 
-  // Task 2: Modal positioned lower (insets.top + 60)
   const cardStyle: ViewStyle = {
     marginHorizontal: 6,
-    marginTop: insets.top + 60,
+    marginTop: insets.top + 80,
     marginBottom: insets.bottom + 6,
     flex: 1,
     borderRadius: 32,
@@ -158,8 +300,8 @@ export default function EditProfileScreen() {
             style={{
               flex: 1,
               backgroundColor: theme.isDark
-                ? 'rgba(30, 30, 30, 0.92)'
-                : 'rgba(255, 255, 255, 0.94)',
+                ? 'rgba(20, 20, 20, 0.98)'
+                : 'rgba(255, 255, 255, 0.98)',
             }}
           >
               {/* Drag handle */}
@@ -194,15 +336,33 @@ export default function EditProfileScreen() {
                     <Feather name="x" size={22} color={theme.colors.text.primary} />
                   </Pressable>
                   <Text variant="body" weight="semibold">Редактировать</Text>
-                  <View style={{ width: 22 }} />
+                  <Pressable onPress={handleSave} disabled={isSaving}>
+                    <Text variant="body" weight="semibold" color={theme.colors.accent.primary}>
+                      {isSaving ? '...' : 'Готово'}
+                    </Text>
+                  </Pressable>
                 </View>
+
+                {/* Banner */}
+                <Pressable onPress={pickBanner} style={{ marginHorizontal: 20, marginBottom: 16 }}>
+                  <View style={{ height: 100, borderRadius: 16, overflow: 'hidden', backgroundColor: theme.colors.background.secondary }}>
+                    {bannerUri ? (
+                      <Image source={{ uri: bannerUri }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                    ) : (
+                      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+                        <Feather name="image" size={24} color={theme.colors.text.tertiary} />
+                        <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginTop: 4 }}>Добавить баннер</Text>
+                      </View>
+                    )}
+                  </View>
+                </Pressable>
 
                 {/* Emoji Avatar */}
                 <View style={{ alignItems: 'center', marginVertical: 20 }}>
                   <Avatar emoji={selectedEmoji} size="xl" />
                   <Pressable style={{ marginTop: 12 }} onPress={() => setShowEmojiPicker(true)}>
                     <Text variant="body" weight="medium" color={theme.colors.accent.primary}>
-                      Изменить эмодзи
+                      Изменить модди
                     </Text>
                   </Pressable>
                 </View>
@@ -236,32 +396,71 @@ export default function EditProfileScreen() {
                   <Text
                     variant="caption"
                     color={theme.colors.text.tertiary}
-                    style={{ marginBottom: 28 }}
+                    style={{ marginBottom: 20 }}
                   >
                     {150 - bio.length} символов осталось
                   </Text>
 
-                  <Pressable
-                    onPress={handleSave}
-                    style={{
-                      backgroundColor: theme.colors.accent.primary,
-                      borderRadius: 14,
-                      paddingVertical: 16,
-                      alignItems: 'center',
-                    }}
-                    disabled={isSaving}
-                  >
-                    <Text variant="body" weight="semibold" color={theme.colors.text.inverse}>
-                      {isSaving ? 'Сохранение...' : 'Сохранить'}
+                  {/* Links Section */}
+                  <View style={{ marginBottom: 24 }}>
+                    <Text variant="body" weight="semibold" style={{ marginBottom: 12 }}>
+                      Ссылки
                     </Text>
-                  </Pressable>
+                    {links.map((link, index) => (
+                      <View
+                        key={index}
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          backgroundColor: theme.colors.background.secondary,
+                          borderRadius: 12,
+                          paddingHorizontal: 12,
+                          paddingVertical: 10,
+                          marginBottom: 8,
+                        }}
+                      >
+                        <Feather
+                          name={(LINK_TYPES.find(t => t.key === link.type)?.icon || 'link') as any}
+                          size={18}
+                          color={theme.colors.accent.primary}
+                        />
+                        <Pressable
+                          onPress={() => handleEditLink(index)}
+                          style={{ flex: 1, marginLeft: 10 }}
+                        >
+                          <Text variant="caption" weight="medium" numberOfLines={1}>
+                            {link.url}
+                          </Text>
+                        </Pressable>
+                        <Pressable onPress={() => handleRemoveLink(index)}>
+                          <Feather name="x-circle" size={18} color={theme.colors.text.tertiary} />
+                        </Pressable>
+                      </View>
+                    ))}
+                    {links.length < 3 && (
+                      <Pressable
+                        onPress={handleAddLink}
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          gap: 8,
+                          paddingVertical: 10,
+                        }}
+                      >
+                        <Feather name="plus-circle" size={18} color={theme.colors.accent.primary} />
+                        <Text variant="caption" weight="medium" color={theme.colors.accent.primary}>
+                          Добавить ссылку
+                        </Text>
+                      </Pressable>
+                    )}
+                  </View>
                 </View>
               </ScrollView>
           </View>
         </Animated.View>
       </KeyboardAvoidingView>
 
-      {/* Task 1: Emoji Picker as separate modal overlay */}
+      {/* Emoji/Mood Picker - Full modal same format as edit modal */}
       {showEmojiPicker && (
         <View
           style={{
@@ -273,7 +472,6 @@ export default function EditProfileScreen() {
             zIndex: 999,
           }}
         >
-          {/* Dark backdrop */}
           <Pressable
             style={{
               position: 'absolute',
@@ -285,23 +483,25 @@ export default function EditProfileScreen() {
             }}
             onPress={() => setShowEmojiPicker(false)}
           />
-          {/* Bottom sheet card */}
+          {/* Full modal card - same format as edit modal */}
           <View
             style={{
-              position: 'absolute',
-              bottom: 0,
-              left: 0,
-              right: 0,
-              backgroundColor: theme.isDark ? '#1e1e1e' : '#ffffff',
-              borderTopLeftRadius: 24,
-              borderTopRightRadius: 24,
-              paddingTop: 16,
-              paddingBottom: insets.bottom + 20,
-              paddingHorizontal: 20,
+              marginHorizontal: 6,
+              marginTop: insets.top + 80,
+              marginBottom: insets.bottom + 6,
+              flex: 1,
+              borderRadius: 32,
+              overflow: 'hidden',
+              backgroundColor: theme.isDark ? 'rgba(30, 30, 30, 0.97)' : 'rgba(255, 255, 255, 0.98)',
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: 12 },
+              shadowOpacity: 0.3,
+              shadowRadius: 32,
+              elevation: 20,
             }}
           >
-            {/* Handle */}
-            <View style={{ alignItems: 'center', marginBottom: 16 }}>
+            {/* Drag handle */}
+            <View style={{ alignItems: 'center', paddingTop: 12, paddingBottom: 4 }}>
               <View
                 style={{
                   width: 36,
@@ -311,30 +511,191 @@ export default function EditProfileScreen() {
                 }}
               />
             </View>
-            <Text variant="body" weight="semibold" align="center" style={{ marginBottom: 16 }}>
-              Выберите эмодзи
-            </Text>
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 10 }}>
-              {EMOJIS.map((e) => (
-                <Pressable
-                  key={e}
-                  onPress={() => { setSelectedEmoji(e); setShowEmojiPicker(false); }}
-                  style={{
-                    width: 44,
-                    height: 44,
-                    borderRadius: 12,
-                    backgroundColor: selectedEmoji === e ? theme.colors.accent.primary + '30' : theme.colors.background.secondary,
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    borderWidth: selectedEmoji === e ? 2 : 0,
-                    borderColor: theme.colors.accent.primary,
-                  }}
-                >
-                  <RNText style={{ fontSize: 20 }} allowFontScaling={false}>{e}</RNText>
-                </Pressable>
-              ))}
+
+            {/* Header */}
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                paddingHorizontal: 20,
+                paddingTop: 8,
+                paddingBottom: 12,
+              }}
+            >
+              <Pressable onPress={() => setShowEmojiPicker(false)}>
+                <Feather name="x" size={22} color={theme.colors.text.primary} />
+              </Pressable>
+              <Text variant="body" weight="semibold">Изменить модди</Text>
+              <View style={{ width: 22 }} />
             </View>
+
+            {/* Current selection preview */}
+            <View style={{ alignItems: 'center', marginBottom: 16 }}>
+              <View
+                style={{
+                  width: 64,
+                  height: 64,
+                  borderRadius: 32,
+                  backgroundColor: theme.colors.accent.primary + '20',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  borderWidth: 2,
+                  borderColor: theme.colors.accent.primary,
+                }}
+              >
+                <RNText style={{ fontSize: 32 }} allowFontScaling={false}>{selectedEmoji}</RNText>
+              </View>
+            </View>
+
+            {/* Scrollable emoji categories */}
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 32 }}
+            >
+              {MOOD_CATEGORIES.map((category) => (
+                <View key={category.title} style={{ marginBottom: 20 }}>
+                  <Text variant="caption" weight="semibold" color={theme.colors.text.secondary} style={{ marginBottom: 10, paddingHorizontal: 4 }}>
+                    {category.title}
+                  </Text>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 8 }}>
+                    {category.emojis.map((e) => (
+                      <Pressable
+                        key={e}
+                        onPress={() => { setSelectedEmoji(e); setShowEmojiPicker(false); }}
+                        style={{
+                          width: 44,
+                          height: 44,
+                          borderRadius: 12,
+                          backgroundColor: selectedEmoji === e ? theme.colors.accent.primary + '30' : theme.colors.background.secondary,
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          borderWidth: selectedEmoji === e ? 2 : 0,
+                          borderColor: theme.colors.accent.primary,
+                        }}
+                      >
+                        <RNText style={{ fontSize: 20 }} allowFontScaling={false}>{e}</RNText>
+                      </Pressable>
+                    ))}
+                  </View>
+                </View>
+              ))}
+            </ScrollView>
           </View>
+        </View>
+      )}
+
+      {/* Link Picker modal overlay */}
+      {showLinkPicker && (
+        <View
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            zIndex: 999,
+          }}
+        >
+          <Pressable
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: 'rgba(0,0,0,0.5)',
+            }}
+            onPress={() => setShowLinkPicker(false)}
+          />
+          <KeyboardAvoidingView
+            style={{ flex: 1, justifyContent: 'center' }}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          >
+            <View
+              style={{
+                marginHorizontal: 16,
+                backgroundColor: theme.isDark ? '#1e1e1e' : '#ffffff',
+                borderRadius: 24,
+                paddingTop: 16,
+                paddingBottom: 24,
+                paddingHorizontal: 20,
+                shadowColor: '#000',
+                shadowOffset: { width: 0, height: 12 },
+                shadowOpacity: 0.3,
+                shadowRadius: 32,
+                elevation: 20,
+              }}
+            >
+              <View style={{ alignItems: 'center', marginBottom: 16 }}>
+                <View
+                  style={{
+                    width: 36,
+                    height: 5,
+                    borderRadius: 3,
+                    backgroundColor: theme.colors.border.medium,
+                  }}
+                />
+              </View>
+              <Text variant="body" weight="semibold" align="center" style={{ marginBottom: 16 }}>
+                {editingLinkIndex !== null ? 'Редактировать ссылку' : 'Добавить ссылку'}
+              </Text>
+
+              {/* Link type selector */}
+              <Text variant="caption" weight="medium" color={theme.colors.text.secondary} style={{ marginBottom: 8 }}>
+                Тип
+              </Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
+                {LINK_TYPES.map((lt) => (
+                  <Pressable
+                    key={lt.key}
+                    onPress={() => setLinkType(lt.key)}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 6,
+                      paddingHorizontal: 12,
+                      paddingVertical: 8,
+                      borderRadius: 10,
+                      backgroundColor: linkType === lt.key
+                        ? theme.colors.accent.primary + '20'
+                        : theme.colors.background.secondary,
+                      borderWidth: linkType === lt.key ? 1.5 : 0,
+                      borderColor: theme.colors.accent.primary,
+                    }}
+                  >
+                    <Feather name={lt.icon as any} size={14} color={linkType === lt.key ? theme.colors.accent.primary : theme.colors.text.tertiary} />
+                    <Text variant="caption" weight={linkType === lt.key ? 'semibold' : 'regular'} color={linkType === lt.key ? theme.colors.accent.primary : theme.colors.text.secondary}>
+                      {lt.label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+
+              {/* URL input */}
+              <Input
+                label="URL"
+                value={linkUrl}
+                onChangeText={setLinkUrl}
+                placeholder="https://..."
+                style={{ marginBottom: 20 }}
+              />
+
+              <Pressable
+                onPress={handleSaveLink}
+                style={{
+                  backgroundColor: theme.colors.accent.primary,
+                  borderRadius: 14,
+                  paddingVertical: 14,
+                  alignItems: 'center',
+                }}
+              >
+                <Text variant="body" weight="semibold" color={theme.colors.text.inverse}>
+                  {editingLinkIndex !== null ? 'Сохранить' : 'Добавить'}
+                </Text>
+              </Pressable>
+            </View>
+          </KeyboardAvoidingView>
         </View>
       )}
     </View>

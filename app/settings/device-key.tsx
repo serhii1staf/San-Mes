@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Pressable, ViewStyle } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as Clipboard from 'expo-clipboard';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
 import { useAuthStore } from '../../src/store';
@@ -11,10 +12,17 @@ export default function DeviceKeyScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const { user } = useAuthStore();
+  const [copied, setCopied] = useState(false);
 
   const deviceKey = user?.deviceKey || 'XXXXXXXXXXXX';
   // Format key as XXX-XXX-XXX-XXX for readability
   const formattedKey = deviceKey.match(/.{1,3}/g)?.join('-') || deviceKey;
+
+  const handleCopy = async () => {
+    await Clipboard.setStringAsync(deviceKey);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
 
   const containerStyle: ViewStyle = {
     flex: 1,
@@ -72,7 +80,7 @@ export default function DeviceKeyScreen() {
           paddingHorizontal: 32,
           width: '100%',
           alignItems: 'center',
-          marginBottom: 24,
+          marginBottom: 16,
           borderWidth: 1,
           borderColor: theme.colors.border.light,
         }}>
@@ -87,6 +95,24 @@ export default function DeviceKeyScreen() {
             {formattedKey}
           </Text>
         </View>
+
+        {/* Copy button */}
+        <Pressable
+          onPress={handleCopy}
+          style={{
+            backgroundColor: theme.colors.accent.primary,
+            borderRadius: 14,
+            paddingVertical: 14,
+            paddingHorizontal: 24,
+            width: '100%',
+            alignItems: 'center',
+            marginBottom: 24,
+          }}
+        >
+          <Text variant="body" weight="semibold" color={theme.colors.text.inverse}>
+            {copied ? 'Скопировано!' : 'Скопировать'}
+          </Text>
+        </Pressable>
 
         {/* PIN reminder */}
         <View style={{
