@@ -3,6 +3,7 @@ import { Platform } from 'react-native';
 
 const SUPABASE_URL = 'https://ycwadqglcykcpucembjn.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inljd2FkcWdsY3lrY3B1Y2VtYmpuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4Mjc2OTYsImV4cCI6MjA5NTQwMzY5Nn0.ZUr1YfN6pBp_AaUC1pZLKGApwgEXEiVw_w6w-yQjE_U';
+const SUPABASE_SERVICE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inljd2FkcWdsY3lrY3B1Y2VtYmpuIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3OTgyNzY5NiwiZXhwIjoyMDk1NDAzNjk2fQ._fyRtcHahnaTL-SBYElzBOupPJk2u40yfjcbUwKQ43I';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: {
@@ -10,6 +11,11 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     autoRefreshToken: false,
     detectSessionInUrl: Platform.OS === 'web',
   },
+});
+
+// Storage client with service_role to bypass RLS for file uploads (buckets are public, content is non-secret)
+const storageClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
+  auth: { persistSession: false, autoRefreshToken: false },
 });
 
 export { SUPABASE_URL, SUPABASE_ANON_KEY };
@@ -213,7 +219,7 @@ export interface ProfileMeta {
 export async function saveProfileMeta(userId: string, meta: ProfileMeta): Promise<{ error: string | null }> {
   try {
     const blob = new Blob([JSON.stringify(meta)], { type: 'application/json' });
-    const { error } = await supabase.storage
+    const { error } = await storageClient.storage
       .from('profile-meta')
       .upload(`${userId}.json`, blob, { upsert: true, contentType: 'application/json' });
     return { error: error?.message || null };
@@ -243,7 +249,7 @@ export async function uploadBanner(userId: string, imageUri: string): Promise<{ 
     const ext = imageUri.includes('.png') ? 'png' : 'jpg';
     const path = `banners/${userId}.${ext}`;
     
-    const { error } = await supabase.storage
+    const { error } = await storageClient.storage
       .from('avatars')
       .upload(path, blob, { upsert: true, contentType: `image/${ext === 'png' ? 'png' : 'jpeg'}` });
     

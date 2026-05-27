@@ -30,7 +30,7 @@ export function Avatar({
     xl: 96,
   };
 
-  // Emoji fontSize — sized to fill container nicely
+  // Emoji fontSize — sized to fill container nicely without clipping
   const emojiSizeMap: Record<AvatarSize, number> = {
     xs: 14,
     sm: 18,
@@ -49,8 +49,7 @@ export function Avatar({
 
   const dimension = sizeMap[size];
 
-  // Emoji avatar — render WITHOUT any overflow constraint
-  // The View has NO borderRadius (which causes clipping on both platforms)
+  // Emoji avatar
   if (emoji) {
     return (
       <View
@@ -60,7 +59,6 @@ export function Avatar({
             height: dimension,
             alignItems: 'center',
             justifyContent: 'center',
-            overflow: 'visible',
           },
           style,
         ]}
@@ -68,8 +66,10 @@ export function Avatar({
         <RNText
           style={{
             fontSize: emojiSizeMap[size],
+            width: dimension,
             textAlign: 'center',
-            lineHeight: emojiSizeMap[size] * 1.4,
+            includeFontPadding: false,
+            textAlignVertical: 'center',
           }}
           allowFontScaling={false}
           numberOfLines={1}
