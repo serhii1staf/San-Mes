@@ -11,7 +11,9 @@ import { PostMenuModal } from '../../src/components/feed/PostMenuModal';
 import { TrendingSection } from '../../src/components/feed/TrendingSection';
 import { useFeedStore, useAuthStore } from '../../src/store';
 import { Post } from '../../src/types';
-import { getPosts, toggleLike as toggleLikeAPI } from '../../src/lib/supabase';
+import { getPosts, toggleLike as toggleLikeAPI, isRepost, createRepost } from '../../src/lib/supabase';
+import { supabase } from '../../src/lib/supabase';
+import { triggerHaptic } from '../../src/utils/haptics';
 
 
 function FeedHeader() {
@@ -64,26 +66,68 @@ export default function FeedScreen() {
   const bgColor = theme.colors.background.primary;
   const bgTransparent = theme.colors.background.primary + '00';
 
+  // Map raw DB posts to app Post type, resolving reposts
+  const mapPosts = useCallback(async (dbPosts: any[], likedPostIds: Set<string>): Promise<Post[]> => {
+    const mapped: Post[] = [];
+    for (const p of dbPosts) {
+      const repostInfo = isRepost(p.content || '');
+      let post: Post = {
+        id: p.id,
+        authorId: p.author_id,
+        authorName: (Array.isArray(p.profiles) ? p.profiles[0]?.display_name : p.profiles?.display_name) || 'User',
+        authorUsername: (Array.isArray(p.profiles) ? p.profiles[0]?.username : p.profiles?.username) || 'user',
+        authorEmoji: (Array.isArray(p.profiles) ? p.profiles[0]?.emoji : p.profiles?.emoji) || '😊',
+        content: repostInfo.isRepost ? (repostInfo.comment || '') : p.content,
+        imageUrl: p.image_url || undefined,
+        likesCount: p.likes_count || 0,
+        commentsCount: p.comments_count || 0,
+        sharesCount: p.shares_count || 0,
+        isLiked: likedPostIds.has(p.id),
+        isBookmarked: false,
+        createdAt: p.created_at,
+        isRepost: repostInfo.isRepost,
+      };
+      // Resolve original post for reposts
+      if (repostInfo.isRepost && repostInfo.originalPostId) {
+        const { data: orig } = await supabase
+          .from('posts')
+          .select('*, profiles:author_id (id, username, display_name, emoji)')
+          .eq('id', repostInfo.originalPostId)
+          .single();
+        if (orig) {
+          post.originalPost = {
+            id: orig.id,
+            authorName: (Array.isArray(orig.profiles) ? orig.profiles[0]?.display_name : orig.profiles?.display_name) || 'User',
+            authorUsername: (Array.isArray(orig.profiles) ? orig.profiles[0]?.username : orig.profiles?.username) || 'user',
+            authorEmoji: (Array.isArray(orig.profiles) ? orig.profiles[0]?.emoji : orig.profiles?.emoji) || '😊',
+            content: orig.content,
+            imageUrl: orig.image_url || undefined,
+          };
+        }
+      }
+      mapped.push(post);
+    }
+    return mapped;
+  }, []);
+
   useEffect(() => {
     const fetchPosts = async () => {
       setLoading(true);
       try {
         const { posts: dbPosts } = await getPosts();
-        const mapped = dbPosts.map(p => ({
-          id: p.id,
-          authorId: p.author_id,
-          authorName: (Array.isArray(p.profiles) ? p.profiles[0]?.display_name : p.profiles?.display_name) || 'User',
-          authorUsername: (Array.isArray(p.profiles) ? p.profiles[0]?.username : p.profiles?.username) || 'user',
-          authorEmoji: (Array.isArray(p.profiles) ? p.profiles[0]?.emoji : p.profiles?.emoji) || '😊',
-          content: p.content,
-          imageUrl: p.image_url || undefined,
-          likesCount: p.likes_count || 0,
-          commentsCount: p.comments_count || 0,
-          sharesCount: p.shares_count || 0,
-          isLiked: false,
-          isBookmarked: false,
-          createdAt: p.created_at,
-        }));
+        
+        let likedPostIds: Set<string> = new Set();
+        if (user?.id) {
+          const { data: likes } = await supabase
+            .from('likes')
+            .select('post_id')
+            .eq('user_id', user.id);
+          if (likes) {
+            likedPostIds = new Set(likes.map(l => l.post_id));
+          }
+        }
+        
+        const mapped = await mapPosts(dbPosts, likedPostIds);
         setPosts(mapped);
       } catch (e) {
         setPosts([]);
@@ -98,28 +142,26 @@ export default function FeedScreen() {
     setRefreshing(true);
     try {
       const { posts: dbPosts } = await getPosts();
-      const mapped = dbPosts.map(p => ({
-        id: p.id,
-        authorId: p.author_id,
-        authorName: (Array.isArray(p.profiles) ? p.profiles[0]?.display_name : p.profiles?.display_name) || 'User',
-        authorUsername: (Array.isArray(p.profiles) ? p.profiles[0]?.username : p.profiles?.username) || 'user',
-        authorEmoji: (Array.isArray(p.profiles) ? p.profiles[0]?.emoji : p.profiles?.emoji) || '😊',
-        content: p.content,
-        imageUrl: p.image_url || undefined,
-        likesCount: p.likes_count || 0,
-        commentsCount: p.comments_count || 0,
-        sharesCount: p.shares_count || 0,
-        isLiked: false,
-        isBookmarked: false,
-        createdAt: p.created_at,
-      }));
+      
+      let likedPostIds: Set<string> = new Set();
+      if (user?.id) {
+        const { data: likes } = await supabase
+          .from('likes')
+          .select('post_id')
+          .eq('user_id', user.id);
+        if (likes) {
+          likedPostIds = new Set(likes.map(l => l.post_id));
+        }
+      }
+      
+      const mapped = await mapPosts(dbPosts, likedPostIds);
       setPosts(mapped);
     } catch (e) {
       setPosts([]);
     } finally {
       setRefreshing(false);
     }
-  }, []);
+  }, [user?.id, mapPosts]);
 
   const renderPost = ({ item }: { item: Post; index: number }) => (
     <View>
@@ -133,10 +175,11 @@ export default function FeedScreen() {
           }
         }}
         onShare={async (postId) => {
-          try {
-            const { Share } = require('react-native');
-            await Share.share({ message: `https://san-mes.vercel.app/post/${postId}` });
-          } catch {}
+          // Set pending repost and switch to create tab
+          if (!user?.id) return;
+          triggerHaptic('medium');
+          useFeedStore.getState().setPendingRepost(postId);
+          router.push('/(tabs)/create');
         }}
         onMenu={(post) => setMenuPost(post)}
       />
@@ -215,6 +258,9 @@ export default function FeedScreen() {
         ListHeaderComponent={posts.length === 0 ? FeedHeader : undefined}
         contentContainerStyle={{ paddingHorizontal: theme.spacing.base, paddingBottom: 100, paddingTop: headerContentHeight }}
         showsVerticalScrollIndicator={false}
+        removeClippedSubviews={true}
+        maxToRenderPerBatch={5}
+        windowSize={7}
         refreshControl={
           <RefreshControl
             refreshing={isRefreshing}

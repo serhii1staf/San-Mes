@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { View, Pressable, Modal, Share, Image, Alert } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { View, Pressable, Modal, Share, Image, Alert, Animated, Dimensions, PanResponder } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
@@ -8,6 +8,12 @@ import { Text } from '../ui/Text';
 import { Avatar } from '../ui/Avatar';
 import { Post } from '../../types';
 import { triggerHaptic } from '../../utils/haptics';
+import { useAuthStore } from '../../store/authStore';
+import { useFeedStore } from '../../store/feedStore';
+import { deletePost } from '../../lib/supabase';
+
+const { height: SCREEN_HEIGHT } = Dimensions.get('window');
+const REPORT_CATS = ['Спам', 'Насилие', 'Ложная информация', 'Мошенничество', 'Нарушение авторских прав', 'Другое'];
 
 interface PostMenuModalProps {
   visible: boolean;
@@ -15,118 +21,137 @@ interface PostMenuModalProps {
   onClose: () => void;
 }
 
-const REPORT_CATEGORIES = [
-  'Спам',
-  'Насилие или опасные организации',
-  'Ложная информация',
-  'Мошенничество',
-  'Нарушение авторских прав',
-  'Другое',
-];
-
 export function PostMenuModal({ visible, post, onClose }: PostMenuModalProps) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
-  const [showReport, setShowReport] = useState(false);
+  const { user } = useAuthStore();
+  const { removePost } = useFeedStore();
+  const [mode, setMode] = useState<'menu' | 'report'>('menu');
+
+  const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
+  const dragY = useRef(new Animated.Value(0)).current;
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (_, g) => g.dy > 10,
+      onPanResponderMove: (_, g) => { if (g.dy > 0) dragY.setValue(g.dy); },
+      onPanResponderRelease: (_, g) => {
+        if (g.dy > 80 || g.vy > 0.5) { dismiss(); }
+        else { Animated.spring(dragY, { toValue: 0, useNativeDriver: true, tension: 120, friction: 10 }).start(); }
+      },
+    })
+  ).current;
+
+  useEffect(() => {
+    if (visible) {
+      setMode('menu');
+      dragY.setValue(0);
+      Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 50, friction: 9 }).start();
+    } else {
+      slideAnim.setValue(SCREEN_HEIGHT);
+    }
+  }, [visible]);
+
+  const dismiss = () => {
+    Animated.timing(slideAnim, { toValue: SCREEN_HEIGHT, duration: 200, useNativeDriver: true }).start(() => {
+      setMode('menu');
+      onClose();
+    });
+  };
+
+  const switchToReport = () => {
+    // Animate out, switch mode, animate in
+    Animated.timing(slideAnim, { toValue: SCREEN_HEIGHT, duration: 150, useNativeDriver: true }).start(() => {
+      setMode('report');
+      dragY.setValue(0);
+      Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 50, friction: 9 }).start();
+    });
+  };
 
   if (!post) return null;
 
-  const handleCopyLink = async () => {
-    triggerHaptic('light');
-    await Clipboard.setStringAsync(`san-mes://post/${post.id}`);
-    onClose();
-  };
+  const isOwnPost = user?.id === post.authorId;
+  const previewName = post.isRepost && post.originalPost ? post.originalPost.authorName : post.authorName;
+  const previewEmoji = post.isRepost && post.originalPost ? post.originalPost.authorEmoji : post.authorEmoji;
+  const previewContent = post.isRepost && post.originalPost ? post.originalPost.content : (post.content || 'Публикация');
+  const previewImage = post.isRepost && post.originalPost ? post.originalPost.imageUrl : post.imageUrl;
 
-  const handleShare = async () => {
-    triggerHaptic('light');
-    try {
-      await Share.share({ message: post.content || 'Посмотри этот пост в San!' });
-    } catch (e) {}
-    onClose();
-  };
-
-  const handleReport = (category: string) => {
+  const handleCopyLink = async () => { triggerHaptic('light'); await Clipboard.setStringAsync(`https://san-mes.vercel.app/post/${post.id}`); dismiss(); };
+  const handleShare = async () => { triggerHaptic('light'); try { await Share.share({ message: `${post.content || ''}\nhttps://san-mes.vercel.app/post/${post.id}` }); } catch {} dismiss(); };
+  const handleDelete = () => {
     triggerHaptic('medium');
-    setShowReport(false);
-    onClose();
+    Alert.alert('Удалить пост?', 'Это действие нельзя отменить', [
+      { text: 'Отмена', style: 'cancel' },
+      { text: 'Удалить', style: 'destructive', onPress: async () => { if (user?.id) { await deletePost(post.id, user.id); removePost(post.id); } dismiss(); } },
+    ]);
   };
 
-  // Report categories modal
-  if (showReport) {
-    return (
-      <Modal visible={visible} transparent animationType="slide" onRequestClose={() => { setShowReport(false); onClose(); }}>
-        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }} onPress={() => { setShowReport(false); onClose(); }}>
-          <View style={{ flex: 1 }} />
-          <Pressable onPress={(e) => e.stopPropagation()}>
-            <View style={{ marginHorizontal: 12, marginBottom: insets.bottom + 12, backgroundColor: theme.isDark ? '#1C1C1E' : '#FFFFFF', borderRadius: 20, paddingTop: 12, paddingBottom: 16, paddingHorizontal: 20 }}>
-              <View style={{ alignItems: 'center', marginBottom: 14 }}>
-                <View style={{ width: 36, height: 5, borderRadius: 3, backgroundColor: theme.colors.border.medium }} />
+  const translateY = Animated.add(slideAnim, dragY);
+  const sheetBg = theme.isDark ? theme.colors.background.elevated : '#FFFFFF';
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={dismiss} statusBarTranslucent>
+      {/* Backdrop — always tappable */}
+      <View style={{ flex: 1 }}>
+        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' }} onPress={dismiss} />
+      </View>
+
+      {/* Sheet */}
+      <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0 }} pointerEvents="box-none">
+        <Animated.View
+          style={{ transform: [{ translateY }] }}
+          {...panResponder.panHandlers}
+        >
+          <View style={{ marginHorizontal: 8, marginBottom: insets.bottom + 28, backgroundColor: sheetBg, borderRadius: 28, shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.12, shadowRadius: 16, elevation: 10 }}>
+          {/* Handle */}
+          <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 6 }}>
+            <View style={{ width: 40, height: 5, borderRadius: 3, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)' }} />
+          </View>
+
+          {mode === 'menu' ? (
+            <>
+              {/* Post preview */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', padding: 12, marginHorizontal: 12, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)', borderRadius: 14, marginBottom: 8 }}>
+                <Avatar emoji={previewEmoji} size="sm" />
+                <View style={{ marginLeft: 10, flex: 1 }}>
+                  <Text variant="caption" weight="semibold" numberOfLines={1}>{previewName}</Text>
+                  <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>{previewContent}</Text>
+                </View>
+                {previewImage && <Image source={{ uri: previewImage }} style={{ width: 40, height: 40, borderRadius: 10, marginLeft: 8 }} resizeMode="cover" />}
               </View>
-              <Text variant="body" weight="semibold" align="center" style={{ marginBottom: 16 }}>Причина жалобы</Text>
-              {REPORT_CATEGORIES.map((cat, i) => (
-                <Pressable key={i} onPress={() => handleReport(cat)} style={{ paddingVertical: 13, borderBottomWidth: i < REPORT_CATEGORIES.length - 1 ? 0.5 : 0, borderBottomColor: theme.colors.border.light }}>
+              <MenuItem icon="link" label="Скопировать ссылку" onPress={handleCopyLink} theme={theme} />
+              <MenuItem icon="share-2" label="Поделиться" onPress={handleShare} theme={theme} />
+              <MenuItem icon="bookmark" label="Сохранить" onPress={() => { triggerHaptic('light'); dismiss(); }} theme={theme} />
+              {isOwnPost && <MenuItem icon="trash-2" label="Удалить пост" onPress={handleDelete} theme={theme} destructive />}
+              {!isOwnPost && <MenuItem icon="flag" label="Пожаловаться" onPress={() => { triggerHaptic('light'); switchToReport(); }} theme={theme} destructive />}
+            </>
+          ) : (
+            <>
+              <Text variant="body" weight="semibold" align="center" style={{ paddingVertical: 10 }}>Причина жалобы</Text>
+              {REPORT_CATS.map((cat, i) => (
+                <Pressable key={i} onPress={() => { triggerHaptic('medium'); Alert.alert('Жалоба отправлена', 'Спасибо.'); dismiss(); }} style={{ paddingVertical: 14, paddingHorizontal: 20, borderTopWidth: 0.5, borderTopColor: theme.colors.border.light }}>
                   <Text variant="body">{cat}</Text>
                 </Pressable>
               ))}
-            </View>
-          </Pressable>
-        </Pressable>
-      </Modal>
-    );
-  }
-
-  return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }} onPress={onClose}>
-        <View style={{ flex: 1 }} />
-        <Pressable onPress={(e) => e.stopPropagation()}>
-          <View style={{ marginHorizontal: 12, marginBottom: insets.bottom + 12, backgroundColor: theme.isDark ? '#1C1C1E' : '#FFFFFF', borderRadius: 20, paddingTop: 12, paddingBottom: 16, paddingHorizontal: 20 }}>
-            {/* Handle */}
-            <View style={{ alignItems: 'center', marginBottom: 14 }}>
-              <View style={{ width: 36, height: 5, borderRadius: 3, backgroundColor: theme.colors.border.medium }} />
-            </View>
-
-            {/* Post preview with image */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', padding: 12, backgroundColor: theme.colors.background.secondary, borderRadius: 14, marginBottom: 16 }}>
-              <Avatar emoji={post.authorEmoji} size="sm" />
-              <View style={{ marginLeft: 10, flex: 1 }}>
-                <Text variant="caption" weight="semibold" numberOfLines={1}>{post.authorName}</Text>
-                <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>{post.content || 'Публикация'}</Text>
-              </View>
-              {post.imageUrl && <Image source={{ uri: post.imageUrl }} style={{ width: 44, height: 44, borderRadius: 8, marginLeft: 8 }} resizeMode="cover" />}
-            </View>
-
-            {/* Options */}
-            <Pressable onPress={handleCopyLink} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 13, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border.light }}>
-              <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: theme.colors.background.secondary, alignItems: 'center', justifyContent: 'center' }}>
-                <Feather name="link" size={18} color={theme.colors.text.primary} />
-              </View>
-              <Text variant="body" style={{ marginLeft: 12 }}>Скопировать ссылку</Text>
-            </Pressable>
-
-            <Pressable onPress={handleShare} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 13, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border.light }}>
-              <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: theme.colors.background.secondary, alignItems: 'center', justifyContent: 'center' }}>
-                <Feather name="share-2" size={18} color={theme.colors.text.primary} />
-              </View>
-              <Text variant="body" style={{ marginLeft: 12 }}>Поделиться</Text>
-            </Pressable>
-
-            <Pressable onPress={() => { triggerHaptic('light'); onClose(); }} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 13, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border.light }}>
-              <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: theme.colors.background.secondary, alignItems: 'center', justifyContent: 'center' }}>
-                <Feather name="bookmark" size={18} color={theme.colors.text.primary} />
-              </View>
-              <Text variant="body" style={{ marginLeft: 12 }}>Сохранить</Text>
-            </Pressable>
-
-            <Pressable onPress={() => { triggerHaptic('light'); setShowReport(true); }} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 13 }}>
-              <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: '#FF3B3015', alignItems: 'center', justifyContent: 'center' }}>
-                <Feather name="flag" size={18} color="#FF3B30" />
-              </View>
-              <Text variant="body" color="#FF3B30" style={{ marginLeft: 12 }}>Пожаловаться</Text>
-            </Pressable>
-          </View>
-        </Pressable>
-      </Pressable>
+            </>
+          )}
+          <View style={{ height: 10 }} />
+        </View>
+        </Animated.View>
+      </View>
     </Modal>
+  );
+}
+
+function MenuItem({ icon, label, onPress, theme, destructive }: { icon: string; label: string; onPress: () => void; theme: any; destructive?: boolean }) {
+  const color = destructive ? '#FF3B30' : theme.colors.text.primary;
+  return (
+    <Pressable onPress={onPress} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 20 }}>
+      <View style={{ width: 34, height: 34, borderRadius: 10, backgroundColor: destructive ? '#FF3B3010' : (theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)'), alignItems: 'center', justifyContent: 'center' }}>
+        <Feather name={icon as any} size={17} color={color} />
+      </View>
+      <Text variant="body" color={color} style={{ marginLeft: 14 }}>{label}</Text>
+    </Pressable>
   );
 }

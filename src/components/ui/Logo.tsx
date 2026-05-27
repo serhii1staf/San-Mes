@@ -1,5 +1,5 @@
 import React from 'react';
-import { Image, ViewStyle } from 'react-native';
+import { Image, ImageStyle } from 'react-native';
 
 interface LogoProps {
   size?: number;
@@ -7,7 +7,7 @@ interface LogoProps {
 }
 
 export function Logo({ size = 80 }: LogoProps) {
-  const imageStyle: ViewStyle & { width: number; height: number; borderRadius: number } = {
+  const imageStyle: ImageStyle = {
     width: size,
     height: size,
     borderRadius: size * 0.2,

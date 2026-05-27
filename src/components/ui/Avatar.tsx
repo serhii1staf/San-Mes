@@ -32,11 +32,11 @@ export function Avatar({
 
   // Emoji fontSize — conservative to avoid clipping
   const emojiSizeMap: Record<AvatarSize, number> = {
-    xs: 12,
-    sm: 16,
-    md: 22,
-    lg: 32,
-    xl: 48,
+    xs: 13,
+    sm: 17,
+    md: 24,
+    lg: 34,
+    xl: 50,
   };
 
   const fontSizeMap: Record<AvatarSize, number> = {

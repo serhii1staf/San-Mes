@@ -20,6 +20,41 @@ const storageClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
 
 export { SUPABASE_URL, SUPABASE_ANON_KEY };
 
+// Upload post image to storage, return public URL
+export async function uploadPostImage(imageUri: string): Promise<{ url: string | null; error: string | null }> {
+  try {
+    const filename = `post_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.jpg`;
+    
+    // Use FormData approach which works correctly in React Native
+    const formData = new FormData();
+    formData.append('', {
+      uri: imageUri,
+      name: filename,
+      type: 'image/jpeg',
+    } as any);
+
+    const uploadUrl = `${SUPABASE_URL}/storage/v1/object/post-images/${filename}`;
+    const response = await fetch(uploadUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}`,
+        'x-upsert': 'true',
+      },
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      return { url: null, error: `Upload failed: ${errText}` };
+    }
+    
+    const { data } = supabase.storage.from('post-images').getPublicUrl(filename);
+    return { url: data.publicUrl, error: null };
+  } catch (e: any) {
+    return { url: null, error: e?.message || 'Unknown error' };
+  }
+}
+
 // ---- Database API ----
 
 export interface DBProfile {
@@ -43,6 +78,39 @@ export interface DBPost {
   comments_count: number;
   shares_count: number;
   created_at: string;
+}
+
+// Repost marker prefix
+const REPOST_PREFIX = '::repost::';
+
+// Check if a post is a repost
+export function isRepost(content: string): { isRepost: boolean; originalPostId?: string; comment?: string } {
+  if (content.startsWith(REPOST_PREFIX)) {
+    const rest = content.slice(REPOST_PREFIX.length);
+    const sepIdx = rest.indexOf('::');
+    if (sepIdx >= 0) {
+      return { isRepost: true, originalPostId: rest.slice(0, sepIdx), comment: rest.slice(sepIdx + 2) || undefined };
+    }
+    return { isRepost: true, originalPostId: rest };
+  }
+  return { isRepost: false };
+}
+
+// Create a repost
+export async function createRepost(authorId: string, originalPostId: string, comment?: string): Promise<{ post: DBPost | null; error: string | null }> {
+  const content = `${REPOST_PREFIX}${originalPostId}::${comment || ''}`;
+  const { data, error } = await supabase
+    .from('posts')
+    .insert({ author_id: authorId, content, image_url: null })
+    .select()
+    .single();
+  if (error) return { post: null, error: error.message };
+  // Increment shares_count on original post
+  const { data: orig } = await supabase.from('posts').select('shares_count').eq('id', originalPostId).single();
+  if (orig) {
+    await supabase.from('posts').update({ shares_count: (orig.shares_count || 0) + 1 }).eq('id', originalPostId);
+  }
+  return { post: data, error: null };
 }
 
 // Simple hash for PIN (not cryptographically secure, but sufficient for demo)
@@ -124,7 +192,7 @@ export async function loginWithPin(pin: string): Promise<{ profile: DBProfile | 
 }
 
 // Get all posts with author info
-export async function getPosts(): Promise<{ posts: any[]; error: string | null }> {
+export async function getPosts(limit: number = 20, offset: number = 0): Promise<{ posts: any[]; error: string | null; hasMore: boolean }> {
   const { data, error } = await supabase
     .from('posts')
     .select(`
@@ -132,10 +200,10 @@ export async function getPosts(): Promise<{ posts: any[]; error: string | null }
       profiles:author_id (id, username, display_name, emoji)
     `)
     .order('created_at', { ascending: false })
-    .limit(50);
+    .range(offset, offset + limit - 1);
 
-  if (error) return { posts: [], error: error.message };
-  return { posts: data || [], error: null };
+  if (error) return { posts: [], error: error.message, hasMore: false };
+  return { posts: data || [], error: null, hasMore: (data || []).length === limit };
 }
 
 // Create a post
@@ -152,6 +220,24 @@ export async function createPost(authorId: string, content: string, imageUrl?: s
 
   if (error) return { post: null, error: error.message };
   return { post: data, error: null };
+}
+
+// Delete a post
+export async function deletePost(postId: string, authorId: string): Promise<{ error: string | null }> {
+  try {
+    // Delete related likes and comments first
+    await supabase.from('likes').delete().eq('post_id', postId);
+    await supabase.from('comments').delete().eq('post_id', postId);
+    // Delete the post itself (only if author matches)
+    const { error } = await supabase
+      .from('posts')
+      .delete()
+      .eq('id', postId)
+      .eq('author_id', authorId);
+    return { error: error?.message || null };
+  } catch (e: any) {
+    return { error: e?.message || 'Unknown error' };
+  }
 }
 
 // Get conversations for a user
@@ -249,19 +335,38 @@ export async function loadProfileMeta(userId: string): Promise<{ meta: ProfileMe
 // Upload banner image to storage, return public URL
 export async function uploadBanner(userId: string, imageUri: string): Promise<{ url: string | null; error: string | null }> {
   try {
-    const response = await fetch(imageUri);
-    const blob = await response.blob();
     const ext = imageUri.includes('.png') ? 'png' : 'jpg';
     const path = `banners/${userId}.${ext}`;
+    const mimeType = ext === 'png' ? 'image/png' : 'image/jpeg';
     
-    const { error } = await storageClient.storage
-      .from('avatars')
-      .upload(path, blob, { upsert: true, contentType: `image/${ext === 'png' ? 'png' : 'jpeg'}` });
-    
-    if (error) return { url: null, error: error.message };
+    // Use FormData approach which works correctly in React Native
+    const formData = new FormData();
+    formData.append('', {
+      uri: imageUri,
+      name: `${userId}.${ext}`,
+      type: mimeType,
+    } as any);
+
+    // Upload using fetch directly to Supabase Storage API (service_role for RLS bypass)
+    const uploadUrl = `${SUPABASE_URL}/storage/v1/object/avatars/${path}`;
+    const response = await fetch(uploadUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}`,
+        'x-upsert': 'true',
+      },
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      return { url: null, error: `Upload failed: ${errText}` };
+    }
     
     const { data } = supabase.storage.from('avatars').getPublicUrl(path);
-    return { url: data.publicUrl, error: null };
+    // Add cache-busting param to force reload
+    const publicUrl = data.publicUrl + '?t=' + Date.now();
+    return { url: publicUrl, error: null };
   } catch (e: any) {
     return { url: null, error: e?.message || 'Unknown error' };
   }
@@ -281,24 +386,36 @@ export async function getProfile(userId: string): Promise<{ profile: DBProfile |
 
 // Toggle like
 export async function toggleLike(userId: string, postId: string): Promise<{ liked: boolean; error: string | null }> {
-  // Check if already liked
-  const { data: existing } = await supabase
-    .from('likes')
-    .select('*')
-    .eq('user_id', userId)
-    .eq('post_id', postId)
-    .single();
+  try {
+    // Check if already liked
+    const { data: existing } = await supabase
+      .from('likes')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('post_id', postId)
+      .maybeSingle();
 
-  if (existing) {
-    // Unlike
-    await supabase.from('likes').delete().eq('user_id', userId).eq('post_id', postId);
-    await supabase.rpc('decrement_likes', { post_id: postId }).catch(() => {});
-    return { liked: false, error: null };
-  } else {
-    // Like
-    await supabase.from('likes').insert({ user_id: userId, post_id: postId });
-    await supabase.rpc('increment_likes', { post_id: postId }).catch(() => {});
-    return { liked: true, error: null };
+    if (existing) {
+      // Unlike
+      await supabase.from('likes').delete().eq('user_id', userId).eq('post_id', postId);
+      // Decrement likes_count directly
+      const { data: post } = await supabase.from('posts').select('likes_count').eq('id', postId).single();
+      if (post) {
+        await supabase.from('posts').update({ likes_count: Math.max((post.likes_count || 0) - 1, 0) }).eq('id', postId);
+      }
+      return { liked: false, error: null };
+    } else {
+      // Like
+      await supabase.from('likes').insert({ user_id: userId, post_id: postId });
+      // Increment likes_count directly
+      const { data: post } = await supabase.from('posts').select('likes_count').eq('id', postId).single();
+      if (post) {
+        await supabase.from('posts').update({ likes_count: (post.likes_count || 0) + 1 }).eq('id', postId);
+      }
+      return { liked: true, error: null };
+    }
+  } catch (e: any) {
+    return { liked: false, error: e?.message || 'Unknown error' };
   }
 }
 
@@ -338,8 +455,11 @@ export async function createComment(postId: string, authorId: string, content: s
       .from('comments')
       .insert({ post_id: postId, author_id: authorId, content });
     if (error) return { error: error.message };
-    // Increment comment count on post
-    await supabase.rpc('increment_comments', { post_id: postId }).catch(() => {});
+    // Increment comment count directly
+    const { data: post } = await supabase.from('posts').select('comments_count').eq('id', postId).single();
+    if (post) {
+      await supabase.from('posts').update({ comments_count: (post.comments_count || 0) + 1 }).eq('id', postId);
+    }
     return { error: null };
   } catch (e: any) {
     return { error: e?.message || 'Unknown error' };
@@ -375,12 +495,12 @@ export async function unfollowUser(followerId: string, followingId: string): Pro
 // Check if following
 export async function isFollowing(followerId: string, followingId: string): Promise<boolean> {
   try {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('follows')
-      .select('id')
+      .select('follower_id')
       .eq('follower_id', followerId)
       .eq('following_id', followingId)
-      .single();
+      .maybeSingle();
     return !!data;
   } catch {
     return false;

@@ -2,36 +2,11 @@ import { create } from 'zustand';
 import { persist, createJSONStorage, StateStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-let mmkvStorage: StateStorage;
-
-try {
-  const { MMKV } = require('react-native-mmkv');
-  const storage = new MMKV({ id: 'theme-storage' });
-  mmkvStorage = {
-    setItem: (name: string, value: string) => {
-      storage.set(name, value);
-    },
-    getItem: (name: string) => {
-      const value = storage.getString(name);
-      return value ?? null;
-    },
-    removeItem: (name: string) => {
-      storage.delete(name);
-    },
-  };
-} catch {
-  mmkvStorage = {
-    setItem: async (name: string, value: string) => {
-      await AsyncStorage.setItem(name, value);
-    },
-    getItem: async (name: string) => {
-      return await AsyncStorage.getItem(name);
-    },
-    removeItem: async (name: string) => {
-      await AsyncStorage.removeItem(name);
-    },
-  };
-}
+const mmkvStorage: StateStorage = {
+  setItem: async (name: string, value: string) => { await AsyncStorage.setItem(name, value); },
+  getItem: async (name: string) => { return await AsyncStorage.getItem(name); },
+  removeItem: async (name: string) => { await AsyncStorage.removeItem(name); },
+};
 
 export type ThemeMode = 'light' | 'dark';
 export type AccentColor = 'coral' | 'sage' | 'lavender' | 'sky' | 'peach' | 'mint';

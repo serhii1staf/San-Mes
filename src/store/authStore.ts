@@ -2,38 +2,17 @@ import { create } from 'zustand';
 import { persist, createJSONStorage, StateStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// Use AsyncStorage as reliable fallback that works in Expo Go
-let appStorage: StateStorage;
-
-try {
-  const { MMKV } = require('react-native-mmkv');
-  const storage = new MMKV({ id: 'auth-storage' });
-  appStorage = {
-    setItem: (name: string, value: string) => {
-      storage.set(name, value);
-    },
-    getItem: (name: string) => {
-      const value = storage.getString(name);
-      return value ?? null;
-    },
-    removeItem: (name: string) => {
-      storage.delete(name);
-    },
-  };
-} catch {
-  // Fallback to AsyncStorage for Expo Go
-  appStorage = {
-    setItem: async (name: string, value: string) => {
-      await AsyncStorage.setItem(name, value);
-    },
-    getItem: async (name: string) => {
-      return await AsyncStorage.getItem(name);
-    },
-    removeItem: async (name: string) => {
-      await AsyncStorage.removeItem(name);
-    },
-  };
-}
+const appStorage: StateStorage = {
+  setItem: async (name: string, value: string) => {
+    await AsyncStorage.setItem(name, value);
+  },
+  getItem: async (name: string) => {
+    return await AsyncStorage.getItem(name);
+  },
+  removeItem: async (name: string) => {
+    await AsyncStorage.removeItem(name);
+  },
+};
 
 export interface UserLink {
   type: string;

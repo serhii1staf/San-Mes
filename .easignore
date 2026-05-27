@@ -1,0 +1,6 @@
+.env.local
+credentials.json
+build-info.json
+.vercel
+.agents
+tokim

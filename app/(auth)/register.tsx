@@ -269,6 +269,7 @@ export default function RegisterScreen() {
   };
 
   return (
+    <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
     <View style={containerStyle}>
       {/* Step indicator */}
       <View style={{ flexDirection: 'row', paddingHorizontal: 32, marginBottom: 32, gap: 8 }}>
@@ -335,5 +336,6 @@ export default function RegisterScreen() {
         )}
       </View>
     </View>
+    </TouchableWithoutFeedback>
   );
 }

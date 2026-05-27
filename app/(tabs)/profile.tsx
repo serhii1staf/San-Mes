@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
+import { LinkedText } from '../../src/components/ui/LinkedText';
 import { useAuthStore } from '../../src/store';
 import { getPosts, loadProfileMeta, getFollowCounts } from '../../src/lib/supabase';
 import { openUrl } from '../../src/utils/openUrl';
@@ -110,7 +111,7 @@ export default function ProfileScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
+      <ScrollView showsVerticalScrollIndicator={false} bounces={false} contentContainerStyle={{ paddingBottom: 100 }}>
         {/* Banner - full width */}
         <View style={{ height: 150, backgroundColor: theme.colors.accent.primary + '20' }}>
           {bannerUrl ? <Image source={{ uri: bannerUrl }} style={{ width: '100%', height: '100%' }} resizeMode="cover" /> : null}
@@ -154,7 +155,7 @@ export default function ProfileScreen() {
           </View>
 
           {/* Bio */}
-          {user.bio ? <Text variant="body" color={theme.colors.text.secondary} style={{ marginTop: 8 }}>{user.bio}</Text> : null}
+          {user.bio ? <LinkedText style={{ marginTop: 8 }}>{user.bio}</LinkedText> : null}
 
           {/* Links */}
           {userLinks.length > 0 && (

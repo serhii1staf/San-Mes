@@ -33,3 +33,11 @@ coverage/
 
 # TypeScript
 *.tsbuildinfo
+.vercel
+.env*.local
+
+# Secrets
+AuthKey_*.p8
+credentials.json
+tokim
+build-info.json

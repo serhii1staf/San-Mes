@@ -28,6 +28,16 @@ export interface Post {
   isLiked: boolean;
   isBookmarked: boolean;
   createdAt: string;
+  // Repost fields
+  isRepost?: boolean;
+  originalPost?: {
+    id: string;
+    authorName: string;
+    authorUsername: string;
+    authorEmoji?: string;
+    content: string;
+    imageUrl?: string;
+  };
 }
 
 export interface Comment {

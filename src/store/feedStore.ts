@@ -8,12 +8,14 @@ interface FeedStoreState {
   isLoading: boolean;
   isRefreshing: boolean;
   hasMore: boolean;
+  pendingRepostId: string | null;
   setPosts: (posts: Post[]) => void;
   addPost: (post: Post) => void;
   removePost: (postId: string) => void;
   toggleLike: (postId: string) => void;
   setLoading: (loading: boolean) => void;
   setRefreshing: (refreshing: boolean) => void;
+  setPendingRepost: (postId: string | null) => void;
 }
 
 export const useFeedStore = create<FeedStoreState>()((set) => ({
@@ -21,6 +23,7 @@ export const useFeedStore = create<FeedStoreState>()((set) => ({
   isLoading: false,
   isRefreshing: false,
   hasMore: true,
+  pendingRepostId: null,
   setPosts: (posts) => set({ posts }),
   addPost: (post) => set((state) => ({ posts: [post, ...state.posts] })),
   removePost: (postId) =>
@@ -35,4 +38,5 @@ export const useFeedStore = create<FeedStoreState>()((set) => ({
     })),
   setLoading: (isLoading) => set({ isLoading }),
   setRefreshing: (isRefreshing) => set({ isRefreshing }),
+  setPendingRepost: (pendingRepostId) => set({ pendingRepostId }),
 }));

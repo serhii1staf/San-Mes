@@ -1,13 +1,13 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, TextInput, Pressable, ViewStyle, ScrollView, Alert, Image } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { useTheme } from '../../src/theme';
-import { Text } from '../../src/components/ui';
+import { Text, Avatar } from '../../src/components/ui';
 import { useAuthStore } from '../../src/store/authStore';
 import { useFeedStore } from '../../src/store/feedStore';
-import { createPost, supabase } from '../../src/lib/supabase';
+import { createPost, createRepost, supabase, uploadPostImage } from '../../src/lib/supabase';
 
 const MAX_CHARS = 500;
 
@@ -17,12 +17,31 @@ export default function CreateScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const { user } = useAuthStore();
-  const { addPost } = useFeedStore();
+  const { addPost, pendingRepostId, setPendingRepost } = useFeedStore();
   const [content, setContent] = useState('');
   const [isPosting, setIsPosting] = useState(false);
   const [audience, setAudience] = useState<Audience>('public');
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [imageUploading, setImageUploading] = useState(false);
+  const [repostData, setRepostData] = useState<{ id: string; authorName: string; authorEmoji: string; content: string; imageUrl?: string } | null>(null);
+
+  // Load repost data from store
+  useEffect(() => {
+    if (pendingRepostId) {
+      supabase.from('posts').select('*, profiles:author_id (display_name, emoji)').eq('id', pendingRepostId).single().then(({ data }) => {
+        if (data) {
+          setRepostData({
+            id: data.id,
+            authorName: (Array.isArray(data.profiles) ? data.profiles[0]?.display_name : data.profiles?.display_name) || 'User',
+            authorEmoji: (Array.isArray(data.profiles) ? data.profiles[0]?.emoji : data.profiles?.emoji) || '😊',
+            content: data.content || '',
+            imageUrl: data.image_url || undefined,
+          });
+        }
+        setPendingRepost(null);
+      });
+    }
+  }, [pendingRepostId]);
 
   const pickImage = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -63,36 +82,20 @@ export default function CreateScreen() {
 
   const uploadImage = async (uri: string): Promise<string | null> => {
     try {
-      const filename = `post_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.jpg`;
-      const response = await fetch(uri);
-      const blob = await response.blob();
-
-      const { data, error } = await supabase.storage
-        .from('post-images')
-        .upload(filename, blob, {
-          contentType: 'image/jpeg',
-          cacheControl: '3600',
-        });
-
+      const { url, error } = await uploadPostImage(uri);
       if (error) {
-        console.log('Upload error:', error.message);
-        // If storage bucket doesn't exist, return the local uri as fallback
-        return uri;
+        console.log('Upload error:', error);
+        return null;
       }
-
-      const { data: urlData } = supabase.storage
-        .from('post-images')
-        .getPublicUrl(data.path);
-
-      return urlData.publicUrl;
+      return url;
     } catch (e) {
-      console.log('Upload failed, using local URI');
-      return uri;
+      console.log('Upload failed:', e);
+      return null;
     }
   };
 
   const handlePost = async () => {
-    if (!content.trim() && !imageUri) return;
+    if (!content.trim() && !imageUri && !repostData) return;
     if (!user) {
       Alert.alert('Ошибка', 'Необходимо войти в аккаунт');
       return;
@@ -100,6 +103,20 @@ export default function CreateScreen() {
 
     setIsPosting(true);
     try {
+      // Handle repost
+      if (repostData) {
+        const { post, error } = await createRepost(user.id, repostData.id, content.trim() || undefined);
+        if (error) {
+          Alert.alert('Ошибка', error);
+        } else {
+          setContent('');
+          setImageUri(null);
+          setRepostData(null);
+        }
+        setIsPosting(false);
+        return;
+      }
+
       let imageUrl: string | undefined;
 
       if (imageUri) {
@@ -115,7 +132,6 @@ export default function CreateScreen() {
       if (error) {
         Alert.alert('Ошибка', error);
       } else {
-        // Add to local feed store
         if (post) {
           addPost({
             id: post.id,
@@ -155,7 +171,7 @@ export default function CreateScreen() {
       ? theme.colors.status.warning
       : theme.colors.text.tertiary;
 
-  const canPost = content.trim() || imageUri;
+  const canPost = content.trim() || imageUri || repostData;
 
   const containerStyle: ViewStyle = {
     flex: 1,
@@ -168,9 +184,25 @@ export default function CreateScreen() {
       <View style={{ paddingHorizontal: theme.spacing.lg, paddingTop: theme.spacing.base }}>
         <View>
           <Text variant="subheading" weight="bold" style={{ marginBottom: theme.spacing.lg }}>
-            Новый пост
+            {repostData ? 'Репост' : 'Новый пост'}
           </Text>
         </View>
+
+        {/* Repost preview */}
+        {repostData && (
+          <View style={{ marginBottom: theme.spacing.base, borderWidth: 1, borderColor: theme.colors.border.light, borderRadius: 14, overflow: 'hidden', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', padding: 12 }}>
+              <Avatar emoji={repostData.authorEmoji} size="xs" />
+              <Text variant="caption" weight="semibold" style={{ marginLeft: 8 }}>{repostData.authorName}</Text>
+              <View style={{ flex: 1 }} />
+              <Pressable onPress={() => setRepostData(null)}>
+                <Feather name="x" size={16} color={theme.colors.text.tertiary} />
+              </Pressable>
+            </View>
+            {repostData.content && <Text variant="body" numberOfLines={3} style={{ paddingHorizontal: 12, paddingBottom: 12 }}>{repostData.content}</Text>}
+            {repostData.imageUrl && <Image source={{ uri: repostData.imageUrl }} style={{ width: '100%', height: 120 }} resizeMode="cover" />}
+          </View>
+        )}
 
         <View>
           <View

@@ -44,8 +44,8 @@ export default function StorageScreen() {
     setIsClearing(true);
     try {
       const keys = await AsyncStorage.getAllKeys();
-      const nonAuthKeys = keys.filter(k => !k.includes('auth'));
-      await AsyncStorage.multiRemove(nonAuthKeys);
+      const nonAuthKeys = (keys as string[]).filter(k => !k.includes('auth'));
+      await (AsyncStorage as any).multiRemove(nonAuthKeys);
       Alert.alert('Готово', 'Кэш успешно очищен');
     } catch (e) {
       Alert.alert('Ошибка', 'Не удалось очистить кэш');
