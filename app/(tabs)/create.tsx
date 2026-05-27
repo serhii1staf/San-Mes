@@ -135,7 +135,6 @@ export default function CreateScreen() {
         }
         setContent('');
         setImageUri(null);
-        Alert.alert('Готово', 'Пост опубликован!');
       }
     } catch (e) {
       Alert.alert('Ошибка', 'Не удалось опубликовать пост');

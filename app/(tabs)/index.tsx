@@ -9,8 +9,9 @@ import { Text, Avatar } from '../../src/components/ui';
 import { PostCard } from '../../src/components/feed/PostCard';
 import { TrendingSection } from '../../src/components/feed/TrendingSection';
 import { useFeedStore } from '../../src/store';
-import { mockPosts, mockStories } from '../../src/utils/mockData';
+import { mockStories } from '../../src/utils/mockData';
 import { Post, Story } from '../../src/types';
+import { getPosts } from '../../src/lib/supabase';
 
 function StoryItem({ story }: { story: Story; index: number }) {
   const theme = useTheme();
@@ -122,21 +123,60 @@ export default function FeedScreen() {
   const bgTransparent = theme.colors.background.primary + '00';
 
   useEffect(() => {
-    setLoading(true);
-    const timer = setTimeout(() => {
-      // Load from Supabase - for now show empty until real posts exist
-      setPosts([]);
-      setLoading(false);
-    }, 500);
-    return () => clearTimeout(timer);
+    const fetchPosts = async () => {
+      setLoading(true);
+      try {
+        const { posts: dbPosts } = await getPosts();
+        const mapped = dbPosts.map(p => ({
+          id: p.id,
+          authorId: p.author_id,
+          authorName: p.profiles?.display_name || 'User',
+          authorUsername: p.profiles?.username || 'user',
+          authorEmoji: p.profiles?.emoji || '😊',
+          content: p.content,
+          imageUrl: p.image_url || undefined,
+          likesCount: p.likes_count || 0,
+          commentsCount: p.comments_count || 0,
+          sharesCount: p.shares_count || 0,
+          isLiked: false,
+          isBookmarked: false,
+          createdAt: p.created_at,
+        }));
+        setPosts(mapped);
+      } catch (e) {
+        setPosts([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchPosts();
   }, []);
 
-  const handleRefresh = useCallback(() => {
+  const handleRefresh = useCallback(async () => {
     setRefreshing(true);
-    setTimeout(() => {
+    try {
+      const { posts: dbPosts } = await getPosts();
+      const mapped = dbPosts.map(p => ({
+        id: p.id,
+        authorId: p.author_id,
+        authorName: p.profiles?.display_name || 'User',
+        authorUsername: p.profiles?.username || 'user',
+        authorEmoji: p.profiles?.emoji || '😊',
+        content: p.content,
+        imageUrl: p.image_url || undefined,
+        likesCount: p.likes_count || 0,
+        commentsCount: p.comments_count || 0,
+        sharesCount: p.shares_count || 0,
+        isLiked: false,
+        isBookmarked: false,
+        createdAt: p.created_at,
+      }));
+      setPosts(mapped);
+    } catch (e) {
       setPosts([]);
+    } finally {
       setRefreshing(false);
-    }, 500);
+    }
   }, []);
 
   const renderPost = ({ item }: { item: Post; index: number }) => (

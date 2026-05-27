@@ -282,8 +282,8 @@ export default function EditProfileScreen() {
             style={{
               flex: 1,
               backgroundColor: theme.isDark
-                ? 'rgba(30, 30, 30, 0.92)'
-                : 'rgba(255, 255, 255, 0.94)',
+                ? 'rgba(20, 20, 20, 0.98)'
+                : 'rgba(255, 255, 255, 0.98)',
             }}
           >
               {/* Drag handle */}

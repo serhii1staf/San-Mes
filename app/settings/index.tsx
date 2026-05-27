@@ -7,6 +7,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
 import { useAuthStore } from '../../src/store';
+import { useSettingsStore } from '../../src/store/settingsStore';
 
 function SettingsRow({
   icon,
@@ -70,6 +71,7 @@ export default function SettingsScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const { logout } = useAuthStore();
+  const { hapticEnabled, useInAppBrowser, setHaptic, setInAppBrowser } = useSettingsStore();
   const [faceId, setFaceId] = useState(true);
 
   const handleLogout = () => {
@@ -168,6 +170,32 @@ export default function SettingsScreen() {
             icon="database"
             label="Данные и память"
             onPress={() => router.push('/settings/storage')}
+          />
+          <SettingsRow
+            icon="smartphone"
+            label="Вибро-отклик"
+            showChevron={false}
+            rightElement={
+              <Switch
+                value={hapticEnabled}
+                onValueChange={setHaptic}
+                trackColor={{ true: '#4CD964', false: theme.colors.border.light }}
+                thumbColor="#FFFFFF"
+              />
+            }
+          />
+          <SettingsRow
+            icon="globe"
+            label="Встроенный браузер"
+            showChevron={false}
+            rightElement={
+              <Switch
+                value={useInAppBrowser}
+                onValueChange={setInAppBrowser}
+                trackColor={{ true: '#4CD964', false: theme.colors.border.light }}
+                thumbColor="#FFFFFF"
+              />
+            }
           />
           <SettingsRow
             icon="folder"
