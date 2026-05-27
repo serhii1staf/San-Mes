@@ -1,14 +1,57 @@
 import React, { useEffect, useState } from 'react';
-import { View, Pressable, ActivityIndicator, ScrollView, Image } from 'react-native';
-import { Feather } from '@expo/vector-icons';
+import { View, Pressable, ActivityIndicator, ScrollView, Image, Dimensions } from 'react-native';
+import { Feather, FontAwesome5 } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
-import { supabase } from '../../src/lib/supabase';
+import { supabase, getPosts } from '../../src/lib/supabase';
 import { useAuthStore } from '../../src/store';
 import { followUser, unfollowUser, isFollowing as checkIsFollowing, getFollowCounts } from '../../src/lib/supabase';
+import { openUrl } from '../../src/utils/openUrl';
 import { triggerHaptic } from '../../src/utils/haptics';
+
+const SCREEN_WIDTH = Dimensions.get('window').width;
+type TabName = 'posts' | 'replies' | 'media' | 'likes';
+
+function detectLinkType(url: string): string {
+  const lower = url.toLowerCase();
+  if (lower.includes('github.com')) return 'github';
+  if (lower.includes('twitter.com') || lower.includes('x.com')) return 'twitter';
+  if (lower.includes('instagram.com')) return 'instagram';
+  if (lower.includes('youtube.com') || lower.includes('youtu.be')) return 'youtube';
+  if (lower.includes('t.me') || lower.includes('telegram')) return 'telegram';
+  if (lower.includes('tiktok.com')) return 'tiktok';
+  if (lower.includes('linkedin.com')) return 'linkedin';
+  if (lower.includes('discord.gg') || lower.includes('discord.com')) return 'discord';
+  if (lower.includes('twitch.tv')) return 'twitch';
+  if (lower.includes('spotify.com')) return 'spotify';
+  return 'website';
+}
+
+function SocialLinkIcon({ type, url }: { type: string; url: string }) {
+  const theme = useTheme();
+  const brandIcons: Record<string, { name: string; color: string; isBrand: boolean }> = {
+    github: { name: 'github', color: theme.isDark ? '#FFFFFF' : '#333333', isBrand: true },
+    twitter: { name: 'twitter', color: '#1DA1F2', isBrand: true },
+    instagram: { name: 'instagram', color: '#E4405F', isBrand: true },
+    youtube: { name: 'youtube', color: '#FF0000', isBrand: true },
+    telegram: { name: 'telegram-plane', color: '#0088CC', isBrand: true },
+    linkedin: { name: 'linkedin-in', color: '#0A66C2', isBrand: true },
+    twitch: { name: 'twitch', color: '#9146FF', isBrand: true },
+    spotify: { name: 'spotify', color: '#1DB954', isBrand: true },
+    tiktok: { name: 'tiktok', color: theme.isDark ? '#FFFFFF' : '#000000', isBrand: true },
+    discord: { name: 'discord', color: '#5865F2', isBrand: true },
+    website: { name: 'globe', color: '#2563EB', isBrand: false },
+  };
+  const detected = detectLinkType(url);
+  const icon = brandIcons[detected] || brandIcons[type] || brandIcons.website;
+  return (
+    <Pressable onPress={() => { triggerHaptic('light'); openUrl(url); }} style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: icon.color + '18', alignItems: 'center', justifyContent: 'center' }}>
+      {icon.isBrand ? <FontAwesome5 name={icon.name} size={13} color={icon.color} brand /> : <Feather name={icon.name as any} size={13} color={icon.color} />}
+    </Pressable>
+  );
+}
 
 export default function UserProfileScreen() {
   const theme = useTheme();
@@ -19,6 +62,8 @@ export default function UserProfileScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [isFollowingState, setIsFollowingState] = useState(false);
   const [followCounts, setFollowCounts] = useState({ followers: 0, following: 0 });
+  const [activeTab, setActiveTab] = useState<TabName>('posts');
+  const [userPosts, setUserPosts] = useState<any[]>([]);
 
   useEffect(() => { loadProfile(); }, [id]);
 
@@ -32,6 +77,17 @@ export default function UserProfileScreen() {
         setIsFollowingState(following);
         const counts = await getFollowCounts(data.id);
         setFollowCounts(counts);
+      }
+      // Load user posts
+      if (data) {
+        try {
+          const { posts: dbPosts } = await getPosts();
+          const posts = dbPosts.filter((p: any) => p.author_id === data.id).map((p: any) => ({
+            id: p.id, content: p.content, imageUrl: p.image_url || undefined,
+            likesCount: p.likes_count || 0, commentsCount: p.comments_count || 0, createdAt: p.created_at,
+          }));
+          setUserPosts(posts);
+        } catch (e) {}
       }
     } catch (e) {}
     setIsLoading(false);
@@ -71,81 +127,111 @@ export default function UserProfileScreen() {
   }
 
   const isOwnProfile = currentUser?.id === profile.id;
+  const bannerUrl = profile.banner_url;
+  const userLinks: { type: string; url: string }[] = profile.links || [];
+  const tabs: { key: TabName; label: string }[] = [
+    { key: 'posts', label: 'Посты' }, { key: 'replies', label: 'Ответы' },
+    { key: 'media', label: 'Медиа' }, { key: 'likes', label: 'Лайки' },
+  ];
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
-      {/* Header */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingTop: insets.top + 8, paddingBottom: 12 }}>
-        <Pressable onPress={() => router.back()}>
-          <Feather name="chevron-left" size={24} color={theme.colors.text.primary} />
-        </Pressable>
-        <Text variant="subheading" weight="bold" style={{ marginLeft: 12 }}>@{profile.username}</Text>
-      </View>
-
-      <ScrollView contentContainerStyle={{ paddingBottom: 100 }}>
-        {/* Banner - only if set */}
-        {profile.banner_url ? (
-          <View style={{ height: 100, marginHorizontal: 20, borderRadius: 16, overflow: 'hidden', marginBottom: 16 }}>
-            <Image source={{ uri: profile.banner_url }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
-          </View>
-        ) : null}
-
-        {/* Profile row: LEFT = stats, RIGHT = avatar */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, marginTop: 8 }}>
-          <View style={{ flex: 1, flexDirection: 'row', gap: 16 }}>
-            <View style={{ alignItems: 'center' }}>
-              <Text variant="body" weight="bold">0</Text>
-              <Text variant="caption" color={theme.colors.text.tertiary}>Посты</Text>
-            </View>
-            <View style={{ alignItems: 'center' }}>
-              <Text variant="body" weight="bold">{followCounts.followers}</Text>
-              <Text variant="caption" color={theme.colors.text.tertiary}>Подписчики</Text>
-            </View>
-            <View style={{ alignItems: 'center' }}>
-              <Text variant="body" weight="bold">{followCounts.following}</Text>
-              <Text variant="caption" color={theme.colors.text.tertiary}>Подписки</Text>
-            </View>
-          </View>
-          <Avatar emoji={profile.emoji} size="xl" />
-        </View>
-
-        {/* Name */}
-        <View style={{ paddingHorizontal: 20, marginTop: 12 }}>
-          <Text variant="body" weight="bold">{profile.display_name}</Text>
-        </View>
-
-        {/* Bio */}
-        {profile.bio ? (
-          <View style={{ paddingHorizontal: 20, marginTop: 2 }}>
-            <Text variant="caption" color={theme.colors.text.secondary}>{profile.bio}</Text>
-          </View>
-        ) : null}
-
-        {/* Follow button (only for other users) */}
-        {!isOwnProfile && (
-          <View style={{ paddingHorizontal: 20, marginTop: 16 }}>
-            <Pressable onPress={handleFollow} style={{
-              backgroundColor: isFollowingState ? theme.colors.background.secondary : theme.colors.accent.primary,
-              borderRadius: 14,
-              paddingVertical: 12,
-              alignItems: 'center',
-              borderWidth: isFollowingState ? 1 : 0,
-              borderColor: theme.colors.border.light,
-            }}>
-              <Text variant="body" weight="semibold" color={isFollowingState ? theme.colors.text.primary : '#FFFFFF'}>
-                {isFollowingState ? 'Отписаться' : 'Подписаться'}
-              </Text>
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
+        {/* Banner - full width */}
+        <View style={{ height: 150, backgroundColor: theme.colors.accent.primary + '20' }}>
+          {bannerUrl ? <Image source={{ uri: bannerUrl }} style={{ width: '100%', height: '100%' }} resizeMode="cover" /> : null}
+          {/* Overlay buttons */}
+          <View style={{ position: 'absolute', top: insets.top + 8, left: 16, right: 16, flexDirection: 'row', justifyContent: 'space-between' }}>
+            <Pressable onPress={() => router.back()} style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' }}>
+              <Feather name="chevron-left" size={18} color="#FFFFFF" />
+            </Pressable>
+            <Pressable style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' }}>
+              <Feather name="more-horizontal" size={18} color="#FFFFFF" />
             </Pressable>
           </View>
-        )}
-
-        {/* Empty posts */}
-        <View style={{ alignItems: 'center', paddingVertical: 40 }}>
-          <View style={{ width: 50, height: 50, alignItems: 'center', justifyContent: 'center' }}>
-            <Text style={{ fontSize: 32 }}>📷</Text>
-          </View>
-          <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginTop: 8 }}>Ещё нет публикаций</Text>
         </View>
+
+        {/* Profile info */}
+        <View style={{ paddingHorizontal: 16, marginTop: -24 }}>
+          {/* Avatar */}
+          <View style={{ borderWidth: 3, borderColor: theme.colors.background.primary, borderRadius: 36, width: 72, height: 72, overflow: 'visible' }}>
+            <Avatar emoji={profile.emoji || '😊'} size="xl" />
+          </View>
+
+          {/* Name row */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}>
+            <View style={{ flex: 1 }}>
+              <Text variant="body" weight="bold">{profile.display_name}</Text>
+              <Text variant="caption" color={theme.colors.text.tertiary}>@{profile.username}</Text>
+            </View>
+            {/* Follow/Edit button */}
+            {!isOwnProfile ? (
+              <Pressable onPress={handleFollow} style={{
+                paddingHorizontal: 20, paddingVertical: 8,
+                backgroundColor: isFollowingState ? 'transparent' : theme.colors.accent.primary,
+                borderWidth: isFollowingState ? 1 : 0,
+                borderColor: theme.colors.border.medium,
+                borderRadius: 8,
+              }}>
+                <Text variant="caption" weight="semibold" color={isFollowingState ? theme.colors.text.primary : '#FFFFFF'}>
+                  {isFollowingState ? 'Отписаться' : 'Подписаться'}
+                </Text>
+              </Pressable>
+            ) : (
+              <Pressable onPress={() => { triggerHaptic('light'); router.push('/profile/edit'); }} style={{ paddingHorizontal: 16, paddingVertical: 7, borderWidth: 1, borderColor: theme.colors.border.medium, borderRadius: 8 }}>
+                <Text variant="caption" weight="semibold">Редактировать</Text>
+              </Pressable>
+            )}
+          </View>
+
+          {/* Stats inline */}
+          <View style={{ flexDirection: 'row', marginTop: 10, gap: 16 }}>
+            <Text variant="caption"><Text variant="caption" weight="bold">{userPosts.length}</Text> <Text variant="caption" color={theme.colors.text.tertiary}>posts</Text></Text>
+            <Text variant="caption"><Text variant="caption" weight="bold">{followCounts.following}</Text> <Text variant="caption" color={theme.colors.text.tertiary}>following</Text></Text>
+            <Text variant="caption"><Text variant="caption" weight="bold">{followCounts.followers}</Text> <Text variant="caption" color={theme.colors.text.tertiary}>followers</Text></Text>
+          </View>
+
+          {/* Bio */}
+          {profile.bio ? <Text variant="body" color={theme.colors.text.secondary} style={{ marginTop: 8 }}>{profile.bio}</Text> : null}
+
+          {/* Links */}
+          {userLinks.length > 0 && (
+            <View style={{ flexDirection: 'row', marginTop: 8, gap: 8 }}>
+              {userLinks.map((link: any, idx: number) => <SocialLinkIcon key={idx} type={link.type} url={link.url} />)}
+            </View>
+          )}
+        </View>
+
+        {/* Tabs */}
+        <View style={{ marginTop: 16, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border.light }}>
+          <View style={{ flexDirection: 'row' }}>
+            {tabs.map((tab) => (
+              <Pressable key={tab.key} onPress={() => { triggerHaptic('selection'); setActiveTab(tab.key); }} style={{ flex: 1, alignItems: 'center', paddingVertical: 11 }}>
+                <Text variant="caption" weight={activeTab === tab.key ? 'bold' : 'regular'} color={activeTab === tab.key ? theme.colors.text.primary : theme.colors.text.tertiary}>{tab.label}</Text>
+              </Pressable>
+            ))}
+          </View>
+          <View style={{ position: 'absolute', bottom: 0, height: 2, backgroundColor: theme.colors.accent.primary, width: SCREEN_WIDTH / 4, left: tabs.findIndex(t => t.key === activeTab) * (SCREEN_WIDTH / 4) }} />
+        </View>
+
+        {/* Content */}
+        {activeTab === 'posts' && (userPosts.length === 0 ? (
+          <View style={{ alignItems: 'center', paddingVertical: 40 }}><Text variant="caption" color={theme.colors.text.tertiary}>Ещё нет публикаций</Text></View>
+        ) : (
+          <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
+            {userPosts.map((post: any) => (
+              <Pressable key={post.id} onPress={() => router.push({ pathname: '/comments/[id]', params: { id: post.id } })} style={{ backgroundColor: theme.colors.background.elevated, borderRadius: 14, padding: 14, marginBottom: 10 }}>
+                {post.imageUrl && <Image source={{ uri: post.imageUrl }} style={{ width: '100%', height: 160, borderRadius: 10, marginBottom: 10 }} resizeMode="cover" />}
+                {post.content ? <Text variant="body">{post.content}</Text> : null}
+                <View style={{ flexDirection: 'row', marginTop: 8, gap: 14 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}><Feather name="heart" size={13} color={theme.colors.text.tertiary} /><Text variant="caption" color={theme.colors.text.tertiary}>{post.likesCount}</Text></View>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}><Feather name="message-circle" size={13} color={theme.colors.text.tertiary} /><Text variant="caption" color={theme.colors.text.tertiary}>{post.commentsCount}</Text></View>
+                </View>
+              </Pressable>
+            ))}
+          </View>
+        ))}
+        {activeTab !== 'posts' && <View style={{ alignItems: 'center', paddingVertical: 40 }}><Text variant="caption" color={theme.colors.text.tertiary}>Пока пусто</Text></View>}
       </ScrollView>
     </View>
   );

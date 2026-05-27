@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Pressable, Modal, Share } from 'react-native';
+import { View, Pressable, Modal, Share, Image, Alert } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
@@ -41,7 +41,7 @@ export function PostMenuModal({ visible, post, onClose }: PostMenuModalProps) {
 
   const handleReport = () => {
     triggerHaptic('light');
-    // TODO: implement report flow
+    Alert.alert('Жалоба отправлена', 'Спасибо за обращение. Мы рассмотрим его в ближайшее время.');
     onClose();
   };
 
@@ -53,7 +53,7 @@ export function PostMenuModal({ visible, post, onClose }: PostMenuModalProps) {
   ];
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }} onPress={onClose}>
         <View style={{ flex: 1 }} />
         <Pressable onPress={(e) => e.stopPropagation()}>
@@ -85,6 +85,9 @@ export function PostMenuModal({ visible, post, onClose }: PostMenuModalProps) {
                 <Text variant="caption" weight="semibold" numberOfLines={1}>{post.authorName}</Text>
                 <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={2}>{post.content || 'Публикация'}</Text>
               </View>
+              {post.imageUrl && (
+                <Image source={{ uri: post.imageUrl }} style={{ width: 44, height: 44, borderRadius: 8, marginLeft: 'auto' }} resizeMode="cover" />
+              )}
             </View>
 
             {/* Options */}

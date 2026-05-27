@@ -55,7 +55,7 @@ export default function CommentsScreen() {
   };
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: theme.colors.background.primary }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0}>
+    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: theme.colors.background.primary }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}>
       {/* Header */}
       <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingTop: insets.top + 8, paddingBottom: 12, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border.light }}>
         <Pressable onPress={() => router.back()}>
@@ -100,7 +100,7 @@ export default function CommentsScreen() {
       )}
 
       {/* Input */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 10, paddingBottom: insets.bottom + 10, borderTopWidth: 0.5, borderTopColor: theme.colors.border.light, backgroundColor: theme.colors.background.elevated }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 8, borderTopWidth: 0.5, borderTopColor: theme.colors.border.light, backgroundColor: theme.colors.background.elevated }}>
         <TextInput
           ref={inputRef}
           value={text}

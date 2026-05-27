@@ -11,7 +11,7 @@ import { updateProfile as updateSupabaseProfile, supabase } from '../../src/lib/
 import { currentUser } from '../../src/utils/mockData';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
-const DISMISS_THRESHOLD = 120;
+const DISMISS_THRESHOLD = 180;
 
 const LINK_TYPES = [
   { key: 'github', label: 'GitHub', icon: 'github' },
@@ -153,7 +153,7 @@ export default function EditProfileScreen() {
     PanResponder.create({
       onStartShouldSetPanResponder: () => false,
       onMoveShouldSetPanResponder: (_, gestureState) => {
-        return gestureState.dy > 10 && Math.abs(gestureState.dx) < Math.abs(gestureState.dy);
+        return gestureState.dy > 30 && Math.abs(gestureState.dx) * 2 < Math.abs(gestureState.dy);
       },
       onPanResponderMove: (_, gestureState) => {
         if (gestureState.dy > 0) {
