@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { View, Pressable, ActivityIndicator, Dimensions, Image, ScrollView } from 'react-native';
+import { View, Pressable, ActivityIndicator, Dimensions, Image, ScrollView, Platform } from 'react-native';
 import { Feather, FontAwesome5 } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { BlurView } from 'expo-blur';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { useAuthStore } from '../../src/store';
@@ -113,6 +115,11 @@ export default function ProfileScreen() {
         {/* Banner - full width */}
         <View style={{ height: 150, backgroundColor: theme.colors.accent.primary + '20' }}>
           {bannerUrl ? <Image source={{ uri: bannerUrl }} style={{ width: '100%', height: '100%' }} resizeMode="cover" /> : null}
+          {/* Bottom blur gradient */}
+          <LinearGradient
+            colors={['transparent', theme.colors.background.primary]}
+            style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 50 }}
+          />
           {/* Overlay buttons */}
           <View style={{ position: 'absolute', top: insets.top + 8, left: 16, right: 16, flexDirection: 'row', justifyContent: 'flex-end' }}>
             <Pressable onPress={() => { triggerHaptic('light'); router.push('/settings'); }} style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' }}>
@@ -122,10 +129,12 @@ export default function ProfileScreen() {
         </View>
 
         {/* Profile info */}
-        <View style={{ paddingHorizontal: 16, marginTop: -24 }}>
-          {/* Avatar */}
-          <View style={{ borderWidth: 3, borderColor: theme.colors.background.primary, borderRadius: 36, width: 72, height: 72, overflow: 'visible' }}>
-            <Avatar emoji={user.emoji} size="xl" />
+        <View style={{ paddingHorizontal: 16, marginTop: -36 }}>
+          {/* Avatar with glass container */}
+          <View style={{ width: 72, height: 72, borderRadius: 36, overflow: 'hidden', borderWidth: 3, borderColor: theme.colors.background.primary }}>
+            <BlurView intensity={80} tint={theme.isDark ? 'dark' : 'light'} style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.isDark ? 'rgba(30,30,30,0.6)' : 'rgba(255,255,255,0.6)' }}>
+              <Avatar emoji={user.emoji} size="lg" />
+            </BlurView>
           </View>
 
           {/* Name row */}

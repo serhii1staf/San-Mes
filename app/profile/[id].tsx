@@ -3,6 +3,8 @@ import { View, Pressable, ActivityIndicator, ScrollView, Image, Dimensions } fro
 import { Feather, FontAwesome5 } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { BlurView } from 'expo-blur';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { supabase, getPosts, loadProfileMeta } from '../../src/lib/supabase';
@@ -145,6 +147,11 @@ export default function UserProfileScreen() {
         {/* Banner - full width */}
         <View style={{ height: 150, backgroundColor: theme.colors.accent.primary + '20' }}>
           {bannerUrl ? <Image source={{ uri: bannerUrl }} style={{ width: '100%', height: '100%' }} resizeMode="cover" /> : null}
+          {/* Bottom blur gradient */}
+          <LinearGradient
+            colors={['transparent', theme.colors.background.primary]}
+            style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 50 }}
+          />
           {/* Overlay buttons */}
           <View style={{ position: 'absolute', top: insets.top + 8, left: 16, right: 16, flexDirection: 'row', justifyContent: 'space-between' }}>
             <Pressable onPress={() => router.back()} style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' }}>
@@ -157,10 +164,12 @@ export default function UserProfileScreen() {
         </View>
 
         {/* Profile info */}
-        <View style={{ paddingHorizontal: 16, marginTop: -24 }}>
-          {/* Avatar */}
-          <View style={{ borderWidth: 3, borderColor: theme.colors.background.primary, borderRadius: 36, width: 72, height: 72, overflow: 'visible' }}>
-            <Avatar emoji={profile.emoji || '😊'} size="xl" />
+        <View style={{ paddingHorizontal: 16, marginTop: -36 }}>
+          {/* Avatar with glass container */}
+          <View style={{ width: 72, height: 72, borderRadius: 36, overflow: 'hidden', borderWidth: 3, borderColor: theme.colors.background.primary }}>
+            <BlurView intensity={80} tint={theme.isDark ? 'dark' : 'light'} style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.isDark ? 'rgba(30,30,30,0.6)' : 'rgba(255,255,255,0.6)' }}>
+              <Avatar emoji={profile.emoji || '😊'} size="lg" />
+            </BlurView>
           </View>
 
           {/* Name row */}

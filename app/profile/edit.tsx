@@ -110,6 +110,15 @@ export default function EditProfileScreen() {
   const [isSaving, setIsSaving] = useState(false);
   const [bannerUri, setBannerUri] = useState<string | null>((user as any)?.bannerUrl || null);
 
+  // Load banner from profile meta on mount (in case local state was lost)
+  useEffect(() => {
+    if (user?.id && !bannerUri) {
+      loadProfileMeta(user.id).then(({ meta }) => {
+        if (meta?.banner_url) setBannerUri(meta.banner_url);
+      });
+    }
+  }, [user?.id]);
+
   // Animation
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
   const backdropAnim = useRef(new Animated.Value(0)).current;
@@ -272,7 +281,7 @@ export default function EditProfileScreen() {
 
   const cardStyle: ViewStyle = {
     marginHorizontal: 6,
-    marginTop: insets.top + 80,
+    marginTop: insets.top + 44,
     marginBottom: insets.bottom + 6,
     flex: 1,
     borderRadius: 32,
@@ -503,7 +512,7 @@ export default function EditProfileScreen() {
           <View
             style={{
               marginHorizontal: 6,
-              marginTop: insets.top + 80,
+              marginTop: insets.top + 44,
               marginBottom: insets.bottom + 6,
               flex: 1,
               borderRadius: 32,
