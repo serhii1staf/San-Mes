@@ -30,13 +30,13 @@ export function Avatar({
     xl: 96,
   };
 
-  // Emoji fontSize — very conservative, ~30% of container
+  // Emoji fontSize — sized to fill container nicely
   const emojiSizeMap: Record<AvatarSize, number> = {
-    xs: 8,
-    sm: 11,
-    md: 15,
-    lg: 22,
-    xl: 34,
+    xs: 14,
+    sm: 18,
+    md: 24,
+    lg: 36,
+    xl: 52,
   };
 
   const fontSizeMap: Record<AvatarSize, number> = {

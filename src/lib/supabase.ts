@@ -188,34 +188,71 @@ export async function sendMessage(conversationId: string, senderId: string, text
   return { error: error?.message || null };
 }
 
-// Update profile (including links as jsonb)
-export async function updateProfile(userId: string, updates: Partial<{ display_name: string; emoji: string; bio: string; links: any; banner_url: string }>): Promise<{ error: string | null }> {
+// Update profile (basic fields in DB)
+export async function updateProfile(userId: string, updates: Partial<{ display_name: string; emoji: string; bio: string }>): Promise<{ error: string | null }> {
   const payload: any = { ...updates, updated_at: new Date().toISOString() };
-  // Ensure links is stored as JSON
-  if (payload.links && typeof payload.links !== 'string') {
-    payload.links = JSON.stringify(payload.links);
-  }
   try {
     const { error } = await supabase
       .from('profiles')
       .update(payload)
       .eq('id', userId);
-
-    if (error) {
-      // If banner_url column doesn't exist, retry without it
-      if (error.message?.includes('banner_url')) {
-        const { banner_url, ...rest } = payload;
-        const { error: retryError } = await supabase
-          .from('profiles')
-          .update(rest)
-          .eq('id', userId);
-        return { error: retryError?.message || null };
-      }
-      return { error: error.message };
-    }
-    return { error: null };
+    return { error: error?.message || null };
   } catch (e: any) {
     return { error: e?.message || 'Unknown error' };
+  }
+}
+
+// ---- Profile Meta (banner_url, links) via Supabase Storage ----
+
+export interface ProfileMeta {
+  banner_url?: string;
+  links?: { type: string; url: string }[];
+}
+
+// Save profile meta (links, banner_url) as JSON file in storage
+export async function saveProfileMeta(userId: string, meta: ProfileMeta): Promise<{ error: string | null }> {
+  try {
+    const blob = new Blob([JSON.stringify(meta)], { type: 'application/json' });
+    const { error } = await supabase.storage
+      .from('profile-meta')
+      .upload(`${userId}.json`, blob, { upsert: true, contentType: 'application/json' });
+    return { error: error?.message || null };
+  } catch (e: any) {
+    return { error: e?.message || 'Unknown error' };
+  }
+}
+
+// Load profile meta from storage
+export async function loadProfileMeta(userId: string): Promise<{ meta: ProfileMeta | null; error: string | null }> {
+  try {
+    const { data } = supabase.storage.from('profile-meta').getPublicUrl(`${userId}.json`);
+    const response = await fetch(data.publicUrl + '?t=' + Date.now());
+    if (!response.ok) return { meta: null, error: null }; // No meta yet
+    const meta = await response.json();
+    return { meta, error: null };
+  } catch (e: any) {
+    return { meta: null, error: null }; // Silently fail - meta is optional
+  }
+}
+
+// Upload banner image to storage, return public URL
+export async function uploadBanner(userId: string, imageUri: string): Promise<{ url: string | null; error: string | null }> {
+  try {
+    const response = await fetch(imageUri);
+    const blob = await response.blob();
+    const ext = imageUri.includes('.png') ? 'png' : 'jpg';
+    const path = `banners/${userId}.${ext}`;
+    
+    const { error } = await supabase.storage
+      .from('avatars')
+      .upload(path, blob, { upsert: true, contentType: `image/${ext === 'png' ? 'png' : 'jpeg'}` });
+    
+    if (error) return { url: null, error: error.message };
+    
+    const { data } = supabase.storage.from('avatars').getPublicUrl(path);
+    return { url: data.publicUrl, error: null };
+  } catch (e: any) {
+    return { url: null, error: e?.message || 'Unknown error' };
   }
 }
 

@@ -7,7 +7,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { useTheme } from '../../src/theme';
 import { Text, Input, Avatar } from '../../src/components/ui';
 import { useAuthStore, UserLink } from '../../src/store/authStore';
-import { updateProfile as updateSupabaseProfile, supabase } from '../../src/lib/supabase';
+import { updateProfile as updateSupabaseProfile, supabase, uploadBanner, saveProfileMeta, loadProfileMeta } from '../../src/lib/supabase';
 import { currentUser } from '../../src/utils/mockData';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -203,6 +203,22 @@ export default function EditProfileScreen() {
           display_name: name,
           bio,
           emoji: selectedEmoji,
+        });
+
+        // Upload banner to Storage if changed
+        let finalBannerUrl = bannerUri;
+        if (bannerUri && !bannerUri.startsWith('https://ycwadqglcykcpucembjn.supabase.co')) {
+          const { url } = await uploadBanner(user.id, bannerUri);
+          if (url) {
+            finalBannerUrl = url;
+            updateProfile({ bannerUrl: url });
+          }
+        }
+
+        // Save links and banner_url to profile-meta storage
+        await saveProfileMeta(user.id, {
+          banner_url: finalBannerUrl || undefined,
+          links: links.length > 0 ? links : undefined,
         });
       }
     } catch (e) {
@@ -542,9 +558,10 @@ export default function EditProfileScreen() {
                   justifyContent: 'center',
                   borderWidth: 2,
                   borderColor: theme.colors.accent.primary,
+                  overflow: 'visible',
                 }}
               >
-                <RNText style={{ fontSize: 32 }} allowFontScaling={false}>{selectedEmoji}</RNText>
+                <RNText style={{ fontSize: 36 }} allowFontScaling={false}>{selectedEmoji}</RNText>
               </View>
             </View>
 
@@ -572,9 +589,10 @@ export default function EditProfileScreen() {
                           justifyContent: 'center',
                           borderWidth: selectedEmoji === e ? 2 : 0,
                           borderColor: theme.colors.accent.primary,
+                          overflow: 'visible',
                         }}
                       >
-                        <RNText style={{ fontSize: 20 }} allowFontScaling={false}>{e}</RNText>
+                        <RNText style={{ fontSize: 24 }} allowFontScaling={false}>{e}</RNText>
                       </Pressable>
                     ))}
                   </View>

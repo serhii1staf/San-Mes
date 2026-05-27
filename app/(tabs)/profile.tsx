@@ -6,7 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { useAuthStore } from '../../src/store';
-import { getPosts } from '../../src/lib/supabase';
+import { getPosts, loadProfileMeta, getFollowCounts } from '../../src/lib/supabase';
 import { openUrl } from '../../src/utils/openUrl';
 import { Post } from '../../src/types';
 import { triggerHaptic } from '../../src/utils/haptics';
@@ -59,8 +59,28 @@ export default function ProfileScreen() {
   const { user } = useAuthStore();
   const [activeTab, setActiveTab] = useState<TabName>('posts');
   const [userPosts, setUserPosts] = useState<Post[]>([]);
+  const [profileMeta, setProfileMeta] = useState<{ banner_url?: string; links?: { type: string; url: string }[] } | null>(null);
+  const [followCounts, setFollowCounts] = useState({ followers: 0, following: 0 });
 
-  useEffect(() => { if (user?.id) loadUserPosts(); }, [user?.id]);
+  useEffect(() => {
+    if (user?.id) {
+      loadUserPosts();
+      loadMeta();
+      loadFollows();
+    }
+  }, [user?.id]);
+
+  const loadMeta = async () => {
+    if (!user?.id) return;
+    const { meta } = await loadProfileMeta(user.id);
+    if (meta) setProfileMeta(meta);
+  };
+
+  const loadFollows = async () => {
+    if (!user?.id) return;
+    const counts = await getFollowCounts(user.id);
+    setFollowCounts(counts);
+  };
 
   const loadUserPosts = async () => {
     try {
@@ -80,8 +100,8 @@ export default function ProfileScreen() {
 
   if (!user) return <View style={{ flex: 1, backgroundColor: theme.colors.background.primary, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator size="large" color={theme.colors.accent.primary} /></View>;
 
-  const userLinks: { type: string; url: string }[] = (user as any).links || [];
-  const bannerUrl = (user as any)?.bannerUrl;
+  const userLinks: { type: string; url: string }[] = (user as any).links || profileMeta?.links || [];
+  const bannerUrl = (user as any)?.bannerUrl || profileMeta?.banner_url;
   const tabs: { key: TabName; label: string }[] = [
     { key: 'posts', label: 'Посты' }, { key: 'replies', label: 'Ответы' },
     { key: 'media', label: 'Медиа' }, { key: 'likes', label: 'Лайки' },
@@ -123,8 +143,8 @@ export default function ProfileScreen() {
           {/* Stats inline */}
           <View style={{ flexDirection: 'row', marginTop: 10, gap: 16 }}>
             <Text variant="caption"><Text variant="caption" weight="bold">{userPosts.length}</Text> <Text variant="caption" color={theme.colors.text.tertiary}>posts</Text></Text>
-            <Text variant="caption"><Text variant="caption" weight="bold">0</Text> <Text variant="caption" color={theme.colors.text.tertiary}>following</Text></Text>
-            <Text variant="caption"><Text variant="caption" weight="bold">0</Text> <Text variant="caption" color={theme.colors.text.tertiary}>followers</Text></Text>
+            <Text variant="caption"><Text variant="caption" weight="bold">{followCounts.following}</Text> <Text variant="caption" color={theme.colors.text.tertiary}>following</Text></Text>
+            <Text variant="caption"><Text variant="caption" weight="bold">{followCounts.followers}</Text> <Text variant="caption" color={theme.colors.text.tertiary}>followers</Text></Text>
           </View>
 
           {/* Bio */}

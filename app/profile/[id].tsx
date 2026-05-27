@@ -5,7 +5,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
-import { supabase, getPosts } from '../../src/lib/supabase';
+import { supabase, getPosts, loadProfileMeta } from '../../src/lib/supabase';
 import { useAuthStore } from '../../src/store';
 import { followUser, unfollowUser, isFollowing as checkIsFollowing, getFollowCounts } from '../../src/lib/supabase';
 import { openUrl } from '../../src/utils/openUrl';
@@ -59,6 +59,7 @@ export default function UserProfileScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { user: currentUser } = useAuthStore();
   const [profile, setProfile] = useState<any>(null);
+  const [profileMeta, setProfileMeta] = useState<{ banner_url?: string; links?: { type: string; url: string }[] } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isFollowingState, setIsFollowingState] = useState(false);
   const [followCounts, setFollowCounts] = useState({ followers: 0, following: 0 });
@@ -72,14 +73,18 @@ export default function UserProfileScreen() {
     try {
       const { data } = await supabase.from('profiles').select('*').eq('id', id).single();
       setProfile(data);
-      if (data && currentUser?.id) {
-        const following = await checkIsFollowing(currentUser.id, data.id);
-        setIsFollowingState(following);
-        const counts = await getFollowCounts(data.id);
-        setFollowCounts(counts);
-      }
-      // Load user posts
       if (data) {
+        // Load profile meta (banner, links) from Storage
+        const { meta } = await loadProfileMeta(data.id);
+        if (meta) setProfileMeta(meta);
+
+        if (currentUser?.id) {
+          const following = await checkIsFollowing(currentUser.id, data.id);
+          setIsFollowingState(following);
+          const counts = await getFollowCounts(data.id);
+          setFollowCounts(counts);
+        }
+        // Load user posts
         try {
           const { posts: dbPosts } = await getPosts();
           const posts = dbPosts.filter((p: any) => p.author_id === data.id).map((p: any) => ({
@@ -127,8 +132,8 @@ export default function UserProfileScreen() {
   }
 
   const isOwnProfile = currentUser?.id === profile.id;
-  const bannerUrl = profile.banner_url;
-  const userLinks: { type: string; url: string }[] = profile.links || [];
+  const bannerUrl = profileMeta?.banner_url;
+  const userLinks: { type: string; url: string }[] = profileMeta?.links || [];
   const tabs: { key: TabName; label: string }[] = [
     { key: 'posts', label: 'Посты' }, { key: 'replies', label: 'Ответы' },
     { key: 'media', label: 'Медиа' }, { key: 'likes', label: 'Лайки' },
