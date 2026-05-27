@@ -1,7 +1,6 @@
 import React from 'react';
 import { View, Pressable, StyleSheet, ViewStyle } from 'react-native';
 import { BottomTabBarProps } from '@react-navigation/bottom-tabs';
-import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../../theme';
@@ -96,16 +95,21 @@ export function CustomTabBar({ state, navigation }: BottomTabBarProps) {
     paddingHorizontal: 8,
     marginHorizontal: 16,
     borderRadius: 32,
-    overflow: 'hidden',
-    borderWidth: theme.isDark ? 1 : 0.5,
-    borderColor: theme.isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)',
+    backgroundColor: theme.isDark ? 'rgba(30, 30, 30, 0.85)' : 'rgba(255, 255, 255, 0.85)',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 16,
+    elevation: 8,
+    borderWidth: 0.5,
+    borderColor: theme.isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)',
   };
 
   return (
     <View style={wrapperStyle} pointerEvents="box-none">
       {/* Tab bar */}
       <View style={{ marginBottom: 24 }}>
-        <BlurView intensity={80} tint={theme.isDark ? 'dark' : 'light'} style={containerStyle}>
+        <View style={containerStyle}>
           {state.routes.map((route, index) => {
             const isFocused = state.index === index;
 
@@ -139,7 +143,7 @@ export function CustomTabBar({ state, navigation }: BottomTabBarProps) {
               />
             );
           })}
-        </BlurView>
+        </View>
       </View>
 
       {/* Gradient fade BELOW the tab bar - from transparent to solid at the very bottom */}

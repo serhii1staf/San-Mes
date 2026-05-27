@@ -5,74 +5,13 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useTheme } from '../../src/theme';
-import { Text, Avatar } from '../../src/components/ui';
+import { Text } from '../../src/components/ui';
 import { PostCard } from '../../src/components/feed/PostCard';
 import { TrendingSection } from '../../src/components/feed/TrendingSection';
 import { useFeedStore, useAuthStore } from '../../src/store';
-import { mockStories } from '../../src/utils/mockData';
-import { Post, Story } from '../../src/types';
+import { Post } from '../../src/types';
 import { getPosts, toggleLike as toggleLikeAPI } from '../../src/lib/supabase';
 
-function StoryItem({ story }: { story: Story; index: number }) {
-  const theme = useTheme();
-  const ringColor = story.isSeen ? theme.colors.border.light : theme.colors.accent.primary;
-
-  return (
-    <View>
-      <Pressable
-        style={{
-          alignItems: 'center',
-          marginRight: theme.spacing.base,
-          width: 72,
-        }}
-      >
-        <View style={{ width: 48, height: 48, alignItems: 'center', justifyContent: 'center' }}>
-          {/* Ring behind emoji */}
-          <View
-            style={{
-              position: 'absolute',
-              width: 48,
-              height: 48,
-              borderRadius: 24,
-              borderWidth: 2,
-              borderColor: ringColor,
-            }}
-          />
-          <Avatar emoji={story.userEmoji} name={story.userName} size="md" />
-        </View>
-        <Text
-          variant="caption"
-          numberOfLines={1}
-          align="center"
-          style={{ marginTop: theme.spacing.xs, width: 64 }}
-        >
-          {story.userName}
-        </Text>
-      </Pressable>
-    </View>
-  );
-}
-
-function StoriesRow() {
-  const theme = useTheme();
-
-  return (
-    <View
-      style={{
-        paddingVertical: theme.spacing.base,
-        paddingLeft: theme.spacing.base,
-      }}
-    >
-      <FlatList
-        horizontal
-        data={mockStories}
-        keyExtractor={(item) => item.id}
-        renderItem={({ item, index }) => <StoryItem story={item} index={index} />}
-        showsHorizontalScrollIndicator={false}
-      />
-    </View>
-  );
-}
 
 function FeedHeader() {
   const theme = useTheme();
@@ -263,7 +202,7 @@ export default function FeedScreen() {
         data={posts}
         keyExtractor={(item) => item.id}
         renderItem={renderPost}
-        ListHeaderComponent={posts.length === 0 ? FeedHeader : StoriesRow}
+        ListHeaderComponent={posts.length === 0 ? FeedHeader : undefined}
         contentContainerStyle={{ paddingHorizontal: theme.spacing.base, paddingBottom: 100, paddingTop: headerContentHeight }}
         showsVerticalScrollIndicator={false}
         refreshControl={

@@ -75,10 +75,10 @@ export default function StorageScreen() {
           overflow: 'hidden',
           marginBottom: 24,
         }}>
-          <StorageRow icon="image" label="Фото" value="12.3 MB" />
-          <StorageRow icon="video" label="Видео" value="45.1 MB" />
-          <StorageRow icon="file" label="Файлы" value="3.2 MB" />
-          <StorageRow icon="message-circle" label="Сообщения" value="8.7 MB" />
+          <StorageRow icon="image" label="Фото" value="—" />
+          <StorageRow icon="video" label="Видео" value="—" />
+          <StorageRow icon="file" label="Файлы" value="—" />
+          <StorageRow icon="message-circle" label="Сообщения" value="—" />
         </View>
 
         {/* Cache */}
@@ -91,7 +91,7 @@ export default function StorageScreen() {
           overflow: 'hidden',
           marginBottom: 24,
         }}>
-          <StorageRow icon="hard-drive" label="Общий кэш" value="24.8 MB" />
+          <StorageRow icon="hard-drive" label="Общий кэш" value="—" />
         </View>
 
         <Pressable
