@@ -55,7 +55,7 @@ export default function CommentsScreen() {
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
+    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: theme.colors.background.primary }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0}>
       {/* Header */}
       <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingTop: insets.top + 8, paddingBottom: 12, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border.light }}>
         <Pressable onPress={() => router.back()}>
@@ -76,7 +76,9 @@ export default function CommentsScreen() {
           contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 16, paddingBottom: 20 }}
           ListEmptyComponent={
             <View style={{ alignItems: 'center', paddingTop: 40 }}>
-              <Text style={{ fontSize: 32 }}>💬</Text>
+              <View style={{ width: 50, height: 50, alignItems: 'center', justifyContent: 'center' }}>
+                <Text style={{ fontSize: 32 }}>💬</Text>
+              </View>
               <Text variant="body" color={theme.colors.text.tertiary} style={{ marginTop: 8 }}>Пока нет комментариев</Text>
             </View>
           }
@@ -98,22 +100,20 @@ export default function CommentsScreen() {
       )}
 
       {/* Input */}
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 10, paddingBottom: insets.bottom + 10, borderTopWidth: 0.5, borderTopColor: theme.colors.border.light, backgroundColor: theme.colors.background.elevated }}>
-          <TextInput
-            ref={inputRef}
-            value={text}
-            onChangeText={setText}
-            placeholder="Написать комментарий..."
-            placeholderTextColor={theme.colors.text.tertiary}
-            style={{ flex: 1, fontSize: 15, color: theme.colors.text.primary, paddingVertical: 8, paddingHorizontal: 14, backgroundColor: theme.colors.background.secondary, borderRadius: 20 }}
-            multiline
-          />
-          <Pressable onPress={handleSend} disabled={!text.trim() || isSending} style={{ marginLeft: 10, opacity: text.trim() ? 1 : 0.4 }}>
-            <Feather name="send" size={22} color={theme.colors.accent.primary} />
-          </Pressable>
-        </View>
-      </KeyboardAvoidingView>
-    </View>
+      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 10, paddingBottom: insets.bottom + 10, borderTopWidth: 0.5, borderTopColor: theme.colors.border.light, backgroundColor: theme.colors.background.elevated }}>
+        <TextInput
+          ref={inputRef}
+          value={text}
+          onChangeText={setText}
+          placeholder="Написать комментарий..."
+          placeholderTextColor={theme.colors.text.tertiary}
+          style={{ flex: 1, fontSize: 15, color: theme.colors.text.primary, paddingVertical: 8, paddingHorizontal: 14, backgroundColor: theme.colors.background.secondary, borderRadius: 20 }}
+          multiline
+        />
+        <Pressable onPress={handleSend} disabled={!text.trim() || isSending} style={{ marginLeft: 10, opacity: text.trim() ? 1 : 0.4 }}>
+          <Feather name="send" size={22} color={theme.colors.accent.primary} />
+        </Pressable>
+      </View>
+    </KeyboardAvoidingView>
   );
 }

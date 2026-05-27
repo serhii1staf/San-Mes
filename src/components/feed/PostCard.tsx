@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { View, Image, Pressable, ViewStyle, TextStyle, Dimensions, ActionSheetIOS, Platform, Share } from 'react-native';
+import { View, Image, Pressable, ViewStyle, TextStyle, Dimensions } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useTheme } from '../../theme';
@@ -18,9 +18,10 @@ interface PostCardProps {
   onComment?: (postId: string) => void;
   onShare?: (postId: string) => void;
   onBookmark?: (postId: string) => void;
+  onMenu?: (post: Post) => void;
 }
 
-export function PostCard({ post, onLike, onComment, onShare, onBookmark }: PostCardProps) {
+export function PostCard({ post, onLike, onComment, onShare, onBookmark, onMenu }: PostCardProps) {
   const theme = useTheme();
   const [isBookmarked, setIsBookmarked] = useState(post.isBookmarked);
   const lastTap = useRef<number>(0);
@@ -97,24 +98,7 @@ export function PostCard({ post, onLike, onComment, onShare, onBookmark }: PostC
         </Pressable>
         <Pressable onPress={() => {
           triggerHaptic('light');
-          if (Platform.OS === 'ios') {
-            ActionSheetIOS.showActionSheetWithOptions(
-              {
-                options: ['Скопировать ссылку', 'Поделиться', 'Пожаловаться', 'Отмена'],
-                cancelButtonIndex: 3,
-                destructiveButtonIndex: 2,
-              },
-              (buttonIndex) => {
-                if (buttonIndex === 0) {
-                  // Copy link - noop for now
-                } else if (buttonIndex === 1) {
-                  Share.share({ message: post.content });
-                }
-              }
-            );
-          } else {
-            Share.share({ message: post.content });
-          }
+          onMenu?.(post);
         }}>
           <Feather name="more-horizontal" size={20} color={theme.colors.text.secondary} />
         </Pressable>

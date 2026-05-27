@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback } from 'react';
+import React, { useEffect, useCallback, useState } from 'react';
 import { View, FlatList, RefreshControl, ViewStyle, Pressable, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -7,6 +7,7 @@ import { router } from 'expo-router';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
 import { PostCard } from '../../src/components/feed/PostCard';
+import { PostMenuModal } from '../../src/components/feed/PostMenuModal';
 import { TrendingSection } from '../../src/components/feed/TrendingSection';
 import { useFeedStore, useAuthStore } from '../../src/store';
 import { Post } from '../../src/types';
@@ -57,6 +58,7 @@ export default function FeedScreen() {
   const insets = useSafeAreaInsets();
   const { posts, isLoading, isRefreshing, setPosts, setLoading, setRefreshing, toggleLike } = useFeedStore();
   const { user } = useAuthStore();
+  const [menuPost, setMenuPost] = useState<Post | null>(null);
 
   // Background color for gradient — uses theme color dynamically
   const bgColor = theme.colors.background.primary;
@@ -130,6 +132,7 @@ export default function FeedScreen() {
             await toggleLikeAPI(user.id, postId);
           }
         }}
+        onMenu={(post) => setMenuPost(post)}
       />
     </View>
   );
@@ -215,6 +218,8 @@ export default function FeedScreen() {
           />
         }
       />
+
+      <PostMenuModal visible={!!menuPost} post={menuPost} onClose={() => setMenuPost(null)} />
     </View>
   );
 }

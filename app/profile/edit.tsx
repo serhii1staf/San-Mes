@@ -334,7 +334,11 @@ export default function EditProfileScreen() {
                     <Feather name="x" size={22} color={theme.colors.text.primary} />
                   </Pressable>
                   <Text variant="body" weight="semibold">Редактировать</Text>
-                  <View style={{ width: 22 }} />
+                  <Pressable onPress={handleSave} disabled={isSaving}>
+                    <Text variant="body" weight="semibold" color={theme.colors.accent.primary}>
+                      {isSaving ? '...' : 'Готово'}
+                    </Text>
+                  </Pressable>
                 </View>
 
                 {/* Banner */}
@@ -448,21 +452,6 @@ export default function EditProfileScreen() {
                       </Pressable>
                     )}
                   </View>
-
-                  <Pressable
-                    onPress={handleSave}
-                    style={{
-                      backgroundColor: theme.colors.accent.primary,
-                      borderRadius: 14,
-                      paddingVertical: 16,
-                      alignItems: 'center',
-                    }}
-                    disabled={isSaving}
-                  >
-                    <Text variant="body" weight="semibold" color={theme.colors.text.inverse}>
-                      {isSaving ? 'Сохранение...' : 'Сохранить'}
-                    </Text>
-                  </Pressable>
                 </View>
               </ScrollView>
           </View>

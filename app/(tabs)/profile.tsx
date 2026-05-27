@@ -7,8 +7,9 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { useAuthStore } from '../../src/store';
-import { supabase } from '../../src/lib/supabase';
+import { supabase, getPosts } from '../../src/lib/supabase';
 import { openUrl } from '../../src/utils/openUrl';
+import { Post } from '../../src/types';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 
@@ -79,6 +80,7 @@ export default function ProfileScreen() {
   const { user, updateProfile: updateLocalProfile } = useAuthStore();
   const [activeTab, setActiveTab] = useState<TabName>('posts');
   const scrollY = useRef(new Animated.Value(0)).current;
+  const [userPosts, setUserPosts] = useState<Post[]>([]);
 
   // Sync profile from Supabase on mount
   useEffect(() => {
@@ -86,6 +88,32 @@ export default function ProfileScreen() {
       syncProfileFromSupabase();
     }
   }, [user?.id]);
+
+  useEffect(() => {
+    if (user?.id) {
+      loadUserPosts();
+    }
+  }, [user?.id]);
+
+  const loadUserPosts = async () => {
+    const { posts: dbPosts } = await getPosts();
+    const myPosts = dbPosts.filter((p: any) => p.author_id === user?.id).map((p: any) => ({
+      id: p.id,
+      authorId: p.author_id,
+      authorName: p.profiles?.display_name || user?.displayName || '',
+      authorUsername: p.profiles?.username || user?.username || '',
+      authorEmoji: p.profiles?.emoji || user?.emoji || '😊',
+      content: p.content,
+      imageUrl: p.image_url || undefined,
+      likesCount: p.likes_count || 0,
+      commentsCount: p.comments_count || 0,
+      sharesCount: p.shares_count || 0,
+      isLiked: false,
+      isBookmarked: false,
+      createdAt: p.created_at,
+    }));
+    setUserPosts(myPosts);
+  };
 
   const syncProfileFromSupabase = async () => {
     if (!user?.id) return;
@@ -186,16 +214,12 @@ export default function ProfileScreen() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 100, paddingTop: headerContentHeight }}
       >
-        {/* Profile banner */}
-        <Pressable onPress={() => router.push('/profile/edit')} style={{ height: 100, marginHorizontal: 20, borderRadius: 16, overflow: 'hidden', backgroundColor: theme.colors.accent.primary + '20', marginTop: 8 }}>
-          {(user as any)?.bannerUrl ? (
+        {/* Profile banner - only show if set */}
+        {(user as any)?.bannerUrl ? (
+          <Pressable onPress={() => router.push('/profile/edit')} style={{ height: 100, marginHorizontal: 20, borderRadius: 16, overflow: 'hidden', marginTop: 8 }}>
             <Image source={{ uri: (user as any).bannerUrl }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
-          ) : (
-            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-              <Text style={{ fontSize: 40 }}>{displayUser.emoji}</Text>
-            </View>
-          )}
-        </Pressable>
+          </Pressable>
+        ) : null}
 
         {/* Profile row: LEFT = stats, RIGHT = avatar */}
         <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, marginTop: 16 }}>
@@ -278,13 +302,28 @@ export default function ProfileScreen() {
           />
         </View>
 
-        {/* Empty state */}
-        <View style={{ alignItems: 'center', paddingVertical: 40 }}>
-          <Text style={{ fontSize: 32 }}>📷</Text>
-          <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginTop: 8 }}>
-            Ещё нет публикаций
-          </Text>
-        </View>
+        {/* Posts / Empty state */}
+        {userPosts.length === 0 ? (
+          <View style={{ alignItems: 'center', paddingVertical: 40 }}>
+            <View style={{ width: 50, height: 50, alignItems: 'center', justifyContent: 'center' }}>
+              <Text style={{ fontSize: 32 }}>📷</Text>
+            </View>
+            <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginTop: 8 }}>
+              Ещё нет публикаций
+            </Text>
+          </View>
+        ) : (
+          <View style={{ paddingHorizontal: 20, paddingTop: 12 }}>
+            {userPosts.map(post => (
+              <View key={post.id} style={{ backgroundColor: theme.colors.background.elevated, borderRadius: 14, padding: 14, marginBottom: 10 }}>
+                <Text variant="body">{post.content}</Text>
+                <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginTop: 6 }}>
+                  ❤️ {post.likesCount}  💬 {post.commentsCount}
+                </Text>
+              </View>
+            ))}
+          </View>
+        )}
       </Animated.ScrollView>
     </View>
   );

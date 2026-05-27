@@ -5,34 +5,35 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
-import { supabase, followUser, unfollowUser, isFollowing as checkIsFollowing, getFollowCounts } from '../../src/lib/supabase';
+import { supabase } from '../../src/lib/supabase';
 import { useAuthStore } from '../../src/store';
+import { followUser, unfollowUser, isFollowing as checkIsFollowing, getFollowCounts } from '../../src/lib/supabase';
 import { triggerHaptic } from '../../src/utils/haptics';
 
 export default function UserProfileScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
+  const { user: currentUser } = useAuthStore();
   const [profile, setProfile] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const { user: currentUser } = useAuthStore();
   const [isFollowingState, setIsFollowingState] = useState(false);
   const [followCounts, setFollowCounts] = useState({ followers: 0, following: 0 });
 
-  useEffect(() => {
-    loadProfile();
-  }, [id]);
+  useEffect(() => { loadProfile(); }, [id]);
 
   const loadProfile = async () => {
     setIsLoading(true);
-    const { data } = await supabase.from('profiles').select('*').eq('id', id).single();
-    setProfile(data);
-    if (data && currentUser?.id) {
-      const following = await checkIsFollowing(currentUser.id, data.id);
-      setIsFollowingState(following);
-      const counts = await getFollowCounts(data.id);
-      setFollowCounts(counts);
-    }
+    try {
+      const { data } = await supabase.from('profiles').select('*').eq('id', id).single();
+      setProfile(data);
+      if (data && currentUser?.id) {
+        const following = await checkIsFollowing(currentUser.id, data.id);
+        setIsFollowingState(following);
+        const counts = await getFollowCounts(data.id);
+        setFollowCounts(counts);
+      }
+    } catch (e) {}
     setIsLoading(false);
   };
 
@@ -62,9 +63,14 @@ export default function UserProfileScreen() {
     return (
       <View style={{ flex: 1, backgroundColor: theme.colors.background.primary, alignItems: 'center', justifyContent: 'center' }}>
         <Text variant="body" color={theme.colors.text.tertiary}>Пользователь не найден</Text>
+        <Pressable onPress={() => router.back()} style={{ marginTop: 16 }}>
+          <Text variant="body" color={theme.colors.accent.primary}>Назад</Text>
+        </Pressable>
       </View>
     );
   }
+
+  const isOwnProfile = currentUser?.id === profile.id;
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
@@ -77,63 +83,67 @@ export default function UserProfileScreen() {
       </View>
 
       <ScrollView contentContainerStyle={{ paddingBottom: 100 }}>
-        {/* Banner placeholder */}
-        <View style={{ height: 120, marginHorizontal: 20, borderRadius: 16, overflow: 'hidden', backgroundColor: theme.colors.accent.primary + '20' }}>
-          {profile.banner_url ? (
+        {/* Banner - only if set */}
+        {profile.banner_url ? (
+          <View style={{ height: 100, marginHorizontal: 20, borderRadius: 16, overflow: 'hidden', marginBottom: 16 }}>
             <Image source={{ uri: profile.banner_url }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
-          ) : (
-            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-              <Text style={{ fontSize: 48 }}>{profile.emoji}</Text>
+          </View>
+        ) : null}
+
+        {/* Profile row: LEFT = stats, RIGHT = avatar */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, marginTop: 8 }}>
+          <View style={{ flex: 1, flexDirection: 'row', gap: 16 }}>
+            <View style={{ alignItems: 'center' }}>
+              <Text variant="body" weight="bold">0</Text>
+              <Text variant="caption" color={theme.colors.text.tertiary}>Посты</Text>
             </View>
-          )}
+            <View style={{ alignItems: 'center' }}>
+              <Text variant="body" weight="bold">{followCounts.followers}</Text>
+              <Text variant="caption" color={theme.colors.text.tertiary}>Подписчики</Text>
+            </View>
+            <View style={{ alignItems: 'center' }}>
+              <Text variant="body" weight="bold">{followCounts.following}</Text>
+              <Text variant="caption" color={theme.colors.text.tertiary}>Подписки</Text>
+            </View>
+          </View>
+          <Avatar emoji={profile.emoji} size="xl" />
         </View>
 
-        {/* Avatar */}
-        <View style={{ alignItems: 'center', marginTop: -30 }}>
-          <View style={{ borderWidth: 4, borderColor: theme.colors.background.primary, borderRadius: 40 }}>
-            <Avatar emoji={profile.emoji} size="xl" />
-          </View>
+        {/* Name */}
+        <View style={{ paddingHorizontal: 20, marginTop: 12 }}>
+          <Text variant="body" weight="bold">{profile.display_name}</Text>
         </View>
 
-        {/* Info */}
-        <View style={{ alignItems: 'center', marginTop: 12, paddingHorizontal: 20 }}>
-          <Text variant="subheading" weight="bold">{profile.display_name}</Text>
-          <Text variant="caption" color={theme.colors.text.secondary}>@{profile.username}</Text>
-          {profile.bio ? (
-            <Text variant="body" color={theme.colors.text.secondary} align="center" style={{ marginTop: 8 }}>
-              {profile.bio}
-            </Text>
-          ) : null}
-        </View>
+        {/* Bio */}
+        {profile.bio ? (
+          <View style={{ paddingHorizontal: 20, marginTop: 2 }}>
+            <Text variant="caption" color={theme.colors.text.secondary}>{profile.bio}</Text>
+          </View>
+        ) : null}
 
-        {/* Stats row */}
-        <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 32, marginTop: 20 }}>
-          <View style={{ alignItems: 'center' }}>
-            <Text variant="body" weight="bold">0</Text>
-            <Text variant="caption" color={theme.colors.text.tertiary}>Посты</Text>
+        {/* Follow button (only for other users) */}
+        {!isOwnProfile && (
+          <View style={{ paddingHorizontal: 20, marginTop: 16 }}>
+            <Pressable onPress={handleFollow} style={{
+              backgroundColor: isFollowingState ? theme.colors.background.secondary : theme.colors.accent.primary,
+              borderRadius: 14,
+              paddingVertical: 12,
+              alignItems: 'center',
+              borderWidth: isFollowingState ? 1 : 0,
+              borderColor: theme.colors.border.light,
+            }}>
+              <Text variant="body" weight="semibold" color={isFollowingState ? theme.colors.text.primary : '#FFFFFF'}>
+                {isFollowingState ? 'Отписаться' : 'Подписаться'}
+              </Text>
+            </Pressable>
           </View>
-          <View style={{ alignItems: 'center' }}>
-            <Text variant="body" weight="bold">{followCounts.followers}</Text>
-            <Text variant="caption" color={theme.colors.text.tertiary}>Подписчики</Text>
-          </View>
-          <View style={{ alignItems: 'center' }}>
-            <Text variant="body" weight="bold">{followCounts.following}</Text>
-            <Text variant="caption" color={theme.colors.text.tertiary}>Подписки</Text>
-          </View>
-        </View>
-
-        {/* Follow button */}
-        <View style={{ paddingHorizontal: 20, marginTop: 20 }}>
-          <Pressable onPress={handleFollow} style={{ backgroundColor: isFollowingState ? theme.colors.background.secondary : theme.colors.accent.primary, borderRadius: 14, paddingVertical: 14, alignItems: 'center', borderWidth: isFollowingState ? 1 : 0, borderColor: theme.colors.border.light }}>
-            <Text variant="body" weight="semibold" color={isFollowingState ? theme.colors.text.primary : '#FFFFFF'}>
-              {isFollowingState ? 'Отписаться' : 'Подписаться'}
-            </Text>
-          </Pressable>
-        </View>
+        )}
 
         {/* Empty posts */}
         <View style={{ alignItems: 'center', paddingVertical: 40 }}>
-          <Text style={{ fontSize: 32 }}>📷</Text>
+          <View style={{ width: 50, height: 50, alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={{ fontSize: 32 }}>📷</Text>
+          </View>
           <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginTop: 8 }}>Ещё нет публикаций</Text>
         </View>
       </ScrollView>
