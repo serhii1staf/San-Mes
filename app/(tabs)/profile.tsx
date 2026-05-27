@@ -1,5 +1,5 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { View, Pressable, ViewStyle, ActivityIndicator, Animated, Dimensions, Image, ScrollView } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Pressable, ActivityIndicator, Dimensions, Image, ScrollView, Modal } from 'react-native';
 import { Feather, FontAwesome5 } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -15,7 +15,6 @@ const SCREEN_WIDTH = Dimensions.get('window').width;
 
 type TabName = 'posts' | 'replies' | 'media' | 'likes';
 
-// Auto-detect link type from URL
 function detectLinkType(url: string): string {
   const lower = url.toLowerCase();
   if (lower.includes('github.com')) return 'github';
@@ -52,12 +51,12 @@ function SocialLinkIcon({ type, url }: { type: string; url: string }) {
   return (
     <Pressable
       onPress={() => { triggerHaptic('light'); openUrl(url); }}
-      style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: icon.color + '18', alignItems: 'center', justifyContent: 'center' }}
+      style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: icon.color + '18', alignItems: 'center', justifyContent: 'center' }}
     >
       {icon.isBrand ? (
-        <FontAwesome5 name={icon.name} size={15} color={icon.color} brand />
+        <FontAwesome5 name={icon.name} size={14} color={icon.color} brand />
       ) : (
-        <Feather name={icon.name as any} size={16} color={icon.color} />
+        <Feather name={icon.name as any} size={14} color={icon.color} />
       )}
     </Pressable>
   );
@@ -69,6 +68,7 @@ export default function ProfileScreen() {
   const { user, updateProfile: updateLocalProfile } = useAuthStore();
   const [activeTab, setActiveTab] = useState<TabName>('posts');
   const [userPosts, setUserPosts] = useState<Post[]>([]);
+  const [showQR, setShowQR] = useState(false);
 
   useEffect(() => {
     if (user?.id) {
@@ -104,8 +104,16 @@ export default function ProfileScreen() {
     try {
       const { data, error } = await supabase.from('profiles').select('*').eq('id', user.id).single();
       if (data && !error) {
-        const links = data.links ? (typeof data.links === 'string' ? JSON.parse(data.links) : data.links) : [];
-        updateLocalProfile({ displayName: data.display_name, emoji: data.emoji, bio: data.bio || '', links });
+        // Only update from Supabase what's actually stored there
+        // Don't overwrite local-only fields (links, bannerUrl) unless Supabase has them
+        const updates: any = {
+          displayName: data.display_name,
+          emoji: data.emoji,
+        };
+        // Only overwrite bio if Supabase has content
+        if (data.bio) updates.bio = data.bio;
+        // Don't touch links/bannerUrl - those are stored locally
+        updateLocalProfile(updates);
       }
     } catch (e) {}
   };
@@ -131,94 +139,93 @@ export default function ProfileScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
-        {/* Banner */}
-        <Pressable onPress={() => router.push('/profile/edit')}>
-          <View style={{ height: 140, backgroundColor: bannerUrl ? undefined : theme.colors.accent.primary + '30' }}>
-            {bannerUrl ? (
-              <Image source={{ uri: bannerUrl }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
-            ) : (
-              <View style={{ flex: 1, backgroundColor: theme.colors.accent.primary + '20' }} />
-            )}
-          </View>
+      {/* Header */}
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingTop: insets.top + 8, paddingBottom: 8 }}>
+        {/* QR button */}
+        <Pressable onPress={() => { triggerHaptic('light'); setShowQR(true); }}>
+          <Feather name="maximize" size={22} color={theme.colors.text.primary} />
         </Pressable>
+        {/* Settings */}
+        <Pressable onPress={() => { triggerHaptic('light'); router.push('/settings'); }}>
+          <Feather name="settings" size={22} color={theme.colors.text.primary} />
+        </Pressable>
+      </View>
 
-        {/* Avatar overlapping banner */}
-        <View style={{ alignItems: 'center', marginTop: -40 }}>
-          <View style={{ borderWidth: 4, borderColor: theme.colors.background.primary, borderRadius: 44, overflow: 'hidden' }}>
-            <Avatar emoji={displayUser.emoji} size="xl" />
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
+        {/* Banner - only if set */}
+        {bannerUrl ? (
+          <Pressable onPress={() => router.push('/profile/edit')} style={{ height: 100, marginHorizontal: 16, borderRadius: 14, overflow: 'hidden', marginBottom: 16 }}>
+            <Image source={{ uri: bannerUrl }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+          </Pressable>
+        ) : null}
+
+        {/* Main profile row: avatar LEFT, stats RIGHT */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, marginTop: bannerUrl ? 0 : 8 }}>
+          {/* Avatar */}
+          <Avatar emoji={displayUser.emoji} size="xl" />
+          {/* Stats */}
+          <View style={{ flex: 1, flexDirection: 'row', justifyContent: 'space-around', marginLeft: 16 }}>
+            <View style={{ alignItems: 'center' }}>
+              <Text variant="body" weight="bold">{userPosts.length}</Text>
+              <Text variant="caption" color={theme.colors.text.tertiary}>посты</Text>
+            </View>
+            <View style={{ alignItems: 'center' }}>
+              <Text variant="body" weight="bold">0</Text>
+              <Text variant="caption" color={theme.colors.text.tertiary}>подписки</Text>
+            </View>
+            <View style={{ alignItems: 'center' }}>
+              <Text variant="body" weight="bold">0</Text>
+              <Text variant="caption" color={theme.colors.text.tertiary}>подписчики</Text>
+            </View>
           </View>
         </View>
 
-        {/* Name & username */}
-        <View style={{ alignItems: 'center', marginTop: 10 }}>
-          <Text variant="subheading" weight="bold">{displayUser.displayName}</Text>
-          <Text variant="caption" color={theme.colors.text.secondary} style={{ marginTop: 2 }}>@{displayUser.username}</Text>
-        </View>
-
-        {/* Stats row */}
-        <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 24, marginTop: 14 }}>
-          <View style={{ alignItems: 'center' }}>
-            <Text variant="body" weight="bold">{userPosts.length}</Text>
-            <Text variant="caption" color={theme.colors.text.tertiary}>посты</Text>
-          </View>
-          <View style={{ alignItems: 'center' }}>
-            <Text variant="body" weight="bold">0</Text>
-            <Text variant="caption" color={theme.colors.text.tertiary}>подписки</Text>
-          </View>
-          <View style={{ alignItems: 'center' }}>
-            <Text variant="body" weight="bold">0</Text>
-            <Text variant="caption" color={theme.colors.text.tertiary}>подписчики</Text>
-          </View>
+        {/* Name + username */}
+        <View style={{ paddingHorizontal: 20, marginTop: 12 }}>
+          <Text variant="body" weight="bold">{displayUser.displayName}</Text>
+          <Text variant="caption" color={theme.colors.text.tertiary}>@{displayUser.username}</Text>
         </View>
 
         {/* Bio */}
         {displayUser.bio ? (
-          <View style={{ paddingHorizontal: 24, marginTop: 12 }}>
-            <Text variant="body" color={theme.colors.text.secondary} align="center">{displayUser.bio}</Text>
+          <View style={{ paddingHorizontal: 20, marginTop: 6 }}>
+            <Text variant="body" color={theme.colors.text.secondary}>{displayUser.bio}</Text>
           </View>
         ) : null}
 
         {/* Social links */}
         {userLinks.length > 0 && (
-          <View style={{ flexDirection: 'row', justifyContent: 'center', marginTop: 10, gap: 10 }}>
+          <View style={{ flexDirection: 'row', paddingHorizontal: 20, marginTop: 10, gap: 8 }}>
             {userLinks.map((link, idx) => (
               <SocialLinkIcon key={idx} type={link.type} url={link.url} />
             ))}
           </View>
         )}
 
-        {/* Edit profile button */}
-        <View style={{ paddingHorizontal: 20, marginTop: 16 }}>
+        {/* Edit button */}
+        <View style={{ paddingHorizontal: 20, marginTop: 14 }}>
           <Pressable
             onPress={() => { triggerHaptic('light'); router.push('/profile/edit'); }}
             style={{
-              borderWidth: 1.5,
+              borderWidth: 1,
               borderColor: theme.colors.border.medium,
-              borderRadius: 12,
-              paddingVertical: 10,
+              borderRadius: 10,
+              paddingVertical: 9,
               alignItems: 'center',
             }}
           >
-            <Text variant="body" weight="semibold">Редактировать</Text>
-          </Pressable>
-        </View>
-
-        {/* Settings row */}
-        <View style={{ flexDirection: 'row', justifyContent: 'center', marginTop: 12, gap: 12 }}>
-          <Pressable onPress={() => { triggerHaptic('light'); router.push('/settings'); }} style={{ padding: 8 }}>
-            <Feather name="settings" size={20} color={theme.colors.text.secondary} />
+            <Text variant="caption" weight="semibold">Редактировать профиль</Text>
           </Pressable>
         </View>
 
         {/* Tabs */}
-        <View style={{ marginTop: 16, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border.light }}>
+        <View style={{ marginTop: 18, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border.light }}>
           <View style={{ flexDirection: 'row' }}>
             {tabs.map((tab) => (
               <Pressable
                 key={tab.key}
                 onPress={() => { triggerHaptic('selection'); setActiveTab(tab.key); }}
-                style={{ flex: 1, alignItems: 'center', paddingVertical: 12 }}
+                style={{ flex: 1, alignItems: 'center', paddingVertical: 11 }}
               >
                 <Text
                   variant="caption"
@@ -230,28 +237,14 @@ export default function ProfileScreen() {
               </Pressable>
             ))}
           </View>
-          {/* Indicator */}
-          <View
-            style={{
-              position: 'absolute',
-              bottom: 0,
-              height: 2,
-              backgroundColor: theme.colors.accent.primary,
-              borderRadius: 1,
-              width: SCREEN_WIDTH / 4,
-              left: tabs.findIndex(t => t.key === activeTab) * (SCREEN_WIDTH / 4),
-            }}
-          />
+          <View style={{ position: 'absolute', bottom: 0, height: 2, backgroundColor: theme.colors.accent.primary, borderRadius: 1, width: SCREEN_WIDTH / 4, left: tabs.findIndex(t => t.key === activeTab) * (SCREEN_WIDTH / 4) }} />
         </View>
 
-        {/* Content */}
+        {/* Tab content */}
         {activeTab === 'posts' && (
           userPosts.length === 0 ? (
             <View style={{ alignItems: 'center', paddingVertical: 40 }}>
-              <View style={{ width: 50, height: 50, alignItems: 'center', justifyContent: 'center' }}>
-                <Text style={{ fontSize: 32 }}>📷</Text>
-              </View>
-              <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginTop: 8 }}>Ещё нет публикаций</Text>
+              <Text variant="caption" color={theme.colors.text.tertiary}>Ещё нет публикаций</Text>
             </View>
           ) : (
             <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
@@ -259,12 +252,7 @@ export default function ProfileScreen() {
                 <Pressable
                   key={post.id}
                   onPress={() => router.push({ pathname: '/comments/[id]', params: { id: post.id } })}
-                  style={{
-                    backgroundColor: theme.colors.background.elevated,
-                    borderRadius: 14,
-                    padding: 14,
-                    marginBottom: 10,
-                  }}
+                  style={{ backgroundColor: theme.colors.background.elevated, borderRadius: 14, padding: 14, marginBottom: 10 }}
                 >
                   {post.imageUrl && (
                     <Image source={{ uri: post.imageUrl }} style={{ width: '100%', height: 160, borderRadius: 10, marginBottom: 10 }} resizeMode="cover" />
@@ -272,11 +260,11 @@ export default function ProfileScreen() {
                   {post.content ? <Text variant="body">{post.content}</Text> : null}
                   <View style={{ flexDirection: 'row', marginTop: 8, gap: 14 }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                      <Feather name="heart" size={14} color={theme.colors.text.tertiary} />
+                      <Feather name="heart" size={13} color={theme.colors.text.tertiary} />
                       <Text variant="caption" color={theme.colors.text.tertiary}>{post.likesCount}</Text>
                     </View>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                      <Feather name="message-circle" size={14} color={theme.colors.text.tertiary} />
+                      <Feather name="message-circle" size={13} color={theme.colors.text.tertiary} />
                       <Text variant="caption" color={theme.colors.text.tertiary}>{post.commentsCount}</Text>
                     </View>
                   </View>
@@ -285,13 +273,36 @@ export default function ProfileScreen() {
             </View>
           )
         )}
-
         {activeTab !== 'posts' && (
           <View style={{ alignItems: 'center', paddingVertical: 40 }}>
             <Text variant="caption" color={theme.colors.text.tertiary}>Пока пусто</Text>
           </View>
         )}
       </ScrollView>
+
+      {/* QR Modal */}
+      <Modal visible={showQR} transparent animationType="slide" onRequestClose={() => setShowQR(false)}>
+        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }} onPress={() => setShowQR(false)}>
+          <View style={{ flex: 1 }} />
+          <Pressable onPress={(e) => e.stopPropagation()}>
+            <View style={{ marginHorizontal: 16, marginBottom: insets.bottom + 16, backgroundColor: theme.isDark ? '#1C1C1E' : '#FFFFFF', borderRadius: 24, padding: 24, alignItems: 'center' }}>
+              {/* QR placeholder */}
+              <View style={{ width: 180, height: 180, borderRadius: 16, backgroundColor: theme.colors.background.secondary, alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
+                <Feather name="maximize" size={60} color={theme.colors.text.tertiary} />
+                <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginTop: 8 }}>QR-код</Text>
+              </View>
+              <Text variant="body" weight="bold">{displayUser.displayName}</Text>
+              <Text variant="caption" color={theme.colors.text.secondary}>@{displayUser.username}</Text>
+              <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginTop: 12, textAlign: 'center' }}>
+                Отсканируйте для перехода в профиль
+              </Text>
+              <Pressable onPress={() => setShowQR(false)} style={{ marginTop: 20, paddingVertical: 12, paddingHorizontal: 32, backgroundColor: theme.colors.accent.primary, borderRadius: 12 }}>
+                <Text variant="body" weight="semibold" color="#FFFFFF">Закрыть</Text>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }

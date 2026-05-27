@@ -1,7 +1,8 @@
 import React from 'react';
-import { View, Pressable, Modal } from 'react-native';
+import { View, Pressable, Modal, Share } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as Clipboard from 'expo-clipboard';
 import { useTheme } from '../../theme';
 import { Text } from '../ui/Text';
 import { Avatar } from '../ui/Avatar';
@@ -20,24 +21,49 @@ export function PostMenuModal({ visible, post, onClose }: PostMenuModalProps) {
 
   if (!post) return null;
 
+  const handleCopyLink = async () => {
+    triggerHaptic('light');
+    await Clipboard.setStringAsync(`https://san-mes.app/post/${post.id}`);
+    onClose();
+  };
+
+  const handleShare = async () => {
+    triggerHaptic('light');
+    await Share.share({ message: post.content || 'Посмотри этот пост в San!' });
+    onClose();
+  };
+
+  const handleSave = () => {
+    triggerHaptic('light');
+    // TODO: implement saved posts
+    onClose();
+  };
+
+  const handleReport = () => {
+    triggerHaptic('light');
+    // TODO: implement report flow
+    onClose();
+  };
+
   const options = [
-    { icon: 'link', label: 'Скопировать ссылку', action: () => { onClose(); } },
-    { icon: 'share-2', label: 'Поделиться', action: () => { onClose(); } },
-    { icon: 'bookmark', label: 'Сохранить', action: () => { onClose(); } },
-    { icon: 'flag', label: 'Пожаловаться', action: () => { onClose(); }, destructive: true },
+    { icon: 'link', label: 'Скопировать ссылку', action: handleCopyLink },
+    { icon: 'share-2', label: 'Поделиться', action: handleShare },
+    { icon: 'bookmark', label: 'Сохранить', action: handleSave },
+    { icon: 'flag', label: 'Пожаловаться', action: handleReport, destructive: true },
   ];
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' }} onPress={onClose}>
+      <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }} onPress={onClose}>
         <View style={{ flex: 1 }} />
         <Pressable onPress={(e) => e.stopPropagation()}>
           <View style={{
+            marginHorizontal: 12,
+            marginBottom: insets.bottom + 12,
             backgroundColor: theme.isDark ? '#1C1C1E' : '#FFFFFF',
-            borderTopLeftRadius: 20,
-            borderTopRightRadius: 20,
+            borderRadius: 20,
             paddingTop: 12,
-            paddingBottom: insets.bottom + 16,
+            paddingBottom: 16,
             paddingHorizontal: 20,
           }}>
             {/* Handle */}
@@ -52,12 +78,12 @@ export function PostMenuModal({ visible, post, onClose }: PostMenuModalProps) {
               padding: 12,
               backgroundColor: theme.colors.background.secondary,
               borderRadius: 14,
-              marginBottom: 20,
+              marginBottom: 16,
             }}>
               <Avatar emoji={post.authorEmoji} size="sm" />
               <View style={{ marginLeft: 10, flex: 1 }}>
                 <Text variant="caption" weight="semibold" numberOfLines={1}>{post.authorName}</Text>
-                <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>{post.content || 'Публикация'}</Text>
+                <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={2}>{post.content || 'Публикация'}</Text>
               </View>
             </View>
 
@@ -65,17 +91,19 @@ export function PostMenuModal({ visible, post, onClose }: PostMenuModalProps) {
             {options.map((opt, i) => (
               <Pressable
                 key={i}
-                onPress={() => { triggerHaptic('light'); opt.action(); }}
+                onPress={opt.action}
                 style={{
                   flexDirection: 'row',
                   alignItems: 'center',
-                  paddingVertical: 14,
+                  paddingVertical: 13,
                   borderBottomWidth: i < options.length - 1 ? 0.5 : 0,
                   borderBottomColor: theme.colors.border.light,
                 }}
               >
-                <Feather name={opt.icon as any} size={20} color={opt.destructive ? '#FF3B30' : theme.colors.text.primary} />
-                <Text variant="body" color={opt.destructive ? '#FF3B30' : theme.colors.text.primary} style={{ marginLeft: 14 }}>{opt.label}</Text>
+                <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: (opt as any).destructive ? '#FF3B3015' : theme.colors.background.secondary, alignItems: 'center', justifyContent: 'center' }}>
+                  <Feather name={opt.icon as any} size={18} color={(opt as any).destructive ? '#FF3B30' : theme.colors.text.primary} />
+                </View>
+                <Text variant="body" color={(opt as any).destructive ? '#FF3B30' : theme.colors.text.primary} style={{ marginLeft: 12 }}>{opt.label}</Text>
               </Pressable>
             ))}
           </View>
