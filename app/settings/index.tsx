@@ -82,7 +82,7 @@ export default function SettingsScreen() {
         style: 'destructive',
         onPress: () => {
           logout();
-          router.replace('/(auth)/login');
+          // AuthNavigationGuard will handle redirect to login
         },
       },
     ]);

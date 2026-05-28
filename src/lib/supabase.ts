@@ -212,7 +212,7 @@ export async function getPosts(limit: number = 20, offset: number = 0): Promise<
     .from('posts')
     .select(`
       *,
-      profiles:author_id (id, username, display_name, emoji)
+      profiles:author_id (id, username, display_name, emoji, badge, is_verified)
     `)
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1);

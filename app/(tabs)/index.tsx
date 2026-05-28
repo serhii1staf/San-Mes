@@ -61,6 +61,8 @@ function mapRawPost(p: any, postsById: Record<string, any>): Post | null {
     authorName: profileData?.display_name || 'User',
     authorUsername: profileData?.username || 'user',
     authorEmoji: profileData?.emoji || '😊',
+    authorBadge: profileData?.badge || undefined,
+    authorVerified: profileData?.is_verified || false,
     content: repostInfo.isRepost ? (repostInfo.comment || '') : (p.content || ''),
     imageUrl: parsedImages[0] || undefined,
     imageUrls: parsedImages.length > 0 ? parsedImages : undefined,
