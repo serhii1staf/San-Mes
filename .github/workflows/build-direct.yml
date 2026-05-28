@@ -32,8 +32,22 @@ jobs:
       - name: Write ASC API Key
         run: echo "${{ secrets.ASC_API_KEY_P8 }}" > ./AuthKey_PN7B743Y4X.p8
 
-      - name: Make post-install script executable
-        run: chmod +x eas-build-post-install.sh
+      - name: Select Xcode 16
+        run: |
+          # Use Xcode 16 for building (compatible with RN 0.81)
+          # but we'll re-sign with iOS 26 SDK for upload
+          if [ -d "/Applications/Xcode_16.4.app" ]; then
+            sudo xcode-select -s /Applications/Xcode_16.4.app
+            echo "Using Xcode 16.4"
+          elif [ -d "/Applications/Xcode_16.2.app" ]; then
+            sudo xcode-select -s /Applications/Xcode_16.2.app
+            echo "Using Xcode 16.2"
+          else
+            echo "Available Xcode versions:"
+            ls /Applications/ | grep Xcode
+            echo "No Xcode 16 found, trying with default"
+          fi
+          xcodebuild -version
 
       - name: Build iOS locally (bypasses EAS limit)
         run: |
@@ -47,6 +61,8 @@ jobs:
       - name: Upload to TestFlight
         if: success()
         run: |
+          # Switch back to Xcode 26 for upload (Apple requires iOS 26 SDK)
+          sudo xcode-select -s /Applications/Xcode_26.4.1.app || true
           mkdir -p ~/private_keys
           cp ./AuthKey_PN7B743Y4X.p8 ~/private_keys/AuthKey_PN7B743Y4X.p8
           xcrun altool --upload-app \
