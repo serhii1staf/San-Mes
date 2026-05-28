@@ -22,13 +22,28 @@ export default function CreateScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const { user } = useAuthStore();
-  const { pendingRepostId, setPendingRepost } = useFeedStore();
+  const { pendingRepostId, setPendingRepost, editingPost, setEditingPost } = useFeedStore();
   const [content, setContent] = useState('');
   const [isPosting, setIsPosting] = useState(false);
   const [audience, setAudience] = useState<Audience>('public');
   const [imageUris, setImageUris] = useState<string[]>([]);
   const [imageUploading, setImageUploading] = useState(false);
+  const [editingPostId, setEditingPostId] = useState<string | null>(null);
   const [repostData, setRepostData] = useState<{ id: string; authorName: string; authorEmoji: string; content: string; imageUrl?: string } | null>(null);
+
+  // Load editing post data
+  useEffect(() => {
+    if (editingPost) {
+      setContent(editingPost.content || '');
+      setEditingPostId(editingPost.id);
+      if (editingPost.imageUrl) {
+        setImageUris([editingPost.imageUrl]);
+      } else if (editingPost.imageUrls && editingPost.imageUrls.length > 0) {
+        setImageUris(editingPost.imageUrls);
+      }
+      setEditingPost(null);
+    }
+  }, [editingPost]);
 
   // Load repost data from store
   useEffect(() => {
@@ -249,7 +264,7 @@ export default function CreateScreen() {
       <View style={{ paddingHorizontal: theme.spacing.lg, paddingTop: theme.spacing.base }}>
         <View>
           <Text variant="subheading" weight="bold" style={{ marginBottom: theme.spacing.lg }}>
-            {repostData ? 'Репост' : 'Новый пост'}
+            {repostData ? 'Репост' : editingPostId ? 'Редактировать' : 'Новый пост'}
           </Text>
         </View>
 

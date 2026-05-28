@@ -10,6 +10,7 @@ import { Text, Avatar } from '../../src/components/ui';
 import { LinkedText } from '../../src/components/ui/LinkedText';
 import { CachedImage } from '../../src/components/ui/CachedImage';
 import { useAuthStore } from '../../src/store';
+import { useFeedStore } from '../../src/store/feedStore';
 import { isRepost, parseImageUrls, getFollowCounts, supabase, deletePost } from '../../src/lib/supabase';
 import { openUrl } from '../../src/utils/openUrl';
 import { Post } from '../../src/types';
@@ -200,11 +201,11 @@ export default function ProfileScreen() {
           </Pressable>
           {/* Image — full width */}
           <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-            {viewingImage && <Image source={{ uri: viewingImage.uri }} style={{ width: SCREEN_WIDTH - 32, height: SCREEN_WIDTH - 32, borderRadius: 16 }} resizeMode="contain" />}
+            {viewingImage && <CachedImage uri={viewingImage.uri} style={{ width: SCREEN_WIDTH - 32, height: SCREEN_WIDTH - 32, borderRadius: 16 }} resizeMode="contain" />}
           </View>
           {/* Bottom actions */}
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 24, paddingBottom: insets.bottom + 20 }}>
-            <Pressable onPress={() => { setViewingImage(null); router.push('/(tabs)/create'); }} style={{ alignItems: 'center' }}>
+            <Pressable onPress={() => { setViewingImage(null); useFeedStore.getState().setEditingPost({ id: viewingImage!.postId, content: userPosts.find(p => p.id === viewingImage!.postId)?.content || '', imageUrl: viewingImage!.uri }); router.push('/(tabs)/create'); }} style={{ alignItems: 'center' }}>
               <Feather name="edit-2" size={20} color="#FFFFFF" />
               <Text variant="caption" color="#FFFFFF" style={{ marginTop: 4, fontSize: 10 }}>Редактировать</Text>
             </Pressable>

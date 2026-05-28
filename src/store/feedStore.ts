@@ -3,12 +3,20 @@ import { Post } from '../types';
 
 export type { Post } from '../types';
 
+interface EditingPost {
+  id: string;
+  content: string;
+  imageUrl?: string;
+  imageUrls?: string[];
+}
+
 interface FeedStoreState {
   posts: Post[];
   isLoading: boolean;
   isRefreshing: boolean;
   hasMore: boolean;
   pendingRepostId: string | null;
+  editingPost: EditingPost | null;
   setPosts: (posts: Post[]) => void;
   addPost: (post: Post) => void;
   removePost: (postId: string) => void;
@@ -16,6 +24,7 @@ interface FeedStoreState {
   setLoading: (loading: boolean) => void;
   setRefreshing: (refreshing: boolean) => void;
   setPendingRepost: (postId: string | null) => void;
+  setEditingPost: (post: EditingPost | null) => void;
 }
 
 export const useFeedStore = create<FeedStoreState>()((set) => ({
@@ -24,6 +33,7 @@ export const useFeedStore = create<FeedStoreState>()((set) => ({
   isRefreshing: false,
   hasMore: true,
   pendingRepostId: null,
+  editingPost: null,
   setPosts: (posts) => set({ posts }),
   addPost: (post) => set((state) => ({ posts: [post, ...state.posts] })),
   removePost: (postId) =>
@@ -39,4 +49,5 @@ export const useFeedStore = create<FeedStoreState>()((set) => ({
   setLoading: (isLoading) => set({ isLoading }),
   setRefreshing: (isRefreshing) => set({ isRefreshing }),
   setPendingRepost: (pendingRepostId) => set({ pendingRepostId }),
+  setEditingPost: (editingPost) => set({ editingPost }),
 }));

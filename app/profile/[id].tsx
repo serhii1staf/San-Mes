@@ -11,6 +11,7 @@ import { LinkedText } from '../../src/components/ui/LinkedText';
 import { parseImageUrls, getProfile, getFollowCounts, deletePost } from '../../src/lib/supabase';
 import { useAuthStore } from '../../src/store';
 import { useEntityStore } from '../../src/store';
+import { useFeedStore } from '../../src/store/feedStore';
 import { syncProfile, syncUserPosts } from '../../src/services/syncService';
 import { queueMutation } from '../../src/services/offlineQueue';
 import { openUrl } from '../../src/utils/openUrl';
@@ -480,14 +481,21 @@ export default function UserProfileScreen() {
 
           {/* Image */}
           <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-            {viewingImage && <Image source={{ uri: viewingImage.uri }} style={{ width: SCREEN_WIDTH - 32, height: SCREEN_WIDTH - 32, borderRadius: 16 }} resizeMode="contain" />}
+            {viewingImage && <CachedImage uri={viewingImage.uri} style={{ width: SCREEN_WIDTH - 32, height: SCREEN_WIDTH - 32, borderRadius: 16 }} resizeMode="contain" />}
           </View>
 
           {/* Bottom actions */}
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 24, paddingBottom: insets.bottom + 20 }}>
             {/* Edit — only for own posts */}
             {isOwnProfile ? (
-              <Pressable onPress={() => { setViewingImage(null); router.push('/(tabs)/create'); }} style={{ alignItems: 'center' }}>
+              <Pressable onPress={() => { 
+                if (viewingImage) {
+                  const post = displayPosts.find((p: any) => p.id === viewingImage.postId);
+                  useFeedStore.getState().setEditingPost({ id: viewingImage.postId, content: post?.content || '', imageUrl: viewingImage.uri });
+                }
+                setViewingImage(null); 
+                router.push('/(tabs)/create'); 
+              }} style={{ alignItems: 'center' }}>
                 <Feather name="edit-2" size={20} color="#FFFFFF" />
                 <Text variant="caption" color="#FFFFFF" style={{ marginTop: 4, fontSize: 10 }}>Редактировать</Text>
               </Pressable>
