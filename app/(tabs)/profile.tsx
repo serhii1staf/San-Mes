@@ -7,12 +7,14 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { LinkedText } from '../../src/components/ui/LinkedText';
-import { useAuthStore } from '../../src/store';
-import { getPosts, loadProfileMeta, getFollowCounts, isRepost, parseImageUrls } from '../../src/lib/supabase';
+import { useAuthStore, useEntityStore } from '../../src/store';
+import { isRepost, parseImageUrls } from '../../src/lib/supabase';
+import { syncMyProfile, syncFeed } from '../../src/lib/syncEngine';
 import { openUrl } from '../../src/utils/openUrl';
 import { Post } from '../../src/types';
 import { triggerHaptic } from '../../src/utils/haptics';
-import { getCached, setCache, CACHE_KEYS } from '../../src/lib/cache';
+import { LocalPost } from '../../src/lib/entityStore';
+import { getDatabase } from '../../src/lib/database';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 type TabName = 'posts' | 'replies' | 'media' | 'likes';
@@ -65,94 +67,95 @@ export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const { user } = useAuthStore();
   const [activeTab, setActiveTab] = useState<TabName>('posts');
-  const [userPosts, setUserPosts] = useState<Post[]>([]);
-  const [profileMeta, setProfileMeta] = useState<{ banner_url?: string; links?: { type: string; url: string }[] } | null>(null);
   const [followCounts, setFollowCounts] = useState({ followers: 0, following: 0 });
 
-  // Refresh data when tab is focused (e.g. after creating a post)
+  // Read from entity store (SSOT)
+  const myPosts = useEntityStore((s) => user?.id ? s.getMyPosts(user.id) : []);
+  const myProfile = useEntityStore((s) => user?.id ? s.getProfile(user.id) : undefined);
+  const profiles = useEntityStore((s) => s.profiles);
+
+  // Compute user posts as Post[] for display
+  const userPosts: Post[] = React.useMemo(() => {
+    if (!myPosts.length || !user?.id) return [];
+    return myPosts.map((p) => {
+      const repostInfo = isRepost(p.content || '');
+      const parsedImages = parseImageUrls(p.image_url);
+      const post: Post = {
+        id: p.id,
+        authorId: p.author_id,
+        authorName: user.displayName || '',
+        authorUsername: user.username || '',
+        authorEmoji: user.emoji || '😊',
+        content: repostInfo.isRepost ? (repostInfo.comment || '') : p.content,
+        imageUrl: parsedImages[0] || undefined,
+        imageUrls: parsedImages.length > 0 ? parsedImages : undefined,
+        likesCount: p.likes_count || 0,
+        commentsCount: p.comments_count || 0,
+        sharesCount: p.shares_count || 0,
+        isLiked: false,
+        isBookmarked: false,
+        createdAt: p.created_at,
+        isRepost: repostInfo.isRepost,
+      };
+
+      // Resolve original post for reposts
+      if (repostInfo.isRepost && repostInfo.originalPostId) {
+        const origPost = useEntityStore.getState().getPost(repostInfo.originalPostId);
+        if (origPost) {
+          const origProfile = profiles[origPost.author_id];
+          const origImages = parseImageUrls(origPost.image_url);
+          post.originalPost = {
+            id: origPost.id,
+            authorName: origProfile?.display_name || 'User',
+            authorUsername: origProfile?.username || 'user',
+            authorEmoji: origProfile?.emoji || '😊',
+            content: origPost.content,
+            imageUrl: origImages[0] || undefined,
+            imageUrls: origImages.length > 0 ? origImages : undefined,
+          };
+        }
+      }
+      return post;
+    });
+  }, [myPosts, user, profiles]);
+
+  // Load follow counts from local DB
+  const loadFollows = useCallback(() => {
+    if (!user?.id) return;
+    try {
+      const db = getDatabase();
+      const followersRow = db.getFirstSync<{ count: number }>(
+        'SELECT COUNT(*) as count FROM follows WHERE following_id = ?',
+        [user.id]
+      );
+      const followingRow = db.getFirstSync<{ count: number }>(
+        'SELECT COUNT(*) as count FROM follows WHERE follower_id = ?',
+        [user.id]
+      );
+      setFollowCounts({
+        followers: followersRow?.count || 0,
+        following: followingRow?.count || 0,
+      });
+    } catch {}
+  }, [user?.id]);
+
+  // Refresh data when tab is focused
   useFocusEffect(
     useCallback(() => {
       if (user?.id) {
-        loadUserPosts();
-        loadMeta();
         loadFollows();
+        // Trigger background sync (non-blocking)
+        syncMyProfile(user.id).catch(() => {});
+        syncFeed(user.id).catch(() => {});
       }
     }, [user?.id])
   );
 
-  const loadMeta = async () => {
-    if (!user?.id) return;
-    const cached = await getCached<{ banner_url?: string; links?: { type: string; url: string }[] }>(CACHE_KEYS.profileMeta(user.id));
-    if (cached) setProfileMeta(cached);
-    const { meta } = await loadProfileMeta(user.id);
-    if (meta) {
-      setProfileMeta(meta);
-      setCache(CACHE_KEYS.profileMeta(user.id), meta);
-    }
-  };
-
-  const loadFollows = async () => {
-    if (!user?.id) return;
-    const cached = await getCached<{ followers: number; following: number }>(CACHE_KEYS.followCounts(user.id));
-    if (cached) setFollowCounts(cached);
-    const counts = await getFollowCounts(user.id);
-    setFollowCounts(counts);
-    setCache(CACHE_KEYS.followCounts(user.id), counts);
-  };
-
-  const loadUserPosts = async () => {
-    try {
-      const cached = await getCached<Post[]>(CACHE_KEYS.myPosts(user?.id || ''));
-      if (cached) setUserPosts(cached);
-      
-      const { posts: dbPosts } = await getPosts();
-      const myRawPosts = dbPosts.filter((p: any) => p.author_id === user?.id);
-      const myPosts: Post[] = [];
-      
-      for (const p of myRawPosts) {
-        const repostInfo = isRepost(p.content || '');
-        const parsedImages = parseImageUrls(p.image_url);
-        let post: Post = {
-          id: p.id, authorId: p.author_id,
-          authorName: (Array.isArray(p.profiles) ? p.profiles[0]?.display_name : p.profiles?.display_name) || user?.displayName || '',
-          authorUsername: (Array.isArray(p.profiles) ? p.profiles[0]?.username : p.profiles?.username) || user?.username || '',
-          authorEmoji: (Array.isArray(p.profiles) ? p.profiles[0]?.emoji : p.profiles?.emoji) || user?.emoji || '😊',
-          content: repostInfo.isRepost ? (repostInfo.comment || '') : p.content,
-          imageUrl: parsedImages[0] || undefined,
-          imageUrls: parsedImages.length > 0 ? parsedImages : undefined,
-          likesCount: p.likes_count || 0, commentsCount: p.comments_count || 0,
-          sharesCount: p.shares_count || 0, isLiked: false, isBookmarked: false, createdAt: p.created_at,
-          isRepost: repostInfo.isRepost,
-        };
-        
-        // Resolve original post for reposts
-        if (repostInfo.isRepost && repostInfo.originalPostId) {
-          const origPost = dbPosts.find((op: any) => op.id === repostInfo.originalPostId);
-          if (origPost) {
-            const origImages = parseImageUrls(origPost.image_url);
-            post.originalPost = {
-              id: origPost.id,
-              authorName: (Array.isArray(origPost.profiles) ? origPost.profiles[0]?.display_name : origPost.profiles?.display_name) || 'User',
-              authorUsername: (Array.isArray(origPost.profiles) ? origPost.profiles[0]?.username : origPost.profiles?.username) || 'user',
-              authorEmoji: (Array.isArray(origPost.profiles) ? origPost.profiles[0]?.emoji : origPost.profiles?.emoji) || '😊',
-              content: origPost.content,
-              imageUrl: origImages[0] || undefined,
-              imageUrls: origImages.length > 0 ? origImages : undefined,
-            };
-          }
-        }
-        myPosts.push(post);
-      }
-      
-      setUserPosts(myPosts);
-      setCache(CACHE_KEYS.myPosts(user?.id || ''), myPosts);
-    } catch (e) {}
-  };
-
   if (!user) return <View style={{ flex: 1, backgroundColor: theme.colors.background.primary, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator size="large" color={theme.colors.accent.primary} /></View>;
 
-  const userLinks: { type: string; url: string }[] = (user as any).links || profileMeta?.links || [];
-  const bannerUrl = (user as any)?.bannerUrl || profileMeta?.banner_url;
+  const profileLinks = myProfile?.links ? (typeof myProfile.links === 'string' ? JSON.parse(myProfile.links) : myProfile.links) : null;
+  const userLinks: { type: string; url: string }[] = (user as any).links || profileLinks || [];
+  const bannerUrl = (user as any)?.bannerUrl || myProfile?.banner_url;
   const tabs: { key: TabName; label: string }[] = [
     { key: 'posts', label: 'Посты' }, { key: 'replies', label: 'Ответы' },
     { key: 'media', label: 'Медиа' }, { key: 'likes', label: 'Лайки' },

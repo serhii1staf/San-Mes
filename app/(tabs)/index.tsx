@@ -9,13 +9,14 @@ import { Text } from '../../src/components/ui';
 import { PostCard } from '../../src/components/feed/PostCard';
 import { PostMenuModal } from '../../src/components/feed/PostMenuModal';
 import { TrendingSection } from '../../src/components/feed/TrendingSection';
-import { useFeedStore, useAuthStore } from '../../src/store';
+import { useFeedStore, useAuthStore, useEntityStore } from '../../src/store';
 import { Post } from '../../src/types';
-import { getPosts, toggleLike as toggleLikeAPI, isRepost, createRepost, parseImageUrls } from '../../src/lib/supabase';
-import { supabase } from '../../src/lib/supabase';
-import { getCached, setCache, CACHE_KEYS } from '../../src/lib/cache';
+import { isRepost, parseImageUrls } from '../../src/lib/supabase';
+import { syncFeed } from '../../src/lib/syncEngine';
+import { queueMutation } from '../../src/lib/mutationQueue';
 import { useUpdateStore } from '../../src/store/updateStore';
 import { triggerHaptic } from '../../src/utils/haptics';
+import { LocalPost } from '../../src/lib/entityStore';
 
 
 function FeedHeader() {
@@ -57,142 +58,139 @@ function SkeletonCard() {
   );
 }
 
+/**
+ * Convert a LocalPost from entityStore into the Post type used by UI components.
+ */
+function mapLocalPostToPost(localPost: LocalPost, profiles: Record<string, any>, userId: string | undefined, likedPostIds: Set<string>): Post | null {
+  const repostInfo = isRepost(localPost.content || '');
+  const parsedImages = parseImageUrls(localPost.image_url);
+  const authorProfile = profiles[localPost.author_id];
+
+  let post: Post = {
+    id: localPost.id,
+    authorId: localPost.author_id,
+    authorName: authorProfile?.display_name || 'User',
+    authorUsername: authorProfile?.username || 'user',
+    authorEmoji: authorProfile?.emoji || '😊',
+    content: repostInfo.isRepost ? (repostInfo.comment || '') : localPost.content,
+    imageUrl: parsedImages[0] || undefined,
+    imageUrls: parsedImages.length > 0 ? parsedImages : undefined,
+    likesCount: localPost.likes_count || 0,
+    commentsCount: localPost.comments_count || 0,
+    sharesCount: localPost.shares_count || 0,
+    isLiked: likedPostIds.has(localPost.id),
+    isBookmarked: false,
+    createdAt: localPost.created_at,
+    isRepost: repostInfo.isRepost,
+  };
+
+  // Skip posts with no content and no image (broken/empty)
+  if (!post.content && !post.imageUrl && !post.isRepost) return null;
+
+  return post;
+}
+
 export default function FeedScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
-  const { posts, isLoading, isRefreshing, setPosts, setLoading, setRefreshing, toggleLike } = useFeedStore();
   const { user } = useAuthStore();
+  const { isRefreshing, setRefreshing, pendingRepostId, setPendingRepost } = useFeedStore();
   const [menuPost, setMenuPost] = useState<Post | null>(null);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
   const { status: updateStatus, progress: updateProgress, message: updateMessage, checkForUpdate, applyUpdate } = useUpdateStore();
+
+  // Read from entity store (SSOT)
+  const feedPosts = useEntityStore((s) => s.getFeedPosts());
+  const profiles = useEntityStore((s) => s.profiles);
+  const isHydrated = useEntityStore((s) => s.isHydrated);
+  const userLikes = useEntityStore((s) => user?.id ? s.getUserLikes(user.id) : new Set<string>());
 
   // Check for OTA updates on mount
   useEffect(() => {
     checkForUpdate();
   }, []);
 
-  // Background color for gradient — uses theme color dynamically
-  const bgColor = theme.colors.background.primary;
-  const bgTransparent = theme.colors.background.primary + '00';
+  // Load likes from SQLite when user is available
+  useEffect(() => {
+    if (user?.id && isHydrated) {
+      useEntityStore.getState().loadLikes(user.id);
+    }
+  }, [user?.id, isHydrated]);
 
-  // Map raw DB posts to app Post type, resolving reposts
-  const mapPosts = useCallback(async (dbPosts: any[], likedPostIds: Set<string>): Promise<Post[]> => {
-    const mapped: Post[] = [];
-    for (const p of dbPosts) {
-      const repostInfo = isRepost(p.content || '');
-      const parsedImages = parseImageUrls(p.image_url);
-      let post: Post = {
-        id: p.id,
-        authorId: p.author_id,
-        authorName: (Array.isArray(p.profiles) ? p.profiles[0]?.display_name : p.profiles?.display_name) || 'User',
-        authorUsername: (Array.isArray(p.profiles) ? p.profiles[0]?.username : p.profiles?.username) || 'user',
-        authorEmoji: (Array.isArray(p.profiles) ? p.profiles[0]?.emoji : p.profiles?.emoji) || '😊',
-        content: repostInfo.isRepost ? (repostInfo.comment || '') : p.content,
-        imageUrl: parsedImages[0] || undefined,
-        imageUrls: parsedImages.length > 0 ? parsedImages : undefined,
-        likesCount: p.likes_count || 0,
-        commentsCount: p.comments_count || 0,
-        sharesCount: p.shares_count || 0,
-        isLiked: likedPostIds.has(p.id),
-        isBookmarked: false,
-        createdAt: p.created_at,
-        isRepost: repostInfo.isRepost,
-      };
-      // Resolve original post for reposts
-      if (repostInfo.isRepost && repostInfo.originalPostId) {
-        const { data: orig } = await supabase
-          .from('posts')
-          .select('*, profiles:author_id (id, username, display_name, emoji)')
-          .eq('id', repostInfo.originalPostId)
-          .single();
-        if (orig) {
-          const origImages = parseImageUrls(orig.image_url);
-          post.originalPost = {
-            id: orig.id,
-            authorName: (Array.isArray(orig.profiles) ? orig.profiles[0]?.display_name : orig.profiles?.display_name) || 'User',
-            authorUsername: (Array.isArray(orig.profiles) ? orig.profiles[0]?.username : orig.profiles?.username) || 'user',
-            authorEmoji: (Array.isArray(orig.profiles) ? orig.profiles[0]?.emoji : orig.profiles?.emoji) || '😊',
-            content: orig.content,
-            imageUrl: origImages[0] || undefined,
-            imageUrls: origImages.length > 0 ? origImages : undefined,
-          };
-        } else {
-          // Original post was deleted — skip this repost
-          continue;
-        }
+  // Trigger initial sync once hydrated
+  useEffect(() => {
+    if (isHydrated) {
+      if (feedPosts.length > 0) {
+        // We have cached data — show it immediately
+        setIsInitialLoading(false);
       }
-      // Skip posts with no content and no image (broken/empty)
-      if (!post.content && !post.imageUrl && !post.isRepost) continue;
-      mapped.push(post);
+      // Sync in background
+      syncFeed(user?.id).then(() => {
+        setIsInitialLoading(false);
+      }).catch(() => {
+        setIsInitialLoading(false);
+      });
+    }
+  }, [isHydrated]);
+
+  // Map local posts to UI Post type
+  const posts: Post[] = React.useMemo(() => {
+    if (!feedPosts.length) return [];
+    const mapped: Post[] = [];
+    for (const localPost of feedPosts) {
+      const post = mapLocalPostToPost(localPost, profiles, user?.id, userLikes);
+      if (post) mapped.push(post);
     }
     return mapped;
-  }, []);
+  }, [feedPosts, profiles, user?.id, userLikes]);
 
-  useEffect(() => {
-    const fetchPosts = async () => {
-      // Only show loading skeleton if we have no posts at all
-      if (posts.length === 0) {
-        // Try cache first for instant display
-        const cached = await getCached<Post[]>(CACHE_KEYS.feed);
-        if (cached && cached.length > 0) {
-          setPosts(cached);
-        } else {
-          setLoading(true);
+  // Resolve reposts — find original post data from entity store
+  const postsWithReposts: Post[] = React.useMemo(() => {
+    const allPosts = useEntityStore.getState().posts;
+    return posts.map((post) => {
+      if (!post.isRepost) return post;
+      const repostInfo = isRepost(allPosts[post.id]?.content || '');
+      if (repostInfo.isRepost && repostInfo.originalPostId) {
+        const origLocal = allPosts[repostInfo.originalPostId];
+        if (origLocal) {
+          const origProfile = profiles[origLocal.author_id];
+          const origImages = parseImageUrls(origLocal.image_url);
+          return {
+            ...post,
+            originalPost: {
+              id: origLocal.id,
+              authorName: origProfile?.display_name || 'User',
+              authorUsername: origProfile?.username || 'user',
+              authorEmoji: origProfile?.emoji || '😊',
+              content: origLocal.content,
+              imageUrl: origImages[0] || undefined,
+              imageUrls: origImages.length > 0 ? origImages : undefined,
+            },
+          };
         }
+        // Original post deleted — skip this repost
+        return null;
       }
-      
-      try {
-        const { posts: dbPosts } = await getPosts();
-        
-        let likedPostIds: Set<string> = new Set();
-        if (user?.id) {
-          const { data: likes } = await supabase
-            .from('likes')
-            .select('post_id')
-            .eq('user_id', user.id);
-          if (likes) {
-            likedPostIds = new Set(likes.map(l => l.post_id));
-          }
-        }
-        
-        const mapped = await mapPosts(dbPosts, likedPostIds);
-        setPosts(mapped);
-        // Save to cache for offline
-        setCache(CACHE_KEYS.feed, mapped);
-      } catch (e) {
-        // Network failed — keep whatever we have (cache or store)
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchPosts();
-  }, []);
+      return post;
+    }).filter(Boolean) as Post[];
+  }, [posts, profiles]);
 
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      const { posts: dbPosts } = await getPosts();
-      
-      let likedPostIds: Set<string> = new Set();
-      if (user?.id) {
-        const { data: likes } = await supabase
-          .from('likes')
-          .select('post_id')
-          .eq('user_id', user.id);
-        if (likes) {
-          likedPostIds = new Set(likes.map(l => l.post_id));
-        }
-      }
-      
-      const mapped = await mapPosts(dbPosts, likedPostIds);
-      setPosts(mapped);
-      setCache(CACHE_KEYS.feed, mapped);
+      await syncFeed(user?.id);
     } catch (e) {
       // Keep existing posts on error
     } finally {
       setRefreshing(false);
     }
-  }, [user?.id, mapPosts]);
+  }, [user?.id]);
+
+  const handleToggleLike = useCallback(async (postId: string) => {
+    if (!user?.id) return;
+    queueMutation('toggle_like', { userId: user.id, postId });
+  }, [user?.id]);
 
   const renderPost = ({ item }: { item: Post; index: number }) => (
     <View>
@@ -200,13 +198,9 @@ export default function FeedScreen() {
         post={item}
         onComment={(postId) => router.push({ pathname: '/comments/[id]', params: { id: postId } })}
         onLike={async (postId) => {
-          toggleLike(postId);
-          if (user?.id) {
-            await toggleLikeAPI(user.id, postId);
-          }
+          handleToggleLike(postId);
         }}
         onShare={async (postId) => {
-          // Set pending repost and switch to create tab
           if (!user?.id) return;
           triggerHaptic('medium');
           useFeedStore.getState().setPendingRepost(postId);
@@ -217,19 +211,20 @@ export default function FeedScreen() {
     </View>
   );
 
+  // Background color for gradient
+  const bgColor = theme.colors.background.primary;
+  const bgTransparent = theme.colors.background.primary + '00';
+  const headerContentHeight = insets.top + 48;
+  const headerGradientHeight = headerContentHeight + 28;
+
   const containerStyle: ViewStyle = {
     flex: 1,
     backgroundColor: theme.colors.background.primary,
   };
 
-  // The gradient extends taller than the header content to create dissolve effect
-  const headerContentHeight = insets.top + 48;
-  const headerGradientHeight = headerContentHeight + 28;
-
-  if (isLoading) {
+  if (isInitialLoading && postsWithReposts.length === 0) {
     return (
       <View style={containerStyle}>
-        {/* Gradient header that dissolves */}
         <View style={[styles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">
           <LinearGradient
             colors={[bgColor, bgColor, bgTransparent]}
@@ -297,10 +292,10 @@ export default function FeedScreen() {
       </View>
 
       <FlatList
-        data={posts}
+        data={postsWithReposts}
         keyExtractor={(item) => item.id}
         renderItem={renderPost}
-        ListHeaderComponent={posts.length === 0 ? FeedHeader : undefined}
+        ListHeaderComponent={postsWithReposts.length === 0 ? FeedHeader : undefined}
         contentContainerStyle={{ paddingHorizontal: theme.spacing.base, paddingBottom: 100, paddingTop: headerContentHeight }}
         showsVerticalScrollIndicator={false}
         removeClippedSubviews={true}

@@ -8,9 +8,11 @@ import * as Clipboard from 'expo-clipboard';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { LinkedText } from '../../src/components/ui/LinkedText';
-import { supabase, getPosts, loadProfileMeta, parseImageUrls } from '../../src/lib/supabase';
-import { useAuthStore } from '../../src/store';
-import { followUser, unfollowUser, isFollowing as checkIsFollowing, getFollowCounts } from '../../src/lib/supabase';
+import { parseImageUrls } from '../../src/lib/supabase';
+import { useAuthStore, useEntityStore } from '../../src/store';
+import { syncProfile, syncUserPosts, syncFollows } from '../../src/lib/syncEngine';
+import { queueMutation } from '../../src/lib/mutationQueue';
+import { getDatabase } from '../../src/lib/database';
 import { openUrl } from '../../src/utils/openUrl';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { PanResponder } from 'react-native';
@@ -217,13 +219,10 @@ export default function UserProfileScreen() {
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { user: currentUser } = useAuthStore();
-  const [profile, setProfile] = useState<any>(null);
-  const [profileMeta, setProfileMeta] = useState<{ banner_url?: string; links?: { type: string; url: string }[] } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isFollowingState, setIsFollowingState] = useState(false);
   const [followCounts, setFollowCounts] = useState({ followers: 0, following: 0 });
   const [activeTab, setActiveTab] = useState<TabName>('posts');
-  const [userPosts, setUserPosts] = useState<any[]>([]);
   const [showMenu, setShowMenu] = useState(false);
   const scrollY = useRef(new Animated.Value(0)).current;
   const headerOpacity = scrollY.interpolate({ inputRange: [0, 50, 120], outputRange: [0, 0, 1], extrapolate: 'clamp' });
@@ -232,51 +231,95 @@ export default function UserProfileScreen() {
   const badgeOpacity = scrollY.interpolate({ inputRange: [180, 220], outputRange: [0, 1], extrapolate: 'clamp' });
   const badgeTranslateY = scrollY.interpolate({ inputRange: [180, 220], outputRange: [20, 0], extrapolate: 'clamp' });
 
+  // Read from entity store (SSOT)
+  const profile = useEntityStore((s) => id ? s.getProfile(id) : undefined);
+  const allPosts = useEntityStore((s) => s.posts);
+
+  // Get user posts from entity store
+  const userPosts = React.useMemo(() => {
+    if (!id) return [];
+    return Object.values(allPosts)
+      .filter((p) => p.author_id === id)
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+      .map((p) => {
+        const parsedImages = parseImageUrls(p.image_url);
+        return {
+          id: p.id,
+          content: p.content,
+          imageUrl: parsedImages[0] || undefined,
+          imageUrls: parsedImages.length > 0 ? parsedImages : undefined,
+          likesCount: p.likes_count || 0,
+          commentsCount: p.comments_count || 0,
+          createdAt: p.created_at,
+        };
+      });
+  }, [allPosts, id]);
+
   useEffect(() => { loadProfile(); }, [id]);
 
   const loadProfile = async () => {
+    if (!id) return;
     setIsLoading(true);
     try {
-      const { data } = await supabase.from('profiles').select('*').eq('id', id).single();
-      setProfile(data);
-      if (data) {
-        const [metaResult, followResult, countsResult] = await Promise.all([
-          loadProfileMeta(data.id),
-          currentUser?.id ? checkIsFollowing(currentUser.id, data.id) : Promise.resolve(false),
-          getFollowCounts(data.id),
-        ]);
-        if (metaResult.meta) setProfileMeta(metaResult.meta);
-        setIsFollowingState(followResult);
-        setFollowCounts(countsResult);
-        const { posts: dbPosts } = await getPosts();
-        setUserPosts(dbPosts.filter((p: any) => p.author_id === data.id).map((p: any) => {
-          const parsedImages = parseImageUrls(p.image_url);
-          return {
-            id: p.id, content: p.content, imageUrl: parsedImages[0] || undefined,
-            imageUrls: parsedImages.length > 0 ? parsedImages : undefined,
-            likesCount: p.likes_count || 0, commentsCount: p.comments_count || 0, createdAt: p.created_at,
-          };
-        }));
+      // Check if we already have the profile in entity store
+      const cachedProfile = useEntityStore.getState().getProfile(id);
+      if (cachedProfile) {
+        // We have local data — show immediately
+        loadFollowState(id);
+        setIsLoading(false);
       }
+
+      // Sync from server in background
+      await Promise.all([
+        syncProfile(id),
+        syncUserPosts(id),
+        currentUser?.id ? syncFollows(currentUser.id) : Promise.resolve(),
+      ]);
+
+      loadFollowState(id);
     } catch (e) {}
     setIsLoading(false);
   };
 
+  const loadFollowState = (profileId: string) => {
+    try {
+      const db = getDatabase();
+      // Check if following
+      if (currentUser?.id) {
+        const isFollowing = useEntityStore.getState().isFollowing(currentUser.id, profileId);
+        setIsFollowingState(isFollowing);
+      }
+      // Get follow counts
+      const followersRow = db.getFirstSync<{ count: number }>(
+        'SELECT COUNT(*) as count FROM follows WHERE following_id = ?',
+        [profileId]
+      );
+      const followingRow = db.getFirstSync<{ count: number }>(
+        'SELECT COUNT(*) as count FROM follows WHERE follower_id = ?',
+        [profileId]
+      );
+      setFollowCounts({
+        followers: followersRow?.count || 0,
+        following: followingRow?.count || 0,
+      });
+    } catch {}
+  };
+
   const handleFollow = async () => {
-    if (!currentUser?.id || !profile?.id) return;
+    if (!currentUser?.id || !id) return;
     triggerHaptic('medium');
     if (isFollowingState) {
-      await unfollowUser(currentUser.id, profile.id);
+      queueMutation('unfollow', { followerId: currentUser.id, followingId: id });
       setIsFollowingState(false);
       setFollowCounts(c => ({ ...c, followers: Math.max(0, c.followers - 1) }));
     } else {
-      await followUser(currentUser.id, profile.id);
+      queueMutation('follow', { followerId: currentUser.id, followingId: id });
       setIsFollowingState(true);
       setFollowCounts(c => ({ ...c, followers: c.followers + 1 }));
     }
   };
 
-  if (isLoading) {
+  if (isLoading && !profile) {
     return <View style={{ flex: 1, backgroundColor: theme.colors.background.primary, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator size="large" color={theme.colors.accent.primary} /></View>;
   }
 
@@ -290,8 +333,9 @@ export default function UserProfileScreen() {
   }
 
   const isOwnProfile = currentUser?.id === profile.id;
-  const bannerUrl = profile.banner_url || profileMeta?.banner_url;
-  const userLinks: { type: string; url: string }[] = profile.links || profileMeta?.links || [];
+  const bannerUrl = profile.banner_url;
+  const profileLinksRaw = profile.links;
+  const userLinks: { type: string; url: string }[] = profileLinksRaw ? (typeof profileLinksRaw === 'string' ? JSON.parse(profileLinksRaw) : profileLinksRaw) : [];
   const tabs: { key: TabName; label: string }[] = [
     { key: 'posts', label: 'Посты' }, { key: 'replies', label: 'Ответы' },
     { key: 'media', label: 'Медиа' }, { key: 'likes', label: 'Лайки' },

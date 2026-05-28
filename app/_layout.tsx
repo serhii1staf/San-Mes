@@ -5,7 +5,9 @@ import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
 import { ThemeProvider, useTheme } from '../src/theme';
 import { fontAssets } from '../src/theme/fonts';
-import { useAuthStore } from '../src/store';
+import { useAuthStore, useEntityStore } from '../src/store';
+import { initDatabase } from '../src/lib/database';
+import { fullSync, startSyncLoop, stopSyncLoop } from '../src/lib/syncEngine';
 
 SplashScreen.preventAutoHideAsync().catch(() => {
   // If preventAutoHideAsync fails (e.g., called too late), ignore the error
@@ -79,6 +81,30 @@ function CustomSplash() {
 export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts(fontAssets);
   const [fontTimeout, setFontTimeout] = useState(false);
+  const [dbReady, setDbReady] = useState(false);
+
+  // Initialize SQLite database and hydrate entity store on startup
+  useEffect(() => {
+    try {
+      initDatabase();
+      useEntityStore.getState().hydrate();
+      setDbReady(true);
+
+      // Start background sync after hydration
+      const authState = useAuthStore.getState();
+      if (authState.isAuthenticated && authState.user?.id) {
+        fullSync(authState.user.id).catch(() => {});
+      }
+      startSyncLoop();
+    } catch (e) {
+      console.warn('[RootLayout] Database init failed:', e);
+      setDbReady(true); // Proceed anyway — app can work without local DB
+    }
+
+    return () => {
+      stopSyncLoop();
+    };
+  }, []);
 
   // Safety timeout: if fonts take more than 3 seconds, proceed without them
   useEffect(() => {
@@ -88,7 +114,7 @@ export default function RootLayout() {
     return () => clearTimeout(timer);
   }, []);
 
-  const ready = fontsLoaded || fontError !== null || fontTimeout;
+  const ready = (fontsLoaded || fontError !== null || fontTimeout) && dbReady;
 
   useEffect(() => {
     if (ready) {
