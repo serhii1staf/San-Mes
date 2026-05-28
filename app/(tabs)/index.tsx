@@ -208,11 +208,13 @@ export default function FeedScreen() {
 
   const handleToggleLike = useCallback((postId: string) => {
     if (!user?.id) return;
-    // Optimistic update via store
-    toggleLike(postId);
+    // Optimistic update locally
+    setPosts(prev => prev.map(p =>
+      p.id === postId ? { ...p, isLiked: !p.isLiked, likesCount: p.isLiked ? p.likesCount - 1 : p.likesCount + 1 } : p
+    ));
     // Send to server (fire and forget)
     apiToggleLike(user.id, postId).catch(() => {});
-  }, [user?.id, toggleLike]);
+  }, [user?.id]);
 
   const renderPost = useCallback(({ item }: { item: Post }) => (
     <View>
