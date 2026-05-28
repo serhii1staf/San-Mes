@@ -22,6 +22,7 @@ export interface Post {
   authorEmoji?: string;
   content: string;
   imageUrl?: string;
+  imageUrls?: string[];
   likesCount: number;
   commentsCount: number;
   sharesCount: number;
@@ -37,6 +38,7 @@ export interface Post {
     authorEmoji?: string;
     content: string;
     imageUrl?: string;
+    imageUrls?: string[];
   };
 }
 

@@ -11,7 +11,7 @@ import { PostMenuModal } from '../../src/components/feed/PostMenuModal';
 import { TrendingSection } from '../../src/components/feed/TrendingSection';
 import { useFeedStore, useAuthStore } from '../../src/store';
 import { Post } from '../../src/types';
-import { getPosts, toggleLike as toggleLikeAPI, isRepost, createRepost } from '../../src/lib/supabase';
+import { getPosts, toggleLike as toggleLikeAPI, isRepost, createRepost, parseImageUrls } from '../../src/lib/supabase';
 import { supabase } from '../../src/lib/supabase';
 import { getCached, setCache, CACHE_KEYS } from '../../src/lib/cache';
 import { useUpdateStore } from '../../src/store/updateStore';
@@ -80,6 +80,7 @@ export default function FeedScreen() {
     const mapped: Post[] = [];
     for (const p of dbPosts) {
       const repostInfo = isRepost(p.content || '');
+      const parsedImages = parseImageUrls(p.image_url);
       let post: Post = {
         id: p.id,
         authorId: p.author_id,
@@ -87,7 +88,8 @@ export default function FeedScreen() {
         authorUsername: (Array.isArray(p.profiles) ? p.profiles[0]?.username : p.profiles?.username) || 'user',
         authorEmoji: (Array.isArray(p.profiles) ? p.profiles[0]?.emoji : p.profiles?.emoji) || '😊',
         content: repostInfo.isRepost ? (repostInfo.comment || '') : p.content,
-        imageUrl: p.image_url || undefined,
+        imageUrl: parsedImages[0] || undefined,
+        imageUrls: parsedImages.length > 0 ? parsedImages : undefined,
         likesCount: p.likes_count || 0,
         commentsCount: p.comments_count || 0,
         sharesCount: p.shares_count || 0,
@@ -104,13 +106,15 @@ export default function FeedScreen() {
           .eq('id', repostInfo.originalPostId)
           .single();
         if (orig) {
+          const origImages = parseImageUrls(orig.image_url);
           post.originalPost = {
             id: orig.id,
             authorName: (Array.isArray(orig.profiles) ? orig.profiles[0]?.display_name : orig.profiles?.display_name) || 'User',
             authorUsername: (Array.isArray(orig.profiles) ? orig.profiles[0]?.username : orig.profiles?.username) || 'user',
             authorEmoji: (Array.isArray(orig.profiles) ? orig.profiles[0]?.emoji : orig.profiles?.emoji) || '😊',
             content: orig.content,
-            imageUrl: orig.image_url || undefined,
+            imageUrl: origImages[0] || undefined,
+            imageUrls: origImages.length > 0 ? origImages : undefined,
           };
         } else {
           // Original post was deleted — skip this repost

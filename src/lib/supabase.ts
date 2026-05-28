@@ -55,6 +55,21 @@ export async function uploadPostImage(imageUri: string): Promise<{ url: string |
   }
 }
 
+// ---- Image URL helpers ----
+
+const IMAGE_URL_SEPARATOR = '|';
+
+/** Parse pipe-separated image URLs from the image_url column. Backward compatible with single URLs. */
+export function parseImageUrls(imageUrl: string | null | undefined): string[] {
+  if (!imageUrl) return [];
+  return imageUrl.split(IMAGE_URL_SEPARATOR).filter(Boolean);
+}
+
+/** Join multiple image URLs into a pipe-separated string for storage. */
+export function joinImageUrls(urls: string[]): string {
+  return urls.join(IMAGE_URL_SEPARATOR);
+}
+
 // ---- Database API ----
 
 export interface DBProfile {

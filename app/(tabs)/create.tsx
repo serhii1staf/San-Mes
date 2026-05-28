@@ -7,9 +7,10 @@ import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { useAuthStore } from '../../src/store/authStore';
 import { useFeedStore } from '../../src/store/feedStore';
-import { createPost, createRepost, supabase, uploadPostImage } from '../../src/lib/supabase';
+import { createPost, createRepost, supabase, uploadPostImage, joinImageUrls } from '../../src/lib/supabase';
 
 const MAX_CHARS = 500;
+const MAX_IMAGES = 6;
 
 type Audience = 'public' | 'friends';
 
@@ -21,7 +22,7 @@ export default function CreateScreen() {
   const [content, setContent] = useState('');
   const [isPosting, setIsPosting] = useState(false);
   const [audience, setAudience] = useState<Audience>('public');
-  const [imageUri, setImageUri] = useState<string | null>(null);
+  const [imageUris, setImageUris] = useState<string[]>([]);
   const [imageUploading, setImageUploading] = useState(false);
   const [repostData, setRepostData] = useState<{ id: string; authorName: string; authorEmoji: string; content: string; imageUrl?: string } | null>(null);
 
@@ -43,7 +44,12 @@ export default function CreateScreen() {
     }
   }, [pendingRepostId]);
 
-  const pickImage = async () => {
+  const pickImages = async () => {
+    if (imageUris.length >= MAX_IMAGES) {
+      Alert.alert('Лимит', `Максимум ${MAX_IMAGES} изображений`);
+      return;
+    }
+
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') {
       Alert.alert('Доступ', 'Нужен доступ к галерее для выбора изображения');
@@ -53,15 +59,23 @@ export default function CreateScreen() {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
       allowsEditing: false,
+      allowsMultipleSelection: true,
+      selectionLimit: MAX_IMAGES - imageUris.length,
       quality: 0.8,
     });
 
-    if (!result.canceled && result.assets[0]) {
-      setImageUri(result.assets[0].uri);
+    if (!result.canceled && result.assets.length > 0) {
+      const newUris = result.assets.map(a => a.uri);
+      setImageUris(prev => [...prev, ...newUris].slice(0, MAX_IMAGES));
     }
   };
 
   const takePhoto = async () => {
+    if (imageUris.length >= MAX_IMAGES) {
+      Alert.alert('Лимит', `Максимум ${MAX_IMAGES} изображений`);
+      return;
+    }
+
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
     if (status !== 'granted') {
       Alert.alert('Доступ', 'Нужен доступ к камере');
@@ -74,7 +88,7 @@ export default function CreateScreen() {
     });
 
     if (!result.canceled && result.assets[0]) {
-      setImageUri(result.assets[0].uri);
+      setImageUris(prev => [...prev, result.assets[0].uri].slice(0, MAX_IMAGES));
     }
   };
 
@@ -93,7 +107,7 @@ export default function CreateScreen() {
   };
 
   const handlePost = async () => {
-    if (!content.trim() && !imageUri && !repostData) return;
+    if (!content.trim() && imageUris.length === 0 && !repostData) return;
     if (!user) {
       Alert.alert('Ошибка', 'Необходимо войти в аккаунт');
       return;
@@ -108,7 +122,7 @@ export default function CreateScreen() {
           Alert.alert('Ошибка', error);
         } else {
           setContent('');
-          setImageUri(null);
+          setImageUris([]);
           setRepostData(null);
         }
         setIsPosting(false);
@@ -117,12 +131,18 @@ export default function CreateScreen() {
 
       let imageUrl: string | undefined;
 
-      if (imageUri) {
+      if (imageUris.length > 0) {
         setImageUploading(true);
-        const uploadedUrl = await uploadImage(imageUri);
+        const uploadedUrls: string[] = [];
+        for (const uri of imageUris) {
+          const uploadedUrl = await uploadImage(uri);
+          if (uploadedUrl) {
+            uploadedUrls.push(uploadedUrl);
+          }
+        }
         setImageUploading(false);
-        if (uploadedUrl) {
-          imageUrl = uploadedUrl;
+        if (uploadedUrls.length > 0) {
+          imageUrl = joinImageUrls(uploadedUrls);
         }
       }
 
@@ -131,6 +151,7 @@ export default function CreateScreen() {
         Alert.alert('Ошибка', error);
       } else {
         if (post) {
+          const postImageUrls = imageUrl ? imageUrl.split('|').filter(Boolean) : undefined;
           addPost({
             id: post.id,
             authorId: user.id,
@@ -138,7 +159,8 @@ export default function CreateScreen() {
             authorUsername: user.username,
             authorEmoji: user.emoji,
             content: post.content,
-            imageUrl: post.image_url || undefined,
+            imageUrl: postImageUrls?.[0] || undefined,
+            imageUrls: postImageUrls,
             likesCount: 0,
             commentsCount: 0,
             sharesCount: 0,
@@ -148,7 +170,7 @@ export default function CreateScreen() {
           });
         }
         setContent('');
-        setImageUri(null);
+        setImageUris([]);
       }
     } catch (e) {
       Alert.alert('Ошибка', 'Не удалось опубликовать пост');
@@ -158,8 +180,8 @@ export default function CreateScreen() {
     }
   };
 
-  const removeImage = () => {
-    setImageUri(null);
+  const removeImage = (index: number) => {
+    setImageUris(prev => prev.filter((_, i) => i !== index));
   };
 
   const charsRemaining = MAX_CHARS - content.length;
@@ -169,7 +191,7 @@ export default function CreateScreen() {
       ? theme.colors.status.warning
       : theme.colors.text.tertiary;
 
-  const canPost = content.trim() || imageUri || repostData;
+  const canPost = content.trim() || imageUris.length > 0 || repostData;
 
   const containerStyle: ViewStyle = {
     flex: 1,
@@ -228,46 +250,62 @@ export default function CreateScreen() {
               }}
             />
 
-            {/* Image preview */}
-            {imageUri && (
-              <View style={{ marginTop: 12, position: 'relative' }}>
-                <Image
-                  source={{ uri: imageUri }}
-                  style={{
-                    width: '100%',
-                    height: 200,
-                    borderRadius: 12,
-                    backgroundColor: theme.colors.background.secondary,
-                  }}
-                  resizeMode="cover"
-                />
-                <Pressable
-                  onPress={removeImage}
-                  style={{
-                    position: 'absolute',
-                    top: 8,
-                    right: 8,
-                    width: 28,
-                    height: 28,
-                    borderRadius: 14,
-                    backgroundColor: 'rgba(0,0,0,0.6)',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}
-                >
-                  <Feather name="x" size={16} color="#fff" />
-                </Pressable>
-              </View>
+            {/* Image previews - horizontal scroll */}
+            {imageUris.length > 0 && (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={{ marginTop: 12 }}
+                contentContainerStyle={{ gap: 8 }}
+              >
+                {imageUris.map((uri, index) => (
+                  <View key={index} style={{ position: 'relative' }}>
+                    <Image
+                      source={{ uri }}
+                      style={{
+                        width: imageUris.length === 1 ? 200 : 140,
+                        height: imageUris.length === 1 ? 200 : 140,
+                        borderRadius: 12,
+                        backgroundColor: theme.colors.background.secondary,
+                      }}
+                      resizeMode="cover"
+                    />
+                    <Pressable
+                      onPress={() => removeImage(index)}
+                      style={{
+                        position: 'absolute',
+                        top: 6,
+                        right: 6,
+                        width: 24,
+                        height: 24,
+                        borderRadius: 12,
+                        backgroundColor: 'rgba(0,0,0,0.6)',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      <Feather name="x" size={14} color="#fff" />
+                    </Pressable>
+                  </View>
+                ))}
+              </ScrollView>
+            )}
+
+            {/* Image count indicator */}
+            {imageUris.length > 0 && (
+              <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginTop: 6 }}>
+                {imageUris.length}/{MAX_IMAGES} фото
+              </Text>
             )}
 
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}>
               {/* Media buttons */}
               <View style={{ flexDirection: 'row', gap: 16 }}>
-                <Pressable onPress={pickImage} style={{ padding: 4 }}>
-                  <Feather name="image" size={22} color={theme.colors.accent.primary} />
+                <Pressable onPress={pickImages} style={{ padding: 4 }}>
+                  <Feather name="image" size={22} color={imageUris.length >= MAX_IMAGES ? theme.colors.text.tertiary : theme.colors.accent.primary} />
                 </Pressable>
                 <Pressable onPress={takePhoto} style={{ padding: 4 }}>
-                  <Feather name="camera" size={22} color={theme.colors.accent.primary} />
+                  <Feather name="camera" size={22} color={imageUris.length >= MAX_IMAGES ? theme.colors.text.tertiary : theme.colors.accent.primary} />
                 </Pressable>
               </View>
               {/* Char counter */}

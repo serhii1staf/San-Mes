@@ -1,5 +1,5 @@
-import React, { useState, useRef, memo, useEffect } from 'react';
-import { View, Image, Pressable, ViewStyle, TextStyle, Dimensions } from 'react-native';
+import React, { useState, useRef, memo } from 'react';
+import { View, Image, Pressable, ViewStyle, TextStyle, Dimensions, ScrollView, NativeSyntheticEvent, NativeScrollEvent } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useTheme } from '../../theme';
@@ -11,28 +11,93 @@ import { formatTimeAgo } from '../../utils/mockData';
 import { triggerHaptic } from '../../utils/haptics';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const IMAGE_MAX_WIDTH = SCREEN_WIDTH - 64; // account for card padding
+const CAROUSEL_HEIGHT = 300;
 
-function AdaptiveImage({ uri, onDoubleTap, borderRadius }: { uri: string; onDoubleTap: () => void; borderRadius: number }) {
-  const [aspectRatio, setAspectRatio] = useState(1.33); // default fallback
+interface ImageCarouselProps {
+  imageUrls: string[];
+  onDoubleTap: () => void;
+  cardWidth: number;
+}
 
-  useEffect(() => {
-    Image.getSize(uri, (w, h) => {
-      if (w && h) setAspectRatio(w / h);
-    }, () => {});
-  }, [uri]);
+function ImageCarousel({ imageUrls, onDoubleTap, cardWidth }: ImageCarouselProps) {
+  const theme = useTheme();
+  const [activeIndex, setActiveIndex] = useState(0);
+  const lastTapRef = useRef<number>(0);
+  const imageWidth = cardWidth * 0.85;
+  const snapInterval = imageWidth + 8; // image width + gap
 
-  // Clamp aspect ratio between 0.5 (tall) and 2.5 (wide)
-  const clampedRatio = Math.max(0.5, Math.min(2.5, aspectRatio));
+  const handleScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const offsetX = e.nativeEvent.contentOffset.x;
+    const index = Math.round(offsetX / snapInterval);
+    setActiveIndex(Math.max(0, Math.min(index, imageUrls.length - 1)));
+  };
+
+  const handlePress = () => {
+    const now = Date.now();
+    if (now - lastTapRef.current < 300) {
+      onDoubleTap();
+    }
+    lastTapRef.current = now;
+  };
+
+  if (imageUrls.length === 1) {
+    return (
+      <Pressable onPress={handlePress} style={{ paddingHorizontal: 12 }}>
+        <Image
+          source={{ uri: imageUrls[0] }}
+          style={{
+            width: '100%',
+            height: CAROUSEL_HEIGHT,
+            borderRadius: theme.borderRadius.md,
+          }}
+          resizeMode="cover"
+        />
+      </Pressable>
+    );
+  }
 
   return (
-    <Pressable onPress={onDoubleTap} style={{ width: '100%' }}>
-      <Image
-        source={{ uri }}
-        style={{ width: '100%', aspectRatio: clampedRatio, borderRadius }}
-        resizeMode="cover"
-      />
-    </Pressable>
+    <View>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        snapToInterval={snapInterval}
+        decelerationRate="fast"
+        contentContainerStyle={{ paddingHorizontal: 12, gap: 8 }}
+        onScroll={handleScroll}
+        scrollEventThrottle={16}
+      >
+        {imageUrls.map((url, index) => (
+          <Pressable key={index} onPress={handlePress}>
+            <Image
+              source={{ uri: url }}
+              style={{
+                width: imageWidth,
+                height: CAROUSEL_HEIGHT,
+                borderRadius: theme.borderRadius.md,
+              }}
+              resizeMode="cover"
+            />
+          </Pressable>
+        ))}
+      </ScrollView>
+      {/* Dots indicator */}
+      <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginTop: 8, gap: 5 }}>
+        {imageUrls.map((_, index) => (
+          <View
+            key={index}
+            style={{
+              width: index === activeIndex ? 7 : 5,
+              height: index === activeIndex ? 7 : 5,
+              borderRadius: 4,
+              backgroundColor: index === activeIndex
+                ? theme.colors.accent.primary
+                : theme.colors.text.tertiary + '40',
+            }}
+          />
+        ))}
+      </View>
+    </View>
   );
 }
 
@@ -56,11 +121,7 @@ export const PostCard = memo(function PostCard({ post, onLike, onComment, onShar
   };
 
   const handleDoubleTap = () => {
-    const now = Date.now();
-    if (now - lastTap.current < 300) {
-      if (!post.isLiked) onLike(post.id);
-    }
-    lastTap.current = now;
+    if (!post.isLiked) onLike(post.id);
   };
 
   const handleBookmark = () => {
@@ -68,6 +129,15 @@ export const PostCard = memo(function PostCard({ post, onLike, onComment, onShar
     setIsBookmarked(!isBookmarked);
     onBookmark?.(post.id);
   };
+
+  // Get image URLs - prefer imageUrls array, fall back to imageUrl
+  const imageUrls = post.imageUrls && post.imageUrls.length > 0
+    ? post.imageUrls
+    : post.imageUrl
+      ? [post.imageUrl]
+      : [];
+
+  const cardWidth = SCREEN_WIDTH - 32; // approximate card width after padding
 
   const containerStyle: ViewStyle = { marginBottom: theme.spacing.base };
   const headerStyle: ViewStyle = { flexDirection: 'row', alignItems: 'center', paddingHorizontal: theme.spacing.base, paddingVertical: theme.spacing.md };
@@ -123,15 +193,21 @@ export const PostCard = memo(function PostCard({ post, onLike, onComment, onShar
               <Text variant="body" numberOfLines={4}>{post.originalPost.content}</Text>
             </View>
           )}
-          {post.originalPost.imageUrl && (
+          {post.originalPost.imageUrls && post.originalPost.imageUrls.length > 0 ? (
+            <Image source={{ uri: post.originalPost.imageUrls[0] }} style={{ width: '100%', height: 150 }} resizeMode="cover" />
+          ) : post.originalPost.imageUrl ? (
             <Image source={{ uri: post.originalPost.imageUrl }} style={{ width: '100%', height: 150 }} resizeMode="cover" />
-          )}
+          ) : null}
         </View>
       )}
 
-      {/* Image (non-repost) */}
-      {!post.isRepost && post.imageUrl && (
-        <AdaptiveImage uri={post.imageUrl} onDoubleTap={handleDoubleTap} borderRadius={theme.borderRadius.md} />
+      {/* Image carousel (non-repost) */}
+      {!post.isRepost && imageUrls.length > 0 && (
+        <ImageCarousel
+          imageUrls={imageUrls}
+          onDoubleTap={handleDoubleTap}
+          cardWidth={cardWidth}
+        />
       )}
 
       {/* Action Bar */}

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View, Pressable, ActivityIndicator, Dimensions, Image, Animated, Modal } from 'react-native';
+import { View, Pressable, ActivityIndicator, Dimensions, Image, Animated, Modal, ScrollView as RNScrollView, NativeSyntheticEvent, NativeScrollEvent } from 'react-native';
 import { Feather, FontAwesome5 } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -8,7 +8,7 @@ import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { LinkedText } from '../../src/components/ui/LinkedText';
 import { useAuthStore } from '../../src/store';
-import { getPosts, loadProfileMeta, getFollowCounts, isRepost } from '../../src/lib/supabase';
+import { getPosts, loadProfileMeta, getFollowCounts, isRepost, parseImageUrls } from '../../src/lib/supabase';
 import { openUrl } from '../../src/utils/openUrl';
 import { Post } from '../../src/types';
 import { triggerHaptic } from '../../src/utils/haptics';
@@ -111,13 +111,15 @@ export default function ProfileScreen() {
       
       for (const p of myRawPosts) {
         const repostInfo = isRepost(p.content || '');
+        const parsedImages = parseImageUrls(p.image_url);
         let post: Post = {
           id: p.id, authorId: p.author_id,
           authorName: (Array.isArray(p.profiles) ? p.profiles[0]?.display_name : p.profiles?.display_name) || user?.displayName || '',
           authorUsername: (Array.isArray(p.profiles) ? p.profiles[0]?.username : p.profiles?.username) || user?.username || '',
           authorEmoji: (Array.isArray(p.profiles) ? p.profiles[0]?.emoji : p.profiles?.emoji) || user?.emoji || '😊',
           content: repostInfo.isRepost ? (repostInfo.comment || '') : p.content,
-          imageUrl: p.image_url || undefined,
+          imageUrl: parsedImages[0] || undefined,
+          imageUrls: parsedImages.length > 0 ? parsedImages : undefined,
           likesCount: p.likes_count || 0, commentsCount: p.comments_count || 0,
           sharesCount: p.shares_count || 0, isLiked: false, isBookmarked: false, createdAt: p.created_at,
           isRepost: repostInfo.isRepost,
@@ -127,13 +129,15 @@ export default function ProfileScreen() {
         if (repostInfo.isRepost && repostInfo.originalPostId) {
           const origPost = dbPosts.find((op: any) => op.id === repostInfo.originalPostId);
           if (origPost) {
+            const origImages = parseImageUrls(origPost.image_url);
             post.originalPost = {
               id: origPost.id,
               authorName: (Array.isArray(origPost.profiles) ? origPost.profiles[0]?.display_name : origPost.profiles?.display_name) || 'User',
               authorUsername: (Array.isArray(origPost.profiles) ? origPost.profiles[0]?.username : origPost.profiles?.username) || 'user',
               authorEmoji: (Array.isArray(origPost.profiles) ? origPost.profiles[0]?.emoji : origPost.profiles?.emoji) || '😊',
               content: origPost.content,
-              imageUrl: origPost.image_url || undefined,
+              imageUrl: origImages[0] || undefined,
+              imageUrls: origImages.length > 0 ? origImages : undefined,
             };
           }
         }
@@ -268,7 +272,27 @@ export default function ProfileScreen() {
                   </View>
                 ) : (
                   <>
-                    {post.imageUrl && <Image source={{ uri: post.imageUrl }} style={{ width: '100%', height: 160, borderRadius: 10, marginBottom: 10 }} resizeMode="cover" />}
+                    {(() => {
+                      const postImages = post.imageUrls && post.imageUrls.length > 0 ? post.imageUrls : post.imageUrl ? [post.imageUrl] : [];
+                      if (postImages.length === 0) return null;
+                      if (postImages.length === 1) {
+                        return <Image source={{ uri: postImages[0] }} style={{ width: '100%', height: 160, borderRadius: 10, marginBottom: 10 }} resizeMode="cover" />;
+                      }
+                      return (
+                        <View style={{ marginBottom: 10 }}>
+                          <RNScrollView horizontal showsHorizontalScrollIndicator={false} snapToInterval={(SCREEN_WIDTH - 80) * 0.8 + 6} decelerationRate="fast" contentContainerStyle={{ gap: 6 }}>
+                            {postImages.map((url: string, idx: number) => (
+                              <Image key={idx} source={{ uri: url }} style={{ width: (SCREEN_WIDTH - 80) * 0.8, height: 160, borderRadius: 10 }} resizeMode="cover" />
+                            ))}
+                          </RNScrollView>
+                          <View style={{ flexDirection: 'row', justifyContent: 'center', marginTop: 6, gap: 4 }}>
+                            {postImages.map((_: string, idx: number) => (
+                              <View key={idx} style={{ width: 5, height: 5, borderRadius: 3, backgroundColor: theme.colors.text.tertiary + '60' }} />
+                            ))}
+                          </View>
+                        </View>
+                      );
+                    })()}
                     {post.content ? <Text variant="body" numberOfLines={3}>{post.content}</Text> : null}
                   </>
                 )}
