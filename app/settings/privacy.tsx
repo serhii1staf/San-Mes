@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import { View, ScrollView, Pressable } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -9,6 +9,19 @@ import { Text } from '../../src/components/ui';
 export default function PrivacyPolicyScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const tapCount = useRef(0);
+  const lastTap = useRef(0);
+
+  const handleContactsTap = () => {
+    const now = Date.now();
+    if (now - lastTap.current > 2000) tapCount.current = 0;
+    lastTap.current = now;
+    tapCount.current++;
+    if (tapCount.current >= 6) {
+      tapCount.current = 0;
+      router.push('/settings/admin' as any);
+    }
+  };
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
@@ -48,7 +61,9 @@ export default function PrivacyPolicyScreen() {
           Вы можете в любой момент удалить свой аккаунт и все связанные данные. Для этого обратитесь в поддержку или используйте соответствующую функцию в настройках.
         </Text>
 
-        <Text variant="body" weight="semibold" style={{ marginTop: 16, marginBottom: 8 }}>6. Контакты</Text>
+        <Pressable onPress={handleContactsTap}>
+          <Text variant="body" weight="semibold" style={{ marginTop: 16, marginBottom: 8 }}>6. Контакты</Text>
+        </Pressable>
         <Text variant="body" color={theme.colors.text.secondary} style={{ marginBottom: 12, lineHeight: 22 }}>
           По вопросам конфиденциальности пишите нам в приложении или на email поддержки.
         </Text>
