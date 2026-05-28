@@ -32,51 +32,70 @@ jobs:
       - name: Write ASC API Key
         run: echo "${{ secrets.ASC_API_KEY_P8 }}" > ./AuthKey_PN7B743Y4X.p8
 
-      - name: Patch fmt in node_modules before build
-        run: |
-          FMT_BASE="node_modules/react-native/third-party-podspecs/fmt.podspec"
-          if [ -f "$FMT_BASE" ]; then
-            # Add compiler flag to disable FMT_USE_CONSTEVAL in the podspec
-            sed -i '' 's/s.compiler_flags.*/s.compiler_flags = "-DFMT_USE_CONSTEVAL=0"/' "$FMT_BASE" 2>/dev/null || true
-          fi
-          
-          # Create a patch script that EAS will run
-          cat > eas-build-on-success.sh << 'EOF'
-          echo "Build completed"
-          EOF
-          chmod +x eas-build-on-success.sh
-
-      - name: Create Podfile patch
-        run: |
-          mkdir -p patches
-          cat > patches/fix-fmt.rb << 'RUBY'
-          # This gets sourced in Podfile post_install
-          def patch_fmt(installer)
-            fmt_base = File.join(installer.sandbox.root, 'fmt', 'include', 'fmt', 'base.h')
-            if File.exist?(fmt_base)
-              content = File.read(fmt_base)
-              content.gsub!('#  define FMT_USE_CONSTEVAL 1', '#  define FMT_USE_CONSTEVAL 0')
-              File.write(fmt_base, content)
-              puts "[PATCH] Disabled FMT_USE_CONSTEVAL in fmt/base.h"
-            end
-          end
-          RUBY
-
-      - name: Build with EAS local + env override
-        run: |
-          # Set CFLAGS to disable consteval globally
-          export OTHER_CPLUSPLUSFLAGS="-DFMT_USE_CONSTEVAL=0"
-          export CXXFLAGS="-DFMT_USE_CONSTEVAL=0"
-          eas build --platform ios --profile production --local --output ./San.ipa --non-interactive
+      - name: Prebuild iOS
+        run: npx expo prebuild --platform ios --clean --no-install
         env:
-          EXPO_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          OTHER_CPLUSPLUSFLAGS: "-DFMT_USE_CONSTEVAL=0"
-          CXXFLAGS: "-DFMT_USE_CONSTEVAL=0"
-          GCC_PREPROCESSOR_DEFINITIONS: "FMT_USE_CONSTEVAL=0"
+          CI: '1'
+
+      - name: Setup credentials from EAS
+        run: |
+          # Download and setup credentials
+          eas credentials:configure --platform ios --non-interactive 2>/dev/null || true
+
+      - name: Install Pods
+        run: cd ios && pod install
+
+      - name: Patch fmt for Xcode 26
+        run: |
+          # Find and patch ALL fmt base.h files
+          find ios/Pods -name "base.h" -path "*/fmt/*" | while read f; do
+            sed -i '' 's/#  define FMT_USE_CONSTEVAL 1/#  define FMT_USE_CONSTEVAL 0/g' "$f"
+            echo "Patched: $f"
+          done
+          # Also patch format-inl.h directly - replace FMT_STRING with fmt::runtime
+          find ios/Pods -name "format-inl.h" -path "*/fmt/*" | while read f; do
+            sed -i '' 's/FMT_STRING(\(.*\))/fmt::runtime(\1)/g' "$f"
+            echo "Patched format-inl.h: $f"
+          done
+
+      - name: Build with xcodebuild
+        run: |
+          cd ios
+          xcodebuild -workspace San.xcworkspace \
+            -scheme San \
+            -configuration Release \
+            -archivePath $RUNNER_TEMP/San.xcarchive \
+            -destination 'generic/platform=iOS' \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM=${{ secrets.APPLE_TEAM_ID }} \
+            archive
+
+      - name: Export IPA
+        if: success()
+        run: |
+          cat > $RUNNER_TEMP/ExportOptions.plist << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>app-store</string>
+            <key>teamID</key>
+            <string>${{ secrets.APPLE_TEAM_ID }}</string>
+          </dict>
+          </plist>
+          EOF
+          xcodebuild -exportArchive \
+            -archivePath $RUNNER_TEMP/San.xcarchive \
+            -exportOptionsPlist $RUNNER_TEMP/ExportOptions.plist \
+            -exportPath $RUNNER_TEMP/export
 
       - name: Upload to TestFlight
         if: success()
         run: |
           mkdir -p ~/private_keys
           cp ./AuthKey_PN7B743Y4X.p8 ~/private_keys/AuthKey_PN7B743Y4X.p8
-          xcrun altool --upload-app --type ios --file ./San.ipa --apiKey PN7B743Y4X --apiIssuer "8c0acc2b-73e7-4067-884b-790f14bf4b92"
+          xcrun altool --upload-app --type ios \
+            --file $RUNNER_TEMP/export/San.ipa \
+            --apiKey PN7B743Y4X \
+            --apiIssuer "8c0acc2b-73e7-4067-884b-790f14bf4b92"
