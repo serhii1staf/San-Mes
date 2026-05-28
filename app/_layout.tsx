@@ -5,8 +5,7 @@ import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
 import { ThemeProvider, useTheme } from '../src/theme';
 import { fontAssets } from '../src/theme/fonts';
-import { useAuthStore, useEntityStore, useConnectivityStore } from '../src/store';
-import { fullSync } from '../src/services/syncService';
+import { useAuthStore, useEntityStore } from '../src/store';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -100,22 +99,9 @@ export default function RootLayout() {
     return () => clearTimeout(timer);
   }, []);
 
-  // Hydrate entity store on mount, then start connectivity monitor
+  // Hydrate entity store on mount
   useEffect(() => {
-    let cancelled = false;
-
-    async function init() {
-      await useEntityStore.getState().hydrate();
-      if (!cancelled) {
-        useConnectivityStore.getState().start();
-      }
-    }
-
-    init();
-
-    return () => {
-      cancelled = true;
-    };
+    useEntityStore.getState().hydrate();
   }, []);
 
   // Safety timeout: force isHydrated after 2 seconds
@@ -128,10 +114,13 @@ export default function RootLayout() {
     return () => clearTimeout(timer);
   }, []);
 
-  // Trigger fullSync when user is authenticated
+  // Trigger feed sync when user is authenticated (lightweight, just feed)
   useEffect(() => {
     if (isAuthenticated && user?.id) {
-      fullSync(user.id);
+      // Only sync feed on startup — other syncs happen on screen focus
+      import('../src/services/syncService').then(({ syncFeed }) => {
+        syncFeed(user.id).catch(() => {});
+      });
     }
   }, [isAuthenticated, user?.id]);
 

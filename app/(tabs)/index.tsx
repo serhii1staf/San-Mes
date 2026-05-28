@@ -8,7 +8,7 @@ import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
 import { PostCard } from '../../src/components/feed/PostCard';
 import { PostMenuModal } from '../../src/components/feed/PostMenuModal';
-import { useFeedStore, useAuthStore, useEntityStore, useConnectivityStore } from '../../src/store';
+import { useFeedStore, useAuthStore, useEntityStore } from '../../src/store';
 import { Post } from '../../src/types';
 import { isRepost, parseImageUrls } from '../../src/lib/supabase';
 import { syncFeed } from '../../src/services/syncService';
@@ -64,9 +64,6 @@ export default function FeedScreen() {
   const isHydrated = useEntityStore((s) => s.isHydrated);
   const profiles = useEntityStore((s) => s.profiles);
   const likes = useEntityStore((s) => s.likes);
-
-  // Read connectivity
-  const isOnline = useConnectivityStore((s) => s.isOnline);
 
   const { status: updateStatus, progress: updateProgress, message: updateMessage, checkForUpdate, applyUpdate } = useUpdateStore();
 
@@ -152,11 +149,11 @@ export default function FeedScreen() {
     setRefreshing(false);
   }, []);
 
-  const handleToggleLike = useCallback(async (postId: string) => {
+  const handleToggleLike = useCallback((postId: string) => {
     if (!user?.id) return;
     const currentlyLiked = (likes[user.id] || []).includes(postId);
-    // Use queueMutation for likes instead of direct API call
-    await queueMutation('toggle_like', {
+    // Fire and forget — don't await, let it run in background
+    queueMutation('toggle_like', {
       userId: user.id,
       postId,
       liked: !currentlyLiked,
