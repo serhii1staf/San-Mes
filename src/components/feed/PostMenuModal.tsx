@@ -1,11 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Pressable, Modal, Share, Image, Alert, Animated, Dimensions, PanResponder } from 'react-native';
+import { View, Pressable, Modal, Share, Alert, Animated, Dimensions, PanResponder } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
 import { useTheme } from '../../theme';
 import { Text } from '../ui/Text';
 import { Avatar } from '../ui/Avatar';
+import { CachedImage } from '../ui/CachedImage';
 import { Post } from '../../types';
 import { triggerHaptic } from '../../utils/haptics';
 import { useAuthStore } from '../../store/authStore';
@@ -120,7 +121,7 @@ export function PostMenuModal({ visible, post, onClose }: PostMenuModalProps) {
                   <Text variant="caption" weight="semibold" numberOfLines={1}>{previewName}</Text>
                   <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>{previewContent}</Text>
                 </View>
-                {previewImage && <Image source={{ uri: previewImage }} style={{ width: 40, height: 40, borderRadius: 10, marginLeft: 8 }} resizeMode="cover" />}
+                {previewImage && <CachedImage uri={previewImage} style={{ width: 40, height: 40, borderRadius: 10, marginLeft: 8 }} resizeMode="cover" />}
               </View>
               <MenuItem icon="link" label="Скопировать ссылку" onPress={handleCopyLink} theme={theme} />
               <MenuItem icon="share-2" label="Поделиться" onPress={handleShare} theme={theme} />
