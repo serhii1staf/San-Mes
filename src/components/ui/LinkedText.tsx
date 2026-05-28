@@ -1,6 +1,7 @@
 import React from 'react';
-import { Text as RNText, TextStyle, Linking } from 'react-native';
+import { Text as RNText, TextStyle } from 'react-native';
 import { useTheme } from '../../theme';
+import { openUrl } from '../../utils/openUrl';
 
 interface LinkedTextProps {
   children: string;
@@ -26,7 +27,7 @@ export function LinkedText({ children, style, color }: LinkedTextProps) {
             <RNText
               key={i}
               style={{ color: linkColor, textDecorationLine: 'underline' }}
-              onPress={() => Linking.openURL(part)}
+              onPress={() => openUrl(part)}
             >
               {part}
             </RNText>

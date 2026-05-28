@@ -58,6 +58,7 @@ function ProfileMenuModal({ visible, profile, onClose }: { visible: boolean; pro
   const dragY = useRef(new Animated.Value(0)).current;
   const [showQR, setShowQR] = useState(false);
   const [showReport, setShowReport] = useState(false);
+  const isClosing = useRef(false);
 
   const panResponder = useRef(PanResponder.create({
     onStartShouldSetPanResponder: () => false,
@@ -71,13 +72,20 @@ function ProfileMenuModal({ visible, profile, onClose }: { visible: boolean; pro
 
   useEffect(() => {
     if (visible) {
+      isClosing.current = false;
       dragY.setValue(0);
-      Animated.timing(backdropAnim, { toValue: 1, duration: 200, useNativeDriver: true }).start();
-      Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 50, friction: 10 }).start();
+      slideAnim.setValue(SCREEN_HEIGHT);
+      backdropAnim.setValue(0);
+      Animated.parallel([
+        Animated.timing(backdropAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
+        Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 50, friction: 10 }),
+      ]).start();
     }
   }, [visible]);
 
   const handleClose = () => {
+    if (isClosing.current) return;
+    isClosing.current = true;
     Animated.parallel([
       Animated.timing(slideAnim, { toValue: SCREEN_HEIGHT, duration: 180, useNativeDriver: true }),
       Animated.timing(backdropAnim, { toValue: 0, duration: 180, useNativeDriver: true }),
@@ -171,8 +179,8 @@ function ProfileMenuModal({ visible, profile, onClose }: { visible: boolean; pro
                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                   <Avatar emoji={profile.emoji || '😊'} size="lg" />
                   <View style={{ marginLeft: 12, flex: 1 }}>
-                    <Text variant="body" weight="bold">{profile.display_name}</Text>
-                    <Text variant="caption" color={theme.colors.text.tertiary}>@{profile.username}</Text>
+                    <Text variant="body" weight="bold" numberOfLines={1}>{profile.display_name}</Text>
+                    <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>@{profile.username}</Text>
                   </View>
                   {/* QR mini - tap to enlarge */}
                   <Pressable onPress={() => { triggerHaptic('light'); setShowQR(true); }} style={{ backgroundColor: '#FFF', borderRadius: 8, padding: 4 }}>

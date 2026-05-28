@@ -30,6 +30,7 @@ export function PostMenuModal({ visible, post, onClose }: PostMenuModalProps) {
 
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
   const dragY = useRef(new Animated.Value(0)).current;
+  const isClosing = useRef(false);
 
   const panResponder = useRef(
     PanResponder.create({
@@ -45,15 +46,17 @@ export function PostMenuModal({ visible, post, onClose }: PostMenuModalProps) {
 
   useEffect(() => {
     if (visible) {
+      isClosing.current = false;
       setMode('menu');
       dragY.setValue(0);
-      Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 50, friction: 9 }).start();
-    } else {
       slideAnim.setValue(SCREEN_HEIGHT);
+      Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 50, friction: 9 }).start();
     }
   }, [visible]);
 
   const dismiss = () => {
+    if (isClosing.current) return;
+    isClosing.current = true;
     Animated.timing(slideAnim, { toValue: SCREEN_HEIGHT, duration: 200, useNativeDriver: true }).start(() => {
       setMode('menu');
       onClose();

@@ -63,12 +63,14 @@ export default function ProfileScreen() {
   const [userPosts, setUserPosts] = useState<Post[]>([]);
   const [profileMeta, setProfileMeta] = useState<{ banner_url?: string; links?: { type: string; url: string }[] } | null>(null);
   const [followCounts, setFollowCounts] = useState({ followers: 0, following: 0 });
+  const [hasLoaded, setHasLoaded] = useState(false);
 
   useEffect(() => {
-    if (user?.id) {
+    if (user?.id && !hasLoaded) {
       loadUserPosts();
       loadMeta();
       loadFollows();
+      setHasLoaded(true);
     }
   }, [user?.id]);
 
@@ -138,8 +140,8 @@ export default function ProfileScreen() {
           {/* Name row */}
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}>
             <View style={{ flex: 1 }}>
-              <Text variant="body" weight="bold">{user.displayName}</Text>
-              <Text variant="caption" color={theme.colors.text.tertiary}>@{user.username}</Text>
+              <Text variant="body" weight="bold" numberOfLines={1}>{user.displayName}</Text>
+              <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>@{user.username}</Text>
             </View>
             {/* Edit button - top right */}
             <Pressable onPress={() => { triggerHaptic('light'); router.push('/profile/edit'); }} style={{ paddingHorizontal: 16, paddingVertical: 7, borderWidth: 1, borderColor: theme.colors.border.medium, borderRadius: 8 }}>
