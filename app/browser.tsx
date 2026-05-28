@@ -43,8 +43,8 @@ export default function BrowserScreen() {
         style={{
           flexDirection: 'row',
           alignItems: 'center',
-          paddingTop: insets.top + 4,
-          paddingBottom: 8,
+          paddingTop: insets.top,
+          paddingBottom: 10,
           paddingHorizontal: 12,
           backgroundColor: theme.colors.background.elevated,
           borderBottomWidth: 0.5,

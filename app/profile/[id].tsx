@@ -219,7 +219,7 @@ export default function UserProfileScreen() {
   const [followCounts, setFollowCounts] = useState({ followers: 0, following: 0 });
   const [activeTab, setActiveTab] = useState<TabName>('posts');
   const [showMenu, setShowMenu] = useState(false);
-  const [viewingImage, setViewingImage] = useState<{ uri: string; postId: string } | null>(null);
+  const [viewingImage, setViewingImage] = useState<{ uri: string; postId: string; allImages?: string[] } | null>(null);
   const scrollY = useRef(new Animated.Value(0)).current;
   const headerOpacity = scrollY.interpolate({ inputRange: [0, 50, 120], outputRange: [0, 0, 1], extrapolate: 'clamp' });
   const buttonsTranslateX = scrollY.interpolate({ inputRange: [0, 180, 250], outputRange: [0, 0, -60], extrapolate: 'clamp' });
@@ -496,7 +496,7 @@ export default function UserProfileScreen() {
               <Pressable key={post.id} onPress={() => router.push({ pathname: '/comments/[id]', params: { id: post.id } })} style={{ flexDirection: 'row', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.75)', borderRadius: 28, padding: 10, marginBottom: 12, borderWidth: 1, borderColor: theme.isDark ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.4)', shadowColor: theme.isDark ? '#000' : '#c8a060', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.12, shadowRadius: 20, elevation: 4, overflow: 'hidden' }}>
                 {/* Left: Image grid thumbnail */}
                 {hasImage ? (
-                  <Pressable onPress={() => setViewingImage({ uri: postImages[0], postId: post.id })}>
+                  <Pressable onPress={() => setViewingImage({ uri: postImages[0], postId: post.id, allImages: postImages })}>
                     <View style={{ width: 100, height: 100, borderRadius: 20, overflow: 'hidden' }}>
                       {postImages.length === 1 ? (
                         <CachedImage uri={postImages[0]} style={{ width: 100, height: 100 }} resizeMode="cover" />
@@ -610,12 +610,22 @@ export default function UserProfileScreen() {
             </View>
           </LinearGradient>
 
-          {/* Image — zoomable */}
+          {/* Image — zoomable + horizontal scroll for multi-image */}
           <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
             {viewingImage && (
-              <RNScrollView maximumZoomScale={3} minimumZoomScale={1} showsHorizontalScrollIndicator={false} showsVerticalScrollIndicator={false} contentContainerStyle={{ justifyContent: 'center', alignItems: 'center', flex: 1 }} centerContent bouncesZoom>
-                <CachedImage uri={viewingImage.uri} style={{ width: SCREEN_WIDTH, height: SCREEN_WIDTH }} resizeMode="contain" />
-              </RNScrollView>
+              viewingImage.allImages && viewingImage.allImages.length > 1 ? (
+                <RNScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false} style={{ flex: 1 }} contentContainerStyle={{ alignItems: 'center' }}>
+                  {viewingImage.allImages.map((imgUri, idx) => (
+                    <RNScrollView key={idx} maximumZoomScale={3} minimumZoomScale={1} showsHorizontalScrollIndicator={false} showsVerticalScrollIndicator={false} contentContainerStyle={{ justifyContent: 'center', alignItems: 'center', width: SCREEN_WIDTH, height: '100%' }} centerContent bouncesZoom>
+                      <CachedImage uri={imgUri} style={{ width: SCREEN_WIDTH, height: SCREEN_WIDTH }} resizeMode="contain" />
+                    </RNScrollView>
+                  ))}
+                </RNScrollView>
+              ) : (
+                <RNScrollView maximumZoomScale={3} minimumZoomScale={1} showsHorizontalScrollIndicator={false} showsVerticalScrollIndicator={false} contentContainerStyle={{ justifyContent: 'center', alignItems: 'center', flex: 1 }} centerContent bouncesZoom>
+                  <CachedImage uri={viewingImage.uri} style={{ width: SCREEN_WIDTH, height: SCREEN_WIDTH }} resizeMode="contain" />
+                </RNScrollView>
+              )
             )}
           </View>
 

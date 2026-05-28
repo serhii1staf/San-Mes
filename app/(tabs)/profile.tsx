@@ -285,11 +285,6 @@ export default function ProfileScreen() {
                         ))}
                       </View>
                     )}
-                    {isRepostPost && (
-                      <View style={{ position: 'absolute', top: 4, left: 4, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 8, paddingHorizontal: 5, paddingVertical: 2, flexDirection: 'row', alignItems: 'center', gap: 2 }}>
-                        <Feather name="repeat" size={8} color="#FFFFFF" />
-                      </View>
-                    )}
                   </View>
                 </Pressable>
               ) : isRepostPost ? (
