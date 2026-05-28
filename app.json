@@ -35,8 +35,7 @@
     "plugins": [
       "expo-router",
       "expo-font",
-      "./plugins/withFmtPatch",
-      "expo-sqlite"
+      "./plugins/withFmtPatch"
     ],
     "experiments": {
       "typedRoutes": true
