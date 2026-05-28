@@ -98,6 +98,12 @@ export default function FeedScreen() {
   const [menuPost, setMenuPost] = useState<Post | null>(null);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [isInitialLoading, setIsInitialLoading] = useState(true);
+
+  // Safety timeout - never show skeleton for more than 3 seconds
+  useEffect(() => {
+    const timer = setTimeout(() => setIsInitialLoading(false), 3000);
+    return () => clearTimeout(timer);
+  }, []);
   const { status: updateStatus, progress: updateProgress, message: updateMessage, checkForUpdate, applyUpdate } = useUpdateStore();
 
   // Read from entity store (SSOT)

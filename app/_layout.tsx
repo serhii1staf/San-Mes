@@ -89,6 +89,9 @@ export default function RootLayout() {
       const dbOk = initDatabase();
       if (dbOk) {
         useEntityStore.getState().hydrate();
+      } else {
+        // DB failed but mark as hydrated so app can proceed
+        useEntityStore.setState({ isHydrated: true });
       }
       setDbReady(true);
 
@@ -100,7 +103,8 @@ export default function RootLayout() {
       startSyncLoop();
     } catch (e) {
       console.warn('[RootLayout] Database init failed:', e);
-      setDbReady(true); // Proceed anyway — app can work without local DB
+      useEntityStore.setState({ isHydrated: true });
+      setDbReady(true);
     }
 
     return () => {
