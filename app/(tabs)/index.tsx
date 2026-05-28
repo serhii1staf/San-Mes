@@ -112,8 +112,13 @@ export default function FeedScreen() {
             content: orig.content,
             imageUrl: orig.image_url || undefined,
           };
+        } else {
+          // Original post was deleted — skip this repost
+          continue;
         }
       }
+      // Skip posts with no content and no image (broken/empty)
+      if (!post.content && !post.imageUrl && !post.isRepost) continue;
       mapped.push(post);
     }
     return mapped;

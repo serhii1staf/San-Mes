@@ -52,9 +52,8 @@ export default function CreateScreen() {
 
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
-      allowsEditing: true,
+      allowsEditing: false,
       quality: 0.8,
-      aspect: [4, 3],
     });
 
     if (!result.canceled && result.assets[0]) {
@@ -70,9 +69,8 @@ export default function CreateScreen() {
     }
 
     const result = await ImagePicker.launchCameraAsync({
-      allowsEditing: true,
+      allowsEditing: false,
       quality: 0.8,
-      aspect: [4, 3],
     });
 
     if (!result.canceled && result.assets[0]) {
