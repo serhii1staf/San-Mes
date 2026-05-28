@@ -1,4 +1,4 @@
-import React, { useState, useRef, memo } from 'react';
+import React, { useState, useRef, memo, useEffect } from 'react';
 import { View, Image, Pressable, ViewStyle, TextStyle, Dimensions } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -11,6 +11,30 @@ import { formatTimeAgo } from '../../utils/mockData';
 import { triggerHaptic } from '../../utils/haptics';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const IMAGE_MAX_WIDTH = SCREEN_WIDTH - 64; // account for card padding
+
+function AdaptiveImage({ uri, onDoubleTap, borderRadius }: { uri: string; onDoubleTap: () => void; borderRadius: number }) {
+  const [aspectRatio, setAspectRatio] = useState(1.33); // default fallback
+
+  useEffect(() => {
+    Image.getSize(uri, (w, h) => {
+      if (w && h) setAspectRatio(w / h);
+    }, () => {});
+  }, [uri]);
+
+  // Clamp aspect ratio between 0.5 (tall) and 2.5 (wide)
+  const clampedRatio = Math.max(0.5, Math.min(2.5, aspectRatio));
+
+  return (
+    <Pressable onPress={onDoubleTap} style={{ width: '100%' }}>
+      <Image
+        source={{ uri }}
+        style={{ width: '100%', aspectRatio: clampedRatio, borderRadius }}
+        resizeMode="cover"
+      />
+    </Pressable>
+  );
+}
 
 interface PostCardProps {
   post: Post;
@@ -107,9 +131,7 @@ export const PostCard = memo(function PostCard({ post, onLike, onComment, onShar
 
       {/* Image (non-repost) */}
       {!post.isRepost && post.imageUrl && (
-        <Pressable onPress={handleDoubleTap} style={{ width: '100%', aspectRatio: 1.33, position: 'relative' }}>
-          <Image source={{ uri: post.imageUrl }} style={{ width: '100%', height: '100%', borderRadius: theme.borderRadius.md }} resizeMode="cover" />
-        </Pressable>
+        <AdaptiveImage uri={post.imageUrl} onDoubleTap={handleDoubleTap} borderRadius={theme.borderRadius.md} />
       )}
 
       {/* Action Bar */}

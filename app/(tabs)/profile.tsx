@@ -8,7 +8,7 @@ import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { LinkedText } from '../../src/components/ui/LinkedText';
 import { useAuthStore } from '../../src/store';
-import { getPosts, loadProfileMeta, getFollowCounts } from '../../src/lib/supabase';
+import { getPosts, loadProfileMeta, getFollowCounts, isRepost } from '../../src/lib/supabase';
 import { openUrl } from '../../src/utils/openUrl';
 import { Post } from '../../src/types';
 import { triggerHaptic } from '../../src/utils/haptics';
@@ -106,15 +106,40 @@ export default function ProfileScreen() {
       if (cached) setUserPosts(cached);
       
       const { posts: dbPosts } = await getPosts();
-      const myPosts = dbPosts.filter((p: any) => p.author_id === user?.id).map((p: any) => ({
-        id: p.id, authorId: p.author_id,
-        authorName: (Array.isArray(p.profiles) ? p.profiles[0]?.display_name : p.profiles?.display_name) || user?.displayName || '',
-        authorUsername: (Array.isArray(p.profiles) ? p.profiles[0]?.username : p.profiles?.username) || user?.username || '',
-        authorEmoji: (Array.isArray(p.profiles) ? p.profiles[0]?.emoji : p.profiles?.emoji) || user?.emoji || '😊',
-        content: p.content, imageUrl: p.image_url || undefined,
-        likesCount: p.likes_count || 0, commentsCount: p.comments_count || 0,
-        sharesCount: p.shares_count || 0, isLiked: false, isBookmarked: false, createdAt: p.created_at,
-      }));
+      const myRawPosts = dbPosts.filter((p: any) => p.author_id === user?.id);
+      const myPosts: Post[] = [];
+      
+      for (const p of myRawPosts) {
+        const repostInfo = isRepost(p.content || '');
+        let post: Post = {
+          id: p.id, authorId: p.author_id,
+          authorName: (Array.isArray(p.profiles) ? p.profiles[0]?.display_name : p.profiles?.display_name) || user?.displayName || '',
+          authorUsername: (Array.isArray(p.profiles) ? p.profiles[0]?.username : p.profiles?.username) || user?.username || '',
+          authorEmoji: (Array.isArray(p.profiles) ? p.profiles[0]?.emoji : p.profiles?.emoji) || user?.emoji || '😊',
+          content: repostInfo.isRepost ? (repostInfo.comment || '') : p.content,
+          imageUrl: p.image_url || undefined,
+          likesCount: p.likes_count || 0, commentsCount: p.comments_count || 0,
+          sharesCount: p.shares_count || 0, isLiked: false, isBookmarked: false, createdAt: p.created_at,
+          isRepost: repostInfo.isRepost,
+        };
+        
+        // Resolve original post for reposts
+        if (repostInfo.isRepost && repostInfo.originalPostId) {
+          const origPost = dbPosts.find((op: any) => op.id === repostInfo.originalPostId);
+          if (origPost) {
+            post.originalPost = {
+              id: origPost.id,
+              authorName: (Array.isArray(origPost.profiles) ? origPost.profiles[0]?.display_name : origPost.profiles?.display_name) || 'User',
+              authorUsername: (Array.isArray(origPost.profiles) ? origPost.profiles[0]?.username : origPost.profiles?.username) || 'user',
+              authorEmoji: (Array.isArray(origPost.profiles) ? origPost.profiles[0]?.emoji : origPost.profiles?.emoji) || '😊',
+              content: origPost.content,
+              imageUrl: origPost.image_url || undefined,
+            };
+          }
+        }
+        myPosts.push(post);
+      }
+      
       setUserPosts(myPosts);
       setCache(CACHE_KEYS.myPosts(user?.id || ''), myPosts);
     } catch (e) {}
@@ -229,8 +254,25 @@ export default function ProfileScreen() {
           <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
             {userPosts.map(post => (
               <Pressable key={post.id} onPress={() => router.push({ pathname: '/comments/[id]', params: { id: post.id } })} style={{ backgroundColor: theme.colors.background.elevated, borderRadius: 14, padding: 14, marginBottom: 10 }}>
-                {post.imageUrl && <Image source={{ uri: post.imageUrl }} style={{ width: '100%', height: 160, borderRadius: 10, marginBottom: 10 }} resizeMode="cover" />}
-                {post.content ? <Text variant="body">{post.content}</Text> : null}
+                {post.isRepost && (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8, gap: 4 }}>
+                    <Feather name="repeat" size={12} color={theme.colors.text.tertiary} />
+                    <Text variant="caption" color={theme.colors.text.tertiary}>Репост</Text>
+                  </View>
+                )}
+                {post.isRepost && post.originalPost ? (
+                  <View style={{ borderWidth: 1, borderColor: theme.colors.border.light, borderRadius: 10, padding: 10, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)' }}>
+                    <Text variant="caption" weight="semibold" numberOfLines={1}>{post.originalPost.authorName}</Text>
+                    {post.originalPost.content ? <Text variant="body" numberOfLines={3} style={{ marginTop: 4 }}>{post.originalPost.content}</Text> : null}
+                    {post.originalPost.imageUrl && <Image source={{ uri: post.originalPost.imageUrl }} style={{ width: '100%', height: 120, borderRadius: 8, marginTop: 8 }} resizeMode="cover" />}
+                  </View>
+                ) : (
+                  <>
+                    {post.imageUrl && <Image source={{ uri: post.imageUrl }} style={{ width: '100%', height: 160, borderRadius: 10, marginBottom: 10 }} resizeMode="cover" />}
+                    {post.content ? <Text variant="body" numberOfLines={3}>{post.content}</Text> : null}
+                  </>
+                )}
+                {post.content && post.isRepost && <Text variant="body" color={theme.colors.text.secondary} style={{ marginTop: 6 }}>{post.content}</Text>}
                 <View style={{ flexDirection: 'row', marginTop: 8, gap: 14 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}><Feather name="heart" size={13} color={theme.colors.text.tertiary} /><Text variant="caption" color={theme.colors.text.tertiary}>{post.likesCount}</Text></View>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}><Feather name="message-circle" size={13} color={theme.colors.text.tertiary} /><Text variant="caption" color={theme.colors.text.tertiary}>{post.commentsCount}</Text></View>
