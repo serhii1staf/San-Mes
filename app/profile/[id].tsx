@@ -72,13 +72,8 @@ function ProfileMenuModal({ visible, profile, onClose }: { visible: boolean; pro
   useEffect(() => {
     if (visible) {
       dragY.setValue(0);
-      backdropAnim.setValue(1);
+      Animated.timing(backdropAnim, { toValue: 1, duration: 200, useNativeDriver: true }).start();
       Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 50, friction: 10 }).start();
-    } else {
-      slideAnim.setValue(SCREEN_HEIGHT);
-      backdropAnim.setValue(0);
-      setShowQR(false);
-      setShowReport(false);
     }
   }, [visible]);
 
@@ -86,7 +81,11 @@ function ProfileMenuModal({ visible, profile, onClose }: { visible: boolean; pro
     Animated.parallel([
       Animated.timing(slideAnim, { toValue: SCREEN_HEIGHT, duration: 180, useNativeDriver: true }),
       Animated.timing(backdropAnim, { toValue: 0, duration: 180, useNativeDriver: true }),
-    ]).start(() => onClose());
+    ]).start(() => {
+      setShowQR(false);
+      setShowReport(false);
+      onClose();
+    });
   };
 
   const handleCopyLink = async () => {
@@ -156,12 +155,13 @@ function ProfileMenuModal({ visible, profile, onClose }: { visible: boolean; pro
   return (
     <Modal visible={visible} transparent animationType="none" onRequestClose={handleClose} statusBarTranslucent>
       <View style={{ flex: 1 }}>
-        <Animated.View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)', opacity: backdropAnim }}>
-          <Pressable style={{ flex: 1 }} onPress={handleClose} />
-        </Animated.View>
-        <View style={{ flex: 1, justifyContent: 'flex-end' }}>
+        {/* Backdrop */}
+        <Pressable style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} onPress={handleClose}>
+          <Animated.View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', opacity: backdropAnim }} />
+        </Pressable>
+        <View style={{ flex: 1, justifyContent: 'flex-end' }} pointerEvents="box-none">
           <Animated.View style={{ transform: [{ translateY }] }} {...panResponder.panHandlers}>
-            <View style={{ marginHorizontal: 8, marginBottom: insets.bottom + 20, backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF', borderRadius: 28, overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.15, shadowRadius: 20, elevation: 12 }}>
+            <View style={{ marginHorizontal: 8, marginBottom: insets.bottom + 8, backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF', borderRadius: 28, overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.15, shadowRadius: 20, elevation: 12 }}>
               <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 6 }}>
                 <View style={{ width: 40, height: 5, borderRadius: 3, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.1)' }} />
               </View>
@@ -329,8 +329,8 @@ export default function UserProfileScreen() {
 
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}>
             <View style={{ flex: 1 }}>
-              <Text variant="body" weight="bold">{profile.display_name}</Text>
-              <Text variant="caption" color={theme.colors.text.tertiary}>@{profile.username}</Text>
+              <Text variant="body" weight="bold" numberOfLines={1}>{profile.display_name}</Text>
+              <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>@{profile.username}</Text>
             </View>
             {!isOwnProfile && (
               <Pressable onPress={handleFollow} style={{ paddingHorizontal: 20, paddingVertical: 8, backgroundColor: isFollowingState ? 'transparent' : theme.colors.accent.primary, borderWidth: isFollowingState ? 1 : 0, borderColor: theme.colors.border.medium, borderRadius: 8 }}>

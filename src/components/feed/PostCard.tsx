@@ -62,11 +62,11 @@ export const PostCard = memo(function PostCard({ post, onLike, onComment, onShar
 
       {/* Header */}
       <View style={headerStyle}>
-        <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: post.authorId } })} style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+        <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: post.authorId } })} style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 }}>
           <Avatar emoji={post.authorEmoji} name={post.authorName} size="sm" />
           <View style={{ marginLeft: theme.spacing.md, flex: 1 }}>
-            <Text weight="semibold" variant="body">{post.authorName}</Text>
-            <Text variant="caption" color={theme.colors.text.secondary}>@{post.authorUsername} · {formatTimeAgo(post.createdAt)}</Text>
+            <Text weight="semibold" variant="body" numberOfLines={1}>{post.authorName}</Text>
+            <Text variant="caption" color={theme.colors.text.secondary} numberOfLines={1}>@{post.authorUsername} · {formatTimeAgo(post.createdAt)}</Text>
           </View>
         </Pressable>
         <Pressable onPress={() => { triggerHaptic('light'); onMenu?.(post); }}>

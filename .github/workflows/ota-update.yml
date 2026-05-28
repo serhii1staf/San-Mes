@@ -1,0 +1,37 @@
+name: OTA Update (без пересборки)
+
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: 'Описание обновления'
+        required: true
+        default: 'OTA update'
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Setup Expo
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Publish OTA Update
+        run: |
+          eas update --branch production --message "${{ github.event.inputs.message }}" --non-interactive

@@ -74,12 +74,12 @@ function NameStep({ value, onChange }: { value: string; onChange: (v: string) =>
         Как тебя зовут?
       </Text>
       <Text variant="body" color={theme.colors.text.secondary} align="center" style={{ marginTop: 8, marginBottom: 40 }}>
-        Только английские буквы, от 4 символов
+        Только английские буквы, 4–16 символов
       </Text>
 
       <TextInput
         value={value}
-        onChangeText={onChange}
+        onChangeText={(v) => onChange(v.slice(0, 16))}
         placeholder="Your name"
         placeholderTextColor={theme.colors.text.tertiary}
         style={{
@@ -178,7 +178,7 @@ export default function RegisterScreen() {
 
   const isValidUsername = (val: string): boolean => {
     const cleaned = val.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
-    if (cleaned.length < 4) return false;
+    if (cleaned.length < 4 || cleaned.length > 16) return false;
     if (!/^[a-zA-Z0-9_ ]+$/.test(val)) return false;
     const lower = val.toLowerCase();
     for (const word of BANNED_WORDS) {

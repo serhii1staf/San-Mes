@@ -16,6 +16,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.sanmes.app",
+      "associatedDomains": ["applinks:san-mes.vercel.app"],
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
@@ -47,6 +48,14 @@
         "projectId": "9d37a5f0-54d8-4d17-8b7f-37ce6256ae06"
       }
     },
-    "owner": "odserser"
+    "owner": "odserser",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/9d37a5f0-54d8-4d17-8b7f-37ce6256ae06",
+      "fallbackToCacheTimeout": 0,
+      "checkAutomatically": "ON_LOAD"
+    }
   }
 }

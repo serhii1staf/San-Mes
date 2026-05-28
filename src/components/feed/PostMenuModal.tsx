@@ -92,18 +92,17 @@ export function PostMenuModal({ visible, post, onClose }: PostMenuModalProps) {
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={dismiss} statusBarTranslucent>
-      {/* Backdrop — always tappable */}
       <View style={{ flex: 1 }}>
-        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' }} onPress={dismiss} />
-      </View>
+        {/* Backdrop — always tappable */}
+        <Pressable style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)' }} onPress={dismiss} />
 
-      {/* Sheet */}
-      <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0 }} pointerEvents="box-none">
-        <Animated.View
-          style={{ transform: [{ translateY }] }}
-          {...panResponder.panHandlers}
-        >
-          <View style={{ marginHorizontal: 8, marginBottom: insets.bottom + 28, backgroundColor: sheetBg, borderRadius: 28, shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.12, shadowRadius: 16, elevation: 10 }}>
+        {/* Sheet */}
+        <View style={{ flex: 1, justifyContent: 'flex-end' }} pointerEvents="box-none">
+          <Animated.View
+            style={{ transform: [{ translateY }] }}
+            {...panResponder.panHandlers}
+          >
+            <View style={{ marginHorizontal: 8, marginBottom: insets.bottom + 8, backgroundColor: sheetBg, borderRadius: 28, shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.12, shadowRadius: 16, elevation: 10 }}>
           {/* Handle */}
           <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 6 }}>
             <View style={{ width: 40, height: 5, borderRadius: 3, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)' }} />
@@ -139,6 +138,7 @@ export function PostMenuModal({ visible, post, onClose }: PostMenuModalProps) {
           <View style={{ height: 10 }} />
         </View>
         </Animated.View>
+        </View>
       </View>
     </Modal>
   );

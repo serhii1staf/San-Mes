@@ -2,6 +2,7 @@
   "buildCommand": "echo 'skip'",
   "outputDirectory": ".",
   "rewrites": [
+    { "source": "/.well-known/apple-app-site-association", "destination": "/api/.well-known/apple-app-site-association" },
     { "source": "/", "destination": "/api/index" },
     { "source": "/post/:id", "destination": "/api/index" },
     { "source": "/profile/:id", "destination": "/api/index" },
