@@ -68,33 +68,37 @@ export default function ProfileScreen() {
   const [followCounts, setFollowCounts] = useState({ followers: 0, following: 0 });
   const [showQR, setShowQR] = useState(false);
 
-  // Read posts from entityStore instead of local state
-  const myLocalPosts = useEntityStore((s) => s.getMyPosts());
-  const profile = useEntityStore((s) => s.profiles[user?.id ?? '']);
+  // Read posts from entityStore — use stable selectors to avoid re-render loops
+  const allPosts = useEntityStore((s) => s.posts);
+  const myPostIds = useEntityStore((s) => s.myPostIds);
+  const storeProfile = useEntityStore((s) => s.profiles[user?.id ?? '']);
 
-  // Map LocalPost[] to Post[] for rendering
-  const userPosts: Post[] = myLocalPosts.map((p: LocalPost) => {
-    const repostInfo = isRepost(p.content || '');
-    const parsedImages = parseImageUrls(p.image_url);
-    return {
-      id: p.id,
-      authorId: p.author_id,
-      authorName: user?.displayName || profile?.display_name || '',
-      authorUsername: user?.username || profile?.username || '',
-      authorEmoji: user?.emoji || profile?.emoji || '😊',
-      content: repostInfo.isRepost ? (repostInfo.comment || '') : (p.content || ''),
-      imageUrl: parsedImages[0] || undefined,
-      imageUrls: parsedImages.length > 0 ? parsedImages : undefined,
-      likesCount: p.likes_count || 0,
-      commentsCount: p.comments_count || 0,
-      sharesCount: p.shares_count || 0,
-      isLiked: false,
-      isBookmarked: false,
-      createdAt: p.created_at,
-      isRepost: repostInfo.isRepost,
-      status: p.status, // Keep status for pending indicator
-    } as Post & { status?: string };
-  });
+  // Map LocalPost[] to Post[] for rendering (memoized)
+  const userPosts: Post[] = React.useMemo(() => {
+    const localPosts = myPostIds.map(id => allPosts[id]).filter(Boolean);
+    return localPosts.map((p: LocalPost) => {
+      const repostInfo = isRepost(p.content || '');
+      const parsedImages = parseImageUrls(p.image_url);
+      return {
+        id: p.id,
+        authorId: p.author_id,
+        authorName: user?.displayName || storeProfile?.display_name || '',
+        authorUsername: user?.username || storeProfile?.username || '',
+        authorEmoji: user?.emoji || storeProfile?.emoji || '😊',
+        content: repostInfo.isRepost ? (repostInfo.comment || '') : (p.content || ''),
+        imageUrl: parsedImages[0] || undefined,
+        imageUrls: parsedImages.length > 0 ? parsedImages : undefined,
+        likesCount: p.likes_count || 0,
+        commentsCount: p.comments_count || 0,
+        sharesCount: p.shares_count || 0,
+        isLiked: false,
+        isBookmarked: false,
+        createdAt: p.created_at,
+        isRepost: repostInfo.isRepost,
+        status: p.status,
+      } as Post & { status?: string };
+    });
+  }, [allPosts, myPostIds, user, storeProfile]);
 
   const loadFollows = useCallback(async () => {
     if (!user?.id) return;
@@ -103,9 +107,8 @@ export default function ProfileScreen() {
 
   useFocusEffect(useCallback(() => {
     if (!user?.id) return;
-    // Trigger background sync for user posts
-    syncUserPosts(user.id);
-    // Load follow counts from supabase (not cached in entityStore yet)
+    // Non-blocking background sync
+    syncUserPosts(user.id).catch(() => {});
     loadFollows();
   }, [user?.id]));
 
