@@ -34,4 +34,6 @@ jobs:
 
       - name: Publish OTA Update
         run: |
-          eas update --branch production --message "${{ github.event.inputs.message }}" --non-interactive
+          eas update --branch production --message "${{ github.event.inputs.message }}" --platform ios
+        env:
+          CI: '1'
