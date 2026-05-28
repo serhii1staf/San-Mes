@@ -3,7 +3,7 @@ import { View, FlatList, RefreshControl, Pressable, StyleSheet, ActivityIndicato
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
@@ -106,6 +106,23 @@ export default function FeedScreen() {
   const hasFetched = useRef(false);
 
   const { status: updateStatus, progress: updateProgress, message: updateMessage, checkForUpdate, applyUpdate } = useUpdateStore();
+
+  // Reload from cache when tab gains focus (picks up new posts from create screen)
+  useFocusEffect(
+    useCallback(() => {
+      AsyncStorage.getItem(FEED_CACHE_KEY).then((cached) => {
+        if (cached) {
+          try {
+            const parsed = JSON.parse(cached);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              setPosts(parsed);
+              setIsLoading(false);
+            }
+          } catch {}
+        }
+      }).catch(() => {});
+    }, [])
+  );
 
   // On first mount: if store is empty — load from cache then from Supabase
   // If store already has posts — display instantly without network request
