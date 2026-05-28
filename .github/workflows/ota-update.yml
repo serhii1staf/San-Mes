@@ -1,12 +1,14 @@
-name: OTA Update (без пересборки)
+name: OTA Update
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       message:
         description: 'Описание обновления'
-        required: true
-        default: 'OTA update'
+        required: false
+        default: ''
 
 jobs:
   update:
@@ -34,6 +36,7 @@ jobs:
 
       - name: Publish OTA Update
         run: |
-          eas update --branch production --message "${{ github.event.inputs.message }}" --platform ios
+          eas update --branch production --message "${MSG}" --platform ios
         env:
           CI: '1'
+          MSG: ${{ github.event.inputs.message || github.event.head_commit.message || 'OTA update' }}

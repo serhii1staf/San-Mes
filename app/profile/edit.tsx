@@ -14,13 +14,26 @@ const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 const DISMISS_THRESHOLD = 200;
 
 const LINK_TYPES = [
-  { key: 'github', label: 'GitHub', icon: 'github' },
-  { key: 'twitter', label: 'Twitter', icon: 'twitter' },
-  { key: 'instagram', label: 'Instagram', icon: 'instagram' },
-  { key: 'youtube', label: 'YouTube', icon: 'youtube' },
-  { key: 'telegram', label: 'Telegram', icon: 'send' },
-  { key: 'website', label: 'Сайт', icon: 'globe' },
+  { key: 'github', label: 'GitHub', icon: 'github', patterns: ['github.com'] },
+  { key: 'twitter', label: 'Twitter/X', icon: 'twitter', patterns: ['twitter.com', 'x.com'] },
+  { key: 'instagram', label: 'Instagram', icon: 'instagram', patterns: ['instagram.com'] },
+  { key: 'youtube', label: 'YouTube', icon: 'youtube', patterns: ['youtube.com', 'youtu.be'] },
+  { key: 'telegram', label: 'Telegram', icon: 'send', patterns: ['t.me', 'telegram.me'] },
+  { key: 'tiktok', label: 'TikTok', icon: 'video', patterns: ['tiktok.com'] },
+  { key: 'discord', label: 'Discord', icon: 'message-circle', patterns: ['discord.gg', 'discord.com'] },
+  { key: 'twitch', label: 'Twitch', icon: 'tv', patterns: ['twitch.tv'] },
+  { key: 'spotify', label: 'Spotify', icon: 'music', patterns: ['spotify.com', 'open.spotify.com'] },
+  { key: 'linkedin', label: 'LinkedIn', icon: 'linkedin', patterns: ['linkedin.com'] },
+  { key: 'website', label: 'Сайт', icon: 'globe', patterns: [] },
 ];
+
+function detectLinkTypeFromUrl(url: string): string {
+  const lower = url.toLowerCase();
+  for (const lt of LINK_TYPES) {
+    if (lt.patterns.some(p => lower.includes(p))) return lt.key;
+  }
+  return 'website';
+}
 
 const MOOD_CATEGORIES: { title: string; emojis: string[] }[] = [
   {
@@ -243,7 +256,10 @@ export default function EditProfileScreen() {
       setShowLinkPicker(false);
       return;
     }
-    const newLink: UserLink = { type: linkType, url: linkUrl.trim() };
+    // Auto-detect type from URL for accuracy
+    const detectedType = detectLinkTypeFromUrl(linkUrl.trim());
+    const finalType = detectedType !== 'website' ? detectedType : linkType;
+    const newLink: UserLink = { type: finalType, url: linkUrl.trim() };
     if (editingLinkIndex !== null) {
       const updated = [...links];
       updated[editingLinkIndex] = newLink;
@@ -681,7 +697,14 @@ export default function EditProfileScreen() {
               <Input
                 label="URL"
                 value={linkUrl}
-                onChangeText={setLinkUrl}
+                onChangeText={(text) => {
+                  setLinkUrl(text);
+                  // Auto-detect link type from URL
+                  const detected = detectLinkTypeFromUrl(text);
+                  if (detected !== 'website' || text.length > 10) {
+                    setLinkType(detected);
+                  }
+                }}
                 placeholder="https://..."
                 style={{ marginBottom: 20 }}
               />

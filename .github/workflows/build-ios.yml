@@ -1,8 +1,6 @@
-name: iOS Build & Deploy
+name: iOS Full Build & TestFlight
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 jobs:
@@ -49,10 +47,3 @@ jobs:
           EXPO_ASC_API_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           EXPO_ASC_API_KEY_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           EXPO_ASC_API_KEY_PATH: ./AuthKey_PN7B743Y4X.p8
-
-      - name: Publish OTA Update
-        if: success()
-        run: |
-          eas update --branch production --message "${{ github.event.head_commit.message }}" --platform ios
-        env:
-          CI: '1'

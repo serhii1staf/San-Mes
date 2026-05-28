@@ -23,12 +23,16 @@ function detectLinkType(url: string): string {
   if (lower.includes('twitter.com') || lower.includes('x.com')) return 'twitter';
   if (lower.includes('instagram.com')) return 'instagram';
   if (lower.includes('youtube.com') || lower.includes('youtu.be')) return 'youtube';
-  if (lower.includes('t.me') || lower.includes('telegram')) return 'telegram';
+  if (lower.includes('t.me') || lower.includes('telegram.me')) return 'telegram';
   if (lower.includes('tiktok.com')) return 'tiktok';
   if (lower.includes('linkedin.com')) return 'linkedin';
   if (lower.includes('discord.gg') || lower.includes('discord.com')) return 'discord';
   if (lower.includes('twitch.tv')) return 'twitch';
-  if (lower.includes('spotify.com')) return 'spotify';
+  if (lower.includes('spotify.com') || lower.includes('open.spotify.com')) return 'spotify';
+  if (lower.includes('reddit.com')) return 'reddit';
+  if (lower.includes('pinterest.com')) return 'pinterest';
+  if (lower.includes('snapchat.com')) return 'snapchat';
+  if (lower.includes('vk.com')) return 'vk';
   return 'website';
 }
 
