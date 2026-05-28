@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Pressable, StyleSheet, ViewStyle } from 'react-native';
+import { View, Pressable, StyleSheet } from 'react-native';
 import { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -60,10 +60,10 @@ export function CustomTabBar({ state, navigation }: BottomTabBarProps) {
 
   return (
     <View style={styles.wrapper} pointerEvents="box-none">
-      {/* Gradient dissolve above tab bar */}
+      {/* Gradient dissolve - fades content behind the tab bar area */}
       <LinearGradient
         colors={[bgTransparent, bgColor]}
-        style={{ position: 'absolute', top: -28, left: 0, right: 0, height: 28 }}
+        style={StyleSheet.absoluteFill}
         pointerEvents="none"
       />
       <View style={[styles.container, {

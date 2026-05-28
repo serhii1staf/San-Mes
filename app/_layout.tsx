@@ -1,9 +1,9 @@
-import React, { useEffect, useState } from 'react';
-import { View, ActivityIndicator, StyleSheet } from 'react-native';
+import React, { useEffect, useState, useRef } from 'react';
+import { View, ActivityIndicator, StyleSheet, Animated, Text as RNText } from 'react-native';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
-import { ThemeProvider } from '../src/theme';
+import { ThemeProvider, useTheme } from '../src/theme';
 import { fontAssets } from '../src/theme/fonts';
 import { useAuthStore } from '../src/store';
 
@@ -29,14 +29,44 @@ function AuthNavigationGuard({ children }: { children: React.ReactNode }) {
   }, [isAuthenticated, segments, hasHydrated]);
 
   if (!hasHydrated) {
-    return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#E8856C" />
-      </View>
-    );
+    return <CustomSplash />;
   }
 
   return <>{children}</>;
+}
+
+function CustomSplash() {
+  const theme = useTheme();
+  const { user } = useAuthStore();
+  const logoAnim = useRef(new Animated.Value(-40)).current;
+  const textAnim = useRef(new Animated.Value(40)).current;
+  const opacityAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(logoAnim, { toValue: 0, duration: 500, useNativeDriver: true }),
+      Animated.timing(textAnim, { toValue: 0, duration: 500, useNativeDriver: true }),
+      Animated.timing(opacityAnim, { toValue: 1, duration: 400, useNativeDriver: true }),
+    ]).start();
+  }, []);
+
+  return (
+    <View style={[styles.loadingContainer, { backgroundColor: theme.colors.background.primary }]}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+        <Animated.Text style={{ fontSize: 36, transform: [{ translateX: logoAnim }], opacity: opacityAnim }} allowFontScaling={false}>
+          🌸
+        </Animated.Text>
+        <Animated.View style={{ transform: [{ translateX: textAnim }], opacity: opacityAnim }}>
+          <RNText style={{ fontSize: 28, fontWeight: '700', color: theme.colors.text.primary }}>San</RNText>
+          {user?.displayName && (
+            <RNText style={{ fontSize: 13, color: theme.colors.text.tertiary, marginTop: 2 }}>
+              Привет, {user.displayName}
+            </RNText>
+          )}
+        </Animated.View>
+      </View>
+    </View>
+  );
 }
 
 export default function RootLayout() {
@@ -71,11 +101,7 @@ export default function RootLayout() {
   }, []);
 
   if (!ready) {
-    return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#E8856C" />
-      </View>
-    );
+    return null; // Native splash screen is still showing
   }
 
   return (

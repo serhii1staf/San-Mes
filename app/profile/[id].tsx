@@ -27,7 +27,12 @@ function detectLinkType(url: string): string {
   if (lower.includes('twitter.com') || lower.includes('x.com')) return 'twitter';
   if (lower.includes('instagram.com')) return 'instagram';
   if (lower.includes('youtube.com') || lower.includes('youtu.be')) return 'youtube';
-  if (lower.includes('t.me') || lower.includes('telegram')) return 'telegram';
+  if (lower.includes('t.me') || lower.includes('telegram.me')) return 'telegram';
+  if (lower.includes('tiktok.com')) return 'tiktok';
+  if (lower.includes('linkedin.com')) return 'linkedin';
+  if (lower.includes('discord.gg') || lower.includes('discord.com')) return 'discord';
+  if (lower.includes('twitch.tv')) return 'twitch';
+  if (lower.includes('spotify.com') || lower.includes('open.spotify.com')) return 'spotify';
   return 'website';
 }
 
@@ -39,6 +44,11 @@ function SocialLinkIcon({ type, url }: { type: string; url: string }) {
     instagram: { name: 'instagram', color: '#E4405F', isBrand: true },
     youtube: { name: 'youtube', color: '#FF0000', isBrand: true },
     telegram: { name: 'telegram-plane', color: '#0088CC', isBrand: true },
+    tiktok: { name: 'tiktok', color: theme.isDark ? '#FFF' : '#000', isBrand: true },
+    linkedin: { name: 'linkedin-in', color: '#0A66C2', isBrand: true },
+    discord: { name: 'discord', color: '#5865F2', isBrand: true },
+    twitch: { name: 'twitch', color: '#9146FF', isBrand: true },
+    spotify: { name: 'spotify', color: '#1DB954', isBrand: true },
     website: { name: 'globe', color: '#2563EB', isBrand: false },
   };
   const detected = detectLinkType(url);

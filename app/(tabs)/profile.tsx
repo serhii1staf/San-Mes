@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { View, Pressable, ActivityIndicator, Dimensions, Image, Animated, Modal } from 'react-native';
 import { Feather, FontAwesome5 } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../src/theme';
@@ -68,16 +68,17 @@ export default function ProfileScreen() {
   const [userPosts, setUserPosts] = useState<Post[]>([]);
   const [profileMeta, setProfileMeta] = useState<{ banner_url?: string; links?: { type: string; url: string }[] } | null>(null);
   const [followCounts, setFollowCounts] = useState({ followers: 0, following: 0 });
-  const [hasLoaded, setHasLoaded] = useState(false);
 
-  useEffect(() => {
-    if (user?.id && !hasLoaded) {
-      loadUserPosts();
-      loadMeta();
-      loadFollows();
-      setHasLoaded(true);
-    }
-  }, [user?.id]);
+  // Refresh data when tab is focused (e.g. after creating a post)
+  useFocusEffect(
+    useCallback(() => {
+      if (user?.id) {
+        loadUserPosts();
+        loadMeta();
+        loadFollows();
+      }
+    }, [user?.id])
+  );
 
   const loadMeta = async () => {
     if (!user?.id) return;
