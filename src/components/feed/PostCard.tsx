@@ -153,8 +153,8 @@ export const PostCard = memo(function PostCard({ post, onLike, onComment, onShar
           <Feather name="repeat" size={13} color={theme.colors.text.tertiary} />
           <Text variant="caption" color={theme.colors.text.tertiary}>{post.authorName} репостнул(а)</Text>
           {post.originalPost?.authorEmoji && (
-            <View style={{ width: 18, height: 18, borderRadius: 9, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)', alignItems: 'center', justifyContent: 'center', marginLeft: 2 }}>
-              <Text style={{ fontSize: 10 }}>{post.originalPost.authorEmoji}</Text>
+            <View style={{ width: 18, height: 18, borderRadius: 9, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)', alignItems: 'center', justifyContent: 'center' }}>
+              <Text style={{ fontSize: 10, lineHeight: 14 }}>{post.originalPost.authorEmoji}</Text>
             </View>
           )}
         </View>

@@ -8,7 +8,7 @@ import * as Clipboard from 'expo-clipboard';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { LinkedText } from '../../src/components/ui/LinkedText';
-import { parseImageUrls, getProfile, getFollowCounts, deletePost } from '../../src/lib/supabase';
+import { parseImageUrls, getProfile, getFollowCounts, deletePost, isRepost, supabase } from '../../src/lib/supabase';
 import { useAuthStore } from '../../src/store';
 import { useEntityStore } from '../../src/store';
 import { useFeedStore } from '../../src/store/feedStore';
@@ -283,22 +283,96 @@ export default function UserProfileScreen() {
   // Display profile: prefer cached from store, fallback to direct fetch
   const displayProfile = cachedProfile || fallbackProfile;
 
-  // Display posts mapped for UI
+  // Display posts mapped for UI — resolve reposts
+  const [resolvedOriginals, setResolvedOriginals] = useState<Record<string, any>>({});
+
+  // Fetch original posts for reposts in this profile
+  useEffect(() => {
+    const repostOriginalIds: string[] = [];
+    for (const p of userPosts) {
+      const ri = isRepost(p.content || '');
+      if (ri.isRepost && ri.originalPostId && !resolvedOriginals[ri.originalPostId]) {
+        repostOriginalIds.push(ri.originalPostId);
+      }
+    }
+    if (repostOriginalIds.length === 0) return;
+    supabase.from('posts').select('*, profiles:author_id (display_name, username, emoji)').in('id', repostOriginalIds).then(({ data }) => {
+      if (!data) return;
+      const map: Record<string, any> = { ...resolvedOriginals };
+      for (const o of data) map[o.id] = o;
+      // Check for deeper chain
+      const deeperIds: string[] = [];
+      for (const o of data) {
+        const ori = isRepost(o.content || '');
+        if (ori.isRepost && ori.originalPostId && !map[ori.originalPostId]) deeperIds.push(ori.originalPostId);
+      }
+      if (deeperIds.length > 0) {
+        supabase.from('posts').select('*, profiles:author_id (display_name, username, emoji)').in('id', deeperIds).then(({ data: deep }) => {
+          if (deep) { for (const dp of deep) map[dp.id] = dp; }
+          setResolvedOriginals(map);
+        });
+      } else {
+        setResolvedOriginals(map);
+      }
+    });
+  }, [userPosts]);
+
   const displayPosts = React.useMemo(() => {
     return userPosts.map((p) => {
+      const repostInfo = isRepost(p.content || '');
       const parsedImages = parseImageUrls(p.image_url);
+
+      let content = repostInfo.isRepost ? (repostInfo.comment || '') : (p.content || '');
+      let imageUrl = parsedImages[0] || undefined;
+      let imageUrls = parsedImages.length > 0 ? parsedImages : undefined;
+      let originalPost: any = undefined;
+
+      if (repostInfo.isRepost && repostInfo.originalPostId) {
+        // Follow repost chain
+        let orig = resolvedOriginals[repostInfo.originalPostId];
+        let depth = 0;
+        while (orig && depth < 10) {
+          const origRi = isRepost(orig.content || '');
+          if (origRi.isRepost && origRi.originalPostId && resolvedOriginals[origRi.originalPostId]) {
+            orig = resolvedOriginals[origRi.originalPostId];
+            depth++;
+          } else break;
+        }
+        if (orig) {
+          const origProfile = Array.isArray(orig.profiles) ? orig.profiles[0] : orig.profiles;
+          const origImages = parseImageUrls(orig.image_url);
+          const origRiCheck = isRepost(orig.content || '');
+          originalPost = {
+            id: orig.id,
+            authorName: origProfile?.display_name || 'User',
+            authorUsername: origProfile?.username || 'user',
+            authorEmoji: origProfile?.emoji || '😊',
+            content: origRiCheck.isRepost ? (origRiCheck.comment || '') : (orig.content || ''),
+            imageUrl: origImages[0] || undefined,
+            imageUrls: origImages.length > 0 ? origImages : undefined,
+          };
+          // Use original post's images for display if the repost has none
+          if (!imageUrl && originalPost.imageUrl) {
+            imageUrl = originalPost.imageUrl;
+            imageUrls = originalPost.imageUrls;
+          }
+        }
+      }
+
       return {
         id: p.id,
-        content: p.content,
-        imageUrl: parsedImages[0] || undefined,
-        imageUrls: parsedImages.length > 0 ? parsedImages : undefined,
+        content,
+        imageUrl,
+        imageUrls,
         likesCount: p.likes_count || 0,
         commentsCount: p.comments_count || 0,
         createdAt: p.created_at,
         status: p.status,
+        isRepost: repostInfo.isRepost,
+        originalPost,
       };
     });
-  }, [userPosts]);
+  }, [userPosts, resolvedOriginals]);
 
   const handleFollow = async () => {
     if (!currentUser?.id || !id) return;
@@ -416,10 +490,12 @@ export default function UserProfileScreen() {
             {displayPosts.map((post: any) => {
               const postImages: string[] = post.imageUrls && post.imageUrls.length > 0 ? post.imageUrls : post.imageUrl ? [post.imageUrl] : [];
               const hasImage = postImages.length > 0;
+              const isRepostPost = post.isRepost;
+              const origPost = post.originalPost;
               return (
               <Pressable key={post.id} onPress={() => router.push({ pathname: '/comments/[id]', params: { id: post.id } })} style={{ flexDirection: 'row', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.75)', borderRadius: 28, padding: 10, marginBottom: 12, borderWidth: 1, borderColor: theme.isDark ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.4)', shadowColor: theme.isDark ? '#000' : '#c8a060', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.12, shadowRadius: 20, elevation: 4, overflow: 'hidden' }}>
                 {/* Left: Image grid thumbnail */}
-                {hasImage && (
+                {hasImage ? (
                   <Pressable onPress={() => setViewingImage({ uri: postImages[0], postId: post.id })}>
                     <View style={{ width: 100, height: 100, borderRadius: 20, overflow: 'hidden' }}>
                       {postImages.length === 1 ? (
@@ -447,17 +523,33 @@ export default function UserProfileScreen() {
                           ))}
                         </View>
                       )}
+                      {isRepostPost && (
+                        <View style={{ position: 'absolute', top: 4, left: 4, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 8, paddingHorizontal: 5, paddingVertical: 2, flexDirection: 'row', alignItems: 'center', gap: 2 }}>
+                          <Feather name="repeat" size={8} color="#FFFFFF" />
+                        </View>
+                      )}
                     </View>
                   </Pressable>
-                )}
+                ) : isRepostPost ? (
+                  <View style={{ width: 100, height: 100, borderRadius: 20, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)', alignItems: 'center', justifyContent: 'center' }}>
+                    <Feather name="repeat" size={24} color={theme.colors.text.tertiary} />
+                    <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 9, marginTop: 4 }}>Репост</Text>
+                  </View>
+                ) : null}
                 {/* Right: Info */}
-                <View style={{ flex: 1, marginLeft: hasImage ? 14 : 4, justifyContent: 'center' }}>
+                <View style={{ flex: 1, marginLeft: (hasImage || isRepostPost) ? 14 : 4, justifyContent: 'center' }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                     <Avatar emoji={displayProfile.emoji || '😊'} size="xs" />
                     <Text variant="caption" weight="semibold" numberOfLines={1}>{displayProfile.display_name}</Text>
                     <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 10 }}>· {formatTimeAgo(post.createdAt)}</Text>
                   </View>
-                  {post.content ? <Text variant="caption" numberOfLines={2} color={theme.colors.text.secondary} style={{ marginBottom: 6 }}>{post.content}</Text> : null}
+                  {isRepostPost && origPost && (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 }}>
+                      <Feather name="repeat" size={10} color={theme.colors.accent.primary} />
+                      <Text variant="caption" color={theme.colors.accent.primary} style={{ fontSize: 10 }}>от {origPost.authorName}</Text>
+                    </View>
+                  )}
+                  {(post.content || origPost?.content) ? <Text variant="caption" numberOfLines={2} color={theme.colors.text.secondary} style={{ marginBottom: 6 }}>{post.content || origPost?.content}</Text> : null}
                   <View style={{ flexDirection: 'row', gap: 12 }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}><Feather name="heart" size={12} color={theme.colors.text.tertiary} /><Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{post.likesCount}</Text></View>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}><Feather name="message-circle" size={12} color={theme.colors.text.tertiary} /><Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{post.commentsCount}</Text></View>
