@@ -35,17 +35,19 @@ jobs:
       - name: Select Xcode 16
         run: |
           # Use Xcode 16 for building (compatible with RN 0.81)
-          # but we'll re-sign with iOS 26 SDK for upload
           if [ -d "/Applications/Xcode_16.4.app" ]; then
             sudo xcode-select -s /Applications/Xcode_16.4.app
+            echo "DEVELOPER_DIR=/Applications/Xcode_16.4.app/Contents/Developer" >> $GITHUB_ENV
             echo "Using Xcode 16.4"
           elif [ -d "/Applications/Xcode_16.2.app" ]; then
             sudo xcode-select -s /Applications/Xcode_16.2.app
+            echo "DEVELOPER_DIR=/Applications/Xcode_16.2.app/Contents/Developer" >> $GITHUB_ENV
             echo "Using Xcode 16.2"
           else
             echo "Available Xcode versions:"
             ls /Applications/ | grep Xcode
-            echo "No Xcode 16 found, trying with default"
+            echo "ERROR: No Xcode 16 found!"
+            exit 1
           fi
           xcodebuild -version
 
