@@ -71,6 +71,10 @@ export default function CreateScreen() {
     const title = repostData ? 'Репост' : editingPostId ? 'Редактировать' : 'Новый пост';
     navigation.setOptions({
       title,
+      headerShown: true,
+      headerStyle: { backgroundColor: theme.colors.background.primary },
+      headerTintColor: theme.colors.text.primary,
+      headerShadowVisible: false,
       headerRight: () => (
         <Pressable
           onPress={() => { handlePostRef.current?.(); }}
