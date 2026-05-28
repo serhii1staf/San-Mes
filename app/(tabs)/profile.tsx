@@ -235,7 +235,7 @@ export default function ProfileScreen() {
         <View style={{ paddingHorizontal: 16, marginTop: -36 }}>
           <View style={{ width: 72, height: 72, borderRadius: 36, overflow: 'hidden', borderWidth: 3, borderColor: theme.colors.background.primary, backgroundColor: theme.isDark ? 'rgba(30,30,30,0.85)' : 'rgba(255,255,255,0.85)', alignItems: 'center', justifyContent: 'center' }}><Avatar emoji={user.emoji} size="lg" /></View>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}>
-            <View style={{ flex: 1 }}><Text variant="body" weight="bold" numberOfLines={1}>{user.displayName}</Text><Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>@{user.username}</Text></View>
+            <View style={{ flex: 1 }}><View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}><Text variant="body" weight="bold" numberOfLines={1}>{user.displayName}</Text>{(user as any).is_verified && <VerifiedBadge size={13} />}{(user as any).badge && <UserBadge badge={(user as any).badge} size="sm" />}</View><Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>@{user.username}</Text></View>
             <Pressable onPress={() => { triggerHaptic('light'); router.push('/profile/edit'); }} style={{ paddingHorizontal: 16, paddingVertical: 7, borderWidth: 1, borderColor: theme.colors.border.medium, borderRadius: 20 }}><Text variant="caption" weight="semibold">Редактировать</Text></Pressable>
           </View>
           <View style={{ flexDirection: 'row', marginTop: 10, gap: 16 }}>

@@ -7,6 +7,8 @@ import { useTheme } from '../../theme';
 import { Text } from '../ui/Text';
 import { Avatar } from '../ui/Avatar';
 import { CachedImage } from '../ui/CachedImage';
+import { VerifiedBadge } from '../ui/VerifiedBadge';
+import { UserBadge } from '../ui/UserBadge';
 import { Post } from '../../types';
 import { triggerHaptic } from '../../utils/haptics';
 import { useAuthStore } from '../../store/authStore';
@@ -118,7 +120,11 @@ export function PostMenuModal({ visible, post, onClose }: PostMenuModalProps) {
               <View style={{ flexDirection: 'row', alignItems: 'center', padding: 12, marginHorizontal: 12, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)', borderRadius: 14, marginBottom: 8 }}>
                 <Avatar emoji={previewEmoji} size="sm" />
                 <View style={{ marginLeft: 10, flex: 1 }}>
-                  <Text variant="caption" weight="semibold" numberOfLines={1}>{previewName}</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                    <Text variant="caption" weight="semibold" numberOfLines={1}>{previewName}</Text>
+                    {post.authorVerified && <VerifiedBadge size={11} />}
+                    {post.authorBadge && <UserBadge badge={post.authorBadge} size="sm" />}
+                  </View>
                   <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>{previewContent}</Text>
                 </View>
                 {previewImage && <CachedImage uri={previewImage} style={{ width: 40, height: 40, borderRadius: 10, marginLeft: 8 }} resizeMode="cover" />}
