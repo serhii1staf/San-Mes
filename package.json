@@ -10,7 +10,8 @@
     "test": "jest --passWithNoTests",
     "lint": "expo lint",
     "ts:check": "tsc --noEmit",
-    "postinstall": "node -e \"const fs=require('fs');const p='node_modules/react-native/third-party-podspecs/fmt.podspec';if(fs.existsSync(p)){let c=fs.readFileSync(p,'utf8');if(!c.includes('FMT_USE_CONSTEVAL')){c=c.replace('GCC_WARN_INHIBIT_ALL_WARNINGS','GCC_PREPROCESSOR_DEFINITIONS\\\" => \\\"$(inherited) FMT_USE_CONSTEVAL=0\\\",\\n    \\\"GCC_WARN_INHIBIT_ALL_WARNINGS');fs.writeFileSync(p,c);console.log('Patched fmt.podspec')}}\""
+    "postinstall": "node -e \"const fs=require('fs');['node_modules/react-native/ReactCommon/fmt/include/fmt/base.h'].forEach(p=>{if(fs.existsSync(p)){let c=fs.readFileSync(p,'utf8');if(c.includes('define FMT_USE_CONSTEVAL 1')){c=c.replace(/#  define FMT_USE_CONSTEVAL 1/g,'#  define FMT_USE_CONSTEVAL 0');fs.writeFileSync(p,c);console.log('Patched:',p)}}});console.log('postinstall: fmt patch check done')\"",
+    "eas-build-post-install": "bash eas-build-post-install.sh"
   },
   "dependencies": {
     "@expo-google-fonts/inter": "^0.2.3",

@@ -32,11 +32,10 @@ jobs:
       - name: Write ASC API Key
         run: echo "${{ secrets.ASC_API_KEY_P8 }}" > ./AuthKey_PN7B743Y4X.p8
 
-      - name: Verify fmt patch applied
-        run: |
-          grep -q "FMT_USE_CONSTEVAL" node_modules/react-native/third-party-podspecs/fmt.podspec && echo "✅ fmt.podspec patched" || echo "❌ patch missing"
+      - name: Make scripts executable
+        run: chmod +x eas-build-post-install.sh
 
-      - name: Build iOS locally
+      - name: Build iOS locally with EAS
         run: eas build --platform ios --profile production --local --output ./San.ipa --non-interactive
 
       - name: Upload to TestFlight

@@ -34,7 +34,8 @@
     },
     "plugins": [
       "expo-router",
-      "expo-font"
+      "expo-font",
+      "./plugins/withFmtPatch"
     ],
     "experiments": {
       "typedRoutes": true
