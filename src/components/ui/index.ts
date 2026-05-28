@@ -6,4 +6,3 @@ export { Input } from './Input';
 export { Logo } from './Logo';
 
 export { CachedImage } from './CachedImage';
-export { ZoomableImage } from './ZoomableImage';
