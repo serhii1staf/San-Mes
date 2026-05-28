@@ -1,9 +1,9 @@
 import React, { useEffect, useCallback, useState, useRef } from 'react';
-import { View, FlatList, RefreshControl, Pressable, StyleSheet, ActivityIndicator, Modal, NativeSyntheticEvent, NativeScrollEvent } from 'react-native';
+import { View, FlatList, RefreshControl, Pressable, StyleSheet, ActivityIndicator, Modal } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
-import { router, useFocusEffect } from 'expo-router';
+import { router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
@@ -98,29 +98,12 @@ export default function FeedScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const { user } = useAuthStore();
-  const { posts, setPosts, isLoading, setLoading, isRefreshing, setRefreshing, toggleLike, feedScrollOffset, setFeedScrollOffset } = useFeedStore();
+  const { isRefreshing, setRefreshing } = useFeedStore();
+  const [posts, setPosts] = useState<Post[]>([]);
   const [menuPost, setMenuPost] = useState<Post | null>(null);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const hasFetched = useRef(false);
-  const flatListRef = useRef<FlatList>(null);
-
-  // Save scroll offset to store (throttled via scrollEventThrottle on FlatList)
-  const handleScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const offset = event.nativeEvent.contentOffset.y;
-    setFeedScrollOffset(offset);
-  }, [setFeedScrollOffset]);
-
-  // Restore scroll position when tab regains focus
-  useFocusEffect(
-    useCallback(() => {
-      if (flatListRef.current && feedScrollOffset > 0) {
-        // Small delay to ensure FlatList is fully rendered before scrolling
-        setTimeout(() => {
-          flatListRef.current?.scrollToOffset({ offset: feedScrollOffset, animated: false });
-        }, 50);
-      }
-    }, [feedScrollOffset])
-  );
 
   const { status: updateStatus, progress: updateProgress, message: updateMessage, checkForUpdate, applyUpdate } = useUpdateStore();
 
@@ -292,7 +275,6 @@ export default function FeedScreen() {
       </View>
 
       <FlatList
-        ref={flatListRef}
         data={posts}
         keyExtractor={(item) => item.id}
         renderItem={renderPost}
@@ -302,8 +284,6 @@ export default function FeedScreen() {
         removeClippedSubviews={true}
         maxToRenderPerBatch={5}
         windowSize={7}
-        onScroll={handleScroll}
-        scrollEventThrottle={16}
         refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={theme.colors.accent.primary} progressViewOffset={headerContentHeight} />}
       />
 

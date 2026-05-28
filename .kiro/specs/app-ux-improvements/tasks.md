@@ -128,8 +128,8 @@
 - [x] 11. Checkpoint — Убедиться что все функции работают корректно
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 12. Git commit и push для OTA-обновления
-  - [-] 12.1 Выполнить git add, commit и push в main для запуска OTA workflow
+- [x] 12. Git commit и push для OTA-обновления
+  - [x] 12.1 Выполнить git add, commit и push в main для запуска OTA workflow
     - `git add -A`
     - `git commit -m "feat: UX improvements — pinch-to-zoom, edit post fix, publish button in header, photo quality 1.0, tab state persistence"`
     - `git push origin main`
