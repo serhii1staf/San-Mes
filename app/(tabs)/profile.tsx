@@ -256,20 +256,38 @@ export default function ProfileScreen() {
             const isRepostPost = post.isRepost;
             return (
             <Pressable key={post.id} onPress={() => router.push({ pathname: '/comments/[id]', params: { id: post.id } })} style={{ flexDirection: 'row', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.75)', borderRadius: 28, padding: 10, marginBottom: 12, borderWidth: 1, borderColor: theme.isDark ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.4)', shadowColor: theme.isDark ? '#000' : '#c8a060', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.12, shadowRadius: 20, elevation: 4, overflow: 'hidden' }}>
-              {/* Left: Image thumbnail (original post's image for reposts) */}
+              {/* Left: Image grid thumbnail */}
               {hasImage ? (
                 <Pressable onPress={() => setViewingImage({ uri: imgs[0], postId: post.id, allImages: imgs })}>
                   <View style={{ width: 100, height: 100, borderRadius: 20, overflow: 'hidden' }}>
-                    <CachedImage uri={imgs[0]} style={{ width: 100, height: 100 }} resizeMode="cover" />
-                    {imgs.length > 1 && (
-                      <View style={{ position: 'absolute', bottom: 4, right: 4, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 8, paddingHorizontal: 5, paddingVertical: 2 }}>
-                        <Text variant="caption" color="#FFFFFF" style={{ fontSize: 9 }}>+{imgs.length - 1}</Text>
+                    {imgs.length === 1 ? (
+                      <CachedImage uri={imgs[0]} style={{ width: 100, height: 100 }} resizeMode="cover" />
+                    ) : imgs.length === 2 ? (
+                      <View style={{ flexDirection: 'row', width: 100, height: 100 }}>
+                        <CachedImage uri={imgs[0]} style={{ width: 49, height: 100 }} resizeMode="cover" />
+                        <View style={{ width: 2 }} />
+                        <CachedImage uri={imgs[1]} style={{ width: 49, height: 100 }} resizeMode="cover" />
+                      </View>
+                    ) : imgs.length === 3 ? (
+                      <View style={{ flexDirection: 'row', width: 100, height: 100 }}>
+                        <CachedImage uri={imgs[0]} style={{ width: 49, height: 100 }} resizeMode="cover" />
+                        <View style={{ width: 2 }} />
+                        <View style={{ width: 49, height: 100 }}>
+                          <CachedImage uri={imgs[1]} style={{ width: 49, height: 49 }} resizeMode="cover" />
+                          <View style={{ height: 2 }} />
+                          <CachedImage uri={imgs[2]} style={{ width: 49, height: 49 }} resizeMode="cover" />
+                        </View>
+                      </View>
+                    ) : (
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', width: 100, height: 100 }}>
+                        {imgs.slice(0, 4).map((imgUri, idx) => (
+                          <CachedImage key={idx} uri={imgUri} style={{ width: 49, height: 49, marginRight: idx % 2 === 0 ? 2 : 0, marginBottom: idx < 2 ? 2 : 0 }} resizeMode="cover" />
+                        ))}
                       </View>
                     )}
                     {isRepostPost && (
                       <View style={{ position: 'absolute', top: 4, left: 4, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 8, paddingHorizontal: 5, paddingVertical: 2, flexDirection: 'row', alignItems: 'center', gap: 2 }}>
                         <Feather name="repeat" size={8} color="#FFFFFF" />
-                        <Text variant="caption" color="#FFFFFF" style={{ fontSize: 8 }}>Репост</Text>
                       </View>
                     )}
                   </View>
@@ -284,7 +302,8 @@ export default function ProfileScreen() {
               <View style={{ flex: 1, marginLeft: (hasImage || isRepostPost) ? 14 : 4, justifyContent: 'center' }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                   <Avatar emoji={user.emoji} size="xs" />
-                  <Text variant="caption" weight="semibold" numberOfLines={1} style={{ flex: 1 }}>{user.displayName}</Text>
+                  <Text variant="caption" weight="semibold" numberOfLines={1}>{user.displayName}</Text>
+                  <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 10 }}>· {formatTimeAgo(post.createdAt)}</Text>
                 </View>
                 {isRepostPost && origPost && (
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 }}>
@@ -294,8 +313,7 @@ export default function ProfileScreen() {
                 )}
                 {isRepostPost && !origPost && <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 }}><Feather name="repeat" size={10} color={theme.colors.accent.primary} /><Text variant="caption" color={theme.colors.accent.primary} style={{ fontSize: 10 }}>Репост</Text></View>}
                 {(post.content || (origPost?.content)) ? <Text variant="caption" numberOfLines={2} color={theme.colors.text.secondary} style={{ marginBottom: 6 }}>{post.content || origPost?.content}</Text> : null}
-                <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{formatTimeAgo(post.createdAt)}</Text>
-                <View style={{ flexDirection: 'row', marginTop: 6, gap: 12 }}>
+                <View style={{ flexDirection: 'row', gap: 12 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}><Feather name="heart" size={12} color={theme.colors.text.tertiary} /><Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{post.likesCount}</Text></View>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}><Feather name="message-circle" size={12} color={theme.colors.text.tertiary} /><Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{post.commentsCount}</Text></View>
                 </View>

@@ -418,21 +418,47 @@ export default function UserProfileScreen() {
               const hasImage = postImages.length > 0;
               return (
               <Pressable key={post.id} onPress={() => router.push({ pathname: '/comments/[id]', params: { id: post.id } })} style={{ flexDirection: 'row', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.75)', borderRadius: 28, padding: 10, marginBottom: 12, borderWidth: 1, borderColor: theme.isDark ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.4)', shadowColor: theme.isDark ? '#000' : '#c8a060', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.12, shadowRadius: 20, elevation: 4, overflow: 'hidden' }}>
-                {/* Left: Post image (square, rounded) — tap opens fullscreen */}
+                {/* Left: Image grid thumbnail */}
                 {hasImage && (
                   <Pressable onPress={() => setViewingImage({ uri: postImages[0], postId: post.id })}>
-                    <CachedImage uri={postImages[0]} style={{ width: 100, height: 100, borderRadius: 20 }} resizeMode="cover" />
+                    <View style={{ width: 100, height: 100, borderRadius: 20, overflow: 'hidden' }}>
+                      {postImages.length === 1 ? (
+                        <CachedImage uri={postImages[0]} style={{ width: 100, height: 100 }} resizeMode="cover" />
+                      ) : postImages.length === 2 ? (
+                        <View style={{ flexDirection: 'row', width: 100, height: 100 }}>
+                          <CachedImage uri={postImages[0]} style={{ width: 49, height: 100 }} resizeMode="cover" />
+                          <View style={{ width: 2 }} />
+                          <CachedImage uri={postImages[1]} style={{ width: 49, height: 100 }} resizeMode="cover" />
+                        </View>
+                      ) : postImages.length === 3 ? (
+                        <View style={{ flexDirection: 'row', width: 100, height: 100 }}>
+                          <CachedImage uri={postImages[0]} style={{ width: 49, height: 100 }} resizeMode="cover" />
+                          <View style={{ width: 2 }} />
+                          <View style={{ width: 49, height: 100 }}>
+                            <CachedImage uri={postImages[1]} style={{ width: 49, height: 49 }} resizeMode="cover" />
+                            <View style={{ height: 2 }} />
+                            <CachedImage uri={postImages[2]} style={{ width: 49, height: 49 }} resizeMode="cover" />
+                          </View>
+                        </View>
+                      ) : (
+                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', width: 100, height: 100 }}>
+                          {postImages.slice(0, 4).map((imgUri: string, idx: number) => (
+                            <CachedImage key={idx} uri={imgUri} style={{ width: 49, height: 49, marginRight: idx % 2 === 0 ? 2 : 0, marginBottom: idx < 2 ? 2 : 0 }} resizeMode="cover" />
+                          ))}
+                        </View>
+                      )}
+                    </View>
                   </Pressable>
                 )}
                 {/* Right: Info */}
                 <View style={{ flex: 1, marginLeft: hasImage ? 14 : 4, justifyContent: 'center' }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                     <Avatar emoji={displayProfile.emoji || '😊'} size="xs" />
-                    <Text variant="caption" weight="semibold" numberOfLines={1} style={{ flex: 1 }}>{displayProfile.display_name}</Text>
+                    <Text variant="caption" weight="semibold" numberOfLines={1}>{displayProfile.display_name}</Text>
+                    <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 10 }}>· {formatTimeAgo(post.createdAt)}</Text>
                   </View>
                   {post.content ? <Text variant="caption" numberOfLines={2} color={theme.colors.text.secondary} style={{ marginBottom: 6 }}>{post.content}</Text> : null}
-                  <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{formatTimeAgo(post.createdAt)}</Text>
-                  <View style={{ flexDirection: 'row', marginTop: 6, gap: 12 }}>
+                  <View style={{ flexDirection: 'row', gap: 12 }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}><Feather name="heart" size={12} color={theme.colors.text.tertiary} /><Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{post.likesCount}</Text></View>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}><Feather name="message-circle" size={12} color={theme.colors.text.tertiary} /><Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{post.commentsCount}</Text></View>
                   </View>
