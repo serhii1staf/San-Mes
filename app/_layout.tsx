@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, ActivityIndicator, StyleSheet, Animated, Text as RNText } from 'react-native';
+import { View, ActivityIndicator, StyleSheet, Animated, Text as RNText, Image as RNImage } from 'react-native';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
@@ -60,9 +60,9 @@ function CustomSplash() {
   return (
     <View style={[styles.loadingContainer, { backgroundColor: theme.colors.background.primary }]}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-        <Animated.Text style={{ fontSize: 36, transform: [{ translateX: logoAnim }], opacity: opacityAnim }} allowFontScaling={false}>
-          🌸
-        </Animated.Text>
+        <Animated.View style={{ transform: [{ translateX: logoAnim }], opacity: opacityAnim }}>
+          <RNImage source={require('../assets/icon.png')} style={{ width: 44, height: 44, borderRadius: 12 }} />
+        </Animated.View>
         <Animated.View style={{ transform: [{ translateX: textAnim }], opacity: opacityAnim }}>
           <RNText style={{ fontSize: 28, fontWeight: '700', color: theme.colors.text.primary }}>San</RNText>
           {user?.displayName && (
@@ -126,7 +126,7 @@ export default function RootLayout() {
             name="profile/edit"
             options={{
               presentation: 'transparentModal',
-              animation: 'slide_from_bottom',
+              animation: 'fade',
               headerShown: false,
               contentStyle: { backgroundColor: 'transparent' },
             }}

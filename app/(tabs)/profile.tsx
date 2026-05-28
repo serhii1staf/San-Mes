@@ -172,7 +172,7 @@ export default function ProfileScreen() {
       <View style={{ position: 'absolute', top: insets.top + 8, left: 16, right: 16, flexDirection: 'row', justifyContent: 'space-between', zIndex: 100 }}>
         <Animated.View style={{ transform: [{ translateX: buttonsTranslateX }] }}>
           <Pressable onPress={() => { triggerHaptic('light'); setShowQR(true); }} style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' }}>
-            <Feather name="maximize" size={16} color="#FFFFFF" />
+            <FontAwesome5 name="qrcode" size={15} color="#FFFFFF" />
           </Pressable>
         </Animated.View>
         <Animated.View style={{ transform: [{ translateX: settingsTranslateX }] }}>

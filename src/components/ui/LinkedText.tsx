@@ -11,6 +11,20 @@ interface LinkedTextProps {
 
 const URL_REGEX = /(https?:\/\/[^\s]+)/g;
 
+function shortenUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    let display = u.hostname.replace('www.', '');
+    if (u.pathname && u.pathname !== '/') {
+      const path = u.pathname.length > 15 ? u.pathname.slice(0, 15) + '...' : u.pathname;
+      display += path;
+    }
+    return display;
+  } catch {
+    return url.length > 30 ? url.slice(0, 30) + '...' : url;
+  }
+}
+
 export function LinkedText({ children, style, color }: LinkedTextProps) {
   const theme = useTheme();
   const textColor = color || theme.colors.text.secondary;
@@ -26,10 +40,10 @@ export function LinkedText({ children, style, color }: LinkedTextProps) {
           return (
             <RNText
               key={i}
-              style={{ color: linkColor, textDecorationLine: 'underline' }}
+              style={{ color: linkColor }}
               onPress={() => openUrl(part)}
             >
-              {part}
+              {shortenUrl(part)}
             </RNText>
           );
         }
