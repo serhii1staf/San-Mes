@@ -1,0 +1,52 @@
+name: Direct iOS Build (No EAS Limit)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 90
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Setup Expo CLI
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Write ASC API Key
+        run: echo "${{ secrets.ASC_API_KEY_P8 }}" > ./AuthKey_PN7B743Y4X.p8
+
+      - name: Build iOS locally (bypasses EAS limit)
+        run: |
+          eas build --platform ios --profile production --local --output ./San.ipa --non-interactive
+        env:
+          EXPO_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          EXPO_ASC_API_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          EXPO_ASC_API_KEY_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          EXPO_ASC_API_KEY_PATH: ./AuthKey_PN7B743Y4X.p8
+
+      - name: Upload to TestFlight
+        if: success()
+        run: |
+          xcrun altool --upload-app \
+            --type ios \
+            --file ./San.ipa \
+            --apiKey PN7B743Y4X \
+            --apiIssuer "8c0acc2b-73e7-4067-884b-790f14bf4b92" \
+            --api-key-path ./AuthKey_PN7B743Y4X.p8
