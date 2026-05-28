@@ -1,9 +1,9 @@
-import React, { useEffect, useCallback, useState, useMemo, useRef } from 'react';
-import { View, FlatList, RefreshControl, Pressable, StyleSheet, ActivityIndicator, Modal } from 'react-native';
+import React, { useEffect, useCallback, useState, useRef } from 'react';
+import { View, FlatList, RefreshControl, Pressable, StyleSheet, ActivityIndicator, Modal, NativeSyntheticEvent, NativeScrollEvent } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
@@ -98,49 +98,80 @@ export default function FeedScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const { user } = useAuthStore();
-  const { isRefreshing, setRefreshing } = useFeedStore();
+  const { posts, setPosts, isLoading, setLoading, isRefreshing, setRefreshing, toggleLike, feedScrollOffset, setFeedScrollOffset } = useFeedStore();
   const [menuPost, setMenuPost] = useState<Post | null>(null);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
-  const [posts, setPosts] = useState<Post[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
   const hasFetched = useRef(false);
+  const flatListRef = useRef<FlatList>(null);
+
+  // Save scroll offset to store (throttled via scrollEventThrottle on FlatList)
+  const handleScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const offset = event.nativeEvent.contentOffset.y;
+    setFeedScrollOffset(offset);
+  }, [setFeedScrollOffset]);
+
+  // Restore scroll position when tab regains focus
+  useFocusEffect(
+    useCallback(() => {
+      if (flatListRef.current && feedScrollOffset > 0) {
+        // Small delay to ensure FlatList is fully rendered before scrolling
+        setTimeout(() => {
+          flatListRef.current?.scrollToOffset({ offset: feedScrollOffset, animated: false });
+        }, 50);
+      }
+    }, [feedScrollOffset])
+  );
 
   const { status: updateStatus, progress: updateProgress, message: updateMessage, checkForUpdate, applyUpdate } = useUpdateStore();
 
-  // 1. Load from cache immediately on mount
+  // On first mount: if store is empty — load from cache then from Supabase
+  // If store already has posts — display instantly without network request
   useEffect(() => {
+    if (posts.length > 0) {
+      // Store already has data — show instantly, no fetch needed
+      setLoading(false);
+      return;
+    }
+
+    // Store is empty — try loading from cache first
     AsyncStorage.getItem(FEED_CACHE_KEY).then((cached) => {
       if (cached) {
         try {
           const parsed = JSON.parse(cached);
           if (Array.isArray(parsed) && parsed.length > 0) {
             setPosts(parsed);
-            setIsLoading(false);
+            setLoading(false);
           }
         } catch {}
       }
     }).catch(() => {});
   }, []);
 
-  // 2. Fetch fresh data from Supabase (once)
+  // Fetch fresh data from Supabase (once, only if store was empty)
   useEffect(() => {
     if (hasFetched.current) return;
     hasFetched.current = true;
 
-    loadFeed();
+    if (posts.length === 0) {
+      loadFeed();
+    }
     checkForUpdate();
   }, []);
 
-  // Safety timeout
+  // Safety timeout to hide loading state
   useEffect(() => {
-    const t = setTimeout(() => setIsLoading(false), 1500);
+    const t = setTimeout(() => setLoading(false), 1500);
     return () => clearTimeout(t);
   }, []);
 
   const loadFeed = useCallback(async () => {
     try {
       const { posts: rawPosts, error } = await getPosts(FEED_LIMIT, 0);
-      if (error || !rawPosts) return;
+      if (error || !rawPosts) {
+        // Network error: preserve existing store data, hide loading
+        setLoading(false);
+        return;
+      }
 
       const postsById: Record<string, any> = {};
       for (const p of rawPosts) postsById[p.id] = p;
@@ -151,29 +182,54 @@ export default function FeedScreen() {
         if (post) mapped.push(post);
       }
 
+      // Write to Zustand store (primary data source)
       setPosts(mapped);
-      setIsLoading(false);
+      setLoading(false);
 
-      // Save to cache (non-blocking)
+      // Save to AsyncStorage cache (non-blocking)
       AsyncStorage.setItem(FEED_CACHE_KEY, JSON.stringify(mapped)).catch(() => {});
-    } catch {}
-  }, []);
+    } catch {
+      // Network error: preserve existing store data, hide loading/refreshing
+      setLoading(false);
+    }
+  }, [setPosts, setLoading]);
 
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
-    await loadFeed();
+    try {
+      const { posts: rawPosts, error } = await getPosts(FEED_LIMIT, 0);
+      if (error || !rawPosts) {
+        // Network error: preserve existing data from store, hide refresh indicator
+        setRefreshing(false);
+        return;
+      }
+
+      const postsById: Record<string, any> = {};
+      for (const p of rawPosts) postsById[p.id] = p;
+
+      const mapped: Post[] = [];
+      for (const p of rawPosts) {
+        const post = mapRawPost(p, postsById);
+        if (post) mapped.push(post);
+      }
+
+      // Update store with fresh data
+      setPosts(mapped);
+      // Save to cache (non-blocking)
+      AsyncStorage.setItem(FEED_CACHE_KEY, JSON.stringify(mapped)).catch(() => {});
+    } catch {
+      // Network error: preserve existing data from store
+    }
     setRefreshing(false);
-  }, [loadFeed]);
+  }, [setPosts, setRefreshing]);
 
   const handleToggleLike = useCallback((postId: string) => {
     if (!user?.id) return;
-    // Optimistic update
-    setPosts(prev => prev.map(p =>
-      p.id === postId ? { ...p, isLiked: !p.isLiked, likesCount: p.isLiked ? p.likesCount - 1 : p.likesCount + 1 } : p
-    ));
+    // Optimistic update via store
+    toggleLike(postId);
     // Send to server (fire and forget)
     apiToggleLike(user.id, postId).catch(() => {});
-  }, [user?.id]);
+  }, [user?.id, toggleLike]);
 
   const renderPost = useCallback(({ item }: { item: Post }) => (
     <View>
@@ -236,6 +292,7 @@ export default function FeedScreen() {
       </View>
 
       <FlatList
+        ref={flatListRef}
         data={posts}
         keyExtractor={(item) => item.id}
         renderItem={renderPost}
@@ -245,6 +302,8 @@ export default function FeedScreen() {
         removeClippedSubviews={true}
         maxToRenderPerBatch={5}
         windowSize={7}
+        onScroll={handleScroll}
+        scrollEventThrottle={16}
         refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={theme.colors.accent.primary} progressViewOffset={headerContentHeight} />}
       />
 

@@ -1,12 +1,13 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { View, Pressable, ActivityIndicator, Dimensions, Image, Animated, Modal, Share, Alert } from 'react-native';
+import { View, Pressable, ActivityIndicator, Dimensions, Image, Animated, Modal, Share, Alert, RefreshControl } from 'react-native';
 import { Feather, FontAwesome5 } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../../src/theme';
-import { Text, Avatar } from '../../src/components/ui';
+import { Text, Avatar, ZoomableImage } from '../../src/components/ui';
 import { LinkedText } from '../../src/components/ui/LinkedText';
 import { CachedImage } from '../../src/components/ui/CachedImage';
 import { useAuthStore } from '../../src/store';
@@ -66,26 +67,32 @@ export default function ProfileScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const { user } = useAuthStore();
+  const { profilePosts: userPosts, setProfilePosts, profileScrollOffset, setProfileScrollOffset } = useFeedStore();
   const [activeTab, setActiveTab] = useState<TabName>('posts');
   const [followCounts, setFollowCounts] = useState({ followers: 0, following: 0 });
-  const [userPosts, setUserPosts] = useState<Post[]>([]);
   const [showQR, setShowQR] = useState(false);
   const [viewingImage, setViewingImage] = useState<{ uri: string; postId: string } | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   const hasFetched = useRef(false);
+  const scrollViewRef = useRef<any>(null);
+  const hasRestoredScroll = useRef(false);
 
-  // 1. Load from cache on mount
+  // 1. On mount: if store is empty, load from cache then fetch from Supabase
   useEffect(() => {
+    if (userPosts.length > 0) return; // Store already has data — show instantly
     AsyncStorage.getItem(MY_POSTS_CACHE_KEY).then((cached) => {
       if (cached) {
         try {
           const parsed = JSON.parse(cached);
-          if (Array.isArray(parsed)) setUserPosts(parsed);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setProfilePosts(parsed);
+          }
         } catch {}
       }
     }).catch(() => {});
   }, []);
 
-  // 2. Fetch fresh data once
+  // 2. Fetch fresh data once (if not already fetched)
   useEffect(() => {
     if (hasFetched.current || !user?.id) return;
     hasFetched.current = true;
@@ -103,7 +110,7 @@ export default function ProfileScreen() {
         const parsedImages = parseImageUrls(p.image_url);
         return { id: p.id, authorId: p.author_id, authorName: user.displayName || '', authorUsername: user.username || '', authorEmoji: user.emoji || '😊', content: repostInfo.isRepost ? (repostInfo.comment || '') : (p.content || ''), imageUrl: parsedImages[0] || undefined, imageUrls: parsedImages.length > 0 ? parsedImages : undefined, likesCount: p.likes_count || 0, commentsCount: p.comments_count || 0, sharesCount: p.shares_count || 0, isLiked: false, isBookmarked: false, createdAt: p.created_at, isRepost: repostInfo.isRepost };
       });
-      setUserPosts(mapped);
+      setProfilePosts(mapped);
       AsyncStorage.setItem(MY_POSTS_CACHE_KEY, JSON.stringify(mapped)).catch(() => {});
     } catch {}
   }, [user?.id]);
@@ -112,6 +119,29 @@ export default function ProfileScreen() {
     if (!user?.id) return;
     try { const counts = await getFollowCounts(user.id); setFollowCounts(counts); } catch {}
   }, [user?.id]);
+
+  // Restore scroll position when tab regains focus
+  useFocusEffect(
+    useCallback(() => {
+      if (profileScrollOffset > 0 && scrollViewRef.current && !hasRestoredScroll.current) {
+        // Small delay to ensure layout is ready
+        const timer = setTimeout(() => {
+          (scrollViewRef.current as any)?.scrollTo({ y: profileScrollOffset, animated: false });
+        }, 50);
+        hasRestoredScroll.current = true;
+        return () => clearTimeout(timer);
+      }
+      hasRestoredScroll.current = false;
+    }, [profileScrollOffset])
+  );
+
+  // Pull-to-refresh handler
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await loadMyPosts();
+    await loadFollows();
+    setRefreshing(false);
+  }, [loadMyPosts, loadFollows]);
 
   if (!user) return <View style={{ flex: 1, backgroundColor: theme.colors.background.primary, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator size="large" color={theme.colors.accent.primary} /></View>;
 
@@ -133,7 +163,7 @@ export default function ProfileScreen() {
         <Animated.View style={{ transform: [{ translateX: buttonsTranslateX }] }}><Pressable onPress={() => { triggerHaptic('light'); setShowQR(true); }} style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' }}><FontAwesome5 name="qrcode" size={15} color="#FFFFFF" /></Pressable></Animated.View>
         <Animated.View style={{ transform: [{ translateX: settingsTranslateX }] }}><Pressable onPress={() => { triggerHaptic('light'); router.push('/settings'); }} style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' }}><Feather name="settings" size={16} color="#FFFFFF" /></Pressable></Animated.View>
       </View>
-      <Animated.ScrollView showsVerticalScrollIndicator={false} bounces={false} onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true })} scrollEventThrottle={16} contentContainerStyle={{ paddingBottom: 100 }}>
+      <Animated.ScrollView ref={scrollViewRef} showsVerticalScrollIndicator={false} bounces={true} onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true, listener: (event: any) => { const offsetY = event.nativeEvent.contentOffset.y; setProfileScrollOffset(offsetY); } })} scrollEventThrottle={16} contentContainerStyle={{ paddingBottom: 100 }} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.colors.accent.primary} />}>
         <View style={{ height: 150, backgroundColor: theme.colors.accent.primary + '20' }}>{bannerUrl ? <CachedImage uri={bannerUrl} style={{ width: '100%', height: '100%' }} resizeMode="cover" /> : null}<LinearGradient colors={['transparent', theme.colors.background.primary]} style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 50 }} /></View>
         <View style={{ paddingHorizontal: 16, marginTop: -36 }}>
           <View style={{ width: 72, height: 72, borderRadius: 36, overflow: 'hidden', borderWidth: 3, borderColor: theme.colors.background.primary, backgroundColor: theme.isDark ? 'rgba(30,30,30,0.85)' : 'rgba(255,255,255,0.85)', alignItems: 'center', justifyContent: 'center' }}><Avatar emoji={user.emoji} size="lg" /></View>
@@ -199,10 +229,10 @@ export default function ProfileScreen() {
           <Pressable onPress={() => setViewingImage(null)} style={{ position: 'absolute', top: insets.top + 12, right: 16, zIndex: 10, width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' }}>
             <Feather name="x" size={20} color="#FFFFFF" />
           </Pressable>
-          {/* Image — full width */}
-          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-            {viewingImage && <CachedImage uri={viewingImage.uri} style={{ width: SCREEN_WIDTH - 32, height: SCREEN_WIDTH - 32, borderRadius: 16 }} resizeMode="contain" />}
-          </View>
+          {/* Image — full width, zoomable */}
+          <GestureHandlerRootView style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+            {viewingImage && <ZoomableImage uri={viewingImage.uri} width={SCREEN_WIDTH} height={SCREEN_WIDTH} />}
+          </GestureHandlerRootView>
           {/* Bottom actions */}
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 24, paddingBottom: insets.bottom + 20 }}>
             <Pressable onPress={() => { setViewingImage(null); useFeedStore.getState().setEditingPost({ id: viewingImage!.postId, content: userPosts.find(p => p.id === viewingImage!.postId)?.content || '', imageUrl: viewingImage!.uri }); router.push('/(tabs)/create'); }} style={{ alignItems: 'center' }}>

@@ -7,8 +7,7 @@ export default function TabLayout() {
   return (
     <Tabs
       tabBar={(props) => <CustomTabBar {...props} />}
-      screenOptions={{ headerShown: false }}
-      sceneContainerStyle={{ backgroundColor: 'transparent' }}
+      screenOptions={{ headerShown: false, sceneStyle: { backgroundColor: 'transparent' } }}
     >
       <Tabs.Screen
         name="index"
@@ -31,7 +30,8 @@ export default function TabLayout() {
       <Tabs.Screen
         name="create"
         options={{
-          title: 'Create',
+          title: 'Новый пост',
+          headerShown: true,
           tabBarIcon: ({ color, size }) => (
             <Feather name="plus-circle" size={size} color={color} />
           ),

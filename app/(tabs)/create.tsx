@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { View, TextInput, Pressable, ViewStyle, ScrollView, Alert, Image } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { View, TextInput, Pressable, ViewStyle, ScrollView, Alert, Image, ActivityIndicator } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
+import { useNavigation } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
@@ -15,12 +15,13 @@ import { useEntityStore } from '../../src/services/entityStore';
 
 const MAX_CHARS = 500;
 const MAX_IMAGES = 6;
+const MAX_IMAGE_SIZE_BYTES = 20 * 1024 * 1024; // 20 MB
 
 type Audience = 'public' | 'friends';
 
 export default function CreateScreen() {
   const theme = useTheme();
-  const insets = useSafeAreaInsets();
+  const navigation = useNavigation();
   const { user } = useAuthStore();
   const { pendingRepostId, setPendingRepost, editingPost, setEditingPost } = useFeedStore();
   const [content, setContent] = useState('');
@@ -63,6 +64,34 @@ export default function CreateScreen() {
     }
   }, [pendingRepostId]);
 
+  const canPost = !!(content.trim() || imageUris.length > 0 || repostData);
+
+  // Set headerRight with publish button and dynamic title
+  useEffect(() => {
+    const title = repostData ? 'Репост' : editingPostId ? 'Редактировать' : 'Новый пост';
+    navigation.setOptions({
+      title,
+      headerRight: () => (
+        <Pressable
+          onPress={() => { handlePostRef.current?.(); }}
+          disabled={!canPost || isPosting}
+          style={{ opacity: (!canPost || isPosting) ? 0.4 : 1, marginRight: 4 }}
+        >
+          {isPosting ? (
+            <ActivityIndicator size="small" color={theme.colors.accent.primary} />
+          ) : (
+            <Text variant="body" weight="semibold" color={theme.colors.accent.primary}>
+              Опубликовать
+            </Text>
+          )}
+        </Pressable>
+      ),
+    });
+  }, [navigation, canPost, isPosting, theme, repostData, editingPostId]);
+
+  // Ref to hold the latest handlePost function for headerRight access
+  const handlePostRef = React.useRef<(() => void) | null>(null);
+
   const pickImages = async () => {
     if (imageUris.length >= MAX_IMAGES) {
       Alert.alert('Лимит', `Максимум ${MAX_IMAGES} изображений`);
@@ -80,12 +109,21 @@ export default function CreateScreen() {
       allowsEditing: false,
       allowsMultipleSelection: true,
       selectionLimit: MAX_IMAGES - imageUris.length,
-      quality: 0.8,
+      quality: 1.0,
     });
 
     if (!result.canceled && result.assets.length > 0) {
-      const newUris = result.assets.map(a => a.uri);
-      setImageUris(prev => [...prev, ...newUris].slice(0, MAX_IMAGES));
+      const validAssets = result.assets.filter(asset => {
+        if (asset.fileSize && asset.fileSize > MAX_IMAGE_SIZE_BYTES) {
+          Alert.alert('Файл слишком большой', `Максимальный размер изображения — 20 МБ. Выберите другое изображение.`);
+          return false;
+        }
+        return true;
+      });
+      if (validAssets.length > 0) {
+        const newUris = validAssets.map(a => a.uri);
+        setImageUris(prev => [...prev, ...newUris].slice(0, MAX_IMAGES));
+      }
     }
   };
 
@@ -103,11 +141,16 @@ export default function CreateScreen() {
 
     const result = await ImagePicker.launchCameraAsync({
       allowsEditing: false,
-      quality: 0.8,
+      quality: 1.0,
     });
 
     if (!result.canceled && result.assets[0]) {
-      setImageUris(prev => [...prev, result.assets[0].uri].slice(0, MAX_IMAGES));
+      const asset = result.assets[0];
+      if (asset.fileSize && asset.fileSize > MAX_IMAGE_SIZE_BYTES) {
+        Alert.alert('Файл слишком большой', `Максимальный размер изображения — 20 МБ. Попробуйте сделать другое фото.`);
+        return;
+      }
+      setImageUris(prev => [...prev, asset.uri].slice(0, MAX_IMAGES));
     }
   };
 
@@ -116,11 +159,13 @@ export default function CreateScreen() {
       const { url, error } = await uploadPostImage(uri);
       if (error) {
         console.log('Upload error:', error);
+        Alert.alert('Ошибка загрузки', `Не удалось загрузить изображение: ${error}`);
         return null;
       }
       return url;
-    } catch (e) {
+    } catch (e: any) {
       console.log('Upload failed:', e);
+      Alert.alert('Ошибка загрузки', `Не удалось загрузить изображение: ${e?.message || 'Неизвестная ошибка'}`);
       return null;
     }
   };
@@ -148,6 +193,94 @@ export default function CreateScreen() {
         return;
       }
 
+      // ===== EDITING MODE: update existing post =====
+      if (editingPostId) {
+        const postContent = content.trim() || '';
+
+        try {
+          let imageUrl: string | undefined;
+
+          if (imageUris.length > 0) {
+            setImageUploading(true);
+            const uploadedUrls: string[] = [];
+            for (const uri of imageUris) {
+              if (uri.startsWith('https://')) {
+                // Existing remote URL — use as-is without re-uploading
+                uploadedUrls.push(uri);
+              } else {
+                // Local file (file://) — upload via uploadPostImage
+                const uploadedUrl = await uploadImage(uri);
+                if (uploadedUrl) {
+                  uploadedUrls.push(uploadedUrl);
+                }
+              }
+            }
+            setImageUploading(false);
+            if (uploadedUrls.length > 0) {
+              imageUrl = joinImageUrls(uploadedUrls);
+            }
+          }
+
+          const { data, error } = await supabase
+            .from('posts')
+            .update({ content: postContent, image_url: imageUrl || null })
+            .eq('id', editingPostId)
+            .select()
+            .single();
+
+          if (error) {
+            Alert.alert('Ошибка', error.message);
+            // Do NOT clear the form on error
+            return;
+          }
+
+          // Build updated post data for cache and store
+          const { parseImageUrls } = await import('../../src/lib/supabase');
+          const parsedImages = parseImageUrls(data.image_url);
+          const updatedPostData = {
+            content: data.content || '',
+            imageUrl: parsedImages[0] || undefined,
+            imageUrls: parsedImages.length > 0 ? parsedImages : undefined,
+          };
+
+          // Update AsyncStorage cache — find post by id and replace data
+          const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+
+          const feedCached = await AsyncStorage.getItem('@san:feed_posts');
+          if (feedCached) {
+            const feedPosts = JSON.parse(feedCached);
+            const updatedFeed = feedPosts.map((p: any) =>
+              p.id === editingPostId ? { ...p, ...updatedPostData } : p
+            );
+            await AsyncStorage.setItem('@san:feed_posts', JSON.stringify(updatedFeed));
+          }
+
+          const myCached = await AsyncStorage.getItem('@san:my_posts');
+          if (myCached) {
+            const myPosts = JSON.parse(myCached);
+            const updatedMy = myPosts.map((p: any) =>
+              p.id === editingPostId ? { ...p, ...updatedPostData } : p
+            );
+            await AsyncStorage.setItem('@san:my_posts', JSON.stringify(updatedMy));
+          }
+
+          // Update Zustand store
+          useFeedStore.getState().updatePost(editingPostId, updatedPostData);
+
+          // Reset state and navigate back
+          setContent('');
+          setImageUris([]);
+          setEditingPostId(null);
+          router.back();
+        } catch (e: any) {
+          setImageUploading(false);
+          Alert.alert('Ошибка', e?.message || 'Не удалось обновить пост');
+          // Do NOT clear the form on error
+        }
+        return;
+      }
+
+      // ===== CREATE MODE: create new post =====
       const { isOnline } = useConnectivityStore.getState();
       const tempId = generateTempId();
       const postContent = content.trim() || '';
@@ -268,23 +401,17 @@ export default function CreateScreen() {
       ? theme.colors.status.warning
       : theme.colors.text.tertiary;
 
-  const canPost = content.trim() || imageUris.length > 0 || repostData;
+  // Keep handlePostRef in sync with latest handlePost
+  handlePostRef.current = handlePost;
 
   const containerStyle: ViewStyle = {
     flex: 1,
     backgroundColor: theme.colors.background.primary,
-    paddingTop: insets.top,
   };
 
   return (
     <ScrollView style={containerStyle} contentContainerStyle={{ paddingBottom: 100 }}>
       <View style={{ paddingHorizontal: theme.spacing.lg, paddingTop: theme.spacing.base }}>
-        <View>
-          <Text variant="subheading" weight="bold" style={{ marginBottom: theme.spacing.lg }}>
-            {repostData ? 'Репост' : editingPostId ? 'Редактировать' : 'Новый пост'}
-          </Text>
-        </View>
-
         {/* Repost preview */}
         {repostData && (
           <View style={{ marginBottom: theme.spacing.base, borderWidth: 1, borderColor: theme.colors.border.light, borderRadius: 14, overflow: 'hidden', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)' }}>
@@ -465,25 +592,6 @@ export default function CreateScreen() {
               </Text>
             </Pressable>
           </View>
-        </View>
-
-        <View style={{ marginTop: theme.spacing.xl }}>
-          <Pressable
-            onPress={handlePost}
-            style={{
-              backgroundColor: canPost
-                ? theme.colors.accent.primary
-                : theme.colors.border.light,
-              borderRadius: theme.borderRadius.pill,
-              paddingVertical: theme.spacing.base,
-              alignItems: 'center',
-            }}
-            disabled={isPosting || !canPost}
-          >
-            <Text variant="body" weight="semibold" color={theme.colors.text.inverse}>
-              {imageUploading ? 'Загрузка фото...' : isPosting ? 'Публикация...' : 'Опубликовать'}
-            </Text>
-          </Pressable>
         </View>
       </View>
     </ScrollView>
