@@ -1,14 +1,12 @@
-name: Direct iOS Build (No EAS Limit)
+name: iOS Build (EAS)
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: macos-26
-    timeout-minutes: 90
-    env:
-      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
 
     steps:
       - name: Checkout
@@ -23,7 +21,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Setup Expo CLI
+      - name: Setup Expo
         uses: expo/expo-github-action@v8
         with:
           eas-version: latest
@@ -32,118 +30,11 @@ jobs:
       - name: Write ASC API Key
         run: echo "${{ secrets.ASC_API_KEY_P8 }}" > ./AuthKey_PN7B743Y4X.p8
 
-      - name: Prebuild iOS project
-        run: npx expo prebuild --platform ios --clean --no-install
+      - name: Build iOS (EAS Cloud)
+        run: eas build --platform ios --profile production --non-interactive
         env:
-          CI: '1'
+          EXPO_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
-      - name: Install CocoaPods
-        run: cd ios && pod install
-
-      - name: Patch fmt for Xcode 26 (disable FMT_USE_CONSTEVAL)
-        run: |
-          FMT_BASE="ios/Pods/fmt/include/fmt/base.h"
-          if [ -f "$FMT_BASE" ]; then
-            sed -i '' 's/#  define FMT_USE_CONSTEVAL 1/#  define FMT_USE_CONSTEVAL 0/' "$FMT_BASE"
-            echo "✅ Patched fmt/base.h (FMT_USE_CONSTEVAL=0)"
-          else
-            echo "⚠️ fmt/base.h not found, trying format.h..."
-            FMT_FORMAT="ios/Pods/fmt/include/fmt/format.h"
-            if [ -f "$FMT_FORMAT" ]; then
-              sed -i '' 's/#  define FMT_USE_CONSTEVAL 1/#  define FMT_USE_CONSTEVAL 0/' "$FMT_FORMAT"
-              echo "✅ Patched fmt/format.h"
-            fi
-          fi
-          # Also patch core.h if it exists (older fmt versions)
-          FMT_CORE="ios/Pods/fmt/include/fmt/core.h"
-          if [ -f "$FMT_CORE" ]; then
-            sed -i '' 's/#  define FMT_USE_CONSTEVAL 1/#  define FMT_USE_CONSTEVAL 0/' "$FMT_CORE"
-          fi
-
-      - name: Setup signing from EAS
-        run: |
-          # EAS build --local handles credentials internally
-          # We use it just for credential setup, then build manually
-          # Actually, let's use eas build --local but with the patched Pods
-          echo "Credentials will be handled by eas build --local"
-
-      - name: Build with patched fmt
-        run: |
-          # Since eas build --local recreates the ios folder, we need a different approach
-          # We'll add a post_install hook to the Podfile that patches fmt
-          
-          # First, add the patch to the generated Podfile
-          PODFILE="ios/Podfile"
-          if [ -f "$PODFILE" ]; then
-            # Add fmt patch to post_install
-            cat >> "$PODFILE" << 'PATCH'
-
-# Xcode 26 fmt workaround
-post_install do |installer|
-  fmt_base = File.join(installer.sandbox.root, 'fmt', 'include', 'fmt', 'base.h')
-  if File.exist?(fmt_base)
-    content = File.read(fmt_base)
-    patched = content.gsub('#  define FMT_USE_CONSTEVAL 1', '#  define FMT_USE_CONSTEVAL 0')
-    File.write(fmt_base, patched)
-    Pod::UI.puts 'Patched fmt for Xcode 26'
-  end
-end
-PATCH
-            echo "✅ Added fmt patch to Podfile"
-          fi
-          
-          # Now run eas build --local which will use the patched Podfile
-          # But wait - eas build --local regenerates everything...
-          # The only way is to use the EAS build hook
-          
-          # Let's try a different approach: set GCC_PREPROCESSOR_DEFINITIONS
-          # to disable FMT_USE_CONSTEVAL at compile time
-          cd ios
-          xcodebuild -workspace San.xcworkspace \
-            -scheme San \
-            -configuration Release \
-            -archivePath ../San.xcarchive \
-            -destination 'generic/platform=iOS' \
-            GCC_PREPROCESSOR_DEFINITIONS='$(inherited) FMT_USE_CONSTEVAL=0' \
-            archive || {
-              echo "Build failed, trying with CLANG flag..."
-              xcodebuild -workspace San.xcworkspace \
-                -scheme San \
-                -configuration Release \
-                -archivePath ../San.xcarchive \
-                -destination 'generic/platform=iOS' \
-                OTHER_CPLUSPLUSFLAGS='$(inherited) -DFMT_USE_CONSTEVAL=0' \
-                archive
-            }
-
-      - name: Export IPA
+      - name: Submit to TestFlight
         if: success()
-        run: |
-          cat > ExportOptions.plist << EOF
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>method</key>
-            <string>app-store</string>
-            <key>teamID</key>
-            <string>${{ secrets.APPLE_TEAM_ID }}</string>
-          </dict>
-          </plist>
-          EOF
-          
-          xcodebuild -exportArchive \
-            -archivePath San.xcarchive \
-            -exportOptionsPlist ExportOptions.plist \
-            -exportPath ./export
-
-      - name: Upload to TestFlight
-        if: success()
-        run: |
-          mkdir -p ~/private_keys
-          cp ./AuthKey_PN7B743Y4X.p8 ~/private_keys/AuthKey_PN7B743Y4X.p8
-          xcrun altool --upload-app \
-            --type ios \
-            --file ./export/San.ipa \
-            --apiKey PN7B743Y4X \
-            --apiIssuer "8c0acc2b-73e7-4067-884b-790f14bf4b92"
+        run: eas submit --platform ios --profile production --latest --non-interactive
