@@ -73,6 +73,11 @@ export async function syncFeed(userId?: string): Promise<void> {
 
     // Persist to cache
     await cacheFeed(localPosts);
+
+    // Also persist all profiles to batch cache for hydration
+    const { cacheAllProfiles } = await import('./cacheService');
+    const allProfiles = Object.values(store.profiles);
+    await cacheAllProfiles(allProfiles);
   } catch (e) {
     console.warn('[SyncService] syncFeed failed:', e);
   }

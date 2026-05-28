@@ -129,12 +129,12 @@ export default function FeedScreen() {
     return result;
   }, [posts, feedIds, profiles, likes, user?.id]);
 
-  // On mount: render immediately from store; trigger syncFeed() in background if online
+  // On mount: always trigger syncFeed (it handles errors gracefully)
   useEffect(() => {
-    if (isHydrated && isOnline) {
+    if (isHydrated) {
       syncFeed().catch(() => {});
     }
-  }, [isHydrated, isOnline]);
+  }, [isHydrated]);
 
   // Once hydrated and we have data (or after safety timeout), stop loading
   useEffect(() => {

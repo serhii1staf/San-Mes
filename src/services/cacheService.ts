@@ -56,6 +56,7 @@ export const KEYS = {
   likes: (userId: string) => `@san:likes:${userId}`,
   follows: (userId: string) => `@san:follows:${userId}`,
   mutations: '@san:mutation_queue',
+  allProfiles: '@san:all_profiles',
 } as const;
 
 export const MAX_FEED_POSTS = 200;
@@ -147,4 +148,15 @@ export async function cacheFollows(userId: string, followingIds: string[]): Prom
 
 export async function getCachedFollows(userId: string): Promise<string[]> {
   return cacheGet<string[]>(KEYS.follows(userId), []);
+}
+
+
+// ─── Batch Profiles Cache ────────────────────────────────────────────────────
+
+export async function cacheAllProfiles(profiles: LocalProfile[]): Promise<void> {
+  await cacheSet(KEYS.allProfiles, profiles);
+}
+
+export async function getCachedAllProfiles(): Promise<LocalProfile[]> {
+  return cacheGet<LocalProfile[]>(KEYS.allProfiles, []);
 }

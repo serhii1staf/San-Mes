@@ -1,9 +1,6 @@
 import { create } from 'zustand';
 
 import {
-  getCachedFeed,
-  getCachedConversations,
-  getCachedLikes,
   cacheFeed,
   cacheProfile,
   cacheLikes,
@@ -92,10 +89,11 @@ export const useEntityStore = create<EntityState>()((set, get) => ({
 
   hydrate: async () => {
     try {
-      const [feed, conversations, likes] = await Promise.all([
+      const { getCachedFeed, getCachedConversations, getCachedLikes, getCachedAllProfiles } = await import('./cacheService');
+      const [feed, conversations, profiles] = await Promise.all([
         getCachedFeed(),
         getCachedConversations(),
-        getCachedLikes('__current__'),
+        getCachedAllProfiles(),
       ]);
 
       const postsMap: Record<string, LocalPost> = {};
@@ -108,7 +106,14 @@ export const useEntityStore = create<EntityState>()((set, get) => ({
         }
       }
 
-      set({ posts: postsMap, feedIds, conversations, isHydrated: true });
+      const profilesMap: Record<string, LocalProfile> = {};
+      for (const profile of profiles) {
+        if (isValidProfile(profile)) {
+          profilesMap[profile.id] = profile;
+        }
+      }
+
+      set({ posts: postsMap, feedIds, conversations, profiles: profilesMap, isHydrated: true });
     } catch (e) {
       console.warn('[EntityStore] Hydration failed:', e);
       set({ isHydrated: true });
