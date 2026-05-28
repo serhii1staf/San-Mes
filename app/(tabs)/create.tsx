@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { View, TextInput, Pressable, ViewStyle, ScrollView, Alert, Image, ActivityIndicator } from 'react-native';
+import { View, TextInput, Pressable, ViewStyle, ScrollView, Alert, Image, ActivityIndicator, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useNavigation } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { LinearGradient } from 'expo-linear-gradient';
 import * as ImagePicker from 'expo-image-picker';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
@@ -22,6 +24,7 @@ type Audience = 'public' | 'friends';
 export default function CreateScreen() {
   const theme = useTheme();
   const navigation = useNavigation();
+  const insets = useSafeAreaInsets();
   const { user } = useAuthStore();
   const { pendingRepostId, setPendingRepost, editingPost, setEditingPost } = useFeedStore();
   const [content, setContent] = useState('');
@@ -66,32 +69,12 @@ export default function CreateScreen() {
 
   const canPost = !!(content.trim() || imageUris.length > 0 || repostData);
 
-  // Set headerRight with publish button and dynamic title
+  // Hide default header — we render our own gradient header
   useEffect(() => {
-    const title = repostData ? 'Репост' : editingPostId ? 'Редактировать' : 'Новый пост';
     navigation.setOptions({
-      title,
-      headerShown: true,
-      headerStyle: { backgroundColor: theme.colors.background.primary },
-      headerTintColor: theme.colors.text.primary,
-      headerShadowVisible: false,
-      headerRight: () => (
-        <Pressable
-          onPress={() => { handlePostRef.current?.(); }}
-          disabled={!canPost || isPosting}
-          style={{ opacity: (!canPost || isPosting) ? 0.4 : 1, marginRight: 4 }}
-        >
-          {isPosting ? (
-            <ActivityIndicator size="small" color={theme.colors.accent.primary} />
-          ) : (
-            <Text variant="body" weight="semibold" color={theme.colors.accent.primary}>
-              Опубликовать
-            </Text>
-          )}
-        </Pressable>
-      ),
+      headerShown: false,
     });
-  }, [navigation, canPost, isPosting, theme, repostData, editingPostId]);
+  }, [navigation]);
 
   // Ref to hold the latest handlePost function for headerRight access
   const handlePostRef = React.useRef<(() => void) | null>(null);
@@ -413,9 +396,40 @@ export default function CreateScreen() {
     backgroundColor: theme.colors.background.primary,
   };
 
+  const bgColor = theme.colors.background.primary;
+  const bgTransparent = bgColor + '00';
+  const headerContentHeight = insets.top + 48;
+  const headerGradientHeight = headerContentHeight + 28;
+  const headerTitle = repostData ? 'Репост' : editingPostId ? 'Редактировать' : 'Новый пост';
+
   return (
-    <ScrollView style={containerStyle} contentContainerStyle={{ paddingBottom: 100 }}>
-      <View style={{ paddingHorizontal: theme.spacing.lg, paddingTop: theme.spacing.base }}>
+    <View style={containerStyle}>
+      {/* Custom gradient header like feed screen */}
+      <View style={[createStyles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">
+        <LinearGradient colors={[bgColor, bgColor, bgTransparent]} locations={[0, 0.55, 1]} style={StyleSheet.absoluteFill} />
+        <View style={[createStyles.headerContent, { paddingTop: insets.top }]} pointerEvents="auto">
+          <Text variant="body" weight="bold">{headerTitle}</Text>
+          <Pressable
+            onPress={() => { handlePostRef.current?.(); }}
+            disabled={!canPost || isPosting}
+            style={{ opacity: (!canPost || isPosting) ? 0.4 : 1, flexDirection: 'row', alignItems: 'center', gap: 4 }}
+          >
+            {isPosting ? (
+              <ActivityIndicator size="small" color={theme.colors.accent.primary} />
+            ) : (
+              <>
+                <Feather name="send" size={16} color={theme.colors.accent.primary} />
+                <Text variant="caption" weight="semibold" color={theme.colors.accent.primary}>
+                  Пост
+                </Text>
+              </>
+            )}
+          </Pressable>
+        </View>
+      </View>
+
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 100, paddingTop: headerContentHeight }}>
+      <View style={{ paddingHorizontal: theme.spacing.lg }}>
         {/* Repost preview */}
         {repostData && (
           <View style={{ marginBottom: theme.spacing.base, borderWidth: 1, borderColor: theme.colors.border.light, borderRadius: 14, overflow: 'hidden', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)' }}>
@@ -599,5 +613,11 @@ export default function CreateScreen() {
         </View>
       </View>
     </ScrollView>
+    </View>
   );
 }
+
+const createStyles = StyleSheet.create({
+  headerWrapper: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100 },
+  headerContent: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 24, paddingBottom: 8 },
+});
