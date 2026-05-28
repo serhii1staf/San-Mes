@@ -235,7 +235,7 @@ export default function ProfileScreen() {
         <View style={{ paddingHorizontal: 16, marginTop: -36 }}>
           <View style={{ width: 72, height: 72, borderRadius: 36, overflow: 'hidden', borderWidth: 3, borderColor: theme.colors.background.primary, backgroundColor: theme.isDark ? 'rgba(30,30,30,0.85)' : 'rgba(255,255,255,0.85)', alignItems: 'center', justifyContent: 'center' }}><Avatar emoji={user.emoji} size="lg" /></View>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}>
-            <View style={{ flex: 1 }}><View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}><Text variant="body" weight="bold" numberOfLines={1}>{user.displayName}</Text>{(user as any).is_verified && <VerifiedBadge size={13} />}{(user as any).badge && <UserBadge badge={(user as any).badge} size="sm" />}</View><Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>@{user.username}</Text></View>
+            <View style={{ flex: 1 }}><View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}><Text variant="body" weight="bold" numberOfLines={1}>{user.displayName}</Text>{user.is_verified && <VerifiedBadge size={13} />}{user.badge && <UserBadge badge={user.badge} size="sm" />}</View><Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>@{user.username}</Text></View>
             <Pressable onPress={() => { triggerHaptic('light'); router.push('/profile/edit'); }} style={{ paddingHorizontal: 16, paddingVertical: 7, borderWidth: 1, borderColor: theme.colors.border.medium, borderRadius: 20 }}><Text variant="caption" weight="semibold">Редактировать</Text></Pressable>
           </View>
           <View style={{ flexDirection: 'row', marginTop: 10, gap: 16 }}>
@@ -300,8 +300,8 @@ export default function ProfileScreen() {
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                   <Avatar emoji={user.emoji} size="xs" />
                   <Text variant="caption" weight="semibold" numberOfLines={1}>{user.displayName}</Text>
-                  {(user as any).is_verified && <VerifiedBadge size={11} />}
-                  {(user as any).badge && <UserBadge badge={(user as any).badge} size="sm" />}
+                  {user.is_verified && <VerifiedBadge size={11} />}
+                  {user.badge && <UserBadge badge={user.badge} size="sm" />}
                   <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 10 }}>· {formatTimeAgo(post.createdAt)}</Text>
                 </View>
                 {isRepostPost && origPost && (
@@ -350,7 +350,7 @@ export default function ProfileScreen() {
                       <View>
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
                           <Text variant="caption" weight="semibold" color="#FFFFFF" style={{ fontSize: 11 }}>{displayName}</Text>
-                          {(user as any)?.is_verified && <VerifiedBadge size={10} />}
+                          {user?.is_verified && <VerifiedBadge size={10} />}
                         </View>
                         {isRepostViewing && <Text variant="caption" color="rgba(255,255,255,0.5)" style={{ fontSize: 9 }}>репост от {user?.displayName}</Text>}
                         {!isRepostViewing && viewingImage && <Text variant="caption" color="rgba(255,255,255,0.6)" style={{ fontSize: 9 }}>{formatTimeAgo(post?.createdAt || '')}</Text>}

@@ -30,6 +30,8 @@ export interface User {
   deviceKey?: string;
   links?: UserLink[];
   bannerUrl?: string;
+  badge?: string;
+  is_verified?: boolean;
 }
 
 interface AuthStoreState {

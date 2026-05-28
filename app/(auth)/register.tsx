@@ -254,6 +254,8 @@ export default function RegisterScreen() {
             pin,
             deviceKey: profile.device_key,
             bio: '',
+            badge: profile.badge || undefined,
+            is_verified: profile.is_verified || false,
           },
           'token-' + Date.now()
         );

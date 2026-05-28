@@ -43,6 +43,8 @@ export default function LoginScreen() {
         bio: profile.bio,
         pin,
         deviceKey: profile.device_key,
+        badge: profile.badge || undefined,
+        is_verified: profile.is_verified || false,
       },
       'token-' + Date.now()
     );
