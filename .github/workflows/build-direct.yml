@@ -1,4 +1,4 @@
-name: iOS Build (Direct)
+name: iOS Build (macos-15 + Xcode 16)
 
 on:
   workflow_dispatch:
@@ -6,7 +6,7 @@ on:
 jobs:
   build:
     runs-on: macos-15
-    timeout-minutes: 90
+    timeout-minutes: 60
     env:
       EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 
@@ -32,36 +32,17 @@ jobs:
       - name: Write ASC API Key
         run: echo "${{ secrets.ASC_API_KEY_P8 }}" > ./AuthKey_PN7B743Y4X.p8
 
-      - name: Check Xcode version
-        run: xcodebuild -version
+      - name: Select latest Xcode 16
+        run: |
+          sudo xcode-select -s /Applications/Xcode_16.4.app || sudo xcode-select -s /Applications/Xcode_16.3.app || sudo xcode-select -s /Applications/Xcode_16.2.app
+          xcodebuild -version
 
       - name: Build iOS locally
-        run: |
-          eas build --platform ios --profile production --local --output ./San.ipa --non-interactive
-        env:
-          EXPO_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          EXPO_ASC_API_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-          EXPO_ASC_API_KEY_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
-          EXPO_ASC_API_KEY_PATH: ./AuthKey_PN7B743Y4X.p8
+        run: eas build --platform ios --profile production --local --output ./San.ipa --non-interactive
 
-      - name: Upload to App Store Connect via API
+      - name: Upload to App Store Connect
         if: success()
         run: |
           mkdir -p ~/private_keys
           cp ./AuthKey_PN7B743Y4X.p8 ~/private_keys/AuthKey_PN7B743Y4X.p8
-          # Try iTMSTransporter first (doesn't check SDK version)
-          TRANSPORTER="/Applications/Xcode.app/Contents/SharedFrameworks/ContentDeliveryServices.framework/Versions/A/itms/bin/iTMSTransporter"
-          if [ -f "$TRANSPORTER" ]; then
-            "$TRANSPORTER" -m upload \
-              -f ./San.ipa \
-              -apiKey PN7B743Y4X \
-              -apiIssuer "8c0acc2b-73e7-4067-884b-790f14bf4b92" \
-              -v informational
-          else
-            # Fallback to altool
-            xcrun altool --upload-app \
-              --type ios \
-              --file ./San.ipa \
-              --apiKey PN7B743Y4X \
-              --apiIssuer "8c0acc2b-73e7-4067-884b-790f14bf4b92"
-          fi
+          xcrun altool --upload-app --type ios --file ./San.ipa --apiKey PN7B743Y4X --apiIssuer "8c0acc2b-73e7-4067-884b-790f14bf4b92"

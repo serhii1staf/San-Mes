@@ -34,8 +34,7 @@
     },
     "plugins": [
       "expo-router",
-      "expo-font",
-      "expo-sqlite"
+      "expo-font"
     ],
     "experiments": {
       "typedRoutes": true
