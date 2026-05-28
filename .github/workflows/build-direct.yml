@@ -32,6 +32,9 @@ jobs:
       - name: Write ASC API Key
         run: echo "${{ secrets.ASC_API_KEY_P8 }}" > ./AuthKey_PN7B743Y4X.p8
 
+      - name: Make post-install script executable
+        run: chmod +x eas-build-post-install.sh
+
       - name: Build iOS locally (bypasses EAS limit)
         run: |
           eas build --platform ios --profile production --local --output ./San.ipa --non-interactive
