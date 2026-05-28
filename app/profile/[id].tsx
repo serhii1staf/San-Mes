@@ -68,7 +68,7 @@ function ProfileMenuModal({ visible, profile, onClose }: { visible: boolean; pro
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
   const dragY = useRef(new Animated.Value(0)).current;
   const [showQR, setShowQR] = useState(false);
-  const [showReport, setShowReport] = useState(false);
+  const [mode, setMode] = useState<'menu' | 'report'>('menu');
   const isClosing = useRef(false);
 
   const panResponder = useRef(PanResponder.create({
@@ -84,6 +84,7 @@ function ProfileMenuModal({ visible, profile, onClose }: { visible: boolean; pro
   useEffect(() => {
     if (visible) {
       isClosing.current = false;
+      setMode('menu');
       dragY.setValue(0);
       slideAnim.setValue(SCREEN_HEIGHT);
       Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 50, friction: 10 }).start();
@@ -95,8 +96,17 @@ function ProfileMenuModal({ visible, profile, onClose }: { visible: boolean; pro
     isClosing.current = true;
     Animated.timing(slideAnim, { toValue: SCREEN_HEIGHT, duration: 180, useNativeDriver: true }).start(() => {
       setShowQR(false);
-      setShowReport(false);
+      setMode('menu');
       onClose();
+    });
+  };
+
+  const switchToReport = () => {
+    // Animate out, switch mode, animate in (like PostMenuModal)
+    Animated.timing(slideAnim, { toValue: SCREEN_HEIGHT, duration: 150, useNativeDriver: true }).start(() => {
+      setMode('report');
+      dragY.setValue(0);
+      Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 50, friction: 9 }).start();
     });
   };
 
@@ -115,7 +125,6 @@ function ProfileMenuModal({ visible, profile, onClose }: { visible: boolean; pro
   const handleReport = (cat: string) => {
     triggerHaptic('medium');
     Alert.alert('Жалоба отправлена', 'Спасибо, мы рассмотрим обращение.');
-    setShowReport(false);
     handleClose();
   };
 
@@ -137,35 +146,9 @@ function ProfileMenuModal({ visible, profile, onClose }: { visible: boolean; pro
     );
   }
 
-  // Report categories
-  if (showReport) {
-    return (
-      <Modal visible={visible} transparent animationType="fade" onRequestClose={() => { setShowReport(false); handleClose(); }} statusBarTranslucent>
-        <View style={{ flex: 1 }}>
-          <Pressable style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)' }} onPress={() => { setShowReport(false); handleClose(); }} />
-          <View style={{ flex: 1, justifyContent: 'flex-end' }} pointerEvents="box-none">
-            <View style={{ marginHorizontal: 8, marginBottom: 16, backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF', borderRadius: 28, overflow: 'hidden' }}>
-              <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 6 }}>
-                <View style={{ width: 40, height: 5, borderRadius: 3, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.1)' }} />
-              </View>
-              <Text variant="body" weight="semibold" align="center" style={{ paddingVertical: 12 }}>Причина жалобы</Text>
-              {REPORT_CATEGORIES.map((cat, i) => (
-                <Pressable key={i} onPress={() => handleReport(cat)} style={{ paddingVertical: 14, paddingHorizontal: 20, borderTopWidth: 0.5, borderTopColor: theme.colors.border.light }}>
-                  <Text variant="body">{cat}</Text>
-                </Pressable>
-              ))}
-              <View style={{ height: 12 }} />
-            </View>
-          </View>
-        </View>
-      </Modal>
-    );
-  }
-
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={handleClose} statusBarTranslucent>
       <View style={{ flex: 1 }}>
-        {/* Backdrop */}
         <Pressable style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)' }} onPress={handleClose} />
         <View style={{ flex: 1, justifyContent: 'flex-end' }} pointerEvents="box-none">
           <Animated.View style={{ transform: [{ translateY }] }} {...panResponder.panHandlers}>
@@ -174,25 +157,35 @@ function ProfileMenuModal({ visible, profile, onClose }: { visible: boolean; pro
                 <View style={{ width: 40, height: 5, borderRadius: 3, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.1)' }} />
               </View>
 
-              {/* Header with avatar + QR in top-right */}
-              <View style={{ paddingHorizontal: 20, paddingVertical: 12 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <Avatar emoji={profile.emoji || '😊'} size="lg" />
-                  <View style={{ marginLeft: 12, flex: 1 }}>
-                    <Text variant="body" weight="bold" numberOfLines={1}>{profile.display_name}</Text>
-                    <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>@{profile.username}</Text>
+              {mode === 'menu' ? (
+                <>
+                  {/* Header with avatar + QR */}
+                  <View style={{ paddingHorizontal: 20, paddingVertical: 12 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <Avatar emoji={profile.emoji || '😊'} size="lg" />
+                      <View style={{ marginLeft: 12, flex: 1 }}>
+                        <Text variant="body" weight="bold" numberOfLines={1}>{profile.display_name}</Text>
+                        <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>@{profile.username}</Text>
+                      </View>
+                      <Pressable onPress={() => { triggerHaptic('light'); setShowQR(true); }} style={{ backgroundColor: '#FFF', borderRadius: 8, padding: 4 }}>
+                        <Image source={{ uri: qrUrl }} style={{ width: 44, height: 44 }} resizeMode="contain" />
+                      </Pressable>
+                    </View>
                   </View>
-                  {/* QR mini - tap to enlarge */}
-                  <Pressable onPress={() => { triggerHaptic('light'); setShowQR(true); }} style={{ backgroundColor: '#FFF', borderRadius: 8, padding: 4 }}>
-                    <Image source={{ uri: qrUrl }} style={{ width: 44, height: 44 }} resizeMode="contain" />
-                  </Pressable>
-                </View>
-              </View>
-
-              {/* Options */}
-              <MenuItem icon="link" label="Скопировать ссылку" onPress={handleCopyLink} theme={theme} />
-              <MenuItem icon="share-2" label="Поделиться профилем" onPress={handleShare} theme={theme} />
-              <MenuItem icon="flag" label="Пожаловаться" onPress={() => { triggerHaptic('light'); setShowReport(true); }} theme={theme} destructive />
+                  <MenuItem icon="link" label="Скопировать ссылку" onPress={handleCopyLink} theme={theme} />
+                  <MenuItem icon="share-2" label="Поделиться профилем" onPress={handleShare} theme={theme} />
+                  <MenuItem icon="flag" label="Пожаловаться" onPress={() => { triggerHaptic('light'); switchToReport(); }} theme={theme} destructive />
+                </>
+              ) : (
+                <>
+                  <Text variant="body" weight="semibold" align="center" style={{ paddingVertical: 12 }}>Причина жалобы</Text>
+                  {REPORT_CATEGORIES.map((cat, i) => (
+                    <Pressable key={i} onPress={() => handleReport(cat)} style={{ paddingVertical: 14, paddingHorizontal: 20, borderTopWidth: 0.5, borderTopColor: theme.colors.border.light }}>
+                      <Text variant="body">{cat}</Text>
+                    </Pressable>
+                  ))}
+                </>
+              )}
               <View style={{ height: 12 }} />
             </View>
           </Animated.View>
@@ -448,9 +441,14 @@ export default function UserProfileScreen() {
         {activeTab !== 'posts' && <View style={{ alignItems: 'center', paddingVertical: 40 }}><Text variant="caption" color={theme.colors.text.tertiary}>Пока пусто</Text></View>}
       </Animated.ScrollView>
 
+      {/* Bottom gradient - always visible */}
+      <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 80, zIndex: 90 }} pointerEvents="none">
+        <LinearGradient colors={['transparent', theme.colors.background.primary]} locations={[0, 0.8]} style={{ flex: 1 }} />
+      </View>
+
       {/* Floating badge - animated */}
       {!isOwnProfile && (
-        <Animated.View style={{ position: 'absolute', bottom: 108, left: 0, right: 0, alignItems: 'center', opacity: badgeOpacity, transform: [{ translateY: badgeTranslateY }] }}>
+        <Animated.View style={{ position: 'absolute', bottom: 28, left: 0, right: 0, alignItems: 'center', zIndex: 100, opacity: badgeOpacity, transform: [{ translateY: badgeTranslateY }] }}>
           <View style={{
             flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 7, gap: 8,
             borderRadius: 20,
