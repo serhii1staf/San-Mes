@@ -3,10 +3,12 @@ import { View, ScrollView, Pressable, TextInput, Alert, Modal, FlatList, Activit
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { CachedImage } from '../../src/components/ui/CachedImage';
-import { supabase, parseImageUrls } from '../../src/lib/supabase';
+import { supabase, parseImageUrls, adminDeletePost } from '../../src/lib/supabase';
+import { useFeedStore } from '../../src/store/feedStore';
 import { formatTimeAgo } from '../../src/utils/mockData';
 
 const ADMIN_PASSWORD = 'V7k!Qm9@Lp2#xR8$Tw6ZcD4%yN';
@@ -61,13 +63,37 @@ export default function AdminScreen() {
   };
 
   const handleDeletePost = async (postId: string) => {
-    Alert.alert('Удалить пост?', 'Это действие необратимо', [
+    Alert.alert('Удалить пост?', 'Будет удалён с сервера, из кэшей и все связанные репосты', [
       { text: 'Отмена', style: 'cancel' },
       { text: 'Удалить', style: 'destructive', onPress: async () => {
-        await supabase.from('posts').delete().eq('id', postId);
+        // Delete from server (+ images + reposts + likes + comments)
+        const { error } = await adminDeletePost(postId);
+        if (error) {
+          Alert.alert('Ошибка', error);
+          return;
+        }
+
+        // Remove from local state
         setUserPosts(prev => prev.filter(p => p.id !== postId));
         setShowPostModal(false);
         setSelectedPost(null);
+
+        // Remove from Zustand feed store
+        useFeedStore.getState().removePost(postId);
+
+        // Remove from AsyncStorage caches
+        try {
+          const feedCached = await AsyncStorage.getItem('@san:feed_posts');
+          if (feedCached) {
+            const posts = JSON.parse(feedCached).filter((p: any) => p.id !== postId);
+            await AsyncStorage.setItem('@san:feed_posts', JSON.stringify(posts));
+          }
+          const myCached = await AsyncStorage.getItem('@san:my_posts');
+          if (myCached) {
+            const posts = JSON.parse(myCached).filter((p: any) => p.id !== postId);
+            await AsyncStorage.setItem('@san:my_posts', JSON.stringify(posts));
+          }
+        } catch {}
       }},
     ]);
   };

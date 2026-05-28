@@ -255,6 +255,39 @@ export async function deletePost(postId: string, authorId: string): Promise<{ er
   }
 }
 
+// Admin delete — no author check, also removes images from storage and cleans reposts
+export async function adminDeletePost(postId: string): Promise<{ error: string | null }> {
+  try {
+    // Get post data first to find image URLs
+    const { data: post } = await supabase.from('posts').select('image_url, content').eq('id', postId).single();
+
+    // Delete images from storage
+    if (post?.image_url) {
+      const urls = post.image_url.split('|||');
+      for (const url of urls) {
+        // Extract storage path from URL
+        const match = url.match(/post-images\/(.+)$/);
+        if (match) {
+          await storageClient.storage.from('post-images').remove([match[1]]);
+        }
+      }
+    }
+
+    // Delete reposts that reference this post
+    await supabase.from('posts').delete().like('content', `::repost::${postId}%`);
+
+    // Delete related likes and comments
+    await supabase.from('likes').delete().eq('post_id', postId);
+    await supabase.from('comments').delete().eq('post_id', postId);
+
+    // Delete the post itself (no author check)
+    const { error } = await supabase.from('posts').delete().eq('id', postId);
+    return { error: error?.message || null };
+  } catch (e: any) {
+    return { error: e?.message || 'Unknown error' };
+  }
+}
+
 // Get conversations for a user
 export async function getConversations(userId: string): Promise<{ conversations: any[]; error: string | null }> {
   const { data, error } = await supabase
