@@ -169,7 +169,11 @@ function ProfileMenuModal({ visible, profile, onClose }: { visible: boolean; pro
                     <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                       <Avatar emoji={profile.emoji || '😊'} size="lg" />
                       <View style={{ marginLeft: 12, flex: 1 }}>
-                        <Text variant="body" weight="bold" numberOfLines={1}>{profile.display_name}</Text>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                          <Text variant="body" weight="bold" numberOfLines={1}>{profile.display_name}</Text>
+                          {profile.is_verified && <VerifiedBadge size={13} />}
+                          {profile.badge && <UserBadge badge={profile.badge} size="sm" />}
+                        </View>
                         <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>@{profile.username}</Text>
                       </View>
                       <Pressable onPress={() => { triggerHaptic('light'); setShowQR(true); }} style={{ backgroundColor: '#FFF', borderRadius: 8, padding: 4 }}>
@@ -547,6 +551,8 @@ export default function UserProfileScreen() {
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                     <Avatar emoji={displayProfile.emoji || '😊'} size="xs" />
                     <Text variant="caption" weight="semibold" numberOfLines={1}>{displayProfile.display_name}</Text>
+                    {displayProfile.is_verified && <VerifiedBadge size={11} />}
+                    {displayProfile.badge && <UserBadge badge={displayProfile.badge} size="sm" />}
                     <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 10 }}>· {formatTimeAgo(post.createdAt)}</Text>
                   </View>
                   {isRepostPost && origPost && (
@@ -586,6 +592,7 @@ export default function UserProfileScreen() {
           }}>
             <Avatar emoji={displayProfile.emoji || '😊'} size="xs" />
             <Text variant="caption" weight="semibold" numberOfLines={1} style={{ maxWidth: 100 }}>{displayProfile.display_name}</Text>
+            {displayProfile.is_verified && <VerifiedBadge size={10} />}
             <Pressable onPress={handleFollow} style={{ paddingHorizontal: 12, paddingVertical: 5, backgroundColor: isFollowingState ? 'transparent' : theme.colors.accent.primary, borderWidth: isFollowingState ? 1 : 0, borderColor: theme.colors.border.medium, borderRadius: 12 }}>
               <Text variant="caption" weight="semibold" color={isFollowingState ? theme.colors.text.primary : '#FFFFFF'} style={{ fontSize: 11 }}>{isFollowingState ? 'Отписаться' : 'Подписаться'}</Text>
             </Pressable>
@@ -605,7 +612,10 @@ export default function UserProfileScreen() {
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 <Avatar emoji={displayProfile?.emoji || '😊'} size="xs" />
                 <View>
-                  <Text variant="caption" weight="semibold" color="#FFFFFF" style={{ fontSize: 11 }}>{displayProfile?.display_name || 'User'}</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                    <Text variant="caption" weight="semibold" color="#FFFFFF" style={{ fontSize: 11 }}>{displayProfile?.display_name || 'User'}</Text>
+                    {displayProfile?.is_verified && <VerifiedBadge size={10} />}
+                  </View>
                   {viewingImage && <Text variant="caption" color="rgba(255,255,255,0.6)" style={{ fontSize: 9 }}>{(() => { const p = displayPosts.find((pp: any) => pp.id === viewingImage.postId); return p?.createdAt ? formatTimeAgo(p.createdAt) : ''; })()}</Text>}
                 </View>
               </View>

@@ -300,6 +300,8 @@ export default function ProfileScreen() {
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                   <Avatar emoji={user.emoji} size="xs" />
                   <Text variant="caption" weight="semibold" numberOfLines={1}>{user.displayName}</Text>
+                  {(user as any).is_verified && <VerifiedBadge size={11} />}
+                  {(user as any).badge && <UserBadge badge={(user as any).badge} size="sm" />}
                   <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 10 }}>· {formatTimeAgo(post.createdAt)}</Text>
                 </View>
                 {isRepostPost && origPost && (
@@ -346,7 +348,10 @@ export default function ProfileScreen() {
                     <>
                       <Avatar emoji={displayEmoji} size="xs" />
                       <View>
-                        <Text variant="caption" weight="semibold" color="#FFFFFF" style={{ fontSize: 11 }}>{displayName}</Text>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                          <Text variant="caption" weight="semibold" color="#FFFFFF" style={{ fontSize: 11 }}>{displayName}</Text>
+                          {(user as any)?.is_verified && <VerifiedBadge size={10} />}
+                        </View>
                         {isRepostViewing && <Text variant="caption" color="rgba(255,255,255,0.5)" style={{ fontSize: 9 }}>репост от {user?.displayName}</Text>}
                         {!isRepostViewing && viewingImage && <Text variant="caption" color="rgba(255,255,255,0.6)" style={{ fontSize: 9 }}>{formatTimeAgo(post?.createdAt || '')}</Text>}
                       </View>

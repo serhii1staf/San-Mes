@@ -5,6 +5,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
+import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
+import { UserBadge } from '../../src/components/ui/UserBadge';
 import { useAuthStore } from '../../src/store';
 import { getComments, createComment } from '../../src/lib/supabase';
 import { triggerHaptic } from '../../src/utils/haptics';
@@ -90,6 +92,8 @@ export default function CommentsScreen() {
               <View style={{ marginLeft: 10, flex: 1 }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                   <Text variant="caption" weight="semibold">{item.profiles?.display_name || 'User'}</Text>
+                  {item.profiles?.is_verified && <VerifiedBadge size={10} />}
+                  {item.profiles?.badge && <UserBadge badge={item.profiles.badge} size="sm" />}
                   <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginLeft: 8 }}>{formatTime(item.created_at)}</Text>
                 </View>
                 <Text variant="body" style={{ marginTop: 2 }}>{item.content}</Text>
