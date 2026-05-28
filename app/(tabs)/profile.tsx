@@ -67,12 +67,22 @@ function SocialLinkIcon({ type, url }: { type: string; url: string }) {
 export default function ProfileScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
-  const { user } = useAuthStore();
+  const { user, updateProfile } = useAuthStore();
   const { profilePosts: userPosts, setProfilePosts, profileScrollOffset, setProfileScrollOffset } = useFeedStore();
   const [activeTab, setActiveTab] = useState<TabName>('posts');
   const [followCounts, setFollowCounts] = useState({ followers: 0, following: 0 });
   const [showQR, setShowQR] = useState(false);
   const [viewingImage, setViewingImage] = useState<{ uri: string; postId: string; allImages?: string[] } | null>(null);
+
+  // Sync badge/is_verified from DB on mount (in case it changed via admin panel)
+  useEffect(() => {
+    if (!user?.id) return;
+    supabase.from('profiles').select('badge, is_verified').eq('id', user.id).single().then(({ data }) => {
+      if (data && (data.badge !== user.badge || data.is_verified !== user.is_verified)) {
+        updateProfile({ badge: data.badge || undefined, is_verified: data.is_verified || false });
+      }
+    }).catch(() => {});
+  }, [user?.id]);
   const [refreshing, setRefreshing] = useState(false);
   const hasFetched = useRef(false);
   const scrollViewRef = useRef<any>(null);
