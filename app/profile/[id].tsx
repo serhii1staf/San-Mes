@@ -474,21 +474,23 @@ export default function UserProfileScreen() {
       {/* Fullscreen Image Viewer */}
       <Modal visible={!!viewingImage} transparent animationType="fade" onRequestClose={() => setViewingImage(null)} statusBarTranslucent>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.92)' }}>
-          {/* Top bar: author left, close right */}
-          <View style={{ position: 'absolute', top: insets.top + 12, left: 16, right: 16, zIndex: 10, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-            {/* Author info */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(0,0,0,0.5)', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 16 }}>
-              <Avatar emoji={displayProfile?.emoji || '😊'} size="xs" />
-              <View>
-                <Text variant="caption" weight="semibold" color="#FFFFFF" style={{ fontSize: 11 }}>{displayProfile?.display_name || 'User'}</Text>
-                {viewingImage && <Text variant="caption" color="rgba(255,255,255,0.6)" style={{ fontSize: 9 }}>{(() => { const p = displayPosts.find((pp: any) => pp.id === viewingImage.postId); return p?.createdAt ? formatTimeAgo(p.createdAt) : ''; })()}</Text>}
+          {/* Top bar with gradient blur */}
+          <LinearGradient colors={['rgba(0,0,0,0.8)', 'rgba(0,0,0,0.5)', 'transparent']} locations={[0, 0.6, 1]} style={{ position: 'absolute', top: 0, left: 0, right: 0, height: insets.top + 80, zIndex: 10 }}>
+            <View style={{ position: 'absolute', top: insets.top + 12, left: 16, right: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              {/* Author info */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Avatar emoji={displayProfile?.emoji || '😊'} size="xs" />
+                <View>
+                  <Text variant="caption" weight="semibold" color="#FFFFFF" style={{ fontSize: 11 }}>{displayProfile?.display_name || 'User'}</Text>
+                  {viewingImage && <Text variant="caption" color="rgba(255,255,255,0.6)" style={{ fontSize: 9 }}>{(() => { const p = displayPosts.find((pp: any) => pp.id === viewingImage.postId); return p?.createdAt ? formatTimeAgo(p.createdAt) : ''; })()}</Text>}
+                </View>
               </View>
+              {/* Close */}
+              <Pressable onPress={() => setViewingImage(null)} style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' }}>
+                <Feather name="x" size={20} color="#FFFFFF" />
+              </Pressable>
             </View>
-            {/* Close */}
-            <Pressable onPress={() => setViewingImage(null)} style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' }}>
-              <Feather name="x" size={20} color="#FFFFFF" />
-            </Pressable>
-          </View>
+          </LinearGradient>
 
           {/* Image — zoomable */}
           <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
@@ -506,36 +508,30 @@ export default function UserProfileScreen() {
             </RNScrollView>
           ) : null; })()}
 
-          {/* Bottom actions */}
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 24, paddingBottom: insets.bottom + 20 }}>
-            {/* Edit — only for own posts */}
-            {isOwnProfile ? (
-              <Pressable onPress={() => { 
-                if (viewingImage) {
-                  const post = displayPosts.find((p: any) => p.id === viewingImage.postId);
-                  useFeedStore.getState().setEditingPost({ id: viewingImage.postId, content: post?.content || '', imageUrl: viewingImage.uri });
-                }
-                setViewingImage(null); 
-                router.push('/(tabs)/create'); 
-              }} style={{ alignItems: 'center' }}>
-                <Feather name="edit-2" size={20} color="#FFFFFF" />
-                <Text variant="caption" color="#FFFFFF" style={{ marginTop: 4, fontSize: 10 }}>Редактировать</Text>
+          {/* Bottom actions — compact rounded container, centered */}
+          <View style={{ alignItems: 'center', paddingBottom: insets.bottom + 20 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 24, paddingHorizontal: 20, paddingVertical: 10 }}>
+              {isOwnProfile && (
+                <Pressable onPress={() => { 
+                  if (viewingImage) {
+                    const post = displayPosts.find((p: any) => p.id === viewingImage.postId);
+                    useFeedStore.getState().setEditingPost({ id: viewingImage.postId, content: post?.content || '', imageUrl: viewingImage.uri });
+                  }
+                  setViewingImage(null); 
+                  router.push('/(tabs)/create'); 
+                }} style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center' }}>
+                  <Feather name="edit-2" size={16} color="#FFFFFF" />
+                </Pressable>
+              )}
+              <Pressable onPress={async () => { if (viewingImage) { try { await Share.share({ message: viewingImage.uri }); } catch {} } }} style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center' }}>
+                <Feather name="share" size={16} color="#FFFFFF" />
               </Pressable>
-            ) : <View style={{ width: 60 }} />}
-
-            {/* Share — center */}
-            <Pressable onPress={async () => { if (viewingImage) { try { await Share.share({ message: viewingImage.uri }); } catch {} } }} style={{ alignItems: 'center' }}>
-              <Feather name="share" size={20} color="#FFFFFF" />
-              <Text variant="caption" color="#FFFFFF" style={{ marginTop: 4, fontSize: 10 }}>Поделиться</Text>
-            </Pressable>
-
-            {/* Delete — only for own posts */}
-            {isOwnProfile ? (
-              <Pressable onPress={() => { if (viewingImage) { Alert.alert('Удалить пост?', 'Это действие нельзя отменить', [{ text: 'Отмена', style: 'cancel' }, { text: 'Удалить', style: 'destructive', onPress: async () => { if (currentUser?.id) { await deletePost(viewingImage.postId, currentUser.id); } setViewingImage(null); } }]); } }} style={{ alignItems: 'center' }}>
-                <Feather name="trash-2" size={20} color="#FF3B30" />
-                <Text variant="caption" color="#FF3B30" style={{ marginTop: 4, fontSize: 10 }}>Удалить</Text>
-              </Pressable>
-            ) : <View style={{ width: 60 }} />}
+              {isOwnProfile && (
+                <Pressable onPress={() => { if (viewingImage) { Alert.alert('Удалить пост?', 'Это действие нельзя отменить', [{ text: 'Отмена', style: 'cancel' }, { text: 'Удалить', style: 'destructive', onPress: async () => { if (currentUser?.id) { await deletePost(viewingImage.postId, currentUser.id); } setViewingImage(null); } }]); } }} style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,60,50,0.2)', alignItems: 'center', justifyContent: 'center' }}>
+                  <Feather name="trash-2" size={16} color="#FF3B30" />
+                </Pressable>
+              )}
+            </View>
           </View>
         </View>
       </Modal>

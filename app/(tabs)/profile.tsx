@@ -104,10 +104,49 @@ export default function ProfileScreen() {
     try {
       const { data } = await supabase.from('posts').select('*').eq('author_id', user.id).order('created_at', { ascending: false }).limit(20);
       if (!data) return;
+
+      // Collect original post IDs from reposts
+      const originalPostIds: string[] = [];
+      for (const p of data) {
+        const repostInfo = isRepost(p.content || '');
+        if (repostInfo.isRepost && repostInfo.originalPostId) {
+          originalPostIds.push(repostInfo.originalPostId);
+        }
+      }
+
+      // Fetch original posts for reposts (with author profiles)
+      let originalsMap: Record<string, any> = {};
+      if (originalPostIds.length > 0) {
+        const { data: originals } = await supabase.from('posts').select('*, profiles:author_id (display_name, username, emoji)').in('id', originalPostIds);
+        if (originals) {
+          for (const o of originals) {
+            originalsMap[o.id] = o;
+          }
+        }
+      }
+
       const mapped: Post[] = data.map((p: any) => {
         const repostInfo = isRepost(p.content || '');
         const parsedImages = parseImageUrls(p.image_url);
-        return { id: p.id, authorId: p.author_id, authorName: user.displayName || '', authorUsername: user.username || '', authorEmoji: user.emoji || '😊', content: repostInfo.isRepost ? (repostInfo.comment || '') : (p.content || ''), imageUrl: parsedImages[0] || undefined, imageUrls: parsedImages.length > 0 ? parsedImages : undefined, likesCount: p.likes_count || 0, commentsCount: p.comments_count || 0, sharesCount: p.shares_count || 0, isLiked: false, isBookmarked: false, createdAt: p.created_at, isRepost: repostInfo.isRepost };
+        const post: Post = { id: p.id, authorId: p.author_id, authorName: user.displayName || '', authorUsername: user.username || '', authorEmoji: user.emoji || '😊', content: repostInfo.isRepost ? (repostInfo.comment || '') : (p.content || ''), imageUrl: parsedImages[0] || undefined, imageUrls: parsedImages.length > 0 ? parsedImages : undefined, likesCount: p.likes_count || 0, commentsCount: p.comments_count || 0, sharesCount: p.shares_count || 0, isLiked: false, isBookmarked: false, createdAt: p.created_at, isRepost: repostInfo.isRepost };
+
+        // Attach original post data for reposts
+        if (repostInfo.isRepost && repostInfo.originalPostId && originalsMap[repostInfo.originalPostId]) {
+          const orig = originalsMap[repostInfo.originalPostId];
+          const origProfile = Array.isArray(orig.profiles) ? orig.profiles[0] : orig.profiles;
+          const origImages = parseImageUrls(orig.image_url);
+          post.originalPost = {
+            id: orig.id,
+            authorName: origProfile?.display_name || 'User',
+            authorUsername: origProfile?.username || 'user',
+            authorEmoji: origProfile?.emoji || '😊',
+            content: orig.content || '',
+            imageUrl: origImages[0] || undefined,
+            imageUrls: origImages.length > 0 ? origImages : undefined,
+          };
+        }
+
+        return post;
       });
       setProfilePosts(mapped);
       AsyncStorage.setItem(MY_POSTS_CACHE_KEY, JSON.stringify(mapped)).catch(() => {});
@@ -184,12 +223,13 @@ export default function ProfileScreen() {
         </View>
         {activeTab === 'posts' && (userPosts.length === 0 ? <View style={{ alignItems: 'center', paddingVertical: 40 }}><Text variant="caption" color={theme.colors.text.tertiary}>Ещё нет публикаций</Text></View> : (
           <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>{userPosts.map(post => {
-            const imgs = post.imageUrls && post.imageUrls.length > 0 ? post.imageUrls : post.imageUrl ? [post.imageUrl] : [];
+            const origPost = post.originalPost;
+            const imgs = post.imageUrls && post.imageUrls.length > 0 ? post.imageUrls : post.imageUrl ? [post.imageUrl] : (origPost?.imageUrls && origPost.imageUrls.length > 0 ? origPost.imageUrls : origPost?.imageUrl ? [origPost.imageUrl] : []);
             const hasImage = imgs.length > 0;
             const isRepostPost = post.isRepost;
             return (
             <Pressable key={post.id} onPress={() => router.push({ pathname: '/comments/[id]', params: { id: post.id } })} style={{ flexDirection: 'row', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.75)', borderRadius: 28, padding: 10, marginBottom: 12, borderWidth: 1, borderColor: theme.isDark ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.4)', shadowColor: theme.isDark ? '#000' : '#c8a060', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.12, shadowRadius: 20, elevation: 4, overflow: 'hidden' }}>
-              {/* Left: Image thumbnail or repost indicator */}
+              {/* Left: Image thumbnail (original post's image for reposts) */}
               {hasImage ? (
                 <Pressable onPress={() => setViewingImage({ uri: imgs[0], postId: post.id, allImages: imgs })}>
                   <View style={{ width: 100, height: 100, borderRadius: 20, overflow: 'hidden' }}>
@@ -197,6 +237,12 @@ export default function ProfileScreen() {
                     {imgs.length > 1 && (
                       <View style={{ position: 'absolute', bottom: 4, right: 4, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 8, paddingHorizontal: 5, paddingVertical: 2 }}>
                         <Text variant="caption" color="#FFFFFF" style={{ fontSize: 9 }}>+{imgs.length - 1}</Text>
+                      </View>
+                    )}
+                    {isRepostPost && (
+                      <View style={{ position: 'absolute', top: 4, left: 4, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 8, paddingHorizontal: 5, paddingVertical: 2, flexDirection: 'row', alignItems: 'center', gap: 2 }}>
+                        <Feather name="repeat" size={8} color="#FFFFFF" />
+                        <Text variant="caption" color="#FFFFFF" style={{ fontSize: 8 }}>Репост</Text>
                       </View>
                     )}
                   </View>
@@ -213,8 +259,14 @@ export default function ProfileScreen() {
                   <Avatar emoji={user.emoji} size="xs" />
                   <Text variant="caption" weight="semibold" numberOfLines={1} style={{ flex: 1 }}>{user.displayName}</Text>
                 </View>
-                {isRepostPost && <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 }}><Feather name="repeat" size={10} color={theme.colors.accent.primary} /><Text variant="caption" color={theme.colors.accent.primary} style={{ fontSize: 10 }}>Репост</Text></View>}
-                {post.content ? <Text variant="caption" numberOfLines={2} color={theme.colors.text.secondary} style={{ marginBottom: 6 }}>{post.content}</Text> : null}
+                {isRepostPost && origPost && (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 }}>
+                    <Feather name="repeat" size={10} color={theme.colors.accent.primary} />
+                    <Text variant="caption" color={theme.colors.accent.primary} style={{ fontSize: 10 }}>от {origPost.authorName}</Text>
+                  </View>
+                )}
+                {isRepostPost && !origPost && <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 }}><Feather name="repeat" size={10} color={theme.colors.accent.primary} /><Text variant="caption" color={theme.colors.accent.primary} style={{ fontSize: 10 }}>Репост</Text></View>}
+                {(post.content || (origPost?.content)) ? <Text variant="caption" numberOfLines={2} color={theme.colors.text.secondary} style={{ marginBottom: 6 }}>{post.content || origPost?.content}</Text> : null}
                 <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{formatTimeAgo(post.createdAt)}</Text>
                 <View style={{ flexDirection: 'row', marginTop: 6, gap: 12 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}><Feather name="heart" size={12} color={theme.colors.text.tertiary} /><Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{post.likesCount}</Text></View>
@@ -239,15 +291,26 @@ export default function ProfileScreen() {
       <Modal visible={!!viewingImage} transparent animationType="fade" onRequestClose={() => setViewingImage(null)} statusBarTranslucent>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.92)' }}>
           {/* Top bar with gradient blur */}
-          <LinearGradient colors={['rgba(0,0,0,0.7)', 'rgba(0,0,0,0.4)', 'transparent']} locations={[0, 0.6, 1]} style={{ position: 'absolute', top: 0, left: 0, right: 0, height: insets.top + 70, zIndex: 10 }}>
+          <LinearGradient colors={['rgba(0,0,0,0.8)', 'rgba(0,0,0,0.5)', 'transparent']} locations={[0, 0.6, 1]} style={{ position: 'absolute', top: 0, left: 0, right: 0, height: insets.top + 80, zIndex: 10 }}>
             <View style={{ position: 'absolute', top: insets.top + 12, left: 16, right: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-              {/* Author info */}
+              {/* Author info — show original author for reposts */}
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <Avatar emoji={user?.emoji} size="xs" />
-                <View>
-                  <Text variant="caption" weight="semibold" color="#FFFFFF" style={{ fontSize: 11 }}>{user?.displayName}</Text>
-                  {viewingImage && <Text variant="caption" color="rgba(255,255,255,0.6)" style={{ fontSize: 9 }}>{formatTimeAgo(userPosts.find(p => p.id === viewingImage.postId)?.createdAt || '')}</Text>}
-                </View>
+                {(() => {
+                  const post = userPosts.find(p => p.id === viewingImage?.postId);
+                  const isRepostViewing = post?.isRepost && post?.originalPost;
+                  const displayEmoji = isRepostViewing ? (post.originalPost?.authorEmoji || '😊') : (user?.emoji || '😊');
+                  const displayName = isRepostViewing ? post.originalPost?.authorName : user?.displayName;
+                  return (
+                    <>
+                      <Avatar emoji={displayEmoji} size="xs" />
+                      <View>
+                        <Text variant="caption" weight="semibold" color="#FFFFFF" style={{ fontSize: 11 }}>{displayName}</Text>
+                        {isRepostViewing && <Text variant="caption" color="rgba(255,255,255,0.5)" style={{ fontSize: 9 }}>репост от {user?.displayName}</Text>}
+                        {!isRepostViewing && viewingImage && <Text variant="caption" color="rgba(255,255,255,0.6)" style={{ fontSize: 9 }}>{formatTimeAgo(post?.createdAt || '')}</Text>}
+                      </View>
+                    </>
+                  );
+                })()}
               </View>
               {/* Close */}
               <Pressable onPress={() => setViewingImage(null)} style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' }}>
@@ -281,15 +344,15 @@ export default function ProfileScreen() {
           ) : null; })()}
           {/* Bottom actions — compact rounded container, centered */}
           <View style={{ alignItems: 'center', paddingBottom: insets.bottom + 20 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 24, paddingHorizontal: 16, paddingVertical: 10 }}>
-              <Pressable onPress={() => { setViewingImage(null); useFeedStore.getState().setEditingPost({ id: viewingImage!.postId, content: userPosts.find(p => p.id === viewingImage!.postId)?.content || '', imageUrl: viewingImage!.uri }); router.push('/(tabs)/create'); }} style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center' }}>
-                <Feather name="edit-2" size={16} color="#FFFFFF" />
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 28, paddingHorizontal: 24, paddingVertical: 12 }}>
+              <Pressable onPress={() => { setViewingImage(null); useFeedStore.getState().setEditingPost({ id: viewingImage!.postId, content: userPosts.find(p => p.id === viewingImage!.postId)?.content || '', imageUrl: viewingImage!.uri }); router.push('/(tabs)/create'); }} style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center' }}>
+                <Feather name="edit-2" size={17} color="#FFFFFF" />
               </Pressable>
-              <Pressable onPress={async () => { if (viewingImage) { try { await Share.share({ message: viewingImage.uri }); } catch {} } }} style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center' }}>
-                <Feather name="share" size={16} color="#FFFFFF" />
+              <Pressable onPress={async () => { if (viewingImage) { try { await Share.share({ message: viewingImage.uri }); } catch {} } }} style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center' }}>
+                <Feather name="share" size={17} color="#FFFFFF" />
               </Pressable>
-              <Pressable onPress={() => { if (viewingImage && user?.id) { Alert.alert('Удалить пост?', 'Это действие нельзя отменить', [{ text: 'Отмена', style: 'cancel' }, { text: 'Удалить', style: 'destructive', onPress: async () => { await deletePost(viewingImage.postId, user.id); setViewingImage(null); loadMyPosts(); } }]); } }} style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(255,60,50,0.2)', alignItems: 'center', justifyContent: 'center' }}>
-                <Feather name="trash-2" size={16} color="#FF3B30" />
+              <Pressable onPress={() => { if (viewingImage && user?.id) { Alert.alert('Удалить пост?', 'Это действие нельзя отменить', [{ text: 'Отмена', style: 'cancel' }, { text: 'Удалить', style: 'destructive', onPress: async () => { await deletePost(viewingImage.postId, user.id); setViewingImage(null); loadMyPosts(); } }]); } }} style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: 'rgba(255,60,50,0.2)', alignItems: 'center', justifyContent: 'center' }}>
+                <Feather name="trash-2" size={17} color="#FF3B30" />
               </Pressable>
             </View>
           </View>
