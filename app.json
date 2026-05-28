@@ -16,7 +16,6 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.sanmes.app",
-      "associatedDomains": ["applinks:san-mes.vercel.app"],
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
