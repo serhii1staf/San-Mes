@@ -357,7 +357,7 @@ export default function EditProfileScreen() {
                   <Text variant="body" weight="semibold">Редактировать</Text>
                   <Pressable onPress={handleSave} disabled={isSaving}>
                     <Text variant="body" weight="semibold" color={theme.colors.accent.primary}>
-                      {isSaving ? '...' : 'Готово'}
+                      {isSaving ? '...' : 'Сохранить'}
                     </Text>
                   </Pressable>
                 </View>
@@ -381,7 +381,7 @@ export default function EditProfileScreen() {
                   <Avatar emoji={selectedEmoji} size="xl" />
                   <Pressable style={{ marginTop: 12 }} onPress={() => setShowEmojiPicker(true)}>
                     <Text variant="body" weight="medium" color={theme.colors.accent.primary}>
-                      Изменить модди
+                      Изменить эмодзи
                     </Text>
                   </Pressable>
                 </View>
@@ -545,7 +545,7 @@ export default function EditProfileScreen() {
               <Pressable onPress={() => setShowEmojiPicker(false)}>
                 <Feather name="x" size={22} color={theme.colors.text.primary} />
               </Pressable>
-              <Text variant="body" weight="semibold">Изменить модди</Text>
+              <Text variant="body" weight="semibold">Эмодзи</Text>
               <View style={{ width: 22 }} />
             </View>
 
