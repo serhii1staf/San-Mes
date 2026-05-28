@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { View, Pressable, ActivityIndicator, Dimensions, Image, ScrollView, Platform } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { View, Pressable, ActivityIndicator, Dimensions, Image, Animated, Modal } from 'react-native';
 import { Feather, FontAwesome5 } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -128,23 +128,48 @@ export default function ProfileScreen() {
     { key: 'media', label: 'Медиа' }, { key: 'likes', label: 'Лайки' },
   ];
 
+  const scrollY = useRef(new Animated.Value(0)).current;
+  const headerOpacity = scrollY.interpolate({ inputRange: [0, 50, 120], outputRange: [0, 0, 1], extrapolate: 'clamp' });
+  const buttonsTranslateX = scrollY.interpolate({ inputRange: [0, 180, 250], outputRange: [0, 0, -60], extrapolate: 'clamp' });
+  const settingsTranslateX = scrollY.interpolate({ inputRange: [0, 180, 250], outputRange: [0, 0, 60], extrapolate: 'clamp' });
+  const [showQR, setShowQR] = useState(false);
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(`https://san-mes.vercel.app/profile/${user.id}`)}`;
+
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
-      <ScrollView showsVerticalScrollIndicator={false} bounces={false} contentContainerStyle={{ paddingBottom: 100 }}>
+      {/* Header gradient overlay */}
+      <Animated.View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 50, height: insets.top + 50, opacity: headerOpacity }} pointerEvents="none">
+        <LinearGradient colors={[theme.colors.background.primary, theme.colors.background.primary, theme.colors.background.primary + '00']} locations={[0, 0.6, 1]} style={{ flex: 1 }} />
+      </Animated.View>
+
+      {/* Fixed header buttons */}
+      <View style={{ position: 'absolute', top: insets.top + 8, left: 16, right: 16, flexDirection: 'row', justifyContent: 'space-between', zIndex: 100 }}>
+        <Animated.View style={{ transform: [{ translateX: buttonsTranslateX }] }}>
+          <Pressable onPress={() => { triggerHaptic('light'); setShowQR(true); }} style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' }}>
+            <Feather name="maximize" size={16} color="#FFFFFF" />
+          </Pressable>
+        </Animated.View>
+        <Animated.View style={{ transform: [{ translateX: settingsTranslateX }] }}>
+          <Pressable onPress={() => { triggerHaptic('light'); router.push('/settings'); }} style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' }}>
+            <Feather name="settings" size={16} color="#FFFFFF" />
+          </Pressable>
+        </Animated.View>
+      </View>
+
+      <Animated.ScrollView
+        showsVerticalScrollIndicator={false}
+        bounces={false}
+        onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true })}
+        scrollEventThrottle={16}
+        contentContainerStyle={{ paddingBottom: 100 }}
+      >
         {/* Banner - full width */}
         <View style={{ height: 150, backgroundColor: theme.colors.accent.primary + '20' }}>
           {bannerUrl ? <Image source={{ uri: bannerUrl }} style={{ width: '100%', height: '100%' }} resizeMode="cover" /> : null}
-          {/* Bottom blur gradient */}
           <LinearGradient
             colors={['transparent', theme.colors.background.primary]}
             style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 50 }}
           />
-          {/* Overlay buttons */}
-          <View style={{ position: 'absolute', top: insets.top + 8, left: 16, right: 16, flexDirection: 'row', justifyContent: 'flex-end' }}>
-            <Pressable onPress={() => { triggerHaptic('light'); router.push('/settings'); }} style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' }}>
-              <Feather name="settings" size={18} color="#FFFFFF" />
-            </Pressable>
-          </View>
         </View>
 
         {/* Profile info */}
@@ -214,7 +239,18 @@ export default function ProfileScreen() {
           </View>
         ))}
         {activeTab !== 'posts' && <View style={{ alignItems: 'center', paddingVertical: 40 }}><Text variant="caption" color={theme.colors.text.tertiary}>Пока пусто</Text></View>}
-      </ScrollView>
+      </Animated.ScrollView>
+
+      {/* QR Modal */}
+      <Modal visible={showQR} transparent animationType="fade" onRequestClose={() => setShowQR(false)} statusBarTranslucent>
+        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', alignItems: 'center', justifyContent: 'center' }} onPress={() => setShowQR(false)}>
+          <Text variant="body" weight="bold" color="#FFFFFF" style={{ marginBottom: 20 }}>Мой QR-код</Text>
+          <View style={{ backgroundColor: '#FFF', borderRadius: 20, padding: 20 }}>
+            <Image source={{ uri: qrUrl }} style={{ width: 200, height: 200 }} resizeMode="contain" />
+          </View>
+          <Text variant="caption" color="#FFFFFF" style={{ marginTop: 20, opacity: 0.7 }}>Нажмите чтобы закрыть</Text>
+        </Pressable>
+      </Modal>
     </View>
   );
 }

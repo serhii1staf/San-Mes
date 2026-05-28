@@ -96,7 +96,7 @@ export function PostMenuModal({ visible, post, onClose }: PostMenuModalProps) {
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={dismiss} statusBarTranslucent>
       <View style={{ flex: 1 }}>
-        {/* Backdrop — always tappable */}
+        {/* Backdrop */}
         <Pressable style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)' }} onPress={dismiss} />
 
         {/* Sheet */}
@@ -105,7 +105,7 @@ export function PostMenuModal({ visible, post, onClose }: PostMenuModalProps) {
             style={{ transform: [{ translateY }] }}
             {...panResponder.panHandlers}
           >
-            <View style={{ marginHorizontal: 8, marginBottom: insets.bottom + 8, backgroundColor: sheetBg, borderRadius: 28, shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.12, shadowRadius: 16, elevation: 10 }}>
+            <View style={{ marginHorizontal: 8, marginBottom: 16, backgroundColor: sheetBg, borderRadius: 28, shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.12, shadowRadius: 16, elevation: 10 }}>
           {/* Handle */}
           <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 6 }}>
             <View style={{ width: 40, height: 5, borderRadius: 3, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)' }} />

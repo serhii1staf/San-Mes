@@ -54,7 +54,6 @@ function ProfileMenuModal({ visible, profile, onClose }: { visible: boolean; pro
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
-  const backdropAnim = useRef(new Animated.Value(0)).current;
   const dragY = useRef(new Animated.Value(0)).current;
   const [showQR, setShowQR] = useState(false);
   const [showReport, setShowReport] = useState(false);
@@ -75,21 +74,14 @@ function ProfileMenuModal({ visible, profile, onClose }: { visible: boolean; pro
       isClosing.current = false;
       dragY.setValue(0);
       slideAnim.setValue(SCREEN_HEIGHT);
-      backdropAnim.setValue(0);
-      Animated.parallel([
-        Animated.timing(backdropAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
-        Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 50, friction: 10 }),
-      ]).start();
+      Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 50, friction: 10 }).start();
     }
   }, [visible]);
 
   const handleClose = () => {
     if (isClosing.current) return;
     isClosing.current = true;
-    Animated.parallel([
-      Animated.timing(slideAnim, { toValue: SCREEN_HEIGHT, duration: 180, useNativeDriver: true }),
-      Animated.timing(backdropAnim, { toValue: 0, duration: 180, useNativeDriver: true }),
-    ]).start(() => {
+    Animated.timing(slideAnim, { toValue: SCREEN_HEIGHT, duration: 180, useNativeDriver: true }).start(() => {
       setShowQR(false);
       setShowReport(false);
       onClose();
@@ -161,15 +153,13 @@ function ProfileMenuModal({ visible, profile, onClose }: { visible: boolean; pro
   }
 
   return (
-    <Modal visible={visible} transparent animationType="none" onRequestClose={handleClose} statusBarTranslucent>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={handleClose} statusBarTranslucent>
       <View style={{ flex: 1 }}>
         {/* Backdrop */}
-        <Pressable style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} onPress={handleClose}>
-          <Animated.View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', opacity: backdropAnim }} />
-        </Pressable>
+        <Pressable style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)' }} onPress={handleClose} />
         <View style={{ flex: 1, justifyContent: 'flex-end' }} pointerEvents="box-none">
           <Animated.View style={{ transform: [{ translateY }] }} {...panResponder.panHandlers}>
-            <View style={{ marginHorizontal: 8, marginBottom: insets.bottom + 8, backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF', borderRadius: 28, overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.15, shadowRadius: 20, elevation: 12 }}>
+            <View style={{ marginHorizontal: 8, marginBottom: 16, backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF', borderRadius: 28, overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.15, shadowRadius: 20, elevation: 12 }}>
               <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 6 }}>
                 <View style={{ width: 40, height: 5, borderRadius: 3, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.1)' }} />
               </View>
