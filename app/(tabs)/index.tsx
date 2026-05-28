@@ -127,11 +127,8 @@ export default function FeedScreen() {
   }, [posts, feedIds, profiles, likes, user?.id]);
 
   // On mount: always trigger syncFeed (it handles errors gracefully)
-  useEffect(() => {
-    if (isHydrated) {
-      syncFeed().catch(() => {});
-    }
-  }, [isHydrated]);
+  // Data is loaded once at app startup (_layout.tsx) — no need to sync here
+  // Just show what's in the store immediately
 
   // Once hydrated and we have data (or after safety timeout), stop loading
   useEffect(() => {
@@ -140,8 +137,8 @@ export default function FeedScreen() {
     }
   }, [isHydrated, feedIds.length]);
 
-  // 2-second skeleton safety timeout
-  useEffect(() => { const t = setTimeout(() => setIsLoading(false), 2000); return () => clearTimeout(t); }, []);
+  // 1.5-second skeleton safety timeout
+  useEffect(() => { const t = setTimeout(() => setIsLoading(false), 1500); return () => clearTimeout(t); }, []);
 
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);

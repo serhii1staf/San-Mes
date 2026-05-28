@@ -114,12 +114,16 @@ export default function RootLayout() {
     return () => clearTimeout(timer);
   }, []);
 
-  // Trigger feed sync when user is authenticated (lightweight, just feed)
+  // Load ALL data once when user is authenticated — no per-screen syncs needed
   useEffect(() => {
     if (isAuthenticated && user?.id) {
-      // Only sync feed on startup — other syncs happen on screen focus
-      import('../src/services/syncService').then(({ syncFeed }) => {
-        syncFeed(user.id).catch(() => {});
+      import('../src/services/syncService').then(({ syncFeed, syncUserPosts, syncProfiles }) => {
+        // Load feed, user posts, and profiles in parallel — one time
+        Promise.all([
+          syncFeed(user.id),
+          syncUserPosts(user.id),
+          syncProfiles(),
+        ]).catch(() => {});
       });
     }
   }, [isAuthenticated, user?.id]);

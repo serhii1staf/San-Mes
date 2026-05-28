@@ -10,7 +10,6 @@ import { LinkedText } from '../../src/components/ui/LinkedText';
 import { CachedImage } from '../../src/components/ui/CachedImage';
 import { useAuthStore, useEntityStore } from '../../src/store';
 import { isRepost, parseImageUrls, getFollowCounts } from '../../src/lib/supabase';
-import { syncUserPosts } from '../../src/services/syncService';
 import { LocalPost } from '../../src/services/entityStore';
 import { openUrl } from '../../src/utils/openUrl';
 import { Post } from '../../src/types';
@@ -107,8 +106,7 @@ export default function ProfileScreen() {
 
   useFocusEffect(useCallback(() => {
     if (!user?.id) return;
-    // Non-blocking background sync
-    syncUserPosts(user.id).catch(() => {});
+    // Only load follow counts (lightweight) — posts already loaded at startup
     loadFollows();
   }, [user?.id]));
 
