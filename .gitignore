@@ -41,3 +41,4 @@ AuthKey_*.p8
 credentials.json
 tokim
 build-info.json
+DEPLOY.md
