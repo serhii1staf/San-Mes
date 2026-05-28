@@ -1,11 +1,12 @@
 import React, { useState, useRef, memo } from 'react';
-import { View, Image, Pressable, ViewStyle, TextStyle, Dimensions, ScrollView, NativeSyntheticEvent, NativeScrollEvent } from 'react-native';
+import { View, Pressable, ViewStyle, TextStyle, Dimensions, ScrollView, NativeSyntheticEvent, NativeScrollEvent } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useTheme } from '../../theme';
 import { Text } from '../ui/Text';
 import { Avatar } from '../ui/Avatar';
 import { Card } from '../ui/Card';
+import { CachedImage } from '../ui/CachedImage';
 import { Post } from '../../types';
 import { formatTimeAgo } from '../../utils/mockData';
 import { triggerHaptic } from '../../utils/haptics';
@@ -43,8 +44,8 @@ function ImageCarousel({ imageUrls, onDoubleTap, cardWidth }: ImageCarouselProps
   if (imageUrls.length === 1) {
     return (
       <Pressable onPress={handlePress} style={{ paddingHorizontal: 12 }}>
-        <Image
-          source={{ uri: imageUrls[0] }}
+        <CachedImage
+          uri={imageUrls[0]}
           style={{
             width: '100%',
             height: CAROUSEL_HEIGHT,
@@ -69,8 +70,8 @@ function ImageCarousel({ imageUrls, onDoubleTap, cardWidth }: ImageCarouselProps
       >
         {imageUrls.map((url, index) => (
           <Pressable key={index} onPress={handlePress}>
-            <Image
-              source={{ uri: url }}
+            <CachedImage
+              uri={url}
               style={{
                 width: imageWidth,
                 height: CAROUSEL_HEIGHT,
@@ -194,9 +195,9 @@ export const PostCard = memo(function PostCard({ post, onLike, onComment, onShar
             </View>
           )}
           {post.originalPost.imageUrls && post.originalPost.imageUrls.length > 0 ? (
-            <Image source={{ uri: post.originalPost.imageUrls[0] }} style={{ width: '100%', height: 150 }} resizeMode="cover" />
+            <CachedImage uri={post.originalPost.imageUrls[0]} style={{ width: '100%', height: 150 }} resizeMode="cover" />
           ) : post.originalPost.imageUrl ? (
-            <Image source={{ uri: post.originalPost.imageUrl }} style={{ width: '100%', height: 150 }} resizeMode="cover" />
+            <CachedImage uri={post.originalPost.imageUrl} style={{ width: '100%', height: 150 }} resizeMode="cover" />
           ) : null}
         </View>
       )}

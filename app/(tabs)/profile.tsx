@@ -7,6 +7,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { LinkedText } from '../../src/components/ui/LinkedText';
+import { CachedImage } from '../../src/components/ui/CachedImage';
 import { useAuthStore, useEntityStore } from '../../src/store';
 import { isRepost, parseImageUrls, getFollowCounts } from '../../src/lib/supabase';
 import { syncUserPosts } from '../../src/services/syncService';
@@ -129,7 +130,7 @@ export default function ProfileScreen() {
         <Animated.View style={{ transform: [{ translateX: settingsTranslateX }] }}><Pressable onPress={() => { triggerHaptic('light'); router.push('/settings'); }} style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' }}><Feather name="settings" size={16} color="#FFFFFF" /></Pressable></Animated.View>
       </View>
       <Animated.ScrollView showsVerticalScrollIndicator={false} bounces={false} onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true })} scrollEventThrottle={16} contentContainerStyle={{ paddingBottom: 100 }}>
-        <View style={{ height: 150, backgroundColor: theme.colors.accent.primary + '20' }}>{bannerUrl ? <Image source={{ uri: bannerUrl }} style={{ width: '100%', height: '100%' }} resizeMode="cover" /> : null}<LinearGradient colors={['transparent', theme.colors.background.primary]} style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 50 }} /></View>
+        <View style={{ height: 150, backgroundColor: theme.colors.accent.primary + '20' }}>{bannerUrl ? <CachedImage uri={bannerUrl} style={{ width: '100%', height: '100%' }} resizeMode="cover" /> : null}<LinearGradient colors={['transparent', theme.colors.background.primary]} style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 50 }} /></View>
         <View style={{ paddingHorizontal: 16, marginTop: -36 }}>
           <View style={{ width: 72, height: 72, borderRadius: 36, overflow: 'hidden', borderWidth: 3, borderColor: theme.colors.background.primary, backgroundColor: theme.isDark ? 'rgba(30,30,30,0.85)' : 'rgba(255,255,255,0.85)', alignItems: 'center', justifyContent: 'center' }}><Avatar emoji={user.emoji} size="lg" /></View>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}>
@@ -154,7 +155,7 @@ export default function ProfileScreen() {
             return (
             <Pressable key={post.id} onPress={() => router.push({ pathname: '/comments/[id]', params: { id: post.id } })} style={{ backgroundColor: theme.colors.background.elevated, borderRadius: 14, padding: 14, marginBottom: 10, opacity: isPending ? 0.6 : 1 }}>
               {isPending && <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 6 }}><ActivityIndicator size="small" color={theme.colors.accent.primary} /><Text variant="caption" color={theme.colors.text.tertiary}>Отправка...</Text></View>}
-              {(() => { const imgs = post.imageUrls && post.imageUrls.length > 0 ? post.imageUrls : post.imageUrl ? [post.imageUrl] : []; if (!imgs.length) return null; if (imgs.length === 1) return <Image source={{ uri: imgs[0] }} style={{ width: '100%', height: 160, borderRadius: 10, marginBottom: 10 }} resizeMode="cover" />; return <RNScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }} contentContainerStyle={{ gap: 6 }}>{imgs.map((url: string, i: number) => <Image key={i} source={{ uri: url }} style={{ width: (SCREEN_WIDTH-80)*0.8, height: 160, borderRadius: 10 }} resizeMode="cover" />)}</RNScrollView>; })()}
+              {(() => { const imgs = post.imageUrls && post.imageUrls.length > 0 ? post.imageUrls : post.imageUrl ? [post.imageUrl] : []; if (!imgs.length) return null; if (imgs.length === 1) return <CachedImage uri={imgs[0]} style={{ width: '100%', height: 160, borderRadius: 10, marginBottom: 10 }} resizeMode="cover" />; return <RNScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }} contentContainerStyle={{ gap: 6 }}>{imgs.map((url: string, i: number) => <CachedImage key={i} uri={url} style={{ width: (SCREEN_WIDTH-80)*0.8, height: 160, borderRadius: 10 }} resizeMode="cover" />)}</RNScrollView>; })()}
               {post.content ? <Text variant="body" numberOfLines={3}>{post.content}</Text> : null}
               <View style={{ flexDirection: 'row', marginTop: 8, gap: 14 }}><View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}><Feather name="heart" size={13} color={theme.colors.text.tertiary} /><Text variant="caption" color={theme.colors.text.tertiary}>{post.likesCount}</Text></View><View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}><Feather name="message-circle" size={13} color={theme.colors.text.tertiary} /><Text variant="caption" color={theme.colors.text.tertiary}>{post.commentsCount}</Text></View></View>
             </Pressable>
