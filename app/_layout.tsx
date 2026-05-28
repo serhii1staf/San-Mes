@@ -117,12 +117,11 @@ export default function RootLayout() {
   // Load ALL data once when user is authenticated — no per-screen syncs needed
   useEffect(() => {
     if (isAuthenticated && user?.id) {
-      import('../src/services/syncService').then(({ syncFeed, syncUserPosts, syncProfiles }) => {
-        // Load feed, user posts, and profiles in parallel — one time
+      import('../src/services/syncService').then(({ syncFeed, syncUserPosts }) => {
+        // Load feed (includes profiles via join) + user's own posts
         Promise.all([
           syncFeed(user.id),
           syncUserPosts(user.id),
-          syncProfiles(),
         ]).catch(() => {});
       });
     }
