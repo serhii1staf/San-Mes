@@ -474,10 +474,21 @@ export default function UserProfileScreen() {
       {/* Fullscreen Image Viewer */}
       <Modal visible={!!viewingImage} transparent animationType="fade" onRequestClose={() => setViewingImage(null)} statusBarTranslucent>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.92)' }}>
-          {/* Close button — top right */}
-          <Pressable onPress={() => setViewingImage(null)} style={{ position: 'absolute', top: insets.top + 12, right: 16, zIndex: 10, width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' }}>
-            <Feather name="x" size={20} color="#FFFFFF" />
-          </Pressable>
+          {/* Top bar: author left, close right */}
+          <View style={{ position: 'absolute', top: insets.top + 12, left: 16, right: 16, zIndex: 10, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            {/* Author info */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(0,0,0,0.5)', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 16 }}>
+              <Avatar emoji={displayProfile?.emoji || '😊'} size="xs" />
+              <View>
+                <Text variant="caption" weight="semibold" color="#FFFFFF" style={{ fontSize: 11 }}>{displayProfile?.display_name || 'User'}</Text>
+                {viewingImage && <Text variant="caption" color="rgba(255,255,255,0.6)" style={{ fontSize: 9 }}>{(() => { const p = displayPosts.find((pp: any) => pp.id === viewingImage.postId); return p?.createdAt ? formatTimeAgo(p.createdAt) : ''; })()}</Text>}
+              </View>
+            </View>
+            {/* Close */}
+            <Pressable onPress={() => setViewingImage(null)} style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' }}>
+              <Feather name="x" size={20} color="#FFFFFF" />
+            </Pressable>
+          </View>
 
           {/* Image — zoomable */}
           <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
@@ -487,6 +498,13 @@ export default function UserProfileScreen() {
               </RNScrollView>
             )}
           </View>
+
+          {/* Description (if exists) */}
+          {viewingImage && (() => { const post = displayPosts.find((pp: any) => pp.id === viewingImage.postId); return post?.content ? (
+            <RNScrollView style={{ maxHeight: 60, marginHorizontal: 24, marginBottom: 8 }} showsVerticalScrollIndicator={false}>
+              <Text variant="caption" color="rgba(255,255,255,0.8)" style={{ fontSize: 12 }}>{post.content}</Text>
+            </RNScrollView>
+          ) : null; })()}
 
           {/* Bottom actions */}
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 24, paddingBottom: insets.bottom + 20 }}>
