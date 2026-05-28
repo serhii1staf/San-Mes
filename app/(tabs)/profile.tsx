@@ -238,10 +238,21 @@ export default function ProfileScreen() {
       {/* Fullscreen Image Viewer */}
       <Modal visible={!!viewingImage} transparent animationType="fade" onRequestClose={() => setViewingImage(null)} statusBarTranslucent>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.92)' }}>
-          {/* Close — top right */}
-          <Pressable onPress={() => setViewingImage(null)} style={{ position: 'absolute', top: insets.top + 12, right: 16, zIndex: 10, width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' }}>
-            <Feather name="x" size={20} color="#FFFFFF" />
-          </Pressable>
+          {/* Top bar: author left, close right */}
+          <View style={{ position: 'absolute', top: insets.top + 12, left: 16, right: 16, zIndex: 10, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            {/* Author info */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(0,0,0,0.5)', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 16 }}>
+              <Avatar emoji={user?.emoji} size="xs" />
+              <View>
+                <Text variant="caption" weight="semibold" color="#FFFFFF" style={{ fontSize: 11 }}>{user?.displayName}</Text>
+                {viewingImage && <Text variant="caption" color="rgba(255,255,255,0.6)" style={{ fontSize: 9 }}>{formatTimeAgo(userPosts.find(p => p.id === viewingImage.postId)?.createdAt || '')}</Text>}
+              </View>
+            </View>
+            {/* Close */}
+            <Pressable onPress={() => setViewingImage(null)} style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' }}>
+              <Feather name="x" size={20} color="#FFFFFF" />
+            </Pressable>
+          </View>
           {/* Image — full width, zoomable + horizontal scroll for multi-image */}
           <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
             {viewingImage && (
@@ -260,6 +271,12 @@ export default function ProfileScreen() {
               )
             )}
           </View>
+          {/* Description (if exists) */}
+          {viewingImage && (() => { const post = userPosts.find(p => p.id === viewingImage.postId); return post?.content ? (
+            <ScrollView style={{ maxHeight: 60, marginHorizontal: 24, marginBottom: 8 }} showsVerticalScrollIndicator={false}>
+              <Text variant="caption" color="rgba(255,255,255,0.8)" style={{ fontSize: 12 }}>{post.content}</Text>
+            </ScrollView>
+          ) : null; })()}
           {/* Bottom actions */}
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 24, paddingBottom: insets.bottom + 20 }}>
             <Pressable onPress={() => { setViewingImage(null); useFeedStore.getState().setEditingPost({ id: viewingImage!.postId, content: userPosts.find(p => p.id === viewingImage!.postId)?.content || '', imageUrl: viewingImage!.uri }); router.push('/(tabs)/create'); }} style={{ alignItems: 'center' }}>
