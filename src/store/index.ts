@@ -11,3 +11,4 @@ export type { Message, Conversation } from './chatStore';
 export { useThemeStore } from './themeStore';
 export type { ThemeMode } from './themeStore';
 export { useSettingsStore } from './settingsStore';
+export { useUpdateStore } from './updateStore';
