@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { View, FlatList, Pressable, ViewStyle, TextInput, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -6,7 +6,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
-import { useChatStore } from '../../src/store';
+import { useChatStore, useEntityStore, useAuthStore } from '../../src/store';
+import { syncConversations } from '../../src/services/syncService';
 import { Conversation } from '../../src/types';
 
 function ConversationItem({ item }: { item: Conversation; index: number }) {
@@ -85,8 +86,36 @@ function ConversationItem({ item }: { item: Conversation; index: number }) {
 export default function MessagesScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
-  const { conversations } = useChatStore();
+  const { conversations: chatStoreConversations } = useChatStore();
+  const entityConversations = useEntityStore((s) => s.conversations);
+  const user = useAuthStore((s) => s.user);
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Trigger syncConversations in background on mount
+  useEffect(() => {
+    if (user?.id) {
+      syncConversations(user.id);
+    }
+  }, [user?.id]);
+
+  // Use entityStore conversations as cache layer; fall back to chatStore if empty
+  const conversations: Conversation[] = useMemo(() => {
+    if (entityConversations.length > 0) {
+      // Map LocalConversation to Conversation type with defaults for missing fields
+      return entityConversations.map((c) => ({
+        id: c.id,
+        participantId: c.participantId,
+        participantName: c.participantName,
+        participantUsername: c.participantUsername,
+        participantEmoji: c.participantEmoji,
+        lastMessage: c.lastMessage || '',
+        lastMessageAt: c.lastMessageAt || '',
+        unreadCount: 0,
+        isOnline: false,
+      }));
+    }
+    return chatStoreConversations;
+  }, [entityConversations, chatStoreConversations]);
 
   const filtered = searchQuery
     ? conversations.filter((c) =>

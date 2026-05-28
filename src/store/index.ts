@@ -12,5 +12,6 @@ export { useThemeStore } from './themeStore';
 export type { ThemeMode } from './themeStore';
 export { useSettingsStore } from './settingsStore';
 export { useUpdateStore } from './updateStore';
-export { useEntityStore } from '../lib/entityStore';
-export type { LocalPost, LocalProfile } from '../lib/entityStore';
+export { useEntityStore } from '../services/entityStore';
+export type { LocalPost, LocalProfile } from '../services/entityStore';
+export { useConnectivityStore } from '../services/connectivityMonitor';

@@ -8,8 +8,11 @@ import * as Clipboard from 'expo-clipboard';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { LinkedText } from '../../src/components/ui/LinkedText';
-import { parseImageUrls, getProfile, getFollowCounts, isFollowing as checkIsFollowing, followUser, unfollowUser, supabase } from '../../src/lib/supabase';
+import { parseImageUrls, getProfile, getFollowCounts } from '../../src/lib/supabase';
 import { useAuthStore } from '../../src/store';
+import { useEntityStore } from '../../src/store';
+import { syncProfile, syncUserPosts } from '../../src/services/syncService';
+import { queueMutation } from '../../src/services/offlineQueue';
 import { openUrl } from '../../src/utils/openUrl';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { PanResponder } from 'react-native';
@@ -217,7 +220,6 @@ export default function UserProfileScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { user: currentUser } = useAuthStore();
   const [isLoading, setIsLoading] = useState(true);
-  const [isFollowingState, setIsFollowingState] = useState(false);
   const [followCounts, setFollowCounts] = useState({ followers: 0, following: 0 });
   const [activeTab, setActiveTab] = useState<TabName>('posts');
   const [showMenu, setShowMenu] = useState(false);
@@ -228,81 +230,88 @@ export default function UserProfileScreen() {
   const badgeOpacity = scrollY.interpolate({ inputRange: [180, 220], outputRange: [0, 1], extrapolate: 'clamp' });
   const badgeTranslateY = scrollY.interpolate({ inputRange: [180, 220], outputRange: [20, 0], extrapolate: 'clamp' });
 
-  // Profile data loaded from Supabase
-  const [profile, setProfile] = useState<any>(null);
-  const [userPosts, setUserPosts] = useState<any[]>([]);
+  // Read profile from entity store (cached)
+  const cachedProfile = useEntityStore((s) => s.profiles[id ?? '']);
+  // Read follow state from entity store
+  const isFollowingState = useEntityStore((s) => s.isFollowing(currentUser?.id ?? '', id ?? ''));
+  // Read user posts from entity store, filtered by author_id
+  const allPosts = useEntityStore((s) => s.posts);
+  const userPosts = React.useMemo(() => {
+    if (!id) return [];
+    return Object.values(allPosts)
+      .filter((p) => p.author_id === id)
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  }, [allPosts, id]);
 
-  useEffect(() => { loadProfile(); }, [id]);
+  // Fallback profile state (for when no cached data exists)
+  const [fallbackProfile, setFallbackProfile] = useState<any>(null);
 
-  const loadProfile = async () => {
+  useEffect(() => {
     if (!id) return;
-    setIsLoading(true);
-    try {
-      // Load profile from Supabase
-      const { profile: profileData, error } = await getProfile(id);
-      if (profileData) {
-        setProfile(profileData);
-      }
 
-      // Load user posts
-      const { data: postsData } = await supabase
-        .from('posts')
-        .select('*')
-        .eq('author_id', id)
-        .order('created_at', { ascending: false })
-        .limit(50);
-
-      if (postsData) {
-        setUserPosts(postsData.map((p: any) => {
-          const parsedImages = parseImageUrls(p.image_url);
-          return {
-            id: p.id,
-            content: p.content,
-            imageUrl: parsedImages[0] || undefined,
-            imageUrls: parsedImages.length > 0 ? parsedImages : undefined,
-            likesCount: p.likes_count || 0,
-            commentsCount: p.comments_count || 0,
-            createdAt: p.created_at,
-          };
-        }));
-      }
-
-      // Load follow state
-      if (currentUser?.id) {
-        const following = await checkIsFollowing(currentUser.id, id);
-        setIsFollowingState(following);
-      }
-
-      // Load follow counts
-      const counts = await getFollowCounts(id);
-      setFollowCounts(counts);
-    } catch (e) {
-      console.warn('[Profile] Load failed:', e);
+    // If we have cached profile, show it immediately (no loading)
+    if (cachedProfile) {
+      setIsLoading(false);
+    } else {
+      // No cached data — load from Supabase directly as fallback
+      setIsLoading(true);
+      getProfile(id).then(({ profile: profileData }) => {
+        if (profileData) {
+          setFallbackProfile(profileData);
+          // Also upsert into entity store for future use
+          useEntityStore.getState().upsertProfile({
+            id: profileData.id,
+            username: profileData.username,
+            display_name: profileData.display_name,
+            emoji: profileData.emoji || '😀',
+            bio: profileData.bio || '',
+            banner_url: (profileData as any).banner_url || null,
+            links: (profileData as any).links ? JSON.stringify((profileData as any).links) : null,
+            created_at: profileData.created_at || null,
+            updated_at: profileData.updated_at || null,
+          });
+        }
+        setIsLoading(false);
+      }).catch(() => setIsLoading(false));
     }
-    setIsLoading(false);
-  };
 
-  const loadFollowState = (profileId: string) => {
-    // Now handled in loadProfile
-  };
+    // Trigger background sync for profile and user posts
+    syncProfile(id);
+    syncUserPosts(id);
 
-  // Display profile from Supabase
-  const displayProfile = profile;
+    // Load follow counts from Supabase (keep direct call for counts display)
+    getFollowCounts(id).then((counts) => setFollowCounts(counts)).catch(() => {});
+  }, [id]);
 
-  // Display posts from Supabase
-  const displayPosts = userPosts;
+  // Display profile: prefer cached from store, fallback to direct fetch
+  const displayProfile = cachedProfile || fallbackProfile;
+
+  // Display posts mapped for UI
+  const displayPosts = React.useMemo(() => {
+    return userPosts.map((p) => {
+      const parsedImages = parseImageUrls(p.image_url);
+      return {
+        id: p.id,
+        content: p.content,
+        imageUrl: parsedImages[0] || undefined,
+        imageUrls: parsedImages.length > 0 ? parsedImages : undefined,
+        likesCount: p.likes_count || 0,
+        commentsCount: p.comments_count || 0,
+        createdAt: p.created_at,
+        status: p.status,
+      };
+    });
+  }, [userPosts]);
 
   const handleFollow = async () => {
     if (!currentUser?.id || !id) return;
     triggerHaptic('medium');
     if (isFollowingState) {
-      setIsFollowingState(false);
       setFollowCounts(c => ({ ...c, followers: Math.max(0, c.followers - 1) }));
-      await unfollowUser(currentUser.id, id);
+      await queueMutation('unfollow', { followerId: currentUser.id, followingId: id });
     } else {
-      setIsFollowingState(true);
       setFollowCounts(c => ({ ...c, followers: c.followers + 1 }));
-      await followUser(currentUser.id, id);
+      await queueMutation('follow', { followerId: currentUser.id, followingId: id });
     }
   };
 

@@ -5,7 +5,8 @@ import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
 import { ThemeProvider, useTheme } from '../src/theme';
 import { fontAssets } from '../src/theme/fonts';
-import { useAuthStore } from '../src/store';
+import { useAuthStore, useEntityStore, useConnectivityStore } from '../src/store';
+import { fullSync } from '../src/services/syncService';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -73,6 +74,8 @@ function CustomSplash() {
 export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts(fontAssets);
   const [fontTimeout, setFontTimeout] = useState(false);
+  const isHydrated = useEntityStore((s) => s.isHydrated);
+  const { isAuthenticated, user } = useAuthStore();
 
   useEffect(() => {
     const timer = setTimeout(() => setFontTimeout(true), 3000);
@@ -87,6 +90,7 @@ export default function RootLayout() {
     }
   }, [ready]);
 
+  // Auth store safety timeout (existing)
   useEffect(() => {
     const timer = setTimeout(() => {
       if (!useAuthStore.getState().hasHydrated) {
@@ -96,7 +100,42 @@ export default function RootLayout() {
     return () => clearTimeout(timer);
   }, []);
 
-  if (!ready) return null;
+  // Hydrate entity store on mount, then start connectivity monitor
+  useEffect(() => {
+    let cancelled = false;
+
+    async function init() {
+      await useEntityStore.getState().hydrate();
+      if (!cancelled) {
+        useConnectivityStore.getState().start();
+      }
+    }
+
+    init();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Safety timeout: force isHydrated after 2 seconds
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (!useEntityStore.getState().isHydrated) {
+        useEntityStore.setState({ isHydrated: true });
+      }
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, []);
+
+  // Trigger fullSync when user is authenticated
+  useEffect(() => {
+    if (isAuthenticated && user?.id) {
+      fullSync(user.id);
+    }
+  }, [isAuthenticated, user?.id]);
+
+  if (!ready || !isHydrated) return null;
 
   return (
     <ThemeProvider>

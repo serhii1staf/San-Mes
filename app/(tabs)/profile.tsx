@@ -7,8 +7,10 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { LinkedText } from '../../src/components/ui/LinkedText';
-import { useAuthStore } from '../../src/store';
-import { isRepost, parseImageUrls, getFollowCounts, supabase } from '../../src/lib/supabase';
+import { useAuthStore, useEntityStore } from '../../src/store';
+import { isRepost, parseImageUrls, getFollowCounts } from '../../src/lib/supabase';
+import { syncUserPosts } from '../../src/services/syncService';
+import { LocalPost } from '../../src/services/entityStore';
 import { openUrl } from '../../src/utils/openUrl';
 import { Post } from '../../src/types';
 import { triggerHaptic } from '../../src/utils/haptics';
@@ -63,28 +65,48 @@ export default function ProfileScreen() {
   const { user } = useAuthStore();
   const [activeTab, setActiveTab] = useState<TabName>('posts');
   const [followCounts, setFollowCounts] = useState({ followers: 0, following: 0 });
-  const [userPosts, setUserPosts] = useState<Post[]>([]);
   const [showQR, setShowQR] = useState(false);
 
-  const loadMyPosts = useCallback(async () => {
-    if (!user?.id) return;
-    try {
-      const { data } = await supabase.from('posts').select('*').eq('author_id', user.id).order('created_at', { ascending: false }).limit(50);
-      if (!data) return;
-      setUserPosts(data.map((p: any) => {
-        const repostInfo = isRepost(p.content || '');
-        const parsedImages = parseImageUrls(p.image_url);
-        return { id: p.id, authorId: p.author_id, authorName: user.displayName || '', authorUsername: user.username || '', authorEmoji: user.emoji || '😊', content: repostInfo.isRepost ? (repostInfo.comment || '') : (p.content || ''), imageUrl: parsedImages[0] || undefined, imageUrls: parsedImages.length > 0 ? parsedImages : undefined, likesCount: p.likes_count || 0, commentsCount: p.comments_count || 0, sharesCount: p.shares_count || 0, isLiked: false, isBookmarked: false, createdAt: p.created_at, isRepost: repostInfo.isRepost };
-      }));
-    } catch {}
-  }, [user?.id]);
+  // Read posts from entityStore instead of local state
+  const myLocalPosts = useEntityStore((s) => s.getMyPosts());
+  const profile = useEntityStore((s) => s.profiles[user?.id ?? '']);
+
+  // Map LocalPost[] to Post[] for rendering
+  const userPosts: Post[] = myLocalPosts.map((p: LocalPost) => {
+    const repostInfo = isRepost(p.content || '');
+    const parsedImages = parseImageUrls(p.image_url);
+    return {
+      id: p.id,
+      authorId: p.author_id,
+      authorName: user?.displayName || profile?.display_name || '',
+      authorUsername: user?.username || profile?.username || '',
+      authorEmoji: user?.emoji || profile?.emoji || '😊',
+      content: repostInfo.isRepost ? (repostInfo.comment || '') : (p.content || ''),
+      imageUrl: parsedImages[0] || undefined,
+      imageUrls: parsedImages.length > 0 ? parsedImages : undefined,
+      likesCount: p.likes_count || 0,
+      commentsCount: p.comments_count || 0,
+      sharesCount: p.shares_count || 0,
+      isLiked: false,
+      isBookmarked: false,
+      createdAt: p.created_at,
+      isRepost: repostInfo.isRepost,
+      status: p.status, // Keep status for pending indicator
+    } as Post & { status?: string };
+  });
 
   const loadFollows = useCallback(async () => {
     if (!user?.id) return;
     try { const counts = await getFollowCounts(user.id); setFollowCounts(counts); } catch {}
   }, [user?.id]);
 
-  useFocusEffect(useCallback(() => { loadMyPosts(); loadFollows(); }, [user?.id]));
+  useFocusEffect(useCallback(() => {
+    if (!user?.id) return;
+    // Trigger background sync for user posts
+    syncUserPosts(user.id);
+    // Load follow counts from supabase (not cached in entityStore yet)
+    loadFollows();
+  }, [user?.id]));
 
   if (!user) return <View style={{ flex: 1, backgroundColor: theme.colors.background.primary, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator size="large" color={theme.colors.accent.primary} /></View>;
 
@@ -127,13 +149,17 @@ export default function ProfileScreen() {
           <View style={{ position: 'absolute', bottom: 0, height: 2, backgroundColor: theme.colors.accent.primary, width: SCREEN_WIDTH / 4, left: tabs.findIndex(t => t.key === activeTab) * (SCREEN_WIDTH / 4) }} />
         </View>
         {activeTab === 'posts' && (userPosts.length === 0 ? <View style={{ alignItems: 'center', paddingVertical: 40 }}><Text variant="caption" color={theme.colors.text.tertiary}>Ещё нет публикаций</Text></View> : (
-          <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>{userPosts.map(post => (
-            <Pressable key={post.id} onPress={() => router.push({ pathname: '/comments/[id]', params: { id: post.id } })} style={{ backgroundColor: theme.colors.background.elevated, borderRadius: 14, padding: 14, marginBottom: 10 }}>
+          <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>{userPosts.map(post => {
+            const isPending = (post as any).status === 'pending';
+            return (
+            <Pressable key={post.id} onPress={() => router.push({ pathname: '/comments/[id]', params: { id: post.id } })} style={{ backgroundColor: theme.colors.background.elevated, borderRadius: 14, padding: 14, marginBottom: 10, opacity: isPending ? 0.6 : 1 }}>
+              {isPending && <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 6 }}><ActivityIndicator size="small" color={theme.colors.accent.primary} /><Text variant="caption" color={theme.colors.text.tertiary}>Отправка...</Text></View>}
               {(() => { const imgs = post.imageUrls && post.imageUrls.length > 0 ? post.imageUrls : post.imageUrl ? [post.imageUrl] : []; if (!imgs.length) return null; if (imgs.length === 1) return <Image source={{ uri: imgs[0] }} style={{ width: '100%', height: 160, borderRadius: 10, marginBottom: 10 }} resizeMode="cover" />; return <RNScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }} contentContainerStyle={{ gap: 6 }}>{imgs.map((url: string, i: number) => <Image key={i} source={{ uri: url }} style={{ width: (SCREEN_WIDTH-80)*0.8, height: 160, borderRadius: 10 }} resizeMode="cover" />)}</RNScrollView>; })()}
               {post.content ? <Text variant="body" numberOfLines={3}>{post.content}</Text> : null}
               <View style={{ flexDirection: 'row', marginTop: 8, gap: 14 }}><View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}><Feather name="heart" size={13} color={theme.colors.text.tertiary} /><Text variant="caption" color={theme.colors.text.tertiary}>{post.likesCount}</Text></View><View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}><Feather name="message-circle" size={13} color={theme.colors.text.tertiary} /><Text variant="caption" color={theme.colors.text.tertiary}>{post.commentsCount}</Text></View></View>
             </Pressable>
-          ))}</View>
+            );
+          })}</View>
         ))}
         {activeTab !== 'posts' && <View style={{ alignItems: 'center', paddingVertical: 40 }}><Text variant="caption" color={theme.colors.text.tertiary}>Пока пусто</Text></View>}
       </Animated.ScrollView>

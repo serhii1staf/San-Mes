@@ -8,7 +8,10 @@ import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { useAuthStore } from '../../src/store/authStore';
 import { useFeedStore } from '../../src/store/feedStore';
+import { useConnectivityStore } from '../../src/store';
 import { createRepost, createPost, supabase, uploadPostImage, joinImageUrls } from '../../src/lib/supabase';
+import { queueMutation, generateTempId } from '../../src/services/offlineQueue';
+import { useEntityStore } from '../../src/services/entityStore';
 
 const MAX_CHARS = 500;
 const MAX_IMAGES = 6;
@@ -116,7 +119,7 @@ export default function CreateScreen() {
 
     setIsPosting(true);
     try {
-      // Handle repost
+      // Handle repost (keep as-is)
       if (repostData) {
         const { post, error } = await createRepost(user.id, repostData.id, content.trim() || undefined);
         if (error) {
@@ -130,36 +133,92 @@ export default function CreateScreen() {
         return;
       }
 
-      let imageUrl: string | undefined;
+      const { isOnline } = useConnectivityStore.getState();
+      const tempId = generateTempId();
+      const postContent = content.trim() || '';
 
-      if (imageUris.length > 0) {
-        setImageUploading(true);
-        const uploadedUrls: string[] = [];
-        for (const uri of imageUris) {
-          const uploadedUrl = await uploadImage(uri);
-          if (uploadedUrl) {
-            uploadedUrls.push(uploadedUrl);
+      if (isOnline) {
+        // Online: try direct API call with image upload
+        try {
+          let imageUrl: string | undefined;
+
+          if (imageUris.length > 0) {
+            setImageUploading(true);
+            const uploadedUrls: string[] = [];
+            for (const uri of imageUris) {
+              const uploadedUrl = await uploadImage(uri);
+              if (uploadedUrl) {
+                uploadedUrls.push(uploadedUrl);
+              }
+            }
+            setImageUploading(false);
+            if (uploadedUrls.length > 0) {
+              imageUrl = joinImageUrls(uploadedUrls);
+            }
           }
-        }
-        setImageUploading(false);
-        if (uploadedUrls.length > 0) {
-          imageUrl = joinImageUrls(uploadedUrls);
-        }
-      }
 
-      const tempId = `temp_${Date.now()}`;
-      const { post, error } = await createPost(user.id, content.trim() || '', imageUrl);
-      if (error) {
-        Alert.alert('Ошибка', error);
-        setIsPosting(false);
-        return;
-      }
+          const { post, error } = await createPost(user.id, postContent, imageUrl);
+          if (!error && post) {
+            // Success — update entity store with server data
+            const store = useEntityStore.getState();
+            store.upsertPost({
+              id: post.id,
+              author_id: post.author_id,
+              content: post.content,
+              image_url: post.image_url,
+              likes_count: post.likes_count,
+              comments_count: post.comments_count,
+              shares_count: post.shares_count,
+              created_at: post.created_at,
+              status: 'synced',
+            });
+            store.setFeedIds([post.id, ...store.feedIds]);
+            store.setMyPostIds([post.id, ...store.myPostIds]);
 
-      setContent('');
-      setImageUris([]);
-      router.replace('/(tabs)');
-    } catch (e) {
-      Alert.alert('Ошибка', 'Не удалось опубликовать пост');
+            setContent('');
+            setImageUris([]);
+            router.replace('/(tabs)');
+            return;
+          }
+
+          // API call failed — fall back to queue silently
+          await queueMutation('create_post', {
+            tempId,
+            authorId: user.id,
+            content: postContent,
+            imageUris: imageUris.length > 0 ? [...imageUris] : [],
+          });
+
+          setContent('');
+          setImageUris([]);
+          router.replace('/(tabs)');
+        } catch (e) {
+          // Network error — fall back to queue silently
+          setImageUploading(false);
+          await queueMutation('create_post', {
+            tempId,
+            authorId: user.id,
+            content: postContent,
+            imageUris: imageUris.length > 0 ? [...imageUris] : [],
+          });
+
+          setContent('');
+          setImageUris([]);
+          router.replace('/(tabs)');
+        }
+      } else {
+        // Offline: queue mutation with local image URIs
+        await queueMutation('create_post', {
+          tempId,
+          authorId: user.id,
+          content: postContent,
+          imageUris: imageUris.length > 0 ? [...imageUris] : [],
+        });
+
+        setContent('');
+        setImageUris([]);
+        router.replace('/(tabs)');
+      }
     } finally {
       setIsPosting(false);
       setImageUploading(false);

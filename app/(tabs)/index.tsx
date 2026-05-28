@@ -1,5 +1,5 @@
-import React, { useEffect, useCallback, useState } from 'react';
-import { View, FlatList, RefreshControl, ViewStyle, Pressable, StyleSheet, ActivityIndicator, Modal } from 'react-native';
+import React, { useEffect, useCallback, useState, useMemo } from 'react';
+import { View, FlatList, RefreshControl, Pressable, StyleSheet, ActivityIndicator, Modal } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
@@ -8,11 +8,14 @@ import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
 import { PostCard } from '../../src/components/feed/PostCard';
 import { PostMenuModal } from '../../src/components/feed/PostMenuModal';
-import { useFeedStore, useAuthStore } from '../../src/store';
+import { useFeedStore, useAuthStore, useEntityStore, useConnectivityStore } from '../../src/store';
 import { Post } from '../../src/types';
-import { getPosts, isRepost, parseImageUrls, toggleLike as apiToggleLike } from '../../src/lib/supabase';
+import { isRepost, parseImageUrls } from '../../src/lib/supabase';
+import { syncFeed } from '../../src/services/syncService';
+import { queueMutation } from '../../src/services/offlineQueue';
 import { useUpdateStore } from '../../src/store/updateStore';
 import { triggerHaptic } from '../../src/utils/haptics';
+import { LocalPost } from '../../src/services/entityStore';
 
 
 function FeedHeader() {
@@ -54,103 +57,144 @@ export default function FeedScreen() {
   const [menuPost, setMenuPost] = useState<Post | null>(null);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
-  const [posts, setPosts] = useState<Post[]>([]);
+
+  // Read from entity store
+  const posts = useEntityStore((s) => s.posts);
+  const feedIds = useEntityStore((s) => s.feedIds);
+  const isHydrated = useEntityStore((s) => s.isHydrated);
+  const profiles = useEntityStore((s) => s.profiles);
+  const likes = useEntityStore((s) => s.likes);
+
+  // Read connectivity
+  const isOnline = useConnectivityStore((s) => s.isOnline);
 
   const { status: updateStatus, progress: updateProgress, message: updateMessage, checkForUpdate, applyUpdate } = useUpdateStore();
 
   useEffect(() => { checkForUpdate(); }, []);
 
-  const loadFeed = useCallback(async () => {
-    try {
-      const { posts: rawPosts, error } = await getPosts(50, 0);
-      if (error || !rawPosts) { setIsLoading(false); return; }
+  // Map LocalPost[] to Post[] using profiles from entityStore
+  const mappedPosts: Post[] = useMemo(() => {
+    const result: Post[] = [];
+    const postsById: Record<string, LocalPost> = posts;
 
-      const mapped: Post[] = [];
-      const postsById: Record<string, any> = {};
-      for (const p of rawPosts) postsById[p.id] = p;
+    for (const id of feedIds) {
+      const p = postsById[id];
+      if (!p) continue;
 
-      for (const p of rawPosts) {
-        const repostInfo = isRepost(p.content || '');
-        const parsedImages = parseImageUrls(p.image_url);
-        const profileData = Array.isArray(p.profiles) ? p.profiles[0] : p.profiles;
+      const repostInfo = isRepost(p.content || '');
+      const parsedImages = parseImageUrls(p.image_url);
+      const profile = profiles[p.author_id];
 
-        let post: Post = {
-          id: p.id,
-          authorId: p.author_id,
-          authorName: profileData?.display_name || 'User',
-          authorUsername: profileData?.username || 'user',
-          authorEmoji: profileData?.emoji || '😊',
-          content: repostInfo.isRepost ? (repostInfo.comment || '') : (p.content || ''),
-          imageUrl: parsedImages[0] || undefined,
-          imageUrls: parsedImages.length > 0 ? parsedImages : undefined,
-          likesCount: p.likes_count || 0,
-          commentsCount: p.comments_count || 0,
-          sharesCount: p.shares_count || 0,
-          isLiked: false,
-          isBookmarked: false,
-          createdAt: p.created_at,
-          isRepost: repostInfo.isRepost,
-        };
+      const isLiked = user?.id ? (likes[user.id] || []).includes(p.id) : false;
 
-        if (!post.content && !post.imageUrl && !post.isRepost) continue;
+      let post: Post = {
+        id: p.id,
+        authorId: p.author_id,
+        authorName: profile?.display_name || 'User',
+        authorUsername: profile?.username || 'user',
+        authorEmoji: profile?.emoji || '😊',
+        content: repostInfo.isRepost ? (repostInfo.comment || '') : (p.content || ''),
+        imageUrl: parsedImages[0] || undefined,
+        imageUrls: parsedImages.length > 0 ? parsedImages : undefined,
+        likesCount: p.likes_count || 0,
+        commentsCount: p.comments_count || 0,
+        sharesCount: p.shares_count || 0,
+        isLiked,
+        isBookmarked: false,
+        createdAt: p.created_at,
+        isRepost: repostInfo.isRepost,
+      };
 
-        if (repostInfo.isRepost && repostInfo.originalPostId) {
-          const orig = postsById[repostInfo.originalPostId];
-          if (orig) {
-            const origProfile = Array.isArray(orig.profiles) ? orig.profiles[0] : orig.profiles;
-            const origImages = parseImageUrls(orig.image_url);
-            post.originalPost = {
-              id: orig.id,
-              authorName: origProfile?.display_name || 'User',
-              authorUsername: origProfile?.username || 'user',
-              authorEmoji: origProfile?.emoji || '😊',
-              content: orig.content || '',
-              imageUrl: origImages[0] || undefined,
-              imageUrls: origImages.length > 0 ? origImages : undefined,
-            };
-          }
+      if (!post.content && !post.imageUrl && !post.isRepost) continue;
+
+      // Handle reposts — look up original post in store
+      if (repostInfo.isRepost && repostInfo.originalPostId) {
+        const orig = postsById[repostInfo.originalPostId];
+        if (orig) {
+          const origProfile = profiles[orig.author_id];
+          const origImages = parseImageUrls(orig.image_url);
+          post.originalPost = {
+            id: orig.id,
+            authorName: origProfile?.display_name || 'User',
+            authorUsername: origProfile?.username || 'user',
+            authorEmoji: origProfile?.emoji || '😊',
+            content: orig.content || '',
+            imageUrl: origImages[0] || undefined,
+            imageUrls: origImages.length > 0 ? origImages : undefined,
+          };
         }
-        mapped.push(post);
       }
-      setPosts(mapped);
-    } catch (e) {
-      console.warn('[Feed] Load failed:', e);
-    } finally {
+      result.push(post);
+    }
+    return result;
+  }, [posts, feedIds, profiles, likes, user?.id]);
+
+  // On mount: render immediately from store; trigger syncFeed() in background if online
+  useEffect(() => {
+    if (isHydrated && isOnline) {
+      syncFeed().catch(() => {});
+    }
+  }, [isHydrated, isOnline]);
+
+  // Once hydrated and we have data (or after safety timeout), stop loading
+  useEffect(() => {
+    if (isHydrated && feedIds.length > 0) {
       setIsLoading(false);
     }
-  }, []);
+  }, [isHydrated, feedIds.length]);
 
-  useEffect(() => { loadFeed(); }, []);
+  // 2-second skeleton safety timeout
   useEffect(() => { const t = setTimeout(() => setIsLoading(false), 2000); return () => clearTimeout(t); }, []);
 
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
-    await loadFeed();
+    await syncFeed();
     setRefreshing(false);
-  }, [loadFeed]);
+  }, []);
 
   const handleToggleLike = useCallback(async (postId: string) => {
     if (!user?.id) return;
-    setPosts(prev => prev.map(p => p.id === postId ? { ...p, isLiked: !p.isLiked, likesCount: p.isLiked ? p.likesCount - 1 : p.likesCount + 1 } : p));
-    await apiToggleLike(user.id, postId);
-  }, [user?.id]);
+    const currentlyLiked = (likes[user.id] || []).includes(postId);
+    // Use queueMutation for likes instead of direct API call
+    await queueMutation('toggle_like', {
+      userId: user.id,
+      postId,
+      liked: !currentlyLiked,
+    });
+  }, [user?.id, likes]);
 
-  const renderPost = ({ item }: { item: Post }) => (
-    <PostCard
-      post={item}
-      onComment={(postId) => router.push({ pathname: '/comments/[id]', params: { id: postId } })}
-      onLike={(postId) => handleToggleLike(postId)}
-      onShare={(postId) => { if (!user?.id) return; triggerHaptic('medium'); useFeedStore.getState().setPendingRepost(postId); router.push('/(tabs)/create'); }}
-      onMenu={(post) => setMenuPost(post)}
-    />
-  );
+  const renderPost = ({ item }: { item: Post }) => {
+    // Show pending indicator on posts with status === 'pending'
+    const localPost = posts[item.id];
+    const isPending = localPost?.status === 'pending';
+
+    return (
+      <View>
+        {isPending && (
+          <View style={[styles.pendingBadge, { backgroundColor: theme.colors.accent.primary + '20' }]}>
+            <ActivityIndicator size={10} color={theme.colors.accent.primary} />
+            <Text variant="caption" color={theme.colors.accent.primary} style={{ marginLeft: 4, fontSize: 10 }}>
+              Отправка...
+            </Text>
+          </View>
+        )}
+        <PostCard
+          post={item}
+          onComment={(postId) => router.push({ pathname: '/comments/[id]', params: { id: postId } })}
+          onLike={(postId) => handleToggleLike(postId)}
+          onShare={(postId) => { if (!user?.id) return; triggerHaptic('medium'); useFeedStore.getState().setPendingRepost(postId); router.push('/(tabs)/create'); }}
+          onMenu={(post) => setMenuPost(post)}
+        />
+      </View>
+    );
+  };
 
   const bgColor = theme.colors.background.primary;
   const bgTransparent = bgColor + '00';
   const headerContentHeight = insets.top + 48;
   const headerGradientHeight = headerContentHeight + 28;
 
-  if (isLoading && posts.length === 0) {
+  if (isLoading && mappedPosts.length === 0) {
     return (
       <View style={{ flex: 1, backgroundColor: bgColor }}>
         <View style={[styles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">
@@ -190,10 +234,10 @@ export default function FeedScreen() {
       </View>
 
       <FlatList
-        data={posts}
+        data={mappedPosts}
         keyExtractor={(item) => item.id}
         renderItem={renderPost}
-        ListHeaderComponent={posts.length === 0 ? FeedHeader : undefined}
+        ListHeaderComponent={mappedPosts.length === 0 ? FeedHeader : undefined}
         contentContainerStyle={{ paddingHorizontal: theme.spacing.base, paddingBottom: 100, paddingTop: headerContentHeight }}
         showsVerticalScrollIndicator={false}
         removeClippedSubviews={true}
@@ -235,4 +279,5 @@ export default function FeedScreen() {
 const styles = StyleSheet.create({
   headerWrapper: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100 },
   headerContent: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 24, paddingBottom: 8 },
+  pendingBadge: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, alignSelf: 'flex-start', marginBottom: 4 },
 });
