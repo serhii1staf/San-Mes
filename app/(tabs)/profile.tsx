@@ -12,6 +12,7 @@ import { getPosts, loadProfileMeta, getFollowCounts } from '../../src/lib/supaba
 import { openUrl } from '../../src/utils/openUrl';
 import { Post } from '../../src/types';
 import { triggerHaptic } from '../../src/utils/haptics';
+import { getCached, setCache, CACHE_KEYS } from '../../src/lib/cache';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 type TabName = 'posts' | 'replies' | 'media' | 'likes';
@@ -76,18 +77,29 @@ export default function ProfileScreen() {
 
   const loadMeta = async () => {
     if (!user?.id) return;
+    const cached = await getCached<{ banner_url?: string; links?: { type: string; url: string }[] }>(CACHE_KEYS.profileMeta(user.id));
+    if (cached) setProfileMeta(cached);
     const { meta } = await loadProfileMeta(user.id);
-    if (meta) setProfileMeta(meta);
+    if (meta) {
+      setProfileMeta(meta);
+      setCache(CACHE_KEYS.profileMeta(user.id), meta);
+    }
   };
 
   const loadFollows = async () => {
     if (!user?.id) return;
+    const cached = await getCached<{ followers: number; following: number }>(CACHE_KEYS.followCounts(user.id));
+    if (cached) setFollowCounts(cached);
     const counts = await getFollowCounts(user.id);
     setFollowCounts(counts);
+    setCache(CACHE_KEYS.followCounts(user.id), counts);
   };
 
   const loadUserPosts = async () => {
     try {
+      const cached = await getCached<Post[]>(CACHE_KEYS.myPosts(user?.id || ''));
+      if (cached) setUserPosts(cached);
+      
       const { posts: dbPosts } = await getPosts();
       const myPosts = dbPosts.filter((p: any) => p.author_id === user?.id).map((p: any) => ({
         id: p.id, authorId: p.author_id,
@@ -99,6 +111,7 @@ export default function ProfileScreen() {
         sharesCount: p.shares_count || 0, isLiked: false, isBookmarked: false, createdAt: p.created_at,
       }));
       setUserPosts(myPosts);
+      setCache(CACHE_KEYS.myPosts(user?.id || ''), myPosts);
     } catch (e) {}
   };
 
@@ -144,7 +157,7 @@ export default function ProfileScreen() {
               <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>@{user.username}</Text>
             </View>
             {/* Edit button - top right */}
-            <Pressable onPress={() => { triggerHaptic('light'); router.push('/profile/edit'); }} style={{ paddingHorizontal: 16, paddingVertical: 7, borderWidth: 1, borderColor: theme.colors.border.medium, borderRadius: 8 }}>
+            <Pressable onPress={() => { triggerHaptic('light'); router.push('/profile/edit'); }} style={{ paddingHorizontal: 16, paddingVertical: 7, borderWidth: 1, borderColor: theme.colors.border.medium, borderRadius: 20 }}>
               <Text variant="caption" weight="semibold">Редактировать</Text>
             </Pressable>
           </View>

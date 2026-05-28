@@ -13,6 +13,7 @@ import { useFeedStore, useAuthStore } from '../../src/store';
 import { Post } from '../../src/types';
 import { getPosts, toggleLike as toggleLikeAPI, isRepost, createRepost } from '../../src/lib/supabase';
 import { supabase } from '../../src/lib/supabase';
+import { getCached, setCache, CACHE_KEYS } from '../../src/lib/cache';
 import { triggerHaptic } from '../../src/utils/haptics';
 
 
@@ -113,6 +114,14 @@ export default function FeedScreen() {
   useEffect(() => {
     const fetchPosts = async () => {
       setLoading(true);
+      
+      // Load from cache first (instant offline display)
+      const cached = await getCached<Post[]>(CACHE_KEYS.feed);
+      if (cached && cached.length > 0) {
+        setPosts(cached);
+        setLoading(false);
+      }
+      
       try {
         const { posts: dbPosts } = await getPosts();
         
@@ -129,8 +138,11 @@ export default function FeedScreen() {
         
         const mapped = await mapPosts(dbPosts, likedPostIds);
         setPosts(mapped);
+        // Save to cache for offline
+        setCache(CACHE_KEYS.feed, mapped);
       } catch (e) {
-        setPosts([]);
+        // If network fails and no cache, show empty
+        if (!cached || cached.length === 0) setPosts([]);
       } finally {
         setLoading(false);
       }
@@ -156,8 +168,9 @@ export default function FeedScreen() {
       
       const mapped = await mapPosts(dbPosts, likedPostIds);
       setPosts(mapped);
+      setCache(CACHE_KEYS.feed, mapped);
     } catch (e) {
-      setPosts([]);
+      // Keep existing posts on error
     } finally {
       setRefreshing(false);
     }

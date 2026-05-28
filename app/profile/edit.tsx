@@ -125,28 +125,17 @@ export default function EditProfileScreen() {
   const dragAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    // Backdrop appears instantly, sheet slides up
-    backdropAnim.setValue(1);
-    Animated.spring(slideAnim, {
-      toValue: 0,
-      useNativeDriver: true,
-      tension: 65,
-      friction: 11,
-    }).start();
+    // Animate both backdrop and sheet together
+    Animated.parallel([
+      Animated.timing(backdropAnim, { toValue: 1, duration: 250, useNativeDriver: true }),
+      Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 65, friction: 11 }),
+    ]).start();
   }, []);
 
   const handleClose = () => {
     Animated.parallel([
-      Animated.timing(slideAnim, {
-        toValue: SCREEN_HEIGHT,
-        duration: 280,
-        useNativeDriver: true,
-      }),
-      Animated.timing(backdropAnim, {
-        toValue: 0,
-        duration: 280,
-        useNativeDriver: true,
-      }),
+      Animated.timing(slideAnim, { toValue: SCREEN_HEIGHT, duration: 280, useNativeDriver: true }),
+      Animated.timing(backdropAnim, { toValue: 0, duration: 280, useNativeDriver: true }),
     ]).start(() => {
       router.back();
     });
@@ -293,10 +282,9 @@ export default function EditProfileScreen() {
   return (
     <View style={outerStyle}>
       {/* Backdrop - tap to close */}
-      <Pressable
-        style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.25)' }}
-        onPress={handleClose}
-      />
+      <Animated.View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)', opacity: backdropAnim }}>
+        <Pressable style={{ flex: 1 }} onPress={handleClose} />
+      </Animated.View>
 
       {/* Modal Card */}
       <KeyboardAvoidingView
