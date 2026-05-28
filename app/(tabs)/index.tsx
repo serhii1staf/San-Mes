@@ -1,5 +1,5 @@
 import React, { useEffect, useCallback, useState } from 'react';
-import { View, FlatList, RefreshControl, ViewStyle, Pressable, StyleSheet, ActivityIndicator, Modal, Animated as RNAnimated } from 'react-native';
+import { View, FlatList, RefreshControl, ViewStyle, Pressable, StyleSheet, ActivityIndicator, Modal } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
@@ -8,18 +8,11 @@ import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
 import { PostCard } from '../../src/components/feed/PostCard';
 import { PostMenuModal } from '../../src/components/feed/PostMenuModal';
-import { TrendingSection } from '../../src/components/feed/TrendingSection';
-import { useFeedStore, useAuthStore, useEntityStore } from '../../src/store';
+import { useFeedStore, useAuthStore } from '../../src/store';
 import { Post } from '../../src/types';
-import { isRepost, parseImageUrls } from '../../src/lib/supabase';
-import { syncFeed } from '../../src/lib/syncEngine';
-import { queueMutation } from '../../src/lib/mutationQueue';
+import { getPosts, isRepost, parseImageUrls, toggleLike as apiToggleLike } from '../../src/lib/supabase';
 import { useUpdateStore } from '../../src/store/updateStore';
 import { triggerHaptic } from '../../src/utils/haptics';
-import { LocalPost } from '../../src/lib/entityStore';
-
-// Module-level flag to prevent skeleton from showing after first load
-let globalFeedLoaded = false;
 
 
 function FeedHeader() {
@@ -61,38 +54,6 @@ function SkeletonCard() {
   );
 }
 
-/**
- * Convert a LocalPost from entityStore into the Post type used by UI components.
- */
-function mapLocalPostToPost(localPost: LocalPost, profiles: Record<string, any>, userId: string | undefined, likedPostIds: Set<string>): Post | null {
-  const repostInfo = isRepost(localPost.content || '');
-  const parsedImages = parseImageUrls(localPost.image_url);
-  const authorProfile = profiles[localPost.author_id];
-
-  let post: Post = {
-    id: localPost.id,
-    authorId: localPost.author_id,
-    authorName: authorProfile?.display_name || 'User',
-    authorUsername: authorProfile?.username || 'user',
-    authorEmoji: authorProfile?.emoji || '😊',
-    content: repostInfo.isRepost ? (repostInfo.comment || '') : localPost.content,
-    imageUrl: parsedImages[0] || undefined,
-    imageUrls: parsedImages.length > 0 ? parsedImages : undefined,
-    likesCount: localPost.likes_count || 0,
-    commentsCount: localPost.comments_count || 0,
-    sharesCount: localPost.shares_count || 0,
-    isLiked: likedPostIds.has(localPost.id),
-    isBookmarked: false,
-    createdAt: localPost.created_at,
-    isRepost: repostInfo.isRepost,
-  };
-
-  // Skip posts with no content and no image (broken/empty)
-  if (!post.content && !post.imageUrl && !post.isRepost) return null;
-
-  return post;
-}
-
 export default function FeedScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
@@ -100,136 +61,123 @@ export default function FeedScreen() {
   const { isRefreshing, setRefreshing, pendingRepostId, setPendingRepost } = useFeedStore();
   const [menuPost, setMenuPost] = useState<Post | null>(null);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
-  const [isInitialLoading, setIsInitialLoading] = useState(!globalFeedLoaded);
-  const syncStarted = React.useRef(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [posts, setPosts] = useState<Post[]>([]);
 
   const { status: updateStatus, progress: updateProgress, message: updateMessage, checkForUpdate, applyUpdate } = useUpdateStore();
-
-  // Read from entity store (SSOT)
-  const feedPosts = useEntityStore((s) => s.getFeedPosts());
-  const profiles = useEntityStore((s) => s.profiles);
-  const isHydrated = useEntityStore((s) => s.isHydrated);
-  const userLikes = useEntityStore((s) => user?.id ? s.getUserLikes(user.id) : new Set<string>());
-
-  // Safety timeout - ALWAYS hide skeleton after 3 seconds no matter what
-  useEffect(() => {
-    if (globalFeedLoaded) return; // Already loaded, no need for timeout
-    const timer = setTimeout(() => {
-      globalFeedLoaded = true;
-      setIsInitialLoading(false);
-    }, 3000);
-    return () => clearTimeout(timer);
-  }, []);
-
-  // If we already have posts, show them immediately
-  useEffect(() => {
-    if (feedPosts.length > 0) {
-      globalFeedLoaded = true;
-      setIsInitialLoading(false);
-    }
-  }, [feedPosts.length]);
 
   // Check for OTA updates on mount
   useEffect(() => {
     checkForUpdate();
   }, []);
 
-  // Load likes from SQLite when user is available
-  useEffect(() => {
-    if (user?.id && isHydrated) {
-      useEntityStore.getState().loadLikes(user.id);
-    }
-  }, [user?.id, isHydrated]);
+  // Load feed directly from Supabase — simple and reliable
+  const loadFeed = useCallback(async () => {
+    try {
+      const { posts: rawPosts, error } = await getPosts(50, 0);
+      if (error || !rawPosts) {
+        setIsLoading(false);
+        return;
+      }
 
-  // Trigger initial sync — don't wait for isHydrated, just sync immediately
-  useEffect(() => {
-    if (syncStarted.current) return;
-    syncStarted.current = true;
+      const mapped: Post[] = [];
+      // Build a lookup for resolving reposts
+      const postsById: Record<string, any> = {};
+      for (const p of rawPosts) {
+        postsById[p.id] = p;
+      }
 
-    // Force isHydrated if not already set (safety)
-    if (!useEntityStore.getState().isHydrated) {
-      useEntityStore.setState({ isHydrated: true });
-    }
+      for (const p of rawPosts) {
+        const repostInfo = isRepost(p.content || '');
+        const parsedImages = parseImageUrls(p.image_url);
+        const profileData = Array.isArray(p.profiles) ? p.profiles[0] : p.profiles;
 
-    // Sync feed from Supabase
-    syncFeed(user?.id)
-      .then(() => {
-        globalFeedLoaded = true;
-        setIsInitialLoading(false);
-      })
-      .catch(() => {
-        globalFeedLoaded = true;
-        setIsInitialLoading(false);
-      });
-  }, []);
+        let post: Post = {
+          id: p.id,
+          authorId: p.author_id,
+          authorName: profileData?.display_name || 'User',
+          authorUsername: profileData?.username || 'user',
+          authorEmoji: profileData?.emoji || '😊',
+          content: repostInfo.isRepost ? (repostInfo.comment || '') : (p.content || ''),
+          imageUrl: parsedImages[0] || undefined,
+          imageUrls: parsedImages.length > 0 ? parsedImages : undefined,
+          likesCount: p.likes_count || 0,
+          commentsCount: p.comments_count || 0,
+          sharesCount: p.shares_count || 0,
+          isLiked: false,
+          isBookmarked: false,
+          createdAt: p.created_at,
+          isRepost: repostInfo.isRepost,
+        };
 
-  // Map local posts to UI Post type
-  const posts: Post[] = React.useMemo(() => {
-    if (!feedPosts.length) return [];
-    const mapped: Post[] = [];
-    for (const localPost of feedPosts) {
-      const post = mapLocalPostToPost(localPost, profiles, user?.id, userLikes);
-      if (post) mapped.push(post);
-    }
-    return mapped;
-  }, [feedPosts, profiles, user?.id, userLikes]);
+        // Skip empty posts
+        if (!post.content && !post.imageUrl && !post.isRepost) continue;
 
-  // Resolve reposts — find original post data from entity store
-  const postsWithReposts: Post[] = React.useMemo(() => {
-    const allPosts = useEntityStore.getState().posts;
-    return posts.map((post) => {
-      if (!post.isRepost) return post;
-      const repostInfo = isRepost(allPosts[post.id]?.content || '');
-      if (repostInfo.isRepost && repostInfo.originalPostId) {
-        const origLocal = allPosts[repostInfo.originalPostId];
-        if (origLocal) {
-          const origProfile = profiles[origLocal.author_id];
-          const origImages = parseImageUrls(origLocal.image_url);
-          return {
-            ...post,
-            originalPost: {
-              id: origLocal.id,
+        // Resolve repost original
+        if (repostInfo.isRepost && repostInfo.originalPostId) {
+          const orig = postsById[repostInfo.originalPostId];
+          if (orig) {
+            const origProfile = Array.isArray(orig.profiles) ? orig.profiles[0] : orig.profiles;
+            const origImages = parseImageUrls(orig.image_url);
+            post.originalPost = {
+              id: orig.id,
               authorName: origProfile?.display_name || 'User',
               authorUsername: origProfile?.username || 'user',
               authorEmoji: origProfile?.emoji || '😊',
-              content: origLocal.content,
+              content: orig.content || '',
               imageUrl: origImages[0] || undefined,
               imageUrls: origImages.length > 0 ? origImages : undefined,
-            },
-          };
+            };
+          }
         }
-        // Original post deleted — skip this repost
-        return null;
+
+        mapped.push(post);
       }
-      return post;
-    }).filter(Boolean) as Post[];
-  }, [posts, profiles]);
+
+      setPosts(mapped);
+    } catch (e) {
+      console.warn('[Feed] Load failed:', e);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  // Load on mount
+  useEffect(() => {
+    loadFeed();
+  }, []);
+
+  // Safety: never show skeleton more than 2 seconds
+  useEffect(() => {
+    const timer = setTimeout(() => setIsLoading(false), 2000);
+    return () => clearTimeout(timer);
+  }, []);
 
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
-    try {
-      await syncFeed(user?.id);
-    } catch (e) {
-      // Keep existing posts on error
-    } finally {
-      setRefreshing(false);
-    }
-  }, [user?.id]);
+    await loadFeed();
+    setRefreshing(false);
+  }, [loadFeed]);
 
   const handleToggleLike = useCallback(async (postId: string) => {
     if (!user?.id) return;
-    queueMutation('toggle_like', { userId: user.id, postId });
+    // Optimistic update
+    setPosts(prev => prev.map(p =>
+      p.id === postId
+        ? { ...p, isLiked: !p.isLiked, likesCount: p.isLiked ? p.likesCount - 1 : p.likesCount + 1 }
+        : p
+    ));
+    // Send to server
+    await apiToggleLike(user.id, postId);
   }, [user?.id]);
 
-  const renderPost = ({ item }: { item: Post; index: number }) => (
+  const renderPost = ({ item }: { item: Post }) => (
     <View>
       <PostCard
         post={item}
         onComment={(postId) => router.push({ pathname: '/comments/[id]', params: { id: postId } })}
-        onLike={async (postId) => {
-          handleToggleLike(postId);
-        }}
-        onShare={async (postId) => {
+        onLike={(postId) => handleToggleLike(postId)}
+        onShare={(postId) => {
           if (!user?.id) return;
           triggerHaptic('medium');
           useFeedStore.getState().setPendingRepost(postId);
@@ -251,7 +199,7 @@ export default function FeedScreen() {
     backgroundColor: theme.colors.background.primary,
   };
 
-  if (isInitialLoading && postsWithReposts.length === 0) {
+  if (isLoading && posts.length === 0) {
     return (
       <View style={containerStyle}>
         <View style={[styles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">
@@ -277,7 +225,7 @@ export default function FeedScreen() {
 
   return (
     <View style={containerStyle}>
-      {/* Gradient header - solid at top, dissolves at bottom */}
+      {/* Gradient header */}
       <View style={[styles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">
         <LinearGradient
           colors={[bgColor, bgColor, bgTransparent]}
@@ -321,10 +269,10 @@ export default function FeedScreen() {
       </View>
 
       <FlatList
-        data={postsWithReposts}
+        data={posts}
         keyExtractor={(item) => item.id}
         renderItem={renderPost}
-        ListHeaderComponent={postsWithReposts.length === 0 ? FeedHeader : undefined}
+        ListHeaderComponent={posts.length === 0 ? FeedHeader : undefined}
         contentContainerStyle={{ paddingHorizontal: theme.spacing.base, paddingBottom: 100, paddingTop: headerContentHeight }}
         showsVerticalScrollIndicator={false}
         removeClippedSubviews={true}
@@ -342,32 +290,26 @@ export default function FeedScreen() {
 
       <PostMenuModal visible={!!menuPost} post={menuPost} onClose={() => setMenuPost(null)} />
 
-      {/* Update Modal - bottom sheet style */}
+      {/* Update Modal */}
       <Modal visible={showUpdateModal} transparent animationType="fade" onRequestClose={() => setShowUpdateModal(false)} statusBarTranslucent>
         <View style={{ flex: 1 }}>
           <Pressable style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)' }} onPress={() => setShowUpdateModal(false)} />
           <View style={{ flex: 1, justifyContent: 'flex-end' }} pointerEvents="box-none">
             <View style={{ marginHorizontal: 8, marginBottom: 16, backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF', borderRadius: 28, shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.12, shadowRadius: 16, elevation: 10, overflow: 'hidden' }}>
-              {/* Handle */}
               <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 6 }}>
                 <View style={{ width: 40, height: 5, borderRadius: 3, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)' }} />
               </View>
-
               <View style={{ paddingHorizontal: 20, paddingBottom: 20 }}>
                 <Text variant="body" weight="bold" align="center" style={{ marginBottom: 16 }}>Обновление приложения</Text>
-                
-                {/* Progress bar */}
                 <View style={{ height: 6, backgroundColor: theme.colors.border.light, borderRadius: 3, marginBottom: 12, overflow: 'hidden' }}>
                   <View style={{ height: '100%', width: `${Math.min(updateProgress, 100)}%`, backgroundColor: theme.colors.accent.primary, borderRadius: 3 }} />
                 </View>
-                
                 <Text variant="caption" color={theme.colors.text.secondary} align="center" style={{ marginBottom: 4 }}>
                   {updateMessage || 'Ожидание...'}
                 </Text>
                 <Text variant="caption" color={theme.colors.text.tertiary} align="center" style={{ marginBottom: 16 }}>
                   {Math.round(updateProgress)}%
                 </Text>
-
                 {updateStatus === 'ready' && (
                   <Pressable onPress={applyUpdate} style={{ backgroundColor: theme.colors.accent.primary, borderRadius: 14, paddingVertical: 14, alignItems: 'center' }}>
                     <Text variant="body" weight="semibold" color="#FFFFFF">Перезапустить</Text>

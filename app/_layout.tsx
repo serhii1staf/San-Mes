@@ -1,30 +1,13 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, ActivityIndicator, StyleSheet, Animated, Text as RNText, Image as RNImage } from 'react-native';
+import { View, StyleSheet, Animated, Text as RNText, Image as RNImage } from 'react-native';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
 import { ThemeProvider, useTheme } from '../src/theme';
 import { fontAssets } from '../src/theme/fonts';
-import { useAuthStore, useEntityStore } from '../src/store';
-import { initDatabase } from '../src/lib/database';
-import { fullSync, startSyncLoop, stopSyncLoop } from '../src/lib/syncEngine';
+import { useAuthStore } from '../src/store';
 
-// Initialize database synchronously at module load time (before any component renders)
-// This ensures isHydrated is true before the feed screen mounts
-try {
-  const dbOk = initDatabase();
-  if (dbOk) {
-    useEntityStore.getState().hydrate();
-  } else {
-    useEntityStore.setState({ isHydrated: true });
-  }
-} catch (e) {
-  useEntityStore.setState({ isHydrated: true });
-}
-
-SplashScreen.preventAutoHideAsync().catch(() => {
-  // If preventAutoHideAsync fails (e.g., called too late), ignore the error
-});
+SplashScreen.preventAutoHideAsync().catch(() => {});
 
 function AuthNavigationGuard({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, hasHydrated } = useAuthStore();
@@ -33,7 +16,6 @@ function AuthNavigationGuard({ children }: { children: React.ReactNode }) {
   const [showSplash, setShowSplash] = useState(true);
 
   useEffect(() => {
-    // Show splash for minimum 800ms for smooth transition
     const timer = setTimeout(() => setShowSplash(false), 800);
     return () => clearTimeout(timer);
   }, []);
@@ -94,38 +76,14 @@ function CustomSplash() {
 export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts(fontAssets);
   const [fontTimeout, setFontTimeout] = useState(false);
-  const [dbReady, setDbReady] = useState(true); // DB init happens at module level now
-
-  // Start sync loop and trigger initial sync
-  useEffect(() => {
-    try {
-      setDbReady(true);
-
-      // Start background sync
-      const authState = useAuthStore.getState();
-      if (authState.isAuthenticated && authState.user?.id) {
-        fullSync(authState.user.id).catch(() => {});
-      }
-      startSyncLoop();
-    } catch (e) {
-      console.warn('[RootLayout] Sync init failed:', e);
-      setDbReady(true);
-    }
-
-    return () => {
-      stopSyncLoop();
-    };
-  }, []);
 
   // Safety timeout: if fonts take more than 3 seconds, proceed without them
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setFontTimeout(true);
-    }, 3000);
+    const timer = setTimeout(() => setFontTimeout(true), 3000);
     return () => clearTimeout(timer);
   }, []);
 
-  const ready = (fontsLoaded || fontError !== null || fontTimeout) && dbReady;
+  const ready = fontsLoaded || fontError !== null || fontTimeout;
 
   useEffect(() => {
     if (ready) {
@@ -133,7 +91,7 @@ export default function RootLayout() {
     }
   }, [ready]);
 
-  // Also force hasHydrated after a timeout in case persist middleware fails
+  // Force hasHydrated after timeout in case persist middleware fails
   useEffect(() => {
     const timer = setTimeout(() => {
       const state = useAuthStore.getState();
@@ -145,17 +103,13 @@ export default function RootLayout() {
   }, []);
 
   if (!ready) {
-    return null; // Native splash screen is still showing
+    return null;
   }
 
   return (
     <ThemeProvider>
       <AuthNavigationGuard>
-        <Stack
-          screenOptions={{
-            headerShown: false,
-          }}
-        >
+        <Stack screenOptions={{ headerShown: false }}>
           <Stack.Screen name="(tabs)" />
           <Stack.Screen name="(auth)" />
           <Stack.Screen name="chat/[id]" />
