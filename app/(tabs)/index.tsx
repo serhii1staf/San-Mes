@@ -112,7 +112,7 @@ export default function FeedScreen() {
   useEffect(() => {
     if (posts.length > 0) {
       // Store already has data — show instantly, no fetch needed
-      setLoading(false);
+      setIsLoading(false);
       return;
     }
 
@@ -123,7 +123,7 @@ export default function FeedScreen() {
           const parsed = JSON.parse(cached);
           if (Array.isArray(parsed) && parsed.length > 0) {
             setPosts(parsed);
-            setLoading(false);
+            setIsLoading(false);
           }
         } catch {}
       }
@@ -143,7 +143,7 @@ export default function FeedScreen() {
 
   // Safety timeout to hide loading state
   useEffect(() => {
-    const t = setTimeout(() => setLoading(false), 1500);
+    const t = setTimeout(() => setIsLoading(false), 1500);
     return () => clearTimeout(t);
   }, []);
 
@@ -152,7 +152,7 @@ export default function FeedScreen() {
       const { posts: rawPosts, error } = await getPosts(FEED_LIMIT, 0);
       if (error || !rawPosts) {
         // Network error: preserve existing store data, hide loading
-        setLoading(false);
+        setIsLoading(false);
         return;
       }
 
@@ -167,15 +167,15 @@ export default function FeedScreen() {
 
       // Write to Zustand store (primary data source)
       setPosts(mapped);
-      setLoading(false);
+      setIsLoading(false);
 
       // Save to AsyncStorage cache (non-blocking)
       AsyncStorage.setItem(FEED_CACHE_KEY, JSON.stringify(mapped)).catch(() => {});
     } catch {
       // Network error: preserve existing store data, hide loading/refreshing
-      setLoading(false);
+      setIsLoading(false);
     }
-  }, [setPosts, setLoading]);
+  }, []);
 
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
