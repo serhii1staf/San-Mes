@@ -8,10 +8,7 @@ import * as Clipboard from 'expo-clipboard';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { LinkedText } from '../../src/components/ui/LinkedText';
-import { parseImageUrls, getProfile, getFollowCounts, isFollowing as checkIsFollowing, supabase } from '../../src/lib/supabase';
-import { useEntityStore } from '../../src/lib/entityStore';
-import { syncProfile, syncUserPosts } from '../../src/lib/syncEngine';
-import { queueMutation } from '../../src/lib/mutationQueue';
+import { parseImageUrls, getProfile, getFollowCounts, isFollowing as checkIsFollowing, followUser, unfollowUser, supabase } from '../../src/lib/supabase';
 import { useAuthStore } from '../../src/store';
 import { openUrl } from '../../src/utils/openUrl';
 import { triggerHaptic } from '../../src/utils/haptics';
@@ -231,43 +228,15 @@ export default function UserProfileScreen() {
   const badgeOpacity = scrollY.interpolate({ inputRange: [180, 220], outputRange: [0, 1], extrapolate: 'clamp' });
   const badgeTranslateY = scrollY.interpolate({ inputRange: [180, 220], outputRange: [20, 0], extrapolate: 'clamp' });
 
-  // Read cached profile from entityStore for instant display
-  const cachedProfile = useEntityStore((s) => s.getProfile(id ?? ''));
-  // Read cached follow state from entityStore
-  const cachedIsFollowing = useEntityStore((s) => s.isFollowing(currentUser?.id ?? '', id ?? ''));
-  // Read cached user posts from entityStore
-  const cachedUserPosts = useEntityStore((s) => {
-    const allPosts = Object.values(s.posts);
-    return allPosts
-      .filter((p) => p.author_id === (id ?? ''))
-      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-  });
-
-  // Profile data loaded from Supabase (fresh data)
+  // Profile data loaded from Supabase
   const [profile, setProfile] = useState<any>(null);
   const [userPosts, setUserPosts] = useState<any[]>([]);
-
-  // Initialize follow state from cache
-  useEffect(() => {
-    setIsFollowingState(cachedIsFollowing);
-  }, [cachedIsFollowing]);
-
-  // Trigger background sync for profile and user posts
-  useEffect(() => {
-    if (id) {
-      syncProfile(id);
-      syncUserPosts(id);
-    }
-  }, [id]);
 
   useEffect(() => { loadProfile(); }, [id]);
 
   const loadProfile = async () => {
     if (!id) return;
-    // Only show loading if we don't have cached data
-    if (!cachedProfile) {
-      setIsLoading(true);
-    }
+    setIsLoading(true);
     try {
       // Load profile from Supabase
       const { profile: profileData, error } = await getProfile(id);
@@ -317,42 +286,23 @@ export default function UserProfileScreen() {
     // Now handled in loadProfile
   };
 
-  // Determine which profile to display: fresh data takes priority, then cached
-  const displayProfile = profile || (cachedProfile ? {
-    id: cachedProfile.id,
-    username: cachedProfile.username,
-    display_name: cachedProfile.display_name,
-    emoji: cachedProfile.emoji,
-    bio: cachedProfile.bio,
-    banner_url: cachedProfile.banner_url,
-    links: cachedProfile.links,
-  } : null);
+  // Display profile from Supabase
+  const displayProfile = profile;
 
-  // Determine which posts to display: fresh data takes priority, then cached
-  const displayPosts = userPosts.length > 0 ? userPosts : cachedUserPosts.map((p) => {
-    const parsedImages = parseImageUrls(p.image_url);
-    return {
-      id: p.id,
-      content: p.content,
-      imageUrl: parsedImages[0] || undefined,
-      imageUrls: parsedImages.length > 0 ? parsedImages : undefined,
-      likesCount: p.likes_count || 0,
-      commentsCount: p.comments_count || 0,
-      createdAt: p.created_at,
-    };
-  });
+  // Display posts from Supabase
+  const displayPosts = userPosts;
 
-  const handleFollow = () => {
+  const handleFollow = async () => {
     if (!currentUser?.id || !id) return;
     triggerHaptic('medium');
     if (isFollowingState) {
-      queueMutation('unfollow', { followerId: currentUser.id, followingId: id });
       setIsFollowingState(false);
       setFollowCounts(c => ({ ...c, followers: Math.max(0, c.followers - 1) }));
+      await unfollowUser(currentUser.id, id);
     } else {
-      queueMutation('follow', { followerId: currentUser.id, followingId: id });
       setIsFollowingState(true);
       setFollowCounts(c => ({ ...c, followers: c.followers + 1 }));
+      await followUser(currentUser.id, id);
     }
   };
 

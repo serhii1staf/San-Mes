@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import { View, Pressable, ActivityIndicator, Dimensions, Image, Animated, Modal, ScrollView as RNScrollView } from 'react-native';
 import { Feather, FontAwesome5 } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
@@ -8,9 +8,7 @@ import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { LinkedText } from '../../src/components/ui/LinkedText';
 import { useAuthStore } from '../../src/store';
-import { isRepost, parseImageUrls, getFollowCounts } from '../../src/lib/supabase';
-import { useEntityStore, LocalPost } from '../../src/lib/entityStore';
-import { syncMyProfile, syncUserPosts } from '../../src/lib/syncEngine';
+import { isRepost, parseImageUrls, getFollowCounts, supabase } from '../../src/lib/supabase';
 import { openUrl } from '../../src/utils/openUrl';
 import { Post } from '../../src/types';
 import { triggerHaptic } from '../../src/utils/haptics';
@@ -29,10 +27,8 @@ function detectLinkType(url: string): string {
   if (lower.includes('linkedin.com')) return 'linkedin';
   if (lower.includes('discord.gg') || lower.includes('discord.com')) return 'discord';
   if (lower.includes('twitch.tv')) return 'twitch';
-  if (lower.includes('spotify.com') || lower.includes('open.spotify.com')) return 'spotify';
+  if (lower.includes('spotify.com')) return 'spotify';
   if (lower.includes('reddit.com')) return 'reddit';
-  if (lower.includes('pinterest.com')) return 'pinterest';
-  if (lower.includes('snapchat.com')) return 'snapchat';
   if (lower.includes('vk.com')) return 'vk';
   return 'website';
 }
@@ -67,202 +63,84 @@ export default function ProfileScreen() {
   const { user } = useAuthStore();
   const [activeTab, setActiveTab] = useState<TabName>('posts');
   const [followCounts, setFollowCounts] = useState({ followers: 0, following: 0 });
+  const [userPosts, setUserPosts] = useState<Post[]>([]);
   const [showQR, setShowQR] = useState(false);
 
-  // Read cached profile and posts from entityStore
-  const cachedProfile = useEntityStore((s) => s.getProfile(user?.id ?? ''));
-  const cachedPosts = useEntityStore((s) => s.getMyPosts(user?.id ?? ''));
-
-  // Map LocalPost[] to Post[] for rendering
-  const userPosts: Post[] = useMemo(() => {
-    if (!user) return [];
-    const displayName = cachedProfile?.display_name || user.displayName || '';
-    const username = cachedProfile?.username || user.username || '';
-    const emoji = cachedProfile?.emoji || user.emoji || '😊';
-
-    return cachedPosts.map((p: LocalPost) => {
-      const repostInfo = isRepost(p.content || '');
-      const parsedImages = parseImageUrls(p.image_url);
-      return {
-        id: p.id,
-        authorId: p.author_id,
-        authorName: displayName,
-        authorUsername: username,
-        authorEmoji: emoji,
-        content: repostInfo.isRepost ? (repostInfo.comment || '') : (p.content || ''),
-        imageUrl: parsedImages[0] || undefined,
-        imageUrls: parsedImages.length > 0 ? parsedImages : undefined,
-        likesCount: p.likes_count || 0,
-        commentsCount: p.comments_count || 0,
-        sharesCount: p.shares_count || 0,
-        isLiked: false,
-        isBookmarked: false,
-        createdAt: p.created_at,
-        isRepost: repostInfo.isRepost,
-      };
-    });
-  }, [cachedPosts, cachedProfile, user]);
-
-  // Load follow counts from Supabase (not cached in entityStore)
-  const loadFollows = useCallback(async () => {
+  const loadMyPosts = useCallback(async () => {
     if (!user?.id) return;
     try {
-      const counts = await getFollowCounts(user.id);
-      setFollowCounts(counts);
+      const { data } = await supabase.from('posts').select('*').eq('author_id', user.id).order('created_at', { ascending: false }).limit(50);
+      if (!data) return;
+      setUserPosts(data.map((p: any) => {
+        const repostInfo = isRepost(p.content || '');
+        const parsedImages = parseImageUrls(p.image_url);
+        return { id: p.id, authorId: p.author_id, authorName: user.displayName || '', authorUsername: user.username || '', authorEmoji: user.emoji || '😊', content: repostInfo.isRepost ? (repostInfo.comment || '') : (p.content || ''), imageUrl: parsedImages[0] || undefined, imageUrls: parsedImages.length > 0 ? parsedImages : undefined, likesCount: p.likes_count || 0, commentsCount: p.comments_count || 0, sharesCount: p.shares_count || 0, isLiked: false, isBookmarked: false, createdAt: p.created_at, isRepost: repostInfo.isRepost };
+      }));
     } catch {}
   }, [user?.id]);
 
-  // Trigger background sync and follow counts when tab is focused
-  useFocusEffect(
-    useCallback(() => {
-      if (user?.id) {
-        syncMyProfile(user.id);
-        syncUserPosts(user.id);
-        loadFollows();
-      }
-    }, [user?.id])
-  );
+  const loadFollows = useCallback(async () => {
+    if (!user?.id) return;
+    try { const counts = await getFollowCounts(user.id); setFollowCounts(counts); } catch {}
+  }, [user?.id]);
+
+  useFocusEffect(useCallback(() => { loadMyPosts(); loadFollows(); }, [user?.id]));
 
   if (!user) return <View style={{ flex: 1, backgroundColor: theme.colors.background.primary, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator size="large" color={theme.colors.accent.primary} /></View>;
 
-  const userLinks: { type: string; url: string }[] = cachedProfile?.links
-    ? (() => { try { return JSON.parse(cachedProfile.links!); } catch { return (user as any).links || []; } })()
-    : (user as any).links || [];
-  const bannerUrl = cachedProfile?.banner_url || (user as any)?.bannerUrl;
-  const tabs: { key: TabName; label: string }[] = [
-    { key: 'posts', label: 'Посты' }, { key: 'replies', label: 'Ответы' },
-    { key: 'media', label: 'Медиа' }, { key: 'likes', label: 'Лайки' },
-  ];
-
+  const userLinks: { type: string; url: string }[] = (user as any).links || [];
+  const bannerUrl = (user as any)?.bannerUrl;
+  const tabs: { key: TabName; label: string }[] = [{ key: 'posts', label: 'Посты' }, { key: 'replies', label: 'Ответы' }, { key: 'media', label: 'Медиа' }, { key: 'likes', label: 'Лайки' }];
   const scrollY = useRef(new Animated.Value(0)).current;
   const headerOpacity = scrollY.interpolate({ inputRange: [0, 50, 120], outputRange: [0, 0, 1], extrapolate: 'clamp' });
   const buttonsTranslateX = scrollY.interpolate({ inputRange: [0, 180, 250], outputRange: [0, 0, -60], extrapolate: 'clamp' });
   const settingsTranslateX = scrollY.interpolate({ inputRange: [0, 180, 250], outputRange: [0, 0, 60], extrapolate: 'clamp' });
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(`https://san-mes.vercel.app/profile/${user.id}`)}`;
 
-  const displayName = cachedProfile?.display_name || user.displayName;
-  const displayUsername = cachedProfile?.username || user.username;
-  const displayEmoji = cachedProfile?.emoji || user.emoji || '😊';
-  const displayBio = cachedProfile?.bio || user.bio;
-
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
       <Animated.View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 50, height: insets.top + 50, opacity: headerOpacity }} pointerEvents="none">
         <LinearGradient colors={[theme.colors.background.primary, theme.colors.background.primary, theme.colors.background.primary + '00']} locations={[0, 0.6, 1]} style={{ flex: 1 }} />
       </Animated.View>
-
       <View style={{ position: 'absolute', top: insets.top + 8, left: 16, right: 16, flexDirection: 'row', justifyContent: 'space-between', zIndex: 100 }}>
-        <Animated.View style={{ transform: [{ translateX: buttonsTranslateX }] }}>
-          <Pressable onPress={() => { triggerHaptic('light'); setShowQR(true); }} style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' }}>
-            <FontAwesome5 name="qrcode" size={15} color="#FFFFFF" />
-          </Pressable>
-        </Animated.View>
-        <Animated.View style={{ transform: [{ translateX: settingsTranslateX }] }}>
-          <Pressable onPress={() => { triggerHaptic('light'); router.push('/settings'); }} style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' }}>
-            <Feather name="settings" size={16} color="#FFFFFF" />
-          </Pressable>
-        </Animated.View>
+        <Animated.View style={{ transform: [{ translateX: buttonsTranslateX }] }}><Pressable onPress={() => { triggerHaptic('light'); setShowQR(true); }} style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' }}><FontAwesome5 name="qrcode" size={15} color="#FFFFFF" /></Pressable></Animated.View>
+        <Animated.View style={{ transform: [{ translateX: settingsTranslateX }] }}><Pressable onPress={() => { triggerHaptic('light'); router.push('/settings'); }} style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' }}><Feather name="settings" size={16} color="#FFFFFF" /></Pressable></Animated.View>
       </View>
-
-      <Animated.ScrollView
-        showsVerticalScrollIndicator={false}
-        bounces={false}
-        onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true })}
-        scrollEventThrottle={16}
-        contentContainerStyle={{ paddingBottom: 100 }}
-      >
-        <View style={{ height: 150, backgroundColor: theme.colors.accent.primary + '20' }}>
-          {bannerUrl ? <Image source={{ uri: bannerUrl }} style={{ width: '100%', height: '100%' }} resizeMode="cover" /> : null}
-          <LinearGradient colors={['transparent', theme.colors.background.primary]} style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 50 }} />
-        </View>
-
+      <Animated.ScrollView showsVerticalScrollIndicator={false} bounces={false} onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true })} scrollEventThrottle={16} contentContainerStyle={{ paddingBottom: 100 }}>
+        <View style={{ height: 150, backgroundColor: theme.colors.accent.primary + '20' }}>{bannerUrl ? <Image source={{ uri: bannerUrl }} style={{ width: '100%', height: '100%' }} resizeMode="cover" /> : null}<LinearGradient colors={['transparent', theme.colors.background.primary]} style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 50 }} /></View>
         <View style={{ paddingHorizontal: 16, marginTop: -36 }}>
-          <View style={{ width: 72, height: 72, borderRadius: 36, overflow: 'hidden', borderWidth: 3, borderColor: theme.colors.background.primary, backgroundColor: theme.isDark ? 'rgba(30,30,30,0.85)' : 'rgba(255,255,255,0.85)', alignItems: 'center', justifyContent: 'center' }}>
-            <Avatar emoji={displayEmoji} size="lg" />
-          </View>
-
+          <View style={{ width: 72, height: 72, borderRadius: 36, overflow: 'hidden', borderWidth: 3, borderColor: theme.colors.background.primary, backgroundColor: theme.isDark ? 'rgba(30,30,30,0.85)' : 'rgba(255,255,255,0.85)', alignItems: 'center', justifyContent: 'center' }}><Avatar emoji={user.emoji} size="lg" /></View>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}>
-            <View style={{ flex: 1 }}>
-              <Text variant="body" weight="bold" numberOfLines={1}>{displayName}</Text>
-              <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>@{displayUsername}</Text>
-            </View>
-            <Pressable onPress={() => { triggerHaptic('light'); router.push('/profile/edit'); }} style={{ paddingHorizontal: 16, paddingVertical: 7, borderWidth: 1, borderColor: theme.colors.border.medium, borderRadius: 20 }}>
-              <Text variant="caption" weight="semibold">Редактировать</Text>
-            </Pressable>
+            <View style={{ flex: 1 }}><Text variant="body" weight="bold" numberOfLines={1}>{user.displayName}</Text><Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>@{user.username}</Text></View>
+            <Pressable onPress={() => { triggerHaptic('light'); router.push('/profile/edit'); }} style={{ paddingHorizontal: 16, paddingVertical: 7, borderWidth: 1, borderColor: theme.colors.border.medium, borderRadius: 20 }}><Text variant="caption" weight="semibold">Редактировать</Text></Pressable>
           </View>
-
           <View style={{ flexDirection: 'row', marginTop: 10, gap: 16 }}>
             <Text variant="caption"><Text variant="caption" weight="bold">{userPosts.length}</Text> <Text variant="caption" color={theme.colors.text.tertiary}>posts</Text></Text>
             <Text variant="caption"><Text variant="caption" weight="bold">{followCounts.following}</Text> <Text variant="caption" color={theme.colors.text.tertiary}>following</Text></Text>
             <Text variant="caption"><Text variant="caption" weight="bold">{followCounts.followers}</Text> <Text variant="caption" color={theme.colors.text.tertiary}>followers</Text></Text>
           </View>
-
-          {displayBio ? <LinkedText style={{ marginTop: 8 }}>{displayBio}</LinkedText> : null}
-
-          {userLinks.length > 0 && (
-            <View style={{ flexDirection: 'row', marginTop: 8, gap: 8 }}>
-              {userLinks.map((link, idx) => <SocialLinkIcon key={idx} type={link.type} url={link.url} />)}
-            </View>
-          )}
+          {user.bio ? <LinkedText style={{ marginTop: 8 }}>{user.bio}</LinkedText> : null}
+          {userLinks.length > 0 && <View style={{ flexDirection: 'row', marginTop: 8, gap: 8 }}>{userLinks.map((link, idx) => <SocialLinkIcon key={idx} type={link.type} url={link.url} />)}</View>}
         </View>
-
         <View style={{ marginTop: 16, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border.light }}>
-          <View style={{ flexDirection: 'row' }}>
-            {tabs.map((tab) => (
-              <Pressable key={tab.key} onPress={() => { triggerHaptic('selection'); setActiveTab(tab.key); }} style={{ flex: 1, alignItems: 'center', paddingVertical: 11 }}>
-                <Text variant="caption" weight={activeTab === tab.key ? 'bold' : 'regular'} color={activeTab === tab.key ? theme.colors.text.primary : theme.colors.text.tertiary}>{tab.label}</Text>
-              </Pressable>
-            ))}
-          </View>
+          <View style={{ flexDirection: 'row' }}>{tabs.map((tab) => (<Pressable key={tab.key} onPress={() => { triggerHaptic('selection'); setActiveTab(tab.key); }} style={{ flex: 1, alignItems: 'center', paddingVertical: 11 }}><Text variant="caption" weight={activeTab === tab.key ? 'bold' : 'regular'} color={activeTab === tab.key ? theme.colors.text.primary : theme.colors.text.tertiary}>{tab.label}</Text></Pressable>))}</View>
           <View style={{ position: 'absolute', bottom: 0, height: 2, backgroundColor: theme.colors.accent.primary, width: SCREEN_WIDTH / 4, left: tabs.findIndex(t => t.key === activeTab) * (SCREEN_WIDTH / 4) }} />
         </View>
-
-        {activeTab === 'posts' && (userPosts.length === 0 ? (
-          <View style={{ alignItems: 'center', paddingVertical: 40 }}><Text variant="caption" color={theme.colors.text.tertiary}>Ещё нет публикаций</Text></View>
-        ) : (
-          <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
-            {userPosts.map(post => (
-              <Pressable key={post.id} onPress={() => router.push({ pathname: '/comments/[id]', params: { id: post.id } })} style={{ backgroundColor: theme.colors.background.elevated, borderRadius: 14, padding: 14, marginBottom: 10 }}>
-                {post.isRepost && (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8, gap: 4 }}>
-                    <Feather name="repeat" size={12} color={theme.colors.text.tertiary} />
-                    <Text variant="caption" color={theme.colors.text.tertiary}>Репост</Text>
-                  </View>
-                )}
-                {(() => {
-                  const postImages = post.imageUrls && post.imageUrls.length > 0 ? post.imageUrls : post.imageUrl ? [post.imageUrl] : [];
-                  if (postImages.length === 0) return null;
-                  if (postImages.length === 1) {
-                    return <Image source={{ uri: postImages[0] }} style={{ width: '100%', height: 160, borderRadius: 10, marginBottom: 10 }} resizeMode="cover" />;
-                  }
-                  return (
-                    <View style={{ marginBottom: 10 }}>
-                      <RNScrollView horizontal showsHorizontalScrollIndicator={false} snapToInterval={(SCREEN_WIDTH - 80) * 0.8 + 6} decelerationRate="fast" contentContainerStyle={{ gap: 6 }}>
-                        {postImages.map((url: string, idx: number) => (
-                          <Image key={idx} source={{ uri: url }} style={{ width: (SCREEN_WIDTH - 80) * 0.8, height: 160, borderRadius: 10 }} resizeMode="cover" />
-                        ))}
-                      </RNScrollView>
-                    </View>
-                  );
-                })()}
-                {post.content ? <Text variant="body" numberOfLines={3}>{post.content}</Text> : null}
-                <View style={{ flexDirection: 'row', marginTop: 8, gap: 14 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}><Feather name="heart" size={13} color={theme.colors.text.tertiary} /><Text variant="caption" color={theme.colors.text.tertiary}>{post.likesCount}</Text></View>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}><Feather name="message-circle" size={13} color={theme.colors.text.tertiary} /><Text variant="caption" color={theme.colors.text.tertiary}>{post.commentsCount}</Text></View>
-                </View>
-              </Pressable>
-            ))}
-          </View>
+        {activeTab === 'posts' && (userPosts.length === 0 ? <View style={{ alignItems: 'center', paddingVertical: 40 }}><Text variant="caption" color={theme.colors.text.tertiary}>Ещё нет публикаций</Text></View> : (
+          <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>{userPosts.map(post => (
+            <Pressable key={post.id} onPress={() => router.push({ pathname: '/comments/[id]', params: { id: post.id } })} style={{ backgroundColor: theme.colors.background.elevated, borderRadius: 14, padding: 14, marginBottom: 10 }}>
+              {(() => { const imgs = post.imageUrls && post.imageUrls.length > 0 ? post.imageUrls : post.imageUrl ? [post.imageUrl] : []; if (!imgs.length) return null; if (imgs.length === 1) return <Image source={{ uri: imgs[0] }} style={{ width: '100%', height: 160, borderRadius: 10, marginBottom: 10 }} resizeMode="cover" />; return <RNScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }} contentContainerStyle={{ gap: 6 }}>{imgs.map((url: string, i: number) => <Image key={i} source={{ uri: url }} style={{ width: (SCREEN_WIDTH-80)*0.8, height: 160, borderRadius: 10 }} resizeMode="cover" />)}</RNScrollView>; })()}
+              {post.content ? <Text variant="body" numberOfLines={3}>{post.content}</Text> : null}
+              <View style={{ flexDirection: 'row', marginTop: 8, gap: 14 }}><View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}><Feather name="heart" size={13} color={theme.colors.text.tertiary} /><Text variant="caption" color={theme.colors.text.tertiary}>{post.likesCount}</Text></View><View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}><Feather name="message-circle" size={13} color={theme.colors.text.tertiary} /><Text variant="caption" color={theme.colors.text.tertiary}>{post.commentsCount}</Text></View></View>
+            </Pressable>
+          ))}</View>
         ))}
         {activeTab !== 'posts' && <View style={{ alignItems: 'center', paddingVertical: 40 }}><Text variant="caption" color={theme.colors.text.tertiary}>Пока пусто</Text></View>}
       </Animated.ScrollView>
-
       <Modal visible={showQR} transparent animationType="fade" onRequestClose={() => setShowQR(false)} statusBarTranslucent>
         <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', alignItems: 'center', justifyContent: 'center' }} onPress={() => setShowQR(false)}>
           <Text variant="body" weight="bold" color="#FFFFFF" style={{ marginBottom: 20 }}>Мой QR-код</Text>
-          <View style={{ backgroundColor: '#FFF', borderRadius: 20, padding: 20 }}>
-            <Image source={{ uri: qrUrl }} style={{ width: 200, height: 200 }} resizeMode="contain" />
-          </View>
+          <View style={{ backgroundColor: '#FFF', borderRadius: 20, padding: 20 }}><Image source={{ uri: qrUrl }} style={{ width: 200, height: 200 }} resizeMode="contain" /></View>
           <Text variant="caption" color="#FFFFFF" style={{ marginTop: 20, opacity: 0.7 }}>Нажмите чтобы закрыть</Text>
         </Pressable>
       </Modal>

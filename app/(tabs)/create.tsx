@@ -8,8 +8,7 @@ import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { useAuthStore } from '../../src/store/authStore';
 import { useFeedStore } from '../../src/store/feedStore';
-import { createRepost, supabase, uploadPostImage, joinImageUrls } from '../../src/lib/supabase';
-import { queueMutation } from '../../src/lib/mutationQueue';
+import { createRepost, createPost, supabase, uploadPostImage, joinImageUrls } from '../../src/lib/supabase';
 
 const MAX_CHARS = 500;
 const MAX_IMAGES = 6;
@@ -149,12 +148,12 @@ export default function CreateScreen() {
       }
 
       const tempId = `temp_${Date.now()}`;
-      queueMutation('create_post', {
-        authorId: user.id,
-        content: content.trim() || '',
-        imageUrl,
-        tempId,
-      });
+      const { post, error } = await createPost(user.id, content.trim() || '', imageUrl);
+      if (error) {
+        Alert.alert('Ошибка', error);
+        setIsPosting(false);
+        return;
+      }
 
       setContent('');
       setImageUris([]);

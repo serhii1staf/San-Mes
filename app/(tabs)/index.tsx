@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback, useState, useMemo } from 'react';
+import React, { useEffect, useCallback, useState } from 'react';
 import { View, FlatList, RefreshControl, ViewStyle, Pressable, StyleSheet, ActivityIndicator, Modal } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -10,10 +10,7 @@ import { PostCard } from '../../src/components/feed/PostCard';
 import { PostMenuModal } from '../../src/components/feed/PostMenuModal';
 import { useFeedStore, useAuthStore } from '../../src/store';
 import { Post } from '../../src/types';
-import { isRepost, parseImageUrls } from '../../src/lib/supabase';
-import { useEntityStore, LocalPost } from '../../src/lib/entityStore';
-import { syncFeed } from '../../src/lib/syncEngine';
-import { queueMutation } from '../../src/lib/mutationQueue';
+import { getPosts, isRepost, parseImageUrls, toggleLike as apiToggleLike } from '../../src/lib/supabase';
 import { useUpdateStore } from '../../src/store/updateStore';
 import { triggerHaptic } from '../../src/utils/haptics';
 
@@ -33,26 +30,18 @@ function FeedHeader() {
 
 function SkeletonCard() {
   const theme = useTheme();
-  const cardStyle: ViewStyle = {
-    backgroundColor: theme.colors.background.elevated,
-    borderRadius: theme.borderRadius.lg,
-    padding: theme.spacing.base,
-    marginBottom: theme.spacing.base,
-  };
-  const shimmerColor = theme.colors.border.light;
-
   return (
-    <View style={cardStyle}>
+    <View style={{ backgroundColor: theme.colors.background.elevated, borderRadius: theme.borderRadius.lg, padding: theme.spacing.base, marginBottom: theme.spacing.base }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: theme.spacing.md }}>
-        <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: shimmerColor }} />
+        <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: theme.colors.border.light }} />
         <View style={{ marginLeft: theme.spacing.md }}>
-          <View style={{ width: 120, height: 12, borderRadius: 6, backgroundColor: shimmerColor }} />
-          <View style={{ width: 80, height: 10, borderRadius: 5, backgroundColor: shimmerColor, marginTop: 6 }} />
+          <View style={{ width: 120, height: 12, borderRadius: 6, backgroundColor: theme.colors.border.light }} />
+          <View style={{ width: 80, height: 10, borderRadius: 5, backgroundColor: theme.colors.border.light, marginTop: 6 }} />
         </View>
       </View>
-      <View style={{ width: '100%', height: 14, borderRadius: 7, backgroundColor: shimmerColor, marginBottom: 8 }} />
-      <View style={{ width: '70%', height: 14, borderRadius: 7, backgroundColor: shimmerColor, marginBottom: theme.spacing.base }} />
-      <View style={{ width: '100%', height: 200, borderRadius: theme.borderRadius.md, backgroundColor: shimmerColor }} />
+      <View style={{ width: '100%', height: 14, borderRadius: 7, backgroundColor: theme.colors.border.light, marginBottom: 8 }} />
+      <View style={{ width: '70%', height: 14, borderRadius: 7, backgroundColor: theme.colors.border.light, marginBottom: theme.spacing.base }} />
+      <View style={{ width: '100%', height: 200, borderRadius: theme.borderRadius.md, backgroundColor: theme.colors.border.light }} />
     </View>
   );
 }
@@ -61,159 +50,114 @@ export default function FeedScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const { user } = useAuthStore();
-  const { isRefreshing, setRefreshing, pendingRepostId, setPendingRepost } = useFeedStore();
+  const { isRefreshing, setRefreshing } = useFeedStore();
   const [menuPost, setMenuPost] = useState<Post | null>(null);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
-
-  // Read from entityStore instead of local state
-  const isHydrated = useEntityStore((s) => s.isHydrated);
-  const feedPosts = useEntityStore((s) => s.getFeedPosts());
-  const profiles = useEntityStore((s) => s.profiles);
-
-  // Subscribe to likes so UI re-renders when likes change
-  const userLikes = useEntityStore((s) => user?.id ? s.getUserLikes(user.id) : new Set<string>());
-
-  // Show skeleton only when not hydrated AND no cached posts
-  const [forceReady, setForceReady] = useState(false);
-  const isLoading = !isHydrated && !forceReady && feedPosts.length === 0;
+  const [isLoading, setIsLoading] = useState(true);
+  const [posts, setPosts] = useState<Post[]>([]);
 
   const { status: updateStatus, progress: updateProgress, message: updateMessage, checkForUpdate, applyUpdate } = useUpdateStore();
 
-  // Check for OTA updates on mount
-  useEffect(() => {
-    checkForUpdate();
-  }, []);
+  useEffect(() => { checkForUpdate(); }, []);
 
-  // Background sync on mount
-  useEffect(() => {
-    syncFeed(user?.id);
-  }, [user?.id]);
+  const loadFeed = useCallback(async () => {
+    try {
+      const { posts: rawPosts, error } = await getPosts(50, 0);
+      if (error || !rawPosts) { setIsLoading(false); return; }
 
-  // Load user likes on mount
-  useEffect(() => {
-    if (user?.id) {
-      useEntityStore.getState().loadLikes(user.id);
-    }
-  }, [user?.id]);
+      const mapped: Post[] = [];
+      const postsById: Record<string, any> = {};
+      for (const p of rawPosts) postsById[p.id] = p;
 
-  // Safety: never show skeleton more than 2 seconds
-  useEffect(() => {
-    const timer = setTimeout(() => setForceReady(true), 2000);
-    return () => clearTimeout(timer);
-  }, []);
+      for (const p of rawPosts) {
+        const repostInfo = isRepost(p.content || '');
+        const parsedImages = parseImageUrls(p.image_url);
+        const profileData = Array.isArray(p.profiles) ? p.profiles[0] : p.profiles;
 
-  // Map LocalPost[] to Post[] using cached profiles from entityStore
-  const posts: Post[] = useMemo(() => {
-    // Build a lookup for resolving reposts
-    const postsById: Record<string, LocalPost> = {};
-    for (const p of feedPosts) {
-      postsById[p.id] = p;
-    }
+        let post: Post = {
+          id: p.id,
+          authorId: p.author_id,
+          authorName: profileData?.display_name || 'User',
+          authorUsername: profileData?.username || 'user',
+          authorEmoji: profileData?.emoji || '😊',
+          content: repostInfo.isRepost ? (repostInfo.comment || '') : (p.content || ''),
+          imageUrl: parsedImages[0] || undefined,
+          imageUrls: parsedImages.length > 0 ? parsedImages : undefined,
+          likesCount: p.likes_count || 0,
+          commentsCount: p.comments_count || 0,
+          sharesCount: p.shares_count || 0,
+          isLiked: false,
+          isBookmarked: false,
+          createdAt: p.created_at,
+          isRepost: repostInfo.isRepost,
+        };
 
-    const mapped: Post[] = [];
-    for (const p of feedPosts) {
-      const repostInfo = isRepost(p.content || '');
-      const parsedImages = parseImageUrls(p.image_url);
-      const profile = profiles[p.author_id];
+        if (!post.content && !post.imageUrl && !post.isRepost) continue;
 
-      let post: Post = {
-        id: p.id,
-        authorId: p.author_id,
-        authorName: profile?.display_name || 'User',
-        authorUsername: profile?.username || 'user',
-        authorEmoji: profile?.emoji || '😊',
-        content: repostInfo.isRepost ? (repostInfo.comment || '') : (p.content || ''),
-        imageUrl: parsedImages[0] || undefined,
-        imageUrls: parsedImages.length > 0 ? parsedImages : undefined,
-        likesCount: p.likes_count || 0,
-        commentsCount: p.comments_count || 0,
-        sharesCount: p.shares_count || 0,
-        isLiked: userLikes.has(p.id),
-        isBookmarked: false,
-        createdAt: p.created_at,
-        isRepost: repostInfo.isRepost,
-      };
-
-      // Skip empty posts
-      if (!post.content && !post.imageUrl && !post.isRepost) continue;
-
-      // Resolve repost original
-      if (repostInfo.isRepost && repostInfo.originalPostId) {
-        const orig = postsById[repostInfo.originalPostId];
-        if (orig) {
-          const origProfile = profiles[orig.author_id];
-          const origImages = parseImageUrls(orig.image_url);
-          post.originalPost = {
-            id: orig.id,
-            authorName: origProfile?.display_name || 'User',
-            authorUsername: origProfile?.username || 'user',
-            authorEmoji: origProfile?.emoji || '😊',
-            content: orig.content || '',
-            imageUrl: origImages[0] || undefined,
-            imageUrls: origImages.length > 0 ? origImages : undefined,
-          };
+        if (repostInfo.isRepost && repostInfo.originalPostId) {
+          const orig = postsById[repostInfo.originalPostId];
+          if (orig) {
+            const origProfile = Array.isArray(orig.profiles) ? orig.profiles[0] : orig.profiles;
+            const origImages = parseImageUrls(orig.image_url);
+            post.originalPost = {
+              id: orig.id,
+              authorName: origProfile?.display_name || 'User',
+              authorUsername: origProfile?.username || 'user',
+              authorEmoji: origProfile?.emoji || '😊',
+              content: orig.content || '',
+              imageUrl: origImages[0] || undefined,
+              imageUrls: origImages.length > 0 ? origImages : undefined,
+            };
+          }
         }
+        mapped.push(post);
       }
-
-      mapped.push(post);
+      setPosts(mapped);
+    } catch (e) {
+      console.warn('[Feed] Load failed:', e);
+    } finally {
+      setIsLoading(false);
     }
+  }, []);
 
-    return mapped;
-  }, [feedPosts, profiles, userLikes]);
+  useEffect(() => { loadFeed(); }, []);
+  useEffect(() => { const t = setTimeout(() => setIsLoading(false), 2000); return () => clearTimeout(t); }, []);
 
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
-    await syncFeed(user?.id);
+    await loadFeed();
     setRefreshing(false);
-  }, [user?.id]);
+  }, [loadFeed]);
 
-  const handleToggleLike = useCallback((postId: string) => {
+  const handleToggleLike = useCallback(async (postId: string) => {
     if (!user?.id) return;
-    queueMutation('toggle_like', { userId: user.id, postId });
+    setPosts(prev => prev.map(p => p.id === postId ? { ...p, isLiked: !p.isLiked, likesCount: p.isLiked ? p.likesCount - 1 : p.likesCount + 1 } : p));
+    await apiToggleLike(user.id, postId);
   }, [user?.id]);
 
   const renderPost = ({ item }: { item: Post }) => (
-    <View>
-      <PostCard
-        post={item}
-        onComment={(postId) => router.push({ pathname: '/comments/[id]', params: { id: postId } })}
-        onLike={(postId) => handleToggleLike(postId)}
-        onShare={(postId) => {
-          if (!user?.id) return;
-          triggerHaptic('medium');
-          useFeedStore.getState().setPendingRepost(postId);
-          router.push('/(tabs)/create');
-        }}
-        onMenu={(post) => setMenuPost(post)}
-      />
-    </View>
+    <PostCard
+      post={item}
+      onComment={(postId) => router.push({ pathname: '/comments/[id]', params: { id: postId } })}
+      onLike={(postId) => handleToggleLike(postId)}
+      onShare={(postId) => { if (!user?.id) return; triggerHaptic('medium'); useFeedStore.getState().setPendingRepost(postId); router.push('/(tabs)/create'); }}
+      onMenu={(post) => setMenuPost(post)}
+    />
   );
 
-  // Background color for gradient
   const bgColor = theme.colors.background.primary;
-  const bgTransparent = theme.colors.background.primary + '00';
+  const bgTransparent = bgColor + '00';
   const headerContentHeight = insets.top + 48;
   const headerGradientHeight = headerContentHeight + 28;
 
-  const containerStyle: ViewStyle = {
-    flex: 1,
-    backgroundColor: theme.colors.background.primary,
-  };
-
-  if (isLoading) {
+  if (isLoading && posts.length === 0) {
     return (
-      <View style={containerStyle}>
+      <View style={{ flex: 1, backgroundColor: bgColor }}>
         <View style={[styles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">
-          <LinearGradient
-            colors={[bgColor, bgColor, bgTransparent]}
-            locations={[0, 0.6, 1]}
-            style={StyleSheet.absoluteFill}
-          />
+          <LinearGradient colors={[bgColor, bgColor, bgTransparent]} locations={[0, 0.6, 1]} style={StyleSheet.absoluteFill} />
           <View style={[styles.headerContent, { paddingTop: insets.top }]}>
             <Text variant="subheading" weight="bold">San</Text>
-            <Pressable>
-              <Feather name="bell" size={22} color={theme.colors.text.primary} />
-            </Pressable>
+            <Feather name="bell" size={22} color={theme.colors.text.primary} />
           </View>
         </View>
         <View style={{ paddingHorizontal: theme.spacing.base, paddingTop: headerContentHeight }}>
@@ -225,46 +169,22 @@ export default function FeedScreen() {
   }
 
   return (
-    <View style={containerStyle}>
-      {/* Gradient header */}
+    <View style={{ flex: 1, backgroundColor: bgColor }}>
       <View style={[styles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">
-        <LinearGradient
-          colors={[bgColor, bgColor, bgTransparent]}
-          locations={[0, 0.55, 1]}
-          style={StyleSheet.absoluteFill}
-        />
+        <LinearGradient colors={[bgColor, bgColor, bgTransparent]} locations={[0, 0.55, 1]} style={StyleSheet.absoluteFill} />
         <View style={[styles.headerContent, { paddingTop: insets.top }]} pointerEvents="auto">
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <Text variant="subheading" weight="bold">San</Text>
             {(updateStatus === 'checking' || updateStatus === 'downloading' || updateStatus === 'ready') && (
               <Pressable onPress={() => setShowUpdateModal(true)} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: theme.colors.accent.primary + '15', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 }}>
-                {updateStatus !== 'ready' ? (
-                  <ActivityIndicator size={11} color={theme.colors.accent.primary} />
-                ) : (
-                  <Feather name="check-circle" size={12} color={theme.colors.accent.primary} />
-                )}
-                <Text variant="caption" color={theme.colors.accent.primary} style={{ fontSize: 11 }}>
-                  {updateStatus === 'ready' ? 'Готово' : `${Math.round(updateProgress)}%`}
-                </Text>
+                {updateStatus !== 'ready' ? <ActivityIndicator size={11} color={theme.colors.accent.primary} /> : <Feather name="check-circle" size={12} color={theme.colors.accent.primary} />}
+                <Text variant="caption" color={theme.colors.accent.primary} style={{ fontSize: 11 }}>{updateStatus === 'ready' ? 'Готово' : `${Math.round(updateProgress)}%`}</Text>
               </Pressable>
             )}
           </View>
-          <Pressable
-            onPress={() => router.push('/notifications')}
-            style={{ position: 'relative' }}
-          >
+          <Pressable onPress={() => router.push('/notifications')} style={{ position: 'relative' }}>
             <Feather name="bell" size={22} color={theme.colors.text.primary} />
-            <View
-              style={{
-                position: 'absolute',
-                top: -2,
-                right: -2,
-                width: 8,
-                height: 8,
-                borderRadius: 4,
-                backgroundColor: theme.colors.accent.primary,
-              }}
-            />
+            <View style={{ position: 'absolute', top: -2, right: -2, width: 8, height: 8, borderRadius: 4, backgroundColor: theme.colors.accent.primary }} />
           </Pressable>
         </View>
       </View>
@@ -279,38 +199,25 @@ export default function FeedScreen() {
         removeClippedSubviews={true}
         maxToRenderPerBatch={5}
         windowSize={7}
-        refreshControl={
-          <RefreshControl
-            refreshing={isRefreshing}
-            onRefresh={handleRefresh}
-            tintColor={theme.colors.accent.primary}
-            progressViewOffset={headerContentHeight}
-          />
-        }
+        refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={theme.colors.accent.primary} progressViewOffset={headerContentHeight} />}
       />
 
       <PostMenuModal visible={!!menuPost} post={menuPost} onClose={() => setMenuPost(null)} />
 
-      {/* Update Modal */}
       <Modal visible={showUpdateModal} transparent animationType="fade" onRequestClose={() => setShowUpdateModal(false)} statusBarTranslucent>
         <View style={{ flex: 1 }}>
           <Pressable style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)' }} onPress={() => setShowUpdateModal(false)} />
           <View style={{ flex: 1, justifyContent: 'flex-end' }} pointerEvents="box-none">
-            <View style={{ marginHorizontal: 8, marginBottom: 16, backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF', borderRadius: 28, shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.12, shadowRadius: 16, elevation: 10, overflow: 'hidden' }}>
+            <View style={{ marginHorizontal: 8, marginBottom: 16, backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF', borderRadius: 28, overflow: 'hidden' }}>
               <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 6 }}>
                 <View style={{ width: 40, height: 5, borderRadius: 3, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)' }} />
               </View>
               <View style={{ paddingHorizontal: 20, paddingBottom: 20 }}>
-                <Text variant="body" weight="bold" align="center" style={{ marginBottom: 16 }}>Обновление приложения</Text>
+                <Text variant="body" weight="bold" align="center" style={{ marginBottom: 16 }}>Обновление</Text>
                 <View style={{ height: 6, backgroundColor: theme.colors.border.light, borderRadius: 3, marginBottom: 12, overflow: 'hidden' }}>
                   <View style={{ height: '100%', width: `${Math.min(updateProgress, 100)}%`, backgroundColor: theme.colors.accent.primary, borderRadius: 3 }} />
                 </View>
-                <Text variant="caption" color={theme.colors.text.secondary} align="center" style={{ marginBottom: 4 }}>
-                  {updateMessage || 'Ожидание...'}
-                </Text>
-                <Text variant="caption" color={theme.colors.text.tertiary} align="center" style={{ marginBottom: 16 }}>
-                  {Math.round(updateProgress)}%
-                </Text>
+                <Text variant="caption" color={theme.colors.text.tertiary} align="center" style={{ marginBottom: 16 }}>{Math.round(updateProgress)}%</Text>
                 {updateStatus === 'ready' && (
                   <Pressable onPress={applyUpdate} style={{ backgroundColor: theme.colors.accent.primary, borderRadius: 14, paddingVertical: 14, alignItems: 'center' }}>
                     <Text variant="body" weight="semibold" color="#FFFFFF">Перезапустить</Text>
@@ -326,18 +233,6 @@ export default function FeedScreen() {
 }
 
 const styles = StyleSheet.create({
-  headerWrapper: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    zIndex: 100,
-  },
-  headerContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 24,
-    paddingBottom: 8,
-  },
+  headerWrapper: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100 },
+  headerContent: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 24, paddingBottom: 8 },
 });
