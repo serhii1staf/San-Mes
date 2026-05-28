@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback, useState } from 'react';
+import React, { useEffect, useCallback, useState, useMemo } from 'react';
 import { View, FlatList, RefreshControl, ViewStyle, Pressable, StyleSheet, ActivityIndicator, Modal } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -10,7 +10,10 @@ import { PostCard } from '../../src/components/feed/PostCard';
 import { PostMenuModal } from '../../src/components/feed/PostMenuModal';
 import { useFeedStore, useAuthStore } from '../../src/store';
 import { Post } from '../../src/types';
-import { getPosts, isRepost, parseImageUrls, toggleLike as apiToggleLike } from '../../src/lib/supabase';
+import { isRepost, parseImageUrls } from '../../src/lib/supabase';
+import { useEntityStore, LocalPost } from '../../src/lib/entityStore';
+import { syncFeed } from '../../src/lib/syncEngine';
+import { queueMutation } from '../../src/lib/mutationQueue';
 import { useUpdateStore } from '../../src/store/updateStore';
 import { triggerHaptic } from '../../src/utils/haptics';
 
@@ -61,8 +64,18 @@ export default function FeedScreen() {
   const { isRefreshing, setRefreshing, pendingRepostId, setPendingRepost } = useFeedStore();
   const [menuPost, setMenuPost] = useState<Post | null>(null);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
-  const [posts, setPosts] = useState<Post[]>([]);
+
+  // Read from entityStore instead of local state
+  const isHydrated = useEntityStore((s) => s.isHydrated);
+  const feedPosts = useEntityStore((s) => s.getFeedPosts());
+  const profiles = useEntityStore((s) => s.profiles);
+
+  // Subscribe to likes so UI re-renders when likes change
+  const userLikes = useEntityStore((s) => user?.id ? s.getUserLikes(user.id) : new Set<string>());
+
+  // Show skeleton only when not hydrated AND no cached posts
+  const [forceReady, setForceReady] = useState(false);
+  const isLoading = !isHydrated && !forceReady && feedPosts.length === 0;
 
   const { status: updateStatus, progress: updateProgress, message: updateMessage, checkForUpdate, applyUpdate } = useUpdateStore();
 
@@ -71,104 +84,92 @@ export default function FeedScreen() {
     checkForUpdate();
   }, []);
 
-  // Load feed directly from Supabase — simple and reliable
-  const loadFeed = useCallback(async () => {
-    try {
-      const { posts: rawPosts, error } = await getPosts(50, 0);
-      if (error || !rawPosts) {
-        setIsLoading(false);
-        return;
-      }
-
-      const mapped: Post[] = [];
-      // Build a lookup for resolving reposts
-      const postsById: Record<string, any> = {};
-      for (const p of rawPosts) {
-        postsById[p.id] = p;
-      }
-
-      for (const p of rawPosts) {
-        const repostInfo = isRepost(p.content || '');
-        const parsedImages = parseImageUrls(p.image_url);
-        const profileData = Array.isArray(p.profiles) ? p.profiles[0] : p.profiles;
-
-        let post: Post = {
-          id: p.id,
-          authorId: p.author_id,
-          authorName: profileData?.display_name || 'User',
-          authorUsername: profileData?.username || 'user',
-          authorEmoji: profileData?.emoji || '😊',
-          content: repostInfo.isRepost ? (repostInfo.comment || '') : (p.content || ''),
-          imageUrl: parsedImages[0] || undefined,
-          imageUrls: parsedImages.length > 0 ? parsedImages : undefined,
-          likesCount: p.likes_count || 0,
-          commentsCount: p.comments_count || 0,
-          sharesCount: p.shares_count || 0,
-          isLiked: false,
-          isBookmarked: false,
-          createdAt: p.created_at,
-          isRepost: repostInfo.isRepost,
-        };
-
-        // Skip empty posts
-        if (!post.content && !post.imageUrl && !post.isRepost) continue;
-
-        // Resolve repost original
-        if (repostInfo.isRepost && repostInfo.originalPostId) {
-          const orig = postsById[repostInfo.originalPostId];
-          if (orig) {
-            const origProfile = Array.isArray(orig.profiles) ? orig.profiles[0] : orig.profiles;
-            const origImages = parseImageUrls(orig.image_url);
-            post.originalPost = {
-              id: orig.id,
-              authorName: origProfile?.display_name || 'User',
-              authorUsername: origProfile?.username || 'user',
-              authorEmoji: origProfile?.emoji || '😊',
-              content: orig.content || '',
-              imageUrl: origImages[0] || undefined,
-              imageUrls: origImages.length > 0 ? origImages : undefined,
-            };
-          }
-        }
-
-        mapped.push(post);
-      }
-
-      setPosts(mapped);
-    } catch (e) {
-      console.warn('[Feed] Load failed:', e);
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
-  // Load on mount
+  // Background sync on mount
   useEffect(() => {
-    loadFeed();
-  }, []);
+    syncFeed(user?.id);
+  }, [user?.id]);
+
+  // Load user likes on mount
+  useEffect(() => {
+    if (user?.id) {
+      useEntityStore.getState().loadLikes(user.id);
+    }
+  }, [user?.id]);
 
   // Safety: never show skeleton more than 2 seconds
   useEffect(() => {
-    const timer = setTimeout(() => setIsLoading(false), 2000);
+    const timer = setTimeout(() => setForceReady(true), 2000);
     return () => clearTimeout(timer);
   }, []);
 
+  // Map LocalPost[] to Post[] using cached profiles from entityStore
+  const posts: Post[] = useMemo(() => {
+    // Build a lookup for resolving reposts
+    const postsById: Record<string, LocalPost> = {};
+    for (const p of feedPosts) {
+      postsById[p.id] = p;
+    }
+
+    const mapped: Post[] = [];
+    for (const p of feedPosts) {
+      const repostInfo = isRepost(p.content || '');
+      const parsedImages = parseImageUrls(p.image_url);
+      const profile = profiles[p.author_id];
+
+      let post: Post = {
+        id: p.id,
+        authorId: p.author_id,
+        authorName: profile?.display_name || 'User',
+        authorUsername: profile?.username || 'user',
+        authorEmoji: profile?.emoji || '😊',
+        content: repostInfo.isRepost ? (repostInfo.comment || '') : (p.content || ''),
+        imageUrl: parsedImages[0] || undefined,
+        imageUrls: parsedImages.length > 0 ? parsedImages : undefined,
+        likesCount: p.likes_count || 0,
+        commentsCount: p.comments_count || 0,
+        sharesCount: p.shares_count || 0,
+        isLiked: userLikes.has(p.id),
+        isBookmarked: false,
+        createdAt: p.created_at,
+        isRepost: repostInfo.isRepost,
+      };
+
+      // Skip empty posts
+      if (!post.content && !post.imageUrl && !post.isRepost) continue;
+
+      // Resolve repost original
+      if (repostInfo.isRepost && repostInfo.originalPostId) {
+        const orig = postsById[repostInfo.originalPostId];
+        if (orig) {
+          const origProfile = profiles[orig.author_id];
+          const origImages = parseImageUrls(orig.image_url);
+          post.originalPost = {
+            id: orig.id,
+            authorName: origProfile?.display_name || 'User',
+            authorUsername: origProfile?.username || 'user',
+            authorEmoji: origProfile?.emoji || '😊',
+            content: orig.content || '',
+            imageUrl: origImages[0] || undefined,
+            imageUrls: origImages.length > 0 ? origImages : undefined,
+          };
+        }
+      }
+
+      mapped.push(post);
+    }
+
+    return mapped;
+  }, [feedPosts, profiles, userLikes]);
+
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
-    await loadFeed();
+    await syncFeed(user?.id);
     setRefreshing(false);
-  }, [loadFeed]);
+  }, [user?.id]);
 
-  const handleToggleLike = useCallback(async (postId: string) => {
+  const handleToggleLike = useCallback((postId: string) => {
     if (!user?.id) return;
-    // Optimistic update
-    setPosts(prev => prev.map(p =>
-      p.id === postId
-        ? { ...p, isLiked: !p.isLiked, likesCount: p.isLiked ? p.likesCount - 1 : p.likesCount + 1 }
-        : p
-    ));
-    // Send to server
-    await apiToggleLike(user.id, postId);
+    queueMutation('toggle_like', { userId: user.id, postId });
   }, [user?.id]);
 
   const renderPost = ({ item }: { item: Post }) => (
@@ -199,7 +200,7 @@ export default function FeedScreen() {
     backgroundColor: theme.colors.background.primary,
   };
 
-  if (isLoading && posts.length === 0) {
+  if (isLoading) {
     return (
       <View style={containerStyle}>
         <View style={[styles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">

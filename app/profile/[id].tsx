@@ -8,7 +8,10 @@ import * as Clipboard from 'expo-clipboard';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { LinkedText } from '../../src/components/ui/LinkedText';
-import { parseImageUrls, getProfile, getFollowCounts, isFollowing as checkIsFollowing, followUser, unfollowUser, supabase } from '../../src/lib/supabase';
+import { parseImageUrls, getProfile, getFollowCounts, isFollowing as checkIsFollowing, supabase } from '../../src/lib/supabase';
+import { useEntityStore } from '../../src/lib/entityStore';
+import { syncProfile, syncUserPosts } from '../../src/lib/syncEngine';
+import { queueMutation } from '../../src/lib/mutationQueue';
 import { useAuthStore } from '../../src/store';
 import { openUrl } from '../../src/utils/openUrl';
 import { triggerHaptic } from '../../src/utils/haptics';
@@ -228,15 +231,43 @@ export default function UserProfileScreen() {
   const badgeOpacity = scrollY.interpolate({ inputRange: [180, 220], outputRange: [0, 1], extrapolate: 'clamp' });
   const badgeTranslateY = scrollY.interpolate({ inputRange: [180, 220], outputRange: [20, 0], extrapolate: 'clamp' });
 
-  // Profile data loaded from Supabase
+  // Read cached profile from entityStore for instant display
+  const cachedProfile = useEntityStore((s) => s.getProfile(id ?? ''));
+  // Read cached follow state from entityStore
+  const cachedIsFollowing = useEntityStore((s) => s.isFollowing(currentUser?.id ?? '', id ?? ''));
+  // Read cached user posts from entityStore
+  const cachedUserPosts = useEntityStore((s) => {
+    const allPosts = Object.values(s.posts);
+    return allPosts
+      .filter((p) => p.author_id === (id ?? ''))
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  });
+
+  // Profile data loaded from Supabase (fresh data)
   const [profile, setProfile] = useState<any>(null);
   const [userPosts, setUserPosts] = useState<any[]>([]);
+
+  // Initialize follow state from cache
+  useEffect(() => {
+    setIsFollowingState(cachedIsFollowing);
+  }, [cachedIsFollowing]);
+
+  // Trigger background sync for profile and user posts
+  useEffect(() => {
+    if (id) {
+      syncProfile(id);
+      syncUserPosts(id);
+    }
+  }, [id]);
 
   useEffect(() => { loadProfile(); }, [id]);
 
   const loadProfile = async () => {
     if (!id) return;
-    setIsLoading(true);
+    // Only show loading if we don't have cached data
+    if (!cachedProfile) {
+      setIsLoading(true);
+    }
     try {
       // Load profile from Supabase
       const { profile: profileData, error } = await getProfile(id);
@@ -286,25 +317,50 @@ export default function UserProfileScreen() {
     // Now handled in loadProfile
   };
 
-  const handleFollow = async () => {
+  // Determine which profile to display: fresh data takes priority, then cached
+  const displayProfile = profile || (cachedProfile ? {
+    id: cachedProfile.id,
+    username: cachedProfile.username,
+    display_name: cachedProfile.display_name,
+    emoji: cachedProfile.emoji,
+    bio: cachedProfile.bio,
+    banner_url: cachedProfile.banner_url,
+    links: cachedProfile.links,
+  } : null);
+
+  // Determine which posts to display: fresh data takes priority, then cached
+  const displayPosts = userPosts.length > 0 ? userPosts : cachedUserPosts.map((p) => {
+    const parsedImages = parseImageUrls(p.image_url);
+    return {
+      id: p.id,
+      content: p.content,
+      imageUrl: parsedImages[0] || undefined,
+      imageUrls: parsedImages.length > 0 ? parsedImages : undefined,
+      likesCount: p.likes_count || 0,
+      commentsCount: p.comments_count || 0,
+      createdAt: p.created_at,
+    };
+  });
+
+  const handleFollow = () => {
     if (!currentUser?.id || !id) return;
     triggerHaptic('medium');
     if (isFollowingState) {
+      queueMutation('unfollow', { followerId: currentUser.id, followingId: id });
       setIsFollowingState(false);
       setFollowCounts(c => ({ ...c, followers: Math.max(0, c.followers - 1) }));
-      await unfollowUser(currentUser.id, id);
     } else {
+      queueMutation('follow', { followerId: currentUser.id, followingId: id });
       setIsFollowingState(true);
       setFollowCounts(c => ({ ...c, followers: c.followers + 1 }));
-      await followUser(currentUser.id, id);
     }
   };
 
-  if (isLoading && !profile) {
+  if (isLoading && !displayProfile) {
     return <View style={{ flex: 1, backgroundColor: theme.colors.background.primary, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator size="large" color={theme.colors.accent.primary} /></View>;
   }
 
-  if (!profile) {
+  if (!displayProfile) {
     return (
       <View style={{ flex: 1, backgroundColor: theme.colors.background.primary, alignItems: 'center', justifyContent: 'center' }}>
         <Text variant="body" color={theme.colors.text.tertiary}>Пользователь не найден</Text>
@@ -313,9 +369,9 @@ export default function UserProfileScreen() {
     );
   }
 
-  const isOwnProfile = currentUser?.id === profile.id;
-  const bannerUrl = profile.banner_url;
-  const profileLinksRaw = profile.links;
+  const isOwnProfile = currentUser?.id === displayProfile.id;
+  const bannerUrl = displayProfile.banner_url;
+  const profileLinksRaw = displayProfile.links;
   const userLinks: { type: string; url: string }[] = profileLinksRaw ? (typeof profileLinksRaw === 'string' ? JSON.parse(profileLinksRaw) : profileLinksRaw) : [];
   const tabs: { key: TabName; label: string }[] = [
     { key: 'posts', label: 'Посты' }, { key: 'replies', label: 'Ответы' },
@@ -359,13 +415,13 @@ export default function UserProfileScreen() {
         {/* Profile info */}
         <View style={{ paddingHorizontal: 16, marginTop: -36 }}>
           <View style={{ width: 72, height: 72, borderRadius: 36, overflow: 'hidden', borderWidth: 3, borderColor: theme.colors.background.primary, backgroundColor: theme.isDark ? 'rgba(30,30,30,0.85)' : 'rgba(255,255,255,0.85)', alignItems: 'center', justifyContent: 'center' }}>
-            <Avatar emoji={profile.emoji || '😊'} size="lg" />
+            <Avatar emoji={displayProfile.emoji || '😊'} size="lg" />
           </View>
 
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}>
             <View style={{ flex: 1 }}>
-              <Text variant="body" weight="bold" numberOfLines={1}>{profile.display_name}</Text>
-              <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>@{profile.username}</Text>
+              <Text variant="body" weight="bold" numberOfLines={1}>{displayProfile.display_name}</Text>
+              <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>@{displayProfile.username}</Text>
             </View>
             {!isOwnProfile && (
               <Pressable onPress={handleFollow} style={{ paddingHorizontal: 20, paddingVertical: 8, backgroundColor: isFollowingState ? 'transparent' : theme.colors.accent.primary, borderWidth: isFollowingState ? 1 : 0, borderColor: theme.colors.border.medium, borderRadius: 8 }}>
@@ -375,12 +431,12 @@ export default function UserProfileScreen() {
           </View>
 
           <View style={{ flexDirection: 'row', marginTop: 10, gap: 16 }}>
-            <Text variant="caption"><Text variant="caption" weight="bold">{userPosts.length}</Text> <Text variant="caption" color={theme.colors.text.tertiary}>posts</Text></Text>
+            <Text variant="caption"><Text variant="caption" weight="bold">{displayPosts.length}</Text> <Text variant="caption" color={theme.colors.text.tertiary}>posts</Text></Text>
             <Text variant="caption"><Text variant="caption" weight="bold">{followCounts.following}</Text> <Text variant="caption" color={theme.colors.text.tertiary}>following</Text></Text>
             <Text variant="caption"><Text variant="caption" weight="bold">{followCounts.followers}</Text> <Text variant="caption" color={theme.colors.text.tertiary}>followers</Text></Text>
           </View>
 
-          {profile.bio ? <LinkedText style={{ marginTop: 8 }}>{profile.bio}</LinkedText> : null}
+          {displayProfile.bio ? <LinkedText style={{ marginTop: 8 }}>{displayProfile.bio}</LinkedText> : null}
           {userLinks.length > 0 && <View style={{ flexDirection: 'row', marginTop: 8, gap: 8 }}>{userLinks.map((link: any, idx: number) => <SocialLinkIcon key={idx} type={link.type} url={link.url} />)}</View>}
         </View>
 
@@ -397,11 +453,11 @@ export default function UserProfileScreen() {
         </View>
 
         {/* Content */}
-        {activeTab === 'posts' && (userPosts.length === 0 ? (
+        {activeTab === 'posts' && (displayPosts.length === 0 ? (
           <View style={{ alignItems: 'center', paddingVertical: 40 }}><Text variant="caption" color={theme.colors.text.tertiary}>Ещё нет публикаций</Text></View>
         ) : (
           <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
-            {userPosts.map((post: any) => {
+            {displayPosts.map((post: any) => {
               const postImages: string[] = post.imageUrls && post.imageUrls.length > 0 ? post.imageUrls : post.imageUrl ? [post.imageUrl] : [];
               return (
               <Pressable key={post.id} onPress={() => router.push({ pathname: '/comments/[id]', params: { id: post.id } })} style={{ backgroundColor: theme.colors.background.elevated, borderRadius: 14, padding: 14, marginBottom: 10 }}>
@@ -443,8 +499,8 @@ export default function UserProfileScreen() {
             shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.12, shadowRadius: 8, elevation: 6,
             borderWidth: 0.5, borderColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)',
           }}>
-            <Avatar emoji={profile.emoji || '😊'} size="xs" />
-            <Text variant="caption" weight="semibold" numberOfLines={1} style={{ maxWidth: 100 }}>{profile.display_name}</Text>
+            <Avatar emoji={displayProfile.emoji || '😊'} size="xs" />
+            <Text variant="caption" weight="semibold" numberOfLines={1} style={{ maxWidth: 100 }}>{displayProfile.display_name}</Text>
             <Pressable onPress={handleFollow} style={{ paddingHorizontal: 12, paddingVertical: 5, backgroundColor: isFollowingState ? 'transparent' : theme.colors.accent.primary, borderWidth: isFollowingState ? 1 : 0, borderColor: theme.colors.border.medium, borderRadius: 12 }}>
               <Text variant="caption" weight="semibold" color={isFollowingState ? theme.colors.text.primary : '#FFFFFF'} style={{ fontSize: 11 }}>{isFollowingState ? 'Отписаться' : 'Подписаться'}</Text>
             </Pressable>
@@ -452,7 +508,7 @@ export default function UserProfileScreen() {
         </Animated.View>
       )}
 
-      <ProfileMenuModal visible={showMenu} profile={profile} onClose={() => setShowMenu(false)} />
+      <ProfileMenuModal visible={showMenu} profile={displayProfile} onClose={() => setShowMenu(false)} />
     </View>
   );
 }

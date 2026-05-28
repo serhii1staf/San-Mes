@@ -2,12 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { View, TextInput, Pressable, ViewStyle, ScrollView, Alert, Image } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
+import { router } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { useAuthStore } from '../../src/store/authStore';
 import { useFeedStore } from '../../src/store/feedStore';
-import { createPost, createRepost, supabase, uploadPostImage, joinImageUrls } from '../../src/lib/supabase';
+import { createRepost, supabase, uploadPostImage, joinImageUrls } from '../../src/lib/supabase';
+import { queueMutation } from '../../src/lib/mutationQueue';
 
 const MAX_CHARS = 500;
 const MAX_IMAGES = 6;
@@ -18,7 +20,7 @@ export default function CreateScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const { user } = useAuthStore();
-  const { addPost, pendingRepostId, setPendingRepost } = useFeedStore();
+  const { pendingRepostId, setPendingRepost } = useFeedStore();
   const [content, setContent] = useState('');
   const [isPosting, setIsPosting] = useState(false);
   const [audience, setAudience] = useState<Audience>('public');
@@ -146,32 +148,17 @@ export default function CreateScreen() {
         }
       }
 
-      const { post, error } = await createPost(user.id, content.trim() || '', imageUrl);
-      if (error) {
-        Alert.alert('Ошибка', error);
-      } else {
-        if (post) {
-          const postImageUrls = imageUrl ? imageUrl.split('|').filter(Boolean) : undefined;
-          addPost({
-            id: post.id,
-            authorId: user.id,
-            authorName: user.displayName,
-            authorUsername: user.username,
-            authorEmoji: user.emoji,
-            content: post.content,
-            imageUrl: postImageUrls?.[0] || undefined,
-            imageUrls: postImageUrls,
-            likesCount: 0,
-            commentsCount: 0,
-            sharesCount: 0,
-            isLiked: false,
-            isBookmarked: false,
-            createdAt: post.created_at,
-          });
-        }
-        setContent('');
-        setImageUris([]);
-      }
+      const tempId = `temp_${Date.now()}`;
+      queueMutation('create_post', {
+        authorId: user.id,
+        content: content.trim() || '',
+        imageUrl,
+        tempId,
+      });
+
+      setContent('');
+      setImageUris([]);
+      router.replace('/(tabs)');
     } catch (e) {
       Alert.alert('Ошибка', 'Не удалось опубликовать пост');
     } finally {

@@ -1,13 +1,57 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, StyleSheet, Animated, Text as RNText, Image as RNImage } from 'react-native';
+import { View, StyleSheet, Animated, Text as RNText, Image as RNImage, AppState } from 'react-native';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
 import { ThemeProvider, useTheme } from '../src/theme';
 import { fontAssets } from '../src/theme/fonts';
 import { useAuthStore } from '../src/store';
+import { initDatabase } from '../src/lib/database';
+import { useEntityStore } from '../src/lib/entityStore';
+import { fullSync, startSyncLoop, stopSyncLoop } from '../src/lib/syncEngine';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
+
+// Module-level: initialize database and hydrate entity store before any component renders
+try {
+  const dbReady = initDatabase();
+  if (dbReady) {
+    useEntityStore.getState().hydrate();
+  }
+} catch (e) {
+  // Ensure the app never crashes during initialization
+  console.warn('[Layout] Module-level init failed:', e);
+}
+
+/**
+ * Manages the sync loop lifecycle based on app state and user authentication.
+ * Starts sync when the app is active and user is authenticated,
+ * stops sync when the app goes to background/inactive or user logs out.
+ */
+function useSyncLifecycle(userId: string | undefined) {
+  useEffect(() => {
+    if (!userId) return;
+
+    // Initial full sync then start the loop
+    fullSync(userId).then(() => {
+      startSyncLoop();
+    });
+
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        startSyncLoop();
+      } else {
+        // 'background' or 'inactive'
+        stopSyncLoop();
+      }
+    });
+
+    return () => {
+      stopSyncLoop();
+      subscription.remove();
+    };
+  }, [userId]);
+}
 
 function AuthNavigationGuard({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, hasHydrated } = useAuthStore();
@@ -76,6 +120,11 @@ function CustomSplash() {
 export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts(fontAssets);
   const [fontTimeout, setFontTimeout] = useState(false);
+  const isHydrated = useEntityStore((s) => s.isHydrated);
+  const { user } = useAuthStore();
+
+  // Sync lifecycle: start/stop sync loop based on auth and app state
+  useSyncLifecycle(user?.id);
 
   // Safety timeout: if fonts take more than 3 seconds, proceed without them
   useEffect(() => {
@@ -83,7 +132,17 @@ export default function RootLayout() {
     return () => clearTimeout(timer);
   }, []);
 
-  const ready = fontsLoaded || fontError !== null || fontTimeout;
+  // Safety timeout: force entityStore isHydrated after 2 seconds if it hasn't been set
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (!useEntityStore.getState().isHydrated) {
+        useEntityStore.setState({ isHydrated: true });
+      }
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, []);
+
+  const ready = (fontsLoaded || fontError !== null || fontTimeout) && isHydrated;
 
   useEffect(() => {
     if (ready) {
@@ -103,7 +162,7 @@ export default function RootLayout() {
   }, []);
 
   if (!ready) {
-    return null;
+    return <CustomSplash />;
   }
 
   return (

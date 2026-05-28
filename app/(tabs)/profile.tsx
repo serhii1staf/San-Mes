@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useMemo } from 'react';
 import { View, Pressable, ActivityIndicator, Dimensions, Image, Animated, Modal, ScrollView as RNScrollView } from 'react-native';
 import { Feather, FontAwesome5 } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
@@ -8,7 +8,9 @@ import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { LinkedText } from '../../src/components/ui/LinkedText';
 import { useAuthStore } from '../../src/store';
-import { isRepost, parseImageUrls, getFollowCounts, supabase } from '../../src/lib/supabase';
+import { isRepost, parseImageUrls, getFollowCounts } from '../../src/lib/supabase';
+import { useEntityStore, LocalPost } from '../../src/lib/entityStore';
+import { syncMyProfile, syncUserPosts } from '../../src/lib/syncEngine';
 import { openUrl } from '../../src/utils/openUrl';
 import { Post } from '../../src/types';
 import { triggerHaptic } from '../../src/utils/haptics';
@@ -65,51 +67,43 @@ export default function ProfileScreen() {
   const { user } = useAuthStore();
   const [activeTab, setActiveTab] = useState<TabName>('posts');
   const [followCounts, setFollowCounts] = useState({ followers: 0, following: 0 });
-  const [userPosts, setUserPosts] = useState<Post[]>([]);
   const [showQR, setShowQR] = useState(false);
 
-  // Load user's posts directly from Supabase
-  const loadMyPosts = useCallback(async () => {
-    if (!user?.id) return;
-    try {
-      const { data, error } = await supabase
-        .from('posts')
-        .select('*')
-        .eq('author_id', user.id)
-        .order('created_at', { ascending: false })
-        .limit(50);
+  // Read cached profile and posts from entityStore
+  const cachedProfile = useEntityStore((s) => s.getProfile(user?.id ?? ''));
+  const cachedPosts = useEntityStore((s) => s.getMyPosts(user?.id ?? ''));
 
-      if (error || !data) return;
+  // Map LocalPost[] to Post[] for rendering
+  const userPosts: Post[] = useMemo(() => {
+    if (!user) return [];
+    const displayName = cachedProfile?.display_name || user.displayName || '';
+    const username = cachedProfile?.username || user.username || '';
+    const emoji = cachedProfile?.emoji || user.emoji || '😊';
 
-      const posts: Post[] = data.map((p: any) => {
-        const repostInfo = isRepost(p.content || '');
-        const parsedImages = parseImageUrls(p.image_url);
-        return {
-          id: p.id,
-          authorId: p.author_id,
-          authorName: user.displayName || '',
-          authorUsername: user.username || '',
-          authorEmoji: user.emoji || '😊',
-          content: repostInfo.isRepost ? (repostInfo.comment || '') : (p.content || ''),
-          imageUrl: parsedImages[0] || undefined,
-          imageUrls: parsedImages.length > 0 ? parsedImages : undefined,
-          likesCount: p.likes_count || 0,
-          commentsCount: p.comments_count || 0,
-          sharesCount: p.shares_count || 0,
-          isLiked: false,
-          isBookmarked: false,
-          createdAt: p.created_at,
-          isRepost: repostInfo.isRepost,
-        };
-      });
+    return cachedPosts.map((p: LocalPost) => {
+      const repostInfo = isRepost(p.content || '');
+      const parsedImages = parseImageUrls(p.image_url);
+      return {
+        id: p.id,
+        authorId: p.author_id,
+        authorName: displayName,
+        authorUsername: username,
+        authorEmoji: emoji,
+        content: repostInfo.isRepost ? (repostInfo.comment || '') : (p.content || ''),
+        imageUrl: parsedImages[0] || undefined,
+        imageUrls: parsedImages.length > 0 ? parsedImages : undefined,
+        likesCount: p.likes_count || 0,
+        commentsCount: p.comments_count || 0,
+        sharesCount: p.shares_count || 0,
+        isLiked: false,
+        isBookmarked: false,
+        createdAt: p.created_at,
+        isRepost: repostInfo.isRepost,
+      };
+    });
+  }, [cachedPosts, cachedProfile, user]);
 
-      setUserPosts(posts);
-    } catch (e) {
-      console.warn('[Profile] Load posts failed:', e);
-    }
-  }, [user?.id]);
-
-  // Load follow counts from Supabase
+  // Load follow counts from Supabase (not cached in entityStore)
   const loadFollows = useCallback(async () => {
     if (!user?.id) return;
     try {
@@ -118,18 +112,23 @@ export default function ProfileScreen() {
     } catch {}
   }, [user?.id]);
 
-  // Refresh data when tab is focused
+  // Trigger background sync and follow counts when tab is focused
   useFocusEffect(
     useCallback(() => {
-      loadMyPosts();
-      loadFollows();
+      if (user?.id) {
+        syncMyProfile(user.id);
+        syncUserPosts(user.id);
+        loadFollows();
+      }
     }, [user?.id])
   );
 
   if (!user) return <View style={{ flex: 1, backgroundColor: theme.colors.background.primary, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator size="large" color={theme.colors.accent.primary} /></View>;
 
-  const userLinks: { type: string; url: string }[] = (user as any).links || [];
-  const bannerUrl = (user as any)?.bannerUrl;
+  const userLinks: { type: string; url: string }[] = cachedProfile?.links
+    ? (() => { try { return JSON.parse(cachedProfile.links!); } catch { return (user as any).links || []; } })()
+    : (user as any).links || [];
+  const bannerUrl = cachedProfile?.banner_url || (user as any)?.bannerUrl;
   const tabs: { key: TabName; label: string }[] = [
     { key: 'posts', label: 'Посты' }, { key: 'replies', label: 'Ответы' },
     { key: 'media', label: 'Медиа' }, { key: 'likes', label: 'Лайки' },
@@ -140,6 +139,11 @@ export default function ProfileScreen() {
   const buttonsTranslateX = scrollY.interpolate({ inputRange: [0, 180, 250], outputRange: [0, 0, -60], extrapolate: 'clamp' });
   const settingsTranslateX = scrollY.interpolate({ inputRange: [0, 180, 250], outputRange: [0, 0, 60], extrapolate: 'clamp' });
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(`https://san-mes.vercel.app/profile/${user.id}`)}`;
+
+  const displayName = cachedProfile?.display_name || user.displayName;
+  const displayUsername = cachedProfile?.username || user.username;
+  const displayEmoji = cachedProfile?.emoji || user.emoji || '😊';
+  const displayBio = cachedProfile?.bio || user.bio;
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
@@ -174,13 +178,13 @@ export default function ProfileScreen() {
 
         <View style={{ paddingHorizontal: 16, marginTop: -36 }}>
           <View style={{ width: 72, height: 72, borderRadius: 36, overflow: 'hidden', borderWidth: 3, borderColor: theme.colors.background.primary, backgroundColor: theme.isDark ? 'rgba(30,30,30,0.85)' : 'rgba(255,255,255,0.85)', alignItems: 'center', justifyContent: 'center' }}>
-            <Avatar emoji={user.emoji} size="lg" />
+            <Avatar emoji={displayEmoji} size="lg" />
           </View>
 
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}>
             <View style={{ flex: 1 }}>
-              <Text variant="body" weight="bold" numberOfLines={1}>{user.displayName}</Text>
-              <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>@{user.username}</Text>
+              <Text variant="body" weight="bold" numberOfLines={1}>{displayName}</Text>
+              <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>@{displayUsername}</Text>
             </View>
             <Pressable onPress={() => { triggerHaptic('light'); router.push('/profile/edit'); }} style={{ paddingHorizontal: 16, paddingVertical: 7, borderWidth: 1, borderColor: theme.colors.border.medium, borderRadius: 20 }}>
               <Text variant="caption" weight="semibold">Редактировать</Text>
@@ -193,7 +197,7 @@ export default function ProfileScreen() {
             <Text variant="caption"><Text variant="caption" weight="bold">{followCounts.followers}</Text> <Text variant="caption" color={theme.colors.text.tertiary}>followers</Text></Text>
           </View>
 
-          {user.bio ? <LinkedText style={{ marginTop: 8 }}>{user.bio}</LinkedText> : null}
+          {displayBio ? <LinkedText style={{ marginTop: 8 }}>{displayBio}</LinkedText> : null}
 
           {userLinks.length > 0 && (
             <View style={{ flexDirection: 'row', marginTop: 8, gap: 8 }}>
