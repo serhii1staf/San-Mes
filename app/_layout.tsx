@@ -17,10 +17,14 @@ try {
   const dbReady = initDatabase();
   if (dbReady) {
     useEntityStore.getState().hydrate();
+  } else {
+    // DB failed — mark as hydrated so app proceeds in online-only mode
+    useEntityStore.setState({ isHydrated: true });
   }
 } catch (e) {
   // Ensure the app never crashes during initialization
   console.warn('[Layout] Module-level init failed:', e);
+  useEntityStore.setState({ isHydrated: true });
 }
 
 /**

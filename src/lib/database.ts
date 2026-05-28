@@ -19,6 +19,7 @@ export function getDatabase(): any {
       const SQLite = require('expo-sqlite');
       db = SQLite.openDatabaseSync('san.db');
     } catch (e) {
+      console.warn('[Database] expo-sqlite not available, using noopDb');
       dbFailed = true;
       return noopDb;
     }
@@ -30,16 +31,14 @@ export function isDatabaseReady(): boolean {
   return dbInitialized && !dbFailed;
 }
 
+export function isDatabaseFailed(): boolean {
+  return dbFailed;
+}
+
 export function initDatabase(): boolean {
   try {
     const database = getDatabase();
-    if (dbFailed) {
-      // Database failed to load — force isHydrated so the app never gets stuck
-      // Use lazy require to avoid circular dependency (entityStore imports from database)
-      const { useEntityStore } = require('./entityStore');
-      useEntityStore.setState({ isHydrated: true });
-      return false;
-    }
+    if (dbFailed) return false;
 
     database.execSync(`CREATE TABLE IF NOT EXISTS posts (id TEXT PRIMARY KEY, author_id TEXT NOT NULL, content TEXT NOT NULL DEFAULT '', image_url TEXT, likes_count INTEGER NOT NULL DEFAULT 0, comments_count INTEGER NOT NULL DEFAULT 0, shares_count INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT);`);
     database.execSync(`CREATE TABLE IF NOT EXISTS profiles (id TEXT PRIMARY KEY, username TEXT NOT NULL, display_name TEXT NOT NULL DEFAULT '', emoji TEXT DEFAULT '😊', bio TEXT DEFAULT '', banner_url TEXT, links TEXT, pin_hash TEXT, device_key TEXT, created_at TEXT, updated_at TEXT);`);
@@ -59,11 +58,8 @@ export function initDatabase(): boolean {
     dbInitialized = true;
     return true;
   } catch (e) {
+    console.warn('[Database] initDatabase failed:', e);
     dbFailed = true;
-    // Table creation failed — force isHydrated so the app never gets stuck
-    // Use lazy require to avoid circular dependency (entityStore imports from database)
-    const { useEntityStore } = require('./entityStore');
-    useEntityStore.setState({ isHydrated: true });
     return false;
   }
 }
