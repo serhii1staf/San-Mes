@@ -1,21 +1,22 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { View, Pressable, ActivityIndicator, Dimensions, Image, Animated, Modal, ScrollView as RNScrollView } from 'react-native';
 import { Feather, FontAwesome5 } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { LinkedText } from '../../src/components/ui/LinkedText';
 import { CachedImage } from '../../src/components/ui/CachedImage';
-import { useAuthStore, useEntityStore } from '../../src/store';
-import { isRepost, parseImageUrls, getFollowCounts } from '../../src/lib/supabase';
-import { LocalPost } from '../../src/services/entityStore';
+import { useAuthStore } from '../../src/store';
+import { isRepost, parseImageUrls, getFollowCounts, supabase } from '../../src/lib/supabase';
 import { openUrl } from '../../src/utils/openUrl';
 import { Post } from '../../src/types';
 import { triggerHaptic } from '../../src/utils/haptics';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
+const MY_POSTS_CACHE_KEY = '@san:my_posts';
 type TabName = 'posts' | 'replies' | 'media' | 'likes';
 
 function detectLinkType(url: string): string {
@@ -65,50 +66,49 @@ export default function ProfileScreen() {
   const { user } = useAuthStore();
   const [activeTab, setActiveTab] = useState<TabName>('posts');
   const [followCounts, setFollowCounts] = useState({ followers: 0, following: 0 });
+  const [userPosts, setUserPosts] = useState<Post[]>([]);
   const [showQR, setShowQR] = useState(false);
+  const hasFetched = useRef(false);
 
-  // Read posts from entityStore — use stable selectors to avoid re-render loops
-  const allPosts = useEntityStore((s) => s.posts);
-  const myPostIds = useEntityStore((s) => s.myPostIds);
-  const storeProfile = useEntityStore((s) => s.profiles[user?.id ?? '']);
+  // 1. Load from cache on mount
+  useEffect(() => {
+    AsyncStorage.getItem(MY_POSTS_CACHE_KEY).then((cached) => {
+      if (cached) {
+        try {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed)) setUserPosts(parsed);
+        } catch {}
+      }
+    }).catch(() => {});
+  }, []);
 
-  // Map LocalPost[] to Post[] for rendering (memoized)
-  const userPosts: Post[] = React.useMemo(() => {
-    const localPosts = myPostIds.map(id => allPosts[id]).filter(Boolean);
-    return localPosts.map((p: LocalPost) => {
-      const repostInfo = isRepost(p.content || '');
-      const parsedImages = parseImageUrls(p.image_url);
-      return {
-        id: p.id,
-        authorId: p.author_id,
-        authorName: user?.displayName || storeProfile?.display_name || '',
-        authorUsername: user?.username || storeProfile?.username || '',
-        authorEmoji: user?.emoji || storeProfile?.emoji || '😊',
-        content: repostInfo.isRepost ? (repostInfo.comment || '') : (p.content || ''),
-        imageUrl: parsedImages[0] || undefined,
-        imageUrls: parsedImages.length > 0 ? parsedImages : undefined,
-        likesCount: p.likes_count || 0,
-        commentsCount: p.comments_count || 0,
-        sharesCount: p.shares_count || 0,
-        isLiked: false,
-        isBookmarked: false,
-        createdAt: p.created_at,
-        isRepost: repostInfo.isRepost,
-        status: p.status,
-      } as Post & { status?: string };
-    });
-  }, [allPosts, myPostIds, user, storeProfile]);
+  // 2. Fetch fresh data once
+  useEffect(() => {
+    if (hasFetched.current || !user?.id) return;
+    hasFetched.current = true;
+    loadMyPosts();
+    loadFollows();
+  }, [user?.id]);
+
+  const loadMyPosts = useCallback(async () => {
+    if (!user?.id) return;
+    try {
+      const { data } = await supabase.from('posts').select('*').eq('author_id', user.id).order('created_at', { ascending: false }).limit(20);
+      if (!data) return;
+      const mapped: Post[] = data.map((p: any) => {
+        const repostInfo = isRepost(p.content || '');
+        const parsedImages = parseImageUrls(p.image_url);
+        return { id: p.id, authorId: p.author_id, authorName: user.displayName || '', authorUsername: user.username || '', authorEmoji: user.emoji || '😊', content: repostInfo.isRepost ? (repostInfo.comment || '') : (p.content || ''), imageUrl: parsedImages[0] || undefined, imageUrls: parsedImages.length > 0 ? parsedImages : undefined, likesCount: p.likes_count || 0, commentsCount: p.comments_count || 0, sharesCount: p.shares_count || 0, isLiked: false, isBookmarked: false, createdAt: p.created_at, isRepost: repostInfo.isRepost };
+      });
+      setUserPosts(mapped);
+      AsyncStorage.setItem(MY_POSTS_CACHE_KEY, JSON.stringify(mapped)).catch(() => {});
+    } catch {}
+  }, [user?.id]);
 
   const loadFollows = useCallback(async () => {
     if (!user?.id) return;
     try { const counts = await getFollowCounts(user.id); setFollowCounts(counts); } catch {}
   }, [user?.id]);
-
-  useFocusEffect(useCallback(() => {
-    if (!user?.id) return;
-    // Only load follow counts (lightweight) — posts already loaded at startup
-    loadFollows();
-  }, [user?.id]));
 
   if (!user) return <View style={{ flex: 1, backgroundColor: theme.colors.background.primary, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator size="large" color={theme.colors.accent.primary} /></View>;
 
@@ -127,7 +127,7 @@ export default function ProfileScreen() {
         <LinearGradient colors={[theme.colors.background.primary, theme.colors.background.primary, theme.colors.background.primary + '00']} locations={[0, 0.6, 1]} style={{ flex: 1 }} />
       </Animated.View>
       <View style={{ position: 'absolute', top: insets.top + 8, left: 16, right: 16, flexDirection: 'row', justifyContent: 'space-between', zIndex: 100 }}>
-        <Animated.View style={{ transform: [{ translateX: buttonsTranslateX }] }}><Pressable onPress={() => { triggerHaptic('light'); setShowQR(true); }} style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' }}><Feather name="maximize" size={15} color="#FFFFFF" /></Pressable></Animated.View>
+        <Animated.View style={{ transform: [{ translateX: buttonsTranslateX }] }}><Pressable onPress={() => { triggerHaptic('light'); setShowQR(true); }} style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' }}><FontAwesome5 name="qrcode" size={15} color="#FFFFFF" /></Pressable></Animated.View>
         <Animated.View style={{ transform: [{ translateX: settingsTranslateX }] }}><Pressable onPress={() => { triggerHaptic('light'); router.push('/settings'); }} style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' }}><Feather name="settings" size={16} color="#FFFFFF" /></Pressable></Animated.View>
       </View>
       <Animated.ScrollView showsVerticalScrollIndicator={false} bounces={false} onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true })} scrollEventThrottle={16} contentContainerStyle={{ paddingBottom: 100 }}>
@@ -151,17 +151,13 @@ export default function ProfileScreen() {
           <View style={{ position: 'absolute', bottom: 0, height: 2, backgroundColor: theme.colors.accent.primary, width: SCREEN_WIDTH / 4, left: tabs.findIndex(t => t.key === activeTab) * (SCREEN_WIDTH / 4) }} />
         </View>
         {activeTab === 'posts' && (userPosts.length === 0 ? <View style={{ alignItems: 'center', paddingVertical: 40 }}><Text variant="caption" color={theme.colors.text.tertiary}>Ещё нет публикаций</Text></View> : (
-          <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>{userPosts.map(post => {
-            const isPending = (post as any).status === 'pending';
-            return (
-            <Pressable key={post.id} onPress={() => router.push({ pathname: '/comments/[id]', params: { id: post.id } })} style={{ backgroundColor: theme.colors.background.elevated, borderRadius: 14, padding: 14, marginBottom: 10, opacity: isPending ? 0.6 : 1 }}>
-              {isPending && <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 6 }}><ActivityIndicator size="small" color={theme.colors.accent.primary} /><Text variant="caption" color={theme.colors.text.tertiary}>Отправка...</Text></View>}
+          <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>{userPosts.map(post => (
+            <Pressable key={post.id} onPress={() => router.push({ pathname: '/comments/[id]', params: { id: post.id } })} style={{ backgroundColor: theme.colors.background.elevated, borderRadius: 14, padding: 14, marginBottom: 10 }}>
               {(() => { const imgs = post.imageUrls && post.imageUrls.length > 0 ? post.imageUrls : post.imageUrl ? [post.imageUrl] : []; if (!imgs.length) return null; if (imgs.length === 1) return <CachedImage uri={imgs[0]} style={{ width: '100%', height: 160, borderRadius: 10, marginBottom: 10 }} resizeMode="cover" />; return <RNScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }} contentContainerStyle={{ gap: 6 }}>{imgs.map((url: string, i: number) => <CachedImage key={i} uri={url} style={{ width: (SCREEN_WIDTH-80)*0.8, height: 160, borderRadius: 10 }} resizeMode="cover" />)}</RNScrollView>; })()}
               {post.content ? <Text variant="body" numberOfLines={3}>{post.content}</Text> : null}
               <View style={{ flexDirection: 'row', marginTop: 8, gap: 14 }}><View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}><Feather name="heart" size={13} color={theme.colors.text.tertiary} /><Text variant="caption" color={theme.colors.text.tertiary}>{post.likesCount}</Text></View><View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}><Feather name="message-circle" size={13} color={theme.colors.text.tertiary} /><Text variant="caption" color={theme.colors.text.tertiary}>{post.commentsCount}</Text></View></View>
             </Pressable>
-            );
-          })}</View>
+          ))}</View>
         ))}
         {activeTab !== 'posts' && <View style={{ alignItems: 'center', paddingVertical: 40 }}><Text variant="caption" color={theme.colors.text.tertiary}>Пока пусто</Text></View>}
       </Animated.ScrollView>

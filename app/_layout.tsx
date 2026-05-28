@@ -5,7 +5,7 @@ import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
 import { ThemeProvider, useTheme } from '../src/theme';
 import { fontAssets } from '../src/theme/fonts';
-import { useAuthStore, useEntityStore } from '../src/store';
+import { useAuthStore } from '../src/store';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -73,8 +73,6 @@ function CustomSplash() {
 export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts(fontAssets);
   const [fontTimeout, setFontTimeout] = useState(false);
-  const isHydrated = useEntityStore((s) => s.isHydrated);
-  const { isAuthenticated, user } = useAuthStore();
 
   useEffect(() => {
     const timer = setTimeout(() => setFontTimeout(true), 3000);
@@ -84,12 +82,9 @@ export default function RootLayout() {
   const ready = fontsLoaded || fontError !== null || fontTimeout;
 
   useEffect(() => {
-    if (ready) {
-      SplashScreen.hideAsync().catch(() => {});
-    }
+    if (ready) SplashScreen.hideAsync().catch(() => {});
   }, [ready]);
 
-  // Auth store safety timeout (existing)
   useEffect(() => {
     const timer = setTimeout(() => {
       if (!useAuthStore.getState().hasHydrated) {
@@ -99,35 +94,7 @@ export default function RootLayout() {
     return () => clearTimeout(timer);
   }, []);
 
-  // Hydrate entity store on mount
-  useEffect(() => {
-    useEntityStore.getState().hydrate();
-  }, []);
-
-  // Safety timeout: force isHydrated after 2 seconds
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      if (!useEntityStore.getState().isHydrated) {
-        useEntityStore.setState({ isHydrated: true });
-      }
-    }, 2000);
-    return () => clearTimeout(timer);
-  }, []);
-
-  // Load ALL data once when user is authenticated — no per-screen syncs needed
-  useEffect(() => {
-    if (isAuthenticated && user?.id) {
-      import('../src/services/syncService').then(({ syncFeed, syncUserPosts }) => {
-        // Load feed (includes profiles via join) + user's own posts
-        Promise.all([
-          syncFeed(user.id),
-          syncUserPosts(user.id),
-        ]).catch(() => {});
-      });
-    }
-  }, [isAuthenticated, user?.id]);
-
-  if (!ready || !isHydrated) return null;
+  if (!ready) return null;
 
   return (
     <ThemeProvider>
@@ -153,10 +120,5 @@ export default function RootLayout() {
 }
 
 const styles = StyleSheet.create({
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#FFF8F0',
-  },
+  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#FFF8F0' },
 });
