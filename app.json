@@ -50,7 +50,9 @@
     "owner": "odserser",
     "runtimeVersion": "54.0.0",
     "updates": {
-      "url": "https://u.expo.dev/9d37a5f0-54d8-4d17-8b7f-37ce6256ae06"
+      "url": "https://u.expo.dev/9d37a5f0-54d8-4d17-8b7f-37ce6256ae06",
+      "fallbackToCacheTimeout": 0,
+      "checkAutomatically": "ON_ERROR_RECOVERY"
     }
   }
 }
