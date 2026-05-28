@@ -47,13 +47,12 @@ jobs:
 
       - name: Patch fmt for Xcode 26
         run: |
-          # Find and patch ALL fmt base.h files
-          find ios/Pods -name "base.h" -path "*/fmt/*" | while read f; do
+          # Patch only regular files (skip symlinks)
+          find ios/Pods -name "base.h" -path "*/fmt/*" -type f | while read f; do
             sed -i '' 's/#  define FMT_USE_CONSTEVAL 1/#  define FMT_USE_CONSTEVAL 0/g' "$f"
             echo "Patched: $f"
           done
-          # Also patch format-inl.h directly - replace FMT_STRING with fmt::runtime
-          find ios/Pods -name "format-inl.h" -path "*/fmt/*" | while read f; do
+          find ios/Pods -name "format-inl.h" -path "*/fmt/*" -type f | while read f; do
             sed -i '' 's/FMT_STRING(\(.*\))/fmt::runtime(\1)/g' "$f"
             echo "Patched format-inl.h: $f"
           done
