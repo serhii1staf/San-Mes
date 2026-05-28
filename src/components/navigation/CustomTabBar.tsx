@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Pressable, StyleSheet, ViewStyle } from 'react-native';
 import { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { Feather } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../theme';
 import { triggerHaptic } from '../../utils/haptics';
 
@@ -54,9 +55,17 @@ function TabBarButton({
 
 export function CustomTabBar({ state, navigation }: BottomTabBarProps) {
   const theme = useTheme();
+  const bgColor = theme.colors.background.primary;
+  const bgTransparent = bgColor + '00';
 
   return (
     <View style={styles.wrapper} pointerEvents="box-none">
+      {/* Gradient dissolve above tab bar */}
+      <LinearGradient
+        colors={[bgTransparent, bgColor]}
+        style={{ position: 'absolute', top: -28, left: 0, right: 0, height: 28 }}
+        pointerEvents="none"
+      />
       <View style={[styles.container, {
         backgroundColor: theme.isDark ? 'rgba(22, 22, 22, 0.97)' : 'rgba(255, 255, 255, 0.97)',
         borderColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)',

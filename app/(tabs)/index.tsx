@@ -254,9 +254,9 @@ export default function FeedScreen() {
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <Text variant="subheading" weight="bold">San</Text>
             {(updateStatus === 'checking' || updateStatus === 'downloading' || updateStatus === 'ready') && (
-              <Pressable onPress={() => setShowUpdateModal(true)} style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: theme.colors.accent.primary + '15', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 12 }}>
+              <Pressable onPress={() => setShowUpdateModal(true)} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: theme.colors.accent.primary + '15', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 }}>
                 {updateStatus !== 'ready' ? (
-                  <ActivityIndicator size={10} color={theme.colors.accent.primary} />
+                  <ActivityIndicator size={11} color={theme.colors.accent.primary} />
                 ) : (
                   <Feather name="check-circle" size={12} color={theme.colors.accent.primary} />
                 )}
@@ -308,36 +308,38 @@ export default function FeedScreen() {
 
       <PostMenuModal visible={!!menuPost} post={menuPost} onClose={() => setMenuPost(null)} />
 
-      {/* Update Modal */}
+      {/* Update Modal - bottom sheet style */}
       <Modal visible={showUpdateModal} transparent animationType="fade" onRequestClose={() => setShowUpdateModal(false)} statusBarTranslucent>
         <View style={{ flex: 1 }}>
           <Pressable style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)' }} onPress={() => setShowUpdateModal(false)} />
-          <View style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 24 }} pointerEvents="box-none">
-            <View style={{ backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF', borderRadius: 24, padding: 24, shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.15, shadowRadius: 20, elevation: 10 }}>
-              <Text variant="body" weight="bold" align="center" style={{ marginBottom: 16 }}>Обновление приложения</Text>
-              
-              {/* Progress bar */}
-              <View style={{ height: 6, backgroundColor: theme.colors.border.light, borderRadius: 3, marginBottom: 12, overflow: 'hidden' }}>
-                <View style={{ height: '100%', width: `${Math.min(updateProgress, 100)}%`, backgroundColor: theme.colors.accent.primary, borderRadius: 3 }} />
+          <View style={{ flex: 1, justifyContent: 'flex-end' }} pointerEvents="box-none">
+            <View style={{ marginHorizontal: 8, marginBottom: 16, backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF', borderRadius: 28, shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.12, shadowRadius: 16, elevation: 10, overflow: 'hidden' }}>
+              {/* Handle */}
+              <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 6 }}>
+                <View style={{ width: 40, height: 5, borderRadius: 3, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)' }} />
               </View>
-              
-              <Text variant="caption" color={theme.colors.text.secondary} align="center" style={{ marginBottom: 4 }}>
-                {updateMessage || 'Ожидание...'}
-              </Text>
-              <Text variant="caption" color={theme.colors.text.tertiary} align="center" style={{ marginBottom: 16 }}>
-                {Math.round(updateProgress)}%
-              </Text>
 
-              {updateStatus === 'ready' && (
-                <Pressable onPress={applyUpdate} style={{ backgroundColor: theme.colors.accent.primary, borderRadius: 14, paddingVertical: 14, alignItems: 'center' }}>
-                  <Text variant="body" weight="semibold" color="#FFFFFF">Перезапустить</Text>
-                </Pressable>
-              )}
-              {updateStatus !== 'ready' && (
-                <Pressable onPress={() => setShowUpdateModal(false)} style={{ alignItems: 'center', paddingVertical: 8 }}>
-                  <Text variant="caption" color={theme.colors.text.tertiary}>Закрыть</Text>
-                </Pressable>
-              )}
+              <View style={{ paddingHorizontal: 20, paddingBottom: 20 }}>
+                <Text variant="body" weight="bold" align="center" style={{ marginBottom: 16 }}>Обновление приложения</Text>
+                
+                {/* Progress bar */}
+                <View style={{ height: 6, backgroundColor: theme.colors.border.light, borderRadius: 3, marginBottom: 12, overflow: 'hidden' }}>
+                  <View style={{ height: '100%', width: `${Math.min(updateProgress, 100)}%`, backgroundColor: theme.colors.accent.primary, borderRadius: 3 }} />
+                </View>
+                
+                <Text variant="caption" color={theme.colors.text.secondary} align="center" style={{ marginBottom: 4 }}>
+                  {updateMessage || 'Ожидание...'}
+                </Text>
+                <Text variant="caption" color={theme.colors.text.tertiary} align="center" style={{ marginBottom: 16 }}>
+                  {Math.round(updateProgress)}%
+                </Text>
+
+                {updateStatus === 'ready' && (
+                  <Pressable onPress={applyUpdate} style={{ backgroundColor: theme.colors.accent.primary, borderRadius: 14, paddingVertical: 14, alignItems: 'center' }}>
+                    <Text variant="body" weight="semibold" color="#FFFFFF">Перезапустить</Text>
+                  </Pressable>
+                )}
+              </View>
             </View>
           </View>
         </View>
