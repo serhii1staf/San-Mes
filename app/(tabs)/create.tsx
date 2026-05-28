@@ -174,24 +174,41 @@ export default function CreateScreen() {
 
           const { post, error } = await createPost(user.id, postContent, imageUrl);
           if (!error && post) {
-            // Success — update entity store with server data
-            const store = useEntityStore.getState();
-            store.upsertPost({
+            // Add to local feed cache immediately so it appears in feed + profile
+            const { parseImageUrls } = await import('../../src/lib/supabase');
+            const parsedImages = parseImageUrls(post.image_url);
+            const newPost = {
               id: post.id,
-              author_id: post.author_id,
-              content: post.content,
-              image_url: post.image_url,
-              likes_count: post.likes_count,
-              comments_count: post.comments_count,
-              shares_count: post.shares_count,
-              created_at: post.created_at,
-              status: 'synced',
-            });
-            store.setFeedIds([post.id, ...store.feedIds]);
-            store.setMyPostIds([post.id, ...store.myPostIds]);
+              authorId: post.author_id,
+              authorName: user.displayName || '',
+              authorUsername: user.username || '',
+              authorEmoji: user.emoji || '😊',
+              content: post.content || '',
+              imageUrl: parsedImages[0] || undefined,
+              imageUrls: parsedImages.length > 0 ? parsedImages : undefined,
+              likesCount: 0,
+              commentsCount: 0,
+              sharesCount: 0,
+              isLiked: false,
+              isBookmarked: false,
+              createdAt: post.created_at,
+              isRepost: false,
+            };
+
+            // Update feed cache
+            const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+            const feedCached = await AsyncStorage.getItem('@san:feed_posts');
+            const feedPosts = feedCached ? JSON.parse(feedCached) : [];
+            await AsyncStorage.setItem('@san:feed_posts', JSON.stringify([newPost, ...feedPosts].slice(0, 20)));
+
+            // Update profile posts cache
+            const myCached = await AsyncStorage.getItem('@san:my_posts');
+            const myPosts = myCached ? JSON.parse(myCached) : [];
+            await AsyncStorage.setItem('@san:my_posts', JSON.stringify([newPost, ...myPosts].slice(0, 20)));
 
             setContent('');
             setImageUris([]);
+            setEditingPostId(null);
             router.replace('/(tabs)');
             return;
           }
