@@ -122,6 +122,20 @@ export default function ProfileScreen() {
           for (const o of originals) {
             originalsMap[o.id] = o;
           }
+          // Check if any originals are themselves reposts — fetch deeper
+          const deeperIds: string[] = [];
+          for (const o of originals) {
+            const oRepost = isRepost(o.content || '');
+            if (oRepost.isRepost && oRepost.originalPostId && !originalsMap[oRepost.originalPostId]) {
+              deeperIds.push(oRepost.originalPostId);
+            }
+          }
+          if (deeperIds.length > 0) {
+            const { data: deepPosts } = await supabase.from('posts').select('*, profiles:author_id (display_name, username, emoji)').in('id', deeperIds);
+            if (deepPosts) {
+              for (const dp of deepPosts) originalsMap[dp.id] = dp;
+            }
+          }
         }
       }
 
@@ -130,17 +144,30 @@ export default function ProfileScreen() {
         const parsedImages = parseImageUrls(p.image_url);
         const post: Post = { id: p.id, authorId: p.author_id, authorName: user.displayName || '', authorUsername: user.username || '', authorEmoji: user.emoji || '😊', content: repostInfo.isRepost ? (repostInfo.comment || '') : (p.content || ''), imageUrl: parsedImages[0] || undefined, imageUrls: parsedImages.length > 0 ? parsedImages : undefined, likesCount: p.likes_count || 0, commentsCount: p.comments_count || 0, sharesCount: p.shares_count || 0, isLiked: false, isBookmarked: false, createdAt: p.created_at, isRepost: repostInfo.isRepost };
 
-        // Attach original post data for reposts
+        // Attach original post data for reposts — follow chain to actual original
         if (repostInfo.isRepost && repostInfo.originalPostId && originalsMap[repostInfo.originalPostId]) {
-          const orig = originalsMap[repostInfo.originalPostId];
+          let orig = originalsMap[repostInfo.originalPostId];
+          // Follow repost chain to find actual original content
+          const maxDepth = 10;
+          let depth = 0;
+          while (orig && depth < maxDepth) {
+            const origRepostInfo = isRepost(orig.content || '');
+            if (origRepostInfo.isRepost && origRepostInfo.originalPostId && originalsMap[origRepostInfo.originalPostId]) {
+              orig = originalsMap[origRepostInfo.originalPostId];
+              depth++;
+            } else {
+              break;
+            }
+          }
           const origProfile = Array.isArray(orig.profiles) ? orig.profiles[0] : orig.profiles;
           const origImages = parseImageUrls(orig.image_url);
+          const origRepostCheck = isRepost(orig.content || '');
           post.originalPost = {
             id: orig.id,
             authorName: origProfile?.display_name || 'User',
             authorUsername: origProfile?.username || 'user',
             authorEmoji: origProfile?.emoji || '😊',
-            content: orig.content || '',
+            content: origRepostCheck.isRepost ? (origRepostCheck.comment || '') : (orig.content || ''),
             imageUrl: origImages[0] || undefined,
             imageUrls: origImages.length > 0 ? origImages : undefined,
           };

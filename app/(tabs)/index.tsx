@@ -11,7 +11,7 @@ import { PostCard } from '../../src/components/feed/PostCard';
 import { PostMenuModal } from '../../src/components/feed/PostMenuModal';
 import { useFeedStore, useAuthStore } from '../../src/store';
 import { Post } from '../../src/types';
-import { getPosts, isRepost, parseImageUrls, toggleLike as apiToggleLike } from '../../src/lib/supabase';
+import { getPosts, isRepost, parseImageUrls, toggleLike as apiToggleLike, supabase } from '../../src/lib/supabase';
 import { useUpdateStore } from '../../src/store/updateStore';
 import { triggerHaptic } from '../../src/utils/haptics';
 
@@ -76,16 +76,33 @@ function mapRawPost(p: any, postsById: Record<string, any>): Post | null {
   if (!post.content && !post.imageUrl && !post.isRepost) return null;
 
   if (repostInfo.isRepost && repostInfo.originalPostId) {
-    const orig = postsById[repostInfo.originalPostId];
+    // Follow the repost chain to find the actual original (non-repost) post
+    let origId: string | undefined = repostInfo.originalPostId;
+    let orig = postsById[origId];
+    const maxDepth = 10; // prevent infinite loops
+    let depth = 0;
+    while (orig && depth < maxDepth) {
+      const origRepostInfo = isRepost(orig.content || '');
+      if (origRepostInfo.isRepost && origRepostInfo.originalPostId && postsById[origRepostInfo.originalPostId]) {
+        // This "original" is itself a repost — follow the chain
+        origId = origRepostInfo.originalPostId;
+        orig = postsById[origId];
+        depth++;
+      } else {
+        break; // Found the actual original (or chain ends here)
+      }
+    }
+
     if (orig) {
       const origProfile = Array.isArray(orig.profiles) ? orig.profiles[0] : orig.profiles;
       const origImages = parseImageUrls(orig.image_url);
+      const origRepostCheck = isRepost(orig.content || '');
       post.originalPost = {
         id: orig.id,
         authorName: origProfile?.display_name || 'User',
         authorUsername: origProfile?.username || 'user',
         authorEmoji: origProfile?.emoji || '😊',
-        content: orig.content || '',
+        content: origRepostCheck.isRepost ? (origRepostCheck.comment || '') : (orig.content || ''),
         imageUrl: origImages[0] || undefined,
         imageUrls: origImages.length > 0 ? origImages : undefined,
       };
@@ -176,6 +193,38 @@ export default function FeedScreen() {
       const postsById: Record<string, any> = {};
       for (const p of rawPosts) postsById[p.id] = p;
 
+      // Collect all referenced original post IDs that are not in this batch
+      const missingIds = new Set<string>();
+      for (const p of rawPosts) {
+        const ri = isRepost(p.content || '');
+        if (ri.isRepost && ri.originalPostId && !postsById[ri.originalPostId]) {
+          missingIds.add(ri.originalPostId);
+        }
+      }
+
+      // Fetch missing referenced posts (with profiles) for repost chain resolution
+      if (missingIds.size > 0) {
+        const { data: missingPosts } = await supabase.from('posts').select('*, profiles:author_id (display_name, username, emoji)').in('id', Array.from(missingIds));
+        if (missingPosts) {
+          for (const mp of missingPosts) {
+            postsById[mp.id] = mp;
+            // Also check if this post is itself a repost needing resolution
+            const mri = isRepost(mp.content || '');
+            if (mri.isRepost && mri.originalPostId && !postsById[mri.originalPostId]) {
+              missingIds.add(mri.originalPostId);
+            }
+          }
+          // Second pass: fetch any newly discovered missing IDs (one level deeper)
+          const newMissing = Array.from(missingIds).filter(id => !postsById[id]);
+          if (newMissing.length > 0) {
+            const { data: deepPosts } = await supabase.from('posts').select('*, profiles:author_id (display_name, username, emoji)').in('id', newMissing);
+            if (deepPosts) {
+              for (const dp of deepPosts) postsById[dp.id] = dp;
+            }
+          }
+        }
+      }
+
       const mapped: Post[] = [];
       for (const p of rawPosts) {
         const post = mapRawPost(p, postsById);
@@ -206,6 +255,30 @@ export default function FeedScreen() {
 
       const postsById: Record<string, any> = {};
       for (const p of rawPosts) postsById[p.id] = p;
+
+      // Resolve repost chains - fetch missing referenced posts
+      const missingIds = new Set<string>();
+      for (const p of rawPosts) {
+        const ri = isRepost(p.content || '');
+        if (ri.isRepost && ri.originalPostId && !postsById[ri.originalPostId]) {
+          missingIds.add(ri.originalPostId);
+        }
+      }
+      if (missingIds.size > 0) {
+        const { data: missingPosts } = await supabase.from('posts').select('*, profiles:author_id (display_name, username, emoji)').in('id', Array.from(missingIds));
+        if (missingPosts) {
+          for (const mp of missingPosts) {
+            postsById[mp.id] = mp;
+            const mri = isRepost(mp.content || '');
+            if (mri.isRepost && mri.originalPostId && !postsById[mri.originalPostId]) missingIds.add(mri.originalPostId);
+          }
+          const newMissing = Array.from(missingIds).filter(id => !postsById[id]);
+          if (newMissing.length > 0) {
+            const { data: deepPosts } = await supabase.from('posts').select('*, profiles:author_id (display_name, username, emoji)').in('id', newMissing);
+            if (deepPosts) { for (const dp of deepPosts) postsById[dp.id] = dp; }
+          }
+        }
+      }
 
       const mapped: Post[] = [];
       for (const p of rawPosts) {
