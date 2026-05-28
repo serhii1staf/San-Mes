@@ -70,7 +70,7 @@ export default function ProfileScreen() {
   const [activeTab, setActiveTab] = useState<TabName>('posts');
   const [followCounts, setFollowCounts] = useState({ followers: 0, following: 0 });
   const [showQR, setShowQR] = useState(false);
-  const [viewingImage, setViewingImage] = useState<{ uri: string; postId: string } | null>(null);
+  const [viewingImage, setViewingImage] = useState<{ uri: string; postId: string; allImages?: string[] } | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const hasFetched = useRef(false);
   const scrollViewRef = useRef<any>(null);
@@ -186,20 +186,34 @@ export default function ProfileScreen() {
           <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>{userPosts.map(post => {
             const imgs = post.imageUrls && post.imageUrls.length > 0 ? post.imageUrls : post.imageUrl ? [post.imageUrl] : [];
             const hasImage = imgs.length > 0;
+            const isRepostPost = post.isRepost;
             return (
             <Pressable key={post.id} onPress={() => router.push({ pathname: '/comments/[id]', params: { id: post.id } })} style={{ flexDirection: 'row', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.75)', borderRadius: 28, padding: 10, marginBottom: 12, borderWidth: 1, borderColor: theme.isDark ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.4)', shadowColor: theme.isDark ? '#000' : '#c8a060', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.12, shadowRadius: 20, elevation: 4, overflow: 'hidden' }}>
-              {/* Left: Post image (square, rounded) — tap opens fullscreen */}
-              {hasImage && (
-                <Pressable onPress={() => setViewingImage({ uri: imgs[0], postId: post.id })}>
-                  <CachedImage uri={imgs[0]} style={{ width: 100, height: 100, borderRadius: 20 }} resizeMode="cover" />
+              {/* Left: Image thumbnail or repost indicator */}
+              {hasImage ? (
+                <Pressable onPress={() => setViewingImage({ uri: imgs[0], postId: post.id, allImages: imgs })}>
+                  <View style={{ width: 100, height: 100, borderRadius: 20, overflow: 'hidden' }}>
+                    <CachedImage uri={imgs[0]} style={{ width: 100, height: 100 }} resizeMode="cover" />
+                    {imgs.length > 1 && (
+                      <View style={{ position: 'absolute', bottom: 4, right: 4, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 8, paddingHorizontal: 5, paddingVertical: 2 }}>
+                        <Text variant="caption" color="#FFFFFF" style={{ fontSize: 9 }}>+{imgs.length - 1}</Text>
+                      </View>
+                    )}
+                  </View>
                 </Pressable>
-              )}
+              ) : isRepostPost ? (
+                <View style={{ width: 100, height: 100, borderRadius: 20, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)', alignItems: 'center', justifyContent: 'center' }}>
+                  <Feather name="repeat" size={24} color={theme.colors.text.tertiary} />
+                  <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 9, marginTop: 4 }}>Репост</Text>
+                </View>
+              ) : null}
               {/* Right: Info */}
-              <View style={{ flex: 1, marginLeft: hasImage ? 14 : 4, justifyContent: 'center' }}>
+              <View style={{ flex: 1, marginLeft: (hasImage || isRepostPost) ? 14 : 4, justifyContent: 'center' }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                   <Avatar emoji={user.emoji} size="xs" />
                   <Text variant="caption" weight="semibold" numberOfLines={1} style={{ flex: 1 }}>{user.displayName}</Text>
                 </View>
+                {isRepostPost && <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 }}><Feather name="repeat" size={10} color={theme.colors.accent.primary} /><Text variant="caption" color={theme.colors.accent.primary} style={{ fontSize: 10 }}>Репост</Text></View>}
                 {post.content ? <Text variant="caption" numberOfLines={2} color={theme.colors.text.secondary} style={{ marginBottom: 6 }}>{post.content}</Text> : null}
                 <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{formatTimeAgo(post.createdAt)}</Text>
                 <View style={{ flexDirection: 'row', marginTop: 6, gap: 12 }}>
@@ -228,20 +242,22 @@ export default function ProfileScreen() {
           <Pressable onPress={() => setViewingImage(null)} style={{ position: 'absolute', top: insets.top + 12, right: 16, zIndex: 10, width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' }}>
             <Feather name="x" size={20} color="#FFFFFF" />
           </Pressable>
-          {/* Image — full width, zoomable via ScrollView */}
+          {/* Image — full width, zoomable + horizontal scroll for multi-image */}
           <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
             {viewingImage && (
-              <ScrollView
-                maximumZoomScale={3}
-                minimumZoomScale={1}
-                showsHorizontalScrollIndicator={false}
-                showsVerticalScrollIndicator={false}
-                contentContainerStyle={{ justifyContent: 'center', alignItems: 'center', flex: 1 }}
-                centerContent={true}
-                bouncesZoom={true}
-              >
-                <CachedImage uri={viewingImage.uri} style={{ width: SCREEN_WIDTH, height: SCREEN_WIDTH }} resizeMode="contain" />
-              </ScrollView>
+              viewingImage.allImages && viewingImage.allImages.length > 1 ? (
+                <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false} style={{ flex: 1 }} contentContainerStyle={{ alignItems: 'center' }}>
+                  {viewingImage.allImages.map((imgUri, idx) => (
+                    <ScrollView key={idx} maximumZoomScale={3} minimumZoomScale={1} showsHorizontalScrollIndicator={false} showsVerticalScrollIndicator={false} contentContainerStyle={{ justifyContent: 'center', alignItems: 'center', width: SCREEN_WIDTH, height: '100%' }} centerContent bouncesZoom>
+                      <CachedImage uri={imgUri} style={{ width: SCREEN_WIDTH, height: SCREEN_WIDTH }} resizeMode="contain" />
+                    </ScrollView>
+                  ))}
+                </ScrollView>
+              ) : (
+                <ScrollView maximumZoomScale={3} minimumZoomScale={1} showsHorizontalScrollIndicator={false} showsVerticalScrollIndicator={false} contentContainerStyle={{ justifyContent: 'center', alignItems: 'center', flex: 1 }} centerContent bouncesZoom>
+                  <CachedImage uri={viewingImage.uri} style={{ width: SCREEN_WIDTH, height: SCREEN_WIDTH }} resizeMode="contain" />
+                </ScrollView>
+              )
             )}
           </View>
           {/* Bottom actions */}

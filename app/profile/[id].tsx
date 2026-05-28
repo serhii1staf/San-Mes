@@ -479,9 +479,13 @@ export default function UserProfileScreen() {
             <Feather name="x" size={20} color="#FFFFFF" />
           </Pressable>
 
-          {/* Image */}
+          {/* Image — zoomable */}
           <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-            {viewingImage && <CachedImage uri={viewingImage.uri} style={{ width: SCREEN_WIDTH - 32, height: SCREEN_WIDTH - 32, borderRadius: 16 }} resizeMode="contain" />}
+            {viewingImage && (
+              <RNScrollView maximumZoomScale={3} minimumZoomScale={1} showsHorizontalScrollIndicator={false} showsVerticalScrollIndicator={false} contentContainerStyle={{ justifyContent: 'center', alignItems: 'center', flex: 1 }} centerContent bouncesZoom>
+                <CachedImage uri={viewingImage.uri} style={{ width: SCREEN_WIDTH, height: SCREEN_WIDTH }} resizeMode="contain" />
+              </RNScrollView>
+            )}
           </View>
 
           {/* Bottom actions */}
