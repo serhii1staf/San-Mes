@@ -8,13 +8,15 @@ import * as Clipboard from 'expo-clipboard';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { LinkedText } from '../../src/components/ui/LinkedText';
-import { parseImageUrls, getProfile, getFollowCounts } from '../../src/lib/supabase';
+import { parseImageUrls, getProfile, getFollowCounts, deletePost } from '../../src/lib/supabase';
 import { useAuthStore } from '../../src/store';
 import { useEntityStore } from '../../src/store';
 import { syncProfile, syncUserPosts } from '../../src/services/syncService';
 import { queueMutation } from '../../src/services/offlineQueue';
 import { openUrl } from '../../src/utils/openUrl';
 import { triggerHaptic } from '../../src/utils/haptics';
+import { formatTimeAgo } from '../../src/utils/mockData';
+import { CachedImage } from '../../src/components/ui/CachedImage';
 import { PanResponder } from 'react-native';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -216,6 +218,7 @@ export default function UserProfileScreen() {
   const [followCounts, setFollowCounts] = useState({ followers: 0, following: 0 });
   const [activeTab, setActiveTab] = useState<TabName>('posts');
   const [showMenu, setShowMenu] = useState(false);
+  const [viewingImage, setViewingImage] = useState<{ uri: string; postId: string } | null>(null);
   const scrollY = useRef(new Animated.Value(0)).current;
   const headerOpacity = scrollY.interpolate({ inputRange: [0, 50, 120], outputRange: [0, 0, 1], extrapolate: 'clamp' });
   const buttonsTranslateX = scrollY.interpolate({ inputRange: [0, 180, 250], outputRange: [0, 0, -60], extrapolate: 'clamp' });
@@ -411,27 +414,27 @@ export default function UserProfileScreen() {
           <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
             {displayPosts.map((post: any) => {
               const postImages: string[] = post.imageUrls && post.imageUrls.length > 0 ? post.imageUrls : post.imageUrl ? [post.imageUrl] : [];
+              const hasImage = postImages.length > 0;
               return (
-              <Pressable key={post.id} onPress={() => router.push({ pathname: '/comments/[id]', params: { id: post.id } })} style={{ backgroundColor: theme.colors.background.elevated, borderRadius: 14, padding: 14, marginBottom: 10 }}>
-                {postImages.length === 1 && <Image source={{ uri: postImages[0] }} style={{ width: '100%', height: 160, borderRadius: 10, marginBottom: 10 }} resizeMode="cover" />}
-                {postImages.length > 1 && (
-                  <View style={{ marginBottom: 10 }}>
-                    <RNScrollView horizontal showsHorizontalScrollIndicator={false} snapToInterval={(SCREEN_WIDTH - 80) * 0.8 + 6} decelerationRate="fast" contentContainerStyle={{ gap: 6 }}>
-                      {postImages.map((url: string, idx: number) => (
-                        <Image key={idx} source={{ uri: url }} style={{ width: (SCREEN_WIDTH - 80) * 0.8, height: 160, borderRadius: 10 }} resizeMode="cover" />
-                      ))}
-                    </RNScrollView>
-                    <View style={{ flexDirection: 'row', justifyContent: 'center', marginTop: 6, gap: 4 }}>
-                      {postImages.map((_: string, idx: number) => (
-                        <View key={idx} style={{ width: 5, height: 5, borderRadius: 3, backgroundColor: theme.colors.text.tertiary + '60' }} />
-                      ))}
-                    </View>
-                  </View>
+              <Pressable key={post.id} onPress={() => router.push({ pathname: '/comments/[id]', params: { id: post.id } })} style={{ flexDirection: 'row', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.75)', borderRadius: 28, padding: 10, marginBottom: 12, borderWidth: 1, borderColor: theme.isDark ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.4)', shadowColor: theme.isDark ? '#000' : '#c8a060', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.12, shadowRadius: 20, elevation: 4, overflow: 'hidden' }}>
+                {/* Left: Post image (square, rounded) — tap opens fullscreen */}
+                {hasImage && (
+                  <Pressable onPress={() => setViewingImage({ uri: postImages[0], postId: post.id })}>
+                    <CachedImage uri={postImages[0]} style={{ width: 100, height: 100, borderRadius: 20 }} resizeMode="cover" />
+                  </Pressable>
                 )}
-                {post.content ? <Text variant="body" numberOfLines={3}>{post.content}</Text> : null}
-                <View style={{ flexDirection: 'row', marginTop: 8, gap: 14 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}><Feather name="heart" size={13} color={theme.colors.text.tertiary} /><Text variant="caption" color={theme.colors.text.tertiary}>{post.likesCount}</Text></View>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}><Feather name="message-circle" size={13} color={theme.colors.text.tertiary} /><Text variant="caption" color={theme.colors.text.tertiary}>{post.commentsCount}</Text></View>
+                {/* Right: Info */}
+                <View style={{ flex: 1, marginLeft: hasImage ? 14 : 4, justifyContent: 'center' }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                    <Avatar emoji={displayProfile.emoji || '😊'} size="xs" />
+                    <Text variant="caption" weight="semibold" numberOfLines={1} style={{ flex: 1 }}>{displayProfile.display_name}</Text>
+                  </View>
+                  {post.content ? <Text variant="caption" numberOfLines={2} color={theme.colors.text.secondary} style={{ marginBottom: 6 }}>{post.content}</Text> : null}
+                  <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{formatTimeAgo(post.createdAt)}</Text>
+                  <View style={{ flexDirection: 'row', marginTop: 6, gap: 12 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}><Feather name="heart" size={12} color={theme.colors.text.tertiary} /><Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{post.likesCount}</Text></View>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}><Feather name="message-circle" size={12} color={theme.colors.text.tertiary} /><Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{post.commentsCount}</Text></View>
+                  </View>
                 </View>
               </Pressable>
               );
@@ -466,6 +469,46 @@ export default function UserProfileScreen() {
       )}
 
       <ProfileMenuModal visible={showMenu} profile={displayProfile} onClose={() => setShowMenu(false)} />
+
+      {/* Fullscreen Image Viewer */}
+      <Modal visible={!!viewingImage} transparent animationType="fade" onRequestClose={() => setViewingImage(null)} statusBarTranslucent>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.92)' }}>
+          {/* Close button — top right */}
+          <Pressable onPress={() => setViewingImage(null)} style={{ position: 'absolute', top: insets.top + 12, right: 16, zIndex: 10, width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' }}>
+            <Feather name="x" size={20} color="#FFFFFF" />
+          </Pressable>
+
+          {/* Image */}
+          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+            {viewingImage && <Image source={{ uri: viewingImage.uri }} style={{ width: SCREEN_WIDTH - 32, height: SCREEN_WIDTH - 32, borderRadius: 16 }} resizeMode="contain" />}
+          </View>
+
+          {/* Bottom actions */}
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 24, paddingBottom: insets.bottom + 20 }}>
+            {/* Edit — only for own posts */}
+            {isOwnProfile ? (
+              <Pressable onPress={() => { setViewingImage(null); router.push('/(tabs)/create'); }} style={{ alignItems: 'center' }}>
+                <Feather name="edit-2" size={20} color="#FFFFFF" />
+                <Text variant="caption" color="#FFFFFF" style={{ marginTop: 4, fontSize: 10 }}>Редактировать</Text>
+              </Pressable>
+            ) : <View style={{ width: 60 }} />}
+
+            {/* Share — center */}
+            <Pressable onPress={async () => { if (viewingImage) { try { await Share.share({ message: viewingImage.uri }); } catch {} } }} style={{ alignItems: 'center' }}>
+              <Feather name="share" size={20} color="#FFFFFF" />
+              <Text variant="caption" color="#FFFFFF" style={{ marginTop: 4, fontSize: 10 }}>Поделиться</Text>
+            </Pressable>
+
+            {/* Delete — only for own posts */}
+            {isOwnProfile ? (
+              <Pressable onPress={() => { if (viewingImage) { Alert.alert('Удалить пост?', 'Это действие нельзя отменить', [{ text: 'Отмена', style: 'cancel' }, { text: 'Удалить', style: 'destructive', onPress: async () => { if (currentUser?.id) { await deletePost(viewingImage.postId, currentUser.id); } setViewingImage(null); } }]); } }} style={{ alignItems: 'center' }}>
+                <Feather name="trash-2" size={20} color="#FF3B30" />
+                <Text variant="caption" color="#FF3B30" style={{ marginTop: 4, fontSize: 10 }}>Удалить</Text>
+              </Pressable>
+            ) : <View style={{ width: 60 }} />}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
