@@ -18,6 +18,8 @@ import { openUrl } from '../../src/utils/openUrl';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { formatTimeAgo } from '../../src/utils/mockData';
 import { CachedImage } from '../../src/components/ui/CachedImage';
+import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
+import { UserBadge } from '../../src/components/ui/UserBadge';
 import { PanResponder } from 'react-native';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -450,19 +452,10 @@ export default function UserProfileScreen() {
 
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}>
             <View style={{ flex: 1 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                 <Text variant="body" weight="bold" numberOfLines={1}>{displayProfile.display_name}</Text>
-                {displayProfile.is_verified && (
-                  <View style={{ width: 16, height: 16, borderRadius: 8, backgroundColor: '#1DA1F2', alignItems: 'center', justifyContent: 'center' }}>
-                    <Feather name="check" size={10} color="#FFFFFF" />
-                  </View>
-                )}
-                {displayProfile.badge && (() => {
-                  const badges: Record<string, { label: string; color: string; icon: string }> = { developer: { label: 'Dev', color: '#6366F1', icon: 'code' }, admin: { label: 'Admin', color: '#EF4444', icon: 'shield' }, moderator: { label: 'Mod', color: '#F59E0B', icon: 'eye' }, vip: { label: 'VIP', color: '#8B5CF6', icon: 'star' }, creator: { label: 'Creator', color: '#EC4899', icon: 'film' } };
-                  const b = badges[displayProfile.badge];
-                  if (!b) return null;
-                  return (<View style={{ flexDirection: 'row', alignItems: 'center', gap: 2, backgroundColor: b.color + '18', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}><Feather name={b.icon as any} size={9} color={b.color} /><Text style={{ fontSize: 9, color: b.color, fontWeight: '700' }}>{b.label}</Text></View>);
-                })()}
+                {displayProfile.is_verified && <VerifiedBadge size={13} />}
+                {displayProfile.badge && <UserBadge badge={displayProfile.badge} size="sm" />}
               </View>
               <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>@{displayProfile.username}</Text>
             </View>

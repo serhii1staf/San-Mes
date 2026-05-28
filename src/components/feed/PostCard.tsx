@@ -7,6 +7,8 @@ import { Text } from '../ui/Text';
 import { Avatar } from '../ui/Avatar';
 import { Card } from '../ui/Card';
 import { CachedImage } from '../ui/CachedImage';
+import { VerifiedBadge } from '../ui/VerifiedBadge';
+import { UserBadge } from '../ui/UserBadge';
 import { Post } from '../../types';
 import { formatTimeAgo } from '../../utils/mockData';
 import { triggerHaptic } from '../../utils/haptics';
@@ -165,30 +167,10 @@ export const PostCard = memo(function PostCard({ post, onLike, onComment, onShar
         <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: post.authorId } })} style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 }}>
           <Avatar emoji={post.authorEmoji} name={post.authorName} size="sm" />
           <View style={{ marginLeft: theme.spacing.md, flex: 1 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
               <Text weight="semibold" variant="body" numberOfLines={1}>{post.authorName}</Text>
-              {post.authorVerified && (
-                <View style={{ width: 16, height: 16, borderRadius: 8, backgroundColor: '#1DA1F2', alignItems: 'center', justifyContent: 'center' }}>
-                  <Feather name="check" size={10} color="#FFFFFF" />
-                </View>
-              )}
-              {post.authorBadge && (() => {
-                const badges: Record<string, { label: string; color: string; icon: string }> = {
-                  developer: { label: 'Dev', color: '#6366F1', icon: 'code' },
-                  admin: { label: 'Admin', color: '#EF4444', icon: 'shield' },
-                  moderator: { label: 'Mod', color: '#F59E0B', icon: 'eye' },
-                  vip: { label: 'VIP', color: '#8B5CF6', icon: 'star' },
-                  creator: { label: 'Creator', color: '#EC4899', icon: 'film' },
-                };
-                const b = badges[post.authorBadge!];
-                if (!b) return null;
-                return (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2, backgroundColor: b.color + '18', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 6 }}>
-                    <Feather name={b.icon as any} size={8} color={b.color} />
-                    <Text style={{ fontSize: 8, color: b.color, fontWeight: '700' }}>{b.label}</Text>
-                  </View>
-                );
-              })()}
+              {post.authorVerified && <VerifiedBadge size={13} />}
+              {post.authorBadge && <UserBadge badge={post.authorBadge} size="sm" />}
             </View>
             <Text variant="caption" color={theme.colors.text.secondary} numberOfLines={1}>@{post.authorUsername} · {formatTimeAgo(post.createdAt)}</Text>
           </View>

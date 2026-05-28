@@ -5,6 +5,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
+import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
+import { UserBadge } from '../../src/components/ui/UserBadge';
 import { getProfiles } from '../../src/lib/supabase';
 
 interface ProfileResult {
@@ -13,6 +15,8 @@ interface ProfileResult {
   display_name: string;
   emoji: string;
   bio: string;
+  badge?: string;
+  is_verified?: boolean;
 }
 
 export default function SearchScreen() {
@@ -127,7 +131,11 @@ export default function SearchScreen() {
             >
               <Avatar emoji={item.emoji} size="md" />
               <View style={{ marginLeft: 12, flex: 1 }}>
-                <Text variant="body" weight="semibold">{item.display_name}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                  <Text variant="body" weight="semibold">{item.display_name}</Text>
+                  {item.is_verified && <VerifiedBadge size={12} />}
+                  {item.badge && <UserBadge badge={item.badge} size="sm" />}
+                </View>
                 <Text variant="caption" color={theme.colors.text.secondary}>@{item.username}</Text>
               </View>
               <Feather name="chevron-right" size={18} color={theme.colors.text.tertiary} />

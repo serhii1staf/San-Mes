@@ -9,6 +9,8 @@ import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { LinkedText } from '../../src/components/ui/LinkedText';
 import { CachedImage } from '../../src/components/ui/CachedImage';
+import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
+import { UserBadge } from '../../src/components/ui/UserBadge';
 import { useAuthStore } from '../../src/store';
 import { useFeedStore } from '../../src/store/feedStore';
 import { isRepost, parseImageUrls, getFollowCounts, supabase, deletePost } from '../../src/lib/supabase';
