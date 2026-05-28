@@ -86,8 +86,10 @@ export default function RootLayout() {
   // Initialize SQLite database and hydrate entity store on startup
   useEffect(() => {
     try {
-      initDatabase();
-      useEntityStore.getState().hydrate();
+      const dbOk = initDatabase();
+      if (dbOk) {
+        useEntityStore.getState().hydrate();
+      }
       setDbReady(true);
 
       // Start background sync after hydration

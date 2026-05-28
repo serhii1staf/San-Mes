@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { getDatabase, initDatabase } from './database';
+import { getDatabase, isDatabaseReady } from './database';
 
 // --- Types ---
 

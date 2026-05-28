@@ -1,22 +1,50 @@
 import * as SQLite from 'expo-sqlite';
 
 let db: SQLite.SQLiteDatabase | null = null;
+let dbInitialized = false;
+let dbFailed = false;
+
+// No-op database for graceful degradation when SQLite is unavailable
+const noopDb = {
+  execSync: () => {},
+  runSync: () => ({ changes: 0, lastInsertRowId: 0 }),
+  getAllSync: () => [],
+  getFirstSync: () => null,
+} as unknown as SQLite.SQLiteDatabase;
 
 /**
- * Get the SQLite database instance (opens it if not already open).
+ * Get the SQLite database instance.
+ * Returns a no-op mock if SQLite is not available (graceful degradation).
  */
 export function getDatabase(): SQLite.SQLiteDatabase {
+  if (dbFailed) return noopDb;
   if (!db) {
-    db = SQLite.openDatabaseSync('san.db');
+    try {
+      db = SQLite.openDatabaseSync('san.db');
+    } catch (e) {
+      dbFailed = true;
+      console.warn('[Database] Failed to open SQLite:', e);
+      return noopDb;
+    }
   }
   return db;
 }
 
 /**
- * Initialize all database tables. Call once on app startup.
+ * Check if database is available and initialized.
  */
-export function initDatabase(): void {
-  const database = getDatabase();
+export function isDatabaseReady(): boolean {
+  return dbInitialized && !dbFailed;
+}
+
+/**
+ * Initialize all database tables. Call once on app startup.
+ * Returns false if initialization fails (app should continue without local DB).
+ */
+export function initDatabase(): boolean {
+  try {
+    const database = getDatabase();
+    if (dbFailed) return false;
 
   database.execSync(`
     CREATE TABLE IF NOT EXISTS posts (
@@ -100,23 +128,37 @@ export function initDatabase(): void {
   database.execSync(`CREATE INDEX IF NOT EXISTS idx_follows_follower ON follows(follower_id);`);
   database.execSync(`CREATE INDEX IF NOT EXISTS idx_follows_following ON follows(following_id);`);
   database.execSync(`CREATE INDEX IF NOT EXISTS idx_mutation_status ON mutation_queue(status);`);
+
+    dbInitialized = true;
+    return true;
+  } catch (e) {
+    dbFailed = true;
+    console.warn('[Database] initDatabase failed:', e);
+    return false;
+  }
 }
 
 // --- Helper functions for sync_meta ---
 
 export function getSyncMeta(key: string): string | null {
-  const database = getDatabase();
-  const row = database.getFirstSync<{ value: string }>(
-    'SELECT value FROM sync_meta WHERE key = ?',
-    [key]
-  );
-  return row?.value ?? null;
+  if (!isDatabaseReady()) return null;
+  try {
+    const database = getDatabase();
+    const row = database.getFirstSync<{ value: string }>(
+      'SELECT value FROM sync_meta WHERE key = ?',
+      [key]
+    );
+    return row?.value ?? null;
+  } catch { return null; }
 }
 
 export function setSyncMeta(key: string, value: string): void {
-  const database = getDatabase();
-  database.runSync(
-    'INSERT OR REPLACE INTO sync_meta (key, value) VALUES (?, ?)',
-    [key, value]
-  );
+  if (!isDatabaseReady()) return;
+  try {
+    const database = getDatabase();
+    database.runSync(
+      'INSERT OR REPLACE INTO sync_meta (key, value) VALUES (?, ?)',
+      [key, value]
+    );
+  } catch {}
 }
