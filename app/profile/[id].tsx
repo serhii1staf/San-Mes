@@ -270,6 +270,8 @@ export default function UserProfileScreen() {
             bio: profileData.bio || '',
             banner_url: (profileData as any).banner_url || null,
             links: (profileData as any).links ? JSON.stringify((profileData as any).links) : null,
+            badge: (profileData as any).badge || null,
+            is_verified: (profileData as any).is_verified || false,
             created_at: profileData.created_at || null,
             updated_at: profileData.updated_at || null,
           });

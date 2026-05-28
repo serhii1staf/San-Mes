@@ -23,6 +23,8 @@ export interface LocalProfile {
   bio: string;
   banner_url: string | null;
   links: string | null;
+  badge?: string | null;
+  is_verified?: boolean;
   created_at: string | null;
   updated_at: string | null;
 }

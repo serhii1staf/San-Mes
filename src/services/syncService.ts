@@ -64,6 +64,8 @@ export async function syncFeed(userId?: string): Promise<void> {
           bio: profileData.bio || '',
           banner_url: profileData.banner_url || null,
           links: profileData.links ? JSON.stringify(profileData.links) : null,
+          badge: profileData.badge || null,
+          is_verified: profileData.is_verified || false,
           created_at: profileData.created_at || null,
           updated_at: profileData.updated_at || null,
         };
@@ -99,6 +101,8 @@ export async function syncProfile(profileId: string): Promise<void> {
       bio: profile.bio || '',
       banner_url: (profile as any).banner_url || null,
       links: (profile as any).links ? JSON.stringify((profile as any).links) : null,
+      badge: (profile as any).badge || null,
+      is_verified: (profile as any).is_verified || false,
       created_at: profile.created_at || null,
       updated_at: profile.updated_at || null,
     };
@@ -131,6 +135,8 @@ export async function syncProfiles(): Promise<void> {
         bio: profile.bio || '',
         banner_url: (profile as any).banner_url || null,
         links: (profile as any).links ? JSON.stringify((profile as any).links) : null,
+        badge: (profile as any).badge || null,
+        is_verified: (profile as any).is_verified || false,
         created_at: profile.created_at || null,
         updated_at: profile.updated_at || null,
       };
