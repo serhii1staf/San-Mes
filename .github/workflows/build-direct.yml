@@ -1,12 +1,14 @@
-name: iOS Build (EAS)
+name: iOS Build (Direct)
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
+    runs-on: macos-15
+    timeout-minutes: 90
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 
     steps:
       - name: Checkout
@@ -30,11 +32,36 @@ jobs:
       - name: Write ASC API Key
         run: echo "${{ secrets.ASC_API_KEY_P8 }}" > ./AuthKey_PN7B743Y4X.p8
 
-      - name: Build iOS (EAS Cloud)
-        run: eas build --platform ios --profile production --non-interactive
+      - name: Check Xcode version
+        run: xcodebuild -version
+
+      - name: Build iOS locally
+        run: |
+          eas build --platform ios --profile production --local --output ./San.ipa --non-interactive
         env:
           EXPO_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          EXPO_ASC_API_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          EXPO_ASC_API_KEY_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          EXPO_ASC_API_KEY_PATH: ./AuthKey_PN7B743Y4X.p8
 
-      - name: Submit to TestFlight
+      - name: Upload to App Store Connect via API
         if: success()
-        run: eas submit --platform ios --profile production --latest --non-interactive
+        run: |
+          mkdir -p ~/private_keys
+          cp ./AuthKey_PN7B743Y4X.p8 ~/private_keys/AuthKey_PN7B743Y4X.p8
+          # Try iTMSTransporter first (doesn't check SDK version)
+          TRANSPORTER="/Applications/Xcode.app/Contents/SharedFrameworks/ContentDeliveryServices.framework/Versions/A/itms/bin/iTMSTransporter"
+          if [ -f "$TRANSPORTER" ]; then
+            "$TRANSPORTER" -m upload \
+              -f ./San.ipa \
+              -apiKey PN7B743Y4X \
+              -apiIssuer "8c0acc2b-73e7-4067-884b-790f14bf4b92" \
+              -v informational
+          else
+            # Fallback to altool
+            xcrun altool --upload-app \
+              --type ios \
+              --file ./San.ipa \
+              --apiKey PN7B743Y4X \
+              --apiIssuer "8c0acc2b-73e7-4067-884b-790f14bf4b92"
+          fi
