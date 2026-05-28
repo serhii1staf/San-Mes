@@ -15,9 +15,16 @@ function AuthNavigationGuard({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, hasHydrated } = useAuthStore();
   const segments = useSegments();
   const router = useRouter();
+  const [showSplash, setShowSplash] = useState(true);
 
   useEffect(() => {
-    if (!hasHydrated) return;
+    // Show splash for minimum 800ms for smooth transition
+    const timer = setTimeout(() => setShowSplash(false), 800);
+    return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!hasHydrated || showSplash) return;
 
     const inAuthGroup = segments[0] === '(auth)';
 
@@ -26,9 +33,9 @@ function AuthNavigationGuard({ children }: { children: React.ReactNode }) {
     } else if (isAuthenticated && inAuthGroup) {
       router.replace('/(tabs)');
     }
-  }, [isAuthenticated, segments, hasHydrated]);
+  }, [isAuthenticated, segments, hasHydrated, showSplash]);
 
-  if (!hasHydrated) {
+  if (!hasHydrated || showSplash) {
     return <CustomSplash />;
   }
 

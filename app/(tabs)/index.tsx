@@ -121,13 +121,15 @@ export default function FeedScreen() {
 
   useEffect(() => {
     const fetchPosts = async () => {
-      setLoading(true);
-      
-      // Load from cache first (instant offline display)
-      const cached = await getCached<Post[]>(CACHE_KEYS.feed);
-      if (cached && cached.length > 0) {
-        setPosts(cached);
-        setLoading(false);
+      // Only show loading skeleton if we have no posts at all
+      if (posts.length === 0) {
+        // Try cache first for instant display
+        const cached = await getCached<Post[]>(CACHE_KEYS.feed);
+        if (cached && cached.length > 0) {
+          setPosts(cached);
+        } else {
+          setLoading(true);
+        }
       }
       
       try {
@@ -149,8 +151,7 @@ export default function FeedScreen() {
         // Save to cache for offline
         setCache(CACHE_KEYS.feed, mapped);
       } catch (e) {
-        // If network fails and no cache, show empty
-        if (!cached || cached.length === 0) setPosts([]);
+        // Network failed — keep whatever we have (cache or store)
       } finally {
         setLoading(false);
       }

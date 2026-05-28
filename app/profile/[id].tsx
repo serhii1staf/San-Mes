@@ -138,13 +138,11 @@ function ProfileMenuModal({ visible, profile, onClose }: { visible: boolean; pro
   // Report categories
   if (showReport) {
     return (
-      <Modal visible={visible} transparent animationType="none" onRequestClose={() => { setShowReport(false); handleClose(); }} statusBarTranslucent>
+      <Modal visible={visible} transparent animationType="fade" onRequestClose={() => { setShowReport(false); handleClose(); }} statusBarTranslucent>
         <View style={{ flex: 1 }}>
-          <Animated.View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)', opacity: backdropAnim }}>
-            <Pressable style={{ flex: 1 }} onPress={() => { setShowReport(false); handleClose(); }} />
-          </Animated.View>
-          <View style={{ flex: 1, justifyContent: 'flex-end' }}>
-            <View style={{ marginHorizontal: 8, marginBottom: insets.bottom + 20, backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF', borderRadius: 28, overflow: 'hidden' }}>
+          <Pressable style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)' }} onPress={() => { setShowReport(false); handleClose(); }} />
+          <View style={{ flex: 1, justifyContent: 'flex-end' }} pointerEvents="box-none">
+            <View style={{ marginHorizontal: 8, marginBottom: 16, backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF', borderRadius: 28, overflow: 'hidden' }}>
               <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 6 }}>
                 <View style={{ width: 40, height: 5, borderRadius: 3, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.1)' }} />
               </View>

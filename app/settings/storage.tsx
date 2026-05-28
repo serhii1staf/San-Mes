@@ -58,7 +58,7 @@ export default function StorageScreen() {
       
       for (const key of keys as string[]) {
         const value = await AsyncStorage.getItem(key);
-        const size = value ? new Blob([value]).size || value.length * 2 : 0;
+        const size = value ? value.length * 2 : 0; // UTF-16 chars = ~2 bytes each
         total += size;
         
         if (key.includes('feed') || key.includes('post')) posts += size;
@@ -68,12 +68,7 @@ export default function StorageScreen() {
       
       setStorageInfo({ posts, messages, profiles, total });
     } catch {
-      // Fallback: estimate from key count
-      try {
-        const keys = await AsyncStorage.getAllKeys();
-        const total = (keys as string[]).length * 512; // rough estimate
-        setStorageInfo({ posts: 0, messages: 0, profiles: 0, total });
-      } catch {}
+      setStorageInfo({ posts: 0, messages: 0, profiles: 0, total: 0 });
     }
   };
 
