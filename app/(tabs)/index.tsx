@@ -18,6 +18,9 @@ import { useUpdateStore } from '../../src/store/updateStore';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { LocalPost } from '../../src/lib/entityStore';
 
+// Module-level flag to prevent skeleton from showing after first load
+let globalFeedLoaded = false;
+
 
 function FeedHeader() {
   const theme = useTheme();
@@ -97,13 +100,9 @@ export default function FeedScreen() {
   const { isRefreshing, setRefreshing, pendingRepostId, setPendingRepost } = useFeedStore();
   const [menuPost, setMenuPost] = useState<Post | null>(null);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
-  const [isInitialLoading, setIsInitialLoading] = useState(true);
+  const [isInitialLoading, setIsInitialLoading] = useState(!globalFeedLoaded);
+  const syncStarted = React.useRef(false);
 
-  // Safety timeout - never show skeleton for more than 3 seconds
-  useEffect(() => {
-    const timer = setTimeout(() => setIsInitialLoading(false), 3000);
-    return () => clearTimeout(timer);
-  }, []);
   const { status: updateStatus, progress: updateProgress, message: updateMessage, checkForUpdate, applyUpdate } = useUpdateStore();
 
   // Read from entity store (SSOT)
@@ -111,6 +110,24 @@ export default function FeedScreen() {
   const profiles = useEntityStore((s) => s.profiles);
   const isHydrated = useEntityStore((s) => s.isHydrated);
   const userLikes = useEntityStore((s) => user?.id ? s.getUserLikes(user.id) : new Set<string>());
+
+  // Safety timeout - ALWAYS hide skeleton after 3 seconds no matter what
+  useEffect(() => {
+    if (globalFeedLoaded) return; // Already loaded, no need for timeout
+    const timer = setTimeout(() => {
+      globalFeedLoaded = true;
+      setIsInitialLoading(false);
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, []);
+
+  // If we already have posts, show them immediately
+  useEffect(() => {
+    if (feedPosts.length > 0) {
+      globalFeedLoaded = true;
+      setIsInitialLoading(false);
+    }
+  }, [feedPosts.length]);
 
   // Check for OTA updates on mount
   useEffect(() => {
@@ -124,21 +141,27 @@ export default function FeedScreen() {
     }
   }, [user?.id, isHydrated]);
 
-  // Trigger initial sync once hydrated
+  // Trigger initial sync — don't wait for isHydrated, just sync immediately
   useEffect(() => {
-    if (isHydrated) {
-      if (feedPosts.length > 0) {
-        // We have cached data — show it immediately
+    if (syncStarted.current) return;
+    syncStarted.current = true;
+
+    // Force isHydrated if not already set (safety)
+    if (!useEntityStore.getState().isHydrated) {
+      useEntityStore.setState({ isHydrated: true });
+    }
+
+    // Sync feed from Supabase
+    syncFeed(user?.id)
+      .then(() => {
+        globalFeedLoaded = true;
         setIsInitialLoading(false);
-      }
-      // Sync in background
-      syncFeed(user?.id).then(() => {
-        setIsInitialLoading(false);
-      }).catch(() => {
+      })
+      .catch(() => {
+        globalFeedLoaded = true;
         setIsInitialLoading(false);
       });
-    }
-  }, [isHydrated]);
+  }, []);
 
   // Map local posts to UI Post type
   const posts: Post[] = React.useMemo(() => {

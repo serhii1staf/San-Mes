@@ -9,6 +9,19 @@ import { useAuthStore, useEntityStore } from '../src/store';
 import { initDatabase } from '../src/lib/database';
 import { fullSync, startSyncLoop, stopSyncLoop } from '../src/lib/syncEngine';
 
+// Initialize database synchronously at module load time (before any component renders)
+// This ensures isHydrated is true before the feed screen mounts
+try {
+  const dbOk = initDatabase();
+  if (dbOk) {
+    useEntityStore.getState().hydrate();
+  } else {
+    useEntityStore.setState({ isHydrated: true });
+  }
+} catch (e) {
+  useEntityStore.setState({ isHydrated: true });
+}
+
 SplashScreen.preventAutoHideAsync().catch(() => {
   // If preventAutoHideAsync fails (e.g., called too late), ignore the error
 });
@@ -81,29 +94,21 @@ function CustomSplash() {
 export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts(fontAssets);
   const [fontTimeout, setFontTimeout] = useState(false);
-  const [dbReady, setDbReady] = useState(false);
+  const [dbReady, setDbReady] = useState(true); // DB init happens at module level now
 
-  // Initialize SQLite database and hydrate entity store on startup
+  // Start sync loop and trigger initial sync
   useEffect(() => {
     try {
-      const dbOk = initDatabase();
-      if (dbOk) {
-        useEntityStore.getState().hydrate();
-      } else {
-        // DB failed but mark as hydrated so app can proceed
-        useEntityStore.setState({ isHydrated: true });
-      }
       setDbReady(true);
 
-      // Start background sync after hydration
+      // Start background sync
       const authState = useAuthStore.getState();
       if (authState.isAuthenticated && authState.user?.id) {
         fullSync(authState.user.id).catch(() => {});
       }
       startSyncLoop();
     } catch (e) {
-      console.warn('[RootLayout] Database init failed:', e);
-      useEntityStore.setState({ isHydrated: true });
+      console.warn('[RootLayout] Sync init failed:', e);
       setDbReady(true);
     }
 
