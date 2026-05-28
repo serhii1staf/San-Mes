@@ -6,6 +6,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import { ThemeProvider, useTheme } from '../src/theme';
 import { fontAssets } from '../src/theme/fonts';
 import { useAuthStore } from '../src/store';
+import { BrowserMiniBar } from '../src/components/ui/BrowserMiniBar';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -99,6 +100,7 @@ export default function RootLayout() {
   return (
     <ThemeProvider>
       <AuthNavigationGuard>
+        <BrowserMiniBar />
         <Stack screenOptions={{ headerShown: false }}>
           <Stack.Screen name="(tabs)" />
           <Stack.Screen name="(auth)" />

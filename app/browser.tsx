@@ -1,20 +1,46 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { View, Pressable, ActivityIndicator, ViewStyle } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { Feather } from '@expo/vector-icons';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router, useLocalSearchParams, useNavigation } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../src/theme';
 import { Text } from '../src/components/ui';
+import { useBrowserStore } from '../src/store/browserStore';
 
 export default function BrowserScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const navigation = useNavigation();
   const { url } = useLocalSearchParams<{ url: string }>();
   const [isLoading, setIsLoading] = useState(true);
   const [currentUrl, setCurrentUrl] = useState(url || '');
   const [canGoBack, setCanGoBack] = useState(false);
   const webViewRef = useRef<WebView>(null);
+  const closedManually = useRef(false);
+  const { setMinimized, clearMinimized } = useBrowserStore();
+
+  // Clear minimized state when browser opens (user tapped the mini-bar)
+  useEffect(() => {
+    clearMinimized();
+  }, []);
+
+  // When modal is dismissed via swipe (not X button), minimize to bar
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('beforeRemove', () => {
+      if (!closedManually.current) {
+        // Swipe dismiss — save to minimized state
+        setMinimized(currentUrl || decodedUrl, displayDomain);
+      }
+    });
+    return unsubscribe;
+  }, [navigation, currentUrl]);
+
+  const handleClose = () => {
+    closedManually.current = true;
+    clearMinimized();
+    router.back();
+  };
 
   const decodedUrl = (() => {
     try {
@@ -52,7 +78,7 @@ export default function BrowserScreen() {
         }}
       >
         {/* Close button */}
-        <Pressable onPress={() => router.back()} style={{ padding: 8 }}>
+        <Pressable onPress={handleClose} style={{ padding: 8 }}>
           <Feather name="x" size={22} color={theme.colors.text.primary} />
         </Pressable>
 
