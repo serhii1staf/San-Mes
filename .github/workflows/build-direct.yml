@@ -32,69 +32,16 @@ jobs:
       - name: Write ASC API Key
         run: echo "${{ secrets.ASC_API_KEY_P8 }}" > ./AuthKey_PN7B743Y4X.p8
 
-      - name: Prebuild iOS
-        run: npx expo prebuild --platform ios --clean --no-install
-        env:
-          CI: '1'
-
-      - name: Setup credentials from EAS
+      - name: Verify fmt patch applied
         run: |
-          # Download and setup credentials
-          eas credentials:configure --platform ios --non-interactive 2>/dev/null || true
+          grep -q "FMT_USE_CONSTEVAL" node_modules/react-native/third-party-podspecs/fmt.podspec && echo "✅ fmt.podspec patched" || echo "❌ patch missing"
 
-      - name: Install Pods
-        run: cd ios && pod install
-
-      - name: Patch fmt for Xcode 26
-        run: |
-          # Patch only regular files (skip symlinks)
-          find ios/Pods -name "base.h" -path "*/fmt/*" -type f | while read f; do
-            sed -i '' 's/#  define FMT_USE_CONSTEVAL 1/#  define FMT_USE_CONSTEVAL 0/g' "$f"
-            echo "Patched: $f"
-          done
-          find ios/Pods -name "format-inl.h" -path "*/fmt/*" -type f | while read f; do
-            sed -i '' 's/FMT_STRING(\(.*\))/fmt::runtime(\1)/g' "$f"
-            echo "Patched format-inl.h: $f"
-          done
-
-      - name: Build with xcodebuild
-        run: |
-          cd ios
-          xcodebuild -workspace San.xcworkspace \
-            -scheme San \
-            -configuration Release \
-            -archivePath $RUNNER_TEMP/San.xcarchive \
-            -destination 'generic/platform=iOS' \
-            CODE_SIGN_STYLE=Manual \
-            DEVELOPMENT_TEAM=${{ secrets.APPLE_TEAM_ID }} \
-            archive
-
-      - name: Export IPA
-        if: success()
-        run: |
-          cat > $RUNNER_TEMP/ExportOptions.plist << 'EOF'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>method</key>
-            <string>app-store</string>
-            <key>teamID</key>
-            <string>${{ secrets.APPLE_TEAM_ID }}</string>
-          </dict>
-          </plist>
-          EOF
-          xcodebuild -exportArchive \
-            -archivePath $RUNNER_TEMP/San.xcarchive \
-            -exportOptionsPlist $RUNNER_TEMP/ExportOptions.plist \
-            -exportPath $RUNNER_TEMP/export
+      - name: Build iOS locally
+        run: eas build --platform ios --profile production --local --output ./San.ipa --non-interactive
 
       - name: Upload to TestFlight
         if: success()
         run: |
           mkdir -p ~/private_keys
           cp ./AuthKey_PN7B743Y4X.p8 ~/private_keys/AuthKey_PN7B743Y4X.p8
-          xcrun altool --upload-app --type ios \
-            --file $RUNNER_TEMP/export/San.ipa \
-            --apiKey PN7B743Y4X \
-            --apiIssuer "8c0acc2b-73e7-4067-884b-790f14bf4b92"
+          xcrun altool --upload-app --type ios --file ./San.ipa --apiKey PN7B743Y4X --apiIssuer "8c0acc2b-73e7-4067-884b-790f14bf4b92"
