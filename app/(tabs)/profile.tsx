@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { View, Pressable, ActivityIndicator, Dimensions, Image, Animated, Modal } from 'react-native';
+import { View, Pressable, ActivityIndicator, Dimensions, Image, Animated, Modal, Share, Alert } from 'react-native';
 import { Feather, FontAwesome5 } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -10,7 +10,7 @@ import { Text, Avatar } from '../../src/components/ui';
 import { LinkedText } from '../../src/components/ui/LinkedText';
 import { CachedImage } from '../../src/components/ui/CachedImage';
 import { useAuthStore } from '../../src/store';
-import { isRepost, parseImageUrls, getFollowCounts, supabase } from '../../src/lib/supabase';
+import { isRepost, parseImageUrls, getFollowCounts, supabase, deletePost } from '../../src/lib/supabase';
 import { openUrl } from '../../src/utils/openUrl';
 import { Post } from '../../src/types';
 import { triggerHaptic } from '../../src/utils/haptics';
@@ -69,6 +69,7 @@ export default function ProfileScreen() {
   const [followCounts, setFollowCounts] = useState({ followers: 0, following: 0 });
   const [userPosts, setUserPosts] = useState<Post[]>([]);
   const [showQR, setShowQR] = useState(false);
+  const [viewingImage, setViewingImage] = useState<{ uri: string; postId: string } | null>(null);
   const hasFetched = useRef(false);
 
   // 1. Load from cache on mount
@@ -157,9 +158,11 @@ export default function ProfileScreen() {
             const hasImage = imgs.length > 0;
             return (
             <Pressable key={post.id} onPress={() => router.push({ pathname: '/comments/[id]', params: { id: post.id } })} style={{ flexDirection: 'row', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.75)', borderRadius: 28, padding: 10, marginBottom: 12, borderWidth: 1, borderColor: theme.isDark ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.4)', shadowColor: theme.isDark ? '#000' : '#c8a060', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.12, shadowRadius: 20, elevation: 4, overflow: 'hidden' }}>
-              {/* Left: Post image (square, rounded) */}
+              {/* Left: Post image (square, rounded) — tap opens fullscreen */}
               {hasImage && (
-                <CachedImage uri={imgs[0]} style={{ width: 100, height: 100, borderRadius: 20 }} resizeMode="cover" />
+                <Pressable onPress={() => setViewingImage({ uri: imgs[0], postId: post.id })}>
+                  <CachedImage uri={imgs[0]} style={{ width: 100, height: 100, borderRadius: 20 }} resizeMode="cover" />
+                </Pressable>
               )}
               {/* Right: Info */}
               <View style={{ flex: 1, marginLeft: hasImage ? 14 : 4, justifyContent: 'center' }}>
@@ -186,6 +189,35 @@ export default function ProfileScreen() {
           <View style={{ backgroundColor: '#FFF', borderRadius: 20, padding: 20 }}><Image source={{ uri: qrUrl }} style={{ width: 200, height: 200 }} resizeMode="contain" /></View>
           <Text variant="caption" color="#FFFFFF" style={{ marginTop: 20, opacity: 0.7 }}>Нажмите чтобы закрыть</Text>
         </Pressable>
+      </Modal>
+
+      {/* Fullscreen Image Viewer */}
+      <Modal visible={!!viewingImage} transparent animationType="fade" onRequestClose={() => setViewingImage(null)} statusBarTranslucent>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.92)' }}>
+          {/* Close — top right */}
+          <Pressable onPress={() => setViewingImage(null)} style={{ position: 'absolute', top: insets.top + 12, right: 16, zIndex: 10, width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' }}>
+            <Feather name="x" size={20} color="#FFFFFF" />
+          </Pressable>
+          {/* Image — full width */}
+          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+            {viewingImage && <Image source={{ uri: viewingImage.uri }} style={{ width: SCREEN_WIDTH - 32, height: SCREEN_WIDTH - 32, borderRadius: 16 }} resizeMode="contain" />}
+          </View>
+          {/* Bottom actions */}
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 24, paddingBottom: insets.bottom + 20 }}>
+            <Pressable onPress={() => { setViewingImage(null); router.push('/(tabs)/create'); }} style={{ alignItems: 'center' }}>
+              <Feather name="edit-2" size={20} color="#FFFFFF" />
+              <Text variant="caption" color="#FFFFFF" style={{ marginTop: 4, fontSize: 10 }}>Редактировать</Text>
+            </Pressable>
+            <Pressable onPress={async () => { if (viewingImage) { try { await Share.share({ message: viewingImage.uri }); } catch {} } }} style={{ alignItems: 'center' }}>
+              <Feather name="share" size={20} color="#FFFFFF" />
+              <Text variant="caption" color="#FFFFFF" style={{ marginTop: 4, fontSize: 10 }}>Поделиться</Text>
+            </Pressable>
+            <Pressable onPress={() => { if (viewingImage && user?.id) { Alert.alert('Удалить пост?', 'Это действие нельзя отменить', [{ text: 'Отмена', style: 'cancel' }, { text: 'Удалить', style: 'destructive', onPress: async () => { await deletePost(viewingImage.postId, user.id); setViewingImage(null); loadMyPosts(); } }]); } }} style={{ alignItems: 'center' }}>
+              <Feather name="trash-2" size={20} color="#FF3B30" />
+              <Text variant="caption" color="#FF3B30" style={{ marginTop: 4, fontSize: 10 }}>Удалить</Text>
+            </Pressable>
+          </View>
+        </View>
       </Modal>
     </View>
   );
