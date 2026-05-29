@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, FlatList, TextInput, Pressable, ViewStyle, KeyboardAvoidingView, Platform, StyleSheet, Keyboard } from 'react-native';
+import { View, FlatList, TextInput, Pressable, ViewStyle, KeyboardAvoidingView, Platform, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -11,6 +11,7 @@ import { useChatStore } from '../../src/store';
 import { mockMessages, mockConversations, formatMessageTime, formatMessageDate } from '../../src/utils/mockData';
 import { ChatMessage } from '../../src/types';
 import { triggerHaptic } from '../../src/utils/haptics';
+import { playSendSound } from '../../src/utils/sounds';
 
 function MessageBubble({ message, isOwn }: { message: ChatMessage; isOwn: boolean }) {
   const theme = useTheme();
@@ -59,19 +60,12 @@ export default function ChatScreen() {
   const { messages: storeMessages, setMessages, addMessage } = useChatStore();
 
   const conversation = mockConversations.find((c) => c.id === id);
-  const chatMessages = (storeMessages[id || ''] || []).slice().reverse() as ChatMessage[];
+  const chatMessages = (storeMessages[id || ''] || []) as ChatMessage[];
 
   const bgColor = theme.colors.background.primary;
   const bgTransparent = bgColor + '00';
   const headerContentHeight = insets.top + 48;
   const headerGradientHeight = headerContentHeight + 28;
-  const [keyboardVisible, setKeyboardVisible] = useState(false);
-
-  useEffect(() => {
-    const showSub = Keyboard.addListener('keyboardWillShow', () => setKeyboardVisible(true));
-    const hideSub = Keyboard.addListener('keyboardWillHide', () => setKeyboardVisible(false));
-    return () => { showSub.remove(); hideSub.remove(); };
-  }, []);
 
   useEffect(() => {
     if (id && mockMessages[id]) {
@@ -81,7 +75,7 @@ export default function ChatScreen() {
 
   const handleSend = () => {
     if (!inputText.trim() || !id) return;
-    triggerHaptic('medium');
+    playSendSound();
     const newMessage: ChatMessage = {
       id: 'm-' + Date.now(),
       conversationId: id,
@@ -125,12 +119,12 @@ export default function ChatScreen() {
           keyExtractor={(item) => item.id}
           inverted
           renderItem={({ item }) => <MessageBubble message={item} isOwn={item.senderId === 'current'} />}
-          contentContainerStyle={{ paddingTop: 8, paddingBottom: headerContentHeight }}
+          contentContainerStyle={{ paddingHorizontal: 0, paddingTop: 8 }}
           showsVerticalScrollIndicator={false}
         />
 
         {/* Input */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: keyboardVisible ? 4 : (insets.bottom + 12), paddingTop: 6, backgroundColor: bgColor }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 8, paddingTop: 6, backgroundColor: bgColor }}>
           <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8, borderWidth: 1, borderColor: theme.colors.border.light }}>
             <TextInput
               value={inputText}
