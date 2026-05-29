@@ -1,11 +1,23 @@
-import * as Haptics from 'expo-haptics';
+import { Audio } from 'expo-av';
+
+let sendSound: Audio.Sound | null = null;
 
 /**
- * Play send feedback — strong haptic that feels like a "send" confirmation
- * Combines impact + notification for a distinct "click" feeling
+ * Play a short send sound (beep)
  */
 export async function playSendSound() {
   try {
-    await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-  } catch {}
+    await Audio.setAudioModeAsync({ playsInSilentModeIOS: true });
+    if (!sendSound) {
+      const { sound } = await Audio.Sound.createAsync(
+        require('../../assets/send.wav'),
+        { shouldPlay: false, volume: 0.5 }
+      );
+      sendSound = sound;
+    }
+    await sendSound.setPositionAsync(0);
+    await sendSound.playAsync();
+  } catch {
+    // Silently fail
+  }
 }

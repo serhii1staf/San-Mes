@@ -117,10 +117,11 @@ export default function ChatScreen() {
           ref={flatListRef}
           data={chatMessages}
           keyExtractor={(item) => item.id}
-          inverted
           renderItem={({ item }) => <MessageBubble message={item} isOwn={item.senderId === 'current'} />}
-          contentContainerStyle={{ paddingHorizontal: 0, paddingTop: 8 }}
+          contentContainerStyle={{ paddingHorizontal: 0, paddingTop: headerContentHeight, paddingBottom: 8 }}
           showsVerticalScrollIndicator={false}
+          onLayout={() => { if (chatMessages.length > 0) flatListRef.current?.scrollToEnd({ animated: false }); }}
+          onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: false })}
         />
 
         {/* Input */}

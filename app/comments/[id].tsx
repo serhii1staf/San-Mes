@@ -12,6 +12,7 @@ import { FormattedText } from '../../src/components/ui/FormattedText';
 import { useAuthStore } from '../../src/store';
 import { getComments, createComment } from '../../src/lib/supabase';
 import { triggerHaptic } from '../../src/utils/haptics';
+import { playSendSound } from '../../src/utils/sounds';
 
 export default function CommentsScreen() {
   const theme = useTheme();
@@ -43,7 +44,7 @@ export default function CommentsScreen() {
 
   const handleSend = async () => {
     if (!text.trim() || !user?.id || !postId) return;
-    triggerHaptic('medium');
+    playSendSound();
     setIsSending(true);
     const { error } = await createComment(postId, user.id, text.trim());
     if (!error) {
