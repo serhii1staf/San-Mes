@@ -1,12 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, FlatList, TextInput, Pressable, KeyboardAvoidingView, Platform, ActivityIndicator } from 'react-native';
+import { View, FlatList, TextInput, Pressable, KeyboardAvoidingView, Platform, ActivityIndicator, StyleSheet } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { UserBadge } from '../../src/components/ui/UserBadge';
+import { FormattedText } from '../../src/components/ui/FormattedText';
 import { useAuthStore } from '../../src/store';
 import { getComments, createComment } from '../../src/lib/supabase';
 import { triggerHaptic } from '../../src/utils/haptics';
@@ -21,6 +23,11 @@ export default function CommentsScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
   const inputRef = useRef<TextInput>(null);
+
+  const bgColor = theme.colors.background.primary;
+  const bgTransparent = bgColor + '00';
+  const headerContentHeight = insets.top + 48;
+  const headerGradientHeight = headerContentHeight + 28;
 
   useEffect(() => {
     loadComments();
@@ -57,13 +64,17 @@ export default function CommentsScreen() {
   };
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: theme.colors.background.primary }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}>
-      {/* Header */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingTop: insets.top + 8, paddingBottom: 12, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border.light }}>
-        <Pressable onPress={() => router.back()}>
-          <Feather name="chevron-left" size={24} color={theme.colors.text.primary} />
-        </Pressable>
-        <Text variant="body" weight="semibold" style={{ marginLeft: 12 }}>Комментарии</Text>
+    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: bgColor }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      {/* Gradient fade header */}
+      <View style={[styles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">
+        <LinearGradient colors={[bgColor, bgColor, bgTransparent]} locations={[0, 0.55, 1]} style={StyleSheet.absoluteFill} />
+        <View style={[styles.headerContent, { paddingTop: insets.top }]} pointerEvents="auto">
+          <Pressable onPress={() => router.back()}>
+            <Feather name="chevron-left" size={24} color={theme.colors.text.primary} />
+          </Pressable>
+          <Text variant="body" weight="bold">Комментарии</Text>
+          <View style={{ width: 24 }} />
+        </View>
       </View>
 
       {/* Comments list */}
@@ -75,12 +86,10 @@ export default function CommentsScreen() {
         <FlatList
           data={comments}
           keyExtractor={(item) => item.id}
-          contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 16, paddingBottom: 20 }}
+          contentContainerStyle={{ paddingHorizontal: 20, paddingTop: headerContentHeight, paddingBottom: 80 }}
           ListEmptyComponent={
             <View style={{ alignItems: 'center', paddingTop: 40 }}>
-              <View style={{ width: 50, height: 50, alignItems: 'center', justifyContent: 'center' }}>
-                <Text style={{ fontSize: 32 }}>💬</Text>
-              </View>
+              <Text style={{ fontSize: 32 }}>💬</Text>
               <Text variant="body" color={theme.colors.text.tertiary} style={{ marginTop: 8 }}>Пока нет комментариев</Text>
             </View>
           }
@@ -90,34 +99,43 @@ export default function CommentsScreen() {
                 <Avatar emoji={item.profiles?.emoji || '😊'} size="sm" />
               </Pressable>
               <View style={{ marginLeft: 10, flex: 1 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
                   <Text variant="caption" weight="semibold">{item.profiles?.display_name || 'User'}</Text>
                   {item.profiles?.is_verified && <VerifiedBadge size={10} />}
                   {item.profiles?.badge && <UserBadge badge={item.profiles.badge} size="sm" />}
-                  <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginLeft: 8 }}>{formatTime(item.created_at)}</Text>
+                  <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginLeft: 4 }}>{formatTime(item.created_at)}</Text>
                 </View>
-                <Text variant="body" style={{ marginTop: 2 }}>{item.content}</Text>
+                <FormattedText style={{ marginTop: 3, fontSize: 14 }}>{item.content}</FormattedText>
               </View>
             </View>
           )}
         />
       )}
 
-      {/* Input */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 8, borderTopWidth: 0.5, borderTopColor: theme.colors.border.light, backgroundColor: theme.colors.background.elevated }}>
-        <TextInput
-          ref={inputRef}
-          value={text}
-          onChangeText={setText}
-          placeholder="Написать комментарий..."
-          placeholderTextColor={theme.colors.text.tertiary}
-          style={{ flex: 1, fontSize: 15, color: theme.colors.text.primary, paddingVertical: 8, paddingHorizontal: 14, backgroundColor: theme.colors.background.secondary, borderRadius: 20 }}
-          multiline
-        />
-        <Pressable onPress={handleSend} disabled={!text.trim() || isSending} style={{ marginLeft: 10, opacity: text.trim() ? 1 : 0.4 }}>
-          <Feather name="send" size={22} color={theme.colors.accent.primary} />
-        </Pressable>
+      {/* Input area with gradient fade */}
+      <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0 }}>
+        <LinearGradient colors={[bgTransparent, bgColor]} locations={[0, 0.3]} style={{ height: 20 }} pointerEvents="none" />
+        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: insets.bottom + 8, paddingTop: 8, backgroundColor: bgColor }}>
+          <TextInput
+            ref={inputRef}
+            value={text}
+            onChangeText={setText}
+            placeholder="Комментарий..."
+            placeholderTextColor={theme.colors.text.tertiary}
+            style={{ flex: 1, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular, paddingVertical: 6 }}
+            multiline
+            onSubmitEditing={handleSend}
+          />
+          <Pressable onPress={handleSend} disabled={!text.trim() || isSending} style={{ marginLeft: 10, opacity: text.trim() ? 1 : 0.4 }}>
+            <Feather name="send" size={20} color={theme.colors.accent.primary} />
+          </Pressable>
+        </View>
       </View>
     </KeyboardAvoidingView>
   );
 }
+
+const styles = StyleSheet.create({
+  headerWrapper: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100 },
+  headerContent: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingBottom: 8 },
+});
