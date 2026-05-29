@@ -150,7 +150,7 @@ export async function createRepost(authorId: string, originalPostId: string, com
 }
 
 // Simple hash for PIN (not cryptographically secure, but sufficient for demo)
-function hashPin(pin: string): string {
+export function hashPin(pin: string): string {
   let hash = 0;
   const str = pin + 'san_salt_2024';
   for (let i = 0; i < str.length; i++) {
