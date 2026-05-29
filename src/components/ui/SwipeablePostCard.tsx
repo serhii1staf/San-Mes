@@ -49,7 +49,7 @@ export function SwipeablePostCard({ children }: SwipeablePostCardProps) {
         resetPosition();
         return false;
       }
-      return g.dx < -15 && Math.abs(g.dx) > Math.abs(g.dy) * 3;
+      return g.dx < -20 && Math.abs(g.dx) > Math.abs(g.dy) * 4;
     },
     onPanResponderMove: (_, g) => {
       if (!isOpen.current && g.dx < 0) {
