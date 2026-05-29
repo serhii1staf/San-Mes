@@ -7,10 +7,10 @@ import { Avatar } from './Avatar';
 import { VerifiedBadge } from './VerifiedBadge';
 import { useAuthStore } from '../../store/authStore';
 import { useAccountsStore, SavedAccount } from '../../store/accountsStore';
-import { useFeedStore } from '../../store/feedStore';
 import { supabase } from '../../lib/supabase';
 import { showToast } from '../../store/toastStore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Updates from 'expo-updates';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -80,9 +80,8 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
 
     // Clear all cached data from previous account
     await AsyncStorage.multiRemove(['@san:feed_posts', '@san:my_posts']);
-    useFeedStore.getState().setPosts([]);
-    useFeedStore.getState().setProfilePosts([]);
 
+    // Login to new account
     login({
       id: profile.id,
       username: profile.username,
@@ -94,8 +93,14 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
       badge: profile.badge || undefined,
       is_verified: profile.is_verified || false,
     }, 'token-' + Date.now());
-    showToast(`Вы вошли как ${profile.display_name}`, 'user');
-    dismiss();
+
+    // Restart app to cleanly load all data for new account
+    try {
+      await Updates.reloadAsync();
+    } catch {
+      // Fallback if updates not available (dev mode)
+      dismiss();
+    }
   };
 
   const handleAddAccount = async () => {
@@ -123,8 +128,6 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
 
     // Clear all cached data from previous account
     await AsyncStorage.multiRemove(['@san:feed_posts', '@san:my_posts']);
-    useFeedStore.getState().setPosts([]);
-    useFeedStore.getState().setProfilePosts([]);
 
     addAccount({
       id: profile.id,
@@ -147,9 +150,14 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
       badge: profile.badge || undefined,
       is_verified: profile.is_verified || false,
     }, 'token-' + Date.now());
-    showToast(`Вы вошли как ${profile.display_name}`, 'user');
+
+    // Restart app to cleanly load all data for new account
     setIsLoading(false);
-    dismiss();
+    try {
+      await Updates.reloadAsync();
+    } catch {
+      dismiss();
+    }
   };
 
   const otherAccounts = accounts.filter(a => a.id !== user?.id);
