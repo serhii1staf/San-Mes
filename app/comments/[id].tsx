@@ -113,10 +113,9 @@ export default function CommentsScreen() {
           />
         )}
 
-        {/* Input area with gradient fade */}
+        {/* Input area */}
         <View>
-          <LinearGradient colors={[bgTransparent, bgColor]} locations={[0, 0.4]} style={{ height: 16 }} pointerEvents="none" />
-          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: insets.bottom + 8, paddingTop: 6, backgroundColor: bgColor }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: insets.bottom > 0 ? 4 : 8, paddingTop: 6, backgroundColor: bgColor }}>
             <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8, borderWidth: 1, borderColor: theme.colors.border.light }}>
               <TextInput
                 ref={inputRef}

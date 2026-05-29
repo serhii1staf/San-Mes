@@ -1,89 +1,38 @@
 import React, { useState, useRef, useEffect } from 'react';
-import {
-  View,
-  FlatList,
-  TextInput,
-  Pressable,
-  ViewStyle,
-  KeyboardAvoidingView,
-  Platform,
-} from 'react-native';
+import { View, FlatList, TextInput, Pressable, ViewStyle, KeyboardAvoidingView, Platform, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
+import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { useChatStore } from '../../src/store';
 import { mockMessages, mockConversations, formatMessageTime, formatMessageDate } from '../../src/utils/mockData';
 import { ChatMessage } from '../../src/types';
 
-function TypingIndicator() {
-  const theme = useTheme();
-  return (
-    <View
-      style={{
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingHorizontal: theme.spacing.base,
-        paddingVertical: theme.spacing.sm,
-        backgroundColor: theme.colors.background.tertiary,
-        borderRadius: theme.borderRadius.lg,
-        alignSelf: 'flex-start',
-        marginLeft: theme.spacing.base,
-        marginBottom: theme.spacing.sm,
-      }}
-    >
-      <View style={{ flexDirection: 'row', gap: 4 }}>
-        {[0, 1, 2].map((i) => (
-          <View
-            key={i}
-            style={{
-              width: 6,
-              height: 6,
-              borderRadius: 3,
-              backgroundColor: theme.colors.text.tertiary,
-            }}
-          />
-        ))}
-      </View>
-    </View>
-  );
-}
-
 function MessageBubble({ message, isOwn }: { message: ChatMessage; isOwn: boolean }) {
   const theme = useTheme();
-
   const bubbleStyle: ViewStyle = {
     maxWidth: '75%',
-    paddingHorizontal: theme.spacing.base,
-    paddingVertical: theme.spacing.md,
-    borderRadius: theme.borderRadius.lg,
-    marginBottom: theme.spacing.xs,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 18,
+    marginBottom: 4,
     backgroundColor: isOwn ? theme.colors.accent.primary : theme.colors.background.tertiary,
     alignSelf: isOwn ? 'flex-end' : 'flex-start',
-    marginLeft: isOwn ? 0 : theme.spacing.base,
-    marginRight: isOwn ? theme.spacing.base : 0,
-    borderBottomRightRadius: isOwn ? 4 : theme.borderRadius.lg,
-    borderBottomLeftRadius: isOwn ? theme.borderRadius.lg : 4,
+    marginLeft: isOwn ? 0 : 16,
+    marginRight: isOwn ? 16 : 0,
+    borderBottomRightRadius: isOwn ? 4 : 18,
+    borderBottomLeftRadius: isOwn ? 18 : 4,
   };
 
   return (
-    <View>
-      <View style={bubbleStyle}>
-        <Text
-          variant="body"
-          color={isOwn ? theme.colors.text.inverse : theme.colors.text.primary}
-        >
-          {message.text}
-        </Text>
-        <Text
-          variant="caption"
-          color={isOwn ? 'rgba(255,255,255,0.7)' : theme.colors.text.tertiary}
-          style={{ marginTop: 4, alignSelf: 'flex-end' }}
-        >
-          {formatMessageTime(message.createdAt)}
-        </Text>
-      </View>
+    <View style={bubbleStyle}>
+      <Text variant="body" color={isOwn ? '#FFFFFF' : theme.colors.text.primary}>{message.text}</Text>
+      <Text variant="caption" color={isOwn ? 'rgba(255,255,255,0.6)' : theme.colors.text.tertiary} style={{ marginTop: 3, alignSelf: 'flex-end', fontSize: 10 }}>
+        {formatMessageTime(message.createdAt)}
+      </Text>
     </View>
   );
 }
@@ -91,16 +40,9 @@ function MessageBubble({ message, isOwn }: { message: ChatMessage; isOwn: boolea
 function DateSeparator({ date }: { date: string }) {
   const theme = useTheme();
   return (
-    <View style={{ alignItems: 'center', marginVertical: theme.spacing.base }}>
-      <View
-        style={{
-          paddingHorizontal: theme.spacing.md,
-          paddingVertical: theme.spacing.xs,
-          borderRadius: theme.borderRadius.pill,
-          backgroundColor: theme.colors.background.tertiary,
-        }}
-      >
-        <Text variant="caption" color={theme.colors.text.tertiary}>{date}</Text>
+    <View style={{ alignItems: 'center', marginVertical: 12 }}>
+      <View style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10, backgroundColor: theme.colors.background.tertiary }}>
+        <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 10 }}>{date}</Text>
       </View>
     </View>
   );
@@ -117,6 +59,11 @@ export default function ChatScreen() {
 
   const conversation = mockConversations.find((c) => c.id === id);
   const chatMessages = (storeMessages[id || ''] || []) as ChatMessage[];
+
+  const bgColor = theme.colors.background.primary;
+  const bgTransparent = bgColor + '00';
+  const headerContentHeight = insets.top + 48;
+  const headerGradientHeight = headerContentHeight + 28;
 
   useEffect(() => {
     if (id && mockMessages[id]) {
@@ -140,113 +87,62 @@ export default function ChatScreen() {
     setTimeout(() => setShowTyping(false), 2000);
   };
 
-  const containerStyle: ViewStyle = {
-    flex: 1,
-    backgroundColor: theme.colors.background.primary,
-  };
-
-  const headerStyle: ViewStyle = {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: theme.spacing.base,
-    paddingTop: insets.top,
-    paddingBottom: theme.spacing.md,
-    backgroundColor: theme.colors.background.elevated,
-    borderBottomWidth: 0.5,
-    borderBottomColor: theme.colors.border.light,
-  };
-
-  const inputBarStyle: ViewStyle = {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: theme.spacing.base,
-    paddingVertical: theme.spacing.sm,
-    backgroundColor: theme.colors.background.elevated,
-    borderTopWidth: 0.5,
-    borderTopColor: theme.colors.border.light,
-    paddingBottom: Platform.OS === 'ios' ? theme.spacing.lg : theme.spacing.sm,
-  };
-
   return (
-    <KeyboardAvoidingView
-      style={containerStyle}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={0}
-    >
-      {/* Header */}
-      <View style={headerStyle}>
-        <Pressable onPress={() => router.back()} style={{ marginRight: theme.spacing.md }}>
-          <Feather name="arrow-left" size={22} color={theme.colors.text.primary} />
-        </Pressable>
-        <Avatar source={conversation?.participantAvatar} name={conversation?.participantName} size="sm" />
-        <View style={{ marginLeft: theme.spacing.md, flex: 1 }}>
-          <Text variant="body" weight="semibold">{conversation?.participantName || 'Chat'}</Text>
-          {conversation?.isOnline && (
-            <Text variant="caption" color={theme.colors.status.success}>Online</Text>
-          )}
+    <View style={{ flex: 1, backgroundColor: bgColor }}>
+      {/* Gradient fade header */}
+      <View style={[styles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">
+        <LinearGradient colors={[bgColor, bgColor, bgTransparent]} locations={[0, 0.55, 1]} style={StyleSheet.absoluteFill} />
+        <View style={[styles.headerContent, { paddingTop: insets.top }]} pointerEvents="auto">
+          <Pressable onPress={() => router.back()}>
+            <Feather name="chevron-left" size={24} color={theme.colors.text.primary} />
+          </Pressable>
+          {/* Name centered in rounded container */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: theme.colors.background.elevated, paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20, borderWidth: 1, borderColor: theme.colors.border.light }}>
+            <Text variant="caption" weight="semibold">{conversation?.participantName || 'Чат'}</Text>
+            {(conversation as any)?.isVerified && <VerifiedBadge size={11} />}
+          </View>
+          {/* Avatar right */}
+          <Pressable onPress={() => { if (conversation) router.push({ pathname: '/profile/[id]', params: { id: conversation.participantId || '' } }); }}>
+            <Avatar emoji={(conversation as any)?.participantEmoji || '😊'} size="sm" />
+          </Pressable>
         </View>
       </View>
 
-      {/* Messages */}
-      <FlatList
-        ref={flatListRef}
-        data={chatMessages}
-        keyExtractor={(item) => item.id}
-        renderItem={({ item }) => (
-          <MessageBubble message={item} isOwn={item.senderId === 'current'} />
-        )}
-        ListHeaderComponent={<DateSeparator date={formatMessageDate(chatMessages[0]?.createdAt || new Date().toISOString())} />}
-        ListFooterComponent={showTyping ? <TypingIndicator /> : null}
-        contentContainerStyle={{ paddingVertical: theme.spacing.base }}
-        showsVerticalScrollIndicator={false}
-        onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
-      />
+      {/* Messages + Input */}
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <FlatList
+          ref={flatListRef}
+          data={chatMessages}
+          keyExtractor={(item) => item.id}
+          renderItem={({ item }) => <MessageBubble message={item} isOwn={item.senderId === 'current'} />}
+          ListHeaderComponent={chatMessages.length > 0 ? <DateSeparator date={formatMessageDate(chatMessages[0]?.createdAt || new Date().toISOString())} /> : null}
+          contentContainerStyle={{ paddingTop: headerContentHeight, paddingBottom: 8 }}
+          showsVerticalScrollIndicator={false}
+          onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+        />
 
-      {/* Input Bar */}
-      <View style={inputBarStyle}>
-        <Pressable style={{ marginRight: theme.spacing.sm }}>
-          <Feather name="plus-circle" size={22} color={theme.colors.text.tertiary} />
-        </Pressable>
-        <View
-          style={{
-            flex: 1,
-            flexDirection: 'row',
-            alignItems: 'center',
-            backgroundColor: theme.colors.background.tertiary,
-            borderRadius: theme.borderRadius.pill,
-            paddingHorizontal: theme.spacing.base,
-            paddingVertical: theme.spacing.sm,
-          }}
-        >
-          <TextInput
-            value={inputText}
-            onChangeText={setInputText}
-            placeholder="Type a message..."
-            placeholderTextColor={theme.colors.text.tertiary}
-            style={{
-              flex: 1,
-              fontSize: theme.typography.sizes.base,
-              fontFamily: theme.fontFamily.regular,
-              color: theme.colors.text.primary,
-              paddingVertical: 2,
-            }}
-          />
+        {/* Input */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: insets.bottom > 0 ? 4 : 8, paddingTop: 6, backgroundColor: bgColor }}>
+          <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8, borderWidth: 1, borderColor: theme.colors.border.light }}>
+            <TextInput
+              value={inputText}
+              onChangeText={setInputText}
+              placeholder="Сообщение..."
+              placeholderTextColor={theme.colors.text.tertiary}
+              style={{ flex: 1, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular, maxHeight: 80 }}
+              multiline
+            />
+          </View>
+          <Pressable onPress={handleSend} style={{ marginLeft: 10, width: 36, height: 36, borderRadius: 18, backgroundColor: inputText.trim() ? theme.colors.accent.primary : theme.colors.background.elevated, alignItems: 'center', justifyContent: 'center' }}>
+            <Feather name="send" size={16} color={inputText.trim() ? '#FFFFFF' : theme.colors.text.tertiary} />
+          </Pressable>
         </View>
-        <Pressable
-          onPress={handleSend}
-          style={{
-            marginLeft: theme.spacing.sm,
-            width: 36,
-            height: 36,
-            borderRadius: 18,
-            backgroundColor: inputText.trim() ? theme.colors.accent.primary : theme.colors.border.light,
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-        >
-          <Feather name="send" size={16} color={theme.colors.text.inverse} />
-        </Pressable>
-      </View>
-    </KeyboardAvoidingView>
+      </KeyboardAvoidingView>
+    </View>
   );
 }
+
+const styles = StyleSheet.create({
+  headerWrapper: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100 },
+  headerContent: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingBottom: 8 },
+});
