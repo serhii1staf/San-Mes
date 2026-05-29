@@ -168,11 +168,8 @@ export default function AppearanceScreen() {
         </View>
 
         {/* Theme name below cards */}
-        <Text variant="body" weight="bold" align="center" style={{ marginTop: 16 }}>
+        <Text variant="body" weight="bold" align="center" style={{ marginTop: 16, marginBottom: 24 }}>
           {ACCENT_COLORS[activeIndex]?.label || ''}
-        </Text>
-        <Text variant="caption" color={theme.colors.text.tertiary} align="center" style={{ marginTop: 4, marginBottom: 24 }}>
-          Пролистайте для выбора темы
         </Text>
 
         {/* Font & Size controls */}
