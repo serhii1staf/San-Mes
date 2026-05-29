@@ -46,7 +46,8 @@ export function SwipeablePostCard({ children }: SwipeablePostCardProps) {
         resetPosition();
         return false;
       }
-      return g.dx < -8 && Math.abs(g.dx) > Math.abs(g.dy);
+      // Only capture if clearly horizontal left: dx < -15 AND dx is 3x bigger than dy
+      return g.dx < -15 && Math.abs(g.dx) > Math.abs(g.dy) * 3;
     },
     onPanResponderMove: (_, g) => {
       if (!isOpen.current && g.dx < 0) {
