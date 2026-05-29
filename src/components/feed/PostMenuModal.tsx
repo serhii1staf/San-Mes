@@ -14,6 +14,7 @@ import { triggerHaptic } from '../../utils/haptics';
 import { useAuthStore } from '../../store/authStore';
 import { useFeedStore } from '../../store/feedStore';
 import { deletePost } from '../../lib/supabase';
+import { showToast } from '../../store/toastStore';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 const REPORT_CATS = ['Спам', 'Насилие', 'Ложная информация', 'Мошенничество', 'Нарушение авторских прав', 'Другое'];
@@ -93,13 +94,13 @@ export function PostMenuModal({ visible, post, onClose }: PostMenuModalProps) {
   const previewContent = post.isRepost && post.originalPost ? post.originalPost.content : (post.content || 'Публикация');
   const previewImage = post.isRepost && post.originalPost ? post.originalPost.imageUrl : post.imageUrl;
 
-  const handleCopyLink = async () => { triggerHaptic('light'); await Clipboard.setStringAsync(`https://san-mes.vercel.app/post/${post.id}`); dismiss(); };
+  const handleCopyLink = async () => { triggerHaptic('light'); await Clipboard.setStringAsync(`https://san-mes.vercel.app/post/${post.id}`); showToast('Ссылка скопирована', 'link'); dismiss(); };
   const handleShare = async () => { triggerHaptic('light'); try { await Share.share({ message: `${post.content || ''}\nhttps://san-mes.vercel.app/post/${post.id}` }); } catch {} dismiss(); };
   const handleDelete = () => {
     triggerHaptic('medium');
     Alert.alert('Удалить пост?', 'Это действие нельзя отменить', [
       { text: 'Отмена', style: 'cancel' },
-      { text: 'Удалить', style: 'destructive', onPress: async () => { if (user?.id) { await deletePost(post.id, user.id); removePost(post.id); } dismiss(); } },
+      { text: 'Удалить', style: 'destructive', onPress: async () => { if (user?.id) { await deletePost(post.id, user.id); removePost(post.id); showToast('Пост удалён', 'trash-2'); } dismiss(); } },
     ]);
   };
 
@@ -143,7 +144,7 @@ export function PostMenuModal({ visible, post, onClose }: PostMenuModalProps) {
               </View>
               <MenuItem icon="link" label="Скопировать ссылку" onPress={handleCopyLink} theme={theme} />
               <MenuItem icon="share-2" label="Поделиться" onPress={handleShare} theme={theme} />
-              <MenuItem icon="bookmark" label="Сохранить" onPress={() => { triggerHaptic('light'); dismiss(); }} theme={theme} />
+              <MenuItem icon="bookmark" label="Сохранить" onPress={() => { triggerHaptic('light'); showToast('Сохранено', 'bookmark'); dismiss(); }} theme={theme} />
               {isOwnPost && <MenuItem icon="trash-2" label="Удалить пост" onPress={handleDelete} theme={theme} destructive />}
               {!isOwnPost && <MenuItem icon="flag" label="Пожаловаться" onPress={() => { triggerHaptic('light'); switchToReport(); }} theme={theme} destructive />}
             </>
@@ -151,7 +152,7 @@ export function PostMenuModal({ visible, post, onClose }: PostMenuModalProps) {
             <>
               <Text variant="body" weight="semibold" align="center" style={{ paddingVertical: 10 }}>Причина жалобы</Text>
               {REPORT_CATS.map((cat, i) => (
-                <Pressable key={i} onPress={() => { triggerHaptic('medium'); Alert.alert('Жалоба отправлена', 'Спасибо.'); dismiss(); }} style={{ paddingVertical: 14, paddingHorizontal: 20, borderTopWidth: 0.5, borderTopColor: theme.colors.border.light }}>
+                <Pressable key={i} onPress={() => { triggerHaptic('medium'); showToast('Жалоба отправлена', 'flag'); dismiss(); }} style={{ paddingVertical: 14, paddingHorizontal: 20, borderTopWidth: 0.5, borderTopColor: theme.colors.border.light }}>
                   <Text variant="body">{cat}</Text>
                 </Pressable>
               ))}

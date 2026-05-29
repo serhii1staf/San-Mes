@@ -7,6 +7,7 @@ import { ThemeProvider, useTheme } from '../src/theme';
 import { fontAssets } from '../src/theme/fonts';
 import { useAuthStore } from '../src/store';
 import { BrowserMiniBar } from '../src/components/ui/BrowserMiniBar';
+import { Toast } from '../src/components/ui/Toast';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -101,6 +102,7 @@ export default function RootLayout() {
     <ThemeProvider>
       <AuthNavigationGuard>
         <BrowserMiniBar />
+        <Toast />
         <Stack screenOptions={{ headerShown: false }}>
           <Stack.Screen name="(tabs)" />
           <Stack.Screen name="(auth)" />
