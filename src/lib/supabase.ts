@@ -23,12 +23,25 @@ export { SUPABASE_URL, SUPABASE_ANON_KEY };
 // Upload post image to storage, return public URL
 export async function uploadPostImage(imageUri: string): Promise<{ url: string | null; error: string | null }> {
   try {
+    // Convert HEIC/HEIF to JPEG using expo-image-manipulator
+    let finalUri = imageUri;
+    const ext = imageUri.split('.').pop()?.toLowerCase() || 'jpg';
+    if (ext === 'heic' || ext === 'heif' || !ext.match(/^(jpg|jpeg|png|gif|webp)$/)) {
+      try {
+        const { manipulateAsync, SaveFormat } = await import('expo-image-manipulator');
+        const result = await manipulateAsync(imageUri, [], { compress: 0.95, format: SaveFormat.JPEG });
+        finalUri = result.uri;
+      } catch (e) {
+        // If manipulator fails, try uploading as-is
+      }
+    }
+
     const filename = `post_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.jpg`;
     
     // Use FormData approach which works correctly in React Native
     const formData = new FormData();
     formData.append('', {
-      uri: imageUri,
+      uri: finalUri,
       name: filename,
       type: 'image/jpeg',
     } as any);

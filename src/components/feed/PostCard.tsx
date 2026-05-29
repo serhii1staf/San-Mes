@@ -206,7 +206,7 @@ export const PostCard = memo(function PostCard({ post, onLike, onComment, onShar
           </View>
           {post.originalPost.content && (
             <View style={{ paddingHorizontal: 12, paddingBottom: 12 }}>
-              <Text variant="body" numberOfLines={4}>{post.originalPost.content}</Text>
+              <FormattedText style={{ fontSize: theme.typography.sizes.base * (theme.fontScale || 1) }}>{post.originalPost.content}</FormattedText>
             </View>
           )}
           {post.originalPost.imageUrls && post.originalPost.imageUrls.length > 0 ? (
