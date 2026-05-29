@@ -41,16 +41,23 @@ export default function CommentsScreen() {
     const { comments: data } = await getComments(postId);
     setComments(data);
     setIsLoading(false);
+    // Scroll to last comment
+    if (data.length > 0) {
+      setTimeout(() => listRef.current?.scrollToEnd({ animated: false }), 150);
+    }
   };
 
   const handleSend = async () => {
     if (!text.trim() || !user?.id || !postId) return;
     playSendSound();
+    const sendText = text.trim();
+    setText('');
     setIsSending(true);
-    const { error } = await createComment(postId, user.id, text.trim());
+    const { error } = await createComment(postId, user.id, sendText);
     if (!error) {
-      setText('');
-      await loadComments();
+      const { comments: data } = await getComments(postId);
+      setComments(data);
+      setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
     }
     setIsSending(false);
   };
@@ -92,7 +99,6 @@ export default function CommentsScreen() {
             keyExtractor={(item) => item.id}
             contentContainerStyle={{ paddingHorizontal: 20, paddingTop: headerContentHeight, paddingBottom: 20 }}
             showsVerticalScrollIndicator={false}
-            onContentSizeChange={() => { if (comments.length > 0) listRef.current?.scrollToEnd({ animated: false }); }}
             ListEmptyComponent={
               <View style={{ alignItems: 'center', paddingTop: 40 }}>
                 <Text style={{ fontSize: 32 }}>💬</Text>

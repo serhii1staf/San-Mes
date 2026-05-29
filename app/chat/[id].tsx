@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { View, FlatList, TextInput, Pressable, ViewStyle, KeyboardAvoidingView, Platform, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useLocalSearchParams, router } from 'expo-router';
@@ -8,44 +8,31 @@ import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { useChatStore } from '../../src/store';
-import { mockMessages, mockConversations, formatMessageTime, formatMessageDate } from '../../src/utils/mockData';
+import { supabase } from '../../src/lib/supabase';
+import { mockMessages, mockConversations, formatMessageTime } from '../../src/utils/mockData';
 import { ChatMessage } from '../../src/types';
 import { triggerHaptic } from '../../src/utils/haptics';
-import { playSendSound } from '../../src/utils/sounds';
 
 function MessageBubble({ message, isOwn }: { message: ChatMessage; isOwn: boolean }) {
   const theme = useTheme();
-  const bubbleStyle: ViewStyle = {
-    maxWidth: '75%',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 18,
-    marginBottom: 4,
-    backgroundColor: isOwn ? theme.colors.accent.primary : theme.colors.background.tertiary,
-    alignSelf: isOwn ? 'flex-end' : 'flex-start',
-    marginLeft: isOwn ? 0 : 16,
-    marginRight: isOwn ? 16 : 0,
-    borderBottomRightRadius: isOwn ? 4 : 18,
-    borderBottomLeftRadius: isOwn ? 18 : 4,
-  };
-
   return (
-    <View style={bubbleStyle}>
+    <View style={{
+      maxWidth: '75%',
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      borderRadius: 18,
+      marginBottom: 4,
+      backgroundColor: isOwn ? theme.colors.accent.primary : theme.colors.background.tertiary,
+      alignSelf: isOwn ? 'flex-end' : 'flex-start',
+      marginLeft: isOwn ? 0 : 16,
+      marginRight: isOwn ? 16 : 0,
+      borderBottomRightRadius: isOwn ? 4 : 18,
+      borderBottomLeftRadius: isOwn ? 18 : 4,
+    }}>
       <Text variant="body" color={isOwn ? '#FFFFFF' : theme.colors.text.primary}>{message.text}</Text>
       <Text variant="caption" color={isOwn ? 'rgba(255,255,255,0.6)' : theme.colors.text.tertiary} style={{ marginTop: 3, alignSelf: 'flex-end', fontSize: 10 }}>
         {formatMessageTime(message.createdAt)}
       </Text>
-    </View>
-  );
-}
-
-function DateSeparator({ date }: { date: string }) {
-  const theme = useTheme();
-  return (
-    <View style={{ alignItems: 'center', marginVertical: 12 }}>
-      <View style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10, backgroundColor: theme.colors.background.tertiary }}>
-        <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 10 }}>{date}</Text>
-      </View>
     </View>
   );
 }
@@ -55,11 +42,14 @@ export default function ChatScreen() {
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
   const [inputText, setInputText] = useState('');
-  const [showTyping, setShowTyping] = useState(false);
   const flatListRef = useRef<FlatList>(null);
   const { messages: storeMessages, setMessages, addMessage } = useChatStore();
+  const hasScrolled = useRef(false);
 
+  // Try to find conversation in mock data, or load profile from DB
   const conversation = mockConversations.find((c) => c.id === id);
+  const [profileData, setProfileData] = useState<any>(null);
+
   const chatMessages = (storeMessages[id || ''] || []) as ChatMessage[];
 
   const bgColor = theme.colors.background.primary;
@@ -67,19 +57,38 @@ export default function ChatScreen() {
   const headerContentHeight = insets.top + 48;
   const headerGradientHeight = headerContentHeight + 28;
 
+  // Load profile data for chat header if not in mock conversations
+  useEffect(() => {
+    if (!conversation && id) {
+      supabase.from('profiles').select('*').eq('id', id).single().then(({ data }) => {
+        if (data) setProfileData(data);
+      });
+    }
+  }, [id, conversation]);
+
   useEffect(() => {
     if (id && mockMessages[id]) {
       setMessages(id, mockMessages[id]);
-      // Scroll to end after data loads
-      setTimeout(() => {
-        flatListRef.current?.scrollToEnd({ animated: false });
-      }, 100);
     }
   }, [id]);
 
+  // Scroll to end once after initial render
+  const scrollToBottom = useCallback(() => {
+    if (chatMessages.length > 0) {
+      setTimeout(() => flatListRef.current?.scrollToEnd({ animated: false }), 50);
+    }
+  }, [chatMessages.length]);
+
+  useEffect(() => {
+    if (!hasScrolled.current && chatMessages.length > 0) {
+      hasScrolled.current = true;
+      setTimeout(() => flatListRef.current?.scrollToEnd({ animated: false }), 150);
+    }
+  }, [chatMessages.length]);
+
   const handleSend = () => {
     if (!inputText.trim() || !id) return;
-    playSendSound();
+    triggerHaptic('medium');
     const newMessage: ChatMessage = {
       id: 'm-' + Date.now(),
       conversationId: id,
@@ -90,9 +99,15 @@ export default function ChatScreen() {
     };
     addMessage(id, newMessage);
     setInputText('');
-    setShowTyping(true);
-    setTimeout(() => setShowTyping(false), 2000);
+    // Scroll to new message
+    setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 50);
   };
+
+  // Display name and emoji from conversation or profile
+  const displayName = conversation?.participantName || profileData?.display_name || 'Чат';
+  const displayEmoji = (conversation as any)?.participantEmoji || profileData?.emoji || '😊';
+  const displayVerified = profileData?.is_verified || false;
+  const profileId = (conversation as any)?.participantId || id;
 
   return (
     <View style={{ flex: 1, backgroundColor: bgColor }}>
@@ -104,13 +119,13 @@ export default function ChatScreen() {
             <Feather name="chevron-left" size={24} color={theme.colors.text.primary} />
           </Pressable>
           {/* Name centered in rounded container */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: theme.colors.background.elevated, paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20, borderWidth: 1, borderColor: theme.colors.border.light }}>
-            <Text variant="caption" weight="semibold">{conversation?.participantName || 'Чат'}</Text>
-            {(conversation as any)?.isVerified && <VerifiedBadge size={11} />}
-          </View>
-          {/* Avatar right */}
-          <Pressable onPress={() => { if (conversation) router.push({ pathname: '/profile/[id]', params: { id: conversation.participantId || '' } }); }}>
-            <Avatar emoji={(conversation as any)?.participantEmoji || '😊'} size="sm" />
+          <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId } })} style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: theme.colors.background.elevated, paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20, borderWidth: 1, borderColor: theme.colors.border.light }}>
+            <Text variant="caption" weight="semibold">{displayName}</Text>
+            {displayVerified && <VerifiedBadge size={11} />}
+          </Pressable>
+          {/* Avatar right — tap opens profile */}
+          <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId } })}>
+            <Avatar emoji={displayEmoji} size="sm" />
           </Pressable>
         </View>
       </View>
@@ -122,10 +137,8 @@ export default function ChatScreen() {
           data={chatMessages}
           keyExtractor={(item) => item.id}
           renderItem={({ item }) => <MessageBubble message={item} isOwn={item.senderId === 'current'} />}
-          contentContainerStyle={{ paddingHorizontal: 0, paddingTop: headerContentHeight, paddingBottom: 8 }}
+          contentContainerStyle={{ paddingTop: headerContentHeight, paddingBottom: 8 }}
           showsVerticalScrollIndicator={false}
-          onLayout={() => { if (chatMessages.length > 0) flatListRef.current?.scrollToEnd({ animated: false }); }}
-          onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: false })}
         />
 
         {/* Input */}
