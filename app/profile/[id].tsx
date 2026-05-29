@@ -516,7 +516,6 @@ export default function UserProfileScreen() {
               const isRepostPost = post.isRepost;
               const origPost = post.originalPost;
               return (
-              return (
               <SwipeablePostCard key={post.id} shareText={`${displayProfile.display_name}: ${post.content || ''}\nhttps://san-mes.vercel.app/post/${post.id}`}>
               <Pressable onPress={() => router.push({ pathname: '/comments/[id]', params: { id: post.id } })} onLongPress={() => { triggerHaptic('medium'); setContextPost({ ...post, authorName: displayProfile.display_name, authorUsername: displayProfile.username, authorEmoji: displayProfile.emoji || '😊', authorVerified: displayProfile.is_verified, authorBadge: displayProfile.badge, authorId: displayProfile.id }); }} delayLongPress={400} style={{ flexDirection: 'row', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.75)', borderRadius: 28, padding: 10, marginBottom: 12, borderWidth: 1, borderColor: theme.isDark ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.4)', shadowColor: theme.isDark ? '#000' : '#c8a060', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.12, shadowRadius: 20, elevation: 4, overflow: 'hidden' }}>
                 {/* Left: Image grid thumbnail */}
