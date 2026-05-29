@@ -13,6 +13,8 @@ import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { UserBadge } from '../../src/components/ui/UserBadge';
 import { FormattedText } from '../../src/components/ui/FormattedText';
 import { AccountSwitcher } from '../../src/components/ui/AccountSwitcher';
+import { PostContextMenu } from '../../src/components/ui/PostContextMenu';
+import { showToast } from '../../src/store/toastStore';
 import { useAuthStore } from '../../src/store';
 import { useFeedStore } from '../../src/store/feedStore';
 import { isRepost, parseImageUrls, getFollowCounts, supabase, deletePost } from '../../src/lib/supabase';
@@ -76,6 +78,7 @@ export default function ProfileScreen() {
   const [showQR, setShowQR] = useState(false);
   const [viewingImage, setViewingImage] = useState<{ uri: string; postId: string; allImages?: string[] } | null>(null);
   const [showAccountSwitcher, setShowAccountSwitcher] = useState(false);
+  const [contextPost, setContextPost] = useState<any>(null);
 
   // Sync badge/is_verified from DB on mount (in case it changed via admin panel)
   useEffect(() => {
@@ -270,7 +273,7 @@ export default function ProfileScreen() {
             const hasImage = imgs.length > 0;
             const isRepostPost = post.isRepost;
             return (
-            <Pressable key={post.id} onPress={() => router.push({ pathname: '/comments/[id]', params: { id: post.id } })} style={{ flexDirection: 'row', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.75)', borderRadius: 28, padding: 10, marginBottom: 12, borderWidth: 1, borderColor: theme.isDark ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.4)', shadowColor: theme.isDark ? '#000' : '#c8a060', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.12, shadowRadius: 20, elevation: 4, overflow: 'hidden' }}>
+            <Pressable key={post.id} onPress={() => router.push({ pathname: '/comments/[id]', params: { id: post.id } })} onLongPress={() => { triggerHaptic('medium'); setContextPost(post); }} delayLongPress={400} style={{ flexDirection: 'row', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.75)', borderRadius: 28, padding: 10, marginBottom: 12, borderWidth: 1, borderColor: theme.isDark ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.4)', shadowColor: theme.isDark ? '#000' : '#c8a060', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.12, shadowRadius: 20, elevation: 4, overflow: 'hidden' }}>
               {/* Left: Image grid thumbnail */}
               {hasImage ? (
                 <Pressable onPress={() => setViewingImage({ uri: imgs[0], postId: post.id, allImages: imgs })}>
@@ -419,6 +422,7 @@ export default function ProfileScreen() {
         </View>
       </Modal>
       <AccountSwitcher visible={showAccountSwitcher} onClose={() => setShowAccountSwitcher(false)} />
+      <PostContextMenu visible={!!contextPost} post={contextPost} isOwnPost={true} onClose={() => setContextPost(null)} onDelete={async (postId) => { if (user?.id) { await deletePost(postId, user.id); useFeedStore.getState().removePost(postId); loadMyPosts(); showToast('Пост удалён', 'trash-2'); } }} />
     </View>
   );
 }
