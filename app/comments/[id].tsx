@@ -24,6 +24,7 @@ export default function CommentsScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
   const inputRef = useRef<TextInput>(null);
+  const listRef = useRef<FlatList>(null);
 
   const bgColor = theme.colors.background.primary;
   const bgTransparent = bgColor + '00';
@@ -86,9 +87,12 @@ export default function CommentsScreen() {
           </View>
         ) : (
           <FlatList
+            ref={listRef}
             data={comments}
             keyExtractor={(item) => item.id}
             contentContainerStyle={{ paddingHorizontal: 20, paddingTop: headerContentHeight, paddingBottom: 20 }}
+            showsVerticalScrollIndicator={false}
+            onContentSizeChange={() => { if (comments.length > 0) listRef.current?.scrollToEnd({ animated: false }); }}
             ListEmptyComponent={
               <View style={{ alignItems: 'center', paddingTop: 40 }}>
                 <Text style={{ fontSize: 32 }}>💬</Text>

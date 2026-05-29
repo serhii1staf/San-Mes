@@ -70,6 +70,10 @@ export default function ChatScreen() {
   useEffect(() => {
     if (id && mockMessages[id]) {
       setMessages(id, mockMessages[id]);
+      // Scroll to end after data loads
+      setTimeout(() => {
+        flatListRef.current?.scrollToEnd({ animated: false });
+      }, 100);
     }
   }, [id]);
 

@@ -1,23 +1,11 @@
-import { Audio } from 'expo-av';
-
-let sendSound: Audio.Sound | null = null;
+import * as Haptics from 'expo-haptics';
 
 /**
- * Play a short send sound (beep)
+ * Play send feedback — notification haptic as sound substitute
+ * Real audio sound requires a native rebuild with expo-av
  */
 export async function playSendSound() {
   try {
-    await Audio.setAudioModeAsync({ playsInSilentModeIOS: true });
-    if (!sendSound) {
-      const { sound } = await Audio.Sound.createAsync(
-        require('../../assets/send.wav'),
-        { shouldPlay: false, volume: 0.5 }
-      );
-      sendSound = sound;
-    }
-    await sendSound.setPositionAsync(0);
-    await sendSound.playAsync();
-  } catch {
-    // Silently fail
-  }
+    await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  } catch {}
 }
