@@ -332,7 +332,7 @@ export default function CreateScreen() {
             }
           }
 
-          const { post, error } = await createPost(user.id, postContent, imageUrl);
+          const { post, error } = await createPost(user.id, postContent, isSpoilerPhoto && imageUrl ? `::spoiler::${imageUrl}` : imageUrl);
           if (!error && post) {
             // Add to local feed cache immediately so it appears in feed + profile
             const { parseImageUrls } = await import('../../src/lib/supabase');

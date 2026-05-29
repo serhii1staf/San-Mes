@@ -11,7 +11,7 @@ import { PostCard } from '../../src/components/feed/PostCard';
 import { PostMenuModal } from '../../src/components/feed/PostMenuModal';
 import { useFeedStore, useAuthStore } from '../../src/store';
 import { Post } from '../../src/types';
-import { getPosts, isRepost, parseImageUrls, toggleLike as apiToggleLike, supabase } from '../../src/lib/supabase';
+import { getPosts, isRepost, parseImageUrls, isImageSpoiler, toggleLike as apiToggleLike, supabase } from '../../src/lib/supabase';
 import { useUpdateStore } from '../../src/store/updateStore';
 import { triggerHaptic } from '../../src/utils/haptics';
 
@@ -53,6 +53,7 @@ function SkeletonCard() {
 function mapRawPost(p: any, postsById: Record<string, any>): Post | null {
   const repostInfo = isRepost(p.content || '');
   const parsedImages = parseImageUrls(p.image_url);
+  const spoiler = isImageSpoiler(p.image_url);
   const profileData = Array.isArray(p.profiles) ? p.profiles[0] : p.profiles;
 
   let post: Post = {
@@ -66,6 +67,7 @@ function mapRawPost(p: any, postsById: Record<string, any>): Post | null {
     content: repostInfo.isRepost ? (repostInfo.comment || '') : (p.content || ''),
     imageUrl: parsedImages[0] || undefined,
     imageUrls: parsedImages.length > 0 ? parsedImages : undefined,
+    isSpoilerImage: spoiler,
     likesCount: p.likes_count || 0,
     commentsCount: p.comments_count || 0,
     sharesCount: p.shares_count || 0,

@@ -10,6 +10,7 @@ import { CachedImage } from '../ui/CachedImage';
 import { VerifiedBadge } from '../ui/VerifiedBadge';
 import { UserBadge } from '../ui/UserBadge';
 import { FormattedText } from '../ui/FormattedText';
+import { SpoilerImage } from '../ui/SpoilerImage';
 import { Post } from '../../types';
 import { formatTimeAgo } from '../../utils/mockData';
 import { triggerHaptic } from '../../utils/haptics';
@@ -218,11 +219,17 @@ export const PostCard = memo(function PostCard({ post, onLike, onComment, onShar
 
       {/* Image carousel (non-repost) */}
       {!post.isRepost && imageUrls.length > 0 && (
-        <ImageCarousel
-          imageUrls={imageUrls}
-          onDoubleTap={handleDoubleTap}
-          cardWidth={cardWidth}
-        />
+        post.isSpoilerImage ? (
+          <View style={{ paddingHorizontal: 12 }}>
+            <SpoilerImage uri={imageUrls[0]} width="100%" height={CAROUSEL_HEIGHT} borderRadius={theme.borderRadius.md} isSpoiler={true} />
+          </View>
+        ) : (
+          <ImageCarousel
+            imageUrls={imageUrls}
+            onDoubleTap={handleDoubleTap}
+            cardWidth={cardWidth}
+          />
+        )
       )}
 
       {/* Action Bar */}

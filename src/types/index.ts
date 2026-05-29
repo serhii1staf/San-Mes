@@ -25,6 +25,7 @@ export interface Post {
   content: string;
   imageUrl?: string;
   imageUrls?: string[];
+  isSpoilerImage?: boolean;
   likesCount: number;
   commentsCount: number;
   sharesCount: number;

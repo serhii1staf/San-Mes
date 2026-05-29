@@ -59,10 +59,18 @@ export async function uploadPostImage(imageUri: string): Promise<{ url: string |
 
 const IMAGE_URL_SEPARATOR = '|';
 
-/** Parse pipe-separated image URLs from the image_url column. Backward compatible with single URLs. */
+const SPOILER_PREFIX = '::spoiler::';
+
+/** Check if image_url is marked as spoiler */
+export function isImageSpoiler(imageUrl: string | null | undefined): boolean {
+  return !!imageUrl && imageUrl.startsWith(SPOILER_PREFIX);
+}
+
+/** Parse pipe-separated image URLs from the image_url column. Strips spoiler prefix. */
 export function parseImageUrls(imageUrl: string | null | undefined): string[] {
   if (!imageUrl) return [];
-  return imageUrl.split(IMAGE_URL_SEPARATOR).filter(Boolean);
+  const clean = imageUrl.startsWith(SPOILER_PREFIX) ? imageUrl.slice(SPOILER_PREFIX.length) : imageUrl;
+  return clean.split(IMAGE_URL_SEPARATOR).filter(Boolean);
 }
 
 /** Join multiple image URLs into a pipe-separated string for storage. */
