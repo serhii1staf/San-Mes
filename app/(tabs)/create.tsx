@@ -184,6 +184,25 @@ export default function CreateScreen() {
       return;
     }
 
+    // Rate limit check
+    const { checkRateLimit, recordAction, detectSuspiciousContent } = await import('../../src/services/rateLimit');
+    const action = repostData ? 'repost' : 'post';
+    const rl = checkRateLimit(action);
+    if (!rl.allowed) {
+      const secs = Math.ceil(rl.retryAfterMs / 1000);
+      Alert.alert('Подождите', `Слишком частые действия. Попробуйте через ${secs} сек.`);
+      return;
+    }
+
+    // Spam/phishing check
+    if (content.trim()) {
+      const spam = detectSuspiciousContent(content);
+      if (spam.isSuspicious) {
+        Alert.alert('Контент заблокирован', spam.reason || 'Подозрительный контент');
+        return;
+      }
+    }
+
     setIsPosting(true);
     try {
       // Handle repost — now supports images
@@ -420,6 +439,8 @@ export default function CreateScreen() {
     } finally {
       setIsPosting(false);
       setImageUploading(false);
+      // Record action for rate limiting
+      recordAction(repostData ? 'repost' : 'post');
     }
   };
 

@@ -8,6 +8,7 @@ import { fontAssets } from '../src/theme/fonts';
 import { useAuthStore } from '../src/store';
 import { BrowserMiniBar } from '../src/components/ui/BrowserMiniBar';
 import { Toast } from '../src/components/ui/Toast';
+import { initRateLimits } from '../src/services/rateLimit';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -91,7 +92,10 @@ export default function RootLayout() {
   const ready = fontsLoaded || fontError !== null || fontTimeout;
 
   useEffect(() => {
-    if (ready) SplashScreen.hideAsync().catch(() => {});
+    if (ready) {
+      SplashScreen.hideAsync().catch(() => {});
+      initRateLimits();
+    }
   }, [ready]);
 
   useEffect(() => {
