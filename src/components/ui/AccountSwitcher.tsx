@@ -7,8 +7,10 @@ import { Avatar } from './Avatar';
 import { VerifiedBadge } from './VerifiedBadge';
 import { useAuthStore } from '../../store/authStore';
 import { useAccountsStore, SavedAccount } from '../../store/accountsStore';
+import { useFeedStore } from '../../store/feedStore';
 import { supabase } from '../../lib/supabase';
 import { showToast } from '../../store/toastStore';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -75,6 +77,12 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
     }
 
     saveCurrentAccount();
+
+    // Clear all cached data from previous account
+    await AsyncStorage.multiRemove(['@san:feed_posts', '@san:my_posts']);
+    useFeedStore.getState().setPosts([]);
+    useFeedStore.getState().setProfilePosts([]);
+
     login({
       id: profile.id,
       username: profile.username,
@@ -112,6 +120,12 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
     }
     // Save current and switch
     saveCurrentAccount();
+
+    // Clear all cached data from previous account
+    await AsyncStorage.multiRemove(['@san:feed_posts', '@san:my_posts']);
+    useFeedStore.getState().setPosts([]);
+    useFeedStore.getState().setProfilePosts([]);
+
     addAccount({
       id: profile.id,
       username: profile.username,
