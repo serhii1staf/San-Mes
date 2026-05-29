@@ -42,8 +42,6 @@ function AuthNavigationGuard({ children }: { children: React.ReactNode }) {
   if (!hasHydrated || showSplash || isLoggingOut) {
     return <CustomSplash />;
   }
-    return <CustomSplash />;
-  }
   return <>{children}</>;
 }
 
