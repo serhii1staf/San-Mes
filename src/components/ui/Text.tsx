@@ -28,24 +28,24 @@ export function Text({
 
   const variantStyles: Record<TextVariant, TextStyle> = {
     heading: {
-      fontSize: theme.typography.sizes['2xl'],
-      lineHeight: theme.typography.sizes['2xl'] * theme.typography.lineHeights.tight,
+      fontSize: theme.typography.sizes['2xl'] * theme.fontScale,
+      lineHeight: theme.typography.sizes['2xl'] * theme.fontScale * theme.typography.lineHeights.tight,
     },
     subheading: {
-      fontSize: theme.typography.sizes.lg,
-      lineHeight: theme.typography.sizes.lg * theme.typography.lineHeights.tight,
+      fontSize: theme.typography.sizes.lg * theme.fontScale,
+      lineHeight: theme.typography.sizes.lg * theme.fontScale * theme.typography.lineHeights.tight,
     },
     body: {
-      fontSize: theme.typography.sizes.base,
-      lineHeight: theme.typography.sizes.base * theme.typography.lineHeights.normal,
+      fontSize: theme.typography.sizes.base * theme.fontScale,
+      lineHeight: theme.typography.sizes.base * theme.fontScale * theme.typography.lineHeights.normal,
     },
     caption: {
-      fontSize: theme.typography.sizes.sm,
-      lineHeight: theme.typography.sizes.sm * theme.typography.lineHeights.normal,
+      fontSize: theme.typography.sizes.sm * theme.fontScale,
+      lineHeight: theme.typography.sizes.sm * theme.fontScale * theme.typography.lineHeights.normal,
     },
     label: {
-      fontSize: theme.typography.sizes.xs,
-      lineHeight: theme.typography.sizes.xs * theme.typography.lineHeights.normal,
+      fontSize: theme.typography.sizes.xs * theme.fontScale,
+      lineHeight: theme.typography.sizes.xs * theme.fontScale * theme.typography.lineHeights.normal,
       textTransform: 'uppercase',
       letterSpacing: 0.5,
     },

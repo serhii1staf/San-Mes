@@ -3,7 +3,7 @@ import { lightTheme, darkTheme, ThemeColors, colors, spacing, borderRadius, typo
 import { fontFamily } from './fonts';
 import { shadows, getShadow } from './shadows';
 import { timingConfigs, springConfigs } from './animations';
-import { useThemeStore, ACCENT_COLORS } from '../store/themeStore';
+import { useThemeStore, ACCENT_COLORS, FONT_SIZES } from '../store/themeStore';
 
 export interface Theme {
   colors: ThemeColors;
@@ -12,6 +12,7 @@ export interface Theme {
   borderRadius: typeof borderRadius;
   typography: typeof typography;
   fontFamily: typeof fontFamily;
+  fontScale: number;
   shadows: typeof shadows;
   getShadow: typeof getShadow;
   animations: {
@@ -30,8 +31,13 @@ interface ThemeProviderProps {
 export function ThemeProvider({ children }: ThemeProviderProps) {
   const mode = useThemeStore((state) => state.mode);
   const accent = useThemeStore((state) => state.accent);
+  const fontSize = useThemeStore((state) => state.fontSize);
   const isDark = mode === 'dark';
   const baseColors = isDark ? darkTheme : lightTheme;
+
+  // Font scale
+  const fontSizeConfig = FONT_SIZES.find(f => f.key === fontSize);
+  const fontScale = fontSizeConfig?.scale || 1.0;
 
   // Find accent config
   const accentConfig = ACCENT_COLORS.find((c) => c.key === accent);
@@ -100,6 +106,7 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
     borderRadius,
     typography,
     fontFamily,
+    fontScale,
     shadows,
     getShadow,
     animations: {

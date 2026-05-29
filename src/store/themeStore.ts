@@ -10,6 +10,21 @@ const mmkvStorage: StateStorage = {
 
 export type ThemeMode = 'light' | 'dark';
 export type AccentColor = 'coral' | 'sage' | 'lavender' | 'sky' | 'peach' | 'mint';
+export type FontFamily = 'inter' | 'system' | 'serif' | 'mono';
+export type FontSize = 'small' | 'medium' | 'large';
+
+export const FONT_FAMILIES: { key: FontFamily; label: string; preview: string }[] = [
+  { key: 'inter', label: 'Inter', preview: 'Aa' },
+  { key: 'system', label: 'Системный', preview: 'Aa' },
+  { key: 'serif', label: 'Serif', preview: 'Aa' },
+  { key: 'mono', label: 'Mono', preview: 'Aa' },
+];
+
+export const FONT_SIZES: { key: FontSize; label: string; scale: number }[] = [
+  { key: 'small', label: 'Мелкий', scale: 0.85 },
+  { key: 'medium', label: 'Обычный', scale: 1.0 },
+  { key: 'large', label: 'Крупный', scale: 1.15 },
+];
 
 export const ACCENT_COLORS: {
   key: AccentColor;
@@ -33,8 +48,12 @@ export const ACCENT_COLORS: {
 interface ThemeStoreState {
   mode: ThemeMode;
   accent: AccentColor;
+  fontFamily: FontFamily;
+  fontSize: FontSize;
   setMode: (mode: ThemeMode) => void;
   setAccent: (accent: AccentColor) => void;
+  setFontFamily: (fontFamily: FontFamily) => void;
+  setFontSize: (fontSize: FontSize) => void;
   toggle: () => void;
 }
 
@@ -43,8 +62,12 @@ export const useThemeStore = create<ThemeStoreState>()(
     (set) => ({
       mode: 'dark',
       accent: 'coral',
+      fontFamily: 'inter',
+      fontSize: 'medium',
       setMode: (mode) => set({ mode }),
       setAccent: (accent) => set({ accent }),
+      setFontFamily: (fontFamily) => set({ fontFamily }),
+      setFontSize: (fontSize) => set({ fontSize }),
       toggle: () => set((state) => ({ mode: state.mode === 'light' ? 'dark' : 'light' })),
     }),
     {
