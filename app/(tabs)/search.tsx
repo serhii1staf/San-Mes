@@ -1,13 +1,16 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { View, Pressable, ViewStyle, TextInput, FlatList, ActivityIndicator } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { UserBadge } from '../../src/components/ui/UserBadge';
 import { getProfiles } from '../../src/lib/supabase';
+
+const SEARCH_HISTORY_KEY = '@san:search_history';
 
 interface ProfileResult {
   id: string;
@@ -27,9 +30,11 @@ export default function SearchScreen() {
   const [profiles, setProfiles] = useState<ProfileResult[]>([]);
   const [allProfiles, setAllProfiles] = useState<ProfileResult[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [history, setHistory] = useState<ProfileResult[]>([]);
 
   useEffect(() => {
     loadProfiles();
+    loadHistory();
   }, []);
 
   useEffect(() => {
@@ -41,7 +46,7 @@ export default function SearchScreen() {
       );
       setProfiles(filtered);
     } else {
-      setProfiles(allProfiles);
+      setProfiles([]);
     }
   }, [query, allProfiles]);
 
@@ -49,8 +54,30 @@ export default function SearchScreen() {
     setIsLoading(true);
     const { profiles: data } = await getProfiles();
     setAllProfiles(data as any[]);
-    setProfiles(data as any[]);
     setIsLoading(false);
+  };
+
+  const loadHistory = async () => {
+    try {
+      const cached = await AsyncStorage.getItem(SEARCH_HISTORY_KEY);
+      if (cached) setHistory(JSON.parse(cached));
+    } catch {}
+  };
+
+  const addToHistory = useCallback(async (profile: ProfileResult) => {
+    const updated = [profile, ...history.filter(h => h.id !== profile.id)].slice(0, 10);
+    setHistory(updated);
+    await AsyncStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(updated));
+  }, [history]);
+
+  const clearHistory = async () => {
+    setHistory([]);
+    await AsyncStorage.removeItem(SEARCH_HISTORY_KEY);
+  };
+
+  const handleSelect = (item: ProfileResult) => {
+    addToHistory(item);
+    router.push({ pathname: '/profile/[id]', params: { id: item.id } });
   };
 
   const containerStyle: ViewStyle = {
@@ -58,6 +85,8 @@ export default function SearchScreen() {
     backgroundColor: theme.colors.background.primary,
     paddingTop: insets.top,
   };
+
+  const showHistory = !query.trim() && history.length > 0;
 
   return (
     <View style={containerStyle}>
@@ -108,19 +137,44 @@ export default function SearchScreen() {
         )}
       </View>
 
+      {/* History */}
+      {showHistory && (
+        <View style={{ paddingHorizontal: theme.spacing.base, paddingTop: 16 }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <Text variant="caption" weight="semibold" color={theme.colors.text.secondary}>Недавние</Text>
+            <Pressable onPress={clearHistory}>
+              <Text variant="caption" color={theme.colors.accent.primary}>Очистить</Text>
+            </Pressable>
+          </View>
+          {history.map(item => (
+            <Pressable key={item.id} onPress={() => handleSelect(item)} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10 }}>
+              <Avatar emoji={item.emoji} size="sm" />
+              <View style={{ marginLeft: 10, flex: 1 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                  <Text variant="caption" weight="semibold" numberOfLines={1} style={{ maxWidth: '70%' }}>{item.display_name}</Text>
+                  {item.is_verified && <VerifiedBadge size={10} />}
+                </View>
+                <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>@{item.username}</Text>
+              </View>
+              <Feather name="clock" size={14} color={theme.colors.text.tertiary} />
+            </Pressable>
+          ))}
+        </View>
+      )}
+
       {/* Results */}
-      {isLoading ? (
+      {isLoading && !showHistory ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
           <ActivityIndicator size="large" color={theme.colors.accent.primary} />
         </View>
-      ) : (
+      ) : query.trim() ? (
         <FlatList
           data={profiles}
           keyExtractor={(item) => item.id}
           contentContainerStyle={{ paddingHorizontal: theme.spacing.base, paddingTop: 16, paddingBottom: 100 }}
           renderItem={({ item }) => (
             <Pressable
-              onPress={() => router.push({ pathname: '/profile/[id]', params: { id: item.id } })}
+              onPress={() => handleSelect(item)}
               style={{
                 flexDirection: 'row',
                 alignItems: 'center',
@@ -130,13 +184,13 @@ export default function SearchScreen() {
               }}
             >
               <Avatar emoji={item.emoji} size="md" />
-              <View style={{ marginLeft: 12, flex: 1 }}>
+              <View style={{ marginLeft: 12, flex: 1, overflow: 'hidden' }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-                  <Text variant="body" weight="semibold">{item.display_name}</Text>
+                  <Text variant="body" weight="semibold" numberOfLines={1} style={{ flexShrink: 1 }}>{item.display_name}</Text>
                   {item.is_verified && <VerifiedBadge size={12} />}
                   {item.badge && <UserBadge badge={item.badge} size="sm" />}
                 </View>
-                <Text variant="caption" color={theme.colors.text.secondary}>@{item.username}</Text>
+                <Text variant="caption" color={theme.colors.text.secondary} numberOfLines={1}>@{item.username}</Text>
               </View>
               <Feather name="chevron-right" size={18} color={theme.colors.text.tertiary} />
             </Pressable>
@@ -147,7 +201,7 @@ export default function SearchScreen() {
             </View>
           }
         />
-      )}
+      ) : null}
     </View>
   );
 }
