@@ -32,12 +32,22 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
   const mode = useThemeStore((state) => state.mode);
   const accent = useThemeStore((state) => state.accent);
   const fontSize = useThemeStore((state) => state.fontSize);
+  const selectedFont = useThemeStore((state) => state.fontFamily);
   const isDark = mode === 'dark';
   const baseColors = isDark ? darkTheme : lightTheme;
 
   // Font scale
   const fontSizeConfig = FONT_SIZES.find(f => f.key === fontSize);
   const fontScale = fontSizeConfig?.scale || 1.0;
+
+  // Font family mapping based on user selection
+  const fontFamilyMap: Record<string, typeof fontFamily> = {
+    inter: fontFamily, // loaded Inter fonts
+    system: { light: 'System', regular: 'System', medium: 'System', semibold: 'System', bold: 'System' },
+    serif: { light: 'Georgia', regular: 'Georgia', medium: 'Georgia', semibold: 'Georgia', bold: 'Georgia' },
+    mono: { light: 'Courier', regular: 'Courier', medium: 'Courier New', semibold: 'Courier New', bold: 'Courier New' },
+  };
+  const activeFontFamily = fontFamilyMap[selectedFont] || fontFamily;
 
   // Find accent config
   const accentConfig = ACCENT_COLORS.find((c) => c.key === accent);
@@ -105,7 +115,7 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
     spacing,
     borderRadius,
     typography,
-    fontFamily,
+    fontFamily: activeFontFamily,
     fontScale,
     shadows,
     getShadow,

@@ -25,8 +25,18 @@ export default function FontsScreen() {
       <ScrollView contentContainerStyle={{ paddingHorizontal: 24, paddingBottom: 60 }} showsVerticalScrollIndicator={false}>
         {/* Preview */}
         <View style={{ backgroundColor: theme.colors.background.elevated, borderRadius: 20, padding: 20, marginBottom: 28, borderWidth: 1, borderColor: theme.colors.border.light }}>
-          <Text variant="subheading" weight="bold" style={{ marginBottom: 4 }}>Предпросмотр</Text>
-          <Text variant="body" color={theme.colors.text.secondary}>Это пример текста с текущими настройками шрифта. Размер и стиль будут применены ко всему приложению.</Text>
+          <Text variant="body" weight="bold" style={{ marginBottom: 8 }}>Привет, мир! 👋</Text>
+          <Text variant="body" color={theme.colors.text.secondary} style={{ marginBottom: 12 }}>Это пример текста с текущими настройками.</Text>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <View style={{ flex: 1, backgroundColor: theme.colors.accent.primary + '15', borderRadius: 12, padding: 10 }}>
+              <Text variant="caption" weight="semibold" color={theme.colors.accent.primary}>Заголовок</Text>
+              <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginTop: 2 }}>Подзаголовок</Text>
+            </View>
+            <View style={{ flex: 1, backgroundColor: theme.colors.background.secondary, borderRadius: 12, padding: 10 }}>
+              <Text variant="caption" weight="medium">12:30</Text>
+              <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginTop: 2 }}>Сообщение</Text>
+            </View>
+          </View>
         </View>
 
         {/* Font Size */}
