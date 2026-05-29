@@ -16,6 +16,7 @@ function AuthNavigationGuard({ children }: { children: React.ReactNode }) {
   const segments = useSegments();
   const router = useRouter();
   const [showSplash, setShowSplash] = useState(true);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
 
   useEffect(() => {
     const timer = setTimeout(() => setShowSplash(false), 800);
@@ -26,13 +27,21 @@ function AuthNavigationGuard({ children }: { children: React.ReactNode }) {
     if (!hasHydrated || showSplash) return;
     const inAuthGroup = segments[0] === '(auth)';
     if (!isAuthenticated && !inAuthGroup) {
-      router.replace('/(auth)/register');
+      // Show blank screen immediately to prevent crashes from null user
+      setIsLoggingOut(true);
+      // Navigate after a frame to let components unmount
+      setTimeout(() => {
+        router.replace('/(auth)/register');
+        setIsLoggingOut(false);
+      }, 50);
     } else if (isAuthenticated && inAuthGroup) {
       router.replace('/(tabs)');
     }
   }, [isAuthenticated, segments, hasHydrated, showSplash]);
 
-  if (!hasHydrated || showSplash) {
+  if (!hasHydrated || showSplash || isLoggingOut) {
+    return <CustomSplash />;
+  }
     return <CustomSplash />;
   }
   return <>{children}</>;
