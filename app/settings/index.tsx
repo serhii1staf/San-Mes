@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { View, ScrollView, Pressable, Switch, ViewStyle, Alert, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -72,7 +72,6 @@ export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
   const { logout } = useAuthStore();
   const { hapticEnabled, useInAppBrowser, setHaptic, setInAppBrowser } = useSettingsStore();
-  const [faceId, setFaceId] = useState(true);
 
   const handleLogout = () => {
     Alert.alert('Выход', 'Вы уверены, что хотите выйти?', [
@@ -192,6 +191,7 @@ export default function SettingsScreen() {
             icon="globe"
             label="Встроенный браузер"
             showChevron={false}
+            isLast
             rightElement={
               <Switch
                 value={useInAppBrowser}
@@ -200,11 +200,6 @@ export default function SettingsScreen() {
                 thumbColor="#FFFFFF"
               />
             }
-          />
-          <SettingsRow
-            icon="folder"
-            label="Папки с чатами"
-            isLast
           />
         </View>
 
@@ -216,48 +211,16 @@ export default function SettingsScreen() {
         </View>
         <View style={sectionCardStyle}>
           <SettingsRow
-            icon="shield"
-            label="Face ID"
-            showChevron={false}
-            rightElement={
-              <Switch
-                value={faceId}
-                onValueChange={setFaceId}
-                trackColor={{ true: '#4CD964', false: theme.colors.border.light }}
-                thumbColor="#FFFFFF"
-              />
-            }
-            isFirst
-          />
-          <SettingsRow
-            icon="lock"
-            label="Конфиденциальность"
-          />
-          <SettingsRow
             icon="smartphone"
             label="Устройства"
             value="2"
             onPress={() => router.push('/settings/device-key')}
+            isFirst
           />
           <SettingsRow
             icon="shield"
             label="Политика конфиденциальности"
             onPress={() => router.push('/settings/privacy')}
-            isLast
-          />
-        </View>
-
-        {/* Платежи */}
-        <View style={sectionTitleStyle}>
-          <Text variant="body" weight="semibold" color={theme.colors.text.secondary}>
-            Платежи
-          </Text>
-        </View>
-        <View style={sectionCardStyle}>
-          <SettingsRow
-            icon="file-text"
-            label="Квитанции"
-            isFirst
             isLast
           />
         </View>
