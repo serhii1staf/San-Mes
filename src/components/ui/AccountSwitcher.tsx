@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, Pressable, Modal, TextInput, Alert, Animated, Dimensions } from 'react-native';
+import { View, Pressable, Modal, TextInput, Alert, Animated, Dimensions, KeyboardAvoidingView, Platform } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../../theme';
 import { Text } from './Text';
@@ -142,6 +142,7 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
 
   return (
     <Modal visible={visible} transparent animationType="none" onRequestClose={dismiss} statusBarTranslucent>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View style={{ flex: 1 }}>
         <Animated.View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)', opacity: backdropAnim }}>
           <Pressable style={{ flex: 1 }} onPress={dismiss} />
@@ -224,6 +225,7 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
           </Animated.View>
         </View>
       </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
