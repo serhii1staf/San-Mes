@@ -50,7 +50,7 @@ export default function CommentsScreen() {
 
   const handleSend = async () => {
     if (!text.trim() || !user?.id || !postId) return;
-    triggerHaptic('light');
+    triggerHaptic('medium');
     setIsSending(true);
     const { error } = await createComment(postId, user.id, text.trim());
     if (!error) {

@@ -10,6 +10,7 @@ import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { useChatStore } from '../../src/store';
 import { mockMessages, mockConversations, formatMessageTime, formatMessageDate } from '../../src/utils/mockData';
 import { ChatMessage } from '../../src/types';
+import { triggerHaptic } from '../../src/utils/haptics';
 
 function MessageBubble({ message, isOwn }: { message: ChatMessage; isOwn: boolean }) {
   const theme = useTheme();
@@ -58,7 +59,7 @@ export default function ChatScreen() {
   const { messages: storeMessages, setMessages, addMessage } = useChatStore();
 
   const conversation = mockConversations.find((c) => c.id === id);
-  const chatMessages = (storeMessages[id || ''] || []) as ChatMessage[];
+  const chatMessages = (storeMessages[id || ''] || []).slice().reverse() as ChatMessage[];
 
   const bgColor = theme.colors.background.primary;
   const bgTransparent = bgColor + '00';
@@ -80,6 +81,7 @@ export default function ChatScreen() {
 
   const handleSend = () => {
     if (!inputText.trim() || !id) return;
+    triggerHaptic('medium');
     const newMessage: ChatMessage = {
       id: 'm-' + Date.now(),
       conversationId: id,
@@ -121,11 +123,10 @@ export default function ChatScreen() {
           ref={flatListRef}
           data={chatMessages}
           keyExtractor={(item) => item.id}
+          inverted
           renderItem={({ item }) => <MessageBubble message={item} isOwn={item.senderId === 'current'} />}
-          ListHeaderComponent={chatMessages.length > 0 ? <DateSeparator date={formatMessageDate(chatMessages[0]?.createdAt || new Date().toISOString())} /> : null}
-          contentContainerStyle={{ paddingTop: headerContentHeight, paddingBottom: 8 }}
+          contentContainerStyle={{ paddingTop: 8, paddingBottom: headerContentHeight }}
           showsVerticalScrollIndicator={false}
-          onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
         />
 
         {/* Input */}
