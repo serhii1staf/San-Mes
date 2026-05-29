@@ -346,6 +346,7 @@ export default function CreateScreen() {
               content: post.content || '',
               imageUrl: parsedImages[0] || undefined,
               imageUrls: parsedImages.length > 0 ? parsedImages : undefined,
+              isSpoilerImage: isSpoilerPhoto,
               likesCount: 0,
               commentsCount: 0,
               sharesCount: 0,
@@ -373,6 +374,7 @@ export default function CreateScreen() {
             setContent('');
             setImageUris([]);
             setEditingPostId(null);
+            setIsSpoilerPhoto(false);
             router.replace('/(tabs)');
             return;
           }
@@ -559,9 +561,17 @@ export default function CreateScreen() {
 
             {/* Image count indicator */}
             {imageUris.length > 0 && (
-              <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginTop: 6 }}>
-                {imageUris.length}/{MAX_IMAGES} фото
-              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6 }}>
+                <Text variant="caption" color={theme.colors.text.tertiary}>
+                  {imageUris.length}/{MAX_IMAGES} фото
+                </Text>
+                {isSpoilerPhoto && (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: theme.colors.accent.primary + '15', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>
+                    <Feather name="eye-off" size={10} color={theme.colors.accent.primary} />
+                    <Text variant="caption" color={theme.colors.accent.primary} style={{ fontSize: 10 }}>скрыто</Text>
+                  </View>
+                )}
+              </View>
             )}
 
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}>
