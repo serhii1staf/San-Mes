@@ -45,6 +45,8 @@ export default function LoginScreen() {
         deviceKey: profile.device_key,
         badge: profile.badge || undefined,
         is_verified: profile.is_verified || false,
+        bannerUrl: profile.banner_url || undefined,
+        links: profile.links || undefined,
       },
       'token-' + Date.now()
     );

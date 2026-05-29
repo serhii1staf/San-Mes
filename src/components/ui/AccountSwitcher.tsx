@@ -92,6 +92,8 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
       deviceKey: account.deviceKey,
       badge: profile.badge || undefined,
       is_verified: profile.is_verified || false,
+      bannerUrl: profile.banner_url || undefined,
+      links: profile.links || undefined,
     }, 'token-' + Date.now());
 
     // Restart app to cleanly load all data for new account
@@ -149,6 +151,8 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
       deviceKey,
       badge: profile.badge || undefined,
       is_verified: profile.is_verified || false,
+      bannerUrl: profile.banner_url || undefined,
+      links: profile.links || undefined,
     }, 'token-' + Date.now());
 
     // Restart app to cleanly load all data for new account
