@@ -36,6 +36,7 @@ export default function CreateScreen() {
   const [editingPostId, setEditingPostId] = useState<string | null>(null);
   const [repostData, setRepostData] = useState<{ id: string; authorName: string; authorEmoji: string; content: string; imageUrl?: string } | null>(null);
   const [showFormatHelp, setShowFormatHelp] = useState(false);
+  const [isSpoilerPhoto, setIsSpoilerPhoto] = useState(false);
 
   // Load editing post data
   useEffect(() => {
@@ -659,7 +660,7 @@ export default function CreateScreen() {
         </View>
       </View>
     </ScrollView>
-    <FormatHelpModal visible={showFormatHelp} onClose={() => setShowFormatHelp(false)} onInsert={(text) => setContent(prev => prev + text)} />
+    <FormatHelpModal visible={showFormatHelp} onClose={() => setShowFormatHelp(false)} onInsert={(text) => setContent(prev => prev + text)} onToggleSpoilerPhoto={() => setIsSpoilerPhoto(prev => !prev)} hasPhotos={imageUris.length > 0} />
     </View>
   );
 }

@@ -20,6 +20,7 @@ import { formatTimeAgo } from '../../src/utils/mockData';
 import { CachedImage } from '../../src/components/ui/CachedImage';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { UserBadge } from '../../src/components/ui/UserBadge';
+import { FormattedText } from '../../src/components/ui/FormattedText';
 import { PanResponder } from 'react-native';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -563,7 +564,7 @@ export default function UserProfileScreen() {
                       <Text variant="caption" color={theme.colors.accent.primary} style={{ fontSize: 10 }}>от {origPost.authorName}</Text>
                     </View>
                   )}
-                  {(post.content || origPost?.content) ? <Text variant="caption" numberOfLines={2} color={theme.colors.text.secondary} style={{ marginBottom: 6 }}>{post.content || origPost?.content}</Text> : null}
+                  {(post.content || origPost?.content) ? <FormattedText style={{ fontSize: 12, marginBottom: 6 }} color={theme.colors.text.secondary}>{post.content || origPost?.content || ''}</FormattedText> : null}
                   <View style={{ flexDirection: 'row', gap: 12 }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}><Feather name="heart" size={12} color={theme.colors.text.tertiary} /><Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{post.likesCount}</Text></View>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}><Feather name="message-circle" size={12} color={theme.colors.text.tertiary} /><Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{post.commentsCount}</Text></View>
