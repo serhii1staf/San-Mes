@@ -1,6 +1,9 @@
 import React, { useRef, useCallback } from 'react';
 import { View, Pressable, Animated, PanResponder } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import { captureRef } from 'react-native-view-shot';
+import * as MediaLibrary from 'expo-media-library';
+import * as Sharing from 'expo-sharing';
 import { useTheme } from '../../theme';
 import { triggerHaptic } from '../../utils/haptics';
 import { showToast } from '../../store/toastStore';
@@ -16,6 +19,7 @@ export function SwipeablePostCard({ children }: SwipeablePostCardProps) {
   const translateX = useRef(new Animated.Value(0)).current;
   const isOpen = useRef(false);
   const timer = useRef<any>(null);
+  const cardRef = useRef<View>(null);
 
   const resetPosition = useCallback(() => {
     isOpen.current = false;
@@ -42,11 +46,9 @@ export function SwipeablePostCard({ children }: SwipeablePostCardProps) {
     onStartShouldSetPanResponder: () => false,
     onMoveShouldSetPanResponder: (_, g) => {
       if (isOpen.current) {
-        // Any movement when open → close
         resetPosition();
         return false;
       }
-      // Only capture if clearly horizontal left: dx < -15 AND dx is 3x bigger than dy
       return g.dx < -15 && Math.abs(g.dx) > Math.abs(g.dy) * 3;
     },
     onPanResponderMove: (_, g) => {
@@ -57,7 +59,6 @@ export function SwipeablePostCard({ children }: SwipeablePostCardProps) {
     onPanResponderRelease: (_, g) => {
       if (!isOpen.current) handleEnd(g.dx);
     },
-    // CRITICAL: when system steals gesture (scroll takes over), reset position
     onPanResponderTerminate: () => {
       if (!isOpen.current) {
         Animated.timing(translateX, { toValue: 0, duration: 150, useNativeDriver: true }).start();
@@ -65,14 +66,32 @@ export function SwipeablePostCard({ children }: SwipeablePostCardProps) {
     },
   })).current;
 
-  const handleScreenshot = () => {
+  const handleScreenshot = async () => {
     triggerHaptic('medium');
-    resetPosition();
+
+    // First reset position so screenshot shows full card
+    isOpen.current = false;
+    if (timer.current) { clearTimeout(timer.current); timer.current = null; }
+    Animated.timing(translateX, { toValue: 0, duration: 150, useNativeDriver: true }).start();
+
+    // Wait for animation to complete
+    await new Promise(resolve => setTimeout(resolve, 200));
+
     try {
-      require('react-native-view-shot');
-      showToast('Скриншот сохранён', 'camera');
-    } catch {
-      showToast('Доступно после обновления', 'info');
+      // Capture the card view
+      const uri = await captureRef(cardRef, { format: 'png', quality: 1 });
+
+      // Save to gallery
+      const { status } = await MediaLibrary.requestPermissionsAsync();
+      if (status === 'granted') {
+        await MediaLibrary.saveToLibraryAsync(uri);
+        showToast('Сохранено в галерею', 'camera');
+      } else {
+        // Fallback: share
+        await Sharing.shareAsync(uri);
+      }
+    } catch (e) {
+      showToast('Не удалось сохранить', 'x');
     }
   };
 
@@ -91,7 +110,9 @@ export function SwipeablePostCard({ children }: SwipeablePostCardProps) {
       </Animated.View>
 
       <Animated.View style={{ transform: [{ translateX }] }} {...panResponder.panHandlers}>
-        {children}
+        <View ref={cardRef} collapsable={false}>
+          {children}
+        </View>
       </Animated.View>
     </View>
   );
