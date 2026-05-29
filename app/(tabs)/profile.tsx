@@ -342,7 +342,7 @@ export default function ProfileScreen() {
       </Modal>
 
       {/* Fullscreen Image Viewer */}
-      <Modal visible={!!viewingImage} transparent animationType="fade" onRequestClose={() => setViewingImage(null)} statusBarTranslucent>
+      <Modal visible={!!viewingImage} transparent animationType="none" onRequestClose={() => setViewingImage(null)} statusBarTranslucent>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.92)' }}>
           {/* Top bar with gradient blur */}
           <LinearGradient colors={['rgba(0,0,0,0.8)', 'rgba(0,0,0,0.5)', 'transparent']} locations={[0, 0.6, 1]} style={{ position: 'absolute', top: 0, left: 0, right: 0, height: insets.top + 80, zIndex: 10 }}>

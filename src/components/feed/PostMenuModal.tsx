@@ -32,6 +32,7 @@ export function PostMenuModal({ visible, post, onClose }: PostMenuModalProps) {
   const [mode, setMode] = useState<'menu' | 'report'>('menu');
 
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
+  const backdropAnim = useRef(new Animated.Value(0)).current;
   const dragY = useRef(new Animated.Value(0)).current;
   const isClosing = useRef(false);
 
@@ -53,16 +54,25 @@ export function PostMenuModal({ visible, post, onClose }: PostMenuModalProps) {
       setMode('menu');
       dragY.setValue(0);
       slideAnim.setValue(SCREEN_HEIGHT);
-      Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 50, friction: 9 }).start();
+      backdropAnim.setValue(0);
+      Animated.parallel([
+        Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 50, friction: 9 }),
+        Animated.timing(backdropAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
+      ]).start();
     }
   }, [visible]);
 
   const dismiss = () => {
     if (isClosing.current) return;
     isClosing.current = true;
-    Animated.timing(slideAnim, { toValue: SCREEN_HEIGHT, duration: 200, useNativeDriver: true }).start(() => {
-      setMode('menu');
-      onClose();
+    Animated.parallel([
+      Animated.timing(slideAnim, { toValue: SCREEN_HEIGHT, duration: 250, useNativeDriver: true }),
+      Animated.timing(backdropAnim, { toValue: 0, duration: 250, useNativeDriver: true }),
+    ]).start(() => {
+      setTimeout(() => {
+        setMode('menu');
+        onClose();
+      }, 30);
     });
   };
 
@@ -97,10 +107,12 @@ export function PostMenuModal({ visible, post, onClose }: PostMenuModalProps) {
   const sheetBg = theme.isDark ? theme.colors.background.elevated : '#FFFFFF';
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={dismiss} statusBarTranslucent>
+    <Modal visible={visible} transparent animationType="none" onRequestClose={dismiss} statusBarTranslucent>
       <View style={{ flex: 1 }}>
         {/* Backdrop */}
-        <Pressable style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)' }} onPress={dismiss} />
+        <Animated.View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)', opacity: backdropAnim }}>
+          <Pressable style={{ flex: 1 }} onPress={dismiss} />
+        </Animated.View>
 
         {/* Sheet */}
         <View style={{ flex: 1, justifyContent: 'flex-end' }} pointerEvents="box-none">
