@@ -5,7 +5,7 @@ import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
-import { useThemeStore, ACCENT_COLORS, FONT_FAMILIES, FONT_SIZES, AccentColor, FontFamily, FontSize } from '../../src/store/themeStore';
+import { useThemeStore, ACCENT_COLORS, AccentColor } from '../../src/store/themeStore';
 import { useAuthStore } from '../../src/store/authStore';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -97,7 +97,7 @@ function ThemePreviewCard({ accentConfig, isDark, isSelected, user }: { accentCo
 export default function AppearanceScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
-  const { mode, accent, fontFamily: currentFont, fontSize: currentSize, setAccent, setFontFamily, setFontSize } = useThemeStore();
+  const { mode, accent, setAccent } = useThemeStore();
   const { user } = useAuthStore();
   const isDark = mode === 'dark';
   const scrollRef = useRef<ScrollView>(null);
@@ -171,29 +171,6 @@ export default function AppearanceScreen() {
         <Text variant="body" weight="bold" align="center" style={{ marginTop: 16, marginBottom: 24 }}>
           {ACCENT_COLORS[activeIndex]?.label || ''}
         </Text>
-
-        {/* Font & Size controls */}
-        <View style={{ paddingHorizontal: 24 }}>
-          {/* Font Size */}
-          <Text variant="caption" weight="semibold" color={theme.colors.text.secondary} style={{ marginBottom: 8 }}>Размер текста</Text>
-          <View style={{ flexDirection: 'row', gap: 8, marginBottom: 20 }}>
-            {FONT_SIZES.map(f => (
-              <Pressable key={f.key} onPress={() => setFontSize(f.key)} style={{ flex: 1, paddingVertical: 10, borderRadius: 12, backgroundColor: currentSize === f.key ? theme.colors.accent.primary + '20' : theme.colors.background.elevated, borderWidth: currentSize === f.key ? 1.5 : 0, borderColor: theme.colors.accent.primary, alignItems: 'center' }}>
-                <Text variant="caption" weight={currentSize === f.key ? 'semibold' : 'regular'} color={currentSize === f.key ? theme.colors.accent.primary : theme.colors.text.secondary}>{f.label}</Text>
-              </Pressable>
-            ))}
-          </View>
-
-          {/* Font Family */}
-          <Text variant="caption" weight="semibold" color={theme.colors.text.secondary} style={{ marginBottom: 8 }}>Шрифт</Text>
-          <View style={{ flexDirection: 'row', gap: 8 }}>
-            {FONT_FAMILIES.map(f => (
-              <Pressable key={f.key} onPress={() => setFontFamily(f.key)} style={{ flex: 1, paddingVertical: 10, borderRadius: 12, backgroundColor: currentFont === f.key ? theme.colors.accent.primary + '20' : theme.colors.background.elevated, borderWidth: currentFont === f.key ? 1.5 : 0, borderColor: theme.colors.accent.primary, alignItems: 'center' }}>
-                <Text variant="caption" weight={currentFont === f.key ? 'semibold' : 'regular'} color={currentFont === f.key ? theme.colors.accent.primary : theme.colors.text.secondary}>{f.label}</Text>
-              </Pressable>
-            ))}
-          </View>
-        </View>
       </View>
     </View>
   );
