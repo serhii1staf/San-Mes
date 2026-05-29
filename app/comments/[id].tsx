@@ -115,7 +115,7 @@ export default function CommentsScreen() {
 
         {/* Input area */}
         <View>
-          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: insets.bottom > 0 ? 4 : 8, paddingTop: 6, backgroundColor: bgColor }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: insets.bottom + 12, paddingTop: 6, backgroundColor: bgColor }}>
             <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8, borderWidth: 1, borderColor: theme.colors.border.light }}>
               <TextInput
                 ref={inputRef}
