@@ -16,6 +16,7 @@ import { syncProfile, syncUserPosts } from '../../src/services/syncService';
 import { queueMutation } from '../../src/services/offlineQueue';
 import { openUrl } from '../../src/utils/openUrl';
 import { triggerHaptic } from '../../src/utils/haptics';
+import { showToast } from '../../src/store/toastStore';
 import { formatTimeAgo } from '../../src/utils/mockData';
 import { CachedImage } from '../../src/components/ui/CachedImage';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
@@ -119,6 +120,7 @@ function ProfileMenuModal({ visible, profile, onClose }: { visible: boolean; pro
   const handleCopyLink = async () => {
     triggerHaptic('light');
     await Clipboard.setStringAsync(`https://san-mes.vercel.app/profile/${profile?.id}`);
+    showToast('Ссылка скопирована', 'link');
     handleClose();
   };
 
@@ -130,7 +132,7 @@ function ProfileMenuModal({ visible, profile, onClose }: { visible: boolean; pro
 
   const handleReport = (cat: string) => {
     triggerHaptic('medium');
-    Alert.alert('Жалоба отправлена', 'Спасибо, мы рассмотрим обращение.');
+    showToast('Жалоба отправлена', 'flag');
     handleClose();
   };
 

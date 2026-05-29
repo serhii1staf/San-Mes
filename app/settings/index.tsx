@@ -81,8 +81,12 @@ export default function SettingsScreen() {
         text: 'Выйти',
         style: 'destructive',
         onPress: () => {
-          logout();
-          // AuthNavigationGuard will handle redirect to login
+          // Navigate away first, then logout after a small delay
+          // This prevents crash from components trying to render without user
+          router.replace('/(tabs)');
+          setTimeout(() => {
+            logout();
+          }, 100);
         },
       },
     ]);
