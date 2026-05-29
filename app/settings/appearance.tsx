@@ -1,180 +1,180 @@
-import React from 'react';
-import { View, Pressable, ViewStyle, ScrollView } from 'react-native';
+import React, { useRef, useState } from 'react';
+import { View, Pressable, ScrollView, Dimensions, NativeSyntheticEvent, NativeScrollEvent } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
 import { useThemeStore, ACCENT_COLORS, AccentColor } from '../../src/store/themeStore';
+import { useAuthStore } from '../../src/store/authStore';
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const CARD_WIDTH = SCREEN_WIDTH * 0.72;
+const CARD_GAP = 12;
+
+function ThemePreviewCard({ accentConfig, isDark, isSelected, user }: { accentConfig: typeof ACCENT_COLORS[0]; isDark: boolean; isSelected: boolean; user: any }) {
+  const bgPrimary = isDark ? accentConfig.darkBg : accentConfig.light;
+  const bgElevated = isDark ? accentConfig.darkElevated : '#FFFFFF';
+  const textPrimary = isDark ? '#FFFFFF' : '#1A1A1A';
+  const textSecondary = isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.5)';
+  const borderColor = isDark ? accentConfig.darkBorder : accentConfig.color + '25';
+  const accent = accentConfig.color;
+
+  return (
+    <View style={{
+      width: CARD_WIDTH,
+      borderRadius: 24,
+      overflow: 'hidden',
+      backgroundColor: bgPrimary,
+      borderWidth: isSelected ? 2.5 : 1,
+      borderColor: isSelected ? accent : borderColor,
+      shadowColor: isSelected ? accent : '#000',
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: isSelected ? 0.3 : 0.1,
+      shadowRadius: 12,
+      elevation: isSelected ? 8 : 3,
+    }}>
+      {/* Mini header */}
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 14, paddingTop: 14, paddingBottom: 6 }}>
+        <Text style={{ fontSize: 14, fontWeight: '700', color: textPrimary }}>San</Text>
+        <View style={{ width: 16, height: 16, borderRadius: 8, backgroundColor: accent, alignItems: 'center', justifyContent: 'center' }}>
+          <Feather name="bell" size={8} color="#FFF" />
+        </View>
+      </View>
+
+      {/* Mini post card */}
+      <View style={{ marginHorizontal: 10, marginVertical: 6, backgroundColor: bgElevated, borderRadius: 16, padding: 10, borderWidth: 0.5, borderColor: borderColor }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+          <View style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: accent + '20', alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={{ fontSize: 12 }}>{user?.emoji || '😊'}</Text>
+          </View>
+          <View style={{ marginLeft: 8 }}>
+            <Text style={{ fontSize: 10, fontWeight: '600', color: textPrimary }}>{user?.displayName || 'User'}</Text>
+            <Text style={{ fontSize: 7, color: textSecondary }}>2m ago</Text>
+          </View>
+        </View>
+        <Text style={{ fontSize: 9, color: textSecondary, marginBottom: 6 }} numberOfLines={2}>Привет! Как дела сегодня? 🌟</Text>
+        <View style={{ height: 55, borderRadius: 10, backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)' }} />
+        <View style={{ flexDirection: 'row', marginTop: 6, gap: 12 }}>
+          <Feather name="heart" size={10} color={accent} />
+          <Feather name="message-circle" size={10} color={textSecondary} />
+          <Feather name="repeat" size={10} color={textSecondary} />
+        </View>
+      </View>
+
+      {/* Mini second post preview */}
+      <View style={{ marginHorizontal: 10, marginBottom: 6, backgroundColor: bgElevated, borderRadius: 16, padding: 10, borderWidth: 0.5, borderColor: borderColor }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <View style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: accent + '20', alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={{ fontSize: 12 }}>🌸</Text>
+          </View>
+          <View style={{ marginLeft: 8 }}>
+            <Text style={{ fontSize: 10, fontWeight: '600', color: textPrimary }}>Мария</Text>
+            <Text style={{ fontSize: 7, color: textSecondary }}>15m ago</Text>
+          </View>
+        </View>
+      </View>
+
+      {/* Mini tab bar */}
+      <View style={{ flexDirection: 'row', justifyContent: 'space-around', paddingVertical: 8, borderTopWidth: 0.5, borderTopColor: borderColor }}>
+        <Feather name="home" size={12} color={accent} />
+        <Feather name="search" size={12} color={textSecondary} />
+        <View style={{ width: 18, height: 18, borderRadius: 9, backgroundColor: accent, alignItems: 'center', justifyContent: 'center' }}>
+          <Feather name="plus" size={9} color="#FFF" />
+        </View>
+        <Feather name="send" size={12} color={textSecondary} />
+        <Feather name="user" size={12} color={textSecondary} />
+      </View>
+
+      {/* Theme label */}
+      <View style={{ alignItems: 'center', paddingVertical: 8, backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)' }}>
+        <Text style={{ fontSize: 11, fontWeight: '600', color: accent }}>{accentConfig.label}</Text>
+      </View>
+    </View>
+  );
+}
 
 export default function AppearanceScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
-  const { accent, setAccent } = useThemeStore();
+  const { mode, accent, setAccent } = useThemeStore();
+  const { user } = useAuthStore();
+  const isDark = mode === 'dark';
+  const scrollRef = useRef<ScrollView>(null);
+  const [activeIndex, setActiveIndex] = useState(ACCENT_COLORS.findIndex(c => c.key === accent));
 
-  const containerStyle: ViewStyle = {
-    flex: 1,
-    backgroundColor: theme.colors.background.primary,
+  const handleScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const x = e.nativeEvent.contentOffset.x;
+    const index = Math.round(x / (CARD_WIDTH + CARD_GAP));
+    setActiveIndex(Math.max(0, Math.min(index, ACCENT_COLORS.length - 1)));
+  };
+
+  const handleSave = () => {
+    const selected = ACCENT_COLORS[activeIndex];
+    if (selected) setAccent(selected.key);
+    router.back();
   };
 
   return (
-    <View style={containerStyle}>
+    <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
       {/* Header */}
-      <View
-        style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: 'center',
-          paddingHorizontal: 24,
-          paddingTop: insets.top + 8,
-          paddingBottom: 16,
-          position: 'relative',
-        }}
-      >
-        <Pressable
-          onPress={() => router.back()}
-          style={{ position: 'absolute', left: 24, top: insets.top + 8 }}
-        >
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: insets.top + 8, paddingBottom: 12 }}>
+        <Pressable onPress={() => router.back()}>
           <Feather name="chevron-left" size={24} color={theme.colors.text.primary} />
         </Pressable>
-        <Text variant="subheading" weight="bold">Внешний вид</Text>
+        <Text variant="body" weight="bold">Внешний вид</Text>
+        <Pressable onPress={handleSave}>
+          <Text variant="body" weight="semibold" color={theme.colors.accent.primary}>Сохранить</Text>
+        </Pressable>
       </View>
 
-      <ScrollView contentContainerStyle={{ paddingHorizontal: 24, paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
-        {/* Color theme selection */}
-        <Text variant="body" weight="semibold" color={theme.colors.text.secondary} style={{ marginBottom: 16 }}>
-          Цветовая тема
-        </Text>
+      {/* Cards carousel */}
+      <View style={{ flex: 1, justifyContent: 'center' }}>
+        <ScrollView
+          ref={scrollRef}
+          horizontal
+          pagingEnabled={false}
+          snapToInterval={CARD_WIDTH + CARD_GAP}
+          decelerationRate="fast"
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ paddingHorizontal: (SCREEN_WIDTH - CARD_WIDTH) / 2, gap: CARD_GAP, alignItems: 'center' }}
+          onScroll={handleScroll}
+          scrollEventThrottle={16}
+        >
+          {ACCENT_COLORS.map((c, index) => (
+            <ThemePreviewCard
+              key={c.key}
+              accentConfig={c}
+              isDark={isDark}
+              isSelected={index === activeIndex}
+              user={user}
+            />
+          ))}
+        </ScrollView>
 
-        <View style={{ gap: 12, marginBottom: 32 }}>
-          {ACCENT_COLORS.map((c) => {
-            const isSelected = accent === c.key;
-            return (
-              <Pressable
-                key={c.key}
-                onPress={() => setAccent(c.key)}
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  paddingVertical: 14,
-                  paddingHorizontal: 16,
-                  borderRadius: 16,
-                  backgroundColor: theme.colors.background.elevated,
-                  borderWidth: isSelected ? 2 : 0,
-                  borderColor: c.color,
-                }}
-              >
-                {/* Color circle */}
-                <View
-                  style={{
-                    width: 40,
-                    height: 40,
-                    borderRadius: 20,
-                    backgroundColor: c.color,
-                    marginRight: 14,
-                  }}
-                />
-                <Text variant="body" weight={isSelected ? 'semibold' : 'regular'} style={{ flex: 1 }}>
-                  {c.label}
-                </Text>
-                {isSelected && (
-                  <Feather name="check-circle" size={20} color={c.color} />
-                )}
-              </Pressable>
-            );
-          })}
+        {/* Dots indicator */}
+        <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginTop: 20, gap: 6 }}>
+          {ACCENT_COLORS.map((c, index) => (
+            <View
+              key={c.key}
+              style={{
+                width: index === activeIndex ? 20 : 6,
+                height: 6,
+                borderRadius: 3,
+                backgroundColor: index === activeIndex ? c.color : theme.colors.border.light,
+              }}
+            />
+          ))}
         </View>
 
-        {/* Preview */}
-        <Text variant="body" weight="semibold" color={theme.colors.text.secondary} style={{ marginBottom: 12 }}>
-          Предпросмотр
+        {/* Theme name below cards */}
+        <Text variant="body" weight="bold" align="center" style={{ marginTop: 16 }}>
+          {ACCENT_COLORS[activeIndex]?.label || ''}
         </Text>
-
-        {/* Mini app preview */}
-        <View style={{
-          backgroundColor: theme.colors.background.elevated,
-          borderRadius: 24,
-          overflow: 'hidden',
-          borderWidth: 1,
-          borderColor: theme.colors.border.light,
-        }}>
-          {/* Mini header */}
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingTop: 16, paddingBottom: 8 }}>
-            <Text variant="body" weight="bold">San</Text>
-            <View style={{ width: 18, height: 18, borderRadius: 9, backgroundColor: theme.colors.accent.primary, alignItems: 'center', justifyContent: 'center' }}>
-              <Text style={{ fontSize: 9, color: '#FFF' }}>2</Text>
-            </View>
-          </View>
-
-          {/* Mini stories row */}
-          <View style={{ flexDirection: 'row', paddingHorizontal: 16, paddingVertical: 8, gap: 12 }}>
-            {['😊', '🌸', '🌿', '🦋'].map((e, i) => (
-              <View key={i} style={{ alignItems: 'center' }}>
-                <View style={{
-                  width: 36,
-                  height: 36,
-                  borderRadius: 18,
-                  borderWidth: 2,
-                  borderColor: i === 0 ? theme.colors.border.light : theme.colors.accent.primary,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}>
-                  <Text style={{ fontSize: 18 }}>{e}</Text>
-                </View>
-              </View>
-            ))}
-          </View>
-
-          {/* Mini post */}
-          <View style={{ paddingHorizontal: 16, paddingVertical: 10 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-              <Text style={{ fontSize: 18, marginRight: 8 }}>🌿</Text>
-              <View>
-                <Text variant="caption" weight="semibold">Alex Woods</Text>
-                <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 9 }}>2m ago</Text>
-              </View>
-            </View>
-            <Text variant="caption" color={theme.colors.text.secondary} numberOfLines={2}>
-              Golden hour in the forest today...
-            </Text>
-            {/* Mini image placeholder */}
-            <View style={{
-              height: 80,
-              borderRadius: 12,
-              backgroundColor: theme.colors.background.secondary,
-              marginTop: 8,
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}>
-              <Feather name="image" size={24} color={theme.colors.text.tertiary} />
-            </View>
-            {/* Mini actions */}
-            <View style={{ flexDirection: 'row', marginTop: 8, gap: 16 }}>
-              <Feather name="heart" size={14} color={theme.colors.accent.primary} />
-              <Feather name="message-circle" size={14} color={theme.colors.text.tertiary} />
-              <Feather name="repeat" size={14} color={theme.colors.text.tertiary} />
-            </View>
-          </View>
-
-          {/* Mini tab bar */}
-          <View style={{
-            flexDirection: 'row',
-            justifyContent: 'space-around',
-            paddingVertical: 10,
-            borderTopWidth: 0.5,
-            borderTopColor: theme.colors.border.light,
-            marginTop: 8,
-          }}>
-            <Feather name="home" size={16} color={theme.colors.accent.primary} />
-            <Feather name="search" size={16} color={theme.colors.text.tertiary} />
-            <View style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: theme.colors.accent.secondary, alignItems: 'center', justifyContent: 'center' }}>
-              <Feather name="plus" size={12} color="#FFF" />
-            </View>
-            <Feather name="send" size={16} color={theme.colors.text.tertiary} />
-            <Feather name="user" size={16} color={theme.colors.text.tertiary} />
-          </View>
-        </View>
-      </ScrollView>
+        <Text variant="caption" color={theme.colors.text.tertiary} align="center" style={{ marginTop: 4 }}>
+          Пролистайте для выбора темы
+        </Text>
+      </View>
     </View>
   );
 }
