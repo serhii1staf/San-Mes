@@ -38,6 +38,8 @@ export interface Post {
     authorName: string;
     authorUsername: string;
     authorEmoji?: string;
+    authorBadge?: string;
+    authorVerified?: boolean;
     content: string;
     imageUrl?: string;
     imageUrls?: string[];

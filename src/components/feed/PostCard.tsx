@@ -199,6 +199,8 @@ export const PostCard = memo(function PostCard({ post, onLike, onComment, onShar
           <View style={{ flexDirection: 'row', alignItems: 'center', padding: 12 }}>
             <Avatar emoji={post.originalPost.authorEmoji} size="xs" />
             <Text variant="caption" weight="semibold" style={{ marginLeft: 8 }}>{post.originalPost.authorName}</Text>
+            {post.originalPost.authorVerified && <VerifiedBadge size={10} />}
+            {post.originalPost.authorBadge && <UserBadge badge={post.originalPost.authorBadge} size="sm" />}
             <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginLeft: 4 }}>@{post.originalPost.authorUsername}</Text>
           </View>
           {post.originalPost.content && (

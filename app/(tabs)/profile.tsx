@@ -129,7 +129,7 @@ export default function ProfileScreen() {
       // Fetch original posts for reposts (with author profiles)
       let originalsMap: Record<string, any> = {};
       if (originalPostIds.length > 0) {
-        const { data: originals } = await supabase.from('posts').select('*, profiles:author_id (display_name, username, emoji)').in('id', originalPostIds);
+        const { data: originals } = await supabase.from('posts').select('*, profiles:author_id (display_name, username, emoji, badge, is_verified)').in('id', originalPostIds);
         if (originals) {
           for (const o of originals) {
             originalsMap[o.id] = o;
@@ -143,7 +143,7 @@ export default function ProfileScreen() {
             }
           }
           if (deeperIds.length > 0) {
-            const { data: deepPosts } = await supabase.from('posts').select('*, profiles:author_id (display_name, username, emoji)').in('id', deeperIds);
+            const { data: deepPosts } = await supabase.from('posts').select('*, profiles:author_id (display_name, username, emoji, badge, is_verified)').in('id', deeperIds);
             if (deepPosts) {
               for (const dp of deepPosts) originalsMap[dp.id] = dp;
             }

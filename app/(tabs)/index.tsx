@@ -104,6 +104,8 @@ function mapRawPost(p: any, postsById: Record<string, any>): Post | null {
         authorName: origProfile?.display_name || 'User',
         authorUsername: origProfile?.username || 'user',
         authorEmoji: origProfile?.emoji || '😊',
+        authorBadge: origProfile?.badge || undefined,
+        authorVerified: origProfile?.is_verified || false,
         content: origRepostCheck.isRepost ? (origRepostCheck.comment || '') : (orig.content || ''),
         imageUrl: origImages[0] || undefined,
         imageUrls: origImages.length > 0 ? origImages : undefined,
@@ -206,7 +208,7 @@ export default function FeedScreen() {
 
       // Fetch missing referenced posts (with profiles) for repost chain resolution
       if (missingIds.size > 0) {
-        const { data: missingPosts } = await supabase.from('posts').select('*, profiles:author_id (display_name, username, emoji)').in('id', Array.from(missingIds));
+        const { data: missingPosts } = await supabase.from('posts').select('*, profiles:author_id (display_name, username, emoji, badge, is_verified)').in('id', Array.from(missingIds));
         if (missingPosts) {
           for (const mp of missingPosts) {
             postsById[mp.id] = mp;
@@ -219,7 +221,7 @@ export default function FeedScreen() {
           // Second pass: fetch any newly discovered missing IDs (one level deeper)
           const newMissing = Array.from(missingIds).filter(id => !postsById[id]);
           if (newMissing.length > 0) {
-            const { data: deepPosts } = await supabase.from('posts').select('*, profiles:author_id (display_name, username, emoji)').in('id', newMissing);
+            const { data: deepPosts } = await supabase.from('posts').select('*, profiles:author_id (display_name, username, emoji, badge, is_verified)').in('id', newMissing);
             if (deepPosts) {
               for (const dp of deepPosts) postsById[dp.id] = dp;
             }
@@ -267,7 +269,7 @@ export default function FeedScreen() {
         }
       }
       if (missingIds.size > 0) {
-        const { data: missingPosts } = await supabase.from('posts').select('*, profiles:author_id (display_name, username, emoji)').in('id', Array.from(missingIds));
+        const { data: missingPosts } = await supabase.from('posts').select('*, profiles:author_id (display_name, username, emoji, badge, is_verified)').in('id', Array.from(missingIds));
         if (missingPosts) {
           for (const mp of missingPosts) {
             postsById[mp.id] = mp;
@@ -276,7 +278,7 @@ export default function FeedScreen() {
           }
           const newMissing = Array.from(missingIds).filter(id => !postsById[id]);
           if (newMissing.length > 0) {
-            const { data: deepPosts } = await supabase.from('posts').select('*, profiles:author_id (display_name, username, emoji)').in('id', newMissing);
+            const { data: deepPosts } = await supabase.from('posts').select('*, profiles:author_id (display_name, username, emoji, badge, is_verified)').in('id', newMissing);
             if (deepPosts) { for (const dp of deepPosts) postsById[dp.id] = dp; }
           }
         }

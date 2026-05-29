@@ -365,6 +365,10 @@ export default function CreateScreen() {
             const myPosts = myCached ? JSON.parse(myCached) : [];
             await AsyncStorage.setItem('@san:my_posts', JSON.stringify([newPost, ...myPosts].slice(0, 20)));
 
+            // Update Zustand profile posts store so profile shows the new post immediately
+            const currentProfilePosts = useFeedStore.getState().profilePosts;
+            useFeedStore.getState().setProfilePosts([newPost, ...currentProfilePosts].slice(0, 20));
+
             setContent('');
             setImageUris([]);
             setEditingPostId(null);
