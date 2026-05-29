@@ -116,6 +116,7 @@ export default function RootLayout() {
           <Stack.Screen name="settings/device-key" />
           <Stack.Screen name="settings/privacy" />
           <Stack.Screen name="settings/admin" />
+          <Stack.Screen name="settings/fonts" />
         </Stack>
       </AuthNavigationGuard>
     </ThemeProvider>

@@ -9,7 +9,7 @@ const mmkvStorage: StateStorage = {
 };
 
 export type ThemeMode = 'light' | 'dark';
-export type AccentColor = 'coral' | 'sage' | 'lavender' | 'sky' | 'peach' | 'mint' | 'ocean' | 'sunset' | 'berry' | 'gold' | 'slate' | 'rose' | 'forest' | 'violet' | 'copper' | 'arctic';
+export type AccentColor = string;
 export type FontFamily = 'inter' | 'system' | 'serif' | 'mono';
 export type FontSize = 'small' | 'medium' | 'large';
 
@@ -27,11 +27,10 @@ export const FONT_SIZES: { key: FontSize; label: string; scale: number }[] = [
 ];
 
 export const ACCENT_COLORS: {
-  key: AccentColor;
+  key: string;
   label: string;
   color: string;
   light: string;
-  // Dark mode background tints
   darkBg: string;
   darkElevated: string;
   darkSecondary: string;
@@ -53,6 +52,16 @@ export const ACCENT_COLORS: {
   { key: 'violet', label: 'Фиалка', color: '#8B6CC0', light: '#F4F0FF', darkBg: '#161220', darkElevated: '#241E38', darkSecondary: '#1E182E', darkBorder: '#302848' },
   { key: 'copper', label: 'Медь', color: '#C07850', light: '#FBF4F0', darkBg: '#1C1510', darkElevated: '#2E221A', darkSecondary: '#261C14', darkBorder: '#3D3020' },
   { key: 'arctic', label: 'Арктика', color: '#6CB4D4', light: '#EDF8FC', darkBg: '#10181E', darkElevated: '#182830', darkSecondary: '#142028', darkBorder: '#203540' },
+  { key: 'cherry', label: 'Вишня', color: '#D4365C', light: '#FFF0F3', darkBg: '#1E1014', darkElevated: '#301820', darkSecondary: '#281418', darkBorder: '#401828' },
+  { key: 'indigo', label: 'Индиго', color: '#5C6BC0', light: '#F0F2FF', darkBg: '#12141E', darkElevated: '#1C2038', darkSecondary: '#181A2C', darkBorder: '#262E48' },
+  { key: 'emerald', label: 'Изумруд', color: '#2ECC71', light: '#EDFCF4', darkBg: '#0E1E14', darkElevated: '#163024', darkSecondary: '#12281C', darkBorder: '#1E4030' },
+  { key: 'amber', label: 'Янтарь', color: '#F5A623', light: '#FFF8E8', darkBg: '#1E180E', darkElevated: '#302818', darkSecondary: '#282012', darkBorder: '#403520' },
+  { key: 'plum', label: 'Слива', color: '#9B59B6', light: '#F8F0FC', darkBg: '#1A1220', darkElevated: '#281E34', darkSecondary: '#22182C', darkBorder: '#382844' },
+  { key: 'teal', label: 'Бирюза', color: '#20B2AA', light: '#ECFCFB', darkBg: '#0E1E1C', darkElevated: '#162E2C', darkSecondary: '#122826', darkBorder: '#1E3E3C' },
+  { key: 'crimson', label: 'Кармин', color: '#DC143C', light: '#FFF0F2', darkBg: '#1E1012', darkElevated: '#30181C', darkSecondary: '#281416', darkBorder: '#401C22' },
+  { key: 'sand', label: 'Песок', color: '#C2B280', light: '#FDFAF2', darkBg: '#1C1A14', darkElevated: '#2E2A20', darkSecondary: '#26221A', darkBorder: '#3D382C' },
+  { key: 'sapphire', label: 'Сапфир', color: '#2E5EAA', light: '#EDF2FF', darkBg: '#0E1420', darkElevated: '#162038', darkSecondary: '#121C30', darkBorder: '#1C2C48' },
+  { key: 'olive', label: 'Олива', color: '#808C3A', light: '#F6F8EE', darkBg: '#161A10', darkElevated: '#222C18', darkSecondary: '#1E2614', darkBorder: '#303C22' },
 ];
 
 interface ThemeStoreState {
@@ -71,7 +80,7 @@ export const useThemeStore = create<ThemeStoreState>()(
   persist(
     (set) => ({
       mode: 'dark',
-      accent: 'coral',
+      accent: 'sage',
       fontFamily: 'inter',
       fontSize: 'medium',
       setMode: (mode) => set({ mode }),
