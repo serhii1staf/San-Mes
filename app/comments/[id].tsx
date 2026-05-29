@@ -64,7 +64,7 @@ export default function CommentsScreen() {
   };
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: bgColor }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <View style={{ flex: 1, backgroundColor: bgColor }}>
       {/* Gradient fade header */}
       <View style={[styles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">
         <LinearGradient colors={[bgColor, bgColor, bgTransparent]} locations={[0, 0.55, 1]} style={StyleSheet.absoluteFill} />
@@ -78,60 +78,63 @@ export default function CommentsScreen() {
       </View>
 
       {/* Comments list */}
-      {isLoading ? (
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-          <ActivityIndicator size="large" color={theme.colors.accent.primary} />
-        </View>
-      ) : (
-        <FlatList
-          data={comments}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={{ paddingHorizontal: 20, paddingTop: headerContentHeight, paddingBottom: 80 }}
-          ListEmptyComponent={
-            <View style={{ alignItems: 'center', paddingTop: 40 }}>
-              <Text style={{ fontSize: 32 }}>💬</Text>
-              <Text variant="body" color={theme.colors.text.tertiary} style={{ marginTop: 8 }}>Пока нет комментариев</Text>
-            </View>
-          }
-          renderItem={({ item }) => (
-            <View style={{ flexDirection: 'row', marginBottom: 16 }}>
-              <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: item.profiles?.id || item.author_id } })}>
-                <Avatar emoji={item.profiles?.emoji || '😊'} size="sm" />
-              </Pressable>
-              <View style={{ marginLeft: 10, flex: 1 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-                  <Text variant="caption" weight="semibold">{item.profiles?.display_name || 'User'}</Text>
-                  {item.profiles?.is_verified && <VerifiedBadge size={10} />}
-                  {item.profiles?.badge && <UserBadge badge={item.profiles.badge} size="sm" />}
-                  <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginLeft: 4 }}>{formatTime(item.created_at)}</Text>
-                </View>
-                <FormattedText style={{ marginTop: 3, fontSize: 14 }}>{item.content}</FormattedText>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0}>
+        {isLoading ? (
+          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+            <ActivityIndicator size="large" color={theme.colors.accent.primary} />
+          </View>
+        ) : (
+          <FlatList
+            data={comments}
+            keyExtractor={(item) => item.id}
+            contentContainerStyle={{ paddingHorizontal: 20, paddingTop: headerContentHeight, paddingBottom: 20 }}
+            ListEmptyComponent={
+              <View style={{ alignItems: 'center', paddingTop: 40 }}>
+                <Text style={{ fontSize: 32 }}>💬</Text>
+                <Text variant="body" color={theme.colors.text.tertiary} style={{ marginTop: 8 }}>Пока нет комментариев</Text>
               </View>
-            </View>
-          )}
-        />
-      )}
-
-      {/* Input area with gradient fade */}
-      <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0 }}>
-        <LinearGradient colors={[bgTransparent, bgColor]} locations={[0, 0.3]} style={{ height: 20 }} pointerEvents="none" />
-        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: insets.bottom + 8, paddingTop: 8, backgroundColor: bgColor }}>
-          <TextInput
-            ref={inputRef}
-            value={text}
-            onChangeText={setText}
-            placeholder="Комментарий..."
-            placeholderTextColor={theme.colors.text.tertiary}
-            style={{ flex: 1, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular, paddingVertical: 6 }}
-            multiline
-            onSubmitEditing={handleSend}
+            }
+            renderItem={({ item }) => (
+              <View style={{ flexDirection: 'row', marginBottom: 16 }}>
+                <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: item.profiles?.id || item.author_id } })}>
+                  <Avatar emoji={item.profiles?.emoji || '😊'} size="sm" />
+                </Pressable>
+                <View style={{ marginLeft: 10, flex: 1 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                    <Text variant="caption" weight="semibold">{item.profiles?.display_name || 'User'}</Text>
+                    {item.profiles?.is_verified && <VerifiedBadge size={10} />}
+                    {item.profiles?.badge && <UserBadge badge={item.profiles.badge} size="sm" />}
+                    <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginLeft: 4 }}>{formatTime(item.created_at)}</Text>
+                  </View>
+                  <FormattedText style={{ marginTop: 3, fontSize: 14 }}>{item.content}</FormattedText>
+                </View>
+              </View>
+            )}
           />
-          <Pressable onPress={handleSend} disabled={!text.trim() || isSending} style={{ marginLeft: 10, opacity: text.trim() ? 1 : 0.4 }}>
-            <Feather name="send" size={20} color={theme.colors.accent.primary} />
-          </Pressable>
+        )}
+
+        {/* Input area with gradient fade */}
+        <View>
+          <LinearGradient colors={[bgTransparent, bgColor]} locations={[0, 0.4]} style={{ height: 16 }} pointerEvents="none" />
+          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: insets.bottom + 8, paddingTop: 6, backgroundColor: bgColor }}>
+            <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8, borderWidth: 1, borderColor: theme.colors.border.light }}>
+              <TextInput
+                ref={inputRef}
+                value={text}
+                onChangeText={setText}
+                placeholder="Комментарий..."
+                placeholderTextColor={theme.colors.text.tertiary}
+                style={{ flex: 1, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular, maxHeight: 80 }}
+                multiline
+              />
+            </View>
+            <Pressable onPress={handleSend} disabled={!text.trim() || isSending} style={{ marginLeft: 10, width: 36, height: 36, borderRadius: 18, backgroundColor: text.trim() ? theme.colors.accent.primary : theme.colors.background.elevated, alignItems: 'center', justifyContent: 'center' }}>
+              <Feather name="send" size={16} color={text.trim() ? '#FFFFFF' : theme.colors.text.tertiary} />
+            </Pressable>
+          </View>
         </View>
-      </View>
-    </KeyboardAvoidingView>
+      </KeyboardAvoidingView>
+    </View>
   );
 }
 
