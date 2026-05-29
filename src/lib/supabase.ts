@@ -112,11 +112,11 @@ export function isRepost(content: string): { isRepost: boolean; originalPostId?:
 }
 
 // Create a repost
-export async function createRepost(authorId: string, originalPostId: string, comment?: string): Promise<{ post: DBPost | null; error: string | null }> {
+export async function createRepost(authorId: string, originalPostId: string, comment?: string, imageUrl?: string): Promise<{ post: DBPost | null; error: string | null }> {
   const content = `${REPOST_PREFIX}${originalPostId}::${comment || ''}`;
   const { data, error } = await supabase
     .from('posts')
-    .insert({ author_id: authorId, content, image_url: null })
+    .insert({ author_id: authorId, content, image_url: imageUrl || null })
     .select()
     .single();
   if (error) return { post: null, error: error.message };

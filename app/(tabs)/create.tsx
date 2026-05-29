@@ -52,14 +52,31 @@ export default function CreateScreen() {
   // Load repost data from store
   useEffect(() => {
     if (pendingRepostId) {
-      supabase.from('posts').select('*, profiles:author_id (display_name, emoji)').eq('id', pendingRepostId).single().then(({ data }) => {
+      supabase.from('posts').select('*, profiles:author_id (display_name, emoji)').eq('id', pendingRepostId).single().then(async ({ data }) => {
         if (data) {
+          let originalData = data;
+          // Follow repost chain to find actual original content
+          const { isRepost: isRepostFn } = await import('../../src/lib/supabase');
+          let depth = 0;
+          while (originalData && depth < 10) {
+            const ri = isRepostFn(originalData.content || '');
+            if (ri.isRepost && ri.originalPostId) {
+              const { data: deeper } = await supabase.from('posts').select('*, profiles:author_id (display_name, emoji)').eq('id', ri.originalPostId).single();
+              if (deeper) {
+                originalData = deeper;
+                depth++;
+              } else break;
+            } else break;
+          }
+          const profile = Array.isArray(originalData.profiles) ? originalData.profiles[0] : originalData.profiles;
+          const { isRepost: checkRepost } = await import('../../src/lib/supabase');
+          const ri = checkRepost(originalData.content || '');
           setRepostData({
-            id: data.id,
-            authorName: (Array.isArray(data.profiles) ? data.profiles[0]?.display_name : data.profiles?.display_name) || 'User',
-            authorEmoji: (Array.isArray(data.profiles) ? data.profiles[0]?.emoji : data.profiles?.emoji) || '😊',
-            content: data.content || '',
-            imageUrl: data.image_url || undefined,
+            id: originalData.id,
+            authorName: profile?.display_name || 'User',
+            authorEmoji: profile?.emoji || '😊',
+            content: ri.isRepost ? (ri.comment || '') : (originalData.content || ''),
+            imageUrl: originalData.image_url || undefined,
           });
         }
         setPendingRepost(null);
@@ -166,9 +183,29 @@ export default function CreateScreen() {
 
     setIsPosting(true);
     try {
-      // Handle repost (keep as-is)
+      // Handle repost — now supports images
       if (repostData) {
-        const { post, error } = await createRepost(user.id, repostData.id, content.trim() || undefined);
+        let repostImageUrl: string | undefined;
+
+        // Upload images if user added any
+        if (imageUris.length > 0) {
+          setImageUploading(true);
+          const uploadedUrls: string[] = [];
+          for (const uri of imageUris) {
+            if (uri.startsWith('https://')) {
+              uploadedUrls.push(uri);
+            } else {
+              const uploadedUrl = await uploadImage(uri);
+              if (uploadedUrl) uploadedUrls.push(uploadedUrl);
+            }
+          }
+          setImageUploading(false);
+          if (uploadedUrls.length > 0) {
+            repostImageUrl = joinImageUrls(uploadedUrls);
+          }
+        }
+
+        const { post, error } = await createRepost(user.id, repostData.id, content.trim() || undefined, repostImageUrl);
         if (error) {
           Alert.alert('Ошибка', error);
         } else {
