@@ -14,6 +14,7 @@ import { useConnectivityStore } from '../../src/store';
 import { createRepost, createPost, supabase, uploadPostImage, joinImageUrls } from '../../src/lib/supabase';
 import { queueMutation, generateTempId } from '../../src/services/offlineQueue';
 import { useEntityStore } from '../../src/services/entityStore';
+import { FormatHelpModal } from '../../src/components/ui/FormatHelpModal';
 
 const MAX_CHARS = 500;
 const MAX_IMAGES = 6;
@@ -34,6 +35,7 @@ export default function CreateScreen() {
   const [imageUploading, setImageUploading] = useState(false);
   const [editingPostId, setEditingPostId] = useState<string | null>(null);
   const [repostData, setRepostData] = useState<{ id: string; authorName: string; authorEmoji: string; content: string; imageUrl?: string } | null>(null);
+  const [showFormatHelp, setShowFormatHelp] = useState(false);
 
   // Load editing post data
   useEffect(() => {
@@ -566,6 +568,9 @@ export default function CreateScreen() {
                 <Pressable onPress={takePhoto} style={{ padding: 4 }}>
                   <Feather name="camera" size={22} color={imageUris.length >= MAX_IMAGES ? theme.colors.text.tertiary : theme.colors.accent.primary} />
                 </Pressable>
+                <Pressable onPress={() => setShowFormatHelp(true)} style={{ padding: 4 }}>
+                  <Feather name="type" size={22} color={theme.colors.accent.primary} />
+                </Pressable>
               </View>
               {/* Char counter */}
               <Text variant="caption" color={charColor}>
@@ -650,6 +655,7 @@ export default function CreateScreen() {
         </View>
       </View>
     </ScrollView>
+    <FormatHelpModal visible={showFormatHelp} onClose={() => setShowFormatHelp(false)} onInsert={(text) => setContent(prev => prev + text)} />
     </View>
   );
 }

@@ -9,6 +9,7 @@ import { Card } from '../ui/Card';
 import { CachedImage } from '../ui/CachedImage';
 import { VerifiedBadge } from '../ui/VerifiedBadge';
 import { UserBadge } from '../ui/UserBadge';
+import { FormattedText } from '../ui/FormattedText';
 import { Post } from '../../types';
 import { formatTimeAgo } from '../../utils/mockData';
 import { triggerHaptic } from '../../utils/haptics';
@@ -183,12 +184,12 @@ export const PostCard = memo(function PostCard({ post, onLike, onComment, onShar
       {/* Content - show repost comment if any */}
       {post.content && !post.isRepost && (
         <View style={{ paddingHorizontal: theme.spacing.base, paddingBottom: theme.spacing.sm }}>
-          <Text variant="body">{post.content}</Text>
+          <FormattedText style={{ fontSize: theme.typography.sizes.base * (theme.fontScale || 1) }}>{post.content}</FormattedText>
         </View>
       )}
       {post.isRepost && post.content && (
         <View style={{ paddingHorizontal: theme.spacing.base, paddingBottom: theme.spacing.sm }}>
-          <Text variant="body">{post.content}</Text>
+          <FormattedText style={{ fontSize: theme.typography.sizes.base * (theme.fontScale || 1) }}>{post.content}</FormattedText>
         </View>
       )}
 
