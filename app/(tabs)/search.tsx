@@ -36,6 +36,7 @@ export default function SearchScreen() {
   useEffect(() => {
     loadProfiles();
     loadHistory();
+    useMiniAppsStore.getState().loadApps();
   }, []);
 
   useEffect(() => {
