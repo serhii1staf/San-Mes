@@ -14,6 +14,7 @@ import { Post } from '../../src/types';
 import { getPosts, isRepost, parseImageUrls, isImageSpoiler, toggleLike as apiToggleLike, supabase } from '../../src/lib/supabase';
 import { useUpdateStore } from '../../src/store/updateStore';
 import { triggerHaptic } from '../../src/utils/haptics';
+import { useConnectivityStore } from '../../src/services/connectivityMonitor';
 
 const FEED_CACHE_KEY = '@san:feed_posts';
 const FEED_LIMIT = 20;
@@ -129,6 +130,7 @@ export default function FeedScreen() {
   const hasFetched = useRef(false);
 
   const { status: updateStatus, progress: updateProgress, message: updateMessage, checkForUpdate, applyUpdate } = useUpdateStore();
+  const isOnline = useConnectivityStore((s) => s.isOnline);
 
   // Reload from cache when tab gains focus (picks up new posts from create screen)
   useFocusEffect(
@@ -358,6 +360,12 @@ export default function FeedScreen() {
         <View style={[styles.headerContent, { paddingTop: insets.top }]} pointerEvents="auto">
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <Text variant="subheading" weight="bold">San</Text>
+            {!isOnline && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(255,59,48,0.12)', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 }}>
+                <ActivityIndicator size={10} color="#FF3B30" />
+                <Text variant="caption" color="#FF3B30" style={{ fontSize: 10 }}>Оффлайн</Text>
+              </View>
+            )}
             {(updateStatus === 'checking' || updateStatus === 'downloading' || updateStatus === 'ready') && (
               <Pressable onPress={() => setShowUpdateModal(true)} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: theme.colors.accent.primary + '15', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 }}>
                 {updateStatus !== 'ready' ? <ActivityIndicator size={11} color={theme.colors.accent.primary} /> : <Feather name="check-circle" size={12} color={theme.colors.accent.primary} />}

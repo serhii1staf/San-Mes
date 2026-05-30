@@ -78,8 +78,11 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
 
     saveCurrentAccount();
 
+    // Close modal immediately to avoid artifact
+    onClose();
+
     // Clear all cached data from previous account
-    await AsyncStorage.multiRemove(['@san:feed_posts', '@san:my_posts']);
+    await AsyncStorage.multiRemove(['@san:feed_posts', '@san:my_posts', 'mini-apps-cache', '@san:search_history']);
 
     // Login to new account
     login({
@@ -99,10 +102,7 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
     // Restart app to cleanly load all data for new account
     try {
       await Updates.reloadAsync();
-    } catch {
-      // Fallback if updates not available (dev mode)
-      dismiss();
-    }
+    } catch {}
   };
 
   const handleAddAccount = async () => {
@@ -128,8 +128,11 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
     // Save current and switch
     saveCurrentAccount();
 
+    // Close modal immediately to avoid artifact
+    onClose();
+
     // Clear all cached data from previous account
-    await AsyncStorage.multiRemove(['@san:feed_posts', '@san:my_posts']);
+    await AsyncStorage.multiRemove(['@san:feed_posts', '@san:my_posts', 'mini-apps-cache', '@san:search_history']);
 
     addAccount({
       id: profile.id,
@@ -159,9 +162,7 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
     setIsLoading(false);
     try {
       await Updates.reloadAsync();
-    } catch {
-      dismiss();
-    }
+    } catch {}
   };
 
   const otherAccounts = accounts.filter(a => a.id !== user?.id);
