@@ -47,7 +47,7 @@ export default function MiniAppsScreen() {
   };
 
   const handleOpen = (app: MiniApp) => {
-    router.push({ pathname: '/browser', params: { url: encodeURIComponent(app.url) } });
+    router.push({ pathname: '/mini-app', params: { url: encodeURIComponent(app.url), name: app.name, emoji: app.emoji } });
   };
 
   const handleDelete = (app: MiniApp) => {

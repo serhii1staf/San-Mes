@@ -8,7 +8,36 @@ import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { useChatStore, useEntityStore, useAuthStore } from '../../src/store';
 import { syncConversations } from '../../src/services/syncService';
+import { useMiniAppsStore } from '../../src/store/miniAppsStore';
 import { Conversation } from '../../src/types';
+
+function MiniAppsRow() {
+  const theme = useTheme();
+  const { apps, loadApps } = useMiniAppsStore();
+
+  useEffect(() => { loadApps(); }, []);
+
+  if (apps.length === 0) return null;
+
+  return (
+    <View style={{ paddingHorizontal: 16, paddingBottom: 8 }}>
+      {apps.slice(0, 5).map(app => (
+        <Pressable key={app.id} onPress={() => router.push({ pathname: '/mini-app', params: { url: encodeURIComponent(app.url), name: app.name, emoji: app.emoji } })} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border.light }}>
+          <View style={{ width: 40, height: 40, borderRadius: 12, backgroundColor: theme.colors.accent.primary + '15', alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={{ fontSize: 20 }}>{app.emoji}</Text>
+          </View>
+          <View style={{ marginLeft: 12, flex: 1 }}>
+            <Text variant="body" weight="medium">{app.name}</Text>
+            {app.description ? <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>{app.description}</Text> : null}
+          </View>
+          <Pressable onPress={() => router.push({ pathname: '/mini-app', params: { url: encodeURIComponent(app.url), name: app.name, emoji: app.emoji } })} style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: theme.colors.accent.primary + '15', alignItems: 'center', justifyContent: 'center' }}>
+            <Feather name="play" size={14} color={theme.colors.accent.primary} />
+          </Pressable>
+        </Pressable>
+      ))}
+    </View>
+  );
+}
 
 function ConversationItem({ item }: { item: Conversation; index: number }) {
   const theme = useTheme();
@@ -178,6 +207,9 @@ export default function MessagesScreen() {
           />
         </View>
       </View>
+
+      {/* Mini-apps in chat list */}
+      <MiniAppsRow />
 
       {filtered.length === 0 ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingBottom: 100 }}>
