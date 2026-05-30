@@ -23,15 +23,15 @@ function MiniAppsRow() {
     <View style={{ paddingHorizontal: 16, paddingBottom: 8 }}>
       {apps.slice(0, 5).map(app => (
         <Pressable key={app.id} onPress={() => router.push({ pathname: '/mini-app', params: { url: encodeURIComponent(app.url), name: app.name, emoji: app.emoji } })} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border.light }}>
-          <View style={{ width: 40, height: 40, borderRadius: 12, backgroundColor: theme.colors.accent.primary + '15', alignItems: 'center', justifyContent: 'center' }}>
-            <Text style={{ fontSize: 20 }}>{app.emoji}</Text>
+          <View style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: theme.colors.accent.primary + '15', alignItems: 'center', justifyContent: 'center', overflow: 'visible' }}>
+            <Text style={{ fontSize: 22 }} allowFontScaling={false}>{app.emoji}</Text>
           </View>
           <View style={{ marginLeft: 12, flex: 1 }}>
             <Text variant="body" weight="medium">{app.name}</Text>
             {app.description ? <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>{app.description}</Text> : null}
           </View>
-          <Pressable onPress={() => router.push({ pathname: '/mini-app', params: { url: encodeURIComponent(app.url), name: app.name, emoji: app.emoji } })} style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: theme.colors.accent.primary + '15', alignItems: 'center', justifyContent: 'center' }}>
-            <Feather name="play" size={14} color={theme.colors.accent.primary} />
+          <Pressable onPress={() => router.push({ pathname: '/mini-app', params: { url: encodeURIComponent(app.url), name: app.name, emoji: app.emoji } })} style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, backgroundColor: theme.colors.accent.primary + '15' }}>
+            <Text variant="caption" weight="semibold" color={theme.colors.accent.primary} style={{ fontSize: 11 }}>Открыть</Text>
           </Pressable>
         </Pressable>
       ))}
