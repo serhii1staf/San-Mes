@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { View, FlatList, Pressable, ViewStyle, TextInput, StyleSheet } from 'react-native';
+import { View, FlatList, Pressable, ViewStyle, TextInput, StyleSheet, Text as RNText } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -23,8 +23,8 @@ function MiniAppsRow() {
     <View style={{ paddingHorizontal: 16, paddingBottom: 8 }}>
       {apps.slice(0, 5).map(app => (
         <Pressable key={app.id} onPress={() => router.push({ pathname: '/mini-app', params: { url: encodeURIComponent(app.url), name: app.name, emoji: app.emoji } })} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border.light }}>
-          <View style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: theme.colors.accent.primary + '15', alignItems: 'center', justifyContent: 'center', overflow: 'visible' }}>
-            <Text style={{ fontSize: 22 }} allowFontScaling={false}>{app.emoji}</Text>
+          <View style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: theme.colors.accent.primary + '12', alignItems: 'center', justifyContent: 'center' }}>
+            <RNText style={{ fontSize: 20 }} allowFontScaling={false}>{app.emoji}</RNText>
           </View>
           <View style={{ marginLeft: 12, flex: 1 }}>
             <Text variant="body" weight="medium">{app.name}</Text>

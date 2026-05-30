@@ -33,9 +33,9 @@ export function BrowserMiniBar() {
   if (!minimizedUrl) return null;
 
   const handleOpen = () => {
-    // If minimized domain contains emoji (mini-app), open as mini-app
-    if (minimizedDomain && /[\u{1F000}-\u{1FFFF}]/u.test(minimizedDomain)) {
-      router.push({ pathname: '/mini-app', params: { url: encodeURIComponent(minimizedUrl), name: minimizedDomain, emoji: '' } });
+    const { isMiniApp } = useBrowserStore.getState();
+    if (isMiniApp) {
+      router.push({ pathname: '/mini-app', params: { url: encodeURIComponent(minimizedUrl), name: minimizedDomain || '', emoji: '' } });
     } else {
       router.push({ pathname: '/browser', params: { url: encodeURIComponent(minimizedUrl) } });
     }

@@ -4,7 +4,8 @@ interface BrowserStore {
   minimizedUrl: string | null;
   minimizedDomain: string | null;
   minimizedFavicon: string | null;
-  setMinimized: (url: string, domain: string) => void;
+  isMiniApp: boolean;
+  setMinimized: (url: string, domain: string, isMiniApp?: boolean) => void;
   clearMinimized: () => void;
 }
 
@@ -12,10 +13,12 @@ export const useBrowserStore = create<BrowserStore>((set) => ({
   minimizedUrl: null,
   minimizedDomain: null,
   minimizedFavicon: null,
-  setMinimized: (url, domain) => set({
+  isMiniApp: false,
+  setMinimized: (url, domain, isMiniApp = false) => set({
     minimizedUrl: url,
     minimizedDomain: domain,
-    minimizedFavicon: `https://www.google.com/s2/favicons?domain=${domain}&sz=32`,
+    minimizedFavicon: isMiniApp ? null : `https://www.google.com/s2/favicons?domain=${domain}&sz=32`,
+    isMiniApp,
   }),
-  clearMinimized: () => set({ minimizedUrl: null, minimizedDomain: null, minimizedFavicon: null }),
+  clearMinimized: () => set({ minimizedUrl: null, minimizedDomain: null, minimizedFavicon: null, isMiniApp: false }),
 }));

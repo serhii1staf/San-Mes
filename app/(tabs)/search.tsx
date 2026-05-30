@@ -9,6 +9,7 @@ import { Text, Avatar } from '../../src/components/ui';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { UserBadge } from '../../src/components/ui/UserBadge';
 import { getProfiles } from '../../src/lib/supabase';
+import { useMiniAppsStore } from '../../src/store/miniAppsStore';
 
 const SEARCH_HISTORY_KEY = '@san:search_history';
 
@@ -172,6 +173,24 @@ export default function SearchScreen() {
           data={profiles}
           keyExtractor={(item) => item.id}
           contentContainerStyle={{ paddingHorizontal: theme.spacing.base, paddingTop: 16, paddingBottom: 100 }}
+          ListHeaderComponent={() => {
+            const { searchApps } = useMiniAppsStore.getState();
+            const matchedApps = searchApps(query);
+            if (matchedApps.length === 0) return null;
+            return (
+              <View style={{ marginBottom: 16 }}>
+                <Text variant="caption" weight="semibold" color={theme.colors.text.secondary} style={{ marginBottom: 8 }}>Мини-приложения</Text>
+                {matchedApps.slice(0, 3).map(app => (
+                  <Pressable key={app.id} onPress={() => router.push({ pathname: '/mini-app', params: { url: encodeURIComponent(app.url), name: app.name, emoji: app.emoji } })} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8 }}>
+                    <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: theme.colors.accent.primary + '12', alignItems: 'center', justifyContent: 'center' }}>
+                      <Text style={{ fontSize: 18 }} allowFontScaling={false}>{app.emoji}</Text>
+                    </View>
+                    <Text variant="body" weight="medium" style={{ marginLeft: 10 }}>{app.name}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            );
+          }}
           renderItem={({ item }) => (
             <Pressable
               onPress={() => handleSelect(item)}

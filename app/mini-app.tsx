@@ -28,8 +28,7 @@ export default function MiniAppScreen() {
   const displayName = name || (() => { try { return new URL(decodedUrl).hostname.replace('www.', ''); } catch { return 'App'; } })();
 
   const handleMinimize = () => {
-    // Store just the name (without emoji prefix) to avoid duplication
-    useBrowserStore.getState().setMinimized(currentUrl || decodedUrl, displayName);
+    useBrowserStore.getState().setMinimized(currentUrl || decodedUrl, displayName, true);
     router.back();
   };
 
@@ -53,20 +52,20 @@ export default function MiniAppScreen() {
         scrollEnabled={true}
         decelerationRate="normal"
         allowsInlineMediaPlayback
+        sharedCookiesEnabled={true}
+        thirdPartyCookiesEnabled={true}
         userAgent="Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
       />
 
       {/* Floating buttons */}
       <View style={{ position: 'absolute', top: insets.top + 8, left: 16, right: 16, flexDirection: 'row', justifyContent: 'space-between' }}>
-        {/* Minimize (left) */}
-        <Pressable onPress={handleMinimize} style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14, backgroundColor: 'rgba(20,20,20,0.75)' }}>
-          <Feather name="minus" size={14} color="#FFFFFF" />
-          <Text style={{ fontSize: 10, color: '#FFFFFF', fontWeight: '600' }}>Свернуть</Text>
+        <Pressable onPress={handleMinimize} style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 9, paddingVertical: 5, borderRadius: 10, backgroundColor: 'rgba(50,50,50,0.9)', borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.15)' }}>
+          <Feather name="chevron-down" size={12} color="rgba(255,255,255,0.9)" />
+          <Text style={{ fontSize: 9, color: 'rgba(255,255,255,0.9)', fontWeight: '500' }}>Свернуть</Text>
         </Pressable>
-        {/* Close (right) */}
-        <Pressable onPress={handleClose} style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14, backgroundColor: 'rgba(20,20,20,0.75)' }}>
-          <Text style={{ fontSize: 10, color: '#FFFFFF', fontWeight: '600' }}>Закрыть</Text>
-          <Feather name="x" size={14} color="#FFFFFF" />
+        <Pressable onPress={handleClose} style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 9, paddingVertical: 5, borderRadius: 10, backgroundColor: 'rgba(50,50,50,0.9)', borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.15)' }}>
+          <Text style={{ fontSize: 9, color: 'rgba(255,255,255,0.9)', fontWeight: '500' }}>Закрыть</Text>
+          <Feather name="x" size={12} color="rgba(255,255,255,0.9)" />
         </Pressable>
       </View>
     </View>
