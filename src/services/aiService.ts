@@ -5,9 +5,10 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const API_URL = 'https://integrate.api.nvidia.com/v1/chat/completions';
 const API_KEY = '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';
-const MODEL = 'z-ai/glm-5.1';
+const MODEL = 'nvidia/llama-3.1-nemotron-ultra-253b-v1';
 const DAILY_LIMIT = 50;
 const RATE_KEY = '@san:ai_usage';
+const CHAT_HISTORY_KEY = '@san:ai_chat';
 
 // ─── Rate Limiting ───────────────────────────────────────────────────────────
 
@@ -186,7 +187,7 @@ export async function sendMessage(messages: { role: string; content: string }[])
   };
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30000);
+  const timeout = setTimeout(() => controller.abort(), 60000);
 
   try {
     const response = await fetch(API_URL, {
@@ -212,4 +213,22 @@ export async function sendMessage(messages: { role: string; content: string }[])
     if (e?.name === 'AbortError') return 'Превышено время ожидания. Попробуй ещё раз.';
     throw e;
   }
+}
+
+// ─── Chat Persistence ────────────────────────────────────────────────────────
+
+export async function saveChatHistory(messages: AIMessage[]): Promise<void> {
+  try {
+    // Keep last 50 messages
+    const toSave = messages.slice(-50);
+    await AsyncStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(toSave));
+  } catch {}
+}
+
+export async function loadChatHistory(): Promise<AIMessage[]> {
+  try {
+    const raw = await AsyncStorage.getItem(CHAT_HISTORY_KEY);
+    if (!raw) return [];
+    return JSON.parse(raw);
+  } catch { return []; }
 }

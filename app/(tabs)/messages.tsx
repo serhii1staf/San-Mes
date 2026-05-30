@@ -11,6 +11,27 @@ import { syncConversations } from '../../src/services/syncService';
 import { useMiniAppsStore } from '../../src/store/miniAppsStore';
 import { Conversation } from '../../src/types';
 
+function AIConversationItem() {
+  const theme = useTheme();
+  return (
+    <Pressable onPress={() => router.push('/chat/ai' as any)} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: theme.spacing.md, paddingHorizontal: theme.spacing.base }}>
+      <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: theme.colors.accent.primary + '15', alignItems: 'center', justifyContent: 'center' }}>
+        <RNText style={{ fontSize: 22 }} allowFontScaling={false}>🤖</RNText>
+      </View>
+      <View style={{ flex: 1, marginLeft: theme.spacing.md }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Text variant="body" weight="semibold">San AI</Text>
+          <View style={{ width: 14, height: 14, borderRadius: 7, backgroundColor: theme.colors.accent.primary, alignItems: 'center', justifyContent: 'center' }}>
+            <Feather name="check" size={8} color="#FFFFFF" />
+          </View>
+        </View>
+        <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>Ассистент • темы, профиль, настройки</Text>
+      </View>
+      <Feather name="chevron-right" size={16} color={theme.colors.text.tertiary} />
+    </Pressable>
+  );
+}
+
 function MiniAppsRow() {
   const theme = useTheme();
   const { apps, loadApps } = useMiniAppsStore();
@@ -209,7 +230,8 @@ export default function MessagesScreen() {
         </View>
       </View>
 
-      {/* Mini-apps in chat list */}
+      {/* AI Chat + Mini-apps in chat list */}
+      <AIConversationItem />
       <MiniAppsRow />
 
       {filtered.length === 0 ? (
