@@ -142,8 +142,11 @@ export default function MessagesScreen() {
           locations={[0, 0.55, 1]}
           style={StyleSheet.absoluteFill}
         />
-        <View style={{ paddingHorizontal: theme.spacing.lg, paddingTop: insets.top + 8, paddingBottom: 8 }} pointerEvents="auto">
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: theme.spacing.lg, paddingTop: insets.top + 8, paddingBottom: 8 }} pointerEvents="auto">
           <Text variant="subheading" weight="bold">Messages</Text>
+          <Pressable onPress={() => router.push('/settings/mini-apps' as any)}>
+            <Feather name="grid" size={20} color={theme.colors.accent.primary} />
+          </Pressable>
         </View>
       </View>
 
