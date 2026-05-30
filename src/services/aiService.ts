@@ -5,7 +5,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const API_URL = 'https://integrate.api.nvidia.com/v1/chat/completions';
 const API_KEY = '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';
-const MODEL = 'meta/llama-3.3-70b-instruct';
+const MODEL = 'nvidia/llama-3.1-nemotron-nano-8b-v1';
 const DAILY_LIMIT = 50;
 const RATE_KEY = '@san:ai_usage';
 const CHAT_HISTORY_KEY = '@san:ai_chat';
@@ -54,24 +54,27 @@ function buildSystemPrompt(): string {
 Текущая тема: ${currentTheme?.label || 'Стандартная'} (${themeState.accent}), режим: ${themeState.mode}
 
 СТРОГИЕ ПРАВИЛА:
-1. НЕ выполняй действия если пользователь НЕ ПРОСИЛ явно. "Привет" — это НЕ просьба менять тему.
-2. Если пользователь говорит "не меняй" или "не надо" — НЕ включай теги действий.
-3. Включай тег [ACTION:...] ТОЛЬКО когда пользователь ПРЯМО просит: "смени тему", "поменяй имя", "сделай тёмную" и т.п.
-4. Если сомневаешься — СПРОСИ, а не делай.
+1. НЕ выполняй действия если пользователь НЕ ПРОСИЛ явно. "Привет" — это НЕ просьба.
+2. Если пользователь говорит "не меняй"/"не надо" — НЕ включай теги.
+3. Включай тег ТОЛЬКО при прямой просьбе: "смени", "поменяй", "сделай", "хочу".
+4. Если сомневаешься — СПРОСИ.
+5. НИКОГДА не используй белый (#FFFFFF) или очень светлые цвета как основной цвет темы.
 
-Формат тегов (включай ТОЛЬКО при явной просьбе):
-[ACTION:theme:ключ_темы] — сменить цветовую тему
-[ACTION:mode:dark] или [ACTION:mode:light] — переключить режим
-[ACTION:name:Новое Имя] — сменить имя
+Теги действий (ТОЛЬКО при явной просьбе):
+[ACTION:theme:ключ] — применить существующую тему
+[ACTION:custom_theme:название:hex_цвет] — создать новую тему с указанным цветом (НЕ белый, НЕ светлый!)
+[ACTION:mode:dark] или [ACTION:mode:light] — режим
+[ACTION:name:Имя] — сменить имя
 [ACTION:emoji:🎭] — сменить эмодзи
-[ACTION:username:new_username] — сменить юзернейм
-[ACTION:bio:Новое описание] — сменить био
-[ACTION:font:inter] — сменить шрифт (inter, system, serif, mono)
+[ACTION:username:nick] — сменить юзернейм
+[ACTION:bio:текст] — сменить био
+[ACTION:font:inter|system|serif|mono] — шрифт
 
-Ключи тем: ${ACCENT_COLORS.map(c => c.key).join(', ')}
-Названия: ${ACCENT_COLORS.map(c => `${c.key}=${c.label}`).join(', ')}
+Существующие темы (используй их в первую очередь): ${ACCENT_COLORS.map(c => `${c.key}(${c.label})`).join(', ')}
 
-Подбор по настроению (предлагай, но НЕ применяй без подтверждения):
+Если ни одна тема не подходит — создай кастомную через [ACTION:custom_theme:Название:hex]. Цвет должен быть насыщенным, НЕ белым, НЕ слишком светлым. Примеры хороших цветов: #6B4EFF, #FF6B6B, #4ECDC4, #2D3436.
+
+Подбор по настроению:
 - Спокойный → sage, mint, arctic, teal
 - Энергичный → coral, sunset, cherry, crimson
 - Минималистичный → slate, indigo, sapphire
@@ -79,12 +82,7 @@ function buildSystemPrompt(): string {
 - Природный → forest, emerald, olive
 - Романтичный → rose, lavender, berry, plum
 
-Пример правильного поведения:
-Пользователь: "Привет" → "Привет! Чем могу помочь?" (БЕЗ тегов!)
-Пользователь: "Хочу спокойную тему" → "Вот, попробуй! [ACTION:theme:sage]"
-Пользователь: "Не надо менять" → "Хорошо, оставляю как есть!" (БЕЗ тегов!)
-
-О San: социальная сеть, посты, чаты, мини-приложения, оффлайн, форматирование. Данные в безопасности.`;
+О San: соцсеть, посты, чаты, мини-приложения, оффлайн, форматирование. Данные в безопасности.`;
 }
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -98,7 +96,7 @@ export interface AIMessage {
 }
 
 export interface ParsedAction {
-  type: 'theme' | 'mode' | 'name' | 'emoji' | 'username' | 'bio' | 'font';
+  type: 'theme' | 'custom_theme' | 'mode' | 'name' | 'emoji' | 'username' | 'bio' | 'font';
   value: string;
   applied?: boolean;
 }
@@ -107,7 +105,10 @@ export interface ParsedAction {
 
 export function parseActions(text: string): { cleanText: string; actions: ParsedAction[] } {
   const actions: ParsedAction[] = [];
-  const cleanText = text.replace(/\[ACTION:(\w+):([^\]]+)\]/g, (_, type, value) => {
+  const cleanText = text.replace(/\[ACTION:custom_theme:([^:]+):([^\]]+)\]/g, (_, name, color) => {
+    actions.push({ type: 'custom_theme', value: `${name}:${color}` });
+    return '';
+  }).replace(/\[ACTION:(\w+):([^\]]+)\]/g, (_, type, value) => {
     actions.push({ type: type as ParsedAction['type'], value });
     return '';
   }).trim();
@@ -120,9 +121,39 @@ export async function applyAction(action: ParsedAction): Promise<boolean> {
   try {
     switch (action.type) {
       case 'theme': {
-        const theme = ACCENT_COLORS.find(c => c.key === action.value);
+        const allThemes = [...ACCENT_COLORS, ...useThemeStore.getState().aiThemes];
+        const theme = allThemes.find(c => c.key === action.value);
         if (theme) { useThemeStore.getState().setAccent(action.value); return true; }
         return false;
+      }
+      case 'custom_theme': {
+        // Format: "Название:hex_цвет"
+        const parts = action.value.split(':');
+        if (parts.length < 2) return false;
+        const name = parts[0].trim();
+        const color = parts[1].trim();
+        if (!color.startsWith('#') || color.length < 4) return false;
+        // Reject white/very light colors
+        const hex = color.replace('#', '');
+        const r = parseInt(hex.substring(0, 2), 16) || 0;
+        const g = parseInt(hex.substring(2, 4), 16) || 0;
+        const b = parseInt(hex.substring(4, 6), 16) || 0;
+        if (r > 220 && g > 220 && b > 220) return false; // too light
+
+        const key = 'ai-' + name.toLowerCase().replace(/[^a-z0-9]/g, '-');
+        // Generate dark bg colors from accent
+        const darkBg = `#${Math.max(10, Math.floor(r * 0.1)).toString(16).padStart(2, '0')}${Math.max(10, Math.floor(g * 0.1)).toString(16).padStart(2, '0')}${Math.max(10, Math.floor(b * 0.1)).toString(16).padStart(2, '0')}`;
+        const darkElevated = `#${Math.max(20, Math.floor(r * 0.15)).toString(16).padStart(2, '0')}${Math.max(20, Math.floor(g * 0.15)).toString(16).padStart(2, '0')}${Math.max(20, Math.floor(b * 0.15)).toString(16).padStart(2, '0')}`;
+        const darkSecondary = `#${Math.max(14, Math.floor(r * 0.12)).toString(16).padStart(2, '0')}${Math.max(14, Math.floor(g * 0.12)).toString(16).padStart(2, '0')}${Math.max(14, Math.floor(b * 0.12)).toString(16).padStart(2, '0')}`;
+        const darkBorder = `#${Math.max(30, Math.floor(r * 0.2)).toString(16).padStart(2, '0')}${Math.max(30, Math.floor(g * 0.2)).toString(16).padStart(2, '0')}${Math.max(30, Math.floor(b * 0.2)).toString(16).padStart(2, '0')}`;
+
+        const newTheme = {
+          key, label: `✨ ${name}`, color,
+          light: '#F8F8F8', darkBg, darkElevated, darkSecondary, darkBorder,
+        };
+        useThemeStore.getState().addAiTheme(newTheme);
+        useThemeStore.getState().setAccent(key);
+        return true;
       }
       case 'mode': {
         if (action.value === 'dark' || action.value === 'light') {

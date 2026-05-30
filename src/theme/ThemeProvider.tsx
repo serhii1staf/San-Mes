@@ -49,8 +49,9 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
   };
   const activeFontFamily = fontFamilyMap[selectedFont] || fontFamily;
 
-  // Find accent config
-  const accentConfig = ACCENT_COLORS.find((c) => c.key === accent);
+  // Find accent config (check AI themes too)
+  const aiThemes = useThemeStore((s) => s.aiThemes);
+  const accentConfig = ACCENT_COLORS.find((c) => c.key === accent) || aiThemes.find((c) => c.key === accent);
   const accentColor = accentConfig?.color || baseColors.accent.primary;
 
   // Build theme colors — override backgrounds with accent-tinted colors

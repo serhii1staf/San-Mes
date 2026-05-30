@@ -69,10 +69,12 @@ interface ThemeStoreState {
   accent: AccentColor;
   fontFamily: FontFamily;
   fontSize: FontSize;
+  aiThemes: typeof ACCENT_COLORS;
   setMode: (mode: ThemeMode) => void;
   setAccent: (accent: AccentColor) => void;
   setFontFamily: (fontFamily: FontFamily) => void;
   setFontSize: (fontSize: FontSize) => void;
+  addAiTheme: (theme: typeof ACCENT_COLORS[0]) => void;
   toggle: () => void;
 }
 
@@ -83,10 +85,12 @@ export const useThemeStore = create<ThemeStoreState>()(
       accent: 'sage',
       fontFamily: 'inter',
       fontSize: 'medium',
+      aiThemes: [],
       setMode: (mode) => set({ mode }),
       setAccent: (accent) => set({ accent }),
       setFontFamily: (fontFamily) => set({ fontFamily }),
       setFontSize: (fontSize) => set({ fontSize }),
+      addAiTheme: (theme) => set((state) => ({ aiThemes: [...state.aiThemes.filter(t => t.key !== theme.key), theme] })),
       toggle: () => set((state) => ({ mode: state.mode === 'light' ? 'dark' : 'light' })),
     }),
     {

@@ -211,7 +211,7 @@ export default function AIChatScreen() {
         )}
 
         {/* Input */}
-        <View style={{ paddingHorizontal: 16, paddingTop: 6, paddingBottom: insets.bottom + 6, backgroundColor: theme.colors.background.primary }}>
+        <View style={{ paddingHorizontal: 16, paddingTop: 6, paddingBottom: 6, backgroundColor: theme.colors.background.primary }}>
           <View style={{ flexDirection: 'row', alignItems: 'flex-end', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)', borderRadius: 24, paddingHorizontal: 16, paddingVertical: 8, borderWidth: 1, borderColor: theme.colors.border.light }}>
             <TextInput
               value={input}
