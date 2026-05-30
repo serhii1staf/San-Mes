@@ -5,7 +5,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const API_URL = 'https://integrate.api.nvidia.com/v1/chat/completions';
 const API_KEY = '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';
-const MODEL = 'nvidia/llama-3.1-nemotron-ultra-253b-v1';
+const MODEL = 'meta/llama-3.1-8b-instruct';
 const DAILY_LIMIT = 50;
 const RATE_KEY = '@san:ai_usage';
 const CHAT_HISTORY_KEY = '@san:ai_chat';

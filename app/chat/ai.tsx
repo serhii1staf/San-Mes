@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { View, Pressable, TextInput, FlatList, ActivityIndicator, Dimensions, Text as RNText } from 'react-native';
+import { View, Pressable, TextInput, FlatList, ActivityIndicator, Dimensions, Text as RNText, Animated, Keyboard, Platform } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -123,19 +123,21 @@ export default function AIChatScreen() {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [remaining, setRemaining] = useState(50);
-  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const keyboardAnim = useRef(new Animated.Value(0)).current;
   const flatListRef = useRef<FlatList>(null);
   const inputRef = useRef<TextInput>(null);
 
-  // Keyboard handling
+  // Smooth keyboard animation
   useEffect(() => {
-    const { Keyboard } = require('react-native');
-    const showSub = Keyboard.addListener('keyboardWillShow', (e: any) => setKeyboardHeight(e.endCoordinates.height));
-    const hideSub = Keyboard.addListener('keyboardWillHide', () => setKeyboardHeight(0));
-    // Android fallback
-    const showSubA = Keyboard.addListener('keyboardDidShow', (e: any) => setKeyboardHeight(e.endCoordinates.height));
-    const hideSubA = Keyboard.addListener('keyboardDidHide', () => setKeyboardHeight(0));
-    return () => { showSub.remove(); hideSub.remove(); showSubA.remove(); hideSubA.remove(); };
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvent, (e) => {
+      Animated.timing(keyboardAnim, { toValue: e.endCoordinates.height, duration: Platform.OS === 'ios' ? e.duration || 250 : 200, useNativeDriver: false }).start();
+    });
+    const hideSub = Keyboard.addListener(hideEvent, (e) => {
+      Animated.timing(keyboardAnim, { toValue: 0, duration: Platform.OS === 'ios' ? (e as any).duration || 250 : 200, useNativeDriver: false }).start();
+    });
+    return () => { showSub.remove(); hideSub.remove(); };
   }, []);
 
   // Load saved chat
@@ -189,7 +191,8 @@ export default function AIChatScreen() {
     setIsLoading(false);
   }, [input, isLoading, messages]);
 
-  const inputBottom = keyboardHeight > 0 ? keyboardHeight : insets.bottom + 8;
+  // Compute bottom with padding
+  const inputBottom = Animated.add(keyboardAnim, new Animated.Value(insets.bottom + 8));
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
@@ -215,49 +218,52 @@ export default function AIChatScreen() {
       </View>
 
       {/* Messages */}
-      <FlatList
-        ref={flatListRef}
-        data={messages}
-        keyExtractor={item => item.id}
-        contentContainerStyle={{ paddingTop: insets.top + 76, paddingBottom: inputBottom + 60, paddingHorizontal: 16 }}
-        renderItem={({ item }) => <MessageBubble message={item} />}
-        onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
-        onLayout={() => flatListRef.current?.scrollToEnd({ animated: false })}
-        showsVerticalScrollIndicator={false}
-        keyboardDismissMode="interactive"
-        ListEmptyComponent={
-          <View style={{ alignItems: 'center', paddingTop: 60 }}>
-            <RNText style={{ fontSize: 48 }} allowFontScaling={false}>🤖</RNText>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 12 }}>
-              <Text variant="body" weight="bold">San AI</Text>
-              <VerifiedBadge size={14} />
+      <Animated.View style={{ flex: 1, paddingBottom: Animated.add(keyboardAnim, new Animated.Value(70)) }}>
+        <FlatList
+          ref={flatListRef}
+          data={messages}
+          keyExtractor={item => item.id}
+          contentContainerStyle={{ paddingTop: insets.top + 76, paddingBottom: 80, paddingHorizontal: 16 }}
+          renderItem={({ item }) => <MessageBubble message={item} />}
+          onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+          onLayout={() => flatListRef.current?.scrollToEnd({ animated: false })}
+          showsVerticalScrollIndicator={false}
+          keyboardDismissMode="interactive"
+          keyboardShouldPersistTaps="handled"
+          ListEmptyComponent={
+            <View style={{ alignItems: 'center', paddingTop: 60 }}>
+              <RNText style={{ fontSize: 48 }} allowFontScaling={false}>🤖</RNText>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 12 }}>
+                <Text variant="body" weight="bold">San AI</Text>
+                <VerifiedBadge size={14} />
+              </View>
+              <Text variant="caption" color={theme.colors.text.tertiary} align="center" style={{ marginTop: 8, paddingHorizontal: 40, lineHeight: 18 }}>
+                Привет! Я могу сменить тему под настроение, изменить имя, эмодзи, био — просто напиши.
+              </Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 6, marginTop: 16, paddingHorizontal: 20 }}>
+                {['Подбери тему', 'Сменить имя', 'Тёмная тема', 'Что ты умеешь?'].map(hint => (
+                  <Pressable key={hint} onPress={() => setInput(hint)} style={{ backgroundColor: theme.colors.accent.primary + '12', borderRadius: 14, paddingHorizontal: 12, paddingVertical: 6 }}>
+                    <Text variant="caption" color={theme.colors.accent.primary} style={{ fontSize: 12 }}>{hint}</Text>
+                  </Pressable>
+                ))}
+              </View>
             </View>
-            <Text variant="caption" color={theme.colors.text.tertiary} align="center" style={{ marginTop: 8, paddingHorizontal: 40, lineHeight: 18 }}>
-              Привет! Я могу сменить тему под настроение, изменить имя, эмодзи, био — просто напиши.
-            </Text>
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 6, marginTop: 16, paddingHorizontal: 20 }}>
-              {['Подбери тему', 'Сменить имя', 'Тёмная тема', 'Что ты умеешь?'].map(hint => (
-                <Pressable key={hint} onPress={() => setInput(hint)} style={{ backgroundColor: theme.colors.accent.primary + '12', borderRadius: 14, paddingHorizontal: 12, paddingVertical: 6 }}>
-                  <Text variant="caption" color={theme.colors.accent.primary} style={{ fontSize: 12 }}>{hint}</Text>
-                </Pressable>
-              ))}
-            </View>
-          </View>
-        }
-      />
+          }
+        />
+      </Animated.View>
 
       {/* Typing indicator */}
       {isLoading && (
-        <View style={{ position: 'absolute', bottom: inputBottom + 56, left: 16 }}>
+        <Animated.View style={{ position: 'absolute', bottom: Animated.add(keyboardAnim, new Animated.Value(insets.bottom + 68)), left: 16 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 8 }}>
             <ActivityIndicator size="small" color={theme.colors.accent.primary} />
             <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>Думаю...</Text>
           </View>
-        </View>
+        </Animated.View>
       )}
 
-      {/* Input */}
-      <View style={{ position: 'absolute', bottom: inputBottom, left: 0, right: 0, paddingHorizontal: 16, paddingTop: 8, backgroundColor: theme.colors.background.primary }}>
+      {/* Input — animated with keyboard */}
+      <Animated.View style={{ position: 'absolute', bottom: Animated.add(keyboardAnim, new Animated.Value(insets.bottom + 8)), left: 0, right: 0, paddingHorizontal: 16, paddingTop: 8, backgroundColor: theme.colors.background.primary }}>
         <View style={{ flexDirection: 'row', alignItems: 'flex-end', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)', borderRadius: 24, paddingHorizontal: 16, paddingVertical: 8, borderWidth: 1, borderColor: theme.colors.border.light }}>
           <TextInput
             ref={inputRef}
@@ -272,7 +278,7 @@ export default function AIChatScreen() {
             <Feather name="send" size={14} color={input.trim() ? '#FFFFFF' : theme.colors.text.tertiary} />
           </Pressable>
         </View>
-      </View>
+      </Animated.View>
     </View>
   );
 }
