@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { View, Pressable, TextInput, FlatList, ActivityIndicator, Dimensions, Text as RNText, Keyboard, Platform, Animated as RNAnimated } from 'react-native';
+import { View, Pressable, TextInput, FlatList, ActivityIndicator, Dimensions, Text as RNText, Keyboard, Platform, LayoutAnimation, UIManager } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -12,6 +12,10 @@ import { useThemeStore, ACCENT_COLORS } from '../../src/store/themeStore';
 import { useAuthStore } from '../../src/store';
 import { sendMessage, parseActions, applyAction, AIMessage, ParsedAction, getRemainingRequests, saveChatHistory, loadChatHistory } from '../../src/services/aiService';
 import { triggerHaptic } from '../../src/utils/haptics';
+
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 
@@ -94,16 +98,18 @@ export default function AIChatScreen() {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [remaining, setRemaining] = useState(50);
+  const [kbHeight, setKbHeight] = useState(0);
   const flatListRef = useRef<FlatList>(null);
-  const bottomPad = useRef(new RNAnimated.Value(insets.bottom + 12)).current;
 
-  // Keyboard — instant sync with native animation
+  // Keyboard — LayoutAnimation for instant sync
   useEffect(() => {
     const show = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', (e) => {
-      RNAnimated.timing(bottomPad, { toValue: e.endCoordinates.height + 4, duration: Platform.OS === 'ios' ? (e as any).duration : 150, useNativeDriver: false }).start();
+      LayoutAnimation.configureNext(LayoutAnimation.create(Platform.OS === 'ios' ? (e as any).duration || 250 : 200, LayoutAnimation.Types.keyboard, LayoutAnimation.Properties.opacity));
+      setKbHeight(e.endCoordinates.height);
     });
     const hide = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide', (e) => {
-      RNAnimated.timing(bottomPad, { toValue: insets.bottom + 12, duration: Platform.OS === 'ios' ? (e as any).duration : 150, useNativeDriver: false }).start();
+      LayoutAnimation.configureNext(LayoutAnimation.create(Platform.OS === 'ios' ? (e as any).duration || 250 : 200, LayoutAnimation.Types.keyboard, LayoutAnimation.Properties.opacity));
+      setKbHeight(0);
     });
     return () => { show.remove(); hide.remove(); };
   }, []);
@@ -216,8 +222,8 @@ export default function AIChatScreen() {
         </View>
       )}
 
-      {/* Input — animated bottom */}
-      <RNAnimated.View style={{ paddingHorizontal: 16, paddingTop: 6, paddingBottom: bottomPad, backgroundColor: theme.colors.background.primary }}>
+      {/* Input */}
+      <View style={{ paddingHorizontal: 16, paddingTop: 6, paddingBottom: kbHeight > 0 ? 6 : insets.bottom + 12, backgroundColor: theme.colors.background.primary }}>
         <View style={{ flexDirection: 'row', alignItems: 'flex-end', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)', borderRadius: 24, paddingHorizontal: 16, paddingVertical: 8, borderWidth: 1, borderColor: theme.colors.border.light }}>
           <TextInput
             value={input}
@@ -231,7 +237,7 @@ export default function AIChatScreen() {
             <Feather name="send" size={14} color={input.trim() ? '#FFFFFF' : theme.colors.text.tertiary} />
           </Pressable>
         </View>
-      </RNAnimated.View>
+      </View>
     </View>
   );
 }

@@ -138,7 +138,12 @@ export async function applyAction(action: ParsedAction): Promise<boolean> {
       case 'theme': {
         const allThemes = [...ACCENT_COLORS, ...useThemeStore.getState().aiThemes];
         const theme = allThemes.find(c => c.key === action.value);
-        if (theme) { useThemeStore.getState().setAccent(action.value); return true; }
+        if (theme) {
+          useThemeStore.getState().setAccent(action.value);
+          // Auto-switch to dark mode for better theme visibility
+          useThemeStore.getState().setMode('dark');
+          return true;
+        }
         return false;
       }
       case 'custom_theme': {
