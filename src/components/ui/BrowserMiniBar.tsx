@@ -35,7 +35,8 @@ export function BrowserMiniBar() {
   const handleOpen = () => {
     const { isMiniApp } = useBrowserStore.getState();
     if (isMiniApp) {
-      router.push({ pathname: '/mini-app', params: { url: encodeURIComponent(minimizedUrl), name: minimizedDomain || '', emoji: '' } });
+      // Pass raw URL — mini-app.tsx will decode it
+      router.push({ pathname: '/mini-app', params: { url: minimizedUrl, name: minimizedDomain || '', emoji: '' } });
     } else {
       router.push({ pathname: '/browser', params: { url: encodeURIComponent(minimizedUrl) } });
     }
