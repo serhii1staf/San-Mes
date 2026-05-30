@@ -101,7 +101,6 @@ export default function AIChatScreen() {
   useEffect(() => {
     const show = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', (e) => {
       RNAnimated.timing(bottomPad, { toValue: e.endCoordinates.height + 4, duration: Platform.OS === 'ios' ? (e as any).duration : 150, useNativeDriver: false }).start();
-      setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 50);
     });
     const hide = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide', (e) => {
       RNAnimated.timing(bottomPad, { toValue: insets.bottom + 12, duration: Platform.OS === 'ios' ? (e as any).duration : 150, useNativeDriver: false }).start();
@@ -110,12 +109,7 @@ export default function AIChatScreen() {
   }, []);
 
   useEffect(() => {
-    loadChatHistory().then(saved => {
-      if (saved.length > 0) {
-        setMessages(saved);
-        setTimeout(() => flatListRef.current?.scrollToEnd({ animated: false }), 200);
-      }
-    });
+    loadChatHistory().then(saved => { if (saved.length > 0) setMessages(saved); });
     getRemainingRequests().then(setRemaining);
   }, []);
 
@@ -129,7 +123,6 @@ export default function AIChatScreen() {
     const newMessages = [...messages, userMsg];
     setMessages(newMessages);
     saveChatHistory(newMessages);
-    setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 50);
 
     setIsLoading(true);
     try {
@@ -154,7 +147,6 @@ export default function AIChatScreen() {
       setMessages(prev => [...prev, errMsg]);
     }
     setIsLoading(false);
-    setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
   }, [input, isLoading, messages]);
 
   return (
@@ -180,18 +172,19 @@ export default function AIChatScreen() {
         </LinearGradient>
       </View>
 
-      {/* Messages */}
+      {/* Messages — inverted for auto-scroll to bottom */}
       <FlatList
         ref={flatListRef}
-        data={messages}
+        data={[...messages].reverse()}
         keyExtractor={item => item.id}
-        contentContainerStyle={{ paddingTop: insets.top + 72, paddingHorizontal: 16, paddingBottom: 70 }}
+        inverted
+        contentContainerStyle={{ paddingTop: 70, paddingHorizontal: 16, paddingBottom: insets.top + 72 }}
         renderItem={({ item }) => <MessageBubble message={item} />}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         initialNumToRender={20}
         ListEmptyComponent={
-          <View style={{ alignItems: 'center', paddingTop: 60 }}>
+          <View style={{ alignItems: 'center', paddingTop: 60, transform: [{ scaleY: -1 }] }}>
             <RNText style={{ fontSize: 48 }} allowFontScaling={false}>🤖</RNText>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 12 }}>
               <Text variant="body" weight="bold">San AI</Text>

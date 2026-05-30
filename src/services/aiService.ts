@@ -105,14 +105,29 @@ export interface ParsedAction {
 
 export function parseActions(text: string): { cleanText: string; actions: ParsedAction[] } {
   const actions: ParsedAction[] = [];
-  const cleanText = text.replace(/\[ACTION:custom_theme:([^:]+):([^\]]+)\]/g, (_, name, color) => {
-    actions.push({ type: 'custom_theme', value: `${name}:${color}` });
+  // Parse custom_theme first (3 parts)
+  let cleaned = text.replace(/\[ACTION:custom_theme:([^:]+):([^\]]+)\]/g, (_, name, color) => {
+    actions.push({ type: 'custom_theme', value: `${name.trim()}:${color.trim()}` });
     return '';
-  }).replace(/\[ACTION:(\w+):([^\]]+)\]/g, (_, type, value) => {
-    actions.push({ type: type as ParsedAction['type'], value });
+  });
+  // Parse regular actions
+  cleaned = cleaned.replace(/\[ACTION:(\w+):([^\]]+)\]/g, (_, type, value) => {
+    actions.push({ type: type.trim() as ParsedAction['type'], value: value.trim() });
     return '';
-  }).trim();
-  return { cleanText, actions };
+  });
+  // Also catch backtick-wrapped actions (model sometimes wraps in code)
+  cleaned = cleaned.replace(/`\[ACTION:(\w+):([^\]]+)\]`/g, (_, type, value) => {
+    actions.push({ type: type.trim() as ParsedAction['type'], value: value.trim() });
+    return '';
+  });
+  // Catch ACTION without brackets (model sometimes forgets brackets)
+  cleaned = cleaned.replace(/ACTION:(\w+):([^\s\]`]+)/g, (_, type, value) => {
+    if (!actions.find(a => a.type === type.trim() && a.value === value.trim())) {
+      actions.push({ type: type.trim() as ParsedAction['type'], value: value.trim() });
+    }
+    return '';
+  });
+  return { cleanText: cleaned.trim(), actions };
 }
 
 // ─── Action Execution ────────────────────────────────────────────────────────
