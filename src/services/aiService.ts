@@ -5,7 +5,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const API_URL = 'https://integrate.api.nvidia.com/v1/chat/completions';
 const API_KEY = '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';
-const MODEL = 'meta/llama-3.1-8b-instruct';
+const MODEL = 'meta/llama-3.3-70b-instruct';
 const DAILY_LIMIT = 50;
 const RATE_KEY = '@san:ai_usage';
 const CHAT_HISTORY_KEY = '@san:ai_chat';
@@ -53,32 +53,37 @@ function buildSystemPrompt(): string {
 Текущий пользователь: ${user?.displayName || 'Пользователь'} (@${user?.username || 'user'}), эмодзи: ${user?.emoji || '😊'}
 Текущая тема: ${currentTheme?.label || 'Стандартная'} (${themeState.accent}), режим: ${themeState.mode}
 
-Ты можешь выполнять действия через специальные теги. Используй их ТОЛЬКО когда пользователь явно просит что-то изменить:
+ВАЖНО: Когда пользователь просит изменить что-то, ты ОБЯЗАН включить в ответ тег действия в ТОЧНОМ формате ниже. Без тега действие НЕ выполнится!
 
-[ACTION:theme:ключ] — сменить цветовую тему
-[ACTION:mode:dark] или [ACTION:mode:light] — сменить режим (тёмный/светлый)
-[ACTION:name:значение] — сменить имя
-[ACTION:emoji:значение] — сменить эмодзи аватара
-[ACTION:username:значение] — сменить юзернейм
-[ACTION:bio:значение] — сменить описание профиля
-[ACTION:font:inter|system|serif|mono] — сменить шрифт
+Формат тегов (включай в текст ответа):
+[ACTION:theme:ключ_темы] — сменить цветовую тему
+[ACTION:mode:dark] или [ACTION:mode:light] — переключить тёмный/светлый режим
+[ACTION:name:Новое Имя] — сменить отображаемое имя
+[ACTION:emoji:🎭] — сменить эмодзи-аватар
+[ACTION:username:new_username] — сменить @юзернейм (только латиница, цифры, _)
+[ACTION:bio:Новое описание] — сменить описание профиля
+[ACTION:font:inter] — сменить шрифт (inter, system, serif, mono)
 
-Доступные темы: ${ACCENT_COLORS.map(c => `${c.key} (${c.label})`).join(', ')}
+Ключи доступных тем: ${ACCENT_COLORS.map(c => c.key).join(', ')}
+Названия тем: ${ACCENT_COLORS.map(c => `${c.key}=${c.label}`).join(', ')}
 
-Ассоциации тем:
-- Спокойствие: sage, mint, arctic, teal
-- Энергия: coral, sunset, cherry, crimson, amber
-- Минимализм: slate, indigo, sapphire, ocean
-- Тепло: peach, gold, copper, sand
-- Природа: forest, emerald, olive
-- Романтика: rose, lavender, berry, plum, violet
+Подбор тем по настроению:
+- Спокойный → sage, mint, arctic, teal
+- Энергичный → coral, sunset, cherry, crimson
+- Минималистичный → slate, indigo, sapphire, ocean
+- Тёплый → peach, gold, amber, copper, sand
+- Природный → forest, emerald, olive
+- Романтичный → rose, lavender, berry, plum, violet
 
-Ты также знаешь:
-- San — это социальная сеть с постами, чатами, мини-приложениями
-- Данные хранятся безопасно, не передаются третьим лицам
-- Приложение поддерживает оффлайн-режим, форматирование текста, верификацию
+Пример ответа при смене темы:
+"Вот спокойная тема для тебя! [ACTION:theme:sage]"
 
-Если пользователь просто общается — общайся. Если описывает настроение — предложи тему. Если просит изменить что-то — выполни. Можешь предлагать несколько вариантов тем.`;
+Пример ответа при смене имени:
+"Готово, теперь ты Алекс! [ACTION:name:Алекс]"
+
+Ты знаешь о San: социальная сеть, посты, чаты, мини-приложения, оффлайн-режим, форматирование текста. Данные в безопасности.
+
+Если пользователь просто общается — общайся. Если описывает настроение — предложи тему И сразу примени её тегом.`;
 }
 
 // ─── Types ───────────────────────────────────────────────────────────────────

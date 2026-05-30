@@ -132,7 +132,7 @@ export default function AIChatScreen() {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
     const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
     const showSub = Keyboard.addListener(showEvent, (e) => {
-      Animated.timing(keyboardAnim, { toValue: e.endCoordinates.height, duration: Platform.OS === 'ios' ? e.duration || 250 : 200, useNativeDriver: false }).start();
+      Animated.timing(keyboardAnim, { toValue: e.endCoordinates.height - insets.bottom, duration: Platform.OS === 'ios' ? e.duration || 250 : 200, useNativeDriver: false }).start();
     });
     const hideSub = Keyboard.addListener(hideEvent, (e) => {
       Animated.timing(keyboardAnim, { toValue: 0, duration: Platform.OS === 'ios' ? (e as any).duration || 250 : 200, useNativeDriver: false }).start();
@@ -252,18 +252,20 @@ export default function AIChatScreen() {
         />
       </Animated.View>
 
-      {/* Typing indicator */}
+      {/* Typing indicator with blur */}
       {isLoading && (
         <Animated.View style={{ position: 'absolute', bottom: Animated.add(keyboardAnim, new Animated.Value(insets.bottom + 68)), left: 16 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 8 }}>
-            <ActivityIndicator size="small" color={theme.colors.accent.primary} />
-            <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>Думаю...</Text>
+          <View style={{ borderRadius: 16, overflow: 'hidden' }}>
+            <BlurView intensity={80} tint="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 8 }}>
+              <ActivityIndicator size="small" color="#FFFFFF" />
+              <Text variant="caption" color="#FFFFFF" style={{ fontSize: 11 }}>Думаю...</Text>
+            </BlurView>
           </View>
         </Animated.View>
       )}
 
       {/* Input — animated with keyboard */}
-      <Animated.View style={{ position: 'absolute', bottom: Animated.add(keyboardAnim, new Animated.Value(insets.bottom + 8)), left: 0, right: 0, paddingHorizontal: 16, paddingTop: 8, backgroundColor: theme.colors.background.primary }}>
+      <Animated.View style={{ position: 'absolute', bottom: Animated.add(keyboardAnim, new Animated.Value(insets.bottom + 4)), left: 0, right: 0, paddingHorizontal: 16, paddingTop: 6, backgroundColor: theme.colors.background.primary }}>
         <View style={{ flexDirection: 'row', alignItems: 'flex-end', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)', borderRadius: 24, paddingHorizontal: 16, paddingVertical: 8, borderWidth: 1, borderColor: theme.colors.border.light }}>
           <TextInput
             ref={inputRef}
