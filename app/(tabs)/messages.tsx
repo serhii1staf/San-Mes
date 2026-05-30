@@ -144,9 +144,7 @@ export default function MessagesScreen() {
         />
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: theme.spacing.lg, paddingTop: insets.top + 8, paddingBottom: 8 }} pointerEvents="auto">
           <Text variant="subheading" weight="bold">Messages</Text>
-          <Pressable onPress={() => router.push('/settings/mini-apps' as any)}>
-            <Feather name="grid" size={20} color={theme.colors.accent.primary} />
-          </Pressable>
+          <View style={{ width: 20 }} />
         </View>
       </View>
 
@@ -203,6 +201,7 @@ export default function MessagesScreen() {
       )}
 
       <Pressable
+        onPress={() => router.push('/settings/mini-apps' as any)}
         style={{
           position: 'absolute',
           bottom: 100,
@@ -220,7 +219,7 @@ export default function MessagesScreen() {
           shadowRadius: 4,
         }}
       >
-        <Feather name="edit" size={22} color={theme.colors.text.inverse} />
+        <Feather name="grid" size={22} color={theme.colors.text.inverse} />
       </Pressable>
     </View>
   );
