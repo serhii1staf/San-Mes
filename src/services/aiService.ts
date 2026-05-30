@@ -1,40 +1,86 @@
 import { useThemeStore, ACCENT_COLORS } from '../store/themeStore';
 import { useAuthStore } from '../store/authStore';
 import { supabase } from '../lib/supabase';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const API_URL = 'https://integrate.api.nvidia.com/v1/chat/completions';
 const API_KEY = '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';
 const MODEL = 'z-ai/glm-5.1';
+const DAILY_LIMIT = 50;
+const RATE_KEY = '@san:ai_usage';
 
-const SYSTEM_PROMPT = `Ты — San AI, умный ассистент внутри приложения San (социальная сеть). Отвечай коротко, дружелюбно, на русском.
+// ─── Rate Limiting ───────────────────────────────────────────────────────────
 
-Ты можешь выполнять действия:
-1. СМЕНИТЬ ТЕМУ — переключить цветовую тему приложения. Доступные темы: ${ACCENT_COLORS.map(c => c.key + ' (' + c.label + ')').join(', ')}
-2. СМЕНИТЬ ИМЯ — изменить отображаемое имя пользователя
-3. СМЕНИТЬ ЭМОДЗИ — изменить эмодзи-аватар пользователя
-4. СМЕНИТЬ ЮЗЕРНЕЙМ — изменить @username
-5. СМЕНИТЬ БИО — изменить описание профиля
+interface UsageData { date: string; count: number; }
 
-Когда пользователь просит выполнить действие, ответь в формате:
-[ACTION:тип:значение]
+export async function getRemainingRequests(): Promise<number> {
+  try {
+    const raw = await AsyncStorage.getItem(RATE_KEY);
+    if (!raw) return DAILY_LIMIT;
+    const data: UsageData = JSON.parse(raw);
+    const today = new Date().toISOString().split('T')[0];
+    if (data.date !== today) return DAILY_LIMIT;
+    return Math.max(0, DAILY_LIMIT - data.count);
+  } catch { return DAILY_LIMIT; }
+}
 
-Примеры:
-- Пользователь: "Хочу тему поярче" → Ответ: "Попробуй вот эту! [ACTION:theme:coral]"
-- Пользователь: "Поменяй имя на Алекс" → Ответ: "Готово! [ACTION:name:Алекс]"
-- Пользователь: "Поставь эмодзи кота" → Ответ: "Мяу! [ACTION:emoji:🐱]"
-- Пользователь: "Юзернейм alex123" → Ответ: "Сделано! [ACTION:username:alex123]"
-- Пользователь: "Напиши в био: люблю кодить" → Ответ: "Обновил! [ACTION:bio:люблю кодить]"
+async function incrementUsage(): Promise<boolean> {
+  const today = new Date().toISOString().split('T')[0];
+  try {
+    const raw = await AsyncStorage.getItem(RATE_KEY);
+    let data: UsageData = { date: today, count: 0 };
+    if (raw) {
+      data = JSON.parse(raw);
+      if (data.date !== today) data = { date: today, count: 0 };
+    }
+    if (data.count >= DAILY_LIMIT) return false;
+    data.count++;
+    await AsyncStorage.setItem(RATE_KEY, JSON.stringify(data));
+    return true;
+  } catch { return true; }
+}
 
-Если пользователь описывает настроение или стиль, подбери подходящую тему:
-- Спокойный/расслабленный → sage, mint, arctic
-- Энергичный/яркий → coral, sunset, cherry, crimson
-- Тёмный/минималистичный → slate, indigo, sapphire
-- Тёплый/уютный → peach, gold, amber, copper, sand
-- Природный → forest, emerald, olive, teal
-- Романтичный → rose, lavender, berry, plum, violet
+// ─── System Prompt ───────────────────────────────────────────────────────────
 
-Если не уверен что хочет пользователь — спроси. Не выполняй действия без явного запроса.
-Ты знаешь политику конфиденциальности San: данные хранятся в Supabase, шифрование на уровне транспорта, никакие данные не передаются третьим лицам.`;
+function buildSystemPrompt(): string {
+  const user = useAuthStore.getState().user;
+  const themeState = useThemeStore.getState();
+  const currentTheme = ACCENT_COLORS.find(c => c.key === themeState.accent);
+
+  return `Ты — San AI, ассистент приложения San. Отвечай на русском, коротко и по делу. Ты дружелюбный, умный и понимаешь контекст.
+
+Текущий пользователь: ${user?.displayName || 'Пользователь'} (@${user?.username || 'user'}), эмодзи: ${user?.emoji || '😊'}
+Текущая тема: ${currentTheme?.label || 'Стандартная'} (${themeState.accent}), режим: ${themeState.mode}
+
+Ты можешь выполнять действия через специальные теги. Используй их ТОЛЬКО когда пользователь явно просит что-то изменить:
+
+[ACTION:theme:ключ] — сменить цветовую тему
+[ACTION:mode:dark] или [ACTION:mode:light] — сменить режим (тёмный/светлый)
+[ACTION:name:значение] — сменить имя
+[ACTION:emoji:значение] — сменить эмодзи аватара
+[ACTION:username:значение] — сменить юзернейм
+[ACTION:bio:значение] — сменить описание профиля
+[ACTION:font:inter|system|serif|mono] — сменить шрифт
+
+Доступные темы: ${ACCENT_COLORS.map(c => `${c.key} (${c.label})`).join(', ')}
+
+Ассоциации тем:
+- Спокойствие: sage, mint, arctic, teal
+- Энергия: coral, sunset, cherry, crimson, amber
+- Минимализм: slate, indigo, sapphire, ocean
+- Тепло: peach, gold, copper, sand
+- Природа: forest, emerald, olive
+- Романтика: rose, lavender, berry, plum, violet
+
+Ты также знаешь:
+- San — это социальная сеть с постами, чатами, мини-приложениями
+- Данные хранятся безопасно, не передаются третьим лицам
+- Приложение поддерживает оффлайн-режим, форматирование текста, верификацию
+
+Если пользователь просто общается — общайся. Если описывает настроение — предложи тему. Если просит изменить что-то — выполни. Можешь предлагать несколько вариантов тем.`;
+}
+
+// ─── Types ───────────────────────────────────────────────────────────────────
 
 export interface AIMessage {
   id: string;
@@ -45,10 +91,12 @@ export interface AIMessage {
 }
 
 export interface ParsedAction {
-  type: 'theme' | 'name' | 'emoji' | 'username' | 'bio';
+  type: 'theme' | 'mode' | 'name' | 'emoji' | 'username' | 'bio' | 'font';
   value: string;
   applied?: boolean;
 }
+
+// ─── Action Parsing ──────────────────────────────────────────────────────────
 
 export function parseActions(text: string): { cleanText: string; actions: ParsedAction[] } {
   const actions: ParsedAction[] = [];
@@ -59,13 +107,27 @@ export function parseActions(text: string): { cleanText: string; actions: Parsed
   return { cleanText, actions };
 }
 
+// ─── Action Execution ────────────────────────────────────────────────────────
+
 export async function applyAction(action: ParsedAction): Promise<boolean> {
   try {
     switch (action.type) {
       case 'theme': {
         const theme = ACCENT_COLORS.find(c => c.key === action.value);
-        if (theme) {
-          useThemeStore.getState().setAccent(action.value);
+        if (theme) { useThemeStore.getState().setAccent(action.value); return true; }
+        return false;
+      }
+      case 'mode': {
+        if (action.value === 'dark' || action.value === 'light') {
+          useThemeStore.getState().setMode(action.value);
+          return true;
+        }
+        return false;
+      }
+      case 'font': {
+        const valid = ['inter', 'system', 'serif', 'mono'];
+        if (valid.includes(action.value)) {
+          useThemeStore.getState().setFontFamily(action.value as any);
           return true;
         }
         return false;
@@ -87,9 +149,11 @@ export async function applyAction(action: ParsedAction): Promise<boolean> {
       case 'username': {
         const user = useAuthStore.getState().user;
         if (!user) return false;
-        const { error } = await supabase.from('profiles').update({ username: action.value }).eq('id', user.id);
+        const clean = action.value.replace(/[^a-zA-Z0-9_]/g, '').toLowerCase();
+        if (!clean) return false;
+        const { error } = await supabase.from('profiles').update({ username: clean }).eq('id', user.id);
         if (error) return false;
-        useAuthStore.getState().updateProfile({ username: action.value });
+        useAuthStore.getState().updateProfile({ username: clean });
         return true;
       }
       case 'bio': {
@@ -102,32 +166,50 @@ export async function applyAction(action: ParsedAction): Promise<boolean> {
       default:
         return false;
     }
-  } catch {
-    return false;
-  }
+  } catch { return false; }
 }
 
+// ─── API Call ────────────────────────────────────────────────────────────────
+
 export async function sendMessage(messages: { role: string; content: string }[]): Promise<string> {
-  const body = {
-    model: MODEL,
-    messages: [{ role: 'system', content: SYSTEM_PROMPT }, ...messages],
-    temperature: 0.7,
-    max_tokens: 512,
-  };
-
-  const response = await fetch(API_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${API_KEY}`,
-    },
-    body: JSON.stringify(body),
-  });
-
-  if (!response.ok) {
-    throw new Error(`API error: ${response.status}`);
+  // Check rate limit
+  const allowed = await incrementUsage();
+  if (!allowed) {
+    return 'Лимит запросов на сегодня исчерпан (50/день). Попробуй завтра!';
   }
 
-  const data = await response.json();
-  return data.choices?.[0]?.message?.content || 'Не удалось получить ответ';
+  const body = {
+    model: MODEL,
+    messages: [{ role: 'system', content: buildSystemPrompt() }, ...messages],
+    temperature: 0.7,
+    max_tokens: 1024,
+  };
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000);
+
+  try {
+    const response = await fetch(API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    if (!response.ok) {
+      if (response.status === 429) return 'Слишком много запросов. Подожди немного.';
+      throw new Error(`API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data.choices?.[0]?.message?.content || 'Не удалось получить ответ.';
+  } catch (e: any) {
+    clearTimeout(timeout);
+    if (e?.name === 'AbortError') return 'Превышено время ожидания. Попробуй ещё раз.';
+    throw e;
+  }
 }
