@@ -62,6 +62,17 @@ export default function MiniAppScreen() {
         onLoadStart={() => setIsLoading(true)}
         onLoadEnd={() => setIsLoading(false)}
         onNavigationStateChange={(navState) => setCurrentUrl(navState.url)}
+        onError={() => setIsLoading(false)}
+        onHttpError={() => setIsLoading(false)}
+        renderError={(errorDomain, errorCode, errorDesc) => (
+          <View style={{ flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center', padding: 32 }}>
+            <Text style={{ fontSize: 16, color: '#FFFFFF', fontWeight: '600', marginBottom: 8 }}>Не удалось загрузить</Text>
+            <Text style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', textAlign: 'center' }}>{errorDesc}</Text>
+            <Pressable onPress={() => webViewRef.current?.reload()} style={{ marginTop: 16, paddingHorizontal: 16, paddingVertical: 8, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.1)' }}>
+              <Text style={{ fontSize: 12, color: '#FFFFFF' }}>Повторить</Text>
+            </Pressable>
+          </View>
+        )}
         allowsBackForwardNavigationGestures
         javaScriptEnabled
         domStorageEnabled
