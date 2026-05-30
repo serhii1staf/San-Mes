@@ -4,7 +4,6 @@ import { WebView } from 'react-native-webview';
 import { Feather } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { BlurView } from 'expo-blur';
 import { Text } from '../src/components/ui';
 import { useBrowserStore } from '../src/store/browserStore';
 
@@ -25,11 +24,11 @@ export default function MiniAppScreen() {
     }
   })();
 
-  const displayName = name || (() => { try { return new URL(decodedUrl).hostname.replace('www.', ''); } catch { return 'App'; } })();
-  const displayDomain = (() => { try { return new URL(decodedUrl).hostname.replace('www.', ''); } catch { return ''; } })();
+  const displayName = name || 'App';
 
   const handleMinimize = () => {
-    useBrowserStore.getState().setMinimized(currentUrl || decodedUrl, displayDomain, true);
+    // Store name (not URL) for display in widget
+    useBrowserStore.getState().setMinimized(currentUrl || decodedUrl, displayName, true);
     router.back();
   };
 
@@ -40,7 +39,7 @@ export default function MiniAppScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: '#000' }}>
-      {/* Loading indicator on black bg (no white flash) */}
+      {/* Loading on black bg */}
       {isLoading && (
         <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#000', zIndex: 50, alignItems: 'center', justifyContent: 'center' }}>
           <ActivityIndicator size="large" color="#FFFFFF" />
@@ -73,19 +72,15 @@ export default function MiniAppScreen() {
         userAgent="Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
       />
 
-      {/* Blur buttons */}
+      {/* Buttons — dark rounded pills (no blur needed for OTA) */}
       <View style={{ position: 'absolute', top: insets.top + 8, left: 16, right: 16, flexDirection: 'row', justifyContent: 'space-between' }}>
-        <Pressable onPress={handleMinimize} style={{ borderRadius: 14, overflow: 'hidden' }}>
-          <BlurView intensity={60} tint="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 6 }}>
-            <Feather name="chevron-down" size={12} color="#FFFFFF" />
-            <Text style={{ fontSize: 10, color: '#FFFFFF', fontWeight: '500' }}>Свернуть</Text>
-          </BlurView>
+        <Pressable onPress={handleMinimize} style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14, backgroundColor: 'rgba(30,30,30,0.92)' }}>
+          <Feather name="chevron-down" size={12} color="#FFFFFF" />
+          <Text style={{ fontSize: 10, color: '#FFFFFF', fontWeight: '500' }}>Свернуть</Text>
         </Pressable>
-        <Pressable onPress={handleClose} style={{ borderRadius: 14, overflow: 'hidden' }}>
-          <BlurView intensity={60} tint="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 6 }}>
-            <Text style={{ fontSize: 10, color: '#FFFFFF', fontWeight: '500' }}>Закрыть</Text>
-            <Feather name="x" size={12} color="#FFFFFF" />
-          </BlurView>
+        <Pressable onPress={handleClose} style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14, backgroundColor: 'rgba(30,30,30,0.92)' }}>
+          <Text style={{ fontSize: 10, color: '#FFFFFF', fontWeight: '500' }}>Закрыть</Text>
+          <Feather name="x" size={12} color="#FFFFFF" />
         </Pressable>
       </View>
     </View>

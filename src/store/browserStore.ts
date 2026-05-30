@@ -15,12 +15,12 @@ export const useBrowserStore = create<BrowserStore>((set) => ({
   minimizedFavicon: null,
   isMiniApp: false,
   setMinimized: (url, domain, isMiniApp = false) => {
-    let faviconDomain = domain;
-    try { faviconDomain = new URL(url.startsWith('http') ? url : `https://${url}`).hostname; } catch {}
+    let favicon = '';
+    try { favicon = `https://www.google.com/s2/favicons?domain=${new URL(url.startsWith('http') ? url : 'https://' + url).hostname}&sz=32`; } catch {}
     set({
       minimizedUrl: url,
-      minimizedDomain: domain,
-      minimizedFavicon: `https://www.google.com/s2/favicons?domain=${faviconDomain}&sz=32`,
+      minimizedDomain: domain, // For mini-apps this is the app name, for browser it's the hostname
+      minimizedFavicon: favicon,
       isMiniApp,
     });
   },

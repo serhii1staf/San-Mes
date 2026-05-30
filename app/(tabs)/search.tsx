@@ -175,8 +175,9 @@ export default function SearchScreen() {
           keyExtractor={(item) => item.id}
           contentContainerStyle={{ paddingHorizontal: theme.spacing.base, paddingTop: 16, paddingBottom: 100 }}
           ListHeaderComponent={() => {
-            const { searchApps } = useMiniAppsStore.getState();
-            const matchedApps = searchApps(query);
+            const apps = useMiniAppsStore((s) => s.apps);
+            const lower = query.toLowerCase();
+            const matchedApps = apps.filter(a => a.name.toLowerCase().includes(lower) || a.description.toLowerCase().includes(lower));
             if (matchedApps.length === 0) return null;
             return (
               <View style={{ marginBottom: 16 }}>
@@ -184,7 +185,7 @@ export default function SearchScreen() {
                 {matchedApps.slice(0, 3).map(app => (
                   <Pressable key={app.id} onPress={() => router.push({ pathname: '/mini-app', params: { url: encodeURIComponent(app.url), name: app.name, emoji: app.emoji } })} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8 }}>
                     <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: theme.colors.accent.primary + '12', alignItems: 'center', justifyContent: 'center' }}>
-                      <Text style={{ fontSize: 18 }} allowFontScaling={false}>{app.emoji}</Text>
+                      <Text style={{ fontSize: 18 }}>{app.emoji}</Text>
                     </View>
                     <Text variant="body" weight="medium" style={{ marginLeft: 10 }}>{app.name}</Text>
                   </Pressable>
