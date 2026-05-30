@@ -90,6 +90,20 @@ export default function MiniAppScreen() {
         mixedContentMode="always"
         originWhitelist={['*']}
         setSupportMultipleWindows={false}
+        allowFileAccess={true}
+        allowUniversalAccessFromFileURLs={true}
+        geolocationEnabled={true}
+        startInLoadingState={false}
+        injectedJavaScript={`
+          // Enable viewport meta for proper scaling
+          if (!document.querySelector('meta[name="viewport"]')) {
+            var meta = document.createElement('meta');
+            meta.name = 'viewport';
+            meta.content = 'width=device-width, initial-scale=1, maximum-scale=5, user-scalable=yes';
+            document.head.appendChild(meta);
+          }
+          true;
+        `}
         userAgent="Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
       />
 

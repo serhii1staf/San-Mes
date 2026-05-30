@@ -250,7 +250,7 @@ export default function ProfileScreen() {
       </View>
       <Animated.ScrollView ref={scrollViewRef} showsVerticalScrollIndicator={false} bounces={false} onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true })} scrollEventThrottle={16} contentContainerStyle={{ paddingBottom: 100 }}>
         <View style={{ height: 200, backgroundColor: theme.colors.accent.primary + '20' }}>{bannerUrl ? <CachedImage uri={bannerUrl} style={{ width: '100%', height: '100%' }} resizeMode="cover" /> : null}<LinearGradient colors={['transparent', theme.colors.background.primary]} style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 60 }} /></View>
-        <View style={{ paddingHorizontal: 16, marginTop: -70 }}>
+        <View style={{ paddingHorizontal: 16, marginTop: -90 }}>
           <Pressable onPress={() => setShowAccountSwitcher(true)}><View style={{ width: 72, height: 72, borderRadius: 36, overflow: 'hidden', borderWidth: 3, borderColor: theme.colors.background.primary, backgroundColor: theme.isDark ? 'rgba(30,30,30,0.85)' : 'rgba(255,255,255,0.85)', alignItems: 'center', justifyContent: 'center' }}><Avatar emoji={user.emoji} size="lg" /></View></Pressable>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}>
             <View style={{ flex: 1 }}><View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}><Text variant="body" weight="bold" numberOfLines={1}>{user.displayName}</Text>{user.is_verified && <VerifiedBadge size={13} />}{user.badge && <UserBadge badge={user.badge} size="sm" />}</View><Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>@{user.username}</Text></View>

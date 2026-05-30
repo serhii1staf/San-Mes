@@ -462,7 +462,7 @@ export default function UserProfileScreen() {
         </View>
 
         {/* Profile info */}
-        <View style={{ paddingHorizontal: 16, marginTop: -70 }}>
+        <View style={{ paddingHorizontal: 16, marginTop: -90 }}>
           <View style={{ width: 72, height: 72, borderRadius: 36, overflow: 'hidden', borderWidth: 3, borderColor: theme.colors.background.primary, backgroundColor: theme.isDark ? 'rgba(30,30,30,0.85)' : 'rgba(255,255,255,0.85)', alignItems: 'center', justifyContent: 'center' }}>
             <Avatar emoji={displayProfile.emoji || '😊'} size="lg" />
           </View>
