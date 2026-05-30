@@ -2,11 +2,9 @@ import { create } from 'zustand';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-const PING_URL = 'https://ycwadqglcykcpucembjn.supabase.co/rest/v1/';
-const SUPABASE_ANON_KEY =
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inljd2FkcWdsY3lrY3B1Y2VtYmpuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4Mjc2OTYsImV4cCI6MjA5NTQwMzY5Nn0.ZUr1YfN6pBp_AaUC1pZLKGApwgEXEiVw_w6w-yQjE_U';
+const PING_URL = 'https://www.google.com/generate_204';
 const PING_TIMEOUT = 5000;
-const POLL_INTERVAL = 10000;
+const POLL_INTERVAL = 15000;
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -31,12 +29,12 @@ async function checkConnectivity(): Promise<boolean> {
     const response = await fetch(PING_URL, {
       method: 'HEAD',
       signal: controller.signal,
-      headers: { apikey: SUPABASE_ANON_KEY },
+      cache: 'no-store',
     });
     clearTimeout(timeoutId);
-    return response.ok;
+    // Google's generate_204 returns 204, any response means online
+    return response.status === 204 || response.ok;
   } catch {
-    // AbortError, TypeError, or any other error → offline
     return false;
   }
 }
