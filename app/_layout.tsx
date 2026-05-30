@@ -9,6 +9,7 @@ import { useAuthStore } from '../src/store';
 import { BrowserMiniBar } from '../src/components/ui/BrowserMiniBar';
 import { Toast } from '../src/components/ui/Toast';
 import { initRateLimits } from '../src/services/rateLimit';
+import { cacheCleanup } from '../src/services/cacheManager';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -95,6 +96,7 @@ export default function RootLayout() {
     if (ready) {
       SplashScreen.hideAsync().catch(() => {});
       initRateLimits();
+      cacheCleanup(); // Clean expired cache entries on startup
     }
   }, [ready]);
 
