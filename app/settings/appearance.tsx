@@ -97,20 +97,22 @@ function ThemePreviewCard({ accentConfig, isDark, isSelected, user }: { accentCo
 export default function AppearanceScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
-  const { mode, accent, setAccent } = useThemeStore();
+  const { mode, accent, setAccent, aiThemes } = useThemeStore();
+  const removeAiTheme = (key: string) => useThemeStore.setState((s) => ({ aiThemes: s.aiThemes.filter(t => t.key !== key) }));
   const { user } = useAuthStore();
   const isDark = mode === 'dark';
+  const allThemes = [...ACCENT_COLORS, ...aiThemes];
   const scrollRef = useRef<ScrollView>(null);
-  const [activeIndex, setActiveIndex] = useState(ACCENT_COLORS.findIndex(c => c.key === accent));
+  const [activeIndex, setActiveIndex] = useState(Math.max(0, allThemes.findIndex(c => c.key === accent)));
 
   const handleScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
     const x = e.nativeEvent.contentOffset.x;
     const index = Math.round(x / (CARD_WIDTH + CARD_GAP));
-    setActiveIndex(Math.max(0, Math.min(index, ACCENT_COLORS.length - 1)));
+    setActiveIndex(Math.max(0, Math.min(index, allThemes.length - 1)));
   };
 
   const handleSave = () => {
-    const selected = ACCENT_COLORS[activeIndex];
+    const selected = allThemes[activeIndex];
     if (selected) setAccent(selected.key);
     router.back();
   };
@@ -141,7 +143,7 @@ export default function AppearanceScreen() {
           onScroll={handleScroll}
           scrollEventThrottle={16}
         >
-          {ACCENT_COLORS.map((c, index) => (
+          {allThemes.map((c, index) => (
             <ThemePreviewCard
               key={c.key}
               accentConfig={c}
@@ -154,7 +156,7 @@ export default function AppearanceScreen() {
 
         {/* Dots indicator */}
         <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginTop: 20, gap: 6 }}>
-          {ACCENT_COLORS.map((c, index) => (
+          {allThemes.map((c, index) => (
             <View
               key={c.key}
               style={{
@@ -167,10 +169,17 @@ export default function AppearanceScreen() {
           ))}
         </View>
 
-        {/* Theme name below cards */}
-        <Text variant="body" weight="bold" align="center" style={{ marginTop: 16, marginBottom: 24 }}>
-          {ACCENT_COLORS[activeIndex]?.label || ''}
-        </Text>
+        {/* Theme name + delete for AI themes */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 16, marginBottom: 24, gap: 8 }}>
+          <Text variant="body" weight="bold" align="center">
+            {allThemes[activeIndex]?.label || ''}
+          </Text>
+          {allThemes[activeIndex]?.key.startsWith('ai-') && (
+            <Pressable onPress={() => { const key = allThemes[activeIndex]?.key; if (key) { removeAiTheme(key); if (accent === key) setAccent('sage'); } }} style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: 'rgba(255,59,48,0.15)', alignItems: 'center', justifyContent: 'center' }}>
+              <Feather name="trash-2" size={12} color="#FF3B30" />
+            </Pressable>
+          )}
+        </View>
       </View>
     </View>
   );

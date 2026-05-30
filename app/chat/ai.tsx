@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { View, Pressable, TextInput, FlatList, ActivityIndicator, Dimensions, Text as RNText, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Pressable, TextInput, FlatList, ActivityIndicator, Dimensions, Text as RNText, Platform } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -20,7 +20,6 @@ function MiniThemeCard({ themeKey }: { themeKey: string }) {
   const allThemes = [...ACCENT_COLORS, ...useThemeStore((s) => s.aiThemes)];
   const t = allThemes.find(c => c.key === themeKey);
   if (!t) return null;
-
   return (
     <View style={{ width: SCREEN_WIDTH * 0.55, borderRadius: 16, overflow: 'hidden', backgroundColor: t.darkBg, borderWidth: 2, borderColor: t.color, marginTop: 8 }}>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 10, paddingTop: 10, paddingBottom: 4 }}>
@@ -70,6 +69,8 @@ function ActionBubble({ action }: { action: ParsedAction }) {
 function MessageBubble({ message }: { message: AIMessage }) {
   const theme = useTheme();
   const isUser = message.role === 'user';
+  // Deduplicate actions of same type (show only last)
+  const uniqueActions = message.actions ? message.actions.filter((a, i, arr) => arr.findIndex(x => x.type === a.type) === i) : undefined;
   return (
     <View style={{ alignSelf: isUser ? 'flex-end' : 'flex-start', maxWidth: '82%', marginBottom: 12 }}>
       {!isUser && (
@@ -82,7 +83,7 @@ function MessageBubble({ message }: { message: AIMessage }) {
       <View style={{ backgroundColor: isUser ? theme.colors.accent.primary : (theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)'), borderRadius: 20, borderBottomRightRadius: isUser ? 6 : 20, borderBottomLeftRadius: isUser ? 20 : 6, paddingHorizontal: 14, paddingVertical: 10 }}>
         <Text variant="body" color={isUser ? '#FFFFFF' : theme.colors.text.primary} style={{ fontSize: 14, lineHeight: 20 }}>{message.content}</Text>
       </View>
-      {message.actions?.map((action, i) => <ActionBubble key={i} action={action} />)}
+      {uniqueActions?.map((action, i) => <ActionBubble key={i} action={action} />)}
     </View>
   );
 }
@@ -118,8 +119,12 @@ export default function AIChatScreen() {
       const response = await sendMessage(recentMessages);
       const { cleanText, actions } = parseActions(response);
 
+      // Deduplicate actions of same type (keep last)
+      const deduped = actions.reduce((acc, a) => { acc.set(a.type, a); return acc; }, new Map<string, ParsedAction>());
+      const uniqueActions = Array.from(deduped.values());
+
       const appliedActions: ParsedAction[] = [];
-      for (const action of actions) {
+      for (const action of uniqueActions) {
         const success = await applyAction(action);
         appliedActions.push({ ...action, applied: success });
         if (success) triggerHaptic('medium');
@@ -131,11 +136,14 @@ export default function AIChatScreen() {
       saveChatHistory(finalMessages);
       getRemainingRequests().then(setRemaining);
     } catch {
-      const errMsg: AIMessage = { id: (Date.now() + 1).toString(), role: 'assistant', content: 'Ошибка подключения. Попробуй ещё раз.', timestamp: Date.now() };
+      const errMsg: AIMessage = { id: (Date.now() + 1).toString(), role: 'assistant', content: 'Ошибка подключения.', timestamp: Date.now() };
       setMessages(prev => [...prev, errMsg]);
     }
     setIsLoading(false);
   }, [input, isLoading, messages]);
+
+  // Inverted data for FlatList
+  const invertedData = [...messages].reverse();
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
@@ -160,45 +168,20 @@ export default function AIChatScreen() {
         </LinearGradient>
       </View>
 
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        {/* Messages */}
-        <FlatList
-          ref={flatListRef}
-          data={messages}
-          keyExtractor={item => item.id}
-          contentContainerStyle={{ paddingTop: insets.top + 72, paddingHorizontal: 16, paddingBottom: 8, flexGrow: 1 }}
-          renderItem={({ item }) => <MessageBubble message={item} />}
-          onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: false })}
-          onLayout={() => flatListRef.current?.scrollToEnd({ animated: false })}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="interactive"
-          automaticallyAdjustKeyboardInsets={false}
-          maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
-          ListEmptyComponent={
-            <View style={{ alignItems: 'center', paddingTop: 60, flex: 1, justifyContent: 'center' }}>
-              <RNText style={{ fontSize: 48 }} allowFontScaling={false}>🤖</RNText>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 12 }}>
-                <Text variant="body" weight="bold">San AI</Text>
-                <VerifiedBadge size={14} />
-              </View>
-              <Text variant="caption" color={theme.colors.text.tertiary} align="center" style={{ marginTop: 8, paddingHorizontal: 40, lineHeight: 18 }}>
-                Могу сменить тему, имя, эмодзи, био. Просто попроси!
-              </Text>
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 6, marginTop: 16 }}>
-                {['Смени тему', 'Поменяй имя', 'Тёмный режим', 'Что умеешь?'].map(hint => (
-                  <Pressable key={hint} onPress={() => setInput(hint)} style={{ backgroundColor: theme.colors.accent.primary + '12', borderRadius: 14, paddingHorizontal: 12, paddingVertical: 6 }}>
-                    <Text variant="caption" color={theme.colors.accent.primary} style={{ fontSize: 12 }}>{hint}</Text>
-                  </Pressable>
-                ))}
-              </View>
-            </View>
-          }
-        />
-
-        {/* Typing */}
-        {isLoading && (
-          <View style={{ paddingHorizontal: 16, paddingBottom: 4 }}>
+      {/* Inverted FlatList — newest at bottom, no scroll needed */}
+      <FlatList
+        ref={flatListRef}
+        data={invertedData}
+        keyExtractor={item => item.id}
+        inverted
+        contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8 }}
+        renderItem={({ item }) => <MessageBubble message={item} />}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+        automaticallyAdjustsScrollIndicatorInsets={false}
+        ListHeaderComponent={isLoading ? (
+          <View style={{ paddingBottom: 8 }}>
             <View style={{ borderRadius: 14, overflow: 'hidden', alignSelf: 'flex-start' }}>
               <BlurView intensity={80} tint="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 7 }}>
                 <ActivityIndicator size="small" color="#FFFFFF" />
@@ -206,25 +189,38 @@ export default function AIChatScreen() {
               </BlurView>
             </View>
           </View>
-        )}
-
-        {/* Input — inside KAV so it moves with keyboard */}
-        <View style={{ paddingHorizontal: 16, paddingTop: 6, paddingBottom: insets.bottom + 6, backgroundColor: theme.colors.background.primary }}>
-          <View style={{ flexDirection: 'row', alignItems: 'flex-end', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)', borderRadius: 24, paddingHorizontal: 16, paddingVertical: 8, borderWidth: 1, borderColor: theme.colors.border.light }}>
-            <TextInput
-              value={input}
-              onChangeText={setInput}
-              placeholder="Напиши что-нибудь..."
-              placeholderTextColor={theme.colors.text.tertiary}
-              multiline
-              style={{ flex: 1, fontSize: 14, color: theme.colors.text.primary, maxHeight: 100, paddingVertical: 4 }}
-            />
-            <Pressable onPress={handleSend} disabled={!input.trim() || isLoading} style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: input.trim() ? theme.colors.accent.primary : 'transparent', alignItems: 'center', justifyContent: 'center', marginLeft: 8 }}>
-              <Feather name="send" size={14} color={input.trim() ? '#FFFFFF' : theme.colors.text.tertiary} />
-            </Pressable>
+        ) : null}
+        ListFooterComponent={<View style={{ height: insets.top + 72 }} />}
+        ListEmptyComponent={
+          <View style={{ alignItems: 'center', paddingVertical: 60, transform: [{ scaleY: -1 }] }}>
+            <RNText style={{ fontSize: 48 }} allowFontScaling={false}>🤖</RNText>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 12 }}>
+              <Text variant="body" weight="bold">San AI</Text>
+              <VerifiedBadge size={14} />
+            </View>
+            <Text variant="caption" color={theme.colors.text.tertiary} align="center" style={{ marginTop: 8, paddingHorizontal: 40, lineHeight: 18 }}>
+              Могу сменить тему, имя, эмодзи, био. Просто попроси!
+            </Text>
           </View>
+        }
+      />
+
+      {/* Input — fixed at bottom, keyboard pushes it natively via inverted list */}
+      <View style={{ paddingHorizontal: 16, paddingTop: 6, paddingBottom: insets.bottom + 6, backgroundColor: theme.colors.background.primary, borderTopWidth: 0.5, borderTopColor: theme.colors.border.light }}>
+        <View style={{ flexDirection: 'row', alignItems: 'flex-end', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)', borderRadius: 24, paddingHorizontal: 16, paddingVertical: 8, borderWidth: 1, borderColor: theme.colors.border.light }}>
+          <TextInput
+            value={input}
+            onChangeText={setInput}
+            placeholder="Напиши что-нибудь..."
+            placeholderTextColor={theme.colors.text.tertiary}
+            multiline
+            style={{ flex: 1, fontSize: 14, color: theme.colors.text.primary, maxHeight: 100, paddingVertical: 4 }}
+          />
+          <Pressable onPress={handleSend} disabled={!input.trim() || isLoading} style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: input.trim() ? theme.colors.accent.primary : 'transparent', alignItems: 'center', justifyContent: 'center', marginLeft: 8 }}>
+            <Feather name="send" size={14} color={input.trim() ? '#FFFFFF' : theme.colors.text.tertiary} />
+          </Pressable>
         </View>
-      </KeyboardAvoidingView>
+      </View>
     </View>
   );
 }
