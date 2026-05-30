@@ -16,11 +16,16 @@ export default function MiniAppScreen() {
 
   const decodedUrl = (() => {
     try {
-      const decoded = decodeURIComponent(url || '');
-      if (decoded.startsWith('http')) return decoded;
+      let decoded = url || '';
+      // Try decoding (might be double-encoded)
+      try { decoded = decodeURIComponent(decoded); } catch {}
+      try { decoded = decodeURIComponent(decoded); } catch {}
+      decoded = decoded.trim();
+      if (decoded.startsWith('http://') || decoded.startsWith('https://')) return decoded;
+      if (decoded.includes('.')) return `https://${decoded}`;
       return `https://${decoded}`;
     } catch {
-      return url || 'https://google.com';
+      return 'https://google.com';
     }
   })();
 

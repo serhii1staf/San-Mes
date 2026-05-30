@@ -41,7 +41,8 @@ export default function SearchScreen() {
 
   useEffect(() => {
     if (query.trim()) {
-      const lower = query.toLowerCase();
+      const searchTerm = query.startsWith('#') ? query.slice(1) : query;
+      const lower = searchTerm.toLowerCase();
       const filtered = allProfiles.filter(p =>
         p.username.toLowerCase().includes(lower) ||
         p.display_name.toLowerCase().includes(lower)
@@ -176,7 +177,8 @@ export default function SearchScreen() {
           contentContainerStyle={{ paddingHorizontal: theme.spacing.base, paddingTop: 16, paddingBottom: 100 }}
           ListHeaderComponent={() => {
             const apps = useMiniAppsStore((s) => s.apps);
-            const lower = query.toLowerCase();
+            const searchTerm = query.startsWith('#') ? query.slice(1) : query;
+            const lower = searchTerm.toLowerCase();
             const matchedApps = apps.filter(a => a.name.toLowerCase().includes(lower) || a.description.toLowerCase().includes(lower));
             if (matchedApps.length === 0) return null;
             return (
