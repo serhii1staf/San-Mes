@@ -119,6 +119,7 @@ export default function MessagesScreen() {
   const entityConversations = useEntityStore((s) => s.conversations);
   const user = useAuthStore((s) => s.user);
   const [searchQuery, setSearchQuery] = useState('');
+  const [showFabMenu, setShowFabMenu] = useState(false);
 
   // Trigger syncConversations in background on mount
   useEffect(() => {
@@ -232,8 +233,25 @@ export default function MessagesScreen() {
         />
       )}
 
+      {/* FAB with popup menu */}
+      {showFabMenu && (
+        <Pressable onPress={() => setShowFabMenu(false)} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 200 }}>
+          <View style={{ position: 'absolute', bottom: 164, right: theme.spacing.lg, backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF', borderRadius: 16, overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 12, elevation: 8, borderWidth: 0.5, borderColor: theme.colors.border.light }}>
+            <Pressable onPress={() => { setShowFabMenu(false); router.push('/settings/mini-apps' as any); }} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, gap: 10 }}>
+              <Feather name="grid" size={16} color={theme.colors.accent.primary} />
+              <Text variant="caption" weight="medium">Мини-приложения</Text>
+            </Pressable>
+            <View style={{ height: 0.5, backgroundColor: theme.colors.border.light }} />
+            <Pressable onPress={() => { setShowFabMenu(false); }} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, gap: 10 }}>
+              <Feather name="settings" size={16} color={theme.colors.text.secondary} />
+              <Text variant="caption" weight="medium">Настройка чатов</Text>
+            </Pressable>
+          </View>
+        </Pressable>
+      )}
+
       <Pressable
-        onPress={() => router.push('/settings/mini-apps' as any)}
+        onPress={() => setShowFabMenu(!showFabMenu)}
         style={{
           position: 'absolute',
           bottom: 100,
@@ -249,9 +267,10 @@ export default function MessagesScreen() {
           shadowOffset: { width: 0, height: 2 },
           shadowOpacity: 0.2,
           shadowRadius: 4,
+          zIndex: 201,
         }}
       >
-        <Feather name="grid" size={22} color={theme.colors.text.inverse} />
+        <Feather name={showFabMenu ? 'x' : 'edit'} size={22} color={theme.colors.text.inverse} />
       </Pressable>
     </View>
   );
