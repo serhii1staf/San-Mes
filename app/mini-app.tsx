@@ -15,9 +15,9 @@ export default function MiniAppScreen() {
   const [currentUrl, setCurrentUrl] = useState('');
   const [isLoading, setIsLoading] = useState(true);
 
-  // Decode URL properly — handle double encoding
+  // Decode URL properly — handle double encoding and trim whitespace
   const decodedUrl = (() => {
-    let raw = url || '';
+    let raw = (url || '').trim();
     // Decode until no more encoding
     for (let i = 0; i < 3; i++) {
       try {
@@ -33,10 +33,11 @@ export default function MiniAppScreen() {
   })();
 
   const displayName = name || 'App';
+  const appEmoji = emoji || '📱';
 
   const handleMinimize = () => {
     // Store the ACTUAL current URL (not encoded) for reopening
-    useBrowserStore.getState().setMinimized(currentUrl || decodedUrl, displayName, true);
+    useBrowserStore.getState().setMinimized(currentUrl || decodedUrl, displayName, true, appEmoji);
     router.back();
   };
 
@@ -47,7 +48,7 @@ export default function MiniAppScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: '#000' }}>
-      {/* Loading on black bg */}
+      {/* Loading overlay on black bg to prevent white flash */}
       {isLoading && (
         <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#000', zIndex: 50, alignItems: 'center', justifyContent: 'center' }}>
           <ActivityIndicator size="large" color="#FFFFFF" />
@@ -64,7 +65,7 @@ export default function MiniAppScreen() {
         onNavigationStateChange={(navState) => setCurrentUrl(navState.url)}
         onError={() => setIsLoading(false)}
         onHttpError={() => setIsLoading(false)}
-        renderError={(errorDomain, errorCode, errorDesc) => (
+        renderError={(_errorDomain, _errorCode, errorDesc) => (
           <View style={{ flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center', padding: 32 }}>
             <Text style={{ fontSize: 16, color: '#FFFFFF', fontWeight: '600', marginBottom: 8 }}>Не удалось загрузить</Text>
             <Text style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', textAlign: 'center' }}>{errorDesc}</Text>
@@ -88,10 +89,11 @@ export default function MiniAppScreen() {
         javaScriptCanOpenWindowsAutomatically={true}
         mixedContentMode="always"
         originWhitelist={['*']}
+        setSupportMultipleWindows={false}
         userAgent="Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
       />
 
-      {/* Blur buttons */}
+      {/* Blur buttons — compact, rounded */}
       <View style={{ position: 'absolute', top: insets.top + 8, left: 16, right: 16, flexDirection: 'row', justifyContent: 'space-between' }}>
         <Pressable onPress={handleMinimize} style={{ borderRadius: 14, overflow: 'hidden' }}>
           <BlurView intensity={80} tint="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 6 }}>

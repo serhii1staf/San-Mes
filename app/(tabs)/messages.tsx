@@ -23,7 +23,7 @@ function MiniAppsRow() {
     <View style={{ paddingHorizontal: 16, paddingBottom: 8 }}>
       {apps.slice(0, 5).map(app => (
         <Pressable key={app.id} onPress={() => router.push({ pathname: '/mini-app', params: { url: encodeURIComponent(app.url), name: app.name, emoji: app.emoji } })} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border.light }}>
-          <View style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: theme.colors.accent.primary + '12', alignItems: 'center', justifyContent: 'center' }}>
+          <View style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: theme.colors.accent.primary + '12', alignItems: 'center', justifyContent: 'center', overflow: 'visible' }}>
             <RNText style={{ fontSize: 20 }} allowFontScaling={false}>{app.emoji}</RNText>
           </View>
           <View style={{ marginLeft: 12, flex: 1 }}>

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { View, Pressable, Image, Animated } from 'react-native';
+import { View, Pressable, Image, Animated, Text as RNText } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -10,7 +10,7 @@ import { useBrowserStore } from '../../store/browserStore';
 export function BrowserMiniBar() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
-  const { minimizedUrl, minimizedDomain, minimizedFavicon, clearMinimized } = useBrowserStore();
+  const { minimizedUrl, minimizedDomain, minimizedFavicon, minimizedEmoji, isMiniApp, clearMinimized } = useBrowserStore();
   const slideAnim = useRef(new Animated.Value(-50)).current;
   const opacityAnim = useRef(new Animated.Value(0)).current;
 
@@ -33,13 +33,15 @@ export function BrowserMiniBar() {
   if (!minimizedUrl) return null;
 
   const handleOpen = () => {
-    const { isMiniApp } = useBrowserStore.getState();
-    if (isMiniApp) {
-      // Pass raw URL — mini-app.tsx will decode it
-      router.push({ pathname: '/mini-app', params: { url: minimizedUrl, name: minimizedDomain || '', emoji: '' } });
+    const state = useBrowserStore.getState();
+    if (state.isMiniApp) {
+      // Reopen mini-app with the stored URL and name
+      router.push({ pathname: '/mini-app', params: { url: state.minimizedUrl || '', name: state.minimizedDomain || '', emoji: state.minimizedEmoji || '' } });
     } else {
-      router.push({ pathname: '/browser', params: { url: encodeURIComponent(minimizedUrl) } });
+      router.push({ pathname: '/browser', params: { url: encodeURIComponent(state.minimizedUrl || '') } });
     }
+    // Clear minimized state after opening
+    clearMinimized();
   };
 
   const handleClose = () => {
@@ -79,13 +81,17 @@ export function BrowserMiniBar() {
           borderColor: glowColor,
         }}
       >
-        {/* Favicon */}
-        <Image
-          source={{ uri: minimizedFavicon || undefined }}
-          style={{ width: 16, height: 16, borderRadius: 4 }}
-          defaultSource={require('../../../assets/icon.png')}
-        />
-        {/* Domain */}
+        {/* Emoji for mini-apps, Favicon for browser */}
+        {isMiniApp && minimizedEmoji ? (
+          <RNText style={{ fontSize: 14 }} allowFontScaling={false}>{minimizedEmoji}</RNText>
+        ) : (
+          <Image
+            source={{ uri: minimizedFavicon || undefined }}
+            style={{ width: 16, height: 16, borderRadius: 4 }}
+            defaultSource={require('../../../assets/icon.png')}
+          />
+        )}
+        {/* Name */}
         <Text variant="caption" weight="medium" numberOfLines={1} style={{ fontSize: 11, maxWidth: 140 }}>
           {minimizedDomain || 'Браузер'}
         </Text>

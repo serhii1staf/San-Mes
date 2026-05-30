@@ -4,6 +4,7 @@ import { Feather, FontAwesome5 } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
+import { BlurView } from 'expo-blur';
 import * as Clipboard from 'expo-clipboard';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
@@ -432,13 +433,17 @@ export default function UserProfileScreen() {
       {/* Fixed header buttons - animate out on scroll */}
       <View style={{ position: 'absolute', top: insets.top + 8, left: 16, right: 16, flexDirection: 'row', justifyContent: 'space-between', zIndex: 100 }}>
         <Animated.View style={{ transform: [{ translateX: buttonsTranslateX }] }}>
-          <Pressable onPress={() => router.back()} style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' }}>
-            <Feather name="chevron-left" size={18} color="#FFFFFF" />
+          <Pressable onPress={() => router.back()} style={{ borderRadius: 17, overflow: 'hidden' }}>
+            <BlurView intensity={80} tint="dark" style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center' }}>
+              <Feather name="chevron-left" size={18} color="#FFFFFF" />
+            </BlurView>
           </Pressable>
         </Animated.View>
         <Animated.View style={{ transform: [{ translateX: menuTranslateX }] }}>
-          <Pressable onPress={() => { triggerHaptic('light'); setShowMenu(true); }} style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' }}>
-            <Feather name="more-horizontal" size={18} color="#FFFFFF" />
+          <Pressable onPress={() => { triggerHaptic('light'); setShowMenu(true); }} style={{ borderRadius: 17, overflow: 'hidden' }}>
+            <BlurView intensity={80} tint="dark" style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center' }}>
+              <Feather name="more-horizontal" size={18} color="#FFFFFF" />
+            </BlurView>
           </Pressable>
         </Animated.View>
       </View>

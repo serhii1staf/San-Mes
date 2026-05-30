@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Pressable, ViewStyle, TextInput, FlatList, ActivityIndicator } from 'react-native';
+import { View, Pressable, ViewStyle, TextInput, FlatList, ActivityIndicator, Text as RNText } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -38,6 +38,9 @@ export default function SearchScreen() {
     loadHistory();
     useMiniAppsStore.getState().loadApps();
   }, []);
+
+  // Get mini-apps from store (reactive)
+  const miniApps = useMiniAppsStore((s) => s.apps);
 
   useEffect(() => {
     if (query.trim()) {
@@ -176,18 +179,17 @@ export default function SearchScreen() {
           keyExtractor={(item) => item.id}
           contentContainerStyle={{ paddingHorizontal: theme.spacing.base, paddingTop: 16, paddingBottom: 100 }}
           ListHeaderComponent={() => {
-            const apps = useMiniAppsStore((s) => s.apps);
             const searchTerm = query.startsWith('#') ? query.slice(1) : query;
             const lower = searchTerm.toLowerCase();
-            const matchedApps = apps.filter(a => a.name.toLowerCase().includes(lower) || a.description.toLowerCase().includes(lower));
+            const matchedApps = miniApps.filter(a => a.name.toLowerCase().includes(lower) || a.description.toLowerCase().includes(lower));
             if (matchedApps.length === 0) return null;
             return (
               <View style={{ marginBottom: 16 }}>
                 <Text variant="caption" weight="semibold" color={theme.colors.text.secondary} style={{ marginBottom: 8 }}>Мини-приложения</Text>
                 {matchedApps.slice(0, 3).map(app => (
                   <Pressable key={app.id} onPress={() => router.push({ pathname: '/mini-app', params: { url: encodeURIComponent(app.url), name: app.name, emoji: app.emoji } })} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8 }}>
-                    <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: theme.colors.accent.primary + '12', alignItems: 'center', justifyContent: 'center' }}>
-                      <Text style={{ fontSize: 18 }}>{app.emoji}</Text>
+                    <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: theme.colors.accent.primary + '12', alignItems: 'center', justifyContent: 'center', overflow: 'visible' }}>
+                      <RNText style={{ fontSize: 18 }} allowFontScaling={false}>{app.emoji}</RNText>
                     </View>
                     <Text variant="body" weight="medium" style={{ marginLeft: 10 }}>{app.name}</Text>
                   </Pressable>
