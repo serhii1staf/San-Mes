@@ -242,6 +242,11 @@ export default function MessagesScreen() {
               <Text variant="caption" weight="medium">Мини-приложения</Text>
             </Pressable>
             <View style={{ height: 0.5, backgroundColor: theme.colors.border.light }} />
+            <Pressable onPress={() => { setShowFabMenu(false); router.push('/chat/ai' as any); }} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, gap: 10 }}>
+              <Feather name="cpu" size={16} color={theme.colors.accent.primary} />
+              <Text variant="caption" weight="medium">San AI</Text>
+            </Pressable>
+            <View style={{ height: 0.5, backgroundColor: theme.colors.border.light }} />
             <Pressable onPress={() => { setShowFabMenu(false); }} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, gap: 10 }}>
               <Feather name="settings" size={16} color={theme.colors.text.secondary} />
               <Text variant="caption" weight="medium">Настройка чатов</Text>
