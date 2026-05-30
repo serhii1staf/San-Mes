@@ -5,7 +5,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const API_URL = 'https://integrate.api.nvidia.com/v1/chat/completions';
 const API_KEY = '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';
-const MODEL = 'nvidia/llama-3.1-nemotron-nano-8b-v1';
+const MODEL = 'meta/llama-3.3-70b-instruct';
 const DAILY_LIMIT = 50;
 const RATE_KEY = '@san:ai_usage';
 const CHAT_HISTORY_KEY = '@san:ai_chat';
@@ -219,8 +219,8 @@ export async function sendMessage(messages: { role: string; content: string }[])
   const body = {
     model: MODEL,
     messages: [{ role: 'system', content: buildSystemPrompt() }, ...messages],
-    temperature: 0.7,
-    max_tokens: 1024,
+    temperature: 0.6,
+    max_tokens: 300,
   };
 
   const controller = new AbortController();
