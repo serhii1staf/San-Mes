@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { View, Pressable, TextInput, FlatList, ActivityIndicator, Dimensions, Text as RNText, Keyboard, Platform, LayoutAnimation, UIManager } from 'react-native';
+import { View, Pressable, TextInput, FlatList, ActivityIndicator, Dimensions, Text as RNText, KeyboardAvoidingView, Platform } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -12,10 +12,6 @@ import { useThemeStore, ACCENT_COLORS } from '../../src/store/themeStore';
 import { useAuthStore } from '../../src/store';
 import { sendMessage, parseActions, applyAction, AIMessage, ParsedAction, getRemainingRequests, saveChatHistory, loadChatHistory } from '../../src/services/aiService';
 import { triggerHaptic } from '../../src/utils/haptics';
-
-if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
-  UIManager.setLayoutAnimationEnabledExperimental(true);
-}
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 
@@ -98,21 +94,7 @@ export default function AIChatScreen() {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [remaining, setRemaining] = useState(50);
-  const [kbHeight, setKbHeight] = useState(0);
   const flatListRef = useRef<FlatList>(null);
-
-  // Keyboard — LayoutAnimation for instant sync
-  useEffect(() => {
-    const show = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', (e) => {
-      LayoutAnimation.configureNext(LayoutAnimation.create(Platform.OS === 'ios' ? (e as any).duration || 250 : 200, LayoutAnimation.Types.keyboard, LayoutAnimation.Properties.opacity));
-      setKbHeight(e.endCoordinates.height);
-    });
-    const hide = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide', (e) => {
-      LayoutAnimation.configureNext(LayoutAnimation.create(Platform.OS === 'ios' ? (e as any).duration || 250 : 200, LayoutAnimation.Types.keyboard, LayoutAnimation.Properties.opacity));
-      setKbHeight(0);
-    });
-    return () => { show.remove(); hide.remove(); };
-  }, []);
 
   useEffect(() => {
     loadChatHistory().then(saved => { if (saved.length > 0) setMessages(saved); });
@@ -178,66 +160,71 @@ export default function AIChatScreen() {
         </LinearGradient>
       </View>
 
-      {/* Messages — inverted for auto-scroll to bottom */}
-      <FlatList
-        ref={flatListRef}
-        data={[...messages].reverse()}
-        keyExtractor={item => item.id}
-        inverted
-        contentContainerStyle={{ paddingTop: 70, paddingHorizontal: 16, paddingBottom: insets.top + 72 }}
-        renderItem={({ item }) => <MessageBubble message={item} />}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
-        initialNumToRender={20}
-        ListEmptyComponent={
-          <View style={{ alignItems: 'center', paddingTop: 60, transform: [{ scaleY: -1 }] }}>
-            <RNText style={{ fontSize: 48 }} allowFontScaling={false}>🤖</RNText>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 12 }}>
-              <Text variant="body" weight="bold">San AI</Text>
-              <VerifiedBadge size={14} />
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        {/* Messages */}
+        <FlatList
+          ref={flatListRef}
+          data={messages}
+          keyExtractor={item => item.id}
+          contentContainerStyle={{ paddingTop: insets.top + 72, paddingHorizontal: 16, paddingBottom: 8, flexGrow: 1 }}
+          renderItem={({ item }) => <MessageBubble message={item} />}
+          onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: false })}
+          onLayout={() => flatListRef.current?.scrollToEnd({ animated: false })}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="interactive"
+          automaticallyAdjustKeyboardInsets={false}
+          maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+          ListEmptyComponent={
+            <View style={{ alignItems: 'center', paddingTop: 60, flex: 1, justifyContent: 'center' }}>
+              <RNText style={{ fontSize: 48 }} allowFontScaling={false}>🤖</RNText>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 12 }}>
+                <Text variant="body" weight="bold">San AI</Text>
+                <VerifiedBadge size={14} />
+              </View>
+              <Text variant="caption" color={theme.colors.text.tertiary} align="center" style={{ marginTop: 8, paddingHorizontal: 40, lineHeight: 18 }}>
+                Могу сменить тему, имя, эмодзи, био. Просто попроси!
+              </Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 6, marginTop: 16 }}>
+                {['Смени тему', 'Поменяй имя', 'Тёмный режим', 'Что умеешь?'].map(hint => (
+                  <Pressable key={hint} onPress={() => setInput(hint)} style={{ backgroundColor: theme.colors.accent.primary + '12', borderRadius: 14, paddingHorizontal: 12, paddingVertical: 6 }}>
+                    <Text variant="caption" color={theme.colors.accent.primary} style={{ fontSize: 12 }}>{hint}</Text>
+                  </Pressable>
+                ))}
+              </View>
             </View>
-            <Text variant="caption" color={theme.colors.text.tertiary} align="center" style={{ marginTop: 8, paddingHorizontal: 40, lineHeight: 18 }}>
-              Могу сменить тему, имя, эмодзи, био. Просто попроси!
-            </Text>
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 6, marginTop: 16 }}>
-              {['Смени тему на спокойную', 'Поменяй имя', 'Тёмный режим', 'Что умеешь?'].map(hint => (
-                <Pressable key={hint} onPress={() => setInput(hint)} style={{ backgroundColor: theme.colors.accent.primary + '12', borderRadius: 14, paddingHorizontal: 12, paddingVertical: 6 }}>
-                  <Text variant="caption" color={theme.colors.accent.primary} style={{ fontSize: 12 }}>{hint}</Text>
-                </Pressable>
-              ))}
+          }
+        />
+
+        {/* Typing */}
+        {isLoading && (
+          <View style={{ paddingHorizontal: 16, paddingBottom: 4 }}>
+            <View style={{ borderRadius: 14, overflow: 'hidden', alignSelf: 'flex-start' }}>
+              <BlurView intensity={80} tint="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 7 }}>
+                <ActivityIndicator size="small" color="#FFFFFF" />
+                <Text style={{ fontSize: 11, color: '#FFFFFF', fontWeight: '500' }}>Думаю...</Text>
+              </BlurView>
             </View>
           </View>
-        }
-      />
+        )}
 
-      {/* Typing */}
-      {isLoading && (
-        <View style={{ paddingHorizontal: 16, paddingBottom: 4 }}>
-          <View style={{ borderRadius: 14, overflow: 'hidden', alignSelf: 'flex-start' }}>
-            <BlurView intensity={80} tint="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 7 }}>
-              <ActivityIndicator size="small" color="#FFFFFF" />
-              <Text style={{ fontSize: 11, color: '#FFFFFF', fontWeight: '500' }}>Думаю...</Text>
-            </BlurView>
+        {/* Input — inside KAV so it moves with keyboard */}
+        <View style={{ paddingHorizontal: 16, paddingTop: 6, paddingBottom: insets.bottom + 6, backgroundColor: theme.colors.background.primary }}>
+          <View style={{ flexDirection: 'row', alignItems: 'flex-end', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)', borderRadius: 24, paddingHorizontal: 16, paddingVertical: 8, borderWidth: 1, borderColor: theme.colors.border.light }}>
+            <TextInput
+              value={input}
+              onChangeText={setInput}
+              placeholder="Напиши что-нибудь..."
+              placeholderTextColor={theme.colors.text.tertiary}
+              multiline
+              style={{ flex: 1, fontSize: 14, color: theme.colors.text.primary, maxHeight: 100, paddingVertical: 4 }}
+            />
+            <Pressable onPress={handleSend} disabled={!input.trim() || isLoading} style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: input.trim() ? theme.colors.accent.primary : 'transparent', alignItems: 'center', justifyContent: 'center', marginLeft: 8 }}>
+              <Feather name="send" size={14} color={input.trim() ? '#FFFFFF' : theme.colors.text.tertiary} />
+            </Pressable>
           </View>
         </View>
-      )}
-
-      {/* Input */}
-      <View style={{ paddingHorizontal: 16, paddingTop: 6, paddingBottom: kbHeight > 0 ? 6 : insets.bottom + 12, backgroundColor: theme.colors.background.primary }}>
-        <View style={{ flexDirection: 'row', alignItems: 'flex-end', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)', borderRadius: 24, paddingHorizontal: 16, paddingVertical: 8, borderWidth: 1, borderColor: theme.colors.border.light }}>
-          <TextInput
-            value={input}
-            onChangeText={setInput}
-            placeholder="Напиши что-нибудь..."
-            placeholderTextColor={theme.colors.text.tertiary}
-            multiline
-            style={{ flex: 1, fontSize: 14, color: theme.colors.text.primary, maxHeight: 100, paddingVertical: 4 }}
-          />
-          <Pressable onPress={handleSend} disabled={!input.trim() || isLoading} style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: input.trim() ? theme.colors.accent.primary : 'transparent', alignItems: 'center', justifyContent: 'center', marginLeft: 8 }}>
-            <Feather name="send" size={14} color={input.trim() ? '#FFFFFF' : theme.colors.text.tertiary} />
-          </Pressable>
-        </View>
-      </View>
+      </KeyboardAvoidingView>
     </View>
   );
 }

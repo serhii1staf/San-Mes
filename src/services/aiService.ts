@@ -158,10 +158,10 @@ export async function applyAction(action: ParsedAction): Promise<boolean> {
         const r = parseInt(hex.substring(0, 2), 16) || 0;
         const g = parseInt(hex.substring(2, 4), 16) || 0;
         const b = parseInt(hex.substring(4, 6), 16) || 0;
-        if (r > 220 && g > 220 && b > 220) return false; // too light
+        if (r > 200 && g > 200 && b > 200) return false; // too light — reject
+        if (r + g + b > 600) return false; // overall too bright — reject
 
         const key = 'ai-' + name.toLowerCase().replace(/[^a-z0-9]/g, '-');
-        // Generate dark bg colors from accent
         const darkBg = `#${Math.max(10, Math.floor(r * 0.1)).toString(16).padStart(2, '0')}${Math.max(10, Math.floor(g * 0.1)).toString(16).padStart(2, '0')}${Math.max(10, Math.floor(b * 0.1)).toString(16).padStart(2, '0')}`;
         const darkElevated = `#${Math.max(20, Math.floor(r * 0.15)).toString(16).padStart(2, '0')}${Math.max(20, Math.floor(g * 0.15)).toString(16).padStart(2, '0')}${Math.max(20, Math.floor(b * 0.15)).toString(16).padStart(2, '0')}`;
         const darkSecondary = `#${Math.max(14, Math.floor(r * 0.12)).toString(16).padStart(2, '0')}${Math.max(14, Math.floor(g * 0.12)).toString(16).padStart(2, '0')}${Math.max(14, Math.floor(b * 0.12)).toString(16).padStart(2, '0')}`;
@@ -173,6 +173,7 @@ export async function applyAction(action: ParsedAction): Promise<boolean> {
         };
         useThemeStore.getState().addAiTheme(newTheme);
         useThemeStore.getState().setAccent(key);
+        useThemeStore.getState().setMode('dark');
         return true;
       }
       case 'mode': {
