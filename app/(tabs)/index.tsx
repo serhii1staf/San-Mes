@@ -15,6 +15,7 @@ import { getPosts, isRepost, parseImageUrls, isImageSpoiler, toggleLike as apiTo
 import { useUpdateStore } from '../../src/store/updateStore';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { useConnectivityStore } from '../../src/services/connectivityMonitor';
+import { resetThrottle } from '../../src/services/syncThrottle';
 
 const FEED_CACHE_KEY = '@san:feed_posts';
 const FEED_LIMIT = 20;
@@ -252,6 +253,7 @@ export default function FeedScreen() {
   }, []);
 
   const handleRefresh = useCallback(async () => {
+    resetThrottle('feed');
     setRefreshing(true);
     try {
       const { posts: rawPosts, error } = await getPosts(FEED_LIMIT, 0);

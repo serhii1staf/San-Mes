@@ -11,6 +11,7 @@ import { supabase } from '../../lib/supabase';
 import { showToast } from '../../store/toastStore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Updates from 'expo-updates';
+import { resetAllThrottles } from '../../services/syncThrottle';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -83,6 +84,7 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
 
     // Clear all cached data from previous account
     await AsyncStorage.multiRemove(['@san:feed_posts', '@san:my_posts', 'mini-apps-cache', '@san:search_history']);
+    resetAllThrottles();
 
     // Login to new account
     login({
@@ -133,6 +135,7 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
 
     // Clear all cached data from previous account
     await AsyncStorage.multiRemove(['@san:feed_posts', '@san:my_posts', 'mini-apps-cache', '@san:search_history']);
+    resetAllThrottles();
 
     addAccount({
       id: profile.id,

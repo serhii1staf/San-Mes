@@ -8,6 +8,7 @@ import {
 } from '../lib/supabase';
 
 import { useEntityStore } from './entityStore';
+import { shouldSync } from './syncThrottle';
 
 import {
   cacheFeed,
@@ -28,6 +29,7 @@ import {
  * Sync the main feed: fetch posts from Supabase, update entity store, persist to cache.
  */
 export async function syncFeed(userId?: string): Promise<void> {
+  if (!await shouldSync('feed', 5 * 60 * 1000)) return; // 5 min
   try {
     const { posts, error } = await getPosts(100, 0);
     if (error || !posts.length) return;
@@ -89,6 +91,7 @@ export async function syncFeed(userId?: string): Promise<void> {
  * Sync a single profile by ID.
  */
 export async function syncProfile(profileId: string): Promise<void> {
+  if (!await shouldSync(`profile:${profileId}`, 10 * 60 * 1000)) return; // 10 min
   try {
     const { profile, error } = await getProfile(profileId);
     if (error || !profile) return;
@@ -120,6 +123,7 @@ export async function syncProfile(profileId: string): Promise<void> {
  * Sync all profiles (for search/discover).
  */
 export async function syncProfiles(): Promise<void> {
+  if (!await shouldSync('all_profiles', 15 * 60 * 1000)) return; // 15 min
   try {
     const { profiles, error } = await getProfiles();
     if (error || !profiles.length) return;
@@ -153,6 +157,7 @@ export async function syncProfiles(): Promise<void> {
  * Sync likes for a user: fetch liked post IDs from Supabase.
  */
 export async function syncLikes(userId: string): Promise<void> {
+  if (!await shouldSync(`likes:${userId}`, 10 * 60 * 1000)) return; // 10 min
   try {
     const { data, error } = await supabase
       .from('likes')
@@ -179,6 +184,7 @@ export async function syncLikes(userId: string): Promise<void> {
  * Sync follows for a user: fetch following IDs from Supabase.
  */
 export async function syncFollows(userId: string): Promise<void> {
+  if (!await shouldSync(`follows:${userId}`, 10 * 60 * 1000)) return; // 10 min
   try {
     const { data, error } = await supabase
       .from('follows')
@@ -205,6 +211,7 @@ export async function syncFollows(userId: string): Promise<void> {
  * Sync posts authored by a specific user (for profile screen).
  */
 export async function syncUserPosts(userId: string): Promise<void> {
+  if (!await shouldSync(`user_posts:${userId}`, 5 * 60 * 1000)) return; // 5 min
   try {
     const { data, error } = await supabase
       .from('posts')
@@ -244,6 +251,7 @@ export async function syncUserPosts(userId: string): Promise<void> {
  * Sync conversations for a user.
  */
 export async function syncConversations(userId: string): Promise<void> {
+  if (!await shouldSync(`conversations:${userId}`, 3 * 60 * 1000)) return; // 3 min
   try {
     const { conversations, error } = await getConversations(userId);
     if (error || !conversations.length) return;
@@ -275,6 +283,7 @@ export async function syncConversations(userId: string): Promise<void> {
  * Sync messages for a specific conversation.
  */
 export async function syncMessages(conversationId: string): Promise<void> {
+  if (!await shouldSync(`messages:${conversationId}`, 60 * 1000)) return; // 1 min
   try {
     const { messages, error } = await getMessages(conversationId);
     if (error || !messages.length) return;
