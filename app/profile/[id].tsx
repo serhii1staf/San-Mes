@@ -451,13 +451,13 @@ export default function UserProfileScreen() {
         contentContainerStyle={{ paddingBottom: 100 }}
       >
         {/* Banner */}
-        <View style={{ height: 150, backgroundColor: theme.colors.accent.primary + '20' }}>
+        <View style={{ height: 200, backgroundColor: theme.colors.accent.primary + '20' }}>
           {bannerUrl ? <Image source={{ uri: bannerUrl }} style={{ width: '100%', height: '100%' }} resizeMode="cover" /> : null}
-          <LinearGradient colors={['transparent', theme.colors.background.primary]} style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 50 }} />
+          <LinearGradient colors={['transparent', theme.colors.background.primary]} style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 60 }} />
         </View>
 
         {/* Profile info */}
-        <View style={{ paddingHorizontal: 16, marginTop: -36 }}>
+        <View style={{ paddingHorizontal: 16, marginTop: -40 }}>
           <View style={{ width: 72, height: 72, borderRadius: 36, overflow: 'hidden', borderWidth: 3, borderColor: theme.colors.background.primary, backgroundColor: theme.isDark ? 'rgba(30,30,30,0.85)' : 'rgba(255,255,255,0.85)', alignItems: 'center', justifyContent: 'center' }}>
             <Avatar emoji={displayProfile.emoji || '😊'} size="lg" />
           </View>
