@@ -11,7 +11,6 @@ import { Toast } from '../src/components/ui/Toast';
 import { initRateLimits } from '../src/services/rateLimit';
 import { cacheCleanup } from '../src/services/cacheManager';
 import { useConnectivityStore } from '../src/services/connectivityMonitor';
-import { KeyboardProvider } from 'react-native-keyboard-controller';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -115,7 +114,6 @@ export default function RootLayout() {
   if (!ready) return null;
 
   return (
-    <KeyboardProvider>
     <ThemeProvider>
       <AuthNavigationGuard>
         <BrowserMiniBar />
@@ -142,7 +140,6 @@ export default function RootLayout() {
         </Stack>
       </AuthNavigationGuard>
     </ThemeProvider>
-    </KeyboardProvider>
   );
 }
 

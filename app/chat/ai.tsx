@@ -1,6 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { View, Pressable, TextInput, FlatList, ActivityIndicator, Dimensions, Text as RNText, Platform } from 'react-native';
-import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
+import { View, Pressable, TextInput, FlatList, ActivityIndicator, Dimensions, Text as RNText, Platform, KeyboardAvoidingView } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
