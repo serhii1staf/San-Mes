@@ -123,7 +123,7 @@ export default function AppearanceScreen() {
     if (idx > 0 && scrollRef.current) {
       setTimeout(() => {
         scrollRef.current?.scrollTo({ x: idx * (CARD_WIDTH + CARD_GAP), animated: true });
-      }, 300);
+      }, 600);
     }
   }, []);
 

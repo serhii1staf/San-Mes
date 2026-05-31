@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { View, Pressable, TextInput, FlatList, ActivityIndicator, Dimensions, Text as RNText, Platform, KeyboardAvoidingView } from 'react-native';
+import { View, Pressable, TextInput, FlatList, ActivityIndicator, Dimensions, Text as RNText, Platform, KeyboardAvoidingView as RNKeyboardAvoidingView } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -12,6 +12,13 @@ import { useThemeStore, ACCENT_COLORS } from '../../src/store/themeStore';
 import { useAuthStore } from '../../src/store';
 import { sendMessage, parseActions, applyAction, AIMessage, ParsedAction, getRemainingRequests, saveChatHistory, loadChatHistory } from '../../src/services/aiService';
 import { triggerHaptic } from '../../src/utils/haptics';
+
+// Use react-native-keyboard-controller if available (after native rebuild), fallback to RN's KAV
+let KeyboardAvoidingView = RNKeyboardAvoidingView;
+try {
+  const kc = require('react-native-keyboard-controller');
+  if (kc?.KeyboardAvoidingView) KeyboardAvoidingView = kc.KeyboardAvoidingView;
+} catch {}
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 
@@ -206,8 +213,8 @@ export default function AIChatScreen() {
       />
 
       {/* Input */}
-      <View style={{ paddingHorizontal: 16, paddingTop: 6, paddingBottom: 6, backgroundColor: theme.colors.background.primary, borderTopWidth: 0.5, borderTopColor: theme.colors.border.light }}>
-        <View style={{ flexDirection: 'row', alignItems: 'flex-end', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)', borderRadius: 24, paddingHorizontal: 16, paddingVertical: 8, borderWidth: 1, borderColor: theme.colors.border.light }}>
+      <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 16, backgroundColor: theme.colors.background.primary + 'CC', borderTopWidth: 0, borderTopColor: theme.colors.border.light }}>
+        <View style={{ flexDirection: 'row', alignItems: 'flex-end', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)', borderRadius: 24, paddingHorizontal: 16, paddingVertical: 8, borderWidth: 1, borderColor: theme.colors.border.light }}>
           <TextInput
             value={input}
             onChangeText={setInput}
