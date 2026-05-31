@@ -205,8 +205,8 @@ export default function AIChatScreen() {
         }
       />
 
-      {/* Input — fixed at bottom, keyboard pushes it natively via inverted list */}
-      <View style={{ paddingHorizontal: 16, paddingTop: 6, paddingBottom: insets.bottom + 6, backgroundColor: theme.colors.background.primary, borderTopWidth: 0.5, borderTopColor: theme.colors.border.light }}>
+      {/* Input */}
+      <View style={{ paddingHorizontal: 16, paddingTop: 6, paddingBottom: 6, backgroundColor: theme.colors.background.primary, borderTopWidth: 0.5, borderTopColor: theme.colors.border.light }}>
         <View style={{ flexDirection: 'row', alignItems: 'flex-end', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)', borderRadius: 24, paddingHorizontal: 16, paddingVertical: 8, borderWidth: 1, borderColor: theme.colors.border.light }}>
           <TextInput
             value={input}

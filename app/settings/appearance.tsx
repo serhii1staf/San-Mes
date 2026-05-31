@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { View, Pressable, ScrollView, Dimensions, NativeSyntheticEvent, NativeScrollEvent } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -116,6 +116,16 @@ export default function AppearanceScreen() {
     if (selected) setAccent(selected.key);
     router.back();
   };
+
+  // Auto-scroll to active theme on mount
+  useEffect(() => {
+    const idx = Math.max(0, allThemes.findIndex(c => c.key === accent));
+    if (idx > 0 && scrollRef.current) {
+      setTimeout(() => {
+        scrollRef.current?.scrollTo({ x: idx * (CARD_WIDTH + CARD_GAP), animated: true });
+      }, 300);
+    }
+  }, []);
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
