@@ -121,9 +121,10 @@ export default function AppearanceScreen() {
   useEffect(() => {
     const idx = Math.max(0, allThemes.findIndex(c => c.key === accent));
     if (idx > 0 && scrollRef.current) {
+      // Set initial position without animation, then no jarring scroll
       setTimeout(() => {
-        scrollRef.current?.scrollTo({ x: idx * (CARD_WIDTH + CARD_GAP), animated: true });
-      }, 600);
+        scrollRef.current?.scrollTo({ x: idx * (CARD_WIDTH + CARD_GAP), animated: false });
+      }, 100);
     }
   }, []);
 

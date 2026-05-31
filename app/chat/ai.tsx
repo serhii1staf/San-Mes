@@ -1,5 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { View, Pressable, TextInput, FlatList, ActivityIndicator, Dimensions, Text as RNText, Platform, KeyboardAvoidingView as RNKeyboardAvoidingView } from 'react-native';
+import { View, Pressable, TextInput, FlatList, ActivityIndicator, Dimensions, Text as RNText, Platform } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -12,13 +13,6 @@ import { useThemeStore, ACCENT_COLORS } from '../../src/store/themeStore';
 import { useAuthStore } from '../../src/store';
 import { sendMessage, parseActions, applyAction, AIMessage, ParsedAction, getRemainingRequests, saveChatHistory, loadChatHistory } from '../../src/services/aiService';
 import { triggerHaptic } from '../../src/utils/haptics';
-
-// Use react-native-keyboard-controller if available (after native rebuild), fallback to RN's KAV
-let KeyboardAvoidingView = RNKeyboardAvoidingView;
-try {
-  const kc = require('react-native-keyboard-controller');
-  if (kc?.KeyboardAvoidingView) KeyboardAvoidingView = kc.KeyboardAvoidingView;
-} catch {}
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 

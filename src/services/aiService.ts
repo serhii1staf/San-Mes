@@ -68,6 +68,7 @@ function buildSystemPrompt(): string {
 [ACTION:emoji:🎭] — сменить эмодзи
 [ACTION:username:nick] — сменить юзернейм
 [ACTION:bio:текст] — сменить био
+[ACTION:links:url1,url2,url3] — добавить ссылки в профиль (до 3, через запятую)
 [ACTION:font:inter|system|serif|mono] — шрифт
 
 Существующие темы (используй их в первую очередь): ${ACCENT_COLORS.map(c => `${c.key}(${c.label})`).join(', ')}
@@ -96,7 +97,7 @@ export interface AIMessage {
 }
 
 export interface ParsedAction {
-  type: 'theme' | 'custom_theme' | 'mode' | 'name' | 'emoji' | 'username' | 'bio' | 'font';
+  type: 'theme' | 'custom_theme' | 'mode' | 'name' | 'emoji' | 'username' | 'bio' | 'font' | 'links';
   value: string;
   applied?: boolean;
 }
@@ -219,6 +220,28 @@ export async function applyAction(action: ParsedAction): Promise<boolean> {
         if (!user) return false;
         await supabase.from('profiles').update({ bio: action.value }).eq('id', user.id);
         useAuthStore.getState().updateProfile({ bio: action.value });
+        return true;
+      }
+      case 'links': {
+        const user = useAuthStore.getState().user;
+        if (!user) return false;
+        // Parse links from value: "url1,url2,url3" or "url1 url2 url3"
+        const urls = action.value.split(/[,\s]+/).filter(u => u.startsWith('http'));
+        const links = urls.map(url => {
+          const lower = url.toLowerCase();
+          let type = 'website';
+          if (lower.includes('t.me') || lower.includes('telegram')) type = 'telegram';
+          else if (lower.includes('instagram.com')) type = 'instagram';
+          else if (lower.includes('github.com')) type = 'github';
+          else if (lower.includes('twitter.com') || lower.includes('x.com')) type = 'twitter';
+          else if (lower.includes('youtube.com')) type = 'youtube';
+          else if (lower.includes('tiktok.com')) type = 'tiktok';
+          else if (lower.includes('discord')) type = 'discord';
+          return { type, url };
+        });
+        if (links.length === 0) return false;
+        await supabase.from('profiles').update({ links }).eq('id', user.id);
+        useAuthStore.getState().updateProfile({ links } as any);
         return true;
       }
       default:
