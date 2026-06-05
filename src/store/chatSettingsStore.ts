@@ -31,6 +31,9 @@ interface ChatSettingsStore {
 
 const DEFAULT_SETTINGS: ChatSettings = { fontSize: 15, fontFamily: 'system', bubbleRadius: 18 };
 
+// Exported for components that merge settings manually (e.g. with useMemo)
+export const DEFAULT_CHAT_SETTINGS = DEFAULT_SETTINGS;
+
 export const useChatSettingsStore = create<ChatSettingsStore>()(
   persist(
     (set, get) => ({

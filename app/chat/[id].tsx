@@ -8,7 +8,7 @@ import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { useChatStore, useEntityStore } from '../../src/store';
-import { useChatSettingsStore } from '../../src/store/chatSettingsStore';
+import { useChatSettingsStore, GLOBAL_CHAT_SETTINGS_KEY, DEFAULT_CHAT_SETTINGS } from '../../src/store/chatSettingsStore';
 import { supabase } from '../../src/lib/supabase';
 import { mockMessages, mockConversations, formatMessageTime } from '../../src/utils/mockData';
 import { ChatMessage } from '../../src/types';
@@ -59,8 +59,14 @@ export default function ChatScreen() {
 
   const chatMessages = (storeMessages[id || ''] || []) as ChatMessage[];
 
-  // Chat settings
-  const chatSettings = useChatSettingsStore((s) => s.getSettings(id || ''));
+  // Chat settings — select raw maps and merge with useMemo to avoid creating
+  // a new object inside the selector (which would cause an infinite render loop)
+  const settingsMap = useChatSettingsStore((s) => s.settings);
+  const chatSettings = React.useMemo(() => {
+    const global = settingsMap[GLOBAL_CHAT_SETTINGS_KEY];
+    const specific = settingsMap[id || ''];
+    return { ...DEFAULT_CHAT_SETTINGS, ...global, ...specific };
+  }, [settingsMap, id]);
 
   const bgColor = theme.colors.background.primary;
   const bgTransparent = bgColor + '00';
