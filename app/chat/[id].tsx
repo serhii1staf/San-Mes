@@ -1,10 +1,11 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, ImageBackground } from 'react-native';
-import { KeyboardStickyView } from 'react-native-keyboard-controller';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, ImageBackground, Keyboard } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { Feather } from '@expo/vector-icons';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
+import { BlurView } from 'expo-blur';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
@@ -41,14 +42,15 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily }: {
   );
 }
 
+const MemoMessageBubble = React.memo(MessageBubble);
+
 export default function ChatScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const { id, participantId: paramParticipantId } = useLocalSearchParams<{ id: string; participantId?: string }>();
   const [inputText, setInputText] = useState('');
-  const flatListRef = useRef<FlatList>(null);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
   const { messages: storeMessages, setMessages, addMessage } = useChatStore();
-  const hasScrolled = useRef(false);
 
   const conversation = mockConversations.find((c) => c.id === id);
   const [profileData, setProfileData] = useState<any>(null);
@@ -59,10 +61,12 @@ export default function ChatScreen() {
 
   const chatMessages = (storeMessages[id || ''] || []) as ChatMessage[];
 
-  // Chat settings — select raw maps and merge with useMemo to avoid creating
-  // a new object inside the selector (which would cause an infinite render loop)
+  // Inverted data — newest first so the list naturally pins newest message at the bottom
+  const invertedData = useMemo(() => [...chatMessages].reverse(), [chatMessages]);
+
+  // Chat settings — select raw map, merge with useMemo (avoid new object in selector → infinite loop)
   const settingsMap = useChatSettingsStore((s) => s.settings);
-  const chatSettings = React.useMemo(() => {
+  const chatSettings = useMemo(() => {
     const global = settingsMap[GLOBAL_CHAT_SETTINGS_KEY];
     const specific = settingsMap[id || ''];
     return { ...DEFAULT_CHAT_SETTINGS, ...global, ...specific };
@@ -72,6 +76,12 @@ export default function ChatScreen() {
   const bgTransparent = bgColor + '00';
   const headerContentHeight = insets.top + 48;
   const headerGradientHeight = headerContentHeight + 28;
+
+  useEffect(() => {
+    const showSub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', () => setKeyboardVisible(true));
+    const hideSub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide', () => setKeyboardVisible(false));
+    return () => { showSub.remove(); hideSub.remove(); };
+  }, []);
 
   useEffect(() => {
     if (!conversation && participantId) {
@@ -87,12 +97,10 @@ export default function ChatScreen() {
     }
   }, [id]);
 
-  useEffect(() => {
-    if (!hasScrolled.current && chatMessages.length > 0) {
-      hasScrolled.current = true;
-      setTimeout(() => flatListRef.current?.scrollToEnd({ animated: false }), 150);
-    }
-  }, [chatMessages.length]);
+  const displayName = conversation?.participantName || profileData?.display_name || 'Чат';
+  const displayEmoji = (conversation as any)?.participantEmoji || profileData?.emoji || '😊';
+  const displayVerified = profileData?.is_verified || false;
+  const profileId = participantId;
 
   const handleSend = async () => {
     if (!inputText.trim() || !id) return;
@@ -109,7 +117,6 @@ export default function ChatScreen() {
       isRead: true,
     };
     addMessage(id, newMessage);
-    setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 50);
 
     try {
       const { useAuthStore, useEntityStore } = await import('../../src/store');
@@ -149,13 +156,18 @@ export default function ChatScreen() {
     } catch {}
   };
 
-  const displayName = conversation?.participantName || profileData?.display_name || 'Чат';
-  const displayEmoji = (conversation as any)?.participantEmoji || profileData?.emoji || '😊';
-  const displayVerified = profileData?.is_verified || false;
-  const profileId = participantId;
+  const renderItem = useCallback(({ item }: { item: ChatMessage }) => (
+    <MemoMessageBubble
+      message={item}
+      isOwn={item.senderId === 'current'}
+      fontSize={chatSettings.fontSize}
+      bubbleRadius={chatSettings.bubbleRadius}
+      fontFamily={chatSettings.fontFamily}
+    />
+  ), [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily]);
 
   return (
-    <View style={{ flex: 1, backgroundColor: bgColor, justifyContent: 'flex-end' }}>
+    <View style={{ flex: 1, backgroundColor: bgColor }}>
       {/* Background image covers the ENTIRE screen, behind everything */}
       {chatSettings.backgroundImage && (
         <ImageBackground
@@ -165,62 +177,68 @@ export default function ChatScreen() {
         />
       )}
 
-      {/* Messages — fill entire screen, scroll all the way to the bottom behind the input */}
-      <FlatList
-        ref={flatListRef}
-        style={StyleSheet.absoluteFill}
-        data={chatMessages}
-        keyExtractor={(item) => item.id}
-        renderItem={({ item }) => (
-          <MessageBubble
-            message={item}
-            isOwn={item.senderId === 'current'}
-            fontSize={chatSettings.fontSize}
-            bubbleRadius={chatSettings.bubbleRadius}
-            fontFamily={chatSettings.fontFamily}
-          />
-        )}
-        contentContainerStyle={{ paddingTop: headerContentHeight + 8, paddingBottom: insets.bottom + 64 }}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="interactive"
-      />
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0}>
+        {/* Inverted list — newest pinned at bottom, grows upward as you scroll */}
+        <FlatList
+          data={invertedData}
+          inverted
+          keyExtractor={(item) => item.id}
+          renderItem={renderItem}
+          contentContainerStyle={{ paddingTop: 8, paddingBottom: 4 }}
+          ListFooterComponent={<View style={{ height: headerContentHeight }} />}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="interactive"
+          removeClippedSubviews={false}
+          initialNumToRender={15}
+          maxToRenderPerBatch={10}
+          windowSize={9}
+        />
 
-      {/* Input bar — sticks to the keyboard with no gap; transparent outer bg lets wallpaper show */}
-      <KeyboardStickyView offset={{ closed: 0, opened: insets.bottom }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: 6, paddingBottom: Math.max(insets.bottom, 8), backgroundColor: 'transparent' }}>
-          <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 22, paddingHorizontal: 14, minHeight: 44, borderWidth: 1, borderColor: theme.colors.border.light }}>
-            <TextInput
-              value={inputText}
-              onChangeText={setInputText}
-              placeholder="Сообщение..."
-              placeholderTextColor={theme.colors.text.tertiary}
-              style={{ flex: 1, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular, maxHeight: 100, paddingVertical: Platform.OS === 'ios' ? 10 : 6 }}
-              multiline
+        {/* Input bar — blur backdrop when keyboard is closed, transparent (wallpaper) when typing */}
+        <View>
+          {!keyboardVisible && (
+            <BlurView
+              intensity={Platform.OS === 'ios' ? 60 : 40}
+              tint={theme.isDark ? 'dark' : 'light'}
+              style={StyleSheet.absoluteFill}
             />
+          )}
+          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: 8, paddingBottom: keyboardVisible ? 14 : Math.max(insets.bottom, 10) }}>
+            <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 22, paddingHorizontal: 14, minHeight: 44, borderWidth: 1, borderColor: theme.colors.border.light }}>
+              <TextInput
+                value={inputText}
+                onChangeText={setInputText}
+                placeholder="Сообщение..."
+                placeholderTextColor={theme.colors.text.tertiary}
+                style={{ flex: 1, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular, maxHeight: 100, paddingVertical: Platform.OS === 'ios' ? 10 : 6 }}
+                multiline
+              />
+            </View>
+            <Pressable onPress={handleSend} style={{ marginLeft: 8, width: 44, height: 44, borderRadius: 22, backgroundColor: inputText.trim() ? theme.colors.accent.primary : theme.colors.background.elevated, alignItems: 'center', justifyContent: 'center' }}>
+              <Feather name="send" size={18} color={inputText.trim() ? '#FFFFFF' : theme.colors.text.tertiary} />
+            </Pressable>
           </View>
-          <Pressable onPress={handleSend} style={{ marginLeft: 8, width: 44, height: 44, borderRadius: 22, backgroundColor: inputText.trim() ? theme.colors.accent.primary : theme.colors.background.elevated, alignItems: 'center', justifyContent: 'center' }}>
-            <Feather name="send" size={18} color={inputText.trim() ? '#FFFFFF' : theme.colors.text.tertiary} />
-          </Pressable>
         </View>
-      </KeyboardStickyView>
+      </KeyboardAvoidingView>
 
       {/* Gradient fade header — same as main page */}
       <View style={[styles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">
         <LinearGradient colors={[bgColor, bgColor, bgTransparent]} locations={[0, 0.55, 1]} style={StyleSheet.absoluteFill} />
         <View style={[styles.headerContent, { paddingTop: insets.top }]} pointerEvents="auto">
-          {/* Back button with окантовка */}
-          <Pressable onPress={() => router.back()} style={[styles.headerPill, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light, width: 36, height: 36, paddingHorizontal: 0, justifyContent: 'center' }]}>
+          {/* Back button (left) */}
+          <Pressable onPress={() => router.back()} style={[styles.headerCircle, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
             <Feather name="chevron-left" size={22} color={theme.colors.text.primary} />
           </Pressable>
-          {/* Name + avatar with окантовка */}
-          <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId } })} style={[styles.headerPill, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light, gap: 8 }]}>
-            <Avatar emoji={displayEmoji} size="xs" />
-            <Text variant="caption" weight="semibold">{displayName}</Text>
-            {displayVerified && <VerifiedBadge size={11} />}
+          {/* Name (center) */}
+          <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId } })} style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+            <Text variant="body" weight="bold" numberOfLines={1}>{displayName}</Text>
+            {displayVerified && <VerifiedBadge size={13} />}
           </Pressable>
-          {/* Spacer for symmetry */}
-          <View style={{ width: 36 }} />
+          {/* Avatar (right) */}
+          <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId } })}>
+            <Avatar emoji={displayEmoji} name={displayName} size="sm" />
+          </Pressable>
         </View>
       </View>
     </View>
@@ -229,6 +247,6 @@ export default function ChatScreen() {
 
 const styles = StyleSheet.create({
   headerWrapper: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100 },
-  headerContent: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingBottom: 8 },
-  headerPill: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, borderWidth: 1 },
+  headerContent: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingBottom: 8, gap: 12 },
+  headerCircle: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
 });
