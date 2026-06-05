@@ -8,6 +8,9 @@ import { FormattedText } from './FormattedText';
 import { ChatMessage } from '../../types';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
+const PREVIEW_MAX_HEIGHT = SCREEN_HEIGHT * 0.4;
+// Above this character count we wrap the preview in a scroll view; short messages render plainly.
+const LONG_TEXT_THRESHOLD = 220;
 
 export type MessageAction = 'reply' | 'copy' | 'edit' | 'delete';
 
@@ -27,22 +30,27 @@ export function MessageContextMenu({ visible, message, isOwn, bubbleColor, bubbl
   const insets = useSafeAreaInsets();
   const slideAnim = useRef(new Animated.Value(40)).current;
   const fade = useRef(new Animated.Value(0)).current;
+  // Guard so rapid taps can't start overlapping dismiss animations (which froze the app)
+  const dismissing = useRef(false);
 
   useEffect(() => {
     if (visible) {
+      dismissing.current = false;
       slideAnim.setValue(40);
       fade.setValue(0);
       Animated.parallel([
-        Animated.timing(slideAnim, { toValue: 0, duration: 260, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-        Animated.timing(fade, { toValue: 1, duration: 200, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+        Animated.timing(slideAnim, { toValue: 0, duration: 240, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+        Animated.timing(fade, { toValue: 1, duration: 180, easing: Easing.out(Easing.quad), useNativeDriver: true }),
       ]).start();
     }
   }, [visible]);
 
   const dismiss = (cb?: () => void) => {
+    if (dismissing.current) return; // ignore repeated taps while closing
+    dismissing.current = true;
     Animated.parallel([
       Animated.timing(slideAnim, { toValue: 40, duration: 200, easing: Easing.in(Easing.cubic), useNativeDriver: true }),
-      Animated.timing(fade, { toValue: 0, duration: 180, easing: Easing.in(Easing.quad), useNativeDriver: true }),
+      Animated.timing(fade, { toValue: 0, duration: 170, easing: Easing.in(Easing.quad), useNativeDriver: true }),
     ]).start(() => { onClose(); cb?.(); });
   };
 
@@ -55,8 +63,26 @@ export function MessageContextMenu({ visible, message, isOwn, bubbleColor, bubbl
     { action: 'delete', icon: 'trash-2', label: 'Удалить', destructive: true, show: isOwn },
   ];
 
-  // Cap the preview so an overly long message never pushes the menu off-screen
-  const previewMaxHeight = SCREEN_HEIGHT * 0.4;
+  const hasImages = !!message.imageUrls && message.imageUrls.length > 0;
+  const isLong = (message.text?.length || 0) > LONG_TEXT_THRESHOLD;
+
+  const previewInner = (
+    <>
+      {message.replyToText ? (
+        <View style={{ paddingLeft: 8, borderLeftWidth: 2, borderLeftColor: isOwn ? 'rgba(255,255,255,0.7)' : theme.colors.accent.primary, marginBottom: 6 }}>
+          <Text variant="caption" color={isOwn ? 'rgba(255,255,255,0.7)' : theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 11 }}>{message.replyToText}</Text>
+        </View>
+      ) : null}
+      {hasImages ? (
+        <Text variant="caption" color={isOwn ? 'rgba(255,255,255,0.8)' : theme.colors.text.tertiary} style={{ fontSize: 12, marginBottom: message.text ? 6 : 0 }}>
+          📷 {message.imageUrls!.length > 1 ? `${message.imageUrls!.length} фото` : 'Фото'}
+        </Text>
+      ) : null}
+      {message.text ? (
+        <FormattedText color={bubbleTextColor} linkColor={isOwn ? '#FFFFFF' : theme.colors.accent.primary} style={{ fontSize: 15 }}>{message.text}</FormattedText>
+      ) : null}
+    </>
+  );
 
   return (
     <Modal visible={visible} transparent animationType="none" onRequestClose={() => dismiss()} statusBarTranslucent>
@@ -69,25 +95,25 @@ export function MessageContextMenu({ visible, message, isOwn, bubbleColor, bubbl
           style={{ flex: 1, justifyContent: 'flex-end', paddingBottom: Math.max(insets.bottom, 16), opacity: fade, transform: [{ translateY: slideAnim }] }}
           pointerEvents="box-none"
         >
-          {/* Highlighted message preview — capped height + scrollable if huge */}
+          {/* Highlighted message preview — sizes to content; only scrolls when very long */}
           <View style={{ marginHorizontal: 16, marginBottom: 8, alignItems: isOwn ? 'flex-end' : 'flex-start' }} pointerEvents="box-none">
             <View style={{
               maxWidth: '85%',
-              maxHeight: previewMaxHeight,
               borderRadius: bubbleRadius,
               backgroundColor: bubbleColor,
               borderBottomRightRadius: isOwn ? 4 : bubbleRadius,
               borderBottomLeftRadius: isOwn ? bubbleRadius : 4,
               overflow: 'hidden',
             }}>
-              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 14, paddingVertical: 10 }} bounces={false}>
-                {message.replyToText ? (
-                  <View style={{ paddingLeft: 8, borderLeftWidth: 2, borderLeftColor: isOwn ? 'rgba(255,255,255,0.7)' : theme.colors.accent.primary, marginBottom: 6 }}>
-                    <Text variant="caption" color={isOwn ? 'rgba(255,255,255,0.7)' : theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 11 }}>{message.replyToText}</Text>
-                  </View>
-                ) : null}
-                <FormattedText color={bubbleTextColor} linkColor={isOwn ? '#FFFFFF' : theme.colors.accent.primary} style={{ fontSize: 15 }}>{message.text}</FormattedText>
-              </ScrollView>
+              {isLong ? (
+                <ScrollView style={{ maxHeight: PREVIEW_MAX_HEIGHT }} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 14, paddingVertical: 10 }} bounces={false}>
+                  {previewInner}
+                </ScrollView>
+              ) : (
+                <View style={{ paddingHorizontal: 14, paddingVertical: 10 }}>
+                  {previewInner}
+                </View>
+              )}
             </View>
           </View>
 

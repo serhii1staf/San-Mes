@@ -27,9 +27,11 @@ export function PostContextMenu({ visible, post, isOwnPost, onClose, onDelete }:
   const theme = useTheme();
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
   const backdropAnim = useRef(new Animated.Value(0)).current;
+  const dismissing = useRef(false);
 
   useEffect(() => {
     if (visible) {
+      dismissing.current = false;
       slideAnim.setValue(SCREEN_HEIGHT);
       backdropAnim.setValue(0);
       Animated.parallel([
@@ -40,6 +42,8 @@ export function PostContextMenu({ visible, post, isOwnPost, onClose, onDelete }:
   }, [visible]);
 
   const dismiss = () => {
+    if (dismissing.current) return;
+    dismissing.current = true;
     Animated.parallel([
       Animated.timing(slideAnim, { toValue: SCREEN_HEIGHT, duration: 250, useNativeDriver: true }),
       Animated.timing(backdropAnim, { toValue: 0, duration: 250, useNativeDriver: true }),
