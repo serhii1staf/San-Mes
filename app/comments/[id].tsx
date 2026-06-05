@@ -176,11 +176,13 @@ export default function CommentsScreen() {
                 {/* Repost — embedded original post preview */}
                 {repostInfo.isRepost && (
                   repostOriginal ? (
-                    <Pressable onPress={() => router.push({ pathname: '/comments/[id]', params: { id: repostOriginal.id } })} style={{ borderWidth: 1, borderColor: theme.colors.border.light, borderRadius: 14, padding: 10, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)' }}>
+                    <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: origProfile?.id || repostOriginal.author_id } })} style={{ borderWidth: 1, borderColor: theme.colors.border.light, borderRadius: 14, padding: 10, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)' }}>
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 6 }}>
                         <Avatar emoji={origProfile?.emoji || '😊'} size="xs" />
                         <Text variant="caption" weight="semibold" numberOfLines={1} style={{ flexShrink: 1 }}>{origProfile?.display_name || 'User'}</Text>
-                        {origProfile?.is_verified && <VerifiedBadge size={9} />}
+                        {origProfile?.is_verified && <VerifiedBadge size={10} />}
+                        {origProfile?.badge && <UserBadge badge={origProfile.badge} size="sm" />}
+                        {origProfile?.username ? <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 11, flexShrink: 0 }}>@{origProfile.username}</Text> : null}
                       </View>
                       {repostOriginal.content ? <FormattedText style={{ fontSize: 13 }} color={theme.colors.text.secondary}>{repostOriginal.content}</FormattedText> : null}
                       {origImages.length > 0 && <CachedImage uri={origImages[0]} style={{ width: '100%', height: 160, borderRadius: 10, marginTop: 6 }} resizeMode="cover" />}
