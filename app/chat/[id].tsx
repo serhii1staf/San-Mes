@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, ImageBackground, Alert, Animated, PanResponder } from 'react-native';
-import { KeyboardAvoidingView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
+import { KeyboardStickyView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
 import Reanimated, { useAnimatedStyle, interpolate, Extrapolation } from 'react-native-reanimated';
-import ContextMenu from 'react-native-context-menu-view';
 import * as Clipboard from 'expo-clipboard';
 import { Feather } from '@expo/vector-icons';
 import { useLocalSearchParams, router } from 'expo-router';
@@ -12,6 +11,7 @@ import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { FormattedText } from '../../src/components/ui/FormattedText';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
+import { MessageContextMenu, MessageAction } from '../../src/components/ui/MessageContextMenu';
 import { useChatStore, useEntityStore } from '../../src/store';
 import { useChatSettingsStore, GLOBAL_CHAT_SETTINGS_KEY, DEFAULT_CHAT_SETTINGS } from '../../src/store/chatSettingsStore';
 import { supabase } from '../../src/lib/supabase';
@@ -22,34 +22,22 @@ import { triggerHaptic } from '../../src/utils/haptics';
 
 const REPLY_THRESHOLD = 60;
 
-function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, onAction }: { message: ChatMessage; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string; onAction: (action: string, message: ChatMessage) => void }) {
+function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, onReply, onLongPress }: { message: ChatMessage; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string; onReply: (m: ChatMessage) => void; onLongPress: (m: ChatMessage) => void }) {
   const theme = useTheme();
   const fontFamilyStyle = fontFamily === 'mono' ? 'monospace' : fontFamily === 'serif' ? 'serif' : undefined;
   const translateX = useRef(new Animated.Value(0)).current;
   const fired = useRef(false);
 
-  const actions = isOwn
-    ? [
-        { title: 'Ответить', systemIcon: 'arrowshape.turn.up.left' },
-        { title: 'Копировать', systemIcon: 'doc.on.doc' },
-        { title: 'Редактировать', systemIcon: 'pencil' },
-        { title: 'Удалить', destructive: true, systemIcon: 'trash' },
-      ]
-    : [
-        { title: 'Ответить', systemIcon: 'arrowshape.turn.up.left' },
-        { title: 'Копировать', systemIcon: 'doc.on.doc' },
-      ];
-
-  // Swipe-to-reply: only claim clearly horizontal left swipes so vertical scroll keeps working
+  // Swipe-to-reply: claim the gesture only for clearly horizontal left swipes
   const panResponder = useRef(PanResponder.create({
-    onMoveShouldSetPanResponder: (_, g) => g.dx < -14 && Math.abs(g.dx) > Math.abs(g.dy) * 1.8,
+    onMoveShouldSetPanResponder: (_, g) => g.dx < -16 && Math.abs(g.dx) > Math.abs(g.dy) * 2.5,
     onPanResponderMove: (_, g) => {
       const dx = Math.max(Math.min(g.dx, 0), -80);
       translateX.setValue(dx);
       if (!fired.current && dx <= -REPLY_THRESHOLD) { fired.current = true; triggerHaptic('light'); }
     },
     onPanResponderRelease: (_, g) => {
-      if (g.dx <= -REPLY_THRESHOLD) onAction('Ответить', message);
+      if (g.dx <= -REPLY_THRESHOLD) onReply(message);
       fired.current = false;
       Animated.spring(translateX, { toValue: 0, useNativeDriver: true, tension: 140, friction: 12 }).start();
     },
@@ -61,35 +49,6 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, onA
 
   const replyIconOpacity = translateX.interpolate({ inputRange: [-REPLY_THRESHOLD, -24, 0], outputRange: [1, 0, 0], extrapolate: 'clamp' });
 
-  const bubbleInner = (
-    <View style={{
-      paddingHorizontal: 14,
-      paddingVertical: 10,
-      borderRadius: bubbleRadius,
-      backgroundColor: isOwn ? theme.colors.accent.primary : theme.colors.background.tertiary,
-      borderBottomRightRadius: isOwn ? 4 : bubbleRadius,
-      borderBottomLeftRadius: isOwn ? bubbleRadius : 4,
-    }}>
-      {/* Quoted reply preview inside the bubble */}
-      {message.replyToText ? (
-        <View style={{ flexDirection: 'row', gap: 8, marginBottom: 6, paddingLeft: 8, borderLeftWidth: 2, borderLeftColor: isOwn ? 'rgba(255,255,255,0.7)' : theme.colors.accent.primary }}>
-          <View style={{ flex: 1 }}>
-            <Text variant="caption" weight="semibold" color={isOwn ? 'rgba(255,255,255,0.9)' : theme.colors.accent.primary} numberOfLines={1} style={{ fontSize: 11 }}>
-              {message.replyToIsOwn ? 'Вы' : 'Собеседник'}
-            </Text>
-            <Text variant="caption" color={isOwn ? 'rgba(255,255,255,0.7)' : theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 11 }}>
-              {message.replyToText}
-            </Text>
-          </View>
-        </View>
-      ) : null}
-      <FormattedText color={isOwn ? '#FFFFFF' : theme.colors.text.primary} linkColor={isOwn ? '#FFFFFF' : theme.colors.accent.primary} style={{ fontSize, fontFamily: fontFamilyStyle }}>{message.text}</FormattedText>
-      <Text variant="caption" color={isOwn ? 'rgba(255,255,255,0.6)' : theme.colors.text.tertiary} style={{ marginTop: 3, alignSelf: 'flex-end', fontSize: 10 }}>
-        {formatMessageTime(message.createdAt)}
-      </Text>
-    </View>
-  );
-
   return (
     <View style={{ justifyContent: 'center' }}>
       <Animated.View style={{ position: 'absolute', right: 16, opacity: replyIconOpacity }}>
@@ -98,15 +57,32 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, onA
         </View>
       </Animated.View>
 
-      <Animated.View style={{ transform: [{ translateX }] }} {...panResponder.panHandlers}>
-        <ContextMenu
-          actions={actions}
-          onPress={(e: any) => onAction(e.nativeEvent.name as string, message)}
-          previewBackgroundColor="transparent"
-          style={{ alignSelf: isOwn ? 'flex-end' : 'flex-start', maxWidth: '78%', marginLeft: isOwn ? 0 : 16, marginRight: isOwn ? 16 : 0, marginBottom: 4 }}
-        >
-          {bubbleInner}
-        </ContextMenu>
+      <Animated.View style={{ transform: [{ translateX }], alignSelf: isOwn ? 'flex-end' : 'flex-start', maxWidth: '78%', marginLeft: isOwn ? 0 : 16, marginRight: isOwn ? 16 : 0, marginBottom: 4 }} {...panResponder.panHandlers}>
+        <Pressable onLongPress={() => { triggerHaptic('medium'); onLongPress(message); }} delayLongPress={300}>
+          <View style={{
+            paddingHorizontal: 14,
+            paddingVertical: 10,
+            borderRadius: bubbleRadius,
+            backgroundColor: isOwn ? theme.colors.accent.primary : theme.colors.background.tertiary,
+            borderBottomRightRadius: isOwn ? 4 : bubbleRadius,
+            borderBottomLeftRadius: isOwn ? bubbleRadius : 4,
+          }}>
+            {message.replyToText ? (
+              <View style={{ paddingLeft: 8, borderLeftWidth: 2, borderLeftColor: isOwn ? 'rgba(255,255,255,0.7)' : theme.colors.accent.primary, marginBottom: 6 }}>
+                <Text variant="caption" weight="semibold" color={isOwn ? 'rgba(255,255,255,0.9)' : theme.colors.accent.primary} numberOfLines={1} style={{ fontSize: 11 }}>
+                  {message.replyToIsOwn ? 'Вы' : 'Собеседник'}
+                </Text>
+                <Text variant="caption" color={isOwn ? 'rgba(255,255,255,0.7)' : theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 11 }}>
+                  {message.replyToText}
+                </Text>
+              </View>
+            ) : null}
+            <FormattedText color={isOwn ? '#FFFFFF' : theme.colors.text.primary} linkColor={isOwn ? '#FFFFFF' : theme.colors.accent.primary} style={{ fontSize, fontFamily: fontFamilyStyle }}>{message.text}</FormattedText>
+            <Text variant="caption" color={isOwn ? 'rgba(255,255,255,0.6)' : theme.colors.text.tertiary} style={{ marginTop: 3, alignSelf: 'flex-end', fontSize: 10 }}>
+              {formatMessageTime(message.createdAt)}
+            </Text>
+          </View>
+        </Pressable>
       </Animated.View>
     </View>
   );
@@ -121,6 +97,7 @@ export default function ChatScreen() {
   const [inputText, setInputText] = useState('');
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
   const [editing, setEditing] = useState<ChatMessage | null>(null);
+  const [menuMessage, setMenuMessage] = useState<ChatMessage | null>(null);
   const { messages: storeMessages, setMessages, addMessage } = useChatStore();
   const flatListRef = useRef<FlatList>(null);
 
@@ -146,10 +123,11 @@ export default function ChatScreen() {
   const bgTransparent = bgColor + '00';
   const headerContentHeight = insets.top + 48;
   const headerGradientHeight = headerContentHeight + 28;
+  const inputBarBottomPad = Math.max(insets.bottom, 12);
 
-  // Input bottom padding: safe-area when keyboard closed, small gap when open (UI thread)
-  const inputPadStyle = useAnimatedStyle(() => ({
-    paddingBottom: interpolate(progress.value, [0, 1], [Math.max(insets.bottom, 12), 10], Extrapolation.CLAMP),
+  // Gradient backdrop fades out as keyboard opens (UI thread)
+  const backdropStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(progress.value, [0, 1], [1, 0], Extrapolation.CLAMP),
   }));
 
   const cachedProfile = useEntityStore((s) => (participantId ? s.profiles[participantId] : undefined));
@@ -177,21 +155,23 @@ export default function ChatScreen() {
     requestAnimationFrame(() => flatListRef.current?.scrollToEnd({ animated }));
   }, []);
 
-  const handleMessageAction = useCallback((action: string, message: ChatMessage) => {
-    if (action === 'Копировать') {
+  const startReply = useCallback((message: ChatMessage) => {
+    setEditing(null);
+    setReplyTo(message);
+    triggerHaptic('light');
+  }, []);
+
+  const handleMenuAction = useCallback((action: MessageAction, message: ChatMessage) => {
+    if (action === 'copy') {
       Clipboard.setStringAsync(message.text);
-      triggerHaptic('light');
       showToast('Скопировано', 'check');
-    } else if (action === 'Ответить') {
-      setEditing(null);
-      setReplyTo(message);
-      triggerHaptic('light');
-    } else if (action === 'Редактировать') {
+    } else if (action === 'reply') {
+      startReply(message);
+    } else if (action === 'edit') {
       setReplyTo(null);
       setEditing(message);
       setInputText(message.text);
-      triggerHaptic('light');
-    } else if (action === 'Удалить') {
+    } else if (action === 'delete') {
       Alert.alert('Удалить сообщение?', '', [
         { text: 'Отмена', style: 'cancel' },
         {
@@ -203,7 +183,7 @@ export default function ChatScreen() {
         },
       ]);
     }
-  }, [id, storeMessages, setMessages]);
+  }, [id, storeMessages, setMessages, startReply]);
 
   const handleSend = async () => {
     if (!inputText.trim() || !id) return;
@@ -279,11 +259,13 @@ export default function ChatScreen() {
       fontSize={chatSettings.fontSize}
       bubbleRadius={chatSettings.bubbleRadius}
       fontFamily={chatSettings.fontFamily}
-      onAction={handleMessageAction}
+      onReply={startReply}
+      onLongPress={setMenuMessage}
     />
-  ), [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, handleMessageAction]);
+  ), [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, startReply]);
 
   const banner = editing || replyTo;
+  const menuIsOwn = menuMessage?.senderId === 'current';
 
   return (
     <View style={{ flex: 1, backgroundColor: bgColor }}>
@@ -291,60 +273,60 @@ export default function ChatScreen() {
         <ImageBackground source={{ uri: chatSettings.backgroundImage }} style={StyleSheet.absoluteFill} resizeMode="cover" />
       )}
 
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0}>
-        {/* Messages: normal top→down order, newest at the bottom */}
-        <FlatList
-          ref={flatListRef}
-          data={chatMessages}
-          keyExtractor={(item) => item.id}
-          renderItem={renderItem}
-          contentContainerStyle={{ paddingTop: headerContentHeight + 8, paddingBottom: 8 }}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="interactive"
-          removeClippedSubviews={false}
-          initialNumToRender={15}
-          maxToRenderPerBatch={10}
-          windowSize={9}
-          onContentSizeChange={() => scrollToEnd(false)}
-        />
+      {/* Messages fill the whole screen; newest at the bottom, scroll behind the input */}
+      <FlatList
+        ref={flatListRef}
+        data={chatMessages}
+        style={StyleSheet.absoluteFill}
+        keyExtractor={(item) => item.id}
+        renderItem={renderItem}
+        contentContainerStyle={{ flexGrow: 1, justifyContent: 'flex-end', paddingTop: headerContentHeight + 8, paddingBottom: inputBarBottomPad + 60 }}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+        removeClippedSubviews={false}
+        initialNumToRender={15}
+        maxToRenderPerBatch={10}
+        windowSize={9}
+        onContentSizeChange={() => scrollToEnd(false)}
+      />
 
-        {/* Input area — gradient dissolve backdrop above the bar */}
-        <View>
-          <LinearGradient colors={[bgTransparent, bgColor]} style={StyleSheet.absoluteFill} pointerEvents="none" />
+      {/* Input bar sticks to the keyboard */}
+      <KeyboardStickyView offset={{ closed: 0, opened: insets.bottom + 8 }} style={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}>
+        <Reanimated.View style={[StyleSheet.absoluteFill, backdropStyle]} pointerEvents="none">
+          <LinearGradient colors={[bgTransparent, bgColor]} style={StyleSheet.absoluteFill} />
+        </Reanimated.View>
 
-          {/* Reply / edit banner in a compact container */}
-          {banner && (
-            <View style={{ marginHorizontal: 12, marginTop: 6, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: theme.colors.background.elevated, borderRadius: 12, borderWidth: 1, borderColor: theme.colors.border.light, paddingHorizontal: 12, paddingVertical: 6 }}>
-              <View style={{ width: 3, alignSelf: 'stretch', borderRadius: 2, backgroundColor: theme.colors.accent.primary }} />
-              <Feather name={editing ? 'edit-2' : 'corner-up-left'} size={15} color={theme.colors.accent.primary} />
-              <View style={{ flex: 1 }}>
-                <Text variant="caption" weight="semibold" color={theme.colors.accent.primary} style={{ fontSize: 12 }}>{editing ? 'Редактирование' : 'Ответ на сообщение'}</Text>
-                <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 12 }}>{banner.text}</Text>
-              </View>
-              <Pressable onPress={() => { setReplyTo(null); setEditing(null); setInputText(''); }} hitSlop={8}>
-                <Feather name="x" size={18} color={theme.colors.text.tertiary} />
-              </Pressable>
+        {banner && (
+          <View style={{ marginHorizontal: 12, marginTop: 6, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: theme.colors.background.elevated, borderRadius: 12, borderWidth: 1, borderColor: theme.colors.border.light, paddingHorizontal: 12, paddingVertical: 6 }}>
+            <View style={{ width: 3, alignSelf: 'stretch', borderRadius: 2, backgroundColor: theme.colors.accent.primary }} />
+            <Feather name={editing ? 'edit-2' : 'corner-up-left'} size={15} color={theme.colors.accent.primary} />
+            <View style={{ flex: 1 }}>
+              <Text variant="caption" weight="semibold" color={theme.colors.accent.primary} style={{ fontSize: 12 }}>{editing ? 'Редактирование' : 'Ответ на сообщение'}</Text>
+              <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 12 }}>{banner.text}</Text>
             </View>
-          )}
-
-          <Reanimated.View style={[{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: 8 }, inputPadStyle]}>
-            <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 22, paddingHorizontal: 14, minHeight: 44, borderWidth: 1, borderColor: theme.colors.border.light }}>
-              <TextInput
-                value={inputText}
-                onChangeText={setInputText}
-                placeholder="Сообщение..."
-                placeholderTextColor={theme.colors.text.tertiary}
-                style={{ flex: 1, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular, maxHeight: 100, paddingVertical: Platform.OS === 'ios' ? 10 : 6 }}
-                multiline
-              />
-            </View>
-            <Pressable onPress={handleSend} style={{ marginLeft: 8, width: 44, height: 44, borderRadius: 22, backgroundColor: inputText.trim() ? theme.colors.accent.primary : theme.colors.background.elevated, alignItems: 'center', justifyContent: 'center' }}>
-              <Feather name={editing ? 'check' : 'send'} size={18} color={inputText.trim() ? '#FFFFFF' : theme.colors.text.tertiary} />
+            <Pressable onPress={() => { setReplyTo(null); setEditing(null); setInputText(''); }} hitSlop={8}>
+              <Feather name="x" size={18} color={theme.colors.text.tertiary} />
             </Pressable>
-          </Reanimated.View>
+          </View>
+        )}
+
+        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: 8, paddingBottom: inputBarBottomPad }}>
+          <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 22, paddingHorizontal: 14, minHeight: 44, borderWidth: 1, borderColor: theme.colors.border.light }}>
+            <TextInput
+              value={inputText}
+              onChangeText={setInputText}
+              placeholder="Сообщение..."
+              placeholderTextColor={theme.colors.text.tertiary}
+              style={{ flex: 1, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular, maxHeight: 100, paddingVertical: Platform.OS === 'ios' ? 10 : 6 }}
+              multiline
+            />
+          </View>
+          <Pressable onPress={handleSend} style={{ marginLeft: 8, width: 44, height: 44, borderRadius: 22, backgroundColor: inputText.trim() ? theme.colors.accent.primary : theme.colors.background.elevated, alignItems: 'center', justifyContent: 'center' }}>
+            <Feather name={editing ? 'check' : 'send'} size={18} color={inputText.trim() ? '#FFFFFF' : theme.colors.text.tertiary} />
+          </Pressable>
         </View>
-      </KeyboardAvoidingView>
+      </KeyboardStickyView>
 
       {/* Gradient fade header */}
       <View style={[styles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">
@@ -364,6 +346,18 @@ export default function ChatScreen() {
           </Pressable>
         </View>
       </View>
+
+      {/* Long-press message menu */}
+      <MessageContextMenu
+        visible={!!menuMessage}
+        message={menuMessage}
+        isOwn={menuIsOwn}
+        bubbleColor={menuIsOwn ? theme.colors.accent.primary : theme.colors.background.tertiary}
+        bubbleTextColor={menuIsOwn ? '#FFFFFF' : theme.colors.text.primary}
+        bubbleRadius={chatSettings.bubbleRadius}
+        onClose={() => setMenuMessage(null)}
+        onAction={handleMenuAction}
+      />
     </View>
   );
 }
