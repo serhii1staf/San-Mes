@@ -1,9 +1,8 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { View, FlatList, TextInput, Pressable, ViewStyle, KeyboardAvoidingView, Platform, StyleSheet, ImageBackground } from 'react-native';
+import { View, FlatList, TextInput, Pressable, KeyboardAvoidingView, Platform, StyleSheet, ImageBackground } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
@@ -14,23 +13,25 @@ import { mockMessages, mockConversations, formatMessageTime } from '../../src/ut
 import { ChatMessage } from '../../src/types';
 import { triggerHaptic } from '../../src/utils/haptics';
 
-function MessageBubble({ message, isOwn }: { message: ChatMessage; isOwn: boolean }) {
+function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily }: { message: ChatMessage; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string }) {
   const theme = useTheme();
+  const fontFamilyStyle = fontFamily === 'mono' ? 'monospace' : fontFamily === 'serif' ? 'serif' : undefined;
+
   return (
     <View style={{
       maxWidth: '75%',
       paddingHorizontal: 14,
       paddingVertical: 10,
-      borderRadius: 18,
+      borderRadius: bubbleRadius,
       marginBottom: 4,
       backgroundColor: isOwn ? theme.colors.accent.primary : theme.colors.background.tertiary,
       alignSelf: isOwn ? 'flex-end' : 'flex-start',
       marginLeft: isOwn ? 0 : 16,
       marginRight: isOwn ? 16 : 0,
-      borderBottomRightRadius: isOwn ? 4 : 18,
-      borderBottomLeftRadius: isOwn ? 18 : 4,
+      borderBottomRightRadius: isOwn ? 4 : bubbleRadius,
+      borderBottomLeftRadius: isOwn ? bubbleRadius : 4,
     }}>
-      <Text variant="body" color={isOwn ? '#FFFFFF' : theme.colors.text.primary}>{message.text}</Text>
+      <Text variant="body" color={isOwn ? '#FFFFFF' : theme.colors.text.primary} style={{ fontSize, fontFamily: fontFamilyStyle }}>{message.text}</Text>
       <Text variant="caption" color={isOwn ? 'rgba(255,255,255,0.6)' : theme.colors.text.tertiary} style={{ marginTop: 3, alignSelf: 'flex-end', fontSize: 10 }}>
         {formatMessageTime(message.createdAt)}
       </Text>
@@ -47,26 +48,21 @@ export default function ChatScreen() {
   const { messages: storeMessages, setMessages, addMessage } = useChatStore();
   const hasScrolled = useRef(false);
 
-  // Try to find conversation in mock data, or load profile from DB
   const conversation = mockConversations.find((c) => c.id === id);
   const [profileData, setProfileData] = useState<any>(null);
 
-  // The actual participant ID: from URL param, from entity store, from mock conversation, or fallback to id
   const entityConversations = useEntityStore((s) => s.conversations);
   const entityConv = entityConversations.find(c => c.id === id);
   const participantId = paramParticipantId || entityConv?.participantId || (conversation as any)?.participantId || id;
 
   const chatMessages = (storeMessages[id || ''] || []) as ChatMessage[];
 
-  // Get chat settings (background, etc.)
+  // Chat settings
   const chatSettings = useChatSettingsStore((s) => s.getSettings(id || ''));
 
   const bgColor = theme.colors.background.primary;
-  const bgTransparent = bgColor + '00';
-  const headerContentHeight = insets.top + 48;
-  const headerGradientHeight = headerContentHeight + 28;
+  const headerHeight = insets.top + 52;
 
-  // Load profile data for chat header if not in mock conversations
   useEffect(() => {
     if (!conversation && participantId) {
       supabase.from('profiles').select('*').eq('id', participantId).single().then(({ data }) => {
@@ -80,13 +76,6 @@ export default function ChatScreen() {
       setMessages(id, mockMessages[id]);
     }
   }, [id]);
-
-  // Scroll to end once after initial render
-  const scrollToBottom = useCallback(() => {
-    if (chatMessages.length > 0) {
-      setTimeout(() => flatListRef.current?.scrollToEnd({ animated: false }), 50);
-    }
-  }, [chatMessages.length]);
 
   useEffect(() => {
     if (!hasScrolled.current && chatMessages.length > 0) {
@@ -112,13 +101,11 @@ export default function ChatScreen() {
     addMessage(id, newMessage);
     setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 50);
 
-    // Save to Supabase (non-blocking)
     try {
       const { useAuthStore, useEntityStore } = await import('../../src/store');
       const user = useAuthStore.getState().user;
       if (!user) return;
 
-      // Find existing conversation between these two users
       const { data: myConvs } = await supabase.from('conversation_participants').select('conversation_id').eq('user_id', user.id);
       const { data: theirConvs } = await supabase.from('conversation_participants').select('conversation_id').eq('user_id', participantId);
 
@@ -130,7 +117,6 @@ export default function ChatScreen() {
       }
 
       if (!convId) {
-        // Create new conversation
         const { data: newConv } = await supabase.from('conversations').insert({}).select().single();
         if (newConv) {
           convId = newConv.id;
@@ -145,7 +131,6 @@ export default function ChatScreen() {
         await supabase.from('messages').insert({ conversation_id: convId, sender_id: user.id, text });
       }
 
-      // Update entity store so chat appears in list
       const store = useEntityStore.getState();
       const existingConvs = store.conversations;
       if (!existingConvs.find(c => c.participantId === participantId)) {
@@ -154,74 +139,74 @@ export default function ChatScreen() {
     } catch {}
   };
 
-  // Display name and emoji from conversation or profile
   const displayName = conversation?.participantName || profileData?.display_name || 'Чат';
   const displayEmoji = (conversation as any)?.participantEmoji || profileData?.emoji || '😊';
   const displayVerified = profileData?.is_verified || false;
   const profileId = participantId;
 
+  const messagesContent = (
+    <FlatList
+      ref={flatListRef}
+      data={chatMessages}
+      keyExtractor={(item) => item.id}
+      renderItem={({ item }) => (
+        <MessageBubble
+          message={item}
+          isOwn={item.senderId === 'current'}
+          fontSize={chatSettings.fontSize}
+          bubbleRadius={chatSettings.bubbleRadius}
+          fontFamily={chatSettings.fontFamily}
+        />
+      )}
+      contentContainerStyle={{ paddingTop: headerHeight + 8, paddingBottom: 8 }}
+      showsVerticalScrollIndicator={false}
+    />
+  );
+
   return (
     <View style={{ flex: 1, backgroundColor: bgColor }}>
-      {/* Gradient fade header */}
-      <View style={[styles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">
-        <LinearGradient colors={[bgColor, bgColor, bgTransparent]} locations={[0, 0.55, 1]} style={StyleSheet.absoluteFill} />
-        <View style={[styles.headerContent, { paddingTop: insets.top }]} pointerEvents="auto">
-          <Pressable onPress={() => router.back()}>
-            <Feather name="chevron-left" size={24} color={theme.colors.text.primary} />
-          </Pressable>
-          {/* Name centered in rounded container */}
-          <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId } })} style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: theme.colors.background.elevated, paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20, borderWidth: 1, borderColor: theme.colors.border.light }}>
-            <Text variant="caption" weight="semibold">{displayName}</Text>
-            {displayVerified && <VerifiedBadge size={11} />}
-          </Pressable>
-          {/* Avatar right — tap opens profile */}
-          <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId } })}>
-            <Avatar emoji={displayEmoji} size="sm" />
-          </Pressable>
-        </View>
+      {/* Background image covers entire screen */}
+      {chatSettings.backgroundImage && (
+        <ImageBackground
+          source={{ uri: chatSettings.backgroundImage }}
+          style={StyleSheet.absoluteFill}
+          resizeMode="cover"
+        />
+      )}
+
+      {/* Header */}
+      <View style={[styles.header, { paddingTop: insets.top + 8, height: headerHeight }]}>
+        <Pressable onPress={() => router.back()} hitSlop={8}>
+          <Feather name="chevron-left" size={24} color={theme.colors.text.primary} />
+        </Pressable>
+        <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId } })} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <Avatar emoji={displayEmoji} size="sm" />
+          <Text variant="body" weight="semibold">{displayName}</Text>
+          {displayVerified && <VerifiedBadge size={11} />}
+        </Pressable>
+        <Pressable onPress={() => router.push({ pathname: '/settings/chat-settings', params: { id: id } } as any)} hitSlop={8}>
+          <Feather name="more-vertical" size={20} color={theme.colors.text.primary} />
+        </Pressable>
       </View>
 
       {/* Messages + Input */}
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        {chatSettings.backgroundImage ? (
-          <ImageBackground source={{ uri: chatSettings.backgroundImage }} style={{ flex: 1 }} resizeMode="cover">
-            <FlatList
-              ref={flatListRef}
-              data={chatMessages}
-              keyExtractor={(item) => item.id}
-              renderItem={({ item }) => <MessageBubble message={item} isOwn={item.senderId === 'current'} />}
-              contentContainerStyle={{ paddingTop: headerContentHeight, paddingBottom: 8 }}
-              showsVerticalScrollIndicator={false}
-            />
-          </ImageBackground>
-        ) : (
-          <FlatList
-            ref={flatListRef}
-            data={chatMessages}
-            keyExtractor={(item) => item.id}
-            renderItem={({ item }) => <MessageBubble message={item} isOwn={item.senderId === 'current'} />}
-            contentContainerStyle={{ paddingTop: headerContentHeight, paddingBottom: 8 }}
-            showsVerticalScrollIndicator={false}
-          />
-        )}
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0}>
+        {messagesContent}
 
-        {/* Input */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 8, paddingTop: 6, backgroundColor: bgColor }}>
-          <Pressable onPress={() => router.push({ pathname: '/settings/chat-settings', params: { id: id } } as any)} style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: theme.colors.background.elevated, alignItems: 'center', justifyContent: 'center', marginRight: 8 }}>
-            <Feather name="settings" size={16} color={theme.colors.text.tertiary} />
-          </Pressable>
-          <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8, borderWidth: 1, borderColor: theme.colors.border.light }}>
+        {/* Input bar */}
+        <View style={{ flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 12, paddingTop: 8, paddingBottom: Math.max(insets.bottom, 12), backgroundColor: chatSettings.backgroundImage ? 'rgba(0,0,0,0.3)' : bgColor }}>
+          <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 22, paddingHorizontal: 14, paddingVertical: 10, borderWidth: 1, borderColor: theme.colors.border.light }}>
             <TextInput
               value={inputText}
               onChangeText={setInputText}
               placeholder="Сообщение..."
               placeholderTextColor={theme.colors.text.tertiary}
-              style={{ flex: 1, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular, maxHeight: 80 }}
+              style={{ flex: 1, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular, maxHeight: 100 }}
               multiline
             />
           </View>
-          <Pressable onPress={handleSend} style={{ marginLeft: 10, width: 36, height: 36, borderRadius: 18, backgroundColor: inputText.trim() ? theme.colors.accent.primary : theme.colors.background.elevated, alignItems: 'center', justifyContent: 'center' }}>
-            <Feather name="send" size={16} color={inputText.trim() ? '#FFFFFF' : theme.colors.text.tertiary} />
+          <Pressable onPress={handleSend} style={{ marginLeft: 8, width: 40, height: 40, borderRadius: 20, backgroundColor: inputText.trim() ? theme.colors.accent.primary : theme.colors.background.elevated, alignItems: 'center', justifyContent: 'center' }}>
+            <Feather name="send" size={18} color={inputText.trim() ? '#FFFFFF' : theme.colors.text.tertiary} />
           </Pressable>
         </View>
       </KeyboardAvoidingView>
@@ -230,6 +215,16 @@ export default function ChatScreen() {
 }
 
 const styles = StyleSheet.create({
-  headerWrapper: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100 },
-  headerContent: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingBottom: 8 },
+  header: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 100,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+  },
 });

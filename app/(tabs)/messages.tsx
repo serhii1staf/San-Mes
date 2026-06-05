@@ -106,38 +106,40 @@ function ConversationItem({ item, isArchived }: { item: Conversation; index: num
         style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: theme.spacing.base }}
       >
         <Avatar emoji={item.participantEmoji} name={item.participantName} size="md" />
-        <View style={{ flex: 1, marginLeft: 12, justifyContent: 'center' }}>
+        <View style={{ flex: 1, marginLeft: 12 }}>
           <Text variant="body" weight={item.unreadCount > 0 ? 'semibold' : 'regular'} numberOfLines={1}>
             {item.participantName}
           </Text>
-          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
-            <Text
-              variant="caption"
-              color={item.unreadCount > 0 ? theme.colors.text.primary : theme.colors.text.secondary}
-              numberOfLines={1}
-              style={{ flex: 1 }}
-            >
-              {item.lastMessage}
-            </Text>
-            {item.unreadCount > 0 && (
-              <View
-                style={{
-                  backgroundColor: theme.colors.accent.primary,
-                  borderRadius: 10,
-                  minWidth: 20,
-                  height: 20,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  paddingHorizontal: 6,
-                  marginLeft: theme.spacing.sm,
-                }}
+          {item.lastMessage ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
+              <Text
+                variant="caption"
+                color={item.unreadCount > 0 ? theme.colors.text.primary : theme.colors.text.secondary}
+                numberOfLines={1}
+                style={{ flex: 1 }}
               >
-                <Text variant="caption" weight="bold" color={theme.colors.text.inverse}>
-                  {item.unreadCount}
-                </Text>
-              </View>
-            )}
-          </View>
+                {item.lastMessage}
+              </Text>
+              {item.unreadCount > 0 && (
+                <View
+                  style={{
+                    backgroundColor: theme.colors.accent.primary,
+                    borderRadius: 10,
+                    minWidth: 20,
+                    height: 20,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    paddingHorizontal: 6,
+                    marginLeft: theme.spacing.sm,
+                  }}
+                >
+                  <Text variant="caption" weight="bold" color={theme.colors.text.inverse}>
+                    {item.unreadCount}
+                  </Text>
+                </View>
+              )}
+            </View>
+          ) : null}
         </View>
       </Pressable>
     </ContextMenu>
