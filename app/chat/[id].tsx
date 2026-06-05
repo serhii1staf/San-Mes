@@ -22,15 +22,17 @@ import { triggerHaptic } from '../../src/utils/haptics';
 
 const REPLY_THRESHOLD = 60;
 
-function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, onReply, onLongPress }: { message: ChatMessage; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string; onReply: (m: ChatMessage) => void; onLongPress: (m: ChatMessage) => void }) {
+function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, onReply, onLongPress, onSwipeActive }: { message: ChatMessage; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string; onReply: (m: ChatMessage) => void; onLongPress: (m: ChatMessage) => void; onSwipeActive: (active: boolean) => void }) {
   const theme = useTheme();
   const fontFamilyStyle = fontFamily === 'mono' ? 'monospace' : fontFamily === 'serif' ? 'serif' : undefined;
   const translateX = useRef(new Animated.Value(0)).current;
   const fired = useRef(false);
 
-  // Swipe-to-reply: claim the gesture only for clearly horizontal left swipes
+  // Swipe-to-reply: claim the gesture only for clearly horizontal left swipes,
+  // and lock the list's vertical scroll while swiping (Telegram-style)
   const panResponder = useRef(PanResponder.create({
-    onMoveShouldSetPanResponder: (_, g) => g.dx < -16 && Math.abs(g.dx) > Math.abs(g.dy) * 2.5,
+    onMoveShouldSetPanResponder: (_, g) => g.dx < -14 && Math.abs(g.dx) > Math.abs(g.dy) * 2,
+    onPanResponderGrant: () => { onSwipeActive(true); },
     onPanResponderMove: (_, g) => {
       const dx = Math.max(Math.min(g.dx, 0), -80);
       translateX.setValue(dx);
@@ -39,10 +41,12 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, onR
     onPanResponderRelease: (_, g) => {
       if (g.dx <= -REPLY_THRESHOLD) onReply(message);
       fired.current = false;
+      onSwipeActive(false);
       Animated.spring(translateX, { toValue: 0, useNativeDriver: true, tension: 140, friction: 12 }).start();
     },
     onPanResponderTerminate: () => {
       fired.current = false;
+      onSwipeActive(false);
       Animated.spring(translateX, { toValue: 0, useNativeDriver: true, tension: 140, friction: 12 }).start();
     },
   })).current;
@@ -98,6 +102,7 @@ export default function ChatScreen() {
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
   const [editing, setEditing] = useState<ChatMessage | null>(null);
   const [menuMessage, setMenuMessage] = useState<ChatMessage | null>(null);
+  const [scrollEnabled, setScrollEnabled] = useState(true);
   const { messages: storeMessages, setMessages, addMessage } = useChatStore();
   const flatListRef = useRef<FlatList>(null);
 
@@ -128,6 +133,11 @@ export default function ChatScreen() {
   // Gradient backdrop fades out as keyboard opens (UI thread)
   const backdropStyle = useAnimatedStyle(() => ({
     opacity: interpolate(progress.value, [0, 1], [1, 0], Extrapolation.CLAMP),
+  }));
+
+  // Input row bottom padding: safe-area when keyboard closed → a comfortable gap when open (UI thread)
+  const inputRowStyle = useAnimatedStyle(() => ({
+    paddingBottom: interpolate(progress.value, [0, 1], [inputBarBottomPad, 14], Extrapolation.CLAMP),
   }));
 
   const cachedProfile = useEntityStore((s) => (participantId ? s.profiles[participantId] : undefined));
@@ -252,6 +262,8 @@ export default function ChatScreen() {
     } catch {}
   };
 
+  const handleSwipeActive = useCallback((active: boolean) => setScrollEnabled(!active), []);
+
   const renderItem = useCallback(({ item }: { item: ChatMessage }) => (
     <MemoMessageBubble
       message={item}
@@ -261,8 +273,9 @@ export default function ChatScreen() {
       fontFamily={chatSettings.fontFamily}
       onReply={startReply}
       onLongPress={setMenuMessage}
+      onSwipeActive={handleSwipeActive}
     />
-  ), [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, startReply]);
+  ), [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, startReply, handleSwipeActive]);
 
   const banner = editing || replyTo;
   const menuIsOwn = menuMessage?.senderId === 'current';
@@ -282,6 +295,7 @@ export default function ChatScreen() {
         renderItem={renderItem}
         contentContainerStyle={{ flexGrow: 1, justifyContent: 'flex-end', paddingTop: headerContentHeight + 8, paddingBottom: inputBarBottomPad + 60 }}
         showsVerticalScrollIndicator={false}
+        scrollEnabled={scrollEnabled}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
         removeClippedSubviews={false}
@@ -291,8 +305,8 @@ export default function ChatScreen() {
         onContentSizeChange={() => scrollToEnd(false)}
       />
 
-      {/* Input bar sticks to the keyboard */}
-      <KeyboardStickyView offset={{ closed: 0, opened: insets.bottom + 18 }} style={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}>
+      {/* Input bar sticks to the keyboard top; the input row's own paddingBottom provides the gap above it. */}
+      <KeyboardStickyView offset={{ closed: 0, opened: 0 }} style={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}>
         <Reanimated.View style={[StyleSheet.absoluteFill, backdropStyle]} pointerEvents="none">
           <LinearGradient colors={[bgTransparent, bgColor]} style={StyleSheet.absoluteFill} />
         </Reanimated.View>
@@ -311,7 +325,7 @@ export default function ChatScreen() {
           </View>
         )}
 
-        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: 8, paddingBottom: inputBarBottomPad }}>
+        <Reanimated.View style={[{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: 8 }, inputRowStyle]}>
           <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 22, paddingHorizontal: 14, minHeight: 44, borderWidth: 1, borderColor: theme.colors.border.light }}>
             <TextInput
               value={inputText}
@@ -325,7 +339,7 @@ export default function ChatScreen() {
           <Pressable onPress={handleSend} style={{ marginLeft: 8, width: 44, height: 44, borderRadius: 22, backgroundColor: inputText.trim() ? theme.colors.accent.primary : theme.colors.background.elevated, alignItems: 'center', justifyContent: 'center' }}>
             <Feather name={editing ? 'check' : 'send'} size={18} color={inputText.trim() ? '#FFFFFF' : theme.colors.text.tertiary} />
           </Pressable>
-        </View>
+        </Reanimated.View>
       </KeyboardStickyView>
 
       {/* Gradient fade header */}

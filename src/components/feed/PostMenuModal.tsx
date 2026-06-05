@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Pressable, Modal, Share, Alert, Animated, Dimensions, PanResponder } from 'react-native';
+import { View, Pressable, Modal, Share, Alert, Animated, Dimensions, PanResponder, StatusBar } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
@@ -109,6 +109,7 @@ export function PostMenuModal({ visible, post, onClose }: PostMenuModalProps) {
 
   return (
     <Modal visible={visible} transparent animationType="none" onRequestClose={dismiss} statusBarTranslucent>
+      <StatusBar hidden />
       <View style={{ flex: 1 }}>
         {/* Backdrop */}
         <Animated.View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)', opacity: backdropAnim }}>

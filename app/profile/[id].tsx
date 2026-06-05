@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, Pressable, ActivityIndicator, Image, Dimensions, Modal, Animated, Share, Alert, ScrollView as RNScrollView } from 'react-native';
+import { View, Pressable, ActivityIndicator, Image, Dimensions, Modal, Animated, Share, Alert, ScrollView as RNScrollView, StatusBar } from 'react-native';
 import { Feather, FontAwesome5 } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -159,6 +159,7 @@ function ProfileMenuModal({ visible, profile, onClose }: { visible: boolean; pro
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={handleClose} statusBarTranslucent>
+      <StatusBar hidden />
       <View style={{ flex: 1 }}>
         <Pressable style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)' }} onPress={handleClose} />
         <View style={{ flex: 1, justifyContent: 'flex-end' }} pointerEvents="box-none">
