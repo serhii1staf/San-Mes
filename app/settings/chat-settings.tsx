@@ -7,7 +7,7 @@ import { BlurView } from 'expo-blur';
 import * as ImagePicker from 'expo-image-picker';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
-import { useChatSettingsStore } from '../../src/store/chatSettingsStore';
+import { useChatSettingsStore, GLOBAL_CHAT_SETTINGS_KEY } from '../../src/store/chatSettingsStore';
 import { useEntityStore } from '../../src/store';
 import { showToast } from '../../src/store/toastStore';
 
@@ -68,8 +68,9 @@ export default function ChatSettingsScreen() {
   // Try to get participant info from entity store conversations
   const conversations = useEntityStore((s) => s.conversations);
   const conv = conversations.find(c => c.id === chatId);
-  const participantName = conv?.participantName || 'Чат';
-  const participantEmoji = conv?.participantEmoji || '😊';
+  const isGlobal = chatId === GLOBAL_CHAT_SETTINGS_KEY;
+  const participantName = isGlobal ? 'Все чаты' : (conv?.participantName || 'Чат');
+  const participantEmoji = isGlobal ? '💬' : (conv?.participantEmoji || '😊');
 
   const pickBackground = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.8 });

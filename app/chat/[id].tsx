@@ -169,6 +169,7 @@ export default function ChatScreen() {
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <FlatList
           ref={flatListRef}
+          style={{ flex: 1 }}
           data={chatMessages}
           keyExtractor={(item) => item.id}
           renderItem={({ item }) => (
@@ -180,23 +181,25 @@ export default function ChatScreen() {
               fontFamily={chatSettings.fontFamily}
             />
           )}
-          contentContainerStyle={{ paddingTop: headerContentHeight + 8, paddingBottom: 8 }}
+          contentContainerStyle={{ paddingTop: headerContentHeight + 8, paddingBottom: 12 }}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="interactive"
         />
 
-        {/* Input bar — transparent so wallpaper shows behind it */}
-        <View style={{ flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 12, paddingTop: 6, paddingBottom: keyboardShown ? 6 : Math.max(insets.bottom, 8), backgroundColor: 'transparent' }}>
-          <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 22, paddingHorizontal: 14, paddingVertical: 10, borderWidth: 1, borderColor: theme.colors.border.light }}>
+        {/* Input bar — absolute overlay so messages scroll behind it to the very bottom */}
+        <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: 6, paddingBottom: keyboardShown ? 6 : Math.max(insets.bottom, 8), backgroundColor: 'transparent' }}>
+          <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 22, paddingHorizontal: 14, minHeight: 44, borderWidth: 1, borderColor: theme.colors.border.light }}>
             <TextInput
               value={inputText}
               onChangeText={setInputText}
               placeholder="Сообщение..."
               placeholderTextColor={theme.colors.text.tertiary}
-              style={{ flex: 1, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular, maxHeight: 100 }}
+              style={{ flex: 1, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular, maxHeight: 100, paddingTop: 0, paddingBottom: 0, textAlignVertical: 'center' }}
               multiline
             />
           </View>
-          <Pressable onPress={handleSend} style={{ marginLeft: 8, width: 40, height: 40, borderRadius: 20, backgroundColor: inputText.trim() ? theme.colors.accent.primary : theme.colors.background.elevated, alignItems: 'center', justifyContent: 'center' }}>
+          <Pressable onPress={handleSend} style={{ marginLeft: 8, width: 44, height: 44, borderRadius: 22, backgroundColor: inputText.trim() ? theme.colors.accent.primary : theme.colors.background.elevated, alignItems: 'center', justifyContent: 'center' }}>
             <Feather name="send" size={18} color={inputText.trim() ? '#FFFFFF' : theme.colors.text.tertiary} />
           </Pressable>
         </View>

@@ -11,7 +11,7 @@ import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { useChatStore, useEntityStore, useAuthStore } from '../../src/store';
 import { syncConversations } from '../../src/services/syncService';
 import { useMiniAppsStore } from '../../src/store/miniAppsStore';
-import { useChatSettingsStore } from '../../src/store/chatSettingsStore';
+import { useChatSettingsStore, GLOBAL_CHAT_SETTINGS_KEY } from '../../src/store/chatSettingsStore';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { Conversation } from '../../src/types';
 
@@ -293,7 +293,7 @@ export default function MessagesScreen() {
               <Text variant="caption" weight="medium">San AI</Text>
             </Pressable>
             <View style={{ height: 0.5, backgroundColor: theme.colors.border.light }} />
-            <Pressable onPress={() => { setShowFabMenu(false); }} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, gap: 10 }}>
+            <Pressable onPress={() => { setShowFabMenu(false); router.push({ pathname: '/settings/chat-settings', params: { id: GLOBAL_CHAT_SETTINGS_KEY } } as any); }} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, gap: 10 }}>
               <Feather name="settings" size={16} color={theme.colors.text.secondary} />
               <Text variant="caption" weight="medium">Настройка чатов</Text>
             </Pressable>

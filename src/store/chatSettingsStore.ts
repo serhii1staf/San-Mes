@@ -16,8 +16,11 @@ export interface ChatSettings {
   bubbleRadius: number; // 12-24
 }
 
+// Special key for global/default chat settings (applies to all chats without their own overrides)
+export const GLOBAL_CHAT_SETTINGS_KEY = '__global__';
+
 interface ChatSettingsStore {
-  settings: Record<string, ChatSettings>; // keyed by participantId
+  settings: Record<string, ChatSettings>; // keyed by chatId (or GLOBAL key)
   archived: string[]; // archived chat IDs
   getSettings: (chatId: string) => ChatSettings;
   updateSettings: (chatId: string, updates: Partial<ChatSettings>) => void;
@@ -33,7 +36,13 @@ export const useChatSettingsStore = create<ChatSettingsStore>()(
     (set, get) => ({
       settings: {},
       archived: [],
-      getSettings: (chatId) => get().settings[chatId] || DEFAULT_SETTINGS,
+      getSettings: (chatId) => {
+        const state = get();
+        const global = state.settings[GLOBAL_CHAT_SETTINGS_KEY];
+        const specific = state.settings[chatId];
+        // Merge: defaults < global < chat-specific
+        return { ...DEFAULT_SETTINGS, ...global, ...specific };
+      },
       updateSettings: (chatId, updates) => set((s) => ({ settings: { ...s.settings, [chatId]: { ...DEFAULT_SETTINGS, ...s.settings[chatId], ...updates } } })),
       archiveChat: (chatId) => set((s) => ({ archived: [...s.archived.filter(id => id !== chatId), chatId] })),
       unarchiveChat: (chatId) => set((s) => ({ archived: s.archived.filter(id => id !== chatId) })),
