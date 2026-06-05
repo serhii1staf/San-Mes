@@ -468,9 +468,9 @@ export default function UserProfileScreen() {
           </View>
 
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}>
-            <View style={{ flex: 1 }}>
+            <View style={{ flex: 1, marginRight: 8 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                <Text variant="body" weight="bold" numberOfLines={1}>{displayProfile.display_name}</Text>
+                <Text variant="body" weight="bold" numberOfLines={1} style={{ flexShrink: 1 }}>{displayProfile.display_name}</Text>
                 {displayProfile.is_verified && <VerifiedBadge size={13} />}
                 {displayProfile.badge && <UserBadge badge={displayProfile.badge} size="sm" />}
               </View>
@@ -569,10 +569,10 @@ export default function UserProfileScreen() {
                 <View style={{ flex: 1, marginLeft: (hasImage || isRepostPost) ? 14 : 4, justifyContent: 'center' }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                     <Avatar emoji={displayProfile.emoji || '😊'} size="xs" />
-                    <Text variant="caption" weight="semibold" numberOfLines={1}>{displayProfile.display_name}</Text>
+                    <Text variant="caption" weight="semibold" numberOfLines={1} style={{ flexShrink: 1 }}>{displayProfile.display_name}</Text>
                     {displayProfile.is_verified && <VerifiedBadge size={11} />}
                     {displayProfile.badge && <UserBadge badge={displayProfile.badge} size="sm" />}
-                    <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 10 }}>· {formatTimeAgo(post.createdAt)}</Text>
+                    <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 10, flexShrink: 0 }}>· {formatTimeAgo(post.createdAt)}</Text>
                   </View>
                   {isRepostPost && origPost && (
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 }}>

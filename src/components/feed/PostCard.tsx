@@ -60,7 +60,7 @@ export const PostCard = memo(function PostCard({ post, currentUserId, onLike, on
         </Pressable>
         <View style={{ marginLeft: 10, flex: 1 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-            <Text weight="bold" variant="body" numberOfLines={1} style={{ fontSize: 15 }}>{post.authorName}</Text>
+            <Text weight="bold" variant="body" numberOfLines={1} style={{ fontSize: 15, flexShrink: 1 }}>{post.authorName}</Text>
             {post.authorVerified && <VerifiedBadge size={13} />}
             {post.authorBadge && <UserBadge badge={post.authorBadge} size="sm" />}
           </View>
@@ -89,7 +89,7 @@ export const PostCard = memo(function PostCard({ post, currentUserId, onLike, on
         <View style={{ marginHorizontal: 16, marginBottom: 10, borderWidth: 1, borderColor: cardBorder, borderRadius: 14, overflow: 'hidden', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)' }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', padding: 10 }}>
             <Avatar emoji={post.originalPost.authorEmoji} size="xs" />
-            <Text variant="caption" weight="semibold" style={{ marginLeft: 8, fontSize: 12 }}>{post.originalPost.authorName}</Text>
+            <Text variant="caption" weight="semibold" numberOfLines={1} style={{ marginLeft: 8, fontSize: 12, flexShrink: 1 }}>{post.originalPost.authorName}</Text>
             {post.originalPost.authorVerified && <VerifiedBadge size={10} />}
           </View>
           {post.originalPost.content && (

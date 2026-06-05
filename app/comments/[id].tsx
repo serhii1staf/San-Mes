@@ -125,13 +125,13 @@ export default function CommentsScreen() {
               <View style={{ marginBottom: 16, paddingBottom: 16, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border.light }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
                   <Avatar emoji={postData.profiles?.emoji || '😊'} size="sm" />
-                  <View style={{ marginLeft: 10 }}>
+                  <View style={{ marginLeft: 10, flex: 1 }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-                      <Text variant="body" weight="bold">{postData.profiles?.display_name || 'User'}</Text>
+                      <Text variant="body" weight="bold" numberOfLines={1} style={{ flexShrink: 1 }}>{postData.profiles?.display_name || 'User'}</Text>
                       {postData.profiles?.is_verified && <VerifiedBadge size={12} />}
                       {postData.profiles?.badge && <UserBadge badge={postData.profiles.badge} size="sm" />}
                     </View>
-                    <Text variant="caption" color={theme.colors.text.tertiary}>@{postData.profiles?.username}</Text>
+                    <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>@{postData.profiles?.username}</Text>
                   </View>
                 </View>
                 {postData.content && <FormattedText style={{ fontSize: 15, lineHeight: 21, marginBottom: 8 }}>{postData.content}</FormattedText>}
@@ -151,10 +151,10 @@ export default function CommentsScreen() {
                 </Pressable>
                 <View style={{ marginLeft: 10, flex: 1 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-                    <Text variant="caption" weight="semibold">{item.profiles?.display_name || 'User'}</Text>
+                    <Text variant="caption" weight="semibold" numberOfLines={1} style={{ flexShrink: 1 }}>{item.profiles?.display_name || 'User'}</Text>
                     {item.profiles?.is_verified && <VerifiedBadge size={10} />}
                     {item.profiles?.badge && <UserBadge badge={item.profiles.badge} size="sm" />}
-                    <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginLeft: 4 }}>{formatTime(item.created_at)}</Text>
+                    <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ marginLeft: 4, flexShrink: 0 }}>{formatTime(item.created_at)}</Text>
                   </View>
                   <FormattedText style={{ marginTop: 3, fontSize: 14 }}>{item.content}</FormattedText>
                 </View>

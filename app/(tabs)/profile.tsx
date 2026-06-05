@@ -253,8 +253,8 @@ export default function ProfileScreen() {
         <View style={{ paddingHorizontal: 16, marginTop: -90 }}>
           <Pressable onPress={() => setShowAccountSwitcher(true)}><View style={{ width: 72, height: 72, borderRadius: 36, overflow: 'hidden', borderWidth: 3, borderColor: theme.colors.background.primary, backgroundColor: theme.isDark ? 'rgba(30,30,30,0.85)' : 'rgba(255,255,255,0.85)', alignItems: 'center', justifyContent: 'center' }}><Avatar emoji={user.emoji} size="lg" /></View></Pressable>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}>
-            <View style={{ flex: 1 }}><View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}><Text variant="body" weight="bold" numberOfLines={1}>{user.displayName}</Text>{user.is_verified && <VerifiedBadge size={13} />}{user.badge && <UserBadge badge={user.badge} size="sm" />}</View><Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>@{user.username}</Text></View>
-            <Pressable onPress={() => { triggerHaptic('light'); router.push('/profile/edit'); }} style={{ borderRadius: 20, overflow: 'hidden' }}><BlurView intensity={80} tint="dark" style={{ paddingHorizontal: 16, paddingVertical: 7 }}><Text variant="caption" weight="semibold" color="#FFFFFF">Редактировать</Text></BlurView></Pressable>
+            <View style={{ flex: 1, marginRight: 8 }}><View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}><Text variant="body" weight="bold" numberOfLines={1} style={{ flexShrink: 1 }}>{user.displayName}</Text>{user.is_verified && <VerifiedBadge size={13} />}{user.badge && <UserBadge badge={user.badge} size="sm" />}</View><Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>@{user.username}</Text></View>
+            <Pressable onPress={() => { triggerHaptic('light'); router.push('/profile/edit'); }} style={{ borderRadius: 20, overflow: 'hidden', flexShrink: 0 }}><BlurView intensity={80} tint="dark" style={{ paddingHorizontal: 16, paddingVertical: 7 }}><Text variant="caption" weight="semibold" color="#FFFFFF">Редактировать</Text></BlurView></Pressable>
           </View>
           <View style={{ flexDirection: 'row', marginTop: 10, gap: 16 }}>
             <Text variant="caption"><Text variant="caption" weight="bold">{userPosts.length}</Text> <Text variant="caption" color={theme.colors.text.tertiary}>posts</Text></Text>
@@ -318,10 +318,10 @@ export default function ProfileScreen() {
               <View style={{ flex: 1, marginLeft: (hasImage || isRepostPost) ? 14 : 4, justifyContent: 'center' }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                   <Avatar emoji={user.emoji} size="xs" />
-                  <Text variant="caption" weight="semibold" numberOfLines={1}>{user.displayName}</Text>
+                  <Text variant="caption" weight="semibold" numberOfLines={1} style={{ flexShrink: 1 }}>{user.displayName}</Text>
                   {user.is_verified && <VerifiedBadge size={11} />}
                   {user.badge && <UserBadge badge={user.badge} size="sm" />}
-                  <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 10 }}>· {formatTimeAgo(post.createdAt)}</Text>
+                  <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 10, flexShrink: 0 }}>· {formatTimeAgo(post.createdAt)}</Text>
                 </View>
                 {isRepostPost && origPost && (
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 }}>
