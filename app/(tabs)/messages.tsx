@@ -100,32 +100,6 @@ function ConversationItem({ item, isArchived }: { item: Conversation; index: num
     <ContextMenu
       actions={actions}
       onPress={handleAction}
-      onPreviewPress={openChat}
-      previewBackgroundColor={theme.colors.background.primary}
-      preview={
-        <View style={{ width: 320, backgroundColor: theme.colors.background.primary }}>
-          {/* Chat preview header */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', padding: 14, backgroundColor: theme.colors.background.elevated }}>
-            <Avatar emoji={item.participantEmoji} name={item.participantName} size="sm" />
-            <View style={{ marginLeft: 10, flex: 1 }}>
-              <Text variant="body" weight="bold">{item.participantName}</Text>
-              <Text variant="caption" color={theme.colors.text.tertiary}>в сети</Text>
-            </View>
-          </View>
-          {/* Message preview area */}
-          <View style={{ padding: 14, minHeight: 80 }}>
-            {item.lastMessage ? (
-              <View style={{ alignSelf: 'flex-start', backgroundColor: theme.colors.background.tertiary, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16, borderBottomLeftRadius: 4, maxWidth: '85%' }}>
-                <Text variant="body" numberOfLines={3}>{item.lastMessage}</Text>
-              </View>
-            ) : (
-              <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                <Text variant="caption" color={theme.colors.text.tertiary}>Нет сообщений</Text>
-              </View>
-            )}
-          </View>
-        </View>
-      }
     >
       <Pressable
         onPress={openChat}

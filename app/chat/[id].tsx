@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { View, FlatList, TextInput, Pressable, ViewStyle, KeyboardAvoidingView, Platform, StyleSheet } from 'react-native';
+import { View, FlatList, TextInput, Pressable, ViewStyle, KeyboardAvoidingView, Platform, StyleSheet, ImageBackground } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -8,6 +8,7 @@ import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { useChatStore, useEntityStore } from '../../src/store';
+import { useChatSettingsStore } from '../../src/store/chatSettingsStore';
 import { supabase } from '../../src/lib/supabase';
 import { mockMessages, mockConversations, formatMessageTime } from '../../src/utils/mockData';
 import { ChatMessage } from '../../src/types';
@@ -56,6 +57,9 @@ export default function ChatScreen() {
   const participantId = paramParticipantId || entityConv?.participantId || (conversation as any)?.participantId || id;
 
   const chatMessages = (storeMessages[id || ''] || []) as ChatMessage[];
+
+  // Get chat settings (background, etc.)
+  const chatSettings = useChatSettingsStore((s) => s.getSettings(id || ''));
 
   const bgColor = theme.colors.background.primary;
   const bgTransparent = bgColor + '00';
@@ -179,17 +183,33 @@ export default function ChatScreen() {
 
       {/* Messages + Input */}
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <FlatList
-          ref={flatListRef}
-          data={chatMessages}
-          keyExtractor={(item) => item.id}
-          renderItem={({ item }) => <MessageBubble message={item} isOwn={item.senderId === 'current'} />}
-          contentContainerStyle={{ paddingTop: headerContentHeight, paddingBottom: 8 }}
-          showsVerticalScrollIndicator={false}
-        />
+        {chatSettings.backgroundImage ? (
+          <ImageBackground source={{ uri: chatSettings.backgroundImage }} style={{ flex: 1 }} resizeMode="cover">
+            <FlatList
+              ref={flatListRef}
+              data={chatMessages}
+              keyExtractor={(item) => item.id}
+              renderItem={({ item }) => <MessageBubble message={item} isOwn={item.senderId === 'current'} />}
+              contentContainerStyle={{ paddingTop: headerContentHeight, paddingBottom: 8 }}
+              showsVerticalScrollIndicator={false}
+            />
+          </ImageBackground>
+        ) : (
+          <FlatList
+            ref={flatListRef}
+            data={chatMessages}
+            keyExtractor={(item) => item.id}
+            renderItem={({ item }) => <MessageBubble message={item} isOwn={item.senderId === 'current'} />}
+            contentContainerStyle={{ paddingTop: headerContentHeight, paddingBottom: 8 }}
+            showsVerticalScrollIndicator={false}
+          />
+        )}
 
         {/* Input */}
         <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 8, paddingTop: 6, backgroundColor: bgColor }}>
+          <Pressable onPress={() => router.push({ pathname: '/settings/chat-settings', params: { id: id } } as any)} style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: theme.colors.background.elevated, alignItems: 'center', justifyContent: 'center', marginRight: 8 }}>
+            <Feather name="settings" size={16} color={theme.colors.text.tertiary} />
+          </Pressable>
           <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8, borderWidth: 1, borderColor: theme.colors.border.light }}>
             <TextInput
               value={inputText}
