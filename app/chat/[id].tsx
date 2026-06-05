@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, ImageBackground } from 'react-native';
-import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
+import { KeyboardStickyView } from 'react-native-keyboard-controller';
 import { Feather } from '@expo/vector-icons';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -155,7 +155,7 @@ export default function ChatScreen() {
   const profileId = participantId;
 
   return (
-    <View style={{ flex: 1, backgroundColor: bgColor }}>
+    <View style={{ flex: 1, backgroundColor: bgColor, justifyContent: 'flex-end' }}>
       {/* Background image covers the ENTIRE screen, behind everything */}
       {chatSettings.backgroundImage && (
         <ImageBackground
@@ -165,29 +165,29 @@ export default function ChatScreen() {
         />
       )}
 
-      {/* Messages + Input */}
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0}>
-        <FlatList
-          ref={flatListRef}
-          style={{ flex: 1 }}
-          data={chatMessages}
-          keyExtractor={(item) => item.id}
-          renderItem={({ item }) => (
-            <MessageBubble
-              message={item}
-              isOwn={item.senderId === 'current'}
-              fontSize={chatSettings.fontSize}
-              bubbleRadius={chatSettings.bubbleRadius}
-              fontFamily={chatSettings.fontFamily}
-            />
-          )}
-          contentContainerStyle={{ paddingTop: headerContentHeight + 8, paddingBottom: 8 }}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="interactive"
-        />
+      {/* Messages — fill entire screen, scroll all the way to the bottom behind the input */}
+      <FlatList
+        ref={flatListRef}
+        style={StyleSheet.absoluteFill}
+        data={chatMessages}
+        keyExtractor={(item) => item.id}
+        renderItem={({ item }) => (
+          <MessageBubble
+            message={item}
+            isOwn={item.senderId === 'current'}
+            fontSize={chatSettings.fontSize}
+            bubbleRadius={chatSettings.bubbleRadius}
+            fontFamily={chatSettings.fontFamily}
+          />
+        )}
+        contentContainerStyle={{ paddingTop: headerContentHeight + 8, paddingBottom: insets.bottom + 64 }}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+      />
 
-        {/* Input bar — normal flex child so messages stay above it; transparent outer bg lets wallpaper show */}
+      {/* Input bar — sticks to the keyboard with no gap; transparent outer bg lets wallpaper show */}
+      <KeyboardStickyView offset={{ closed: 0, opened: insets.bottom }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: 6, paddingBottom: Math.max(insets.bottom, 8), backgroundColor: 'transparent' }}>
           <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 22, paddingHorizontal: 14, minHeight: 44, borderWidth: 1, borderColor: theme.colors.border.light }}>
             <TextInput
@@ -203,7 +203,7 @@ export default function ChatScreen() {
             <Feather name="send" size={18} color={inputText.trim() ? '#FFFFFF' : theme.colors.text.tertiary} />
           </Pressable>
         </View>
-      </KeyboardAvoidingView>
+      </KeyboardStickyView>
 
       {/* Gradient fade header — same as main page */}
       <View style={[styles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">
