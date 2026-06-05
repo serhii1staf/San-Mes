@@ -10,6 +10,7 @@ import { Text, Avatar } from '../../src/components/ui';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { UserBadge } from '../../src/components/ui/UserBadge';
 import { FormattedText } from '../../src/components/ui/FormattedText';
+import { CachedImage } from '../../src/components/ui/CachedImage';
 import { useAuthStore } from '../../src/store';
 import { getComments, createComment } from '../../src/lib/supabase';
 import { triggerHaptic } from '../../src/utils/haptics';
@@ -24,6 +25,7 @@ export default function CommentsScreen() {
   const [text, setText] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
+  const [postData, setPostData] = useState<any>(null);
   const inputRef = useRef<TextInput>(null);
   const listRef = useRef<FlatList>(null);
 
@@ -34,7 +36,15 @@ export default function CommentsScreen() {
 
   useEffect(() => {
     loadComments();
+    loadPost();
   }, [postId]);
+
+  const loadPost = async () => {
+    if (!postId) return;
+    const { supabase } = await import('../../src/lib/supabase');
+    const { data } = await supabase.from('posts').select('*, profiles:author_id (id, display_name, username, emoji, badge, is_verified)').eq('id', postId).single();
+    if (data) setPostData(data);
+  };
 
   const loadComments = async () => {
     if (!postId) return;
@@ -100,6 +110,23 @@ export default function CommentsScreen() {
             keyExtractor={(item) => item.id}
             contentContainerStyle={{ paddingHorizontal: 20, paddingTop: headerContentHeight, paddingBottom: 20 }}
             showsVerticalScrollIndicator={false}
+            ListHeaderComponent={postData ? (
+              <View style={{ marginBottom: 16, paddingBottom: 16, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border.light }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                  <Avatar emoji={postData.profiles?.emoji || '😊'} size="sm" />
+                  <View style={{ marginLeft: 10 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                      <Text variant="body" weight="bold">{postData.profiles?.display_name || 'User'}</Text>
+                      {postData.profiles?.is_verified && <VerifiedBadge size={12} />}
+                      {postData.profiles?.badge && <UserBadge badge={postData.profiles.badge} size="sm" />}
+                    </View>
+                    <Text variant="caption" color={theme.colors.text.tertiary}>@{postData.profiles?.username}</Text>
+                  </View>
+                </View>
+                {postData.content && <FormattedText style={{ fontSize: 15, lineHeight: 21, marginBottom: 8 }}>{postData.content}</FormattedText>}
+                {postData.image_url && <CachedImage uri={postData.image_url.split(',')[0]} style={{ width: '100%', height: 200, borderRadius: 12, marginBottom: 8 }} resizeMode="cover" />}
+              </View>
+            ) : null}
             ListEmptyComponent={
               <View style={{ alignItems: 'center', paddingTop: 40 }}>
                 <Text style={{ fontSize: 32 }}>💬</Text>
@@ -126,7 +153,7 @@ export default function CommentsScreen() {
         )}
 
         {/* Input area — clean pill, no outer container */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: insets.bottom > 0 ? insets.bottom : 12, paddingTop: 8, backgroundColor: bgColor }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 8, paddingTop: 8, backgroundColor: bgColor }}>
           <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 22, paddingHorizontal: 16, paddingVertical: 10, borderWidth: 1, borderColor: theme.colors.border.light }}>
             <TextInput
               ref={inputRef}
