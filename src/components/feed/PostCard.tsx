@@ -1,11 +1,10 @@
 import React, { useState, useRef, memo } from 'react';
-import { View, Pressable, ViewStyle, TextStyle, Dimensions, ScrollView, NativeSyntheticEvent, NativeScrollEvent } from 'react-native';
+import { View, Pressable, ViewStyle, Dimensions, ScrollView, NativeSyntheticEvent, NativeScrollEvent, Text as RNText } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useTheme } from '../../theme';
 import { Text } from '../ui/Text';
 import { Avatar } from '../ui/Avatar';
-import { Card } from '../ui/Card';
 import { CachedImage } from '../ui/CachedImage';
 import { VerifiedBadge } from '../ui/VerifiedBadge';
 import { UserBadge } from '../ui/UserBadge';
@@ -16,95 +15,7 @@ import { formatTimeAgo } from '../../utils/mockData';
 import { triggerHaptic } from '../../utils/haptics';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const CAROUSEL_HEIGHT = 300;
-
-interface ImageCarouselProps {
-  imageUrls: string[];
-  onDoubleTap: () => void;
-  cardWidth: number;
-}
-
-function ImageCarousel({ imageUrls, onDoubleTap, cardWidth }: ImageCarouselProps) {
-  const theme = useTheme();
-  const [activeIndex, setActiveIndex] = useState(0);
-  const lastTapRef = useRef<number>(0);
-  const imageWidth = cardWidth * 0.85;
-  const snapInterval = imageWidth + 8; // image width + gap
-
-  const handleScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const offsetX = e.nativeEvent.contentOffset.x;
-    const index = Math.round(offsetX / snapInterval);
-    setActiveIndex(Math.max(0, Math.min(index, imageUrls.length - 1)));
-  };
-
-  const handlePress = () => {
-    const now = Date.now();
-    if (now - lastTapRef.current < 300) {
-      onDoubleTap();
-    }
-    lastTapRef.current = now;
-  };
-
-  if (imageUrls.length === 1) {
-    return (
-      <Pressable onPress={handlePress} style={{ paddingHorizontal: 12 }}>
-        <CachedImage
-          uri={imageUrls[0]}
-          style={{
-            width: '100%',
-            height: CAROUSEL_HEIGHT,
-            borderRadius: theme.borderRadius.md,
-          }}
-          resizeMode="cover"
-        />
-      </Pressable>
-    );
-  }
-
-  return (
-    <View>
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        snapToInterval={snapInterval}
-        decelerationRate="fast"
-        contentContainerStyle={{ paddingHorizontal: 12, gap: 8 }}
-        onScroll={handleScroll}
-        scrollEventThrottle={16}
-      >
-        {imageUrls.map((url, index) => (
-          <Pressable key={index} onPress={handlePress}>
-            <CachedImage
-              uri={url}
-              style={{
-                width: imageWidth,
-                height: CAROUSEL_HEIGHT,
-                borderRadius: theme.borderRadius.md,
-              }}
-              resizeMode="cover"
-            />
-          </Pressable>
-        ))}
-      </ScrollView>
-      {/* Dots indicator */}
-      <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginTop: 8, gap: 5 }}>
-        {imageUrls.map((_, index) => (
-          <View
-            key={index}
-            style={{
-              width: index === activeIndex ? 7 : 5,
-              height: index === activeIndex ? 7 : 5,
-              borderRadius: 4,
-              backgroundColor: index === activeIndex
-                ? theme.colors.accent.primary
-                : theme.colors.text.tertiary + '40',
-            }}
-          />
-        ))}
-      </View>
-    </View>
-  );
-}
+const IMAGE_HEIGHT = 280;
 
 interface PostCardProps {
   post: Post;
@@ -117,154 +28,159 @@ interface PostCardProps {
 
 export const PostCard = memo(function PostCard({ post, onLike, onComment, onShare, onBookmark, onMenu }: PostCardProps) {
   const theme = useTheme();
-  const [isBookmarked, setIsBookmarked] = useState(post.isBookmarked);
   const lastTap = useRef<number>(0);
 
-  const handleLike = () => {
-    triggerHaptic('light');
-    onLike(post.id);
-  };
+  const handleLike = () => { triggerHaptic('light'); onLike(post.id); };
+  const handleDoubleTap = () => { if (!post.isLiked) onLike(post.id); };
 
-  const handleDoubleTap = () => {
-    if (!post.isLiked) onLike(post.id);
-  };
+  const imageUrls = post.imageUrls && post.imageUrls.length > 0 ? post.imageUrls : post.imageUrl ? [post.imageUrl] : [];
+  const hasImages = imageUrls.length > 0 && !post.isSpoilerImage;
+  const hasSpoiler = post.isSpoilerImage && imageUrls.length > 0;
 
-  const handleBookmark = () => {
-    triggerHaptic('light');
-    setIsBookmarked(!isBookmarked);
-    onBookmark?.(post.id);
-  };
-
-  // Get image URLs - prefer imageUrls array, fall back to imageUrl
-  const imageUrls = post.imageUrls && post.imageUrls.length > 0
-    ? post.imageUrls
-    : post.imageUrl
-      ? [post.imageUrl]
-      : [];
-
-  const cardWidth = SCREEN_WIDTH - 32; // approximate card width after padding
-
-  const containerStyle: ViewStyle = { marginBottom: theme.spacing.base };
-  const headerStyle: ViewStyle = { flexDirection: 'row', alignItems: 'center', paddingHorizontal: theme.spacing.base, paddingVertical: theme.spacing.md };
-  const actionBarStyle: ViewStyle = { flexDirection: 'row', alignItems: 'center', paddingHorizontal: theme.spacing.base, paddingVertical: theme.spacing.md };
-  const actionButtonStyle: ViewStyle = { flexDirection: 'row', alignItems: 'center', marginRight: theme.spacing.lg };
+  // Card colors
+  const cardBg = theme.isDark ? 'rgba(28,28,30,0.95)' : 'rgba(255,255,255,0.95)';
+  const cardBorder = theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
 
   return (
-    <Card style={containerStyle} padding="sm" shadow="sm">
+    <View style={{ marginBottom: 12, borderRadius: 20, backgroundColor: cardBg, borderWidth: 1, borderColor: cardBorder, overflow: 'hidden' }}>
       {/* Repost indicator */}
       {post.isRepost && (
-        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: theme.spacing.base, paddingTop: theme.spacing.sm, gap: 6 }}>
-          <Feather name="repeat" size={13} color={theme.colors.text.tertiary} />
-          <Text variant="caption" color={theme.colors.text.tertiary}>{post.authorName} репостнул(а)</Text>
-          {post.originalPost?.authorEmoji && (
-            <View style={{ width: 18, height: 18, borderRadius: 9, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)', alignItems: 'center', justifyContent: 'center' }}>
-              <Text style={{ fontSize: 10, lineHeight: 14 }}>{post.originalPost.authorEmoji}</Text>
-            </View>
-          )}
+        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: 10, gap: 6 }}>
+          <Feather name="repeat" size={12} color={theme.colors.text.tertiary} />
+          <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{post.authorName} репостнул(а)</Text>
         </View>
       )}
 
-      {/* Header */}
-      <View style={headerStyle}>
-        <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: post.authorId } })} style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 }}>
+      {/* Header: avatar + name + username + time + icons */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: post.isRepost ? 8 : 14, paddingBottom: 8 }}>
+        <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: post.authorId } })}>
           <Avatar emoji={post.authorEmoji} name={post.authorName} size="sm" />
-          <View style={{ marginLeft: theme.spacing.md, flex: 1 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-              <Text weight="semibold" variant="body" numberOfLines={1}>{post.authorName}</Text>
-              {post.authorVerified && <VerifiedBadge size={13} />}
-              {post.authorBadge && <UserBadge badge={post.authorBadge} size="sm" />}
-            </View>
-            <Text variant="caption" color={theme.colors.text.secondary} numberOfLines={1}>@{post.authorUsername} · {formatTimeAgo(post.createdAt)}</Text>
-          </View>
         </Pressable>
-        <Pressable onPress={() => { triggerHaptic('light'); onMenu?.(post); }}>
-          <Feather name="more-horizontal" size={20} color={theme.colors.text.secondary} />
+        <View style={{ marginLeft: 10, flex: 1 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+            <Text weight="bold" variant="body" numberOfLines={1} style={{ fontSize: 15 }}>{post.authorName}</Text>
+            {post.authorVerified && <VerifiedBadge size={13} />}
+            {post.authorBadge && <UserBadge badge={post.authorBadge} size="sm" />}
+          </View>
+          <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 12 }}>@{post.authorUsername} · {formatTimeAgo(post.createdAt)}</Text>
+        </View>
+        {/* Right icons */}
+        <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: post.authorId } })} hitSlop={8} style={{ padding: 4 }}>
+          <Feather name="user-plus" size={16} color={theme.colors.text.tertiary} />
+        </Pressable>
+        <Pressable onPress={() => { triggerHaptic('light'); onMenu?.(post); }} hitSlop={8} style={{ padding: 4, marginLeft: 6 }}>
+          <Feather name="more-vertical" size={16} color={theme.colors.text.tertiary} />
         </Pressable>
       </View>
 
-      {/* Content - show repost comment if any */}
-      {post.content && !post.isRepost && (
-        <View style={{ paddingHorizontal: theme.spacing.base, paddingBottom: theme.spacing.sm }}>
-          <FormattedText style={{ fontSize: theme.typography.sizes.base * (theme.fontScale || 1) }}>{post.content}</FormattedText>
+      {/* Content text */}
+      {post.content ? (
+        <View style={{ paddingHorizontal: 16, paddingBottom: hasImages || hasSpoiler ? 10 : 4 }}>
+          <FormattedText style={{ fontSize: 14, lineHeight: 20 }}>{post.content}</FormattedText>
         </View>
-      )}
-      {post.isRepost && post.content && (
-        <View style={{ paddingHorizontal: theme.spacing.base, paddingBottom: theme.spacing.sm }}>
-          <FormattedText style={{ fontSize: theme.typography.sizes.base * (theme.fontScale || 1) }}>{post.content}</FormattedText>
-        </View>
-      )}
+      ) : null}
 
-      {/* Original post embed (for reposts) */}
+      {/* Original post embed (reposts) */}
       {post.isRepost && post.originalPost && (
-        <View style={{ marginHorizontal: theme.spacing.base, marginBottom: theme.spacing.sm, borderWidth: 1, borderColor: theme.colors.border.light, borderRadius: 14, overflow: 'hidden', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)' }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', padding: 12 }}>
+        <View style={{ marginHorizontal: 16, marginBottom: 10, borderWidth: 1, borderColor: cardBorder, borderRadius: 14, overflow: 'hidden', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)' }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', padding: 10 }}>
             <Avatar emoji={post.originalPost.authorEmoji} size="xs" />
-            <Text variant="caption" weight="semibold" style={{ marginLeft: 8 }}>{post.originalPost.authorName}</Text>
+            <Text variant="caption" weight="semibold" style={{ marginLeft: 8, fontSize: 12 }}>{post.originalPost.authorName}</Text>
             {post.originalPost.authorVerified && <VerifiedBadge size={10} />}
-            {post.originalPost.authorBadge && <UserBadge badge={post.originalPost.authorBadge} size="sm" />}
-            <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginLeft: 4 }}>@{post.originalPost.authorUsername}</Text>
           </View>
           {post.originalPost.content && (
-            <View style={{ paddingHorizontal: 12, paddingBottom: 12 }}>
-              <FormattedText style={{ fontSize: theme.typography.sizes.base * (theme.fontScale || 1) }}>{post.originalPost.content}</FormattedText>
+            <View style={{ paddingHorizontal: 10, paddingBottom: 10 }}>
+              <FormattedText style={{ fontSize: 13 }}>{post.originalPost.content}</FormattedText>
             </View>
           )}
           {post.originalPost.imageUrls && post.originalPost.imageUrls.length > 0 ? (
-            <CachedImage uri={post.originalPost.imageUrls[0]} style={{ width: '100%', height: 150 }} resizeMode="cover" />
+            <CachedImage uri={post.originalPost.imageUrls[0]} style={{ width: '100%', height: 140 }} resizeMode="cover" />
           ) : post.originalPost.imageUrl ? (
-            <CachedImage uri={post.originalPost.imageUrl} style={{ width: '100%', height: 150 }} resizeMode="cover" />
+            <CachedImage uri={post.originalPost.imageUrl} style={{ width: '100%', height: 140 }} resizeMode="cover" />
           ) : null}
         </View>
       )}
 
-      {/* Image carousel (non-repost) */}
-      {!post.isRepost && imageUrls.length > 0 && (
-        post.isSpoilerImage ? (
-          <View style={{ paddingHorizontal: 12 }}>
-            <SpoilerImage uri={imageUrls[0]} width="100%" height={CAROUSEL_HEIGHT} borderRadius={theme.borderRadius.md} isSpoiler={true} />
-          </View>
+      {/* Image — fixed height, cover mode, rounded inside card */}
+      {hasImages && !post.isRepost && (
+        imageUrls.length === 1 ? (
+          <Pressable onPress={() => { const now = Date.now(); if (now - lastTap.current < 300) handleDoubleTap(); lastTap.current = now; }}>
+            <CachedImage uri={imageUrls[0]} style={{ width: '100%', height: IMAGE_HEIGHT, marginBottom: 0 }} resizeMode="cover" />
+          </Pressable>
         ) : (
-          <ImageCarousel
-            imageUrls={imageUrls}
-            onDoubleTap={handleDoubleTap}
-            cardWidth={cardWidth}
-          />
+          <ImageCarousel imageUrls={imageUrls} onDoubleTap={handleDoubleTap} />
         )
       )}
 
-      {/* Action Bar */}
-      <View style={actionBarStyle}>
-        <Pressable onPress={handleLike} style={actionButtonStyle}>
-          <Feather name="heart" size={18} color={post.isLiked ? theme.colors.accent.primary : theme.colors.text.secondary} />
-          <Text variant="caption" weight="medium" color={post.isLiked ? theme.colors.accent.primary : theme.colors.text.secondary} style={{ marginLeft: theme.spacing.xs } as TextStyle}>{post.likesCount}</Text>
+      {hasSpoiler && (
+        <View style={{ paddingHorizontal: 16, paddingBottom: 8 }}>
+          <SpoilerImage uri={imageUrls[0]} width="100%" height={IMAGE_HEIGHT} borderRadius={12} isSpoiler={true} />
+        </View>
+      )}
+
+      {/* Action bar — icons like on screenshot */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 10, gap: 4 }}>
+        {/* Like (heart) */}
+        <Pressable onPress={handleLike} style={{ flexDirection: 'row', alignItems: 'center', marginRight: 12 }}>
+          <Feather name="heart" size={16} color={post.isLiked ? '#FF3B30' : theme.colors.text.tertiary} />
+          <Text variant="caption" color={post.isLiked ? '#FF3B30' : theme.colors.text.tertiary} style={{ marginLeft: 4, fontSize: 12 }}>{post.likesCount || ''}</Text>
         </Pressable>
 
-        <Pressable style={actionButtonStyle} onPress={() => onComment?.(post.id)}>
-          <Feather name="message-circle" size={18} color={theme.colors.text.secondary} />
-          <Text variant="caption" weight="medium" color={theme.colors.text.secondary} style={{ marginLeft: theme.spacing.xs } as TextStyle}>{post.commentsCount}</Text>
+        {/* Star (bookmark/favorite) */}
+        <Pressable onPress={() => { triggerHaptic('light'); onBookmark?.(post.id); }} style={{ flexDirection: 'row', alignItems: 'center', marginRight: 12 }}>
+          <Feather name="star" size={16} color={theme.colors.text.tertiary} />
         </Pressable>
 
-        <Pressable style={actionButtonStyle} onPress={() => { triggerHaptic('light'); onShare?.(post.id); }}>
-          <Feather name="repeat" size={18} color={theme.colors.text.secondary} />
-          <Text variant="caption" weight="medium" color={theme.colors.text.secondary} style={{ marginLeft: theme.spacing.xs } as TextStyle}>{post.sharesCount}</Text>
+        {/* Comments */}
+        <Pressable onPress={() => onComment?.(post.id)} style={{ flexDirection: 'row', alignItems: 'center', marginRight: 12 }}>
+          <Feather name="message-square" size={16} color={theme.colors.text.tertiary} />
+          <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginLeft: 4, fontSize: 12 }}>{post.commentsCount || ''}</Text>
         </Pressable>
 
-        <Pressable style={actionButtonStyle} onPress={async () => {
-          triggerHaptic('light');
-          try {
-            const { Share } = require('react-native');
-            await Share.share({ message: `${post.content || ''}\n\nhttps://san-mes.vercel.app/post/${post.id}` });
-          } catch {}
-        }}>
-          <Feather name="share" size={18} color={theme.colors.text.secondary} />
+        {/* Repost */}
+        <Pressable onPress={() => { triggerHaptic('light'); onShare?.(post.id); }} style={{ flexDirection: 'row', alignItems: 'center', marginRight: 12 }}>
+          <Feather name="corner-up-right" size={16} color={theme.colors.text.tertiary} />
+          <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginLeft: 4, fontSize: 12 }}>{post.sharesCount || ''}</Text>
         </Pressable>
 
-        <View style={{ flex: 1 }} />
-
-        <Pressable onPress={handleBookmark}>
-          <Feather name="bookmark" size={18} color={isBookmarked ? theme.colors.accent.tertiary : theme.colors.text.secondary} />
+        {/* Share */}
+        <Pressable onPress={async () => { triggerHaptic('light'); try { const { Share } = require('react-native'); await Share.share({ message: `${post.content || ''}\nhttps://san-mes.vercel.app/post/${post.id}` }); } catch {} }} style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <Feather name="send" size={15} color={theme.colors.text.tertiary} />
         </Pressable>
       </View>
-    </Card>
+    </View>
   );
 });
+
+// Image carousel for multiple images
+function ImageCarousel({ imageUrls, onDoubleTap }: { imageUrls: string[]; onDoubleTap: () => void }) {
+  const [activeIndex, setActiveIndex] = useState(0);
+  const lastTapRef = useRef<number>(0);
+  const imgWidth = SCREEN_WIDTH - 32;
+
+  const handleScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const index = Math.round(e.nativeEvent.contentOffset.x / imgWidth);
+    setActiveIndex(Math.max(0, Math.min(index, imageUrls.length - 1)));
+  };
+
+  const handlePress = () => { const now = Date.now(); if (now - lastTapRef.current < 300) onDoubleTap(); lastTapRef.current = now; };
+
+  return (
+    <View>
+      <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false} onScroll={handleScroll} scrollEventThrottle={16}>
+        {imageUrls.map((url, i) => (
+          <Pressable key={i} onPress={handlePress}>
+            <CachedImage uri={url} style={{ width: imgWidth, height: IMAGE_HEIGHT }} resizeMode="cover" />
+          </Pressable>
+        ))}
+      </ScrollView>
+      {imageUrls.length > 1 && (
+        <View style={{ flexDirection: 'row', justifyContent: 'center', marginTop: 6, gap: 4 }}>
+          {imageUrls.map((_, i) => (
+            <View key={i} style={{ width: i === activeIndex ? 7 : 5, height: 5, borderRadius: 3, backgroundColor: i === activeIndex ? '#FFFFFF' : 'rgba(255,255,255,0.3)' }} />
+          ))}
+        </View>
+      )}
+    </View>
+  );
+}
