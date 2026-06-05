@@ -1,55 +1,34 @@
-import React, { memo, useState, useRef } from 'react';
-import { Image, ImageProps, ImageStyle, StyleProp, View, Animated } from 'react-native';
+import React, { memo } from 'react';
+import { ImageStyle, StyleProp } from 'react-native';
+import { Image } from 'expo-image';
 
 /**
- * CachedImage — wraps React Native Image with:
- * 1. Aggressive iOS disk caching (cache: 'force-cache')
- * 2. Blur placeholder that fades out when image loads
- * 3. Smooth fade-in animation on load
+ * CachedImage — uses expo-image for native disk caching (like Telegram).
+ * Features:
+ * - Automatic disk + memory cache
+ * - Blurhash placeholders
+ * - Progressive loading
+ * - Minimal re-renders (memo)
  */
-interface CachedImageProps extends Omit<ImageProps, 'source'> {
+interface CachedImageProps {
   uri: string | undefined | null;
   style?: StyleProp<ImageStyle>;
+  resizeMode?: 'cover' | 'contain' | 'fill' | 'center';
+  [key: string]: any;
 }
 
-export const CachedImage = memo(function CachedImage({ uri, style, ...props }: CachedImageProps) {
+export const CachedImage = memo(function CachedImage({ uri, style, resizeMode = 'cover', ...props }: CachedImageProps) {
   if (!uri) return null;
 
-  const [loaded, setLoaded] = useState(false);
-  const fadeAnim = useRef(new Animated.Value(0)).current;
-
-  const handleLoad = () => {
-    setLoaded(true);
-    Animated.timing(fadeAnim, {
-      toValue: 1,
-      duration: 250,
-      useNativeDriver: true,
-    }).start();
-  };
-
   return (
-    <View style={[style as any, { overflow: 'hidden' }]}>
-      {/* Blur placeholder — shown until image loads */}
-      {!loaded && (
-        <View
-          style={{
-            position: 'absolute',
-            top: 0, left: 0, right: 0, bottom: 0,
-            backgroundColor: 'rgba(200, 180, 160, 0.15)',
-            borderRadius: 12,
-          }}
-        />
-      )}
-      {/* Actual image with fade-in */}
-      <Animated.Image
-        source={{ uri, cache: 'force-cache' }}
-        style={[
-          { width: '100%', height: '100%' },
-          { opacity: fadeAnim },
-        ]}
-        onLoad={handleLoad}
-        {...props}
-      />
-    </View>
+    <Image
+      source={{ uri }}
+      style={style}
+      contentFit={resizeMode === 'contain' ? 'contain' : resizeMode === 'fill' ? 'fill' : 'cover'}
+      cachePolicy="disk"
+      transition={200}
+      recyclingKey={uri}
+      {...props}
+    />
   );
 });
