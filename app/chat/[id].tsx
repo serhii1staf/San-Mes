@@ -7,7 +7,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
-import { useChatStore } from '../../src/store';
+import { useChatStore, useEntityStore } from '../../src/store';
 import { supabase } from '../../src/lib/supabase';
 import { mockMessages, mockConversations, formatMessageTime } from '../../src/utils/mockData';
 import { ChatMessage } from '../../src/types';
@@ -50,8 +50,10 @@ export default function ChatScreen() {
   const conversation = mockConversations.find((c) => c.id === id);
   const [profileData, setProfileData] = useState<any>(null);
 
-  // The actual participant ID is either passed as param, from mock conversation, or fallback to id
-  const participantId = paramParticipantId || (conversation as any)?.participantId || id;
+  // The actual participant ID: from URL param, from entity store, from mock conversation, or fallback to id
+  const entityConversations = useEntityStore((s) => s.conversations);
+  const entityConv = entityConversations.find(c => c.id === id);
+  const participantId = paramParticipantId || entityConv?.participantId || (conversation as any)?.participantId || id;
 
   const chatMessages = (storeMessages[id || ''] || []) as ChatMessage[];
 

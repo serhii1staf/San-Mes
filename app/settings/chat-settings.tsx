@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Pressable, ScrollView, TextInput, StyleSheet, Dimensions } from 'react-native';
+import { View, Pressable, ScrollView, TextInput, StyleSheet, ImageBackground } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -11,14 +11,12 @@ import { useChatSettingsStore } from '../../src/store/chatSettingsStore';
 import { useEntityStore } from '../../src/store';
 import { showToast } from '../../src/store/toastStore';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
-
-function ChatPreview({ fontSize, bubbleRadius, fontFamily }: { fontSize: number; bubbleRadius: number; fontFamily: string }) {
+function ChatPreview({ fontSize, bubbleRadius, fontFamily, backgroundImage }: { fontSize: number; bubbleRadius: number; fontFamily: string; backgroundImage?: string }) {
   const theme = useTheme();
   const fontFamilyStyle = fontFamily === 'mono' ? 'monospace' : fontFamily === 'serif' ? 'serif' : undefined;
 
-  return (
-    <View style={{ paddingHorizontal: 16, paddingVertical: 20, backgroundColor: theme.colors.background.primary, minHeight: 200 }}>
+  const content = (
+    <View style={{ paddingHorizontal: 16, paddingVertical: 20, minHeight: 200 }}>
       {/* Incoming message */}
       <View style={{ alignSelf: 'flex-start', maxWidth: '75%', marginBottom: 8 }}>
         <View style={{ backgroundColor: theme.colors.background.tertiary, paddingHorizontal: 14, paddingVertical: 10, borderRadius: bubbleRadius, borderBottomLeftRadius: 4 }}>
@@ -42,6 +40,16 @@ function ChatPreview({ fontSize, bubbleRadius, fontFamily }: { fontSize: number;
       </View>
     </View>
   );
+
+  if (backgroundImage) {
+    return (
+      <ImageBackground source={{ uri: backgroundImage }} style={{ minHeight: 200 }} resizeMode="cover">
+        {content}
+      </ImageBackground>
+    );
+  }
+
+  return <View style={{ backgroundColor: theme.colors.background.primary }}>{content}</View>;
 }
 
 export default function ChatSettingsScreen() {
@@ -55,6 +63,7 @@ export default function ChatSettingsScreen() {
   const [fontSize, setFontSize] = useState(settings.fontSize);
   const [bubbleRadius, setBubbleRadius] = useState(settings.bubbleRadius);
   const [fontFamily, setFontFamily] = useState(settings.fontFamily);
+  const [backgroundImage, setBackgroundImage] = useState(settings.backgroundImage);
 
   // Try to get participant info from entity store conversations
   const conversations = useEntityStore((s) => s.conversations);
@@ -65,13 +74,15 @@ export default function ChatSettingsScreen() {
   const pickBackground = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.8 });
     if (!result.canceled && result.assets[0]) {
-      updateSettings(chatId, { backgroundImage: result.assets[0].uri });
+      const uri = result.assets[0].uri;
+      setBackgroundImage(uri);
+      updateSettings(chatId, { backgroundImage: uri });
       showToast('Фон установлен', 'check');
     }
   };
 
   const save = () => {
-    updateSettings(chatId, { localName: localName.trim() || undefined, fontSize, bubbleRadius, fontFamily });
+    updateSettings(chatId, { localName: localName.trim() || undefined, fontSize, bubbleRadius, fontFamily, backgroundImage });
     showToast('Сохранено', 'check');
     router.back();
   };
@@ -104,7 +115,7 @@ export default function ChatSettingsScreen() {
             <Avatar emoji={participantEmoji} size="xs" style={{ marginLeft: 8 }} />
             <Text variant="caption" weight="semibold" style={{ marginLeft: 6 }}>{localName || participantName}</Text>
           </View>
-          <ChatPreview fontSize={fontSize} bubbleRadius={bubbleRadius} fontFamily={fontFamily} />
+          <ChatPreview fontSize={fontSize} bubbleRadius={bubbleRadius} fontFamily={fontFamily} backgroundImage={backgroundImage} />
         </View>
 
         {/* Settings sections */}
@@ -116,13 +127,13 @@ export default function ChatSettingsScreen() {
                 <Feather name="image" size={16} color={theme.colors.accent.primary} />
               </View>
               <Text variant="body" style={{ flex: 1 }}>Фон чата</Text>
-              {settings.backgroundImage && <Feather name="check-circle" size={16} color={theme.colors.accent.primary} />}
+              {backgroundImage && <Feather name="check-circle" size={16} color={theme.colors.accent.primary} />}
               <Feather name="chevron-right" size={16} color={theme.colors.text.tertiary} style={{ marginLeft: 8 }} />
             </Pressable>
-            {settings.backgroundImage && (
+            {backgroundImage && (
               <>
                 <View style={{ height: 0.5, backgroundColor: theme.colors.border.light, marginLeft: 52 }} />
-                <Pressable onPress={() => { updateSettings(chatId, { backgroundImage: undefined }); showToast('Фон убран', 'check'); }} style={styles.row}>
+                <Pressable onPress={() => { setBackgroundImage(undefined); updateSettings(chatId, { backgroundImage: undefined }); showToast('Фон убран', 'check'); }} style={styles.row}>
                   <View style={[styles.iconCircle, { backgroundColor: '#FF3B3015' }]}>
                     <Feather name="x" size={16} color="#FF3B30" />
                   </View>

@@ -62,7 +62,7 @@ function MiniAppsRow() {
   );
 }
 
-function ConversationItem({ item, onLongPress, isArchived }: { item: Conversation; index: number; onLongPress?: (item: Conversation) => void; isArchived?: boolean }) {
+function ConversationItem({ item, isArchived }: { item: Conversation; index: number; isArchived?: boolean }) {
   const theme = useTheme();
 
   const actions = isArchived
@@ -92,13 +92,18 @@ function ConversationItem({ item, onLongPress, isArchived }: { item: Conversatio
     }
   };
 
+  const openChat = () => {
+    router.push(`/chat/${item.id}?participantId=${item.participantId}` as any);
+  };
+
   return (
     <ContextMenu
       actions={actions}
       onPress={handleAction}
+      onPreviewPress={openChat}
       previewBackgroundColor={theme.colors.background.primary}
       preview={
-        <View style={{ width: 320, padding: 0, backgroundColor: theme.colors.background.primary, borderRadius: 16, overflow: 'hidden' }}>
+        <View style={{ width: 320, backgroundColor: theme.colors.background.primary }}>
           {/* Chat preview header */}
           <View style={{ flexDirection: 'row', alignItems: 'center', padding: 14, backgroundColor: theme.colors.background.elevated }}>
             <Avatar emoji={item.participantEmoji} name={item.participantName} size="sm" />
@@ -123,7 +128,7 @@ function ConversationItem({ item, onLongPress, isArchived }: { item: Conversatio
       }
     >
       <Pressable
-        onPress={() => router.push({ pathname: '/chat/[id]', params: { id: item.id, participantId: item.participantId } } as any)}
+        onPress={openChat}
         style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: theme.spacing.base }}
       >
         <Avatar emoji={item.participantEmoji} name={item.participantName} size="md" />
@@ -173,7 +178,6 @@ export default function MessagesScreen() {
   const user = useAuthStore((s) => s.user);
   const [searchQuery, setSearchQuery] = useState('');
   const [showFabMenu, setShowFabMenu] = useState(false);
-  const [selectedChat, setSelectedChat] = useState<Conversation | null>(null);
   const [activeTab, setActiveTab] = useState<'chats' | 'apps' | 'archive'>('chats');
   const archived = useChatSettingsStore((s) => s.archived);
 
@@ -293,7 +297,7 @@ export default function MessagesScreen() {
         <FlatList
           data={filtered}
           keyExtractor={(item) => item.id}
-          renderItem={({ item, index }) => <ConversationItem item={item} index={index} isArchived={archived.includes(item.id)} onLongPress={(c) => setSelectedChat(c)} />}
+          renderItem={({ item, index }) => <ConversationItem item={item} index={index} isArchived={archived.includes(item.id)} />}
           contentContainerStyle={{ paddingBottom: 100 }}
           showsVerticalScrollIndicator={false}
         />
