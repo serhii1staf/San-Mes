@@ -105,35 +105,42 @@ export default function ChatScreen() {
 
     // Save to Supabase (non-blocking)
     try {
-      const { useAuthStore } = await import('../../src/store');
+      const { useAuthStore, useEntityStore } = await import('../../src/store');
       const user = useAuthStore.getState().user;
       if (!user) return;
 
-      // Ensure conversation exists
-      const { data: existingConv } = await supabase.from('conversations').select('id').eq('id', id).single();
-      let convId = existingConv?.id;
+      // Find existing conversation between these two users
+      const { data: myConvs } = await supabase.from('conversation_participants').select('conversation_id').eq('user_id', user.id);
+      const { data: theirConvs } = await supabase.from('conversation_participants').select('conversation_id').eq('user_id', id);
 
-      if (!convId) {
-        // Create conversation
-        const { data: newConv } = await supabase.from('conversations').insert({ id }).select().single();
-        convId = newConv?.id || id;
-        // Add participants
-        await supabase.from('conversation_participants').insert([
-          { conversation_id: convId, user_id: user.id },
-          { conversation_id: convId, user_id: id },
-        ]).select();
+      let convId: string | null = null;
+      if (myConvs && theirConvs) {
+        const myIds = new Set(myConvs.map((c: any) => c.conversation_id));
+        const shared = theirConvs.find((c: any) => myIds.has(c.conversation_id));
+        if (shared) convId = shared.conversation_id;
       }
 
-      // Send message
-      await supabase.from('messages').insert({ conversation_id: convId, sender_id: user.id, text });
+      if (!convId) {
+        // Create new conversation
+        const { data: newConv } = await supabase.from('conversations').insert({}).select().single();
+        if (newConv) {
+          convId = newConv.id;
+          await supabase.from('conversation_participants').insert([
+            { conversation_id: convId, user_id: user.id },
+            { conversation_id: convId, user_id: id },
+          ]);
+        }
+      }
 
-      // Update entity store for messages list
-      const { useEntityStore } = await import('../../src/store');
+      if (convId) {
+        await supabase.from('messages').insert({ conversation_id: convId, sender_id: user.id, text });
+      }
+
+      // Update entity store so chat appears in list
       const store = useEntityStore.getState();
       const existingConvs = store.conversations;
-      if (!existingConvs.find(c => c.id === id)) {
-        const name = displayName || 'Чат';
-        store.setConversations([{ id, participantId: id, participantName: name, participantUsername: '', participantEmoji: displayEmoji }, ...existingConvs]);
+      if (!existingConvs.find(c => c.participantId === id)) {
+        store.setConversations([{ id: convId || id, participantId: id, participantName: displayName || 'Чат', participantUsername: '', participantEmoji: displayEmoji }, ...existingConvs]);
       }
     } catch {}
   };
