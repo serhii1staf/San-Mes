@@ -1,8 +1,9 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { View, FlatList, TextInput, Pressable, KeyboardAvoidingView, Platform, StyleSheet, ImageBackground } from 'react-native';
+import React, { useState, useRef, useEffect } from 'react';
+import { View, FlatList, TextInput, Pressable, KeyboardAvoidingView, Platform, StyleSheet, ImageBackground, Keyboard } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
@@ -44,6 +45,7 @@ export default function ChatScreen() {
   const insets = useSafeAreaInsets();
   const { id, participantId: paramParticipantId } = useLocalSearchParams<{ id: string; participantId?: string }>();
   const [inputText, setInputText] = useState('');
+  const [keyboardShown, setKeyboardShown] = useState(false);
   const flatListRef = useRef<FlatList>(null);
   const { messages: storeMessages, setMessages, addMessage } = useChatStore();
   const hasScrolled = useRef(false);
@@ -61,7 +63,15 @@ export default function ChatScreen() {
   const chatSettings = useChatSettingsStore((s) => s.getSettings(id || ''));
 
   const bgColor = theme.colors.background.primary;
-  const headerHeight = insets.top + 52;
+  const bgTransparent = bgColor + '00';
+  const headerContentHeight = insets.top + 48;
+  const headerGradientHeight = headerContentHeight + 28;
+
+  useEffect(() => {
+    const showSub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', () => setKeyboardShown(true));
+    const hideSub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide', () => setKeyboardShown(false));
+    return () => { showSub.remove(); hideSub.remove(); };
+  }, []);
 
   useEffect(() => {
     if (!conversation && participantId) {
@@ -144,28 +154,9 @@ export default function ChatScreen() {
   const displayVerified = profileData?.is_verified || false;
   const profileId = participantId;
 
-  const messagesContent = (
-    <FlatList
-      ref={flatListRef}
-      data={chatMessages}
-      keyExtractor={(item) => item.id}
-      renderItem={({ item }) => (
-        <MessageBubble
-          message={item}
-          isOwn={item.senderId === 'current'}
-          fontSize={chatSettings.fontSize}
-          bubbleRadius={chatSettings.bubbleRadius}
-          fontFamily={chatSettings.fontFamily}
-        />
-      )}
-      contentContainerStyle={{ paddingTop: headerHeight + 8, paddingBottom: 8 }}
-      showsVerticalScrollIndicator={false}
-    />
-  );
-
   return (
     <View style={{ flex: 1, backgroundColor: bgColor }}>
-      {/* Background image covers entire screen */}
+      {/* Background image covers the ENTIRE screen, behind everything */}
       {chatSettings.backgroundImage && (
         <ImageBackground
           source={{ uri: chatSettings.backgroundImage }}
@@ -174,27 +165,27 @@ export default function ChatScreen() {
         />
       )}
 
-      {/* Header */}
-      <View style={[styles.header, { paddingTop: insets.top + 8, height: headerHeight }]}>
-        <Pressable onPress={() => router.back()} hitSlop={8}>
-          <Feather name="chevron-left" size={24} color={theme.colors.text.primary} />
-        </Pressable>
-        <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId } })} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <Avatar emoji={displayEmoji} size="sm" />
-          <Text variant="body" weight="semibold">{displayName}</Text>
-          {displayVerified && <VerifiedBadge size={11} />}
-        </Pressable>
-        <Pressable onPress={() => router.push({ pathname: '/settings/chat-settings', params: { id: id } } as any)} hitSlop={8}>
-          <Feather name="more-vertical" size={20} color={theme.colors.text.primary} />
-        </Pressable>
-      </View>
-
       {/* Messages + Input */}
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0}>
-        {messagesContent}
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <FlatList
+          ref={flatListRef}
+          data={chatMessages}
+          keyExtractor={(item) => item.id}
+          renderItem={({ item }) => (
+            <MessageBubble
+              message={item}
+              isOwn={item.senderId === 'current'}
+              fontSize={chatSettings.fontSize}
+              bubbleRadius={chatSettings.bubbleRadius}
+              fontFamily={chatSettings.fontFamily}
+            />
+          )}
+          contentContainerStyle={{ paddingTop: headerContentHeight + 8, paddingBottom: 8 }}
+          showsVerticalScrollIndicator={false}
+        />
 
-        {/* Input bar */}
-        <View style={{ flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 12, paddingTop: 8, paddingBottom: Math.max(insets.bottom, 12), backgroundColor: chatSettings.backgroundImage ? 'rgba(0,0,0,0.3)' : bgColor }}>
+        {/* Input bar — transparent so wallpaper shows behind it */}
+        <View style={{ flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 12, paddingTop: 6, paddingBottom: keyboardShown ? 6 : Math.max(insets.bottom, 8), backgroundColor: 'transparent' }}>
           <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 22, paddingHorizontal: 14, paddingVertical: 10, borderWidth: 1, borderColor: theme.colors.border.light }}>
             <TextInput
               value={inputText}
@@ -210,21 +201,31 @@ export default function ChatScreen() {
           </Pressable>
         </View>
       </KeyboardAvoidingView>
+
+      {/* Gradient fade header — same as main page */}
+      <View style={[styles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">
+        <LinearGradient colors={[bgColor, bgColor, bgTransparent]} locations={[0, 0.55, 1]} style={StyleSheet.absoluteFill} />
+        <View style={[styles.headerContent, { paddingTop: insets.top }]} pointerEvents="auto">
+          {/* Back button with окантовка */}
+          <Pressable onPress={() => router.back()} style={[styles.headerPill, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light, width: 36, height: 36, paddingHorizontal: 0, justifyContent: 'center' }]}>
+            <Feather name="chevron-left" size={22} color={theme.colors.text.primary} />
+          </Pressable>
+          {/* Name + avatar with окантовка */}
+          <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId } })} style={[styles.headerPill, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light, gap: 8 }]}>
+            <Avatar emoji={displayEmoji} size="xs" />
+            <Text variant="caption" weight="semibold">{displayName}</Text>
+            {displayVerified && <VerifiedBadge size={11} />}
+          </Pressable>
+          {/* Spacer for symmetry */}
+          <View style={{ width: 36 }} />
+        </View>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  header: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    zIndex: 100,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingBottom: 8,
-  },
+  headerWrapper: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100 },
+  headerContent: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingBottom: 8 },
+  headerPill: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, borderWidth: 1 },
 });
