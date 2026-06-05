@@ -25,7 +25,6 @@ export const CachedImage = memo(function CachedImage({ uri, style, resizeMode = 
       source={{ uri }}
       style={style}
       contentFit={resizeMode === 'contain' ? 'contain' : resizeMode === 'fill' ? 'fill' : 'cover'}
-      cachePolicy="disk"
       transition={200}
       recyclingKey={uri}
       {...props}
