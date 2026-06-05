@@ -1,6 +1,7 @@
-import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, ImageBackground, Keyboard } from 'react-native';
-import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, ImageBackground } from 'react-native';
+import { KeyboardAvoidingView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
+import Animated, { useAnimatedStyle, interpolate, Extrapolation } from 'react-native-reanimated';
 import { Feather } from '@expo/vector-icons';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -48,8 +49,10 @@ export default function ChatScreen() {
   const insets = useSafeAreaInsets();
   const { id, participantId: paramParticipantId } = useLocalSearchParams<{ id: string; participantId?: string }>();
   const [inputText, setInputText] = useState('');
-  const [keyboardVisible, setKeyboardVisible] = useState(false);
   const { messages: storeMessages, setMessages, addMessage } = useChatStore();
+
+  // Keyboard animation progress on the UI thread (0 closed → 1 open), no React re-renders
+  const { progress } = useReanimatedKeyboardAnimation();
 
   const conversation = mockConversations.find((c) => c.id === id);
   const [profileData, setProfileData] = useState<any>(null);
@@ -76,11 +79,10 @@ export default function ChatScreen() {
   const headerContentHeight = insets.top + 48;
   const headerGradientHeight = headerContentHeight + 28;
 
-  useEffect(() => {
-    const showSub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', () => setKeyboardVisible(true));
-    const hideSub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide', () => setKeyboardVisible(false));
-    return () => { showSub.remove(); hideSub.remove(); };
-  }, []);
+  // Gradient backdrop under the input fades out as the keyboard opens (UI thread, no re-render)
+  const backdropStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(progress.value, [0, 1], [1, 0], Extrapolation.CLAMP),
+  }));
 
   // Prefer cached profile data from entityStore (works offline); only hit network as fallback
   const cachedProfile = useEntityStore((s) => (participantId ? s.profiles[participantId] : undefined));
@@ -202,14 +204,15 @@ export default function ChatScreen() {
           windowSize={9}
         />
 
-        {/* Input bar — gradient dissolve backdrop, same as bottom navigation */}
+        {/* Input bar — gradient dissolve backdrop fades out when keyboard opens */}
         <View>
-          <LinearGradient
-            colors={[bgTransparent, bgColor]}
-            style={StyleSheet.absoluteFill}
-            pointerEvents="none"
-          />
-          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: 10, paddingBottom: keyboardVisible ? 14 : Math.max(insets.bottom, 12) }}>
+          <Animated.View style={[StyleSheet.absoluteFill, backdropStyle]} pointerEvents="none">
+            <LinearGradient
+              colors={[bgTransparent, bgColor]}
+              style={StyleSheet.absoluteFill}
+            />
+          </Animated.View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: 10, paddingBottom: Math.max(insets.bottom, 12) }}>
             <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 22, paddingHorizontal: 14, minHeight: 44, borderWidth: 1, borderColor: theme.colors.border.light }}>
               <TextInput
                 value={inputText}
@@ -235,12 +238,14 @@ export default function ChatScreen() {
           <Pressable onPress={() => router.back()} style={[styles.headerCircle, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
             <Feather name="chevron-left" size={22} color={theme.colors.text.primary} />
           </Pressable>
-          {/* Name (center) inside a pill container */}
-          <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId } })} style={[styles.headerPill, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
-            <Text variant="caption" weight="semibold" numberOfLines={1}>{displayName}</Text>
-            {displayVerified && <VerifiedBadge size={12} />}
-          </Pressable>
-          {/* Avatar (right) inside a pill container */}
+          {/* Name (center) inside a compact pill container */}
+          <View style={{ flex: 1, alignItems: 'center' }}>
+            <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId } })} style={[styles.headerPill, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
+              <Text variant="caption" weight="semibold" numberOfLines={1}>{displayName}</Text>
+              {displayVerified && <VerifiedBadge size={12} />}
+            </Pressable>
+          </View>
+          {/* Avatar (right) inside a circle container */}
           <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId } })} style={[styles.headerCircle, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light, overflow: 'hidden' }]}>
             <Avatar emoji={displayEmoji} name={displayName} size="xs" />
           </Pressable>
@@ -254,5 +259,5 @@ const styles = StyleSheet.create({
   headerWrapper: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100 },
   headerContent: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingBottom: 8, gap: 10 },
   headerCircle: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
-  headerPill: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, height: 36, borderRadius: 18, borderWidth: 1, paddingHorizontal: 14 },
+  headerPill: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, height: 36, borderRadius: 18, borderWidth: 1, paddingHorizontal: 16 },
 });
