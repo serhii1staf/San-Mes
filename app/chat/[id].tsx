@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, ImageBackground } from 'react-native';
-import { KeyboardAvoidingView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
+import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, ImageBackground, Alert } from 'react-native';
+import { KeyboardStickyView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
 import Animated, { useAnimatedStyle, interpolate, Extrapolation } from 'react-native-reanimated';
+import ContextMenu from 'react-native-context-menu-view';
+import * as Clipboard from 'expo-clipboard';
 import { Feather } from '@expo/vector-icons';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -13,32 +15,51 @@ import { useChatStore, useEntityStore } from '../../src/store';
 import { useChatSettingsStore, GLOBAL_CHAT_SETTINGS_KEY, DEFAULT_CHAT_SETTINGS } from '../../src/store/chatSettingsStore';
 import { supabase } from '../../src/lib/supabase';
 import { mockMessages, mockConversations, formatMessageTime } from '../../src/utils/mockData';
+import { showToast } from '../../src/store/toastStore';
 import { ChatMessage } from '../../src/types';
 import { triggerHaptic } from '../../src/utils/haptics';
 
-function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily }: { message: ChatMessage; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string }) {
+function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, onAction }: { message: ChatMessage; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string; onAction: (action: string, message: ChatMessage) => void }) {
   const theme = useTheme();
   const fontFamilyStyle = fontFamily === 'mono' ? 'monospace' : fontFamily === 'serif' ? 'serif' : undefined;
 
+  const actions = isOwn
+    ? [
+        { title: 'Ответить', systemIcon: 'arrowshape.turn.up.left' },
+        { title: 'Копировать', systemIcon: 'doc.on.doc' },
+        { title: 'Редактировать', systemIcon: 'pencil' },
+        { title: 'Удалить', destructive: true, systemIcon: 'trash' },
+      ]
+    : [
+        { title: 'Ответить', systemIcon: 'arrowshape.turn.up.left' },
+        { title: 'Копировать', systemIcon: 'doc.on.doc' },
+      ];
+
+  const handlePress = (e: any) => {
+    const title = e.nativeEvent.name as string;
+    onAction(title, message);
+  };
+
   return (
-    <View style={{
-      maxWidth: '75%',
-      paddingHorizontal: 14,
-      paddingVertical: 10,
-      borderRadius: bubbleRadius,
-      marginBottom: 4,
-      backgroundColor: isOwn ? theme.colors.accent.primary : theme.colors.background.tertiary,
-      alignSelf: isOwn ? 'flex-end' : 'flex-start',
-      marginLeft: isOwn ? 0 : 16,
-      marginRight: isOwn ? 16 : 0,
-      borderBottomRightRadius: isOwn ? 4 : bubbleRadius,
-      borderBottomLeftRadius: isOwn ? bubbleRadius : 4,
-    }}>
-      <Text variant="body" color={isOwn ? '#FFFFFF' : theme.colors.text.primary} style={{ fontSize, fontFamily: fontFamilyStyle }}>{message.text}</Text>
-      <Text variant="caption" color={isOwn ? 'rgba(255,255,255,0.6)' : theme.colors.text.tertiary} style={{ marginTop: 3, alignSelf: 'flex-end', fontSize: 10 }}>
-        {formatMessageTime(message.createdAt)}
-      </Text>
-    </View>
+    <ContextMenu
+      actions={actions}
+      onPress={handlePress}
+      style={{ alignSelf: isOwn ? 'flex-end' : 'flex-start', maxWidth: '75%', marginLeft: isOwn ? 0 : 16, marginRight: isOwn ? 16 : 0, marginBottom: 4 }}
+    >
+      <View style={{
+        paddingHorizontal: 14,
+        paddingVertical: 10,
+        borderRadius: bubbleRadius,
+        backgroundColor: isOwn ? theme.colors.accent.primary : theme.colors.background.tertiary,
+        borderBottomRightRadius: isOwn ? 4 : bubbleRadius,
+        borderBottomLeftRadius: isOwn ? bubbleRadius : 4,
+      }}>
+        <Text variant="body" color={isOwn ? '#FFFFFF' : theme.colors.text.primary} style={{ fontSize, fontFamily: fontFamilyStyle }}>{message.text}</Text>
+        <Text variant="caption" color={isOwn ? 'rgba(255,255,255,0.6)' : theme.colors.text.tertiary} style={{ marginTop: 3, alignSelf: 'flex-end', fontSize: 10 }}>
+          {formatMessageTime(message.createdAt)}
+        </Text>
+      </View>
+    </ContextMenu>
   );
 }
 
@@ -49,6 +70,8 @@ export default function ChatScreen() {
   const insets = useSafeAreaInsets();
   const { id, participantId: paramParticipantId } = useLocalSearchParams<{ id: string; participantId?: string }>();
   const [inputText, setInputText] = useState('');
+  const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
+  const [editing, setEditing] = useState<ChatMessage | null>(null);
   const { messages: storeMessages, setMessages, addMessage } = useChatStore();
 
   // Keyboard animation progress on the UI thread (0 closed → 1 open), no React re-renders
@@ -78,6 +101,7 @@ export default function ChatScreen() {
   const bgTransparent = bgColor + '00';
   const headerContentHeight = insets.top + 48;
   const headerGradientHeight = headerContentHeight + 28;
+  const inputBarBottomPad = Math.max(insets.bottom, 12);
 
   // Gradient backdrop under the input fades out as the keyboard opens (UI thread, no re-render)
   const backdropStyle = useAnimatedStyle(() => ({
@@ -111,17 +135,57 @@ export default function ChatScreen() {
   const displayVerified = profileData?.is_verified || false;
   const profileId = participantId;
 
+  const handleMessageAction = useCallback((action: string, message: ChatMessage) => {
+    if (action === 'Копировать') {
+      Clipboard.setStringAsync(message.text);
+      triggerHaptic('light');
+      showToast('Скопировано', 'check');
+    } else if (action === 'Ответить') {
+      setEditing(null);
+      setReplyTo(message);
+      triggerHaptic('light');
+    } else if (action === 'Редактировать') {
+      setReplyTo(null);
+      setEditing(message);
+      setInputText(message.text);
+      triggerHaptic('light');
+    } else if (action === 'Удалить') {
+      Alert.alert('Удалить сообщение?', '', [
+        { text: 'Отмена', style: 'cancel' },
+        {
+          text: 'Удалить', style: 'destructive', onPress: () => {
+            if (!id) return;
+            const next = (storeMessages[id] || []).filter((m) => m.id !== message.id);
+            setMessages(id, next as any);
+            triggerHaptic('medium');
+          },
+        },
+      ]);
+    }
+  }, [id, storeMessages, setMessages]);
+
   const handleSend = async () => {
     if (!inputText.trim() || !id) return;
     triggerHaptic('medium');
     const text = inputText.trim();
     setInputText('');
 
+    // Editing an existing message — replace its text
+    if (editing) {
+      const next = (storeMessages[id] || []).map((m) => (m.id === editing.id ? { ...m, text } : m));
+      setMessages(id, next as any);
+      setEditing(null);
+      return;
+    }
+
+    const replyPrefix = replyTo ? `↩︎ ${replyTo.text.slice(0, 40)}\n` : '';
+    setReplyTo(null);
+
     const newMessage: ChatMessage = {
       id: 'm-' + Date.now(),
       conversationId: id,
       senderId: 'current',
-      text,
+      text: replyPrefix + text,
       createdAt: new Date().toISOString(),
       isRead: true,
     };
@@ -154,7 +218,7 @@ export default function ChatScreen() {
       }
 
       if (convId) {
-        await supabase.from('messages').insert({ conversation_id: convId, sender_id: user.id, text });
+        await supabase.from('messages').insert({ conversation_id: convId, sender_id: user.id, text: newMessage.text });
       }
 
       const store = useEntityStore.getState();
@@ -172,8 +236,9 @@ export default function ChatScreen() {
       fontSize={chatSettings.fontSize}
       bubbleRadius={chatSettings.bubbleRadius}
       fontFamily={chatSettings.fontFamily}
+      onAction={handleMessageAction}
     />
-  ), [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily]);
+  ), [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, handleMessageAction]);
 
   return (
     <View style={{ flex: 1, backgroundColor: bgColor }}>
@@ -186,49 +251,60 @@ export default function ChatScreen() {
         />
       )}
 
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0}>
-        {/* Inverted list — newest pinned at bottom, grows upward as you scroll */}
-        <FlatList
-          data={invertedData}
-          inverted
-          keyExtractor={(item) => item.id}
-          renderItem={renderItem}
-          contentContainerStyle={{ paddingTop: 8, paddingBottom: 4 }}
-          ListFooterComponent={<View style={{ height: headerContentHeight }} />}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="interactive"
-          removeClippedSubviews={false}
-          initialNumToRender={15}
-          maxToRenderPerBatch={10}
-          windowSize={9}
-        />
+      {/* Inverted list fills the WHOLE screen — messages scroll to the very bottom behind the input.
+          For an inverted list, contentContainer paddingTop is visually at the BOTTOM. */}
+      <FlatList
+        data={invertedData}
+        inverted
+        style={StyleSheet.absoluteFill}
+        keyExtractor={(item) => item.id}
+        renderItem={renderItem}
+        contentContainerStyle={{ paddingTop: inputBarBottomPad + 56, paddingBottom: headerContentHeight + 8, paddingHorizontal: 0 }}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+        removeClippedSubviews={false}
+        initialNumToRender={15}
+        maxToRenderPerBatch={10}
+        windowSize={9}
+      />
 
-        {/* Input bar — gradient dissolve backdrop fades out when keyboard opens */}
-        <View>
-          <Animated.View style={[StyleSheet.absoluteFill, backdropStyle]} pointerEvents="none">
-            <LinearGradient
-              colors={[bgTransparent, bgColor]}
-              style={StyleSheet.absoluteFill}
-            />
-          </Animated.View>
-          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: 10, paddingBottom: Math.max(insets.bottom, 12) }}>
-            <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 22, paddingHorizontal: 14, minHeight: 44, borderWidth: 1, borderColor: theme.colors.border.light }}>
-              <TextInput
-                value={inputText}
-                onChangeText={setInputText}
-                placeholder="Сообщение..."
-                placeholderTextColor={theme.colors.text.tertiary}
-                style={{ flex: 1, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular, maxHeight: 100, paddingVertical: Platform.OS === 'ios' ? 10 : 6 }}
-                multiline
-              />
+      {/* Input bar — sticks to the keyboard with no gap (UI thread) */}
+      <KeyboardStickyView offset={{ closed: 0, opened: insets.bottom }} style={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}>
+        <Animated.View style={[StyleSheet.absoluteFill, backdropStyle]} pointerEvents="none">
+          <LinearGradient colors={[bgTransparent, bgColor]} style={StyleSheet.absoluteFill} />
+        </Animated.View>
+
+        {/* Reply / edit banner */}
+        {(replyTo || editing) && (
+          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: 8, gap: 8 }}>
+            <Feather name={editing ? 'edit-2' : 'corner-up-left'} size={16} color={theme.colors.accent.primary} />
+            <View style={{ flex: 1 }}>
+              <Text variant="caption" weight="semibold" color={theme.colors.accent.primary}>{editing ? 'Редактирование' : 'Ответ'}</Text>
+              <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>{(editing || replyTo)?.text}</Text>
             </View>
-            <Pressable onPress={handleSend} style={{ marginLeft: 8, width: 44, height: 44, borderRadius: 22, backgroundColor: inputText.trim() ? theme.colors.accent.primary : theme.colors.background.elevated, alignItems: 'center', justifyContent: 'center' }}>
-              <Feather name="send" size={18} color={inputText.trim() ? '#FFFFFF' : theme.colors.text.tertiary} />
+            <Pressable onPress={() => { setReplyTo(null); setEditing(null); setInputText(''); }} hitSlop={8}>
+              <Feather name="x" size={18} color={theme.colors.text.tertiary} />
             </Pressable>
           </View>
+        )}
+
+        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: 10, paddingBottom: inputBarBottomPad }}>
+          <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 22, paddingHorizontal: 14, minHeight: 44, borderWidth: 1, borderColor: theme.colors.border.light }}>
+            <TextInput
+              value={inputText}
+              onChangeText={setInputText}
+              placeholder="Сообщение..."
+              placeholderTextColor={theme.colors.text.tertiary}
+              style={{ flex: 1, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular, maxHeight: 100, paddingVertical: Platform.OS === 'ios' ? 10 : 6 }}
+              multiline
+            />
+          </View>
+          <Pressable onPress={handleSend} style={{ marginLeft: 8, width: 44, height: 44, borderRadius: 22, backgroundColor: inputText.trim() ? theme.colors.accent.primary : theme.colors.background.elevated, alignItems: 'center', justifyContent: 'center' }}>
+            <Feather name={editing ? 'check' : 'send'} size={18} color={inputText.trim() ? '#FFFFFF' : theme.colors.text.tertiary} />
+          </Pressable>
         </View>
-      </KeyboardAvoidingView>
+      </KeyboardStickyView>
 
       {/* Gradient fade header — same as main page */}
       <View style={[styles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">
