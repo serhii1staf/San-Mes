@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, FlatList, TextInput, Pressable, KeyboardAvoidingView, Platform, StyleSheet, ImageBackground, Keyboard } from 'react-native';
+import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, ImageBackground } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { Feather } from '@expo/vector-icons';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -45,7 +46,6 @@ export default function ChatScreen() {
   const insets = useSafeAreaInsets();
   const { id, participantId: paramParticipantId } = useLocalSearchParams<{ id: string; participantId?: string }>();
   const [inputText, setInputText] = useState('');
-  const [keyboardShown, setKeyboardShown] = useState(false);
   const flatListRef = useRef<FlatList>(null);
   const { messages: storeMessages, setMessages, addMessage } = useChatStore();
   const hasScrolled = useRef(false);
@@ -72,12 +72,6 @@ export default function ChatScreen() {
   const bgTransparent = bgColor + '00';
   const headerContentHeight = insets.top + 48;
   const headerGradientHeight = headerContentHeight + 28;
-
-  useEffect(() => {
-    const showSub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', () => setKeyboardShown(true));
-    const hideSub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide', () => setKeyboardShown(false));
-    return () => { showSub.remove(); hideSub.remove(); };
-  }, []);
 
   useEffect(() => {
     if (!conversation && participantId) {
@@ -172,7 +166,7 @@ export default function ChatScreen() {
       )}
 
       {/* Messages + Input */}
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0}>
         <FlatList
           ref={flatListRef}
           style={{ flex: 1 }}
@@ -187,21 +181,21 @@ export default function ChatScreen() {
               fontFamily={chatSettings.fontFamily}
             />
           )}
-          contentContainerStyle={{ paddingTop: headerContentHeight + 8, paddingBottom: 12 }}
+          contentContainerStyle={{ paddingTop: headerContentHeight + 8, paddingBottom: 8 }}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="interactive"
         />
 
-        {/* Input bar — absolute overlay so messages scroll behind it to the very bottom */}
-        <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: 6, paddingBottom: keyboardShown ? 6 : Math.max(insets.bottom, 8), backgroundColor: 'transparent' }}>
+        {/* Input bar — normal flex child so messages stay above it; transparent outer bg lets wallpaper show */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: 6, paddingBottom: Math.max(insets.bottom, 8), backgroundColor: 'transparent' }}>
           <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 22, paddingHorizontal: 14, minHeight: 44, borderWidth: 1, borderColor: theme.colors.border.light }}>
             <TextInput
               value={inputText}
               onChangeText={setInputText}
               placeholder="Сообщение..."
               placeholderTextColor={theme.colors.text.tertiary}
-              style={{ flex: 1, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular, maxHeight: 100, paddingTop: 0, paddingBottom: 0, textAlignVertical: 'center' }}
+              style={{ flex: 1, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular, maxHeight: 100, paddingVertical: Platform.OS === 'ios' ? 10 : 6 }}
               multiline
             />
           </View>
