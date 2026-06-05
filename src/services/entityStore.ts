@@ -255,6 +255,10 @@ export const useEntityStore = create<EntityState>()((set, get) => ({
 
   setConversations: (convs: LocalConversation[]) => {
     set({ conversations: convs });
+    // Persist to cache so conversations survive app restart (even offline)
+    import('./cacheService').then(({ cacheConversations }) => {
+      cacheConversations(convs).catch(() => {});
+    }).catch(() => {});
   },
 
   replaceTempPost: (tempId: string, realPost: LocalPost) => {

@@ -5,7 +5,6 @@ import { Feather } from '@expo/vector-icons';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import { BlurView } from 'expo-blur';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
@@ -83,13 +82,21 @@ export default function ChatScreen() {
     return () => { showSub.remove(); hideSub.remove(); };
   }, []);
 
+  // Prefer cached profile data from entityStore (works offline); only hit network as fallback
+  const cachedProfile = useEntityStore((s) => (participantId ? s.profiles[participantId] : undefined));
+
   useEffect(() => {
-    if (!conversation && participantId) {
+    if (conversation) return;
+    if (cachedProfile) {
+      setProfileData(cachedProfile);
+      return;
+    }
+    if (participantId) {
       supabase.from('profiles').select('*').eq('id', participantId).single().then(({ data }) => {
         if (data) setProfileData(data);
-      });
+      }).catch(() => {});
     }
-  }, [participantId, conversation]);
+  }, [participantId, conversation, cachedProfile]);
 
   useEffect(() => {
     if (id && mockMessages[id]) {
@@ -195,16 +202,14 @@ export default function ChatScreen() {
           windowSize={9}
         />
 
-        {/* Input bar — blur backdrop when keyboard is closed, transparent (wallpaper) when typing */}
+        {/* Input bar — gradient dissolve backdrop, same as bottom navigation */}
         <View>
-          {!keyboardVisible && (
-            <BlurView
-              intensity={Platform.OS === 'ios' ? 60 : 40}
-              tint={theme.isDark ? 'dark' : 'light'}
-              style={StyleSheet.absoluteFill}
-            />
-          )}
-          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: 8, paddingBottom: keyboardVisible ? 14 : Math.max(insets.bottom, 10) }}>
+          <LinearGradient
+            colors={[bgTransparent, bgColor]}
+            style={StyleSheet.absoluteFill}
+            pointerEvents="none"
+          />
+          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: 10, paddingBottom: keyboardVisible ? 14 : Math.max(insets.bottom, 12) }}>
             <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 22, paddingHorizontal: 14, minHeight: 44, borderWidth: 1, borderColor: theme.colors.border.light }}>
               <TextInput
                 value={inputText}
@@ -230,14 +235,14 @@ export default function ChatScreen() {
           <Pressable onPress={() => router.back()} style={[styles.headerCircle, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
             <Feather name="chevron-left" size={22} color={theme.colors.text.primary} />
           </Pressable>
-          {/* Name (center) */}
-          <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId } })} style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
-            <Text variant="body" weight="bold" numberOfLines={1}>{displayName}</Text>
-            {displayVerified && <VerifiedBadge size={13} />}
+          {/* Name (center) inside a pill container */}
+          <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId } })} style={[styles.headerPill, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
+            <Text variant="caption" weight="semibold" numberOfLines={1}>{displayName}</Text>
+            {displayVerified && <VerifiedBadge size={12} />}
           </Pressable>
-          {/* Avatar (right) */}
-          <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId } })}>
-            <Avatar emoji={displayEmoji} name={displayName} size="sm" />
+          {/* Avatar (right) inside a pill container */}
+          <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId } })} style={[styles.headerCircle, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light, overflow: 'hidden' }]}>
+            <Avatar emoji={displayEmoji} name={displayName} size="xs" />
           </Pressable>
         </View>
       </View>
@@ -247,6 +252,7 @@ export default function ChatScreen() {
 
 const styles = StyleSheet.create({
   headerWrapper: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100 },
-  headerContent: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingBottom: 8, gap: 12 },
+  headerContent: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingBottom: 8, gap: 10 },
   headerCircle: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
+  headerPill: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, height: 36, borderRadius: 18, borderWidth: 1, paddingHorizontal: 14 },
 });
