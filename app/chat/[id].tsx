@@ -292,7 +292,7 @@ export default function ChatScreen() {
       />
 
       {/* Input bar sticks to the keyboard */}
-      <KeyboardStickyView offset={{ closed: 0, opened: insets.bottom + 8 }} style={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}>
+      <KeyboardStickyView offset={{ closed: 0, opened: insets.bottom + 18 }} style={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}>
         <Reanimated.View style={[StyleSheet.absoluteFill, backdropStyle]} pointerEvents="none">
           <LinearGradient colors={[bgTransparent, bgColor]} style={StyleSheet.absoluteFill} />
         </Reanimated.View>
