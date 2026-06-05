@@ -112,11 +112,11 @@ export function PostContextMenu({ visible, post, isOwnPost, onClose, onDelete }:
                 <Avatar emoji={post.authorEmoji} size="sm" />
                 <View style={{ marginLeft: 10, flex: 1 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-                    <Text variant="caption" weight="semibold">{post.authorName}</Text>
+                    <Text variant="caption" weight="semibold" numberOfLines={1} style={{ flexShrink: 1 }}>{post.authorName}</Text>
                     {post.authorVerified && <VerifiedBadge size={10} />}
                     {post.authorBadge && <UserBadge badge={post.authorBadge} size="sm" />}
                   </View>
-                  <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 10 }}>@{post.authorUsername} · {formatTimeAgo(post.createdAt)}</Text>
+                  <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 10 }}>@{post.authorUsername} · {formatTimeAgo(post.createdAt)}</Text>
                 </View>
               </View>
               {/* Content with formatting */}
@@ -126,7 +126,7 @@ export function PostContextMenu({ visible, post, isOwnPost, onClose, onDelete }:
                 <View style={{ borderWidth: 1, borderColor: theme.colors.border.light, borderRadius: 14, padding: 10, marginBottom: 8, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)' }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, marginBottom: 4 }}>
                     <Avatar emoji={post.originalPost.authorEmoji} size="xs" />
-                    <Text variant="caption" weight="semibold" style={{ marginLeft: 4 }}>{post.originalPost.authorName}</Text>
+                    <Text variant="caption" weight="semibold" numberOfLines={1} style={{ marginLeft: 4, flexShrink: 1 }}>{post.originalPost.authorName}</Text>
                     {post.originalPost.authorVerified && <VerifiedBadge size={9} />}
                   </View>
                   {post.originalPost.content ? <FormattedText style={{ fontSize: 12 }} color={theme.colors.text.secondary}>{post.originalPost.content}</FormattedText> : null}

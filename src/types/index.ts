@@ -69,6 +69,7 @@ export interface ChatMessage {
   replyToId?: string;
   replyToText?: string;
   replyToIsOwn?: boolean;
+  imageUrls?: string[];
 }
 
 export interface Conversation {
@@ -78,6 +79,7 @@ export interface Conversation {
   participantUsername: string;
   participantAvatar?: string;
   participantEmoji?: string;
+  participantVerified?: boolean;
   lastMessage?: string;
   lastMessageAt?: string;
   unreadCount: number;

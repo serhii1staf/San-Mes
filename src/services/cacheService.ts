@@ -35,6 +35,7 @@ export interface LocalConversation {
   participantName: string;
   participantUsername: string;
   participantEmoji: string;
+  participantVerified?: boolean;
   lastMessage?: string;
   lastMessageAt?: string;
 }

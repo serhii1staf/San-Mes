@@ -135,7 +135,7 @@ export function PostMenuModal({ visible, post, onClose }: PostMenuModalProps) {
                 <Avatar emoji={previewEmoji} size="sm" />
                 <View style={{ marginLeft: 10, flex: 1 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-                    <Text variant="caption" weight="semibold" numberOfLines={1}>{previewName}</Text>
+                    <Text variant="caption" weight="semibold" numberOfLines={1} style={{ flexShrink: 1 }}>{previewName}</Text>
                     {post.authorVerified && <VerifiedBadge size={11} />}
                     {post.authorBadge && <UserBadge badge={post.authorBadge} size="sm" />}
                   </View>

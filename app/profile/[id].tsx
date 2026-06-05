@@ -175,9 +175,9 @@ function ProfileMenuModal({ visible, profile, onClose }: { visible: boolean; pro
                   <View style={{ paddingHorizontal: 20, paddingVertical: 12 }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                       <Avatar emoji={profile.emoji || '😊'} size="lg" />
-                      <View style={{ marginLeft: 12, flex: 1 }}>
+                      <View style={{ marginLeft: 12, flex: 1, marginRight: 12 }}>
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                          <Text variant="body" weight="bold" numberOfLines={1}>{profile.display_name}</Text>
+                          <Text variant="body" weight="bold" numberOfLines={1} style={{ flexShrink: 1 }}>{profile.display_name}</Text>
                           {profile.is_verified && <VerifiedBadge size={13} />}
                           {profile.badge && <UserBadge badge={profile.badge} size="sm" />}
                         </View>

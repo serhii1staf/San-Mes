@@ -107,9 +107,12 @@ function ConversationItem({ item, isArchived }: { item: Conversation; index: num
       >
         <Avatar emoji={item.participantEmoji} name={item.participantName} size="md" />
         <View style={{ flex: 1, marginLeft: 12 }}>
-          <Text variant="body" weight={item.unreadCount > 0 ? 'semibold' : 'regular'} numberOfLines={1}>
-            {item.participantName}
-          </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+            <Text variant="body" weight={item.unreadCount > 0 ? 'semibold' : 'regular'} numberOfLines={1} style={{ flexShrink: 1 }}>
+              {item.participantName}
+            </Text>
+            {item.participantVerified && <VerifiedBadge size={13} />}
+          </View>
           {item.lastMessage ? (
             <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
               <Text
@@ -167,6 +170,7 @@ export default function MessagesScreen() {
   // Use entityStore conversations as cache layer; fall back to chatStore if empty
   const conversations: Conversation[] = useMemo(() => {
     if (entityConversations.length > 0) {
+      const profiles = useEntityStore.getState().profiles;
       // Map LocalConversation to Conversation type with defaults for missing fields
       return entityConversations.map((c) => ({
         id: c.id,
@@ -174,6 +178,7 @@ export default function MessagesScreen() {
         participantName: c.participantName,
         participantUsername: c.participantUsername,
         participantEmoji: c.participantEmoji,
+        participantVerified: (c as any).participantVerified ?? profiles[c.participantId]?.is_verified ?? false,
         lastMessage: c.lastMessage || '',
         lastMessageAt: c.lastMessageAt || '',
         unreadCount: 0,

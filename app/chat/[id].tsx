@@ -1,28 +1,31 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, ImageBackground, Alert, Animated, PanResponder } from 'react-native';
-import { KeyboardAvoidingView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
+import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, ImageBackground, Alert, Animated, PanResponder, Modal, StatusBar, Dimensions } from 'react-native';
+import { KeyboardStickyView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
 import Reanimated, { useAnimatedStyle, interpolate, Extrapolation } from 'react-native-reanimated';
 import * as Clipboard from 'expo-clipboard';
+import * as ImagePicker from 'expo-image-picker';
 import { Feather } from '@expo/vector-icons';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
+import { CachedImage } from '../../src/components/ui/CachedImage';
 import { FormattedText } from '../../src/components/ui/FormattedText';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { MessageContextMenu, MessageAction } from '../../src/components/ui/MessageContextMenu';
 import { useChatStore, useEntityStore } from '../../src/store';
 import { useChatSettingsStore, GLOBAL_CHAT_SETTINGS_KEY, DEFAULT_CHAT_SETTINGS } from '../../src/store/chatSettingsStore';
-import { supabase } from '../../src/lib/supabase';
+import { supabase, uploadChatImage } from '../../src/lib/supabase';
 import { mockMessages, mockConversations, formatMessageTime } from '../../src/utils/mockData';
 import { showToast } from '../../src/store/toastStore';
 import { ChatMessage } from '../../src/types';
 import { triggerHaptic } from '../../src/utils/haptics';
 
 const REPLY_THRESHOLD = 60;
+const SCREEN_WIDTH = Dimensions.get('window').width;
 
-function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, onReply, onLongPress, onSwipeActive }: { message: ChatMessage; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string; onReply: (m: ChatMessage) => void; onLongPress: (m: ChatMessage) => void; onSwipeActive: (active: boolean) => void }) {
+function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, onReply, onLongPress, onSwipeActive, onImagePress }: { message: ChatMessage; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string; onReply: (m: ChatMessage) => void; onLongPress: (m: ChatMessage) => void; onSwipeActive: (active: boolean) => void; onImagePress: (images: string[], index: number) => void }) {
   const theme = useTheme();
   const fontFamilyStyle = fontFamily === 'mono' ? 'monospace' : fontFamily === 'serif' ? 'serif' : undefined;
   const translateX = useRef(new Animated.Value(0)).current;
@@ -81,7 +84,18 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, onR
                 </Text>
               </View>
             ) : null}
-            <FormattedText color={isOwn ? '#FFFFFF' : theme.colors.text.primary} linkColor={isOwn ? '#FFFFFF' : theme.colors.accent.primary} style={{ fontSize, fontFamily: fontFamilyStyle }}>{message.text}</FormattedText>
+            {message.imageUrls && message.imageUrls.length > 0 ? (
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginBottom: message.text ? 6 : 0 }}>
+                {message.imageUrls.map((uri, idx) => (
+                  <Pressable key={idx} onPress={() => onImagePress(message.imageUrls!, idx)}>
+                    <CachedImage uri={uri} style={{ width: message.imageUrls!.length === 1 ? 200 : 120, height: message.imageUrls!.length === 1 ? 200 : 120, borderRadius: 12 }} resizeMode="cover" />
+                  </Pressable>
+                ))}
+              </View>
+            ) : null}
+            {message.text ? (
+              <FormattedText color={isOwn ? '#FFFFFF' : theme.colors.text.primary} linkColor={isOwn ? '#FFFFFF' : theme.colors.accent.primary} style={{ fontSize, fontFamily: fontFamilyStyle }}>{message.text}</FormattedText>
+            ) : null}
             <Text variant="caption" color={isOwn ? 'rgba(255,255,255,0.6)' : theme.colors.text.tertiary} style={{ marginTop: 3, alignSelf: 'flex-end', fontSize: 10 }}>
               {formatMessageTime(message.createdAt)}
             </Text>
@@ -103,6 +117,9 @@ export default function ChatScreen() {
   const [editing, setEditing] = useState<ChatMessage | null>(null);
   const [menuMessage, setMenuMessage] = useState<ChatMessage | null>(null);
   const [scrollEnabled, setScrollEnabled] = useState(true);
+  const [pendingImages, setPendingImages] = useState<string[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [viewerImages, setViewerImages] = useState<{ images: string[]; index: number } | null>(null);
   const { messages: storeMessages, setMessages, addMessage } = useChatStore();
   const flatListRef = useRef<FlatList>(null);
 
@@ -133,6 +150,11 @@ export default function ChatScreen() {
   // Gradient backdrop fades out as keyboard opens (UI thread)
   const backdropStyle = useAnimatedStyle(() => ({
     opacity: interpolate(progress.value, [0, 1], [1, 0], Extrapolation.CLAMP),
+  }));
+
+  // Input bottom padding: safe-area when keyboard closed → small gap when open (UI thread, no re-render)
+  const inputRowStyle = useAnimatedStyle(() => ({
+    paddingBottom: interpolate(progress.value, [0, 1], [inputBarBottomPad, 10], Extrapolation.CLAMP),
   }));
 
   const cachedProfile = useEntityStore((s) => (participantId ? s.profiles[participantId] : undefined));
@@ -166,6 +188,23 @@ export default function ChatScreen() {
     triggerHaptic('light');
   }, []);
 
+  const pickImages = useCallback(async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsMultipleSelection: true,
+      selectionLimit: 6,
+      quality: 1,
+    });
+    if (!result.canceled && result.assets.length > 0) {
+      setPendingImages((prev) => [...prev, ...result.assets.map((a) => a.uri)].slice(0, 6));
+      triggerHaptic('light');
+    }
+  }, []);
+
+  const openImageViewer = useCallback((images: string[], index: number) => {
+    setViewerImages({ images, index });
+  }, []);
+
   const handleMenuAction = useCallback((action: MessageAction, message: ChatMessage) => {
     if (action === 'copy') {
       Clipboard.setStringAsync(message.text);
@@ -191,7 +230,8 @@ export default function ChatScreen() {
   }, [id, storeMessages, setMessages, startReply]);
 
   const handleSend = async () => {
-    if (!inputText.trim() || !id) return;
+    const hasImages = pendingImages.length > 0;
+    if ((!inputText.trim() && !hasImages) || !id) return;
     triggerHaptic('medium');
     const text = inputText.trim();
     setInputText('');
@@ -205,6 +245,9 @@ export default function ChatScreen() {
     const currentReply = replyTo;
     setReplyTo(null);
 
+    const localImages = pendingImages;
+    setPendingImages([]);
+
     const newMessage: ChatMessage = {
       id: 'm-' + Date.now(),
       conversationId: id,
@@ -215,9 +258,26 @@ export default function ChatScreen() {
       replyToId: currentReply?.id,
       replyToText: currentReply?.text,
       replyToIsOwn: currentReply ? currentReply.senderId === 'current' : undefined,
+      imageUrls: localImages.length > 0 ? localImages : undefined,
     };
     addMessage(id, newMessage);
     scrollToEnd();
+
+    // Upload images in the background, then swap local URIs for remote URLs
+    let uploadedUrls: string[] = [];
+    if (localImages.length > 0) {
+      setUploading(true);
+      try {
+        const results = await Promise.all(localImages.map((uri) => uploadChatImage(uri)));
+        uploadedUrls = results.map((r) => r.url).filter(Boolean) as string[];
+        if (uploadedUrls.length > 0) {
+          setMessages(id, (useChatStore.getState().messages[id] || []).map((m) =>
+            m.id === newMessage.id ? { ...m, imageUrls: uploadedUrls } : m
+          ) as any);
+        }
+      } catch {}
+      setUploading(false);
+    }
 
     try {
       const { useAuthStore, useEntityStore } = await import('../../src/store');
@@ -246,7 +306,9 @@ export default function ChatScreen() {
       }
 
       if (convId) {
-        await supabase.from('messages').insert({ conversation_id: convId, sender_id: user.id, text });
+        // Encode attached images into the stored text with a marker so it round-trips without schema changes
+        const imageMarker = uploadedUrls.length > 0 ? `::img::${uploadedUrls.join('|')}::` : '';
+        await supabase.from('messages').insert({ conversation_id: convId, sender_id: user.id, text: imageMarker + text });
       }
 
       const store = useEntityStore.getState();
@@ -259,18 +321,31 @@ export default function ChatScreen() {
 
   const handleSwipeActive = useCallback((active: boolean) => setScrollEnabled(!active), []);
 
-  const renderItem = useCallback(({ item }: { item: ChatMessage }) => (
-    <MemoMessageBubble
-      message={item}
-      isOwn={item.senderId === 'current'}
-      fontSize={chatSettings.fontSize}
-      bubbleRadius={chatSettings.bubbleRadius}
-      fontFamily={chatSettings.fontFamily}
-      onReply={startReply}
-      onLongPress={setMenuMessage}
-      onSwipeActive={handleSwipeActive}
-    />
-  ), [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, startReply, handleSwipeActive]);
+  // Parse the ::img::url1|url2:: marker for messages coming from the DB
+  const parseMessage = useCallback((m: ChatMessage): ChatMessage => {
+    if (m.imageUrls || !m.text?.startsWith('::img::')) return m;
+    const end = m.text.indexOf('::', 7);
+    if (end === -1) return m;
+    const urls = m.text.slice(7, end).split('|').filter(Boolean);
+    return { ...m, imageUrls: urls.length ? urls : undefined, text: m.text.slice(end + 2) };
+  }, []);
+
+  const renderItem = useCallback(({ item }: { item: ChatMessage }) => {
+    const m = parseMessage(item);
+    return (
+      <MemoMessageBubble
+        message={m}
+        isOwn={m.senderId === 'current'}
+        fontSize={chatSettings.fontSize}
+        bubbleRadius={chatSettings.bubbleRadius}
+        fontFamily={chatSettings.fontFamily}
+        onReply={startReply}
+        onLongPress={setMenuMessage}
+        onSwipeActive={handleSwipeActive}
+        onImagePress={openImageViewer}
+      />
+    );
+  }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, startReply, handleSwipeActive, openImageViewer, parseMessage]);
 
   const banner = editing || replyTo;
   const menuIsOwn = menuMessage?.senderId === 'current';
@@ -281,62 +356,78 @@ export default function ChatScreen() {
         <ImageBackground source={{ uri: chatSettings.backgroundImage }} style={StyleSheet.absoluteFill} resizeMode="cover" />
       )}
 
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0}>
-        {/* Messages: normal flow, newest at the bottom; scroll always works */}
-        <FlatList
-          ref={flatListRef}
-          data={chatMessages}
-          keyExtractor={(item) => item.id}
-          renderItem={renderItem}
-          contentContainerStyle={{ flexGrow: 1, justifyContent: 'flex-end', paddingTop: headerContentHeight + 8, paddingBottom: 8 }}
-          showsVerticalScrollIndicator={false}
-          scrollEnabled={scrollEnabled}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="interactive"
-          removeClippedSubviews={false}
-          initialNumToRender={15}
-          maxToRenderPerBatch={10}
-          windowSize={9}
-          onContentSizeChange={() => scrollToEnd(false)}
-        />
+      {/* Messages fill the screen; newest at the bottom; scroll behind the input to the very bottom */}
+      <FlatList
+        ref={flatListRef}
+        data={chatMessages}
+        style={StyleSheet.absoluteFill}
+        keyExtractor={(item) => item.id}
+        renderItem={renderItem}
+        contentContainerStyle={{ flexGrow: 1, justifyContent: 'flex-end', paddingTop: headerContentHeight + 8, paddingBottom: inputBarBottomPad + 60 }}
+        showsVerticalScrollIndicator={false}
+        scrollEnabled={scrollEnabled}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+        removeClippedSubviews={false}
+        initialNumToRender={15}
+        maxToRenderPerBatch={10}
+        windowSize={9}
+        onContentSizeChange={() => scrollToEnd(false)}
+      />
 
-        {/* Input bar — normal flex child below the list */}
-        <View>
-          <Reanimated.View style={[StyleSheet.absoluteFill, backdropStyle]} pointerEvents="none">
-            <LinearGradient colors={[bgTransparent, bgColor]} style={StyleSheet.absoluteFill} />
-          </Reanimated.View>
+      {/* Input bar sticks to the keyboard top; animated bottom padding gives the gap */}
+      <KeyboardStickyView offset={{ closed: 0, opened: 0 }} style={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}>
+        <Reanimated.View style={[StyleSheet.absoluteFill, backdropStyle]} pointerEvents="none">
+          <LinearGradient colors={[bgTransparent, bgColor]} style={StyleSheet.absoluteFill} />
+        </Reanimated.View>
 
-          {banner && (
-            <View style={{ marginHorizontal: 12, marginTop: 6, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: theme.colors.background.elevated, borderRadius: 12, borderWidth: 1, borderColor: theme.colors.border.light, paddingHorizontal: 12, paddingVertical: 6 }}>
-              <View style={{ width: 3, alignSelf: 'stretch', borderRadius: 2, backgroundColor: theme.colors.accent.primary }} />
-              <Feather name={editing ? 'edit-2' : 'corner-up-left'} size={15} color={theme.colors.accent.primary} />
-              <View style={{ flex: 1 }}>
-                <Text variant="caption" weight="semibold" color={theme.colors.accent.primary} style={{ fontSize: 12 }}>{editing ? 'Редактирование' : 'Ответ на сообщение'}</Text>
-                <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 12 }}>{banner.text}</Text>
-              </View>
-              <Pressable onPress={() => { setReplyTo(null); setEditing(null); setInputText(''); }} hitSlop={8}>
-                <Feather name="x" size={18} color={theme.colors.text.tertiary} />
-              </Pressable>
+        {banner && (
+          <View style={{ marginHorizontal: 12, marginTop: 6, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: theme.colors.background.elevated, borderRadius: 12, borderWidth: 1, borderColor: theme.colors.border.light, paddingHorizontal: 12, paddingVertical: 6 }}>
+            <View style={{ width: 3, alignSelf: 'stretch', borderRadius: 2, backgroundColor: theme.colors.accent.primary }} />
+            <Feather name={editing ? 'edit-2' : 'corner-up-left'} size={15} color={theme.colors.accent.primary} />
+            <View style={{ flex: 1 }}>
+              <Text variant="caption" weight="semibold" color={theme.colors.accent.primary} style={{ fontSize: 12 }}>{editing ? 'Редактирование' : 'Ответ на сообщение'}</Text>
+              <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 12 }}>{banner.text}</Text>
             </View>
-          )}
-
-          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: 8, paddingBottom: inputBarBottomPad }}>
-            <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 22, paddingHorizontal: 14, minHeight: 44, borderWidth: 1, borderColor: theme.colors.border.light }}>
-              <TextInput
-                value={inputText}
-                onChangeText={setInputText}
-                placeholder="Сообщение..."
-                placeholderTextColor={theme.colors.text.tertiary}
-                style={{ flex: 1, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular, maxHeight: 100, paddingVertical: Platform.OS === 'ios' ? 10 : 6 }}
-                multiline
-              />
-            </View>
-            <Pressable onPress={handleSend} style={{ marginLeft: 8, width: 44, height: 44, borderRadius: 22, backgroundColor: inputText.trim() ? theme.colors.accent.primary : theme.colors.background.elevated, alignItems: 'center', justifyContent: 'center' }}>
-              <Feather name={editing ? 'check' : 'send'} size={18} color={inputText.trim() ? '#FFFFFF' : theme.colors.text.tertiary} />
+            <Pressable onPress={() => { setReplyTo(null); setEditing(null); setInputText(''); }} hitSlop={8}>
+              <Feather name="x" size={18} color={theme.colors.text.tertiary} />
             </Pressable>
           </View>
-        </View>
-      </KeyboardAvoidingView>
+        )}
+
+        {/* Pending image attachments preview */}
+        {pendingImages.length > 0 && (
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 16, paddingTop: 8 }}>
+            {pendingImages.map((uri, idx) => (
+              <View key={idx} style={{ position: 'relative' }}>
+                <CachedImage uri={uri} style={{ width: 60, height: 60, borderRadius: 10 }} resizeMode="cover" />
+                <Pressable onPress={() => setPendingImages((prev) => prev.filter((_, i) => i !== idx))} style={{ position: 'absolute', top: -6, right: -6, width: 22, height: 22, borderRadius: 11, backgroundColor: 'rgba(0,0,0,0.7)', alignItems: 'center', justifyContent: 'center' }}>
+                  <Feather name="x" size={13} color="#FFFFFF" />
+                </Pressable>
+              </View>
+            ))}
+          </View>
+        )}
+
+        <Reanimated.View style={[{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: 8 }, inputRowStyle]}>
+          <Pressable onPress={pickImages} style={{ width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', marginRight: 6 }}>
+            <Feather name="image" size={22} color={theme.colors.accent.primary} />
+          </Pressable>
+          <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 22, paddingHorizontal: 14, minHeight: 44, borderWidth: 1, borderColor: theme.colors.border.light }}>
+            <TextInput
+              value={inputText}
+              onChangeText={setInputText}
+              placeholder="Сообщение..."
+              placeholderTextColor={theme.colors.text.tertiary}
+              style={{ flex: 1, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular, maxHeight: 100, paddingVertical: Platform.OS === 'ios' ? 10 : 6 }}
+              multiline
+            />
+          </View>
+          <Pressable onPress={handleSend} style={{ marginLeft: 8, width: 44, height: 44, borderRadius: 22, backgroundColor: (inputText.trim() || pendingImages.length > 0) ? theme.colors.accent.primary : theme.colors.background.elevated, alignItems: 'center', justifyContent: 'center' }}>
+            <Feather name={editing ? 'check' : 'send'} size={18} color={(inputText.trim() || pendingImages.length > 0) ? '#FFFFFF' : theme.colors.text.tertiary} />
+          </Pressable>
+        </Reanimated.View>
+      </KeyboardStickyView>
 
       {/* Gradient fade header */}
       <View style={[styles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">
@@ -368,6 +459,33 @@ export default function ChatScreen() {
         onClose={() => setMenuMessage(null)}
         onAction={handleMenuAction}
       />
+
+      {/* Fullscreen image viewer */}
+      <Modal visible={!!viewerImages} transparent animationType="fade" onRequestClose={() => setViewerImages(null)} statusBarTranslucent>
+        <StatusBar hidden />
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.95)' }}>
+          <Pressable onPress={() => setViewerImages(null)} style={{ position: 'absolute', top: insets.top + 12, right: 16, zIndex: 10, width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' }}>
+            <Feather name="x" size={20} color="#FFFFFF" />
+          </Pressable>
+          {viewerImages && (
+            <FlatList
+              data={viewerImages.images}
+              horizontal
+              pagingEnabled
+              initialScrollIndex={viewerImages.index}
+              getItemLayout={(_, index) => ({ length: SCREEN_WIDTH, offset: SCREEN_WIDTH * index, index })}
+              keyExtractor={(uri, i) => uri + i}
+              showsHorizontalScrollIndicator={false}
+              style={{ flex: 1 }}
+              renderItem={({ item }) => (
+                <View style={{ width: SCREEN_WIDTH, height: '100%', justifyContent: 'center', alignItems: 'center' }}>
+                  <CachedImage uri={item} style={{ width: SCREEN_WIDTH, height: SCREEN_WIDTH }} resizeMode="contain" />
+                </View>
+              )}
+            />
+          )}
+        </View>
+      </Modal>
     </View>
   );
 }

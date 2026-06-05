@@ -20,6 +20,54 @@ const storageClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
 
 export { SUPABASE_URL, SUPABASE_ANON_KEY };
 
+// Upload a chat image: aggressively compressed (resized + JPEG quality) to keep files in KB, not MB.
+// GIFs are uploaded as-is to preserve animation.
+export async function uploadChatImage(imageUri: string): Promise<{ url: string | null; error: string | null }> {
+  try {
+    const ext = imageUri.split('.').pop()?.toLowerCase() || 'jpg';
+    const isGif = ext === 'gif';
+    let finalUri = imageUri;
+    let contentType = 'image/jpeg';
+    let fileExt = 'jpg';
+
+    if (isGif) {
+      // Keep GIFs untouched so the animation survives
+      contentType = 'image/gif';
+      fileExt = 'gif';
+    } else {
+      // Resize to max 1280px on the long edge + compress to ~0.5 quality → typically tens of KB
+      try {
+        const { manipulateAsync, SaveFormat } = await import('expo-image-manipulator');
+        const result = await manipulateAsync(imageUri, [{ resize: { width: 1280 } }], { compress: 0.5, format: SaveFormat.JPEG });
+        finalUri = result.uri;
+      } catch {
+        // Fall back to original if manipulation fails
+      }
+    }
+
+    const filename = `chat_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.${fileExt}`;
+    const formData = new FormData();
+    formData.append('', { uri: finalUri, name: filename, type: contentType } as any);
+
+    const uploadUrl = `${SUPABASE_URL}/storage/v1/object/post-images/${filename}`;
+    const response = await fetch(uploadUrl, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}`, 'x-upsert': 'true' },
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      return { url: null, error: `Upload failed: ${errText}` };
+    }
+
+    const { data } = supabase.storage.from('post-images').getPublicUrl(filename);
+    return { url: data.publicUrl, error: null };
+  } catch (e: any) {
+    return { url: null, error: e?.message || 'Unknown error' };
+  }
+}
+
 // Upload post image to storage, return public URL
 export async function uploadPostImage(imageUri: string): Promise<{ url: string | null; error: string | null }> {
   try {
@@ -316,7 +364,7 @@ export async function getConversations(userId: string): Promise<{ conversations:
     .select(`
       conversation_id,
       conversations:conversation_id (id, created_at),
-      profiles:user_id (id, username, display_name, emoji)
+      profiles:user_id (id, username, display_name, emoji, is_verified)
     `)
     .neq('user_id', userId);
 

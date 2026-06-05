@@ -267,6 +267,7 @@ export async function syncConversations(userId: string): Promise<void> {
         participantName: profile?.display_name || '',
         participantUsername: profile?.username || '',
         participantEmoji: profile?.emoji || '😀',
+        participantVerified: profile?.is_verified || false,
       };
     });
 
