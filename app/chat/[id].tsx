@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, ImageBackground, Alert, Animated, PanResponder, Modal, StatusBar, Dimensions } from 'react-native';
-import { KeyboardAvoidingView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
+import { KeyboardStickyView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
 import Reanimated, { useAnimatedStyle, interpolate, Extrapolation } from 'react-native-reanimated';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
@@ -128,7 +128,7 @@ export default function ChatScreen() {
   const { messages: storeMessages, setMessages, addMessage } = useChatStore();
   const flatListRef = useRef<FlatList>(null);
 
-  const { progress } = useReanimatedKeyboardAnimation();
+  const { progress, height: keyboardHeight } = useReanimatedKeyboardAnimation();
 
   const conversation = mockConversations.find((c) => c.id === id);
   const [profileData, setProfileData] = useState<any>(null);
@@ -155,6 +155,16 @@ export default function ChatScreen() {
   // Gradient backdrop fades out as keyboard opens (UI thread)
   const backdropStyle = useAnimatedStyle(() => ({
     opacity: interpolate(progress.value, [0, 1], [1, 0], Extrapolation.CLAMP),
+  }));
+
+  // Input row bottom padding: safe-area when keyboard closed → small gap when open (UI thread)
+  const inputRowStyle = useAnimatedStyle(() => ({
+    paddingBottom: interpolate(progress.value, [0, 1], [inputBarBottomPad, 8], Extrapolation.CLAMP),
+  }));
+
+  // List bottom spacer grows with the keyboard so the newest messages stay reachable (UI thread)
+  const listFooterStyle = useAnimatedStyle(() => ({
+    height: Math.abs(keyboardHeight.value) + 64,
   }));
 
   const cachedProfile = useEntityStore((s) => (participantId ? s.profiles[participantId] : undefined));
@@ -373,82 +383,82 @@ export default function ChatScreen() {
         <ImageBackground source={{ uri: chatSettings.backgroundImage }} style={StyleSheet.absoluteFill} resizeMode="cover" />
       )}
 
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0}>
-        {/* Messages: normal flow, newest pinned to bottom; lifts smoothly with the keyboard */}
-        <FlatList
-          ref={flatListRef}
-          data={chatMessages}
-          keyExtractor={(item) => item.id}
-          renderItem={renderItem}
-          contentContainerStyle={{ flexGrow: 1, justifyContent: 'flex-end', paddingTop: headerContentHeight + 8, paddingBottom: 8 }}
-          showsVerticalScrollIndicator={false}
-          scrollEnabled={scrollEnabled}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="interactive"
-          removeClippedSubviews={false}
-          initialNumToRender={15}
-          maxToRenderPerBatch={10}
-          windowSize={9}
-          onContentSizeChange={() => scrollToEnd(false)}
-        />
+      {/* Messages fill the whole screen; newest at the bottom; scroll behind the input to the very bottom */}
+      <FlatList
+        ref={flatListRef}
+        data={chatMessages}
+        style={StyleSheet.absoluteFill}
+        keyExtractor={(item) => item.id}
+        renderItem={renderItem}
+        contentContainerStyle={{ flexGrow: 1, justifyContent: 'flex-end', paddingTop: headerContentHeight + 8 }}
+        ListFooterComponent={<Reanimated.View style={listFooterStyle} />}
+        showsVerticalScrollIndicator={false}
+        scrollEnabled={scrollEnabled}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+        removeClippedSubviews={false}
+        initialNumToRender={15}
+        maxToRenderPerBatch={10}
+        windowSize={9}
+        onContentSizeChange={() => scrollToEnd(false)}
+      />
 
-        {/* Input bar — flex child below the list; gradient dissolve backdrop above it */}
-        <View>
-          <Reanimated.View style={[StyleSheet.absoluteFill, backdropStyle]} pointerEvents="none">
-            <LinearGradient colors={[bgTransparent, bgColor]} style={StyleSheet.absoluteFill} />
-          </Reanimated.View>
+      {/* Input bar sticks to the keyboard top; animated bottom padding keeps a comfortable gap */}
+      <KeyboardStickyView offset={{ closed: 0, opened: 0 }} style={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}>
+        <Reanimated.View style={[StyleSheet.absoluteFill, backdropStyle]} pointerEvents="none">
+          <LinearGradient colors={[bgTransparent, bgColor]} style={StyleSheet.absoluteFill} />
+        </Reanimated.View>
 
-          {banner && (
-            <View style={{ marginHorizontal: 12, marginTop: 6, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: theme.colors.background.elevated, borderRadius: 12, borderWidth: 1, borderColor: theme.colors.border.light, paddingHorizontal: 12, paddingVertical: 6 }}>
-              <View style={{ width: 3, alignSelf: 'stretch', borderRadius: 2, backgroundColor: theme.colors.accent.primary }} />
-              <Feather name={editing ? 'edit-2' : 'corner-up-left'} size={15} color={theme.colors.accent.primary} />
-              {banner.imageUrls && banner.imageUrls.length > 0 ? (
-                <CachedImage uri={banner.imageUrls[0]} style={{ width: 32, height: 32, borderRadius: 6 }} resizeMode="cover" />
-              ) : null}
-              <View style={{ flex: 1 }}>
-                <Text variant="caption" weight="semibold" color={theme.colors.accent.primary} style={{ fontSize: 12 }}>{editing ? 'Редактирование' : 'Ответ на сообщение'}</Text>
-                <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 12 }}>{banner.text || (banner.imageUrls && banner.imageUrls.length > 0 ? `📷 ${banner.imageUrls.length > 1 ? banner.imageUrls.length + ' фото' : 'Фото'}` : '')}</Text>
-              </View>
-              <Pressable onPress={() => { setReplyTo(null); setEditing(null); setInputText(''); }} hitSlop={8}>
-                <Feather name="x" size={18} color={theme.colors.text.tertiary} />
-              </Pressable>
+        {banner && (
+          <View style={{ marginHorizontal: 12, marginTop: 6, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: theme.colors.background.elevated, borderRadius: 12, borderWidth: 1, borderColor: theme.colors.border.light, paddingHorizontal: 12, paddingVertical: 6 }}>
+            <View style={{ width: 3, alignSelf: 'stretch', borderRadius: 2, backgroundColor: theme.colors.accent.primary }} />
+            <Feather name={editing ? 'edit-2' : 'corner-up-left'} size={15} color={theme.colors.accent.primary} />
+            {banner.imageUrls && banner.imageUrls.length > 0 ? (
+              <CachedImage uri={banner.imageUrls[0]} style={{ width: 32, height: 32, borderRadius: 6 }} resizeMode="cover" />
+            ) : null}
+            <View style={{ flex: 1 }}>
+              <Text variant="caption" weight="semibold" color={theme.colors.accent.primary} style={{ fontSize: 12 }}>{editing ? 'Редактирование' : 'Ответ на сообщение'}</Text>
+              <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 12 }}>{banner.text || (banner.imageUrls && banner.imageUrls.length > 0 ? `📷 ${banner.imageUrls.length > 1 ? banner.imageUrls.length + ' фото' : 'Фото'}` : '')}</Text>
             </View>
-          )}
-
-          {/* Pending image attachments preview */}
-          {pendingImages.length > 0 && (
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 16, paddingTop: 8 }}>
-              {pendingImages.map((uri, idx) => (
-                <View key={idx} style={{ position: 'relative' }}>
-                  <CachedImage uri={uri} style={{ width: 60, height: 60, borderRadius: 10 }} resizeMode="cover" />
-                  <Pressable onPress={() => setPendingImages((prev) => prev.filter((_, i) => i !== idx))} style={{ position: 'absolute', top: -6, right: -6, width: 22, height: 22, borderRadius: 11, backgroundColor: 'rgba(0,0,0,0.7)', alignItems: 'center', justifyContent: 'center' }}>
-                    <Feather name="x" size={13} color="#FFFFFF" />
-                  </Pressable>
-                </View>
-              ))}
-            </View>
-          )}
-
-          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: 8, paddingBottom: inputBarBottomPad }}>
-            <Pressable onPress={pickImages} style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: theme.colors.background.elevated, borderWidth: 1, borderColor: theme.colors.border.light, alignItems: 'center', justifyContent: 'center', marginRight: 8 }}>
-              <Feather name="image" size={20} color={theme.colors.accent.primary} />
-            </Pressable>
-            <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 22, paddingHorizontal: 14, minHeight: 44, borderWidth: 1, borderColor: theme.colors.border.light }}>
-              <TextInput
-                value={inputText}
-                onChangeText={setInputText}
-                placeholder="Сообщение..."
-                placeholderTextColor={theme.colors.text.tertiary}
-                style={{ flex: 1, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular, maxHeight: 100, paddingVertical: Platform.OS === 'ios' ? 10 : 6 }}
-                multiline
-              />
-            </View>
-            <Pressable onPress={handleSend} style={{ marginLeft: 8, width: 44, height: 44, borderRadius: 22, backgroundColor: (inputText.trim() || pendingImages.length > 0) ? theme.colors.accent.primary : theme.colors.background.elevated, alignItems: 'center', justifyContent: 'center' }}>
-              <Feather name={editing ? 'check' : 'send'} size={18} color={(inputText.trim() || pendingImages.length > 0) ? '#FFFFFF' : theme.colors.text.tertiary} />
+            <Pressable onPress={() => { setReplyTo(null); setEditing(null); setInputText(''); }} hitSlop={8}>
+              <Feather name="x" size={18} color={theme.colors.text.tertiary} />
             </Pressable>
           </View>
-        </View>
-      </KeyboardAvoidingView>
+        )}
+
+        {/* Pending image attachments preview */}
+        {pendingImages.length > 0 && (
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 16, paddingTop: 8 }}>
+            {pendingImages.map((uri, idx) => (
+              <View key={idx} style={{ position: 'relative' }}>
+                <CachedImage uri={uri} style={{ width: 60, height: 60, borderRadius: 10 }} resizeMode="cover" />
+                <Pressable onPress={() => setPendingImages((prev) => prev.filter((_, i) => i !== idx))} style={{ position: 'absolute', top: -6, right: -6, width: 22, height: 22, borderRadius: 11, backgroundColor: 'rgba(0,0,0,0.7)', alignItems: 'center', justifyContent: 'center' }}>
+                  <Feather name="x" size={13} color="#FFFFFF" />
+                </Pressable>
+              </View>
+            ))}
+          </View>
+        )}
+
+        <Reanimated.View style={[{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: 8 }, inputRowStyle]}>
+          <Pressable onPress={pickImages} style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: theme.colors.background.elevated, borderWidth: 1, borderColor: theme.colors.border.light, alignItems: 'center', justifyContent: 'center', marginRight: 8 }}>
+            <Feather name="image" size={20} color={theme.colors.accent.primary} />
+          </Pressable>
+          <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 22, paddingHorizontal: 14, minHeight: 44, borderWidth: 1, borderColor: theme.colors.border.light }}>
+            <TextInput
+              value={inputText}
+              onChangeText={setInputText}
+              placeholder="Сообщение..."
+              placeholderTextColor={theme.colors.text.tertiary}
+              style={{ flex: 1, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular, maxHeight: 100, paddingVertical: Platform.OS === 'ios' ? 10 : 6 }}
+              multiline
+            />
+          </View>
+          <Pressable onPress={handleSend} style={{ marginLeft: 8, width: 44, height: 44, borderRadius: 22, backgroundColor: (inputText.trim() || pendingImages.length > 0) ? theme.colors.accent.primary : theme.colors.background.elevated, alignItems: 'center', justifyContent: 'center' }}>
+            <Feather name={editing ? 'check' : 'send'} size={18} color={(inputText.trim() || pendingImages.length > 0) ? '#FFFFFF' : theme.colors.text.tertiary} />
+          </Pressable>
+        </Reanimated.View>
+      </KeyboardStickyView>
 
       {/* Gradient fade header */}
       <View style={[styles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">
