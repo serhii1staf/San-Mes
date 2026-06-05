@@ -86,21 +86,56 @@ export default function ChatScreen() {
     }
   }, [chatMessages.length]);
 
-  const handleSend = () => {
+  const handleSend = async () => {
     if (!inputText.trim() || !id) return;
     triggerHaptic('medium');
+    const text = inputText.trim();
+    setInputText('');
+
     const newMessage: ChatMessage = {
       id: 'm-' + Date.now(),
       conversationId: id,
       senderId: 'current',
-      text: inputText.trim(),
+      text,
       createdAt: new Date().toISOString(),
       isRead: true,
     };
     addMessage(id, newMessage);
-    setInputText('');
-    // Scroll to new message
     setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 50);
+
+    // Save to Supabase (non-blocking)
+    try {
+      const { useAuthStore } = await import('../../src/store');
+      const user = useAuthStore.getState().user;
+      if (!user) return;
+
+      // Ensure conversation exists
+      const { data: existingConv } = await supabase.from('conversations').select('id').eq('id', id).single();
+      let convId = existingConv?.id;
+
+      if (!convId) {
+        // Create conversation
+        const { data: newConv } = await supabase.from('conversations').insert({ id }).select().single();
+        convId = newConv?.id || id;
+        // Add participants
+        await supabase.from('conversation_participants').insert([
+          { conversation_id: convId, user_id: user.id },
+          { conversation_id: convId, user_id: id },
+        ]).select();
+      }
+
+      // Send message
+      await supabase.from('messages').insert({ conversation_id: convId, sender_id: user.id, text });
+
+      // Update entity store for messages list
+      const { useEntityStore } = await import('../../src/store');
+      const store = useEntityStore.getState();
+      const existingConvs = store.conversations;
+      if (!existingConvs.find(c => c.id === id)) {
+        const name = displayName || 'Чат';
+        store.setConversations([{ id, participantId: id, participantName: name, participantUsername: '', participantEmoji: displayEmoji }, ...existingConvs]);
+      }
+    } catch {}
   };
 
   // Display name and emoji from conversation or profile

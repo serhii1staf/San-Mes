@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { View, FlatList, Pressable, ViewStyle, TextInput, StyleSheet, Text as RNText } from 'react-native';
+import { View, FlatList, Pressable, ViewStyle, TextInput, StyleSheet, Text as RNText, Alert } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -10,6 +10,7 @@ import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { useChatStore, useEntityStore, useAuthStore } from '../../src/store';
 import { syncConversations } from '../../src/services/syncService';
 import { useMiniAppsStore } from '../../src/store/miniAppsStore';
+import { triggerHaptic } from '../../src/utils/haptics';
 import { Conversation } from '../../src/types';
 
 function AIConversationItem() {
@@ -59,13 +60,15 @@ function MiniAppsRow() {
   );
 }
 
-function ConversationItem({ item }: { item: Conversation; index: number }) {
+function ConversationItem({ item, onLongPress }: { item: Conversation; index: number; onLongPress?: (item: Conversation) => void }) {
   const theme = useTheme();
 
   return (
     <View>
       <Pressable
         onPress={() => router.push(`/chat/${item.id}`)}
+        onLongPress={() => { triggerHaptic('medium'); onLongPress?.(item); }}
+        delayLongPress={400}
         style={{
           flexDirection: 'row',
           alignItems: 'center',
@@ -140,6 +143,7 @@ export default function MessagesScreen() {
   const user = useAuthStore((s) => s.user);
   const [searchQuery, setSearchQuery] = useState('');
   const [showFabMenu, setShowFabMenu] = useState(false);
+  const [selectedChat, setSelectedChat] = useState<Conversation | null>(null);
 
   // Trigger syncConversations in background on mount
   useEffect(() => {
@@ -248,7 +252,7 @@ export default function MessagesScreen() {
         <FlatList
           data={filtered}
           keyExtractor={(item) => item.id}
-          renderItem={({ item, index }) => <ConversationItem item={item} index={index} />}
+          renderItem={({ item, index }) => <ConversationItem item={item} index={index} onLongPress={(c) => setSelectedChat(c)} />}
           contentContainerStyle={{ paddingBottom: 100 }}
           showsVerticalScrollIndicator={false}
         />
@@ -298,6 +302,35 @@ export default function MessagesScreen() {
       >
         <Feather name={showFabMenu ? 'x' : 'edit'} size={22} color={theme.colors.text.inverse} />
       </Pressable>
+
+      {/* Chat context menu */}
+      {selectedChat && (
+        <Pressable onPress={() => setSelectedChat(null)} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)', zIndex: 300, justifyContent: 'flex-end' }}>
+          <View style={{ marginHorizontal: 8, marginBottom: 16, backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF', borderRadius: 24, overflow: 'hidden' }}>
+            {/* Header */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', padding: 16, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border.light }}>
+              <Avatar emoji={selectedChat.participantEmoji} size="sm" />
+              <View style={{ marginLeft: 10 }}>
+                <Text variant="body" weight="bold">{selectedChat.participantName}</Text>
+              </View>
+            </View>
+            {/* Actions */}
+            <Pressable onPress={() => { setSelectedChat(null); Alert.alert('Удалить чат?', 'Это действие нельзя отменить', [{ text: 'Отмена' }, { text: 'Удалить', style: 'destructive', onPress: () => { /* TODO: delete */ } }]); }} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14 }}>
+              <Feather name="trash-2" size={18} color="#FF3B30" />
+              <Text variant="body" color="#FF3B30" style={{ marginLeft: 12 }}>Удалить</Text>
+            </Pressable>
+            <Pressable onPress={() => { setSelectedChat(null); Alert.alert('Заблокировать?', selectedChat.participantName, [{ text: 'Отмена' }, { text: 'Заблокировать', style: 'destructive' }]); }} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14 }}>
+              <Feather name="slash" size={18} color={theme.colors.text.primary} />
+              <Text variant="body" style={{ marginLeft: 12 }}>Заблокировать</Text>
+            </Pressable>
+            <Pressable onPress={() => { setSelectedChat(null); }} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14 }}>
+              <Feather name="settings" size={18} color={theme.colors.text.primary} />
+              <Text variant="body" style={{ marginLeft: 12 }}>Настройки чата</Text>
+            </Pressable>
+            <View style={{ height: 12 }} />
+          </View>
+        </Pressable>
+      )}
     </View>
   );
 }
