@@ -62,37 +62,68 @@ function MiniAppsRow() {
   );
 }
 
-function ConversationItem({ item, onLongPress }: { item: Conversation; index: number; onLongPress?: (item: Conversation) => void }) {
+function ConversationItem({ item, onLongPress, isArchived }: { item: Conversation; index: number; onLongPress?: (item: Conversation) => void; isArchived?: boolean }) {
   const theme = useTheme();
 
-  return (
-    <ContextMenu
-      actions={[
+  const actions = isArchived
+    ? [
+        { title: 'Из архива', systemIcon: 'tray.and.arrow.up' },
+        { title: 'Настройки чата', systemIcon: 'gearshape' },
+        { title: 'Удалить', destructive: true, systemIcon: 'trash' },
+      ]
+    : [
         { title: 'В архив', systemIcon: 'archivebox' },
         { title: 'Настройки чата', systemIcon: 'gearshape' },
         { title: 'Заблокировать', systemIcon: 'nosign' },
         { title: 'Удалить', destructive: true, systemIcon: 'trash' },
-      ]}
-      onPress={(e) => {
-        const idx = e.nativeEvent.index;
-        if (idx === 0) { useChatSettingsStore.getState().archiveChat(item.id); triggerHaptic('medium'); }
-        if (idx === 1) router.push({ pathname: '/settings/chat-settings', params: { id: item.id } } as any);
-        if (idx === 2) Alert.alert('Заблокировать?', item.participantName, [{ text: 'Отмена' }, { text: 'Заблокировать', style: 'destructive' }]);
-        if (idx === 3) Alert.alert('Удалить чат?', item.participantName, [{ text: 'Отмена' }, { text: 'Удалить', style: 'destructive' }]);
-      }}
+      ];
+
+  const handleAction = (e: any) => {
+    const idx = e.nativeEvent.index;
+    if (isArchived) {
+      if (idx === 0) { useChatSettingsStore.getState().unarchiveChat(item.id); triggerHaptic('medium'); }
+      if (idx === 1) router.push({ pathname: '/settings/chat-settings', params: { id: item.id } } as any);
+      if (idx === 2) Alert.alert('Удалить чат?', item.participantName, [{ text: 'Отмена' }, { text: 'Удалить', style: 'destructive' }]);
+    } else {
+      if (idx === 0) { useChatSettingsStore.getState().archiveChat(item.id); triggerHaptic('medium'); }
+      if (idx === 1) router.push({ pathname: '/settings/chat-settings', params: { id: item.id } } as any);
+      if (idx === 2) Alert.alert('Заблокировать?', item.participantName, [{ text: 'Отмена' }, { text: 'Заблокировать', style: 'destructive' }]);
+      if (idx === 3) Alert.alert('Удалить чат?', item.participantName, [{ text: 'Отмена' }, { text: 'Удалить', style: 'destructive' }]);
+    }
+  };
+
+  return (
+    <ContextMenu
+      actions={actions}
+      onPress={handleAction}
       previewBackgroundColor={theme.colors.background.primary}
       preview={
-        <View style={{ width: 300, padding: 16, backgroundColor: theme.colors.background.primary }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
-            <Avatar emoji={item.participantEmoji} size="sm" />
-            <Text variant="body" weight="bold" style={{ marginLeft: 10 }}>{item.participantName}</Text>
+        <View style={{ width: 320, padding: 0, backgroundColor: theme.colors.background.primary, borderRadius: 16, overflow: 'hidden' }}>
+          {/* Chat preview header */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', padding: 14, backgroundColor: theme.colors.background.elevated }}>
+            <Avatar emoji={item.participantEmoji} name={item.participantName} size="sm" />
+            <View style={{ marginLeft: 10, flex: 1 }}>
+              <Text variant="body" weight="bold">{item.participantName}</Text>
+              <Text variant="caption" color={theme.colors.text.tertiary}>в сети</Text>
+            </View>
           </View>
-          {item.lastMessage ? <Text variant="body" color={theme.colors.text.secondary} numberOfLines={3}>{item.lastMessage}</Text> : <Text variant="caption" color={theme.colors.text.tertiary}>Нет сообщений</Text>}
+          {/* Message preview area */}
+          <View style={{ padding: 14, minHeight: 80 }}>
+            {item.lastMessage ? (
+              <View style={{ alignSelf: 'flex-start', backgroundColor: theme.colors.background.tertiary, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16, borderBottomLeftRadius: 4, maxWidth: '85%' }}>
+                <Text variant="body" numberOfLines={3}>{item.lastMessage}</Text>
+              </View>
+            ) : (
+              <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+                <Text variant="caption" color={theme.colors.text.tertiary}>Нет сообщений</Text>
+              </View>
+            )}
+          </View>
         </View>
       }
     >
       <Pressable
-        onPress={() => router.push(`/chat/${item.id}`)}
+        onPress={() => router.push({ pathname: '/chat/[id]', params: { id: item.id, participantId: item.participantId } } as any)}
         style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: theme.spacing.base }}
       >
         <Avatar emoji={item.participantEmoji} name={item.participantName} size="md" />
@@ -262,7 +293,7 @@ export default function MessagesScreen() {
         <FlatList
           data={filtered}
           keyExtractor={(item) => item.id}
-          renderItem={({ item, index }) => <ConversationItem item={item} index={index} onLongPress={(c) => setSelectedChat(c)} />}
+          renderItem={({ item, index }) => <ConversationItem item={item} index={index} isArchived={archived.includes(item.id)} onLongPress={(c) => setSelectedChat(c)} />}
           contentContainerStyle={{ paddingBottom: 100 }}
           showsVerticalScrollIndicator={false}
         />

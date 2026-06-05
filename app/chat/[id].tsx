@@ -40,7 +40,7 @@ function MessageBubble({ message, isOwn }: { message: ChatMessage; isOwn: boolea
 export default function ChatScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, participantId: paramParticipantId } = useLocalSearchParams<{ id: string; participantId?: string }>();
   const [inputText, setInputText] = useState('');
   const flatListRef = useRef<FlatList>(null);
   const { messages: storeMessages, setMessages, addMessage } = useChatStore();
@@ -49,6 +49,9 @@ export default function ChatScreen() {
   // Try to find conversation in mock data, or load profile from DB
   const conversation = mockConversations.find((c) => c.id === id);
   const [profileData, setProfileData] = useState<any>(null);
+
+  // The actual participant ID is either passed as param, from mock conversation, or fallback to id
+  const participantId = paramParticipantId || (conversation as any)?.participantId || id;
 
   const chatMessages = (storeMessages[id || ''] || []) as ChatMessage[];
 
@@ -59,12 +62,12 @@ export default function ChatScreen() {
 
   // Load profile data for chat header if not in mock conversations
   useEffect(() => {
-    if (!conversation && id) {
-      supabase.from('profiles').select('*').eq('id', id).single().then(({ data }) => {
+    if (!conversation && participantId) {
+      supabase.from('profiles').select('*').eq('id', participantId).single().then(({ data }) => {
         if (data) setProfileData(data);
       });
     }
-  }, [id, conversation]);
+  }, [participantId, conversation]);
 
   useEffect(() => {
     if (id && mockMessages[id]) {
@@ -111,7 +114,7 @@ export default function ChatScreen() {
 
       // Find existing conversation between these two users
       const { data: myConvs } = await supabase.from('conversation_participants').select('conversation_id').eq('user_id', user.id);
-      const { data: theirConvs } = await supabase.from('conversation_participants').select('conversation_id').eq('user_id', id);
+      const { data: theirConvs } = await supabase.from('conversation_participants').select('conversation_id').eq('user_id', participantId);
 
       let convId: string | null = null;
       if (myConvs && theirConvs) {
@@ -127,7 +130,7 @@ export default function ChatScreen() {
           convId = newConv.id;
           await supabase.from('conversation_participants').insert([
             { conversation_id: convId, user_id: user.id },
-            { conversation_id: convId, user_id: id },
+            { conversation_id: convId, user_id: participantId },
           ]);
         }
       }
@@ -139,8 +142,8 @@ export default function ChatScreen() {
       // Update entity store so chat appears in list
       const store = useEntityStore.getState();
       const existingConvs = store.conversations;
-      if (!existingConvs.find(c => c.participantId === id)) {
-        store.setConversations([{ id: convId || id, participantId: id, participantName: displayName || 'Чат', participantUsername: '', participantEmoji: displayEmoji }, ...existingConvs]);
+      if (!existingConvs.find(c => c.participantId === participantId)) {
+        store.setConversations([{ id: convId || id || '', participantId: participantId || '', participantName: displayName || 'Чат', participantUsername: '', participantEmoji: displayEmoji }, ...existingConvs]);
       }
     } catch {}
   };
@@ -149,7 +152,7 @@ export default function ChatScreen() {
   const displayName = conversation?.participantName || profileData?.display_name || 'Чат';
   const displayEmoji = (conversation as any)?.participantEmoji || profileData?.emoji || '😊';
   const displayVerified = profileData?.is_verified || false;
-  const profileId = (conversation as any)?.participantId || id;
+  const profileId = participantId;
 
   return (
     <View style={{ flex: 1, backgroundColor: bgColor }}>
