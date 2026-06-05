@@ -14,7 +14,7 @@ import { CachedImage } from '../../src/components/ui/CachedImage';
 import { FormattedText } from '../../src/components/ui/FormattedText';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { MessageContextMenu, MessageAction } from '../../src/components/ui/MessageContextMenu';
-import { useChatStore, useEntityStore } from '../../src/store';
+import { useChatStore, useEntityStore, useConnectivityStore } from '../../src/store';
 import { useChatSettingsStore, GLOBAL_CHAT_SETTINGS_KEY, DEFAULT_CHAT_SETTINGS } from '../../src/store/chatSettingsStore';
 import { supabase, uploadChatImage } from '../../src/lib/supabase';
 import { mockMessages, mockConversations, formatMessageTime } from '../../src/utils/mockData';
@@ -169,6 +169,8 @@ export default function ChatScreen() {
     if (conversation) return;
     if (cachedProfile) { setProfileData(cachedProfile); return; }
     if (participantId) {
+      // Skip the network call when offline so it can't hang and congest the JS thread
+      if (!useConnectivityStore.getState().isOnline) return;
       supabase.from('profiles').select('*').eq('id', participantId).single().then(({ data }) => {
         if (data) setProfileData(data);
       }).catch(() => {});
@@ -293,7 +295,10 @@ export default function ChatScreen() {
     addMessage(id, newMessage);
     scrollToEnd();
 
-    // Upload images in the background, then swap local URIs for remote URLs
+    // Upload images in the background, then swap local URIs for remote URLs.
+    // Skip all network work when offline so the JS thread / keyboard stay smooth.
+    if (!useConnectivityStore.getState().isOnline) return;
+
     let uploadedUrls: string[] = [];
     if (localImages.length > 0) {
       setUploading(true);

@@ -11,8 +11,8 @@ import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { UserBadge } from '../../src/components/ui/UserBadge';
 import { FormattedText } from '../../src/components/ui/FormattedText';
 import { CachedImage } from '../../src/components/ui/CachedImage';
-import { useAuthStore } from '../../src/store';
-import { getComments, createComment } from '../../src/lib/supabase';
+import { useAuthStore, useConnectivityStore } from '../../src/store';
+import { getComments, createComment, isRepost, parseImageUrls } from '../../src/lib/supabase';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { playSendSound } from '../../src/utils/sounds';
 
@@ -26,6 +26,7 @@ export default function CommentsScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
   const [postData, setPostData] = useState<any>(null);
+  const [repostOriginal, setRepostOriginal] = useState<any>(null);
   const inputRef = useRef<TextInput>(null);
   const listRef = useRef<FlatList>(null);
 
@@ -68,6 +69,29 @@ export default function CommentsScreen() {
       setTimeout(() => listRef.current?.scrollToEnd({ animated: false }), 150);
     }
   };
+
+  // If this post is a repost, resolve the original post (with author) to render a proper preview
+  useEffect(() => {
+    if (!postData?.content) { setRepostOriginal(null); return; }
+    const info = isRepost(postData.content);
+    if (!info.isRepost || !info.originalPostId) { setRepostOriginal(null); return; }
+    let cancelled = false;
+    (async () => {
+      const { useEntityStore } = require('../../src/store');
+      const cachedOrig = useEntityStore.getState().posts[info.originalPostId!];
+      if (cachedOrig) {
+        const prof = useEntityStore.getState().profiles[cachedOrig.author_id];
+        if (!cancelled) setRepostOriginal({ ...cachedOrig, profiles: prof || null });
+        return;
+      }
+      // Don't hit the network when offline
+      if (!useConnectivityStore.getState().isOnline) return;
+      const { supabase } = await import('../../src/lib/supabase');
+      const { data } = await supabase.from('posts').select('*, profiles:author_id (id, display_name, username, emoji, badge, is_verified)').eq('id', info.originalPostId).single();
+      if (!cancelled && data) setRepostOriginal(data);
+    })();
+    return () => { cancelled = true; };
+  }, [postData?.content]);
 
   const handleSend = async () => {
     if (!text.trim() || !user?.id || !postId) return;
@@ -121,8 +145,20 @@ export default function CommentsScreen() {
             keyExtractor={(item) => item.id}
             contentContainerStyle={{ paddingHorizontal: 20, paddingTop: headerContentHeight, paddingBottom: 20 }}
             showsVerticalScrollIndicator={false}
-            ListHeaderComponent={postData ? (
+            ListHeaderComponent={postData ? (() => {
+              const repostInfo = isRepost(postData.content || '');
+              const repostComment = repostInfo.isRepost ? (repostInfo.comment || '') : '';
+              const mainContent = repostInfo.isRepost ? repostComment : (postData.content || '');
+              const origProfile = repostOriginal ? (Array.isArray(repostOriginal.profiles) ? repostOriginal.profiles[0] : repostOriginal.profiles) : null;
+              const origImages = repostOriginal ? parseImageUrls(repostOriginal.image_url) : [];
+              return (
               <View style={{ marginBottom: 16, paddingBottom: 16, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border.light }}>
+                {repostInfo.isRepost && (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 8 }}>
+                    <Feather name="repeat" size={12} color={theme.colors.text.tertiary} />
+                    <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ flexShrink: 1 }}>{postData.profiles?.display_name || 'User'} сделал(а) репост</Text>
+                  </View>
+                )}
                 <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
                   <Avatar emoji={postData.profiles?.emoji || '😊'} size="sm" />
                   <View style={{ marginLeft: 10, flex: 1 }}>
@@ -134,10 +170,30 @@ export default function CommentsScreen() {
                     <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>@{postData.profiles?.username}</Text>
                   </View>
                 </View>
-                {postData.content && <FormattedText style={{ fontSize: 15, lineHeight: 21, marginBottom: 8 }}>{postData.content}</FormattedText>}
-                {postData.image_url && <CachedImage uri={postData.image_url.split(',')[0]} style={{ width: '100%', height: 200, borderRadius: 12, marginBottom: 8 }} resizeMode="cover" />}
+                {mainContent ? <FormattedText style={{ fontSize: 15, lineHeight: 21, marginBottom: 8 }}>{mainContent}</FormattedText> : null}
+                {!repostInfo.isRepost && postData.image_url && <CachedImage uri={postData.image_url.split(',')[0]} style={{ width: '100%', height: 200, borderRadius: 12, marginBottom: 8 }} resizeMode="cover" />}
+
+                {/* Repost — embedded original post preview */}
+                {repostInfo.isRepost && (
+                  repostOriginal ? (
+                    <Pressable onPress={() => router.push({ pathname: '/comments/[id]', params: { id: repostOriginal.id } })} style={{ borderWidth: 1, borderColor: theme.colors.border.light, borderRadius: 14, padding: 10, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)' }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 6 }}>
+                        <Avatar emoji={origProfile?.emoji || '😊'} size="xs" />
+                        <Text variant="caption" weight="semibold" numberOfLines={1} style={{ flexShrink: 1 }}>{origProfile?.display_name || 'User'}</Text>
+                        {origProfile?.is_verified && <VerifiedBadge size={9} />}
+                      </View>
+                      {repostOriginal.content ? <FormattedText style={{ fontSize: 13 }} color={theme.colors.text.secondary}>{repostOriginal.content}</FormattedText> : null}
+                      {origImages.length > 0 && <CachedImage uri={origImages[0]} style={{ width: '100%', height: 160, borderRadius: 10, marginTop: 6 }} resizeMode="cover" />}
+                    </Pressable>
+                  ) : (
+                    <View style={{ borderWidth: 1, borderColor: theme.colors.border.light, borderRadius: 14, padding: 14, alignItems: 'center' }}>
+                      <ActivityIndicator size="small" color={theme.colors.accent.primary} />
+                    </View>
+                  )
+                )}
               </View>
-            ) : null}
+              );
+            })() : null}
             ListEmptyComponent={
               <View style={{ alignItems: 'center', paddingTop: 40 }}>
                 <RNText style={{ fontSize: 32 }} allowFontScaling={false}>💬</RNText>

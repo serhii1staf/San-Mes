@@ -3,8 +3,8 @@ import { create } from 'zustand';
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 const PING_URL = 'https://www.google.com/generate_204';
-const PING_TIMEOUT = 5000;
-const POLL_INTERVAL = 15000;
+const PING_TIMEOUT = 3000;
+const POLL_INTERVAL = 20000;
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
