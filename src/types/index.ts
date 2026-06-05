@@ -69,6 +69,7 @@ export interface ChatMessage {
   replyToId?: string;
   replyToText?: string;
   replyToIsOwn?: boolean;
+  replyToImage?: string;
   imageUrls?: string[];
 }
 
