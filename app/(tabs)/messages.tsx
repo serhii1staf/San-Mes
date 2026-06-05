@@ -75,18 +75,21 @@ function ConversationItem({ item, onLongPress }: { item: Conversation; index: nu
         const idx = e.nativeEvent.index;
         if (idx === 0) Alert.alert('Удалить чат?', item.participantName, [{ text: 'Отмена' }, { text: 'Удалить', style: 'destructive' }]);
         if (idx === 1) Alert.alert('Заблокировать?', item.participantName, [{ text: 'Отмена' }, { text: 'Заблокировать', style: 'destructive' }]);
-        if (idx === 2) router.push(`/chat/${item.id}`);
       }}
       previewBackgroundColor={theme.colors.background.primary}
+      preview={
+        <View style={{ width: 300, padding: 16, backgroundColor: theme.colors.background.primary }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+            <Avatar emoji={item.participantEmoji} size="sm" />
+            <Text variant="body" weight="bold" style={{ marginLeft: 10 }}>{item.participantName}</Text>
+          </View>
+          {item.lastMessage ? <Text variant="body" color={theme.colors.text.secondary} numberOfLines={3}>{item.lastMessage}</Text> : <Text variant="caption" color={theme.colors.text.tertiary}>Нет сообщений</Text>}
+        </View>
+      }
     >
       <Pressable
         onPress={() => router.push(`/chat/${item.id}`)}
-        style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          paddingVertical: 14,
-          paddingHorizontal: theme.spacing.base,
-        }}
+        style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: theme.spacing.base }}
       >
         <Avatar emoji={item.participantEmoji} name={item.participantName} size="md" />
         <View style={{ flex: 1, marginLeft: 12, justifyContent: 'center' }}>
