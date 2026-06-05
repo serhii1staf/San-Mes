@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, ImageBackground, Alert } from 'react-native';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, ImageBackground, Alert, Animated, PanResponder } from 'react-native';
 import { KeyboardStickyView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
-import Animated, { useAnimatedStyle, interpolate, Extrapolation } from 'react-native-reanimated';
+import Reanimated, { useAnimatedStyle, interpolate, Extrapolation } from 'react-native-reanimated';
 import ContextMenu from 'react-native-context-menu-view';
 import * as Clipboard from 'expo-clipboard';
 import { Feather } from '@expo/vector-icons';
@@ -19,9 +19,13 @@ import { showToast } from '../../src/store/toastStore';
 import { ChatMessage } from '../../src/types';
 import { triggerHaptic } from '../../src/utils/haptics';
 
+const REPLY_THRESHOLD = 56;
+
 function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, onAction }: { message: ChatMessage; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string; onAction: (action: string, message: ChatMessage) => void }) {
   const theme = useTheme();
   const fontFamilyStyle = fontFamily === 'mono' ? 'monospace' : fontFamily === 'serif' ? 'serif' : undefined;
+  const translateX = useRef(new Animated.Value(0)).current;
+  const triggered = useRef(false);
 
   const actions = isOwn
     ? [
@@ -36,30 +40,67 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, onA
       ];
 
   const handlePress = (e: any) => {
-    const title = e.nativeEvent.name as string;
-    onAction(title, message);
+    onAction(e.nativeEvent.name as string, message);
   };
 
+  // Swipe-left to reply
+  const panResponder = useRef(PanResponder.create({
+    onMoveShouldSetPanResponder: (_, g) => g.dx < -10 && Math.abs(g.dx) > Math.abs(g.dy) * 2,
+    onPanResponderMove: (_, g) => {
+      const dx = Math.max(g.dx, -90);
+      if (dx < 0) {
+        translateX.setValue(dx);
+        if (!triggered.current && dx <= -REPLY_THRESHOLD) {
+          triggered.current = true;
+          triggerHaptic('light');
+        }
+      }
+    },
+    onPanResponderRelease: (_, g) => {
+      if (g.dx <= -REPLY_THRESHOLD) onAction('Ответить', message);
+      triggered.current = false;
+      Animated.spring(translateX, { toValue: 0, useNativeDriver: true, tension: 140, friction: 12 }).start();
+    },
+    onPanResponderTerminate: () => {
+      triggered.current = false;
+      Animated.spring(translateX, { toValue: 0, useNativeDriver: true, tension: 140, friction: 12 }).start();
+    },
+  })).current;
+
+  const replyIconOpacity = translateX.interpolate({ inputRange: [-REPLY_THRESHOLD, -20, 0], outputRange: [1, 0, 0], extrapolate: 'clamp' });
+
   return (
-    <ContextMenu
-      actions={actions}
-      onPress={handlePress}
-      style={{ alignSelf: isOwn ? 'flex-end' : 'flex-start', maxWidth: '75%', marginLeft: isOwn ? 0 : 16, marginRight: isOwn ? 16 : 0, marginBottom: 4 }}
-    >
-      <View style={{
-        paddingHorizontal: 14,
-        paddingVertical: 10,
-        borderRadius: bubbleRadius,
-        backgroundColor: isOwn ? theme.colors.accent.primary : theme.colors.background.tertiary,
-        borderBottomRightRadius: isOwn ? 4 : bubbleRadius,
-        borderBottomLeftRadius: isOwn ? bubbleRadius : 4,
-      }}>
-        <Text variant="body" color={isOwn ? '#FFFFFF' : theme.colors.text.primary} style={{ fontSize, fontFamily: fontFamilyStyle }}>{message.text}</Text>
-        <Text variant="caption" color={isOwn ? 'rgba(255,255,255,0.6)' : theme.colors.text.tertiary} style={{ marginTop: 3, alignSelf: 'flex-end', fontSize: 10 }}>
-          {formatMessageTime(message.createdAt)}
-        </Text>
-      </View>
-    </ContextMenu>
+    <View style={{ justifyContent: 'center' }}>
+      {/* Reply hint icon revealed on swipe */}
+      <Animated.View style={{ position: 'absolute', right: 16, opacity: replyIconOpacity }}>
+        <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: theme.colors.accent.primary + '20', alignItems: 'center', justifyContent: 'center' }}>
+          <Feather name="corner-up-left" size={16} color={theme.colors.accent.primary} />
+        </View>
+      </Animated.View>
+
+      <Animated.View style={{ transform: [{ translateX }] }} {...panResponder.panHandlers}>
+        <ContextMenu
+          actions={actions}
+          onPress={handlePress}
+          previewBackgroundColor="transparent"
+          style={{ alignSelf: isOwn ? 'flex-end' : 'flex-start', maxWidth: '78%', marginLeft: isOwn ? 0 : 16, marginRight: isOwn ? 16 : 0, marginBottom: 4 }}
+        >
+          <View style={{
+            paddingHorizontal: 14,
+            paddingVertical: 10,
+            borderRadius: bubbleRadius,
+            backgroundColor: isOwn ? theme.colors.accent.primary : theme.colors.background.tertiary,
+            borderBottomRightRadius: isOwn ? 4 : bubbleRadius,
+            borderBottomLeftRadius: isOwn ? bubbleRadius : 4,
+          }}>
+            <Text variant="body" color={isOwn ? '#FFFFFF' : theme.colors.text.primary} style={{ fontSize, fontFamily: fontFamilyStyle }}>{message.text}</Text>
+            <Text variant="caption" color={isOwn ? 'rgba(255,255,255,0.6)' : theme.colors.text.tertiary} style={{ marginTop: 3, alignSelf: 'flex-end', fontSize: 10 }}>
+              {formatMessageTime(message.createdAt)}
+            </Text>
+          </View>
+        </ContextMenu>
+      </Animated.View>
+    </View>
   );
 }
 
@@ -73,6 +114,7 @@ export default function ChatScreen() {
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
   const [editing, setEditing] = useState<ChatMessage | null>(null);
   const { messages: storeMessages, setMessages, addMessage } = useChatStore();
+  const flatListRef = useRef<FlatList>(null);
 
   // Keyboard animation progress on the UI thread (0 closed → 1 open), no React re-renders
   const { progress } = useReanimatedKeyboardAnimation();
@@ -85,9 +127,6 @@ export default function ChatScreen() {
   const participantId = paramParticipantId || entityConv?.participantId || (conversation as any)?.participantId || id;
 
   const chatMessages = (storeMessages[id || ''] || []) as ChatMessage[];
-
-  // Inverted data — newest first so the list naturally pins newest message at the bottom
-  const invertedData = useMemo(() => [...chatMessages].reverse(), [chatMessages]);
 
   // Chat settings — select raw map, merge with useMemo (avoid new object in selector → infinite loop)
   const settingsMap = useChatSettingsStore((s) => s.settings);
@@ -134,6 +173,10 @@ export default function ChatScreen() {
   const displayEmoji = (conversation as any)?.participantEmoji || profileData?.emoji || '😊';
   const displayVerified = profileData?.is_verified || false;
   const profileId = participantId;
+
+  const scrollToEnd = useCallback(() => {
+    requestAnimationFrame(() => flatListRef.current?.scrollToEnd({ animated: true }));
+  }, []);
 
   const handleMessageAction = useCallback((action: string, message: ChatMessage) => {
     if (action === 'Копировать') {
@@ -190,6 +233,7 @@ export default function ChatScreen() {
       isRead: true,
     };
     addMessage(id, newMessage);
+    scrollToEnd();
 
     try {
       const { useAuthStore, useEntityStore } = await import('../../src/store');
@@ -251,15 +295,14 @@ export default function ChatScreen() {
         />
       )}
 
-      {/* Inverted list fills the WHOLE screen — messages scroll to the very bottom behind the input.
-          For an inverted list, contentContainer paddingTop is visually at the BOTTOM. */}
+      {/* Messages in natural top→down order, pinned to the bottom; scroll behind the input */}
       <FlatList
-        data={invertedData}
-        inverted
+        ref={flatListRef}
+        data={chatMessages}
         style={StyleSheet.absoluteFill}
         keyExtractor={(item) => item.id}
         renderItem={renderItem}
-        contentContainerStyle={{ paddingTop: inputBarBottomPad + 56, paddingBottom: headerContentHeight + 8, paddingHorizontal: 0 }}
+        contentContainerStyle={{ flexGrow: 1, justifyContent: 'flex-end', paddingTop: headerContentHeight + 8, paddingBottom: inputBarBottomPad + 60 }}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
@@ -267,17 +310,19 @@ export default function ChatScreen() {
         initialNumToRender={15}
         maxToRenderPerBatch={10}
         windowSize={9}
+        onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: false })}
       />
 
       {/* Input bar — sticks to the keyboard with no gap (UI thread) */}
-      <KeyboardStickyView offset={{ closed: 0, opened: insets.bottom }} style={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}>
-        <Animated.View style={[StyleSheet.absoluteFill, backdropStyle]} pointerEvents="none">
+      <KeyboardStickyView offset={{ closed: 0, opened: insets.bottom + 8 }} style={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}>
+        <Reanimated.View style={[StyleSheet.absoluteFill, backdropStyle]} pointerEvents="none">
           <LinearGradient colors={[bgTransparent, bgColor]} style={StyleSheet.absoluteFill} />
-        </Animated.View>
+        </Reanimated.View>
 
-        {/* Reply / edit banner */}
+        {/* Reply / edit banner — inside an elevated container pill */}
         {(replyTo || editing) && (
-          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: 8, gap: 8 }}>
+          <View style={{ marginHorizontal: 12, marginTop: 6, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: theme.colors.background.elevated, borderRadius: 14, borderWidth: 1, borderColor: theme.colors.border.light, paddingHorizontal: 12, paddingVertical: 8 }}>
+            <View style={{ width: 3, alignSelf: 'stretch', borderRadius: 2, backgroundColor: theme.colors.accent.primary }} />
             <Feather name={editing ? 'edit-2' : 'corner-up-left'} size={16} color={theme.colors.accent.primary} />
             <View style={{ flex: 1 }}>
               <Text variant="caption" weight="semibold" color={theme.colors.accent.primary}>{editing ? 'Редактирование' : 'Ответ'}</Text>
@@ -317,7 +362,7 @@ export default function ChatScreen() {
           {/* Name (center) inside a compact pill container */}
           <View style={{ flex: 1, alignItems: 'center' }}>
             <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId } })} style={[styles.headerPill, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
-              <Text variant="caption" weight="semibold" numberOfLines={1}>{displayName}</Text>
+              <Text variant="caption" weight="semibold" numberOfLines={1} style={{ flexShrink: 1 }}>{displayName}</Text>
               {displayVerified && <VerifiedBadge size={12} />}
             </Pressable>
           </View>
