@@ -24,9 +24,10 @@ interface PostCardProps {
   onShare?: (postId: string) => void;
   onBookmark?: (postId: string) => void;
   onMenu?: (post: Post) => void;
+  onFollow?: (userId: string) => void;
 }
 
-export const PostCard = memo(function PostCard({ post, onLike, onComment, onShare, onBookmark, onMenu }: PostCardProps) {
+export const PostCard = memo(function PostCard({ post, onLike, onComment, onShare, onBookmark, onMenu, onFollow }: PostCardProps) {
   const theme = useTheme();
   const lastTap = useRef<number>(0);
 
@@ -37,12 +38,12 @@ export const PostCard = memo(function PostCard({ post, onLike, onComment, onShar
   const hasImages = imageUrls.length > 0 && !post.isSpoilerImage;
   const hasSpoiler = post.isSpoilerImage && imageUrls.length > 0;
 
-  // Card colors
-  const cardBg = theme.isDark ? 'rgba(28,28,30,0.95)' : 'rgba(255,255,255,0.95)';
-  const cardBorder = theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
+  // Card colors — blend with theme background
+  const cardBg = theme.isDark ? theme.colors.background.elevated : 'rgba(255,255,255,0.95)';
+  const cardBorder = theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
 
   return (
-    <View style={{ marginBottom: 12, borderRadius: 20, backgroundColor: cardBg, borderWidth: 1, borderColor: cardBorder, overflow: 'hidden' }}>
+    <View style={{ marginBottom: 12, borderRadius: 28, backgroundColor: cardBg, borderWidth: 1, borderColor: cardBorder, overflow: 'hidden' }}>
       {/* Repost indicator */}
       {post.isRepost && (
         <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: 10, gap: 6 }}>
@@ -65,7 +66,7 @@ export const PostCard = memo(function PostCard({ post, onLike, onComment, onShar
           <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 12 }}>@{post.authorUsername} · {formatTimeAgo(post.createdAt)}</Text>
         </View>
         {/* Right icons */}
-        <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: post.authorId } })} hitSlop={8} style={{ padding: 4 }}>
+        <Pressable onPress={() => { triggerHaptic('light'); onFollow?.(post.authorId); }} hitSlop={8} style={{ padding: 4 }}>
           <Feather name="user-plus" size={16} color={theme.colors.text.tertiary} />
         </Pressable>
         <Pressable onPress={() => { triggerHaptic('light'); onMenu?.(post); }} hitSlop={8} style={{ padding: 4, marginLeft: 6 }}>
@@ -118,17 +119,12 @@ export const PostCard = memo(function PostCard({ post, onLike, onComment, onShar
         </View>
       )}
 
-      {/* Action bar — icons like on screenshot */}
+      {/* Action bar */}
       <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 10, gap: 4 }}>
-        {/* Like (heart) */}
+        {/* Star (like) */}
         <Pressable onPress={handleLike} style={{ flexDirection: 'row', alignItems: 'center', marginRight: 12 }}>
-          <Feather name="heart" size={16} color={post.isLiked ? '#FF3B30' : theme.colors.text.tertiary} />
-          <Text variant="caption" color={post.isLiked ? '#FF3B30' : theme.colors.text.tertiary} style={{ marginLeft: 4, fontSize: 12 }}>{post.likesCount || ''}</Text>
-        </Pressable>
-
-        {/* Star (bookmark/favorite) */}
-        <Pressable onPress={() => { triggerHaptic('light'); onBookmark?.(post.id); }} style={{ flexDirection: 'row', alignItems: 'center', marginRight: 12 }}>
-          <Feather name="star" size={16} color={theme.colors.text.tertiary} />
+          <Feather name="star" size={16} color={post.isLiked ? theme.colors.accent.primary : theme.colors.text.tertiary} />
+          <Text variant="caption" color={post.isLiked ? theme.colors.accent.primary : theme.colors.text.tertiary} style={{ marginLeft: 4, fontSize: 12 }}>{post.likesCount || ''}</Text>
         </Pressable>
 
         {/* Comments */}

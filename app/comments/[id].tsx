@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, FlatList, TextInput, Pressable, Platform, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, FlatList, TextInput, Pressable, Platform, ActivityIndicator, StyleSheet, Text as RNText } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -129,7 +129,7 @@ export default function CommentsScreen() {
             ) : null}
             ListEmptyComponent={
               <View style={{ alignItems: 'center', paddingTop: 40 }}>
-                <Text style={{ fontSize: 32 }}>💬</Text>
+                <RNText style={{ fontSize: 32 }} allowFontScaling={false}>💬</RNText>
                 <Text variant="body" color={theme.colors.text.tertiary} style={{ marginTop: 8 }}>Пока нет комментариев</Text>
               </View>
             }
@@ -153,7 +153,7 @@ export default function CommentsScreen() {
         )}
 
         {/* Input area — clean pill, no outer container */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 8, paddingTop: 8, backgroundColor: bgColor }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 14, paddingTop: 8, backgroundColor: bgColor }}>
           <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 22, paddingHorizontal: 16, paddingVertical: 10, borderWidth: 1, borderColor: theme.colors.border.light }}>
             <TextInput
               ref={inputRef}
