@@ -19,6 +19,7 @@ const IMAGE_HEIGHT = 280;
 
 interface PostCardProps {
   post: Post;
+  currentUserId?: string;
   onLike: (postId: string) => void;
   onComment?: (postId: string) => void;
   onShare?: (postId: string) => void;
@@ -27,7 +28,7 @@ interface PostCardProps {
   onFollow?: (userId: string) => void;
 }
 
-export const PostCard = memo(function PostCard({ post, onLike, onComment, onShare, onBookmark, onMenu, onFollow }: PostCardProps) {
+export const PostCard = memo(function PostCard({ post, currentUserId, onLike, onComment, onShare, onBookmark, onMenu, onFollow }: PostCardProps) {
   const theme = useTheme();
   const lastTap = useRef<number>(0);
 
@@ -66,9 +67,11 @@ export const PostCard = memo(function PostCard({ post, onLike, onComment, onShar
           <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 12 }}>@{post.authorUsername} · {formatTimeAgo(post.createdAt)}</Text>
         </View>
         {/* Right icons */}
-        <Pressable onPress={() => { triggerHaptic('light'); onFollow?.(post.authorId); }} hitSlop={8} style={{ padding: 4 }}>
-          <Feather name="user-plus" size={16} color={theme.colors.text.tertiary} />
-        </Pressable>
+        {currentUserId !== post.authorId && (
+          <Pressable onPress={() => { triggerHaptic('light'); onFollow?.(post.authorId); }} hitSlop={8} style={{ padding: 4 }}>
+            <Feather name="user-plus" size={16} color={theme.colors.text.tertiary} />
+          </Pressable>
+        )}
         <Pressable onPress={() => { triggerHaptic('light'); onMenu?.(post); }} hitSlop={8} style={{ padding: 4, marginLeft: 6 }}>
           <Feather name="more-vertical" size={16} color={theme.colors.text.tertiary} />
         </Pressable>

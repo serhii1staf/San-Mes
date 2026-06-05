@@ -16,6 +16,7 @@ import { useUpdateStore } from '../../src/store/updateStore';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { useConnectivityStore } from '../../src/services/connectivityMonitor';
 import { resetThrottle } from '../../src/services/syncThrottle';
+import { queueMutation } from '../../src/services/offlineQueue';
 
 const FEED_CACHE_KEY = '@san:feed_posts';
 const FEED_LIMIT = 20;
@@ -320,8 +321,10 @@ export default function FeedScreen() {
     <View>
       <PostCard
         post={item}
+        currentUserId={user?.id}
         onComment={(postId) => router.push({ pathname: '/comments/[id]', params: { id: postId } })}
         onLike={(postId) => handleToggleLike(postId)}
+        onFollow={(userId) => { triggerHaptic('medium'); queueMutation('follow', { followerId: user?.id, followingId: userId }); }}
         onShare={(postId) => {
           if (!user?.id) return;
           triggerHaptic('medium');

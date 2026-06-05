@@ -36,7 +36,18 @@ export default function CommentsScreen() {
 
   useEffect(() => {
     loadComments();
-    loadPost();
+    // Load post from entity store (cached) — no network request needed
+    if (postId) {
+      const { useEntityStore } = require('../../src/store');
+      const cached = useEntityStore.getState().posts[postId];
+      if (cached) {
+        // Get author profile from store
+        const profile = useEntityStore.getState().profiles[cached.author_id];
+        setPostData({ ...cached, profiles: profile || null });
+      } else {
+        loadPost();
+      }
+    }
   }, [postId]);
 
   const loadPost = async () => {
