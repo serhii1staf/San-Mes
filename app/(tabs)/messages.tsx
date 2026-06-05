@@ -69,12 +69,13 @@ function ConversationItem({ item, onLongPress }: { item: Conversation; index: nu
       actions={[
         { title: 'Удалить', destructive: true, systemIcon: 'trash' },
         { title: 'Заблокировать', systemIcon: 'nosign' },
-        { title: 'Настройки', systemIcon: 'gearshape' },
+        { title: 'Настройки чата', systemIcon: 'gearshape' },
       ]}
       onPress={(e) => {
         const idx = e.nativeEvent.index;
         if (idx === 0) Alert.alert('Удалить чат?', item.participantName, [{ text: 'Отмена' }, { text: 'Удалить', style: 'destructive' }]);
         if (idx === 1) Alert.alert('Заблокировать?', item.participantName, [{ text: 'Отмена' }, { text: 'Заблокировать', style: 'destructive' }]);
+        if (idx === 2) router.push(`/chat/${item.id}`);
       }}
       previewBackgroundColor={theme.colors.background.primary}
     >
@@ -83,35 +84,15 @@ function ConversationItem({ item, onLongPress }: { item: Conversation; index: nu
         style={{
           flexDirection: 'row',
           alignItems: 'center',
-          paddingVertical: theme.spacing.md,
+          paddingVertical: 14,
           paddingHorizontal: theme.spacing.base,
         }}
       >
-        <View style={{ position: 'relative' }}>
-          <Avatar emoji={item.participantEmoji} name={item.participantName} size="md" />
-          {item.isOnline && (
-            <View
-              style={{
-                position: 'absolute',
-                bottom: 0,
-                right: 0,
-                width: 12,
-                height: 12,
-                borderRadius: 6,
-                backgroundColor: theme.colors.status.success,
-                borderWidth: 2,
-                borderColor: theme.colors.background.elevated,
-              }}
-            />
-          )}
-        </View>
-
-        <View style={{ flex: 1, marginLeft: theme.spacing.md }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-            <Text variant="body" weight={item.unreadCount > 0 ? 'semibold' : 'regular'}>
-              {item.participantName}
-            </Text>
-          </View>
+        <Avatar emoji={item.participantEmoji} name={item.participantName} size="md" />
+        <View style={{ flex: 1, marginLeft: 12, justifyContent: 'center' }}>
+          <Text variant="body" weight={item.unreadCount > 0 ? 'semibold' : 'regular'} numberOfLines={1}>
+            {item.participantName}
+          </Text>
           <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
             <Text
               variant="caption"
