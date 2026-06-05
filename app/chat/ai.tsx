@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { View, Pressable, TextInput, FlatList, ActivityIndicator, Dimensions, Text as RNText, Platform } from 'react-native';
+import { View, Pressable, TextInput, FlatList, ActivityIndicator, Dimensions, Text as RNText, Platform, StyleSheet } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -89,6 +89,8 @@ function MessageBubble({ message }: { message: AIMessage }) {
   );
 }
 
+const MemoMessageBubble = React.memo(MessageBubble, (prev, next) => prev.message.id === next.message.id && prev.message.content === next.message.content);
+
 export default function AIChatScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
@@ -143,8 +145,10 @@ export default function AIChatScreen() {
     setIsLoading(false);
   }, [input, isLoading, messages]);
 
-  // Inverted data for FlatList
-  const invertedData = [...messages].reverse();
+  // Inverted data for FlatList — memoized to avoid re-reverse on every keystroke
+  const invertedData = React.useMemo(() => [...messages].reverse(), [messages]);
+
+  const renderItem = useCallback(({ item }: { item: AIMessage }) => <MemoMessageBubble message={item} />, []);
 
   return (
     <KeyboardAvoidingView style={{ flex: 1, backgroundColor: theme.colors.background.primary }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0}>
@@ -176,11 +180,15 @@ export default function AIChatScreen() {
         keyExtractor={item => item.id}
         inverted
         contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8 }}
-        renderItem={({ item }) => <MessageBubble message={item} />}
+        renderItem={renderItem}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
         automaticallyAdjustsScrollIndicatorInsets={false}
+        removeClippedSubviews={false}
+        initialNumToRender={12}
+        maxToRenderPerBatch={8}
+        windowSize={9}
         ListHeaderComponent={isLoading ? (
           <View style={{ paddingBottom: 8 }}>
             <View style={{ borderRadius: 14, overflow: 'hidden', alignSelf: 'flex-start' }}>
@@ -206,9 +214,14 @@ export default function AIChatScreen() {
         }
       />
 
-      {/* Input */}
-      <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 16, backgroundColor: theme.colors.background.primary + 'CC', borderTopWidth: 0, borderTopColor: theme.colors.border.light }}>
-        <View style={{ flexDirection: 'row', alignItems: 'flex-end', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)', borderRadius: 24, paddingHorizontal: 16, paddingVertical: 8, borderWidth: 1, borderColor: theme.colors.border.light }}>
+      {/* Input — no surrounding container, rounded pill with blur below */}
+      <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 16 }}>
+        {/* Blur background behind input (like bottom nav) */}
+        <View style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, overflow: 'hidden' }} pointerEvents="none">
+          <BlurView intensity={40} tint={theme.isDark ? 'dark' : 'light'} style={{ flex: 1 }} />
+          <LinearGradient colors={[theme.colors.background.primary + '00', theme.colors.background.primary + 'AA']} style={StyleSheet.absoluteFill} />
+        </View>
+        <View style={{ flexDirection: 'row', alignItems: 'flex-end', backgroundColor: theme.isDark ? 'rgba(40,40,40,0.95)' : 'rgba(255,255,255,0.95)', borderRadius: 24, paddingHorizontal: 16, paddingVertical: 8, borderWidth: 1, borderColor: theme.colors.border.light }}>
           <TextInput
             value={input}
             onChangeText={setInput}
