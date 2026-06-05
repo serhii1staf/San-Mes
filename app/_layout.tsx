@@ -139,6 +139,7 @@ export default function RootLayout() {
           <Stack.Screen name="settings/admin" />
           <Stack.Screen name="settings/fonts" />
           <Stack.Screen name="settings/mini-apps" />
+          <Stack.Screen name="settings/chat-settings" />
         </Stack>
       </AuthNavigationGuard>
     </ThemeProvider>

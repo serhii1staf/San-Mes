@@ -11,6 +11,7 @@ import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { useChatStore, useEntityStore, useAuthStore } from '../../src/store';
 import { syncConversations } from '../../src/services/syncService';
 import { useMiniAppsStore } from '../../src/store/miniAppsStore';
+import { useChatSettingsStore } from '../../src/store/chatSettingsStore';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { Conversation } from '../../src/types';
 
@@ -67,14 +68,17 @@ function ConversationItem({ item, onLongPress }: { item: Conversation; index: nu
   return (
     <ContextMenu
       actions={[
-        { title: 'Удалить', destructive: true, systemIcon: 'trash' },
-        { title: 'Заблокировать', systemIcon: 'nosign' },
+        { title: 'В архив', systemIcon: 'archivebox' },
         { title: 'Настройки чата', systemIcon: 'gearshape' },
+        { title: 'Заблокировать', systemIcon: 'nosign' },
+        { title: 'Удалить', destructive: true, systemIcon: 'trash' },
       ]}
       onPress={(e) => {
         const idx = e.nativeEvent.index;
-        if (idx === 0) Alert.alert('Удалить чат?', item.participantName, [{ text: 'Отмена' }, { text: 'Удалить', style: 'destructive' }]);
-        if (idx === 1) Alert.alert('Заблокировать?', item.participantName, [{ text: 'Отмена' }, { text: 'Заблокировать', style: 'destructive' }]);
+        if (idx === 0) { useChatSettingsStore.getState().archiveChat(item.id); triggerHaptic('medium'); }
+        if (idx === 1) router.push({ pathname: '/settings/chat-settings', params: { id: item.id } } as any);
+        if (idx === 2) Alert.alert('Заблокировать?', item.participantName, [{ text: 'Отмена' }, { text: 'Заблокировать', style: 'destructive' }]);
+        if (idx === 3) Alert.alert('Удалить чат?', item.participantName, [{ text: 'Отмена' }, { text: 'Удалить', style: 'destructive' }]);
       }}
       previewBackgroundColor={theme.colors.background.primary}
       preview={
@@ -139,6 +143,8 @@ export default function MessagesScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [showFabMenu, setShowFabMenu] = useState(false);
   const [selectedChat, setSelectedChat] = useState<Conversation | null>(null);
+  const [activeTab, setActiveTab] = useState<'chats' | 'apps' | 'archive'>('chats');
+  const archived = useChatSettingsStore((s) => s.archived);
 
   // Trigger syncConversations in background on mount
   useEffect(() => {
@@ -167,10 +173,10 @@ export default function MessagesScreen() {
   }, [entityConversations, chatStoreConversations]);
 
   const filtered = searchQuery
-    ? conversations.filter((c) =>
-        c.participantName.toLowerCase().includes(searchQuery.toLowerCase())
-      )
-    : conversations;
+    ? conversations.filter((c) => c.participantName.toLowerCase().includes(searchQuery.toLowerCase()))
+    : activeTab === 'archive'
+      ? conversations.filter(c => archived.includes(c.id))
+      : conversations.filter(c => !archived.includes(c.id));
 
   const containerStyle: ViewStyle = {
     flex: 1,
@@ -228,9 +234,18 @@ export default function MessagesScreen() {
         </View>
       </View>
 
-      {/* AI Chat + Mini-apps in chat list */}
-      <AIConversationItem />
-      <MiniAppsRow />
+      {/* Category tabs */}
+      <View style={{ flexDirection: 'row', paddingHorizontal: theme.spacing.base, marginBottom: 8, gap: 8 }}>
+        {[{ key: 'chats', label: 'Чаты' }, { key: 'apps', label: 'Приложения' }, { key: 'archive', label: 'Архив' }].map(tab => (
+          <Pressable key={tab.key} onPress={() => setActiveTab(tab.key as any)} style={{ paddingHorizontal: 14, paddingVertical: 6, borderRadius: 16, backgroundColor: activeTab === tab.key ? theme.colors.accent.primary + '20' : 'transparent' }}>
+            <Text variant="caption" weight={activeTab === tab.key ? 'bold' : 'regular'} color={activeTab === tab.key ? theme.colors.accent.primary : theme.colors.text.tertiary} style={{ fontSize: 12 }}>{tab.label}</Text>
+          </Pressable>
+        ))}
+      </View>
+
+      {/* AI Chat + Mini-apps (only in apps tab or chats tab) */}
+      {activeTab === 'chats' && <AIConversationItem />}
+      {activeTab === 'apps' && <MiniAppsRow />}
 
       {filtered.length === 0 ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingBottom: 100 }}>
