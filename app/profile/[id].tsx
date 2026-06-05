@@ -225,7 +225,7 @@ function MenuItem({ icon, label, onPress, theme, destructive }: { icon: string; 
 export default function UserProfileScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, fromChat } = useLocalSearchParams<{ id: string; fromChat?: string }>();
   const { user: currentUser } = useAuthStore();
   const [isLoading, setIsLoading] = useState(true);
   const [followCounts, setFollowCounts] = useState({ followers: 0, following: 0 });
@@ -478,9 +478,11 @@ export default function UserProfileScreen() {
             </View>
             {!isOwnProfile && (
               <View style={{ flexDirection: 'row', gap: 8 }}>
-                <Pressable onPress={() => router.push({ pathname: '/chat/[id]', params: { id: displayProfile.id } })} style={{ width: 36, height: 36, borderRadius: 18, borderWidth: 1, borderColor: theme.colors.border.medium, alignItems: 'center', justifyContent: 'center' }}>
-                  <Feather name="send" size={16} color={theme.colors.text.primary} />
-                </Pressable>
+                {fromChat !== '1' && (
+                  <Pressable onPress={() => router.push({ pathname: '/chat/[id]', params: { id: displayProfile.id } })} style={{ width: 36, height: 36, borderRadius: 18, borderWidth: 1, borderColor: theme.colors.border.medium, alignItems: 'center', justifyContent: 'center' }}>
+                    <Feather name="send" size={16} color={theme.colors.text.primary} />
+                  </Pressable>
+                )}
                 <Pressable onPress={handleFollow} style={{ paddingHorizontal: 20, paddingVertical: 8, backgroundColor: isFollowingState ? 'transparent' : theme.colors.accent.primary, borderWidth: isFollowingState ? 1 : 0, borderColor: theme.colors.border.medium, borderRadius: 8 }}>
                   <Text variant="caption" weight="semibold" color={isFollowingState ? theme.colors.text.primary : '#FFFFFF'}>{isFollowingState ? 'Отписаться' : 'Подписаться'}</Text>
                 </Pressable>

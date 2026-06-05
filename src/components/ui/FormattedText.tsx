@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text as RNText, Pressable, TextStyle } from 'react-native';
 import { router } from 'expo-router';
 import { useTheme } from '../../theme';
+import { openUrl } from '../../utils/openUrl';
 
 interface FormattedTextProps {
   children: string;
@@ -85,6 +86,13 @@ export function FormattedText({ children, style, color }: FormattedTextProps) {
               </RNText>
             );
 
+          case 'link':
+            return (
+              <RNText key={i} onPress={() => openUrl(part.content)} style={{ color: theme.colors.accent.primary, textDecorationLine: 'underline' }}>
+                {part.content}
+              </RNText>
+            );
+
           default:
             return <RNText key={i}>{part.content}</RNText>;
         }
@@ -94,14 +102,14 @@ export function FormattedText({ children, style, color }: FormattedTextProps) {
 }
 
 interface TextPart {
-  type: 'text' | 'bold' | 'italic' | 'strike' | 'underline' | 'code' | 'spoiler' | 'mention' | 'hashtag';
+  type: 'text' | 'bold' | 'italic' | 'strike' | 'underline' | 'code' | 'spoiler' | 'mention' | 'hashtag' | 'link';
   content: string;
 }
 
 function parseFormatting(text: string): TextPart[] {
   const parts: TextPart[] = [];
-  // Regex for all format patterns
-  const regex = /(\*\*(.+?)\*\*)|(\*(.+?)\*)|(~~(.+?)~~)|(__(.+?)__)|(`(.+?)`)|(\|\|(.+?)\|\|)|(@(\w+))|(#(\w+))/g;
+  // Regex for all format patterns (URLs first so they aren't broken by other rules)
+  const regex = /(https?:\/\/[^\s]+)|(\*\*(.+?)\*\*)|(\*(.+?)\*)|(~~(.+?)~~)|(__(.+?)__)|(`(.+?)`)|(\|\|(.+?)\|\|)|(@(\w+))|(#(\w+))/g;
 
   let lastIndex = 0;
   let match: RegExpExecArray | null;
@@ -112,14 +120,15 @@ function parseFormatting(text: string): TextPart[] {
       parts.push({ type: 'text', content: text.slice(lastIndex, match.index) });
     }
 
-    if (match[1]) parts.push({ type: 'bold', content: match[2] });
-    else if (match[3]) parts.push({ type: 'italic', content: match[4] });
-    else if (match[5]) parts.push({ type: 'strike', content: match[6] });
-    else if (match[7]) parts.push({ type: 'underline', content: match[8] });
-    else if (match[9]) parts.push({ type: 'code', content: match[10] });
-    else if (match[11]) parts.push({ type: 'spoiler', content: match[12] });
-    else if (match[13]) parts.push({ type: 'mention', content: match[14] });
-    else if (match[15]) parts.push({ type: 'hashtag', content: match[16] });
+    if (match[1]) parts.push({ type: 'link', content: match[1] });
+    else if (match[2]) parts.push({ type: 'bold', content: match[3] });
+    else if (match[4]) parts.push({ type: 'italic', content: match[5] });
+    else if (match[6]) parts.push({ type: 'strike', content: match[7] });
+    else if (match[8]) parts.push({ type: 'underline', content: match[9] });
+    else if (match[10]) parts.push({ type: 'code', content: match[11] });
+    else if (match[12]) parts.push({ type: 'spoiler', content: match[13] });
+    else if (match[14]) parts.push({ type: 'mention', content: match[15] });
+    else if (match[16]) parts.push({ type: 'hashtag', content: match[17] });
 
     lastIndex = match.index + match[0].length;
   }

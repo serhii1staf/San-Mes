@@ -10,6 +10,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
+import { FormattedText } from '../../src/components/ui/FormattedText';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { useChatStore, useEntityStore } from '../../src/store';
 import { useChatSettingsStore, GLOBAL_CHAT_SETTINGS_KEY, DEFAULT_CHAT_SETTINGS } from '../../src/store/chatSettingsStore';
@@ -93,7 +94,7 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, onA
             borderBottomRightRadius: isOwn ? 4 : bubbleRadius,
             borderBottomLeftRadius: isOwn ? bubbleRadius : 4,
           }}>
-            <Text variant="body" color={isOwn ? '#FFFFFF' : theme.colors.text.primary} style={{ fontSize, fontFamily: fontFamilyStyle }}>{message.text}</Text>
+            <FormattedText color={isOwn ? '#FFFFFF' : theme.colors.text.primary} style={{ fontSize, fontFamily: fontFamilyStyle }}>{message.text}</FormattedText>
             <Text variant="caption" color={isOwn ? 'rgba(255,255,255,0.6)' : theme.colors.text.tertiary} style={{ marginTop: 3, alignSelf: 'flex-end', fontSize: 10 }}>
               {formatMessageTime(message.createdAt)}
             </Text>
@@ -361,13 +362,13 @@ export default function ChatScreen() {
           </Pressable>
           {/* Name (center) inside a compact pill container */}
           <View style={{ flex: 1, alignItems: 'center' }}>
-            <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId } })} style={[styles.headerPill, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
+            <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId, fromChat: '1' } })} style={[styles.headerPill, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
               <Text variant="caption" weight="semibold" numberOfLines={1} style={{ flexShrink: 1 }}>{displayName}</Text>
               {displayVerified && <VerifiedBadge size={12} />}
             </Pressable>
           </View>
           {/* Avatar (right) inside a circle container */}
-          <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId } })} style={[styles.headerCircle, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light, overflow: 'hidden' }]}>
+          <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId, fromChat: '1' } })} style={[styles.headerCircle, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light, overflow: 'hidden' }]}>
             <Avatar emoji={displayEmoji} name={displayName} size="xs" />
           </Pressable>
         </View>

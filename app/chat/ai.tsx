@@ -8,6 +8,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
+import { FormattedText } from '../../src/components/ui/FormattedText';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { useThemeStore, ACCENT_COLORS } from '../../src/store/themeStore';
 import { useAuthStore } from '../../src/store';
@@ -82,7 +83,7 @@ function MessageBubble({ message }: { message: AIMessage }) {
         </View>
       )}
       <View style={{ backgroundColor: isUser ? theme.colors.accent.primary : (theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)'), borderRadius: 20, borderBottomRightRadius: isUser ? 6 : 20, borderBottomLeftRadius: isUser ? 20 : 6, paddingHorizontal: 14, paddingVertical: 10 }}>
-        <Text variant="body" color={isUser ? '#FFFFFF' : theme.colors.text.primary} style={{ fontSize: 14, lineHeight: 20 }}>{message.content}</Text>
+        <FormattedText color={isUser ? '#FFFFFF' : theme.colors.text.primary} style={{ fontSize: 14, lineHeight: 20 }}>{message.content}</FormattedText>
       </View>
       {uniqueActions?.map((action, i) => <ActionBubble key={i} action={action} />)}
     </View>
