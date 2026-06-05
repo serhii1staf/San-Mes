@@ -191,10 +191,10 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
                   <Avatar emoji={user.emoji} size="sm" />
                   <View style={{ marginLeft: 12, flex: 1 }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                      <Text variant="body" weight="semibold">{user.displayName}</Text>
+                      <Text variant="body" weight="semibold" numberOfLines={1} style={{ flexShrink: 1 }}>{user.displayName}</Text>
                       {user.is_verified && <VerifiedBadge size={12} />}
                     </View>
-                    <Text variant="caption" color={theme.colors.text.tertiary}>@{user.username}</Text>
+                    <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>@{user.username}</Text>
                   </View>
                   <View style={{ backgroundColor: theme.colors.accent.primary + '20', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 }}>
                     <Text variant="caption" color={theme.colors.accent.primary} style={{ fontSize: 10 }}>Активный</Text>
@@ -208,10 +208,10 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
                   <Avatar emoji={account.emoji} size="sm" />
                   <View style={{ marginLeft: 12, flex: 1 }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                      <Text variant="body" weight="medium">{account.displayName}</Text>
+                      <Text variant="body" weight="medium" numberOfLines={1} style={{ flexShrink: 1 }}>{account.displayName}</Text>
                       {account.is_verified && <VerifiedBadge size={11} />}
                     </View>
-                    <Text variant="caption" color={theme.colors.text.tertiary}>@{account.username}</Text>
+                    <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>@{account.username}</Text>
                   </View>
                   <Feather name="log-in" size={16} color={theme.colors.text.tertiary} />
                 </Pressable>

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, ImageBackground, Alert, Animated, PanResponder, Modal, StatusBar, Dimensions } from 'react-native';
-import { KeyboardStickyView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
-import Reanimated, { useAnimatedStyle, interpolate, Extrapolation } from 'react-native-reanimated';
+import { KeyboardStickyView, useReanimatedKeyboardAnimation, useKeyboardHandler } from 'react-native-keyboard-controller';
+import Reanimated, { useAnimatedStyle, interpolate, Extrapolation, runOnJS } from 'react-native-reanimated';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
 import { Feather } from '@expo/vector-icons';
@@ -87,7 +87,7 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, onR
             {message.imageUrls && message.imageUrls.length > 0 ? (
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginBottom: message.text ? 6 : 0 }}>
                 {message.imageUrls.map((uri, idx) => (
-                  <Pressable key={idx} onPress={() => onImagePress(message.imageUrls!, idx)}>
+                  <Pressable key={idx} onPress={() => onImagePress(message.imageUrls!, idx)} onLongPress={() => { triggerHaptic('medium'); onLongPress(message); }} delayLongPress={300}>
                     <CachedImage uri={uri} style={{ width: message.imageUrls!.length === 1 ? 200 : 120, height: message.imageUrls!.length === 1 ? 200 : 120, borderRadius: 12 }} resizeMode="cover" />
                   </Pressable>
                 ))}
@@ -123,7 +123,7 @@ export default function ChatScreen() {
   const { messages: storeMessages, setMessages, addMessage } = useChatStore();
   const flatListRef = useRef<FlatList>(null);
 
-  const { progress } = useReanimatedKeyboardAnimation();
+  const { progress, height: keyboardHeight } = useReanimatedKeyboardAnimation();
 
   const conversation = mockConversations.find((c) => c.id === id);
   const [profileData, setProfileData] = useState<any>(null);
@@ -157,6 +157,12 @@ export default function ChatScreen() {
     paddingBottom: interpolate(progress.value, [0, 1], [inputBarBottomPad, 10], Extrapolation.CLAMP),
   }));
 
+  // Spacer at the bottom of the message list grows with the keyboard so the last
+  // messages stay reachable above the keyboard + input bar (UI thread).
+  const listFooterStyle = useAnimatedStyle(() => ({
+    height: Math.abs(keyboardHeight.value) + 70,
+  }));
+
   const cachedProfile = useEntityStore((s) => (participantId ? s.profiles[participantId] : undefined));
 
   useEffect(() => {
@@ -181,6 +187,19 @@ export default function ChatScreen() {
   const scrollToEnd = useCallback((animated = true) => {
     requestAnimationFrame(() => flatListRef.current?.scrollToEnd({ animated }));
   }, []);
+
+  // Keep the latest messages in view when the keyboard opens
+  useKeyboardHandler({
+    onStart: () => {
+      'worklet';
+    },
+    onEnd: (e) => {
+      'worklet';
+      if (e.height > 0) {
+        runOnJS(scrollToEnd)(false);
+      }
+    },
+  }, [scrollToEnd]);
 
   const startReply = useCallback((message: ChatMessage) => {
     setEditing(null);
@@ -215,6 +234,8 @@ export default function ChatScreen() {
       setReplyTo(null);
       setEditing(message);
       setInputText(message.text);
+      // Load existing photos so they can be removed/replaced while editing
+      setPendingImages(message.imageUrls || []);
     } else if (action === 'delete') {
       Alert.alert('Удалить сообщение?', '', [
         { text: 'Отмена', style: 'cancel' },
@@ -237,8 +258,17 @@ export default function ChatScreen() {
     setInputText('');
 
     if (editing) {
-      setMessages(id, (storeMessages[id] || []).map((m) => (m.id === editing.id ? { ...m, text } : m)) as any);
+      // Re-upload any newly added local images (those that aren't already remote URLs)
+      let finalImages: string[] | undefined = pendingImages.length > 0 ? pendingImages : undefined;
+      const localOnes = pendingImages.filter((u) => !u.startsWith('http'));
       setEditing(null);
+      setPendingImages([]);
+      setMessages(id, (storeMessages[id] || []).map((m) => (m.id === editing.id ? { ...m, text, imageUrls: finalImages } : m)) as any);
+      if (localOnes.length > 0) {
+        const results = await Promise.all(pendingImages.map((u) => u.startsWith('http') ? Promise.resolve({ url: u, error: null }) : uploadChatImage(u)));
+        const urls = results.map((r) => r.url).filter(Boolean) as string[];
+        setMessages(id, (useChatStore.getState().messages[id] || []).map((m) => (m.id === editing.id ? { ...m, imageUrls: urls.length ? urls : undefined } : m)) as any);
+      }
       return;
     }
 
@@ -363,7 +393,8 @@ export default function ChatScreen() {
         style={StyleSheet.absoluteFill}
         keyExtractor={(item) => item.id}
         renderItem={renderItem}
-        contentContainerStyle={{ flexGrow: 1, justifyContent: 'flex-end', paddingTop: headerContentHeight + 8, paddingBottom: inputBarBottomPad + 60 }}
+        contentContainerStyle={{ flexGrow: 1, justifyContent: 'flex-end', paddingTop: headerContentHeight + 8 }}
+        ListFooterComponent={<Reanimated.View style={listFooterStyle} />}
         showsVerticalScrollIndicator={false}
         scrollEnabled={scrollEnabled}
         keyboardShouldPersistTaps="handled"
@@ -385,9 +416,12 @@ export default function ChatScreen() {
           <View style={{ marginHorizontal: 12, marginTop: 6, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: theme.colors.background.elevated, borderRadius: 12, borderWidth: 1, borderColor: theme.colors.border.light, paddingHorizontal: 12, paddingVertical: 6 }}>
             <View style={{ width: 3, alignSelf: 'stretch', borderRadius: 2, backgroundColor: theme.colors.accent.primary }} />
             <Feather name={editing ? 'edit-2' : 'corner-up-left'} size={15} color={theme.colors.accent.primary} />
+            {banner.imageUrls && banner.imageUrls.length > 0 ? (
+              <CachedImage uri={banner.imageUrls[0]} style={{ width: 32, height: 32, borderRadius: 6 }} resizeMode="cover" />
+            ) : null}
             <View style={{ flex: 1 }}>
               <Text variant="caption" weight="semibold" color={theme.colors.accent.primary} style={{ fontSize: 12 }}>{editing ? 'Редактирование' : 'Ответ на сообщение'}</Text>
-              <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 12 }}>{banner.text}</Text>
+              <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 12 }}>{banner.text || (banner.imageUrls && banner.imageUrls.length > 0 ? `📷 ${banner.imageUrls.length > 1 ? banner.imageUrls.length + ' фото' : 'Фото'}` : '')}</Text>
             </View>
             <Pressable onPress={() => { setReplyTo(null); setEditing(null); setInputText(''); }} hitSlop={8}>
               <Feather name="x" size={18} color={theme.colors.text.tertiary} />
@@ -410,8 +444,8 @@ export default function ChatScreen() {
         )}
 
         <Reanimated.View style={[{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: 8 }, inputRowStyle]}>
-          <Pressable onPress={pickImages} style={{ width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', marginRight: 6 }}>
-            <Feather name="image" size={22} color={theme.colors.accent.primary} />
+          <Pressable onPress={pickImages} style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: theme.colors.background.elevated, borderWidth: 1, borderColor: theme.colors.border.light, alignItems: 'center', justifyContent: 'center', marginRight: 8 }}>
+            <Feather name="image" size={20} color={theme.colors.accent.primary} />
           </Pressable>
           <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 22, paddingHorizontal: 14, minHeight: 44, borderWidth: 1, borderColor: theme.colors.border.light }}>
             <TextInput

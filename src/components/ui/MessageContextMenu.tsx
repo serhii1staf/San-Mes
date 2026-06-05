@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme';
 import { Text } from './Text';
 import { FormattedText } from './FormattedText';
+import { CachedImage } from './CachedImage';
 import { ChatMessage } from '../../types';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -74,9 +75,11 @@ export function MessageContextMenu({ visible, message, isOwn, bubbleColor, bubbl
         </View>
       ) : null}
       {hasImages ? (
-        <Text variant="caption" color={isOwn ? 'rgba(255,255,255,0.8)' : theme.colors.text.tertiary} style={{ fontSize: 12, marginBottom: message.text ? 6 : 0 }}>
-          📷 {message.imageUrls!.length > 1 ? `${message.imageUrls!.length} фото` : 'Фото'}
-        </Text>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginBottom: message.text ? 6 : 0 }}>
+          {message.imageUrls!.slice(0, 4).map((uri, idx) => (
+            <CachedImage key={idx} uri={uri} style={{ width: message.imageUrls!.length === 1 ? 160 : 76, height: message.imageUrls!.length === 1 ? 160 : 76, borderRadius: 10 }} resizeMode="cover" />
+          ))}
+        </View>
       ) : null}
       {message.text ? (
         <FormattedText color={bubbleTextColor} linkColor={isOwn ? '#FFFFFF' : theme.colors.accent.primary} style={{ fontSize: 15 }}>{message.text}</FormattedText>
