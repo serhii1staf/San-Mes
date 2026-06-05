@@ -94,8 +94,8 @@ export function PostMenuModal({ visible, post, onClose }: PostMenuModalProps) {
   const previewContent = post.isRepost && post.originalPost ? post.originalPost.content : (post.content || 'Публикация');
   const previewImage = post.isRepost && post.originalPost ? post.originalPost.imageUrl : post.imageUrl;
 
-  const handleCopyLink = async () => { triggerHaptic('light'); await Clipboard.setStringAsync(`https://san-mes.vercel.app/post/${post.id}`); showToast('Ссылка скопирована', 'link'); dismiss(); };
-  const handleShare = async () => { triggerHaptic('light'); try { await Share.share({ message: `${post.content || ''}\nhttps://san-mes.vercel.app/post/${post.id}` }); } catch {} dismiss(); };
+  const handleCopyLink = async () => { triggerHaptic('light'); await Clipboard.setStringAsync(`https://san-m-app.com/post/${post.id}`); showToast('Ссылка скопирована', 'link'); dismiss(); };
+  const handleShare = async () => { triggerHaptic('light'); try { await Share.share({ message: `${post.content || ''}\nhttps://san-m-app.com/post/${post.id}` }); } catch {} dismiss(); };
   const handleDelete = () => {
     triggerHaptic('medium');
     Alert.alert('Удалить пост?', 'Это действие нельзя отменить', [

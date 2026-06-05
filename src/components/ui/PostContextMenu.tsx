@@ -67,7 +67,7 @@ export function PostContextMenu({ visible, post, isOwnPost, onClose, onDelete }:
   const handleShare = async () => {
     if (post) {
       try {
-        await Share.share({ message: `${post.authorName}: ${post.content || ''}\nhttps://san-mes.vercel.app/post/${post.id}` });
+        await Share.share({ message: `${post.authorName}: ${post.content || ''}\nhttps://san-m-app.com/post/${post.id}` });
       } catch {}
     }
     dismiss();

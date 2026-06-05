@@ -122,14 +122,14 @@ function ProfileMenuModal({ visible, profile, onClose }: { visible: boolean; pro
 
   const handleCopyLink = async () => {
     triggerHaptic('light');
-    await Clipboard.setStringAsync(`https://san-mes.vercel.app/profile/${profile?.id}`);
+    await Clipboard.setStringAsync(`https://san-m-app.com/profile/${profile?.id}`);
     showToast('Ссылка скопирована', 'link');
     handleClose();
   };
 
   const handleShare = async () => {
     triggerHaptic('light');
-    try { await Share.share({ message: `${profile?.display_name || 'User'} в San\nhttps://san-mes.vercel.app/profile/${profile?.id}` }); } catch {}
+    try { await Share.share({ message: `${profile?.display_name || 'User'} в San\nhttps://san-m-app.com/profile/${profile?.id}` }); } catch {}
     handleClose();
   };
 
@@ -141,7 +141,7 @@ function ProfileMenuModal({ visible, profile, onClose }: { visible: boolean; pro
 
   if (!profile) return null;
   const translateY = Animated.add(slideAnim, dragY);
-  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(`https://san-mes.vercel.app/profile/${profile.id}`)}`;
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(`https://san-m-app.com/profile/${profile.id}`)}`;
 
   // QR fullscreen view
   if (showQR) {
@@ -521,7 +521,7 @@ export default function UserProfileScreen() {
               const isRepostPost = post.isRepost;
               const origPost = post.originalPost;
               return (
-              <SwipeablePostCard key={post.id} shareText={`${displayProfile.display_name}: ${post.content || ''}\nhttps://san-mes.vercel.app/post/${post.id}`}>
+              <SwipeablePostCard key={post.id} shareText={`${displayProfile.display_name}: ${post.content || ''}\nhttps://san-m-app.com/post/${post.id}`}>
               <Pressable onPress={() => router.push({ pathname: '/comments/[id]', params: { id: post.id } })} onLongPress={() => { triggerHaptic('medium'); setContextPost({ ...post, authorName: displayProfile.display_name, authorUsername: displayProfile.username, authorEmoji: displayProfile.emoji || '😊', authorVerified: displayProfile.is_verified, authorBadge: displayProfile.badge, authorId: displayProfile.id }); }} delayLongPress={400} style={{ flexDirection: 'row', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.75)', borderRadius: 28, padding: 10, marginBottom: 12, borderWidth: 1, borderColor: theme.isDark ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.4)', shadowColor: theme.isDark ? '#000' : '#c8a060', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.12, shadowRadius: 20, elevation: 4, overflow: 'hidden' }}>
                 {/* Left: Image grid thumbnail */}
                 {hasImage ? (

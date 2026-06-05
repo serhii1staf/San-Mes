@@ -237,7 +237,7 @@ export default function ProfileScreen() {
   const headerOpacity = scrollY.interpolate({ inputRange: [0, 50, 120], outputRange: [0, 0, 1], extrapolate: 'clamp' });
   const buttonsTranslateX = scrollY.interpolate({ inputRange: [0, 180, 250], outputRange: [0, 0, -60], extrapolate: 'clamp' });
   const settingsTranslateX = scrollY.interpolate({ inputRange: [0, 180, 250], outputRange: [0, 0, 60], extrapolate: 'clamp' });
-  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(`https://san-mes.vercel.app/profile/${user.id}`)}`;
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(`https://san-m-app.com/profile/${user.id}`)}`;
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
@@ -275,7 +275,7 @@ export default function ProfileScreen() {
             const hasImage = imgs.length > 0;
             const isRepostPost = post.isRepost;
             return (
-            <SwipeablePostCard key={post.id} shareText={`${user.displayName}: ${post.content || ''}\nhttps://san-mes.vercel.app/post/${post.id}`}>
+            <SwipeablePostCard key={post.id} shareText={`${user.displayName}: ${post.content || ''}\nhttps://san-m-app.com/post/${post.id}`}>
             <Pressable onPress={() => router.push({ pathname: '/comments/[id]', params: { id: post.id } })} onLongPress={() => { triggerHaptic('medium'); setContextPost(post); }} delayLongPress={400} style={{ flexDirection: 'row', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.75)', borderRadius: 28, padding: 10, marginBottom: 12, borderWidth: 1, borderColor: theme.isDark ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.4)', shadowColor: theme.isDark ? '#000' : '#c8a060', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.12, shadowRadius: 20, elevation: 4, overflow: 'hidden' }}>
               {/* Left: Image grid thumbnail */}
               {hasImage ? (
