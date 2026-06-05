@@ -66,6 +66,9 @@ export interface ChatMessage {
   text: string;
   createdAt: string;
   isRead: boolean;
+  replyToId?: string;
+  replyToText?: string;
+  replyToIsOwn?: boolean;
 }
 
 export interface Conversation {
