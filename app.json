@@ -14,7 +14,6 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.sanmes.app",
-      "associatedDomains": ["applinks:san-m-app.com"],
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
