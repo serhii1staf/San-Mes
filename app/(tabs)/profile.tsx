@@ -326,7 +326,7 @@ export default function ProfileScreen() {
                 {isRepostPost && origPost && (
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 }}>
                     <Feather name="repeat" size={10} color={theme.colors.accent.primary} />
-                    <Text variant="caption" color={theme.colors.accent.primary} style={{ fontSize: 10 }}>от {origPost.authorName}</Text>
+                    <Text variant="caption" color={theme.colors.accent.primary} numberOfLines={1} style={{ fontSize: 10, flexShrink: 1 }}>от {origPost.authorName}</Text>
                   </View>
                 )}
                 {isRepostPost && !origPost && <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 }}><Feather name="repeat" size={10} color={theme.colors.accent.primary} /><Text variant="caption" color={theme.colors.accent.primary} style={{ fontSize: 10 }}>Репост</Text></View>}
@@ -372,7 +372,7 @@ export default function ProfileScreen() {
                           <Text variant="caption" weight="semibold" color="#FFFFFF" style={{ fontSize: 11 }}>{displayName}</Text>
                           {user?.is_verified && <VerifiedBadge size={10} />}
                         </View>
-                        {isRepostViewing && <Text variant="caption" color="rgba(255,255,255,0.5)" style={{ fontSize: 9 }}>репост от {user?.displayName}</Text>}
+                        {isRepostViewing && <Text variant="caption" color="rgba(255,255,255,0.5)" numberOfLines={1} style={{ fontSize: 9 }}>репост от {user?.displayName}</Text>}
                         {!isRepostViewing && viewingImage && <Text variant="caption" color="rgba(255,255,255,0.6)" style={{ fontSize: 9 }}>{formatTimeAgo(post?.createdAt || '')}</Text>}
                       </View>
                     </>
@@ -403,12 +403,16 @@ export default function ProfileScreen() {
               )
             )}
           </View>
-          {/* Description (if exists) */}
-          {viewingImage && (() => { const post = userPosts.find(p => p.id === viewingImage.postId); return post?.content ? (
-            <ScrollView style={{ maxHeight: 60, marginHorizontal: 24, marginBottom: 8 }} showsVerticalScrollIndicator={false}>
-              <Text variant="caption" color="rgba(255,255,255,0.8)" style={{ fontSize: 12 }}>{post.content}</Text>
-            </ScrollView>
-          ) : null; })()}
+          {/* Description (if exists) — for reposts, fall back to the original post's content */}
+          {viewingImage && (() => {
+            const post = userPosts.find(p => p.id === viewingImage.postId);
+            const caption = post?.content || (post as any)?.originalPost?.content || '';
+            return caption ? (
+              <ScrollView style={{ maxHeight: 60, marginHorizontal: 24, marginBottom: 8 }} showsVerticalScrollIndicator={false}>
+                <Text variant="caption" color="rgba(255,255,255,0.8)" style={{ fontSize: 12 }}>{caption}</Text>
+              </ScrollView>
+            ) : null;
+          })()}
           {/* Bottom actions — compact rounded container, centered */}
           <View style={{ alignItems: 'center', paddingBottom: insets.bottom + 20 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 28, paddingHorizontal: 24, paddingVertical: 12 }}>

@@ -580,7 +580,7 @@ export default function UserProfileScreen() {
                   {isRepostPost && origPost && (
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 }}>
                       <Feather name="repeat" size={10} color={theme.colors.accent.primary} />
-                      <Text variant="caption" color={theme.colors.accent.primary} style={{ fontSize: 10 }}>от {origPost.authorName}</Text>
+                      <Text variant="caption" color={theme.colors.accent.primary} numberOfLines={1} style={{ fontSize: 10, flexShrink: 1 }}>от {origPost.authorName}</Text>
                     </View>
                   )}
                   {(post.content || origPost?.content) ? <FormattedText style={{ fontSize: 12, marginBottom: 6 }} color={theme.colors.text.secondary}>{post.content || origPost?.content || ''}</FormattedText> : null}
@@ -668,12 +668,16 @@ export default function UserProfileScreen() {
             )}
           </View>
 
-          {/* Description (if exists) */}
-          {viewingImage && (() => { const post = displayPosts.find((pp: any) => pp.id === viewingImage.postId); return post?.content ? (
-            <RNScrollView style={{ maxHeight: 60, marginHorizontal: 24, marginBottom: 8 }} showsVerticalScrollIndicator={false}>
-              <Text variant="caption" color="rgba(255,255,255,0.8)" style={{ fontSize: 12 }}>{post.content}</Text>
-            </RNScrollView>
-          ) : null; })()}
+          {/* Description (if exists) — for reposts, fall back to the original post's content */}
+          {viewingImage && (() => {
+            const post = displayPosts.find((pp: any) => pp.id === viewingImage.postId);
+            const caption = post?.content || post?.originalPost?.content || '';
+            return caption ? (
+              <RNScrollView style={{ maxHeight: 60, marginHorizontal: 24, marginBottom: 8 }} showsVerticalScrollIndicator={false}>
+                <Text variant="caption" color="rgba(255,255,255,0.8)" style={{ fontSize: 12 }}>{caption}</Text>
+              </RNScrollView>
+            ) : null;
+          })()}
 
           {/* Bottom actions — compact rounded container, centered */}
           <View style={{ alignItems: 'center', paddingBottom: insets.bottom + 20 }}>
