@@ -83,7 +83,7 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, onA
           </View>
         </View>
       ) : null}
-      <FormattedText color={isOwn ? '#FFFFFF' : theme.colors.text.primary} style={{ fontSize, fontFamily: fontFamilyStyle }}>{message.text}</FormattedText>
+      <FormattedText color={isOwn ? '#FFFFFF' : theme.colors.text.primary} linkColor={isOwn ? '#FFFFFF' : theme.colors.accent.primary} style={{ fontSize, fontFamily: fontFamilyStyle }}>{message.text}</FormattedText>
       <Text variant="caption" color={isOwn ? 'rgba(255,255,255,0.6)' : theme.colors.text.tertiary} style={{ marginTop: 3, alignSelf: 'flex-end', fontSize: 10 }}>
         {formatMessageTime(message.createdAt)}
       </Text>

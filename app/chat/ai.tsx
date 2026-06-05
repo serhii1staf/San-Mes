@@ -33,7 +33,7 @@ function MiniThemeCard({ themeKey }: { themeKey: string }) {
           <View style={{ width: 18, height: 18, borderRadius: 9, backgroundColor: t.color + '20', alignItems: 'center', justifyContent: 'center' }}>
             <RNText style={{ fontSize: 9 }} allowFontScaling={false}>{user?.emoji || '😊'}</RNText>
           </View>
-          <Text style={{ fontSize: 8, fontWeight: '600', color: '#FFFFFF', marginLeft: 6 }}>{user?.displayName || 'User'}</Text>
+          <Text style={{ fontSize: 8, fontWeight: '600', color: '#FFFFFF', marginLeft: 6, flexShrink: 1 }} numberOfLines={1}>{user?.displayName || 'User'}</Text>
         </View>
         <View style={{ height: 6, width: '80%', borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.08)', marginBottom: 3 }} />
         <View style={{ height: 6, width: '50%', borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.05)' }} />
@@ -83,7 +83,7 @@ function MessageBubble({ message }: { message: AIMessage }) {
         </View>
       )}
       <View style={{ backgroundColor: isUser ? theme.colors.accent.primary : (theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)'), borderRadius: 20, borderBottomRightRadius: isUser ? 6 : 20, borderBottomLeftRadius: isUser ? 20 : 6, paddingHorizontal: 14, paddingVertical: 10 }}>
-        <FormattedText color={isUser ? '#FFFFFF' : theme.colors.text.primary} style={{ fontSize: 14, lineHeight: 20 }}>{message.content}</FormattedText>
+        <FormattedText color={isUser ? '#FFFFFF' : theme.colors.text.primary} linkColor={isUser ? '#FFFFFF' : theme.colors.accent.primary} style={{ fontSize: 14, lineHeight: 20 }}>{message.content}</FormattedText>
       </View>
       {uniqueActions?.map((action, i) => <ActionBubble key={i} action={action} />)}
     </View>

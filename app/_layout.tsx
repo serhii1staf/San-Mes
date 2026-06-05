@@ -66,14 +66,14 @@ function CustomSplash() {
 
   return (
     <View style={[styles.loadingContainer, { backgroundColor: theme.colors.background.primary }]}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 32, maxWidth: '90%' }}>
         <Animated.View style={{ transform: [{ translateX: logoAnim }], opacity: opacityAnim }}>
           <RNImage source={require('../assets/icon.png')} style={{ width: 44, height: 44, borderRadius: 12 }} />
         </Animated.View>
-        <Animated.View style={{ transform: [{ translateX: textAnim }], opacity: opacityAnim }}>
+        <Animated.View style={{ transform: [{ translateX: textAnim }], opacity: opacityAnim, flexShrink: 1 }}>
           <RNText style={{ fontSize: 28, fontWeight: '700', color: theme.colors.text.primary }}>San</RNText>
           {user?.displayName && (
-            <RNText style={{ fontSize: 13, color: theme.colors.text.tertiary, marginTop: 2 }}>
+            <RNText numberOfLines={1} style={{ fontSize: 13, color: theme.colors.text.tertiary, marginTop: 2 }}>
               Привет, {user.displayName}
             </RNText>
           )}

@@ -8,6 +8,7 @@ interface FormattedTextProps {
   children: string;
   style?: TextStyle;
   color?: string;
+  linkColor?: string;
 }
 
 /**
@@ -21,10 +22,11 @@ interface FormattedTextProps {
  * __underline__ — underlined text
  * #hashtag — clickable hashtag (accent color)
  */
-export function FormattedText({ children, style, color }: FormattedTextProps) {
+export function FormattedText({ children, style, color, linkColor }: FormattedTextProps) {
   const theme = useTheme();
   const [revealedSpoilers, setRevealedSpoilers] = useState<Set<number>>(new Set());
   const textColor = color || theme.colors.text.primary;
+  const resolvedLinkColor = linkColor || theme.colors.accent.primary;
 
   const revealSpoiler = (index: number) => {
     setRevealedSpoilers(prev => new Set(prev).add(index));
@@ -88,7 +90,7 @@ export function FormattedText({ children, style, color }: FormattedTextProps) {
 
           case 'link':
             return (
-              <RNText key={i} onPress={() => openUrl(part.content)} style={{ color: theme.colors.accent.primary, textDecorationLine: 'underline' }}>
+              <RNText key={i} onPress={() => openUrl(part.content)} style={{ color: resolvedLinkColor, textDecorationLine: 'underline' }}>
                 {part.content}
               </RNText>
             );

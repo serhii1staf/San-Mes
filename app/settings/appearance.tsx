@@ -5,6 +5,7 @@ import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
+import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { useThemeStore, ACCENT_COLORS, AccentColor } from '../../src/store/themeStore';
 import { useAuthStore } from '../../src/store/authStore';
 
@@ -48,8 +49,11 @@ function ThemePreviewCard({ accentConfig, isDark, isSelected, user }: { accentCo
           <View style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: accent + '20', alignItems: 'center', justifyContent: 'center' }}>
             <Text style={{ fontSize: 12 }}>{user?.emoji || '😊'}</Text>
           </View>
-          <View style={{ marginLeft: 8 }}>
-            <Text style={{ fontSize: 10, fontWeight: '600', color: textPrimary }}>{user?.displayName || 'User'}</Text>
+          <View style={{ marginLeft: 8, flex: 1 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+              <Text style={{ fontSize: 10, fontWeight: '600', color: textPrimary, flexShrink: 1 }} numberOfLines={1}>{user?.displayName || 'User'}</Text>
+              {user?.is_verified && <VerifiedBadge size={9} />}
+            </View>
             <Text style={{ fontSize: 7, color: textSecondary }}>2m ago</Text>
           </View>
         </View>
