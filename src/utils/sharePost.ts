@@ -1,5 +1,6 @@
-// Share a post as an actual image + text into other apps / social networks,
-// instead of just sharing a link back to our domain.
+// Share a post as an actual image + text (with a link) into other apps /
+// social networks. The link is always appended so there is always something
+// to share, and image-only posts still carry a caption + link.
 //
 // Strategy (iOS-first, this is an App Store app):
 //   1. Resolve the post's first image URL (post or repost original).
@@ -8,17 +9,15 @@
 //      file:// uri — effectively downloading + caching it.
 //   3. Share via react-native `Share.share({ message, url })`:
 //        - On iOS the `url` (local image file) is attached as the photo and
-//          `message` is the caption — both go into the share sheet together,
-//          so the image lands in Instagram/Telegram/WhatsApp/etc. with text.
-//   4. If there is no image, fall back to sharing just the text.
-//
-// We intentionally do NOT share the Supabase/site link anymore.
+//          `message` is the caption — both go into the share sheet together.
+//   4. If there is no image, share the caption (content + link) as text.
 
 import { Share, Platform } from 'react-native';
-import { showToast } from '../store/toastStore';
 import type { Post } from '../types';
 
-/** Build the caption text from a post (author + content), no URL. */
+const SITE_BASE_URL = 'https://san-m-app.com';
+
+/** Build the caption text from a post (content + link to the post). */
 function buildCaption(post: Post): string {
   const parts: string[] = [];
   if (post.isRepost && post.originalPost) {
@@ -27,6 +26,9 @@ function buildCaption(post: Post): string {
   } else if (post.content) {
     parts.push(post.content);
   }
+  // Always include a link back to the post so there is always something to
+  // share (even for image-only posts) and the link opens our site.
+  parts.push(`${SITE_BASE_URL}/post/${post.id}`);
   return parts.join('\n').trim();
 }
 
@@ -76,6 +78,32 @@ export async function shareImageUrl(imageUrl: string | null | undefined, caption
     // cancelled / failed — silent
   }
 }
+/**
+ * Share a single image (by URL) as an actual photo file, with optional caption.
+ * Downloads the remote image to a local file then shares it. Falls back to
+ * sharing the URL as text if the download fails.
+ */
+export async function shareImageUrl(imageUrl: string | null | undefined, caption?: string): Promise<void> {
+  if (!imageUrl) return;
+  try {
+    const localUri = await toLocalImageFile(imageUrl);
+    if (localUri) {
+      await Share.share(
+        Platform.OS === 'ios'
+          ? { url: localUri, message: caption || undefined }
+          : { message: caption || '', url: localUri }
+      );
+      return;
+    }
+    await Share.share({ message: caption ? `${caption}\n${imageUrl}` : imageUrl });
+  } catch {
+    // cancelled / failed — silent
+  }
+}
+/**
+ * Share a post as image + text. Always includes a link to the post, so there
+ * is always something to share (never "nothing to share").
+ */
 export async function sharePost(post: Post | null | undefined): Promise<void> {
   if (!post) return;
   const caption = buildCaption(post);
@@ -95,12 +123,8 @@ export async function sharePost(post: Post | null | undefined): Promise<void> {
         return;
       }
     }
-    // No image (or download failed) → share text only.
-    if (caption) {
-      await Share.share({ message: caption });
-    } else {
-      showToast('Нечего отправить', 'x');
-    }
+    // No image (or download failed) → share text + link only.
+    await Share.share({ message: caption });
   } catch {
     // User cancelled or share failed — stay silent (matches old behavior).
   }
