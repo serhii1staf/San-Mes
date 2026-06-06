@@ -4,11 +4,11 @@ import { Feather } from '@expo/vector-icons';
 import { WebView } from 'react-native-webview';
 import { CachedImage } from './CachedImage';
 
-// In-app media viewer (Discord/Telegram style):
-//   - YouTube/Vimeo videos play INLINE inside the app via an embedded player
-//     (the video streams from the provider — zero load on our server / DB).
-//   - Images open as a full-screen zoomable-ish image viewer.
-// Opens as a lightweight modal so the user never leaves the app.
+// Full-screen in-app media viewer.
+//   - YouTube/Vimeo play inline via the provider's embed page (loaded by URL so
+//     the iframe has a real https origin — avoids YouTube embed error 150/153).
+//   - Images open as a full-screen viewer.
+// Video streams from the provider — zero load on our server / database.
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 
@@ -23,30 +23,25 @@ interface MediaViewerModalProps {
   onClose: () => void;
 }
 
-function youtubeEmbedHtml(videoId: string): string {
-  // Autoplay, inline, no related videos at end. The player + stream come from
-  // YouTube directly — our backend is not involved at all.
-  return `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-<style>html,body{margin:0;background:#000;height:100%;overflow:hidden}.w{position:absolute;inset:0}iframe{width:100%;height:100%;border:0}</style></head>
-<body><div class="w"><iframe src="https://www.youtube.com/embed/${videoId}?autoplay=1&playsinline=1&rel=0&modestbranding=1" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe></div></body></html>`;
-}
-
-function vimeoEmbedHtml(videoId: string): string {
-  return `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-<style>html,body{margin:0;background:#000;height:100%;overflow:hidden}iframe{position:absolute;inset:0;width:100%;height:100%;border:0}</style></head>
-<body><iframe src="https://player.vimeo.com/video/${videoId}?autoplay=1&playsinline=1" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen></iframe></body></html>`;
+export function embedUrlFor(source: MediaViewerSource): string {
+  if (source.kind === 'youtube') {
+    // Load by URL with a real origin → fixes embed errors 150/153.
+    return `https://www.youtube-nocookie.com/embed/${source.videoId}?autoplay=1&playsinline=1&rel=0&modestbranding=1&fs=1&origin=https://san-m-app.com`;
+  }
+  if (source.kind === 'vimeo') {
+    return `https://player.vimeo.com/video/${source.videoId}?autoplay=1&playsinline=1`;
+  }
+  return '';
 }
 
 export function MediaViewerModal({ visible, source, onClose }: MediaViewerModalProps) {
   if (!source) return null;
-
   const isVideo = source.kind === 'youtube' || source.kind === 'vimeo';
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent supportedOrientations={['portrait', 'landscape']}>
       <StatusBar hidden />
       <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.96)' }}>
-        {/* Close button */}
         <Pressable
           onPress={onClose}
           style={{ position: 'absolute', top: 50, right: 18, zIndex: 10, width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' }}
@@ -59,16 +54,17 @@ export function MediaViewerModal({ visible, source, onClose }: MediaViewerModalP
           <View style={{ flex: 1, justifyContent: 'center' }}>
             <View style={{ width: SCREEN_W, height: SCREEN_W * (9 / 16), backgroundColor: '#000' }}>
               <WebView
-                source={{ html: source.kind === 'youtube' ? youtubeEmbedHtml(source.videoId) : vimeoEmbedHtml(source.videoId) }}
+                source={{ uri: embedUrlFor(source) }}
                 style={{ flex: 1, backgroundColor: '#000' }}
                 allowsInlineMediaPlayback
                 mediaPlaybackRequiresUserAction={false}
                 javaScriptEnabled
                 domStorageEnabled
                 allowsFullscreenVideo
+                originWhitelist={['*']}
                 startInLoadingState
                 renderLoading={() => (
-                  <View style={{ position: 'absolute', inset: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: '#000' }}>
+                  <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: '#000' }}>
                     <ActivityIndicator color="#FFFFFF" />
                   </View>
                 )}
