@@ -5,7 +5,10 @@ const SUPABASE_URL = 'https://ycwadqglcykcpucembjn.supabase.co';
 const SUPABASE_ANON_KEY =
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inljd2FkcWdsY3lrY3B1Y2VtYmpuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4Mjc2OTYsImV4cCI6MjA5NTQwMzY5Nn0.ZUr1YfN6pBp_AaUC1pZLKGApwgEXEiVw_w6w-yQjE_U';
 
-const APP_LINK = 'https://apps.apple.com/app/id6773943434';
+// App Store link (app not published yet) + custom scheme deep link for the
+// installed app. The page tries the scheme first, then falls back to the store.
+const APP_STORE_LINK = 'https://apps.apple.com/app/id6773943434';
+const APP_SCHEME = 'san-mes';
 const FALLBACK_OG_IMAGE = 'https://i.postimg.cc/k5jt7kL1/image.png';
 const IMAGE_SEP = '|';
 const SPOILER_PREFIX = '::spoiler::';
@@ -47,7 +50,6 @@ async function fetchPost(id: string) {
 }
 
 async function fetchProfile(id: string) {
-  // Allow lookup by id or by username.
   const byId = await sbGet(
     `profiles?id=eq.${encodeURIComponent(id)}&select=id,username,display_name,emoji,bio,is_verified&limit=1`
   );
@@ -58,20 +60,30 @@ async function fetchProfile(id: string) {
   return byName && byName[0] ? byName[0] : null;
 }
 
-function renderPage(opts: {
+const VERIFIED_SVG =
+  '<svg viewBox="0 0 24 24" width="20" height="20" fill="#3DA5F4" style="flex:0 0 auto"><path d="M12 2l2.4 1.8 3 .1 1 2.8 2.4 1.7-1 2.8 1 2.8-2.4 1.7-1 2.8-3 .1L12 22l-2.4-1.8-3-.1-1-2.8L3.2 15l1-2.8-1-2.8 2.4-1.7 1-2.8 3-.1z"/><path d="M10.6 14.6l-2.2-2.2-1.2 1.2 3.4 3.4 6-6-1.2-1.2z" fill="#fff"/></svg>';
+
+interface PageOpts {
+  kind: 'post' | 'profile' | 'generic';
   title: string;
   description: string;
   ogImage: string;
   heading: string;
   emoji: string;
+  verified?: boolean;
+  subline?: string; // @username or tagline
+  deepLink: string; // san-mes://... path
   bodyHtml: string;
-}): string {
-  const { title, description, ogImage, heading, emoji, bodyHtml } = opts;
+}
+
+function renderPage(opts: PageOpts): string {
+  const { title, description, ogImage, heading, emoji, verified, subline, deepLink, bodyHtml } = opts;
+  const isProfile = opts.kind === 'profile';
   return `<!DOCTYPE html>
 <html lang="ru">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>${escapeHtml(title)}</title>
   <meta name="description" content="${escapeHtml(description)}">
   <meta property="og:title" content="${escapeHtml(title)}">
@@ -82,38 +94,69 @@ function renderPage(opts: {
   <meta name="twitter:title" content="${escapeHtml(title)}">
   <meta name="twitter:description" content="${escapeHtml(description)}">
   <meta name="twitter:image" content="${escapeHtml(ogImage)}">
+  <meta name="theme-color" content="#E37857">
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body { width: 100%; overflow-x: hidden; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: linear-gradient(160deg, #FFF3E9 0%, #FBE8DC 100%); min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; color: #1a1a1a; }
-    .card { background: #fff; border-radius: 28px; padding: 24px; max-width: 420px; width: 100%; box-shadow: 0 12px 40px rgba(180,120,80,0.18); overflow: hidden; }
-    .head { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; min-width: 0; }
-    .emoji { flex: 0 0 auto; width: 52px; height: 52px; border-radius: 26px; background: #FFEFE6; display: flex; align-items: center; justify-content: center; font-size: 28px; }
-    .head-text { min-width: 0; flex: 1 1 auto; }
-    .name { font-size: 18px; font-weight: 700; color: #1a1a1a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .sub { font-size: 13px; color: #9a9a9a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .content { font-size: 16px; color: #222; line-height: 1.5; margin-bottom: 16px; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
-    .photo { width: 100%; border-radius: 18px; margin-bottom: 16px; display: block; }
-    .stats { font-size: 14px; color: #999; margin-bottom: 22px; }
-    .btn { display: block; text-align: center; background: linear-gradient(135deg, #EC8C6E, #E37857); color: #fff; text-decoration: none; padding: 16px 28px; border-radius: 16px; font-weight: 600; font-size: 16px; box-shadow: 0 6px 18px rgba(227,120,87,0.35); }
-    .secondary { display: block; text-align: center; margin-top: 14px; color: #E37857; text-decoration: none; font-size: 14px; font-weight: 500; }
-    .logo { text-align: center; font-size: 13px; color: #c9b8ad; margin-top: 18px; letter-spacing: 0.5px; }
+    *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+    /* Fully transparent / hidden scrollbars */
+    html{scrollbar-width:none;-ms-overflow-style:none;}
+    html::-webkit-scrollbar,body::-webkit-scrollbar,*::-webkit-scrollbar{width:0;height:0;background:transparent;display:none;}
+    html,body{width:100%;overflow-x:hidden;}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#EDE4FB;min-height:100vh;min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:18px;color:#16181c;}
+    .card{position:relative;background:#fff;border-radius:26px;width:100%;max-width:430px;overflow:hidden;box-shadow:0 20px 60px rgba(80,60,120,0.22);}
+    /* Telegram-style cover banner */
+    .cover{height:132px;background:linear-gradient(135deg,#F7A07E 0%,#E37857 55%,#D7625F 100%);position:relative;}
+    .cover::after{content:'';position:absolute;inset:0;background:radial-gradient(circle at 78% 20%,rgba(255,255,255,0.28),transparent 45%);}
+    .avatar-wrap{position:absolute;left:24px;top:84px;}
+    .avatar{width:96px;height:96px;border-radius:30px;background:#FFEFE6;border:4px solid #fff;display:flex;align-items:center;justify-content:center;font-size:50px;box-shadow:0 8px 20px rgba(0,0,0,0.12);}
+    .body{padding:60px 24px 24px;}
+    .name-row{display:flex;align-items:center;gap:6px;min-width:0;}
+    .name{font-size:23px;font-weight:800;letter-spacing:-0.3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
+    .sub{font-size:15px;color:#8a8d93;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+    .content{font-size:16px;line-height:1.55;margin-top:16px;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;color:#16181c;}
+    .photo{width:100%;border-radius:18px;margin-top:16px;display:block;}
+    .stats{display:flex;gap:18px;margin-top:18px;font-size:15px;color:#8a8d93;font-weight:600;}
+    .stats b{color:#16181c;font-weight:700;}
+    .actions{margin-top:24px;}
+    .btn{display:flex;align-items:center;justify-content:center;gap:8px;background:linear-gradient(135deg,#EC8C6E,#E37857);color:#fff;text-decoration:none;padding:16px;border-radius:16px;font-weight:700;font-size:16px;box-shadow:0 8px 22px rgba(227,120,87,0.4);border:none;width:100%;cursor:pointer;}
+    .hint{text-align:center;margin-top:12px;font-size:13px;color:#a7abb2;}
+    .foot{display:flex;align-items:center;justify-content:center;gap:6px;margin-top:20px;font-size:13px;color:#c2b8d8;font-weight:600;letter-spacing:0.3px;}
   </style>
 </head>
 <body>
   <div class="card">
-    <div class="head">
-      <div class="emoji">${emoji || '🌸'}</div>
-      <div class="head-text">
-        <div class="name">${escapeHtml(heading)}</div>
-        <div class="sub">San — социальная сеть</div>
+    <div class="cover"></div>
+    <div class="avatar-wrap"><div class="avatar">${emoji || '🌸'}</div></div>
+    <div class="body">
+      <div class="name-row">
+        <span class="name">${escapeHtml(heading)}</span>
+        ${verified ? VERIFIED_SVG : ''}
       </div>
+      ${subline ? `<div class="sub">${escapeHtml(subline)}</div>` : ''}
+      ${bodyHtml}
+      <div class="actions">
+        <button class="btn" id="openBtn">${isProfile ? 'Открыть профиль в San' : 'Открыть в San'}</button>
+        <div class="hint">Нет приложения? Откроется App Store</div>
+      </div>
+      <div class="foot">🌸 San</div>
     </div>
-    ${bodyHtml}
-    <a class="btn" href="${APP_LINK}">Открыть в San</a>
-    <a class="secondary" href="${APP_LINK}">Скачать приложение</a>
-    <div class="logo">🌸 San</div>
   </div>
+  <script>
+    (function(){
+      var deep=${JSON.stringify(deepLink)};
+      var store=${JSON.stringify(APP_STORE_LINK)};
+      function openApp(){
+        var t=Date.now();
+        // Try to open the installed app via custom scheme.
+        window.location.href=deep;
+        // If still here after a moment, the app isn't installed → App Store.
+        setTimeout(function(){
+          if(Date.now()-t<1600){ window.location.href=store; }
+        },1200);
+      }
+      var b=document.getElementById('openBtn');
+      if(b) b.addEventListener('click',openApp);
+    })();
+  </script>
 </body>
 </html>`;
 }
@@ -132,7 +175,8 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
 
     try {
       if (postMatch) {
-        const post = await fetchPost(decodeURIComponent(postMatch[1]));
+        const id = decodeURIComponent(postMatch[1]);
+        const post = await fetchPost(id);
         if (post) {
           const author = post.profiles || {};
           const isRepost = typeof post.content === 'string' && post.content.startsWith(REPOST_PREFIX);
@@ -144,35 +188,42 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
           const bodyHtml =
             (text ? `<div class="content">${escapeHtml(text)}</div>` : '') +
             (img ? `<img class="photo" src="${escapeHtml(img)}" alt="">` : '') +
-            `<div class="stats">❤ ${post.likes_count || 0} · 💬 ${post.comments_count || 0}</div>`;
+            `<div class="stats"><span><b>${post.likes_count || 0}</b> ❤</span><span><b>${post.comments_count || 0}</b> 💬</span></div>`;
           res.end(
             renderPage({
+              kind: 'post',
               title,
               description,
               ogImage: img || FALLBACK_OG_IMAGE,
               heading: authorName,
               emoji: author.emoji,
+              verified: !!author.is_verified,
+              subline: author.username ? `@${author.username}` : undefined,
+              deepLink: `${APP_SCHEME}://post/${id}`,
               bodyHtml,
             })
           );
           return;
         }
       } else if (profileMatch) {
-        const profile = await fetchProfile(decodeURIComponent(profileMatch[1]));
+        const id = decodeURIComponent(profileMatch[1]);
+        const profile = await fetchProfile(id);
         if (profile) {
           const name = profile.display_name || profile.username || 'Профиль';
           const title = `${name} в San`;
           const description = (profile.bio || `Профиль @${profile.username} в San`).slice(0, 160);
-          const bodyHtml =
-            `<div class="sub" style="margin-bottom:12px">@${escapeHtml(profile.username || '')}</div>` +
-            (profile.bio ? `<div class="content">${escapeHtml(profile.bio)}</div>` : '');
+          const bodyHtml = profile.bio ? `<div class="content">${escapeHtml(profile.bio)}</div>` : '';
           res.end(
             renderPage({
+              kind: 'profile',
               title,
               description,
               ogImage: FALLBACK_OG_IMAGE,
               heading: name,
               emoji: profile.emoji,
+              verified: !!profile.is_verified,
+              subline: profile.username ? `@${profile.username}` : undefined,
+              deepLink: `${APP_SCHEME}://profile/${profile.id || id}`,
               bodyHtml,
             })
           );
@@ -183,14 +234,16 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       // fall through to generic page
     }
 
-    // Generic / not-found fallback page.
     res.end(
       renderPage({
+        kind: 'generic',
         title: 'San — Социальная сеть',
         description: 'Присоединяйся к San — современная социальная сеть с эмодзи-аватарами',
         ogImage: FALLBACK_OG_IMAGE,
         heading: 'San',
         emoji: '🌸',
+        subline: 'Социальная сеть',
+        deepLink: `${APP_SCHEME}://`,
         bodyHtml: '<div class="content">Современная социальная сеть с эмодзи-аватарами.</div>',
       })
     );
@@ -205,7 +258,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       app: 'San',
       version: '1.0.0',
       status: 'online',
-      download: APP_LINK,
+      download: APP_STORE_LINK,
       api: { health: '/api/health', posts: '/api/posts', auth: '/api/auth/login' },
     })
   );
