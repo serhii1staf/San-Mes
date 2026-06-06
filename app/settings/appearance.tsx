@@ -13,7 +13,7 @@ const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const CARD_WIDTH = SCREEN_WIDTH * 0.72;
 const CARD_GAP = 12;
 
-function ThemePreviewCard({ accentConfig, isDark, isSelected, user }: { accentConfig: typeof ACCENT_COLORS[0]; isDark: boolean; isSelected: boolean; user: any }) {
+function ThemePreviewCardBase({ accentConfig, isDark, isSelected, user }: { accentConfig: typeof ACCENT_COLORS[0]; isDark: boolean; isSelected: boolean; user: any }) {
   const bgPrimary = isDark ? accentConfig.darkBg : accentConfig.light;
   const bgElevated = isDark ? accentConfig.darkElevated : '#FFFFFF';
   const textPrimary = isDark ? '#FFFFFF' : '#1A1A1A';
@@ -97,6 +97,15 @@ function ThemePreviewCard({ accentConfig, isDark, isSelected, user }: { accentCo
     </View>
   );
 }
+
+// Memoized so scrolling (which updates activeIndex on the parent) only re-renders
+// the two cards whose selected-state actually changed — not the whole carousel.
+const ThemePreviewCard = React.memo(ThemePreviewCardBase, (prev, next) =>
+  prev.isSelected === next.isSelected &&
+  prev.isDark === next.isDark &&
+  prev.accentConfig.key === next.accentConfig.key &&
+  prev.user === next.user
+);
 
 export default function AppearanceScreen() {
   const theme = useTheme();
