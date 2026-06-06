@@ -84,25 +84,27 @@ function renderPage(opts: {
   <meta name="twitter:image" content="${escapeHtml(ogImage)}">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #FFF8F0; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
-    .card { background: #fff; border-radius: 24px; padding: 32px; max-width: 440px; width: 100%; box-shadow: 0 8px 32px rgba(0,0,0,0.08); }
-    .head { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
-    .emoji { width: 52px; height: 52px; border-radius: 26px; background: #FFEFE6; display: flex; align-items: center; justify-content: center; font-size: 28px; }
-    .name { font-size: 18px; font-weight: 700; color: #1a1a1a; }
-    .sub { font-size: 14px; color: #999; }
-    .content { font-size: 17px; color: #222; line-height: 1.5; margin-bottom: 16px; white-space: pre-wrap; word-break: break-word; }
-    .photo { width: 100%; border-radius: 16px; margin-bottom: 16px; display: block; }
-    .stats { font-size: 14px; color: #888; margin-bottom: 20px; }
-    .btn { display: block; text-align: center; background: #E8856C; color: #fff; text-decoration: none; padding: 15px 28px; border-radius: 14px; font-weight: 600; font-size: 16px; }
-    .secondary { display: block; text-align: center; margin-top: 12px; color: #E8856C; text-decoration: none; font-size: 14px; }
-    .logo { text-align: center; font-size: 13px; color: #bbb; margin-top: 18px; letter-spacing: 0.5px; }
+    html, body { width: 100%; overflow-x: hidden; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: linear-gradient(160deg, #FFF3E9 0%, #FBE8DC 100%); min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; color: #1a1a1a; }
+    .card { background: #fff; border-radius: 28px; padding: 24px; max-width: 420px; width: 100%; box-shadow: 0 12px 40px rgba(180,120,80,0.18); overflow: hidden; }
+    .head { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; min-width: 0; }
+    .emoji { flex: 0 0 auto; width: 52px; height: 52px; border-radius: 26px; background: #FFEFE6; display: flex; align-items: center; justify-content: center; font-size: 28px; }
+    .head-text { min-width: 0; flex: 1 1 auto; }
+    .name { font-size: 18px; font-weight: 700; color: #1a1a1a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sub { font-size: 13px; color: #9a9a9a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .content { font-size: 16px; color: #222; line-height: 1.5; margin-bottom: 16px; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
+    .photo { width: 100%; border-radius: 18px; margin-bottom: 16px; display: block; }
+    .stats { font-size: 14px; color: #999; margin-bottom: 22px; }
+    .btn { display: block; text-align: center; background: linear-gradient(135deg, #EC8C6E, #E37857); color: #fff; text-decoration: none; padding: 16px 28px; border-radius: 16px; font-weight: 600; font-size: 16px; box-shadow: 0 6px 18px rgba(227,120,87,0.35); }
+    .secondary { display: block; text-align: center; margin-top: 14px; color: #E37857; text-decoration: none; font-size: 14px; font-weight: 500; }
+    .logo { text-align: center; font-size: 13px; color: #c9b8ad; margin-top: 18px; letter-spacing: 0.5px; }
   </style>
 </head>
 <body>
   <div class="card">
     <div class="head">
       <div class="emoji">${emoji || '🌸'}</div>
-      <div>
+      <div class="head-text">
         <div class="name">${escapeHtml(heading)}</div>
         <div class="sub">San — социальная сеть</div>
       </div>
