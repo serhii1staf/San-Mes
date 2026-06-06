@@ -733,8 +733,20 @@ export async function deleteAccount(userId: string): Promise<{ error: string | n
     await supabase.from('posts').delete().eq('author_id', userId);
 
     // 5. Delete the user's messages and conversation memberships.
+    //    Also delete the conversations themselves (and any remaining messages /
+    //    memberships in them) so no trace of the user's chats remains.
     try {
+      const { data: myConvs } = await supabase
+        .from('conversation_participants')
+        .select('conversation_id')
+        .eq('user_id', userId);
+      const convIds = (myConvs || []).map((c: any) => c.conversation_id).filter(Boolean);
       await supabase.from('messages').delete().eq('sender_id', userId);
+      if (convIds.length > 0) {
+        await supabase.from('messages').delete().in('conversation_id', convIds);
+        await supabase.from('conversation_participants').delete().in('conversation_id', convIds);
+        await supabase.from('conversations').delete().in('id', convIds);
+      }
       await supabase.from('conversation_participants').delete().eq('user_id', userId);
     } catch {}
 

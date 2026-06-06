@@ -126,6 +126,12 @@ export default function SettingsScreen() {
                 Alert.alert('Ошибка', error);
                 return;
               }
+              // Wipe ALL on-device data so nothing about the user remains locally
+              // (App Store / Google Play data-deletion requirement).
+              try {
+                const { kvClearAll } = await import('../../src/services/kvStore');
+                await kvClearAll();
+              } catch {}
             } catch (e: any) {
               Alert.alert('Ошибка', e?.message || 'Не удалось удалить аккаунт');
               return;

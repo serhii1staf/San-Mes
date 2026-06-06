@@ -13,6 +13,8 @@ import { CachedImage } from '../../src/components/ui/CachedImage';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { UserBadge } from '../../src/components/ui/UserBadge';
 import { FormattedText } from '../../src/components/ui/FormattedText';
+import { LinkPreview } from '../../src/components/ui/LinkPreview';
+import { extractFirstUrl } from '../../src/services/linkPreview';
 import { AccountSwitcher } from '../../src/components/ui/AccountSwitcher';
 import { PostContextMenu } from '../../src/components/ui/PostContextMenu';
 import { SwipeablePostCard } from '../../src/components/ui/SwipeablePostCard';
@@ -336,6 +338,15 @@ export default function ProfileScreen() {
                 )}
                 {isRepostPost && !origPost && <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 }}><Feather name="repeat" size={10} color={theme.colors.accent.primary} /><Text variant="caption" color={theme.colors.accent.primary} style={{ fontSize: 10 }}>Репост</Text></View>}
                 {(post.content || (origPost?.content)) ? <FormattedText style={{ fontSize: 12, marginBottom: 6 }} color={theme.colors.text.secondary}>{post.content || origPost?.content || ''}</FormattedText> : null}
+                {/* Link preview when the post has no image (Telegram-style, instant from cache) */}
+                {!hasImage && (() => {
+                  const link = extractFirstUrl(post.content || origPost?.content || '');
+                  return link ? (
+                    <Pressable onLongPress={() => { triggerHaptic('medium'); setContextPost(post); }} delayLongPress={400} style={{ marginBottom: 6 }}>
+                      <LinkPreview url={link} />
+                    </Pressable>
+                  ) : null;
+                })()}
                 <View style={{ flexDirection: 'row', gap: 12 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}><Feather name="heart" size={12} color={theme.colors.text.tertiary} /><Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{post.likesCount}</Text></View>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}><Feather name="message-circle" size={12} color={theme.colors.text.tertiary} /><Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{post.commentsCount}</Text></View>

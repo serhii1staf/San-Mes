@@ -23,6 +23,8 @@ import { CachedImage } from '../../src/components/ui/CachedImage';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { UserBadge } from '../../src/components/ui/UserBadge';
 import { FormattedText } from '../../src/components/ui/FormattedText';
+import { LinkPreview } from '../../src/components/ui/LinkPreview';
+import { extractFirstUrl } from '../../src/services/linkPreview';
 import { PostContextMenu } from '../../src/components/ui/PostContextMenu';
 import { SwipeablePostCard } from '../../src/components/ui/SwipeablePostCard';
 import { PanResponder } from 'react-native';
@@ -584,6 +586,15 @@ export default function UserProfileScreen() {
                     </View>
                   )}
                   {(post.content || origPost?.content) ? <FormattedText style={{ fontSize: 12, marginBottom: 6 }} color={theme.colors.text.secondary}>{post.content || origPost?.content || ''}</FormattedText> : null}
+                  {/* Link preview when the post has no image (Telegram-style, instant from cache) */}
+                  {!hasImage && (() => {
+                    const link = extractFirstUrl(post.content || origPost?.content || '');
+                    return link ? (
+                      <Pressable onLongPress={() => { triggerHaptic('medium'); setContextPost({ ...post, authorName: displayProfile.display_name, authorUsername: displayProfile.username, authorEmoji: displayProfile.emoji || '😊', authorVerified: displayProfile.is_verified, authorBadge: displayProfile.badge, authorId: displayProfile.id }); }} delayLongPress={400} style={{ marginBottom: 6 }}>
+                        <LinkPreview url={link} />
+                      </Pressable>
+                    ) : null;
+                  })()}
                   <View style={{ flexDirection: 'row', gap: 12 }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}><Feather name="heart" size={12} color={theme.colors.text.tertiary} /><Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{post.likesCount}</Text></View>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}><Feather name="message-circle" size={12} color={theme.colors.text.tertiary} /><Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{post.commentsCount}</Text></View>

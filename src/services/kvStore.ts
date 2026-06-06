@@ -38,6 +38,21 @@ export function isMMKVAvailable(): boolean {
   return mmkv !== null;
 }
 
+// Wipe ALL local key/value data (MMKV store + in-memory mirror + AsyncStorage).
+// Used on account deletion so no trace of the user remains on-device
+// (App Store / Google Play data-deletion requirement).
+export async function kvClearAll(): Promise<void> {
+  try {
+    if (mmkv) {
+      try { mmkv.clearAll(); } catch {}
+    }
+    for (const k of Object.keys(memMirror)) delete memMirror[k];
+    await AsyncStorage.clear().catch(() => {});
+  } catch (e) {
+    console.warn('[kvStore] clearAll failed', e);
+  }
+}
+
 // In-memory mirror so sync reads return data after kvWarm() has loaded it
 // (used only in the AsyncStorage-fallback path).
 const memMirror: Record<string, string> = {};

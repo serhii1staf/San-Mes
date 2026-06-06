@@ -135,7 +135,7 @@ function ConversationItem({ item, tab }: { item: Conversation; index: number; ta
     >
       <Pressable
         onPress={openChat}
-        style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: theme.spacing.base }}
+        style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: theme.spacing.base }}
       >
         <Avatar emoji={item.participantEmoji} name={item.participantName} size="md" />
         <View style={{ flex: 1, marginLeft: 12 }}>
@@ -360,6 +360,9 @@ export default function MessagesScreen() {
           data={filtered}
           keyExtractor={(item) => item.id}
           renderItem={({ item, index }) => <ConversationItem item={item} index={index} tab={activeTab} />}
+          ItemSeparatorComponent={() => (
+            <View style={{ height: 0.5, backgroundColor: theme.colors.border.light, marginLeft: 68 }} />
+          )}
           contentContainerStyle={{ paddingBottom: 100 }}
           showsVerticalScrollIndicator={false}
         />

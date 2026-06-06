@@ -256,18 +256,24 @@ export default function ChatScreen() {
 
   // Robust initial scroll-to-bottom: when a chat first opens, images/previews
   // load slightly after mount and grow the content, which can leave the list
-  // parked in the middle. We pin it to the newest message a few times during the
-  // first ~700ms, then stop so we never fight the user's own scrolling.
+  // parked in the middle. We keep the list invisible until it's pinned to the
+  // newest message, then fade it in — so the user never SEES the jump. A few
+  // re-pins during the first ~700ms absorb late-loading image/preview heights.
   const didInitialScrollRef = useRef(false);
+  const [listReady, setListReady] = useState(false);
   useEffect(() => {
     didInitialScrollRef.current = false;
+    setListReady(false);
   }, [id]);
   useEffect(() => {
     if (didInitialScrollRef.current) return;
-    if (!chatMessages.length) return;
+    if (!chatMessages.length) { setListReady(true); return; }
     didInitialScrollRef.current = true;
-    const timers = [0, 120, 350, 650].map((d) =>
-      setTimeout(() => { try { flatListRef.current?.scrollToEnd({ animated: false }); } catch {} }, d)
+    const timers = [0, 60, 160, 360, 650].map((d) =>
+      setTimeout(() => {
+        try { flatListRef.current?.scrollToEnd({ animated: false }); } catch {}
+        if (d >= 60) setListReady(true);
+      }, d)
     );
     return () => timers.forEach(clearTimeout);
   }, [id, chatMessages.length]);
@@ -544,7 +550,7 @@ export default function ChatScreen() {
       <FlatList
         ref={flatListRef}
         data={chatMessages}
-        style={StyleSheet.absoluteFill}
+        style={[StyleSheet.absoluteFill, { opacity: listReady ? 1 : 0 }]}
         keyExtractor={(item) => item.id}
         renderItem={renderItem}
         contentContainerStyle={{ flexGrow: 1, justifyContent: 'flex-end', paddingTop: headerContentHeight + 8 }}
