@@ -269,7 +269,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       version: '1.0.0',
       status: 'online',
       download: APP_STORE_LINK,
-      api: { health: '/api/health', posts: '/api/posts', auth: '/api/auth/login' },
+      api: { health: '/api/health', unfurl: '/api/unfurl' },
     })
   );
 }
