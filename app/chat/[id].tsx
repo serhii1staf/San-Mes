@@ -25,7 +25,7 @@ import { triggerHaptic } from '../../src/utils/haptics';
 const REPLY_THRESHOLD = 60;
 const SCREEN_WIDTH = Dimensions.get('window').width;
 
-function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, onReply, onLongPress, onSwipeActive, onImagePress }: { message: ChatMessage; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string; onReply: (m: ChatMessage) => void; onLongPress: (m: ChatMessage) => void; onSwipeActive: (active: boolean) => void; onImagePress: (images: string[], index: number) => void }) {
+function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, highlighted, onReply, onLongPress, onSwipeActive, onImagePress }: { message: ChatMessage; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string; highlighted?: boolean; onReply: (m: ChatMessage) => void; onLongPress: (m: ChatMessage) => void; onSwipeActive: (active: boolean) => void; onImagePress: (images: string[], index: number) => void }) {
   const theme = useTheme();
   const fontFamilyStyle = fontFamily === 'mono' ? 'monospace' : fontFamily === 'serif' ? 'serif' : undefined;
   const translateX = useRef(new Animated.Value(0)).current;
@@ -73,6 +73,8 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, onR
             backgroundColor: isOwn ? theme.colors.accent.primary : theme.colors.background.tertiary,
             borderBottomRightRadius: isOwn ? 4 : bubbleRadius,
             borderBottomLeftRadius: isOwn ? bubbleRadius : 4,
+            borderWidth: highlighted ? 2 : 0,
+            borderColor: highlighted ? theme.colors.accent.primary : 'transparent',
           }}>
             {message.replyToText || message.replyToImage ? (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingLeft: 8, borderLeftWidth: 2, borderLeftColor: isOwn ? 'rgba(255,255,255,0.7)' : theme.colors.accent.primary, marginBottom: 6 }}>
@@ -125,6 +127,10 @@ export default function ChatScreen() {
   const [pendingImages, setPendingImages] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
   const [viewerImages, setViewerImages] = useState<{ images: string[]; index: number } | null>(null);
+  const [searchMode, setSearchMode] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchMatches, setSearchMatches] = useState<number[]>([]);
+  const [searchActiveIdx, setSearchActiveIdx] = useState(0);
   const { messages: storeMessages, setMessages, addMessage } = useChatStore();
   const flatListRef = useRef<FlatList>(null);
 
@@ -193,6 +199,58 @@ export default function ChatScreen() {
   const scrollToEnd = useCallback((animated = true) => {
     requestAnimationFrame(() => flatListRef.current?.scrollToEnd({ animated }));
   }, []);
+
+  // ── Message search ──────────────────────────────────────────────────────────
+  const openSearch = useCallback(() => {
+    triggerHaptic('light');
+    setSearchMode(true);
+  }, []);
+
+  const closeSearch = useCallback(() => {
+    setSearchMode(false);
+    setSearchQuery('');
+    setSearchMatches([]);
+    setSearchActiveIdx(0);
+  }, []);
+
+  const scrollToIndex = useCallback((index: number) => {
+    if (index < 0 || index >= chatMessages.length) return;
+    try {
+      flatListRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.5 });
+    } catch {}
+  }, [chatMessages.length]);
+
+  // Recompute matches when the query changes; jump to the most recent match
+  useEffect(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) { setSearchMatches([]); setSearchActiveIdx(0); return; }
+    const matches: number[] = [];
+    chatMessages.forEach((m, i) => {
+      if (m.text && m.text.toLowerCase().includes(q)) matches.push(i);
+    });
+    setSearchMatches(matches);
+    if (matches.length > 0) {
+      const last = matches.length - 1;
+      setSearchActiveIdx(last);
+      scrollToIndex(matches[last]);
+    }
+  }, [searchQuery, chatMessages, scrollToIndex]);
+
+  const goToPrevMatch = useCallback(() => {
+    if (searchMatches.length === 0) return;
+    const next = (searchActiveIdx - 1 + searchMatches.length) % searchMatches.length;
+    setSearchActiveIdx(next);
+    scrollToIndex(searchMatches[next]);
+    triggerHaptic('light');
+  }, [searchMatches, searchActiveIdx, scrollToIndex]);
+
+  const goToNextMatch = useCallback(() => {
+    if (searchMatches.length === 0) return;
+    const next = (searchActiveIdx + 1) % searchMatches.length;
+    setSearchActiveIdx(next);
+    scrollToIndex(searchMatches[next]);
+    triggerHaptic('light');
+  }, [searchMatches, searchActiveIdx, scrollToIndex]);
 
   const startReply = useCallback((message: ChatMessage) => {
     setEditing(null);
@@ -357,7 +415,9 @@ export default function ChatScreen() {
     return { ...m, imageUrls: urls.length ? urls : undefined, text: m.text.slice(end + 2) };
   }, []);
 
-  const renderItem = useCallback(({ item }: { item: ChatMessage }) => {
+  const activeMatchIndex = searchMatches.length > 0 ? searchMatches[searchActiveIdx] : -1;
+
+  const renderItem = useCallback(({ item, index }: { item: ChatMessage; index: number }) => {
     const m = parseMessage(item);
     return (
       <MemoMessageBubble
@@ -366,13 +426,14 @@ export default function ChatScreen() {
         fontSize={chatSettings.fontSize}
         bubbleRadius={chatSettings.bubbleRadius}
         fontFamily={chatSettings.fontFamily}
+        highlighted={index === activeMatchIndex}
         onReply={startReply}
         onLongPress={setMenuMessage}
         onSwipeActive={handleSwipeActive}
         onImagePress={openImageViewer}
       />
     );
-  }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, startReply, handleSwipeActive, openImageViewer, parseMessage]);
+  }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, startReply, handleSwipeActive, openImageViewer, parseMessage, activeMatchIndex]);
 
   const banner = editing || replyTo;
   const menuIsOwn = menuMessage?.senderId === 'current';
@@ -401,9 +462,16 @@ export default function ChatScreen() {
         maxToRenderPerBatch={10}
         windowSize={9}
         onContentSizeChange={() => scrollToEnd(false)}
+        onScrollToIndexFailed={(info) => {
+          // Item not measured yet — wait a frame then scroll to the offset estimate
+          setTimeout(() => {
+            try { flatListRef.current?.scrollToIndex({ index: info.index, animated: true, viewPosition: 0.5 }); } catch {}
+          }, 120);
+        }}
       />
 
-      {/* Input bar sticks to the keyboard top; animated bottom padding keeps a comfortable gap */}
+      {/* Input bar sticks to the keyboard top; hidden while searching */}
+      {!searchMode && (
       <KeyboardStickyView offset={{ closed: 0, opened: 0 }} style={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}>
         <Reanimated.View style={[StyleSheet.absoluteFill, backdropStyle]} pointerEvents="none">
           <LinearGradient colors={[bgTransparent, bgColor]} style={StyleSheet.absoluteFill} />
@@ -459,24 +527,64 @@ export default function ChatScreen() {
           </Pressable>
         </Reanimated.View>
       </KeyboardStickyView>
+      )}
 
       {/* Gradient fade header */}
       <View style={[styles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">
         <LinearGradient colors={[bgColor, bgColor, bgTransparent]} locations={[0, 0.55, 1]} style={StyleSheet.absoluteFill} />
-        <View style={[styles.headerContent, { paddingTop: insets.top }]} pointerEvents="auto">
-          <Pressable onPress={() => router.back()} style={[styles.headerCircle, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
-            <Feather name="chevron-left" size={22} color={theme.colors.text.primary} />
-          </Pressable>
-          <View style={{ flex: 1, alignItems: 'center' }}>
-            <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId, fromChat: '1' } })} style={[styles.headerPill, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
-              <Text variant="caption" weight="semibold" numberOfLines={1} style={{ flexShrink: 1 }}>{displayName}</Text>
-              {displayVerified && <VerifiedBadge size={12} />}
+        {searchMode ? (
+          <View style={[styles.headerContent, { paddingTop: insets.top }]} pointerEvents="auto">
+            <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 20, borderWidth: 1, borderColor: theme.colors.border.light, paddingHorizontal: 14, height: 40 }}>
+              <Feather name="search" size={16} color={theme.colors.text.tertiary} />
+              <TextInput
+                autoFocus
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                placeholder="Поиск по сообщениям..."
+                placeholderTextColor={theme.colors.text.tertiary}
+                style={{ flex: 1, marginLeft: 8, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular }}
+              />
+              {searchQuery.length > 0 && (
+                <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 12, marginRight: 4 }}>
+                  {searchMatches.length > 0 ? `${searchActiveIdx + 1}/${searchMatches.length}` : '0'}
+                </Text>
+              )}
+            </View>
+            {searchMatches.length > 0 && (
+              <View style={{ flexDirection: 'row', marginLeft: 6 }}>
+                <Pressable onPress={goToPrevMatch} style={[styles.headerCircle, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
+                  <Feather name="chevron-up" size={18} color={theme.colors.text.primary} />
+                </Pressable>
+                <Pressable onPress={goToNextMatch} style={[styles.headerCircle, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light, marginLeft: 6 }]}>
+                  <Feather name="chevron-down" size={18} color={theme.colors.text.primary} />
+                </Pressable>
+              </View>
+            )}
+            <Pressable onPress={closeSearch} style={[styles.headerCircle, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light, marginLeft: 6 }]}>
+              <Feather name="x" size={20} color={theme.colors.text.primary} />
             </Pressable>
           </View>
-          <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId, fromChat: '1' } })} style={[styles.headerCircle, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light, overflow: 'hidden' }]}>
-            <Avatar emoji={displayEmoji} name={displayName} size="xs" />
-          </Pressable>
-        </View>
+        ) : (
+          <View style={[styles.headerContent, { paddingTop: insets.top }]} pointerEvents="auto">
+            <Pressable onPress={() => router.back()} style={[styles.headerCircle, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
+              <Feather name="chevron-left" size={22} color={theme.colors.text.primary} />
+            </Pressable>
+            <View style={{ flex: 1, alignItems: 'center' }}>
+              <Pressable
+                onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId, fromChat: '1' } })}
+                onLongPress={openSearch}
+                delayLongPress={300}
+                style={[styles.headerPill, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}
+              >
+                <Text variant="caption" weight="semibold" numberOfLines={1} style={{ flexShrink: 1 }}>{displayName}</Text>
+                {displayVerified && <VerifiedBadge size={12} />}
+              </Pressable>
+            </View>
+            <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId, fromChat: '1' } })} style={[styles.headerCircle, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light, overflow: 'hidden' }]}>
+              <Avatar emoji={displayEmoji} name={displayName} size="xs" />
+            </Pressable>
+          </View>
+        )}
       </View>
 
       {/* Long-press message menu */}
