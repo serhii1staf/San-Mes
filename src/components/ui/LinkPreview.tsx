@@ -5,38 +5,38 @@ import { router } from 'expo-router';
 import { useTheme } from '../../theme';
 import { Text } from './Text';
 import { CachedImage } from './CachedImage';
-import { MediaViewerModal, MediaViewerSource, InlineVideoPlayer } from './MediaViewerModal';
+import { MediaViewerModal, MediaViewerSource } from './MediaViewerModal';
 import { getLinkPreview, getCachedPreviewSync, LinkPreviewData } from '../../services/linkPreview';
 
-// Rich link preview card (Discord / Telegram style).
+// Lightweight rich link preview (Discord / Telegram style).
 //
-// Video behaviour (like Discord):
-//   - Tap the video thumbnail → an embedded player loads RIGHT IN THE CARD and
-//     plays (YouTube via the official IFrame API for reliability — no error 153).
-//   - Tap the maximize button → fullscreen player.
-// Image link → fullscreen image viewer. Other links → in-app browser.
+// IMPORTANT design choices for performance & stability inside long lists:
+//   - The card NEVER mounts a WebView while in a list. It only renders a cached
+//     thumbnail image (CachedImage). This means scrolling back to an old
+//     preview does NOT reload anything and costs almost nothing.
+//   - Tapping a video opens the FULLSCREEN player modal (not inline), which
+//     avoids layout changes that would otherwise make the chat list jump.
+//   - Metadata is read synchronously from cache → instant, no flicker, no
+//     re-fetch on re-entering a screen. Nothing hits our server / database.
 //
-// `textColor` lets callers (e.g. own chat bubbles) force readable colors.
-// Anti-flicker: in-memory cache is read synchronously, so loaded previews
-// render instantly with no spinner and no re-fetch on scroll / navigation.
+// `textColor` overrides text colors (e.g. white inside own chat bubbles).
+// `compact` renders an ultra-thin row (used for our own profile/post links).
 
 interface LinkPreviewProps {
   url: string;
   onError?: () => void;
-  textColor?: string; // override title/description color (e.g. white in own bubbles)
+  textColor?: string;
+  compact?: boolean;
 }
 
-const PREVIEW_HEIGHT = 190;
-const FALLBACK_WIDTH = 280;
+const THUMB_RADIUS = 14;
 
-export function LinkPreview({ url, onError, textColor }: LinkPreviewProps) {
+export function LinkPreview({ url, onError, textColor, compact }: LinkPreviewProps) {
   const theme = useTheme();
   const cached = getCachedPreviewSync(url);
   const [data, setData] = useState<LinkPreviewData | null>(cached === undefined ? null : cached);
   const [resolved, setResolved] = useState<boolean>(cached !== undefined);
-  const [playing, setPlaying] = useState(false);
   const [fullscreen, setFullscreen] = useState<MediaViewerSource | null>(null);
-  const [cardWidth, setCardWidth] = useState(0);
   const mounted = useRef(true);
 
   useEffect(() => {
@@ -64,21 +64,20 @@ export function LinkPreview({ url, onError, textColor }: LinkPreviewProps) {
     };
   }, [url]);
 
-  const border = theme.colors.border.light;
   const accent = theme.colors.accent.primary;
-  const bg = theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.025)';
+  const subColor = textColor ? textColor : theme.colors.text.tertiary;
   const titleColor = textColor || theme.colors.text.primary;
-  const descColor = textColor || theme.colors.text.tertiary;
 
-  const videoSource: MediaViewerSource | null = data?.provider === 'youtube' && data.videoId
-    ? { kind: 'youtube', videoId: data.videoId }
-    : data?.provider === 'vimeo' && data.videoId
-    ? { kind: 'vimeo', videoId: data.videoId }
-    : null;
+  const videoSource: MediaViewerSource | null =
+    data?.provider === 'youtube' && data.videoId
+      ? { kind: 'youtube', videoId: data.videoId }
+      : data?.provider === 'vimeo' && data.videoId
+      ? { kind: 'vimeo', videoId: data.videoId }
+      : null;
 
   const handlePress = () => {
     if (videoSource) {
-      setPlaying(true);
+      setFullscreen(videoSource); // open fullscreen player
       return;
     }
     if (data?.type === 'image' && data.image) {
@@ -92,22 +91,17 @@ export function LinkPreview({ url, onError, textColor }: LinkPreviewProps) {
     }
   };
 
-  const fullscreenEl = (
-    <MediaViewerModal visible={!!fullscreen} source={fullscreen} onClose={() => setFullscreen(null)} />
-  );
+  const fullscreenEl = <MediaViewerModal visible={!!fullscreen} source={fullscreen} onClose={() => setFullscreen(null)} />;
 
-  // Skeleton while first fetch is in flight (fixed height = no layout jump).
+  // Skeleton (thin, fixed height = no layout jump) during the first fetch.
   if (!resolved && !data) {
     return (
-      <View style={{ borderRadius: 16, overflow: 'hidden', backgroundColor: bg, borderWidth: 1, borderColor: border }}>
-        <View style={{ height: 4, backgroundColor: accent, opacity: 0.5 }} />
-        <View style={{ padding: 12, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <Feather name="link" size={14} color={descColor} />
-          <Text variant="caption" color={descColor} numberOfLines={1} style={{ flex: 1 }}>
-            {url.replace(/^https?:\/\/(www\.)?/, '')}
-          </Text>
-        </View>
-      </View>
+      <Pressable onPress={handlePress} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6 }}>
+        <Feather name="link" size={13} color={subColor} />
+        <Text variant="caption" color={subColor} numberOfLines={1} style={{ flex: 1, fontSize: 12 }}>
+          {url.replace(/^https?:\/\/(www\.)?/, '')}
+        </Text>
+      </Pressable>
     );
   }
 
@@ -122,87 +116,53 @@ export function LinkPreview({ url, onError, textColor }: LinkPreviewProps) {
     }
   })();
 
-  const effectiveWidth = cardWidth > 0 ? cardWidth : FALLBACK_WIDTH;
-
+  // Compact / thin layout: a slim row with a small left thumbnail and text.
+  // Used everywhere (chat, comments) — no heavy container, expands full width.
   return (
     <>
       {fullscreenEl}
-      <View
-        onLayout={(e) => {
-          const w = e.nativeEvent.layout.width;
-          if (w && Math.abs(w - cardWidth) > 1) setCardWidth(w);
-        }}
+      <Pressable
+        onPress={handlePress}
         style={{
-          width: '100%',
-          borderRadius: 16,
-          overflow: 'hidden',
-          backgroundColor: bg,
-          borderLeftWidth: 3,
-          borderLeftColor: accent,
-          borderTopWidth: 1,
-          borderRightWidth: 1,
-          borderBottomWidth: 1,
-          borderTopColor: border,
-          borderRightColor: border,
-          borderBottomColor: border,
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 10,
+          paddingLeft: 10,
+          borderLeftWidth: 2,
+          borderLeftColor: textColor ? 'rgba(255,255,255,0.6)' : accent,
         }}
       >
-        {/* Media area */}
-        {playing && videoSource ? (
-          <View style={{ position: 'relative' }}>
-            <InlineVideoPlayer source={videoSource} width={effectiveWidth} />
-            <Pressable
-              onPress={() => setFullscreen(videoSource)}
-              style={{ position: 'absolute', bottom: 8, right: 8, width: 30, height: 30, borderRadius: 15, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center' }}
-              hitSlop={8}
-            >
-              <Feather name="maximize-2" size={14} color="#FFFFFF" />
-            </Pressable>
-          </View>
-        ) : data.image ? (
-          <Pressable onPress={handlePress}>
-            <CachedImage uri={data.image} style={{ width: '100%', aspectRatio: isVideo ? 16 / 9 : undefined, height: isVideo ? undefined : PREVIEW_HEIGHT }} resizeMode="cover" />
+        {/* Left thumbnail (no webview — just a cached image) */}
+        {data.image ? (
+          <View style={{ width: 64, height: 64, borderRadius: THUMB_RADIUS, overflow: 'hidden', backgroundColor: '#000' }}>
+            <CachedImage uri={data.image} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
             {isVideo && (
               <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
-                <View
-                  style={{
-                    width: 56,
-                    height: 56,
-                    borderRadius: 28,
-                    backgroundColor: 'rgba(0,0,0,0.6)',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    borderWidth: 2,
-                    borderColor: 'rgba(255,255,255,0.85)',
-                  }}
-                >
-                  <Feather name="play" size={24} color="#FFFFFF" style={{ marginLeft: 3 }} />
+                <View style={{ width: 26, height: 26, borderRadius: 13, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.85)' }}>
+                  <Feather name="play" size={12} color="#FFFFFF" style={{ marginLeft: 2 }} />
                 </View>
               </View>
             )}
-          </Pressable>
+          </View>
         ) : null}
 
-        {/* Text area (tap opens link / browser) */}
-        <Pressable onPress={handlePress} style={{ padding: 12 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 3 }}>
-            <Feather name={isVideo ? 'play-circle' : 'link'} size={11} color={textColor || accent} />
-            <Text variant="caption" weight="semibold" color={textColor || accent} numberOfLines={1} style={{ flex: 1, fontSize: 11, opacity: textColor ? 0.9 : 1 }}>
-              {data.siteName || host}
-            </Text>
-          </View>
+        {/* Text */}
+        <View style={{ flex: 1, paddingVertical: 2 }}>
+          <Text variant="caption" weight="semibold" color={textColor || accent} numberOfLines={1} style={{ fontSize: 11, opacity: textColor ? 0.9 : 1 }}>
+            {data.siteName || host}
+          </Text>
           {data.title ? (
-            <Text variant="body" weight="semibold" color={titleColor} numberOfLines={2} style={{ fontSize: 14, lineHeight: 18, marginBottom: data.description ? 3 : 0 }}>
+            <Text variant="caption" weight="semibold" color={titleColor} numberOfLines={2} style={{ fontSize: 13, lineHeight: 17, marginTop: 1 }}>
               {data.title}
             </Text>
           ) : null}
-          {data.description ? (
-            <Text variant="caption" color={descColor} numberOfLines={2} style={{ fontSize: 12, lineHeight: 16, opacity: textColor ? 0.85 : 1 }}>
+          {!compact && data.description ? (
+            <Text variant="caption" color={subColor} numberOfLines={2} style={{ fontSize: 11, lineHeight: 15, marginTop: 1, opacity: textColor ? 0.8 : 1 }}>
               {data.description}
             </Text>
           ) : null}
-        </Pressable>
-      </View>
+        </View>
+      </Pressable>
     </>
   );
 }
