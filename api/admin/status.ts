@@ -95,68 +95,108 @@ function sha256hex(data: string): string {
 }
 
 // List objects and sum sizes + count, capped to stay fast.
+//
+// AWS SigV4 is time-sensitive and Vercel's serverless clock can be skewed,
+// which makes Cloudflare reject signatures ("Access Denied"). To be robust we
+// first do a probe request, read Cloudflare's own `Date` response header, and
+// re-sign every real request using THAT clock — so it works regardless of the
+// host machine's time.
+function signAndBuild(signingDate: Date, token?: string) {
+  const region = 'auto';
+  const service = 's3';
+  const amzDate = signingDate.toISOString().replace(/[:-]|\.\d{3}/g, '');
+  const dateStamp = amzDate.slice(0, 8);
+
+  const params: Record<string, string> = { 'list-type': '2', 'max-keys': '1000' };
+  if (token) params['continuation-token'] = token;
+  const canonicalQuery = Object.keys(params)
+    .sort()
+    .map((k) => `${encodeURIComponent(k)}=${encodeURIComponent(params[k])}`)
+    .join('&');
+
+  const payloadHash = sha256hex('');
+  const canonicalHeaders = `host:${R2_HOST}\nx-amz-content-sha256:${payloadHash}\nx-amz-date:${amzDate}\n`;
+  const signedHeaders = 'host;x-amz-content-sha256;x-amz-date';
+  const canonicalRequest = ['GET', `/${R2_BUCKET}`, canonicalQuery, canonicalHeaders, signedHeaders, payloadHash].join('\n');
+  const scope = `${dateStamp}/${region}/${service}/aws4_request`;
+  const stringToSign = ['AWS4-HMAC-SHA256', amzDate, scope, sha256hex(canonicalRequest)].join('\n');
+  const kDate = hmac('AWS4' + R2_SECRET_ACCESS_KEY, dateStamp);
+  const kRegion = hmac(kDate, region);
+  const kService = hmac(kRegion, service);
+  const kSigning = hmac(kService, 'aws4_request');
+  const signature = crypto.createHmac('sha256', kSigning).update(stringToSign, 'utf8').digest('hex');
+  const authorization = `AWS4-HMAC-SHA256 Credential=${R2_ACCESS_KEY_ID}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
+
+  return {
+    url: `https://${R2_HOST}/${R2_BUCKET}?${canonicalQuery}`,
+    headers: { 'x-amz-content-sha256': payloadHash, 'x-amz-date': amzDate, Authorization: authorization } as Record<string, string>,
+  };
+}
+
 async function r2Usage(): Promise<{ bytes: number; objects: number; debug?: string }> {
   let bytes = 0;
   let objects = 0;
   let token: string | undefined;
   let debug = '';
-  const region = 'auto';
-  const service = 's3';
+
+  // Determine the signing clock. Probe once with the local clock; if the
+  // response carries a Date header, trust Cloudflare's time for signing.
+  let signingDate = new Date();
+  try {
+    const probe = signAndBuild(signingDate, undefined);
+    const probeResp = await fetchT(probe.url, { method: 'GET', headers: probe.headers });
+    const serverDate = probeResp.headers.get('date');
+    if (serverDate) {
+      const d = new Date(serverDate);
+      if (!isNaN(d.getTime())) signingDate = d;
+    }
+    if (probeResp.ok) {
+      // Probe already succeeded — consume its body as the first page.
+      const xml = await probeResp.text();
+      const r = sumPage(xml);
+      bytes += r.bytes;
+      objects += r.objects;
+      token = r.nextToken;
+      if (!token) return { bytes, objects, debug };
+    }
+  } catch {
+    /* fall through to signed loop */
+  }
 
   for (let page = 0; page < 20; page++) {
-    const now = new Date();
-    const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, '');
-    const dateStamp = amzDate.slice(0, 8);
-
-    const params: Record<string, string> = { 'list-type': '2', 'max-keys': '1000' };
-    if (token) params['continuation-token'] = token;
-    const canonicalQuery = Object.keys(params)
-      .sort()
-      .map((k) => `${encodeURIComponent(k)}=${encodeURIComponent(params[k])}`)
-      .join('&');
-
-    const payloadHash = sha256hex('');
-    const canonicalHeaders = `host:${R2_HOST}\nx-amz-content-sha256:${payloadHash}\nx-amz-date:${amzDate}\n`;
-    const signedHeaders = 'host;x-amz-content-sha256;x-amz-date';
-    const canonicalRequest = ['GET', `/${R2_BUCKET}`, canonicalQuery, canonicalHeaders, signedHeaders, payloadHash].join('\n');
-    const scope = `${dateStamp}/${region}/${service}/aws4_request`;
-    const stringToSign = ['AWS4-HMAC-SHA256', amzDate, scope, sha256hex(canonicalRequest)].join('\n');
-    const kDate = hmac('AWS4' + R2_SECRET_ACCESS_KEY, dateStamp);
-    const kRegion = hmac(kDate, region);
-    const kService = hmac(kRegion, service);
-    const kSigning = hmac(kService, 'aws4_request');
-    const signature = crypto.createHmac('sha256', kSigning).update(stringToSign, 'utf8').digest('hex');
-    const authorization = `AWS4-HMAC-SHA256 Credential=${R2_ACCESS_KEY_ID}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
-
-    const url = `https://${R2_HOST}/${R2_BUCKET}?${canonicalQuery}`;
-    const resp = await fetchT(url, {
-      method: 'GET',
-      headers: { 'x-amz-content-sha256': payloadHash, 'x-amz-date': amzDate, Authorization: authorization },
-    });
+    const { url, headers } = signAndBuild(signingDate, token);
+    const resp = await fetchT(url, { method: 'GET', headers });
     if (!resp.ok) {
       debug = `http ${resp.status}`;
       break;
     }
     const xml = await resp.text();
-
-    const sizeMatches = xml.match(/<Size>(\d+)<\/Size>/g) || [];
-    if (sizeMatches.length === 0) debug = `no-sizes len=${xml.length}`;
-    for (const s of sizeMatches) {
-      const n = parseInt(s.replace(/<\/?Size>/g, ''), 10);
-      if (!isNaN(n)) {
-        bytes += n;
-        objects += 1;
-      }
-    }
-    const truncated = /<IsTruncated>true<\/IsTruncated>/.test(xml);
-    const tokMatch = xml.match(/<NextContinuationToken>([^<]+)<\/NextContinuationToken>/);
-    if (truncated && tokMatch) {
-      token = tokMatch[1];
+    const r = sumPage(xml);
+    bytes += r.bytes;
+    objects += r.objects;
+    if (r.nextToken) {
+      token = r.nextToken;
     } else {
       break;
     }
   }
   return { bytes, objects, debug };
+}
+
+function sumPage(xml: string): { bytes: number; objects: number; nextToken?: string } {
+  let bytes = 0;
+  let objects = 0;
+  const sizeMatches = xml.match(/<Size>(\d+)<\/Size>/g) || [];
+  for (const s of sizeMatches) {
+    const n = parseInt(s.replace(/<\/?Size>/g, ''), 10);
+    if (!isNaN(n)) {
+      bytes += n;
+      objects += 1;
+    }
+  }
+  const truncated = /<IsTruncated>true<\/IsTruncated>/.test(xml);
+  const tokMatch = xml.match(/<NextContinuationToken>([^<]+)<\/NextContinuationToken>/);
+  return { bytes, objects, nextToken: truncated && tokMatch ? tokMatch[1] : undefined };
 }
 
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
