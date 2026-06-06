@@ -17,6 +17,7 @@ import { triggerHaptic } from '../../src/utils/haptics';
 import { useConnectivityStore } from '../../src/services/connectivityMonitor';
 import { resetThrottle, shouldSync } from '../../src/services/syncThrottle';
 import { accountKey } from '../../src/services/cacheService';
+import { updateFeedWidget } from '../../src/services/widgetBridge';
 import { queueMutation } from '../../src/services/offlineQueue';
 
 const FEED_CACHE_KEY = '@san:feed_posts';
@@ -128,6 +129,19 @@ export default function FeedScreen() {
   const { isRefreshing, setRefreshing } = useFeedStore();
   const [posts, setPosts] = useState<Post[]>([]);
   const [menuPost, setMenuPost] = useState<Post | null>(null);
+
+  // Keep the iOS home-screen widget in sync with the latest feed (no-op on Android
+  // or when the native widget module isn't in the build yet).
+  useEffect(() => {
+    if (posts.length > 0) {
+      updateFeedWidget(posts.map((p) => ({
+        id: p.id,
+        authorName: p.authorName,
+        authorEmoji: p.authorEmoji,
+        content: p.content,
+      })));
+    }
+  }, [posts]);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const hasFetched = useRef(false);

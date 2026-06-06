@@ -16,6 +16,9 @@
       "bundleIdentifier": "com.sanmes.app",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
+      },
+      "entitlements": {
+        "com.apple.security.application-groups": ["group.com.sanmes.app"]
       }
     },
     "android": {
@@ -33,7 +36,8 @@
     "plugins": [
       "expo-router",
       "expo-font",
-      "./plugins/withFmtPatch"
+      "./plugins/withFmtPatch",
+      "@bacons/apple-targets"
     ],
     "experiments": {
       "typedRoutes": true
