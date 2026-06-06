@@ -11,6 +11,7 @@ import { Toast } from '../src/components/ui/Toast';
 import { initRateLimits } from '../src/services/rateLimit';
 import { cacheCleanup } from '../src/services/cacheManager';
 import { useConnectivityStore } from '../src/services/connectivityMonitor';
+import { useEntityStore } from '../src/services/entityStore';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -99,6 +100,9 @@ export default function RootLayout() {
       SplashScreen.hideAsync().catch(() => {});
       initRateLimits();
       cacheCleanup();
+      // Reload cached data (feed, conversations, profiles) into memory so chats/posts
+      // survive an app restart even before any network sync runs.
+      useEntityStore.getState().hydrate();
       useConnectivityStore.getState().start();
     }
   }, [ready]);
