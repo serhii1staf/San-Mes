@@ -37,7 +37,18 @@
       "expo-router",
       "expo-font",
       "./plugins/withFmtPatch",
-      "@bacons/apple-targets"
+      "@bacons/apple-targets",
+      [
+        "expo-alternate-app-icons",
+        [
+          { "name": "Classic", "ios": "./assets/app-icons/classic.png" },
+          { "name": "Dark", "ios": "./assets/app-icons/dark.png" },
+          { "name": "Blue", "ios": "./assets/app-icons/blue.png" },
+          { "name": "Orange", "ios": "./assets/app-icons/orange.png" },
+          { "name": "Mono", "ios": "./assets/app-icons/mono.png" },
+          { "name": "Gradient", "ios": "./assets/app-icons/gradient.png" }
+        ]
+      ]
     ],
     "experiments": {
       "typedRoutes": true

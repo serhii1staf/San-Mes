@@ -79,9 +79,6 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
 
     saveCurrentAccount();
 
-    // Close modal immediately to avoid artifact
-    onClose();
-
     // Switch the cache namespace to the new account. We do NOT clear the previous
     // account's cache — each account keeps its own namespace so switching back is instant.
     const { setCacheAccount } = await import('../../services/cacheService');
@@ -90,7 +87,8 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
     setThrottleAccount(profile.id);
     resetAllThrottles();
 
-    // Login to new account
+    // Persist the new account to the auth store BEFORE reloading so the fresh
+    // launch comes up already logged into the target account.
     login({
       id: profile.id,
       username: profile.username,
@@ -105,10 +103,17 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
       links: profile.links || undefined,
     }, 'token-' + Date.now());
 
-    // Restart app to cleanly load all data for new account
-    try {
-      await Updates.reloadAsync();
-    } catch {}
+    // Defer the reload to the next tick so the auth-state change and any pending
+    // navigation/render settle first. Reloading mid-render races with the
+    // navigation triggered by login() and crashes the app. A short delay lets
+    // React commit, then we cleanly restart to load the new account's data.
+    setTimeout(() => {
+      Updates.reloadAsync().catch(() => {
+        // If reload isn't available (e.g. dev client), just close the sheet —
+        // the reactive stores already point at the new account.
+        onClose();
+      });
+    }, 120);
   };
 
   const handleAddAccount = async () => {
@@ -133,9 +138,6 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
     }
     // Save current and switch
     saveCurrentAccount();
-
-    // Close modal immediately to avoid artifact
-    onClose();
 
     // Switch the cache namespace to the new account (keeps each account's data isolated).
     const { setCacheAccount } = await import('../../services/cacheService');
@@ -168,11 +170,15 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
       links: profile.links || undefined,
     }, 'token-' + Date.now());
 
-    // Restart app to cleanly load all data for new account
     setIsLoading(false);
-    try {
-      await Updates.reloadAsync();
-    } catch {}
+
+    // Defer the reload so the auth-state change / navigation settles first
+    // (reloading mid-render races with login()'s navigation and crashes).
+    setTimeout(() => {
+      Updates.reloadAsync().catch(() => {
+        onClose();
+      });
+    }, 120);
   };
 
   const otherAccounts = accounts.filter(a => a.id !== user?.id);
