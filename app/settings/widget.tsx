@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { View, Pressable, ScrollView, Platform } from 'react-native';
+import { View, Pressable, ScrollView, Platform, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
 import { showToast } from '../../src/store/toastStore';
@@ -56,17 +57,40 @@ export default function WidgetScreen() {
     borderColor: theme.colors.border.light,
   } as const;
 
+  const bgColor = theme.colors.background.primary;
+  const bgTransparent = theme.colors.background.primary + '00';
+  const headerContentHeight = insets.top + 48;
+  const headerGradientHeight = headerContentHeight + 28;
+
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: insets.top + 8, paddingBottom: 12 }}>
-        <Pressable onPress={() => router.back()} hitSlop={8}>
-          <Feather name="chevron-left" size={24} color={theme.colors.text.primary} />
-        </Pressable>
-        <Text variant="body" weight="bold">Виджет</Text>
-        <View style={{ width: 24 }} />
+      {/* Gradient fade header (same pattern as Settings) */}
+      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100, height: headerGradientHeight }} pointerEvents="box-none">
+        <LinearGradient
+          colors={[bgColor, bgColor, bgTransparent]}
+          locations={[0, 0.55, 1]}
+          style={StyleSheet.absoluteFill}
+        />
+        <View
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'center',
+            paddingHorizontal: 20,
+            paddingTop: insets.top + 8,
+            paddingBottom: 8,
+            position: 'relative',
+          }}
+          pointerEvents="auto"
+        >
+          <Pressable onPress={() => router.back()} hitSlop={8} style={{ position: 'absolute', left: 20, top: insets.top + 8 }}>
+            <Feather name="chevron-left" size={24} color={theme.colors.text.primary} />
+          </Pressable>
+          <Text variant="subheading" weight="bold">Виджет</Text>
+        </View>
       </View>
 
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 32 }}>
+      <ScrollView contentContainerStyle={{ padding: 16, paddingTop: headerContentHeight, paddingBottom: insets.bottom + 32 }} showsVerticalScrollIndicator={false}>
         {/* How to add */}
         <View style={cardStyle}>
           <Text variant="body" weight="bold" style={{ marginBottom: 14 }}>Как добавить виджет на главный экран</Text>

@@ -28,6 +28,7 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
   const [deviceKey, setDeviceKey] = useState('');
   const [pin, setPin] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [switching, setSwitching] = useState(false);
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
   const backdropAnim = useRef(new Animated.Value(0)).current;
 
@@ -47,9 +48,11 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
 
   const dismiss = () => {
     Animated.parallel([
-      Animated.timing(slideAnim, { toValue: SCREEN_HEIGHT, duration: 250, useNativeDriver: true }),
-      Animated.timing(backdropAnim, { toValue: 0, duration: 250, useNativeDriver: true }),
-    ]).start(() => setTimeout(onClose, 30));
+      Animated.timing(slideAnim, { toValue: SCREEN_HEIGHT, duration: 220, useNativeDriver: true }),
+      Animated.timing(backdropAnim, { toValue: 0, duration: 220, useNativeDriver: true }),
+    ]).start(({ finished }) => {
+      if (finished) onClose();
+    });
   };
 
   // Save current account before switching
@@ -103,14 +106,14 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
       links: profile.links || undefined,
     }, 'token-' + Date.now());
 
-    // Defer the reload to the next tick so the auth-state change and any pending
-    // navigation/render settle first. Reloading mid-render races with the
-    // navigation triggered by login() and crashes the app. A short delay lets
-    // React commit, then we cleanly restart to load the new account's data.
+    // Show a full-screen cover in the app's background color so the native reload
+    // doesn't flash white. Then reload on the next tick (avoids the navigation race).
+    setSwitching(true);
     setTimeout(() => {
       Updates.reloadAsync().catch(() => {
         // If reload isn't available (e.g. dev client), just close the sheet —
         // the reactive stores already point at the new account.
+        setSwitching(false);
         onClose();
       });
     }, 120);
@@ -172,10 +175,11 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
 
     setIsLoading(false);
 
-    // Defer the reload so the auth-state change / navigation settles first
-    // (reloading mid-render races with login()'s navigation and crashes).
+    // Show a full-screen cover so the native reload doesn't flash white.
+    setSwitching(true);
     setTimeout(() => {
       Updates.reloadAsync().catch(() => {
+        setSwitching(false);
         onClose();
       });
     }, 120);
@@ -267,6 +271,21 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
             </View>
           </Animated.View>
         </View>
+
+        {/* Full-screen cover shown right before app reload so the native restart
+            doesn't flash white. Uses the app background color. */}
+        {switching && (
+          <View
+            pointerEvents="auto"
+            style={{
+              position: 'absolute',
+              top: 0, left: 0, right: 0, bottom: 0,
+              backgroundColor: theme.colors.background.primary,
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          />
+        )}
       </View>
       </KeyboardAvoidingView>
     </Modal>
