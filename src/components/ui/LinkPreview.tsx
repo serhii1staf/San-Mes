@@ -6,7 +6,7 @@ import { WebView } from 'react-native-webview';
 import { useTheme } from '../../theme';
 import { Text } from './Text';
 import { CachedImage } from './CachedImage';
-import { MediaViewerModal, MediaViewerSource, embedUrlFor } from './MediaViewerModal';
+import { MediaViewerModal, MediaViewerSource, playerHtml, baseUrlFor } from './MediaViewerModal';
 import { getLinkPreview, getCachedPreviewSync, LinkPreviewData } from '../../services/linkPreview';
 
 // Rich link preview card (Discord / Telegram style).
@@ -139,9 +139,9 @@ export function LinkPreview({ url, onError }: LinkPreviewProps) {
       >
         {/* Media area */}
         {playing && videoSource ? (
-          <View style={{ width: '100%', height: PREVIEW_HEIGHT, backgroundColor: '#000' }}>
+          <View style={{ width: '100%', aspectRatio: 16 / 9, backgroundColor: '#000' }}>
             <WebView
-              source={{ uri: embedUrlFor(videoSource) }}
+              source={{ html: playerHtml(videoSource), baseUrl: baseUrlFor(videoSource) }}
               style={{ flex: 1, backgroundColor: '#000' }}
               allowsInlineMediaPlayback
               mediaPlaybackRequiresUserAction={false}
@@ -149,6 +149,7 @@ export function LinkPreview({ url, onError }: LinkPreviewProps) {
               domStorageEnabled
               allowsFullscreenVideo
               originWhitelist={['*']}
+              scrollEnabled={false}
               startInLoadingState
               renderLoading={() => (
                 <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: '#000' }}>
@@ -156,18 +157,10 @@ export function LinkPreview({ url, onError }: LinkPreviewProps) {
                 </View>
               )}
             />
-            {/* Expand to fullscreen */}
-            <Pressable
-              onPress={() => setFullscreen(videoSource)}
-              style={{ position: 'absolute', top: 8, right: 8, width: 32, height: 32, borderRadius: 16, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center' }}
-              hitSlop={8}
-            >
-              <Feather name="maximize-2" size={15} color="#FFFFFF" />
-            </Pressable>
           </View>
         ) : data.image ? (
           <Pressable onPress={handlePress}>
-            <CachedImage uri={data.image} style={{ width: '100%', height: PREVIEW_HEIGHT }} resizeMode="cover" />
+            <CachedImage uri={data.image} style={{ width: '100%', aspectRatio: isVideo ? 16 / 9 : undefined, height: isVideo ? undefined : PREVIEW_HEIGHT }} resizeMode="cover" />
             {isVideo && (
               <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
                 <View
