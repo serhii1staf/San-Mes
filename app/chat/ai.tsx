@@ -1,6 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { View, Pressable, TextInput, FlatList, ActivityIndicator, Dimensions, Text as RNText, Platform } from 'react-native';
-import { KeyboardStickyView } from 'react-native-keyboard-controller';
+import { KeyboardStickyView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
+import Reanimated, { useAnimatedStyle } from 'react-native-reanimated';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -98,6 +99,20 @@ export default function AIChatScreen() {
   const [messages, setMessages] = useState<AIMessage[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+
+  const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
+  // Inverted list: the visual bottom spacer is the ListHeaderComponent.
+  // Grow it with the keyboard so newest messages stay above the input bar.
+  const INPUT_BAR = 60;
+  const headerSpacerStyle = useAnimatedStyle(() => ({
+    height: Math.abs(keyboardHeight.value) + INPUT_BAR + insets.bottom,
+  }));
+
+  // Bottom padding under the input: safe-area when keyboard closed → small gap when open.
+  const inputPadStyle = useAnimatedStyle(() => {
+    const open = Math.abs(keyboardHeight.value) > 1;
+    return { paddingBottom: open ? 8 : (insets.bottom > 0 ? insets.bottom : 16) };
+  });
   const [remaining, setRemaining] = useState(50);
   const flatListRef = useRef<FlatList>(null);
 
@@ -180,7 +195,7 @@ export default function AIChatScreen() {
         data={invertedData}
         keyExtractor={item => item.id}
         inverted
-        contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 72 + insets.bottom }}
+        contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8 }}
         renderItem={renderItem}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
@@ -190,16 +205,21 @@ export default function AIChatScreen() {
         initialNumToRender={12}
         maxToRenderPerBatch={8}
         windowSize={9}
-        ListHeaderComponent={isLoading ? (
-          <View style={{ paddingBottom: 8 }}>
-            <View style={{ borderRadius: 14, overflow: 'hidden', alignSelf: 'flex-start' }}>
-              <BlurView intensity={80} tint="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 7 }}>
-                <ActivityIndicator size="small" color="#FFFFFF" />
-                <Text style={{ fontSize: 11, color: '#FFFFFF', fontWeight: '500' }}>Думаю...</Text>
-              </BlurView>
-            </View>
-          </View>
-        ) : null}
+        ListHeaderComponent={
+          <>
+            {isLoading ? (
+              <View style={{ paddingBottom: 8 }}>
+                <View style={{ borderRadius: 14, overflow: 'hidden', alignSelf: 'flex-start' }}>
+                  <BlurView intensity={80} tint="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 7 }}>
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                    <Text style={{ fontSize: 11, color: '#FFFFFF', fontWeight: '500' }}>Думаю...</Text>
+                  </BlurView>
+                </View>
+              </View>
+            ) : null}
+            <Reanimated.View style={headerSpacerStyle} />
+          </>
+        }
         ListFooterComponent={<View style={{ height: insets.top + 72 }} />}
         ListEmptyComponent={
           <View style={{ alignItems: 'center', paddingVertical: 60, transform: [{ scaleY: -1 }] }}>
@@ -217,7 +237,7 @@ export default function AIChatScreen() {
 
       {/* Input — sticks to keyboard (smooth, no lag) */}
       <KeyboardStickyView offset={{ closed: 0, opened: 0 }} style={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}>
-        <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: insets.bottom > 0 ? insets.bottom : 16, backgroundColor: theme.colors.background.primary }}>
+        <Reanimated.View style={[{ paddingHorizontal: 16, paddingTop: 8, backgroundColor: theme.colors.background.primary }, inputPadStyle]}>
           <View style={{ flexDirection: 'row', alignItems: 'flex-end', backgroundColor: theme.isDark ? 'rgba(40,40,40,0.95)' : 'rgba(245,245,245,0.95)', borderRadius: 24, paddingHorizontal: 16, paddingVertical: 8, borderWidth: 1, borderColor: theme.colors.border.light }}>
             <TextInput
               value={input}
@@ -231,7 +251,7 @@ export default function AIChatScreen() {
               <Feather name="send" size={14} color={input.trim() ? '#FFFFFF' : theme.colors.text.tertiary} />
             </Pressable>
           </View>
-        </View>
+        </Reanimated.View>
       </KeyboardStickyView>
     </View>
   );

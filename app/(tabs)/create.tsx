@@ -44,10 +44,11 @@ export default function CreateScreen() {
     if (editingPost) {
       setContent(editingPost.content || '');
       setEditingPostId(editingPost.id);
-      if (editingPost.imageUrl) {
-        setImageUris([editingPost.imageUrl]);
-      } else if (editingPost.imageUrls && editingPost.imageUrls.length > 0) {
+      // Prefer the full image array; fall back to the single imageUrl.
+      if (editingPost.imageUrls && editingPost.imageUrls.length > 0) {
         setImageUris(editingPost.imageUrls);
+      } else if (editingPost.imageUrl) {
+        setImageUris([editingPost.imageUrl]);
       }
       setEditingPost(null);
     }

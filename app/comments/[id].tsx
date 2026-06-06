@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, FlatList, TextInput, Pressable, Platform, ActivityIndicator, StyleSheet, Text as RNText } from 'react-native';
-import { KeyboardStickyView } from 'react-native-keyboard-controller';
+import { KeyboardStickyView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
+import Reanimated, { useAnimatedStyle } from 'react-native-reanimated';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -19,6 +20,11 @@ import { playSendSound } from '../../src/utils/sounds';
 export default function CommentsScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
+  const inputPadStyle = useAnimatedStyle(() => {
+    const open = Math.abs(keyboardHeight.value) > 1;
+    return { paddingBottom: open ? 8 : (insets.bottom > 0 ? insets.bottom : 14) };
+  });
   const { id: postId } = useLocalSearchParams<{ id: string }>();
   const { user } = useAuthStore();
   const [comments, setComments] = useState<any[]>([]);
@@ -222,7 +228,7 @@ export default function CommentsScreen() {
 
         {/* Input area — sticks to keyboard (smooth, no lag) */}
         <KeyboardStickyView offset={{ closed: 0, opened: 0 }} style={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: insets.bottom > 0 ? insets.bottom : 14, paddingTop: 8, backgroundColor: bgColor }}>
+          <Reanimated.View style={[{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: 8, backgroundColor: bgColor }, inputPadStyle]}>
             <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 22, paddingHorizontal: 16, paddingVertical: 10, borderWidth: 1, borderColor: theme.colors.border.light }}>
               <TextInput
                 ref={inputRef}
@@ -237,7 +243,7 @@ export default function CommentsScreen() {
             <Pressable onPress={handleSend} disabled={!text.trim() || isSending} style={{ marginLeft: 10, width: 40, height: 40, borderRadius: 20, backgroundColor: text.trim() ? theme.colors.accent.primary : theme.colors.background.elevated, alignItems: 'center', justifyContent: 'center' }}>
               <Feather name="send" size={16} color={text.trim() ? '#FFFFFF' : theme.colors.text.tertiary} />
             </Pressable>
-          </View>
+          </Reanimated.View>
         </KeyboardStickyView>
     </View>
   );
