@@ -2,57 +2,115 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { accountKey } from './cacheAccount';
 
 /**
- * kvStore — fast key/value layer for chat data (messages, conversations).
+ * kvStore — fast key/value layer for chat data (messages, conversations) and the
+ * general cache.
  *
- * Backed entirely by AsyncStorage (+ an in-memory mirror for synchronous reads).
- *
- * NOTE: react-native-mmkv (v4 + Nitro) was removed because it caused a hard
- * native crash on launch with this Expo SDK 54 / RN 0.81 stack. All
- * functionality — chat persistence, per-account isolation — is preserved here;
- * we only forgo MMKV's synchronous-read speed. The in-memory mirror gives the
- * same instant cache-first rendering after kvWarm() runs on screen mount.
+ * Uses react-native-mmkv v3 (TurboModules, synchronous, no Nitro) when the
+ * native module loads successfully. Falls back transparently to AsyncStorage
+ * (+ an in-memory mirror for sync reads) if MMKV is unavailable or throws — so
+ * the app NEVER crashes because of storage. (v4 + Nitro caused a hard launch
+ * crash on this Expo SDK 54 / RN 0.81 stack; v3 is the stable line.)
  *
  * Every key is namespaced per account via accountKey(), so one account never
- * reads another account's chat data.
+ * reads another account's data.
  */
 
-export function isMMKVAvailable(): boolean {
-  return false;
+// Master switch. MMKV v3 is stable on this stack; flip to false to force the
+// AsyncStorage fallback without touching anything else.
+const USE_MMKV = true;
+
+let mmkv: any = null;
+if (USE_MMKV) {
+  try {
+    const { MMKV } = require('react-native-mmkv');
+    mmkv = new MMKV({ id: 'san-kv' });
+    // Probe once so a broken native module trips the catch here (not later mid-render).
+    mmkv.set('__probe__', '1');
+    mmkv.getString('__probe__');
+    mmkv.delete('__probe__');
+  } catch (e) {
+    mmkv = null;
+    console.warn('[kvStore] MMKV unavailable — using AsyncStorage fallback.', e);
+  }
 }
 
-// In-memory mirror so sync reads return data after kvWarm() has loaded it.
+export function isMMKVAvailable(): boolean {
+  return mmkv !== null;
+}
+
+// In-memory mirror so sync reads return data after kvWarm() has loaded it
+// (used only in the AsyncStorage-fallback path).
 const memMirror: Record<string, string> = {};
 
-// ─── Raw API (key is already namespaced by the caller) ─────────────────────────
-// Used by cacheService, which applies its own namespaced() before calling.
+// ─── Raw API (key is already namespaced by the caller — used by cacheService) ──
 
-export function kvGetStringRawSync(_key: string): string | null {
-  return null; // AsyncStorage path handles raw reads in cacheService
+export function kvGetStringRawSync(key: string): string | null {
+  if (!mmkv) return null;
+  try {
+    const v = mmkv.getString(key);
+    return v == null ? null : v;
+  } catch {
+    return null;
+  }
 }
 
-export function kvSetStringRaw(_key: string, _value: string): void {
-  // no-op: cacheService writes through AsyncStorage as the durable path
+export function kvSetStringRaw(key: string, value: string): void {
+  if (!mmkv) return;
+  try {
+    mmkv.set(key, value);
+  } catch {
+    // ignore — AsyncStorage write in cacheService is the durable path
+  }
 }
 
-export function kvDeleteRaw(_key: string): void {
-  // no-op
+export function kvDeleteRaw(key: string): void {
+  if (!mmkv) return;
+  try {
+    mmkv.delete(key);
+  } catch {
+    // ignore
+  }
 }
 
-// ─── Sync string API ─────────────────────────────────────────────────────────
+// ─── Sync string API (applies account namespace) ──────────────────────────────
 
 export function kvGetStringSync(baseKey: string): string | null {
   const key = accountKey(baseKey);
+  if (mmkv) {
+    try {
+      const v = mmkv.getString(key);
+      return v == null ? null : v;
+    } catch {
+      return null;
+    }
+  }
   return memMirror[key] ?? null;
 }
 
 export function kvSetString(baseKey: string, value: string): void {
   const key = accountKey(baseKey);
+  if (mmkv) {
+    try {
+      mmkv.set(key, value);
+      return;
+    } catch {
+      // fall through to AsyncStorage fallback
+    }
+  }
   memMirror[key] = value;
   AsyncStorage.setItem(key, value).catch(() => {});
 }
 
 export function kvDelete(baseKey: string): void {
   const key = accountKey(baseKey);
+  if (mmkv) {
+    try {
+      mmkv.delete(key);
+      return;
+    } catch {
+      // fall through
+    }
+  }
   delete memMirror[key];
   AsyncStorage.removeItem(key).catch(() => {});
 }
@@ -82,10 +140,11 @@ export function kvSetJSON(baseKey: string, value: unknown): void {
 
 /**
  * Warm the in-memory mirror from AsyncStorage for the given base keys.
+ * No-op when MMKV is available (reads are already synchronous from disk).
  * Call before a sync read on app/screen mount so cache-first render works.
  */
 export async function kvWarm(baseKeys: string[]): Promise<void> {
-  if (baseKeys.length === 0) return;
+  if (mmkv || baseKeys.length === 0) return;
   try {
     const keys = baseKeys.map(accountKey);
     const pairs = await AsyncStorage.multiGet(keys);
@@ -93,6 +152,6 @@ export async function kvWarm(baseKeys: string[]): Promise<void> {
       if (v != null) memMirror[k] = v;
     }
   } catch {
-    // ignore — sync reads will just return null until data is written
+    // ignore — sync reads return null until data is written
   }
 }
