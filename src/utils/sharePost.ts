@@ -57,50 +57,6 @@ async function toLocalImageFile(uri: string): Promise<string | null> {
 }
 
 /**
- * Share a single image (by URL) as an actual photo file, with optional caption.
- * Downloads the remote image to a local file then shares it. Falls back to
- * sharing the URL as text if the download fails.
- */
-export async function shareImageUrl(imageUrl: string | null | undefined, caption?: string): Promise<void> {
-  if (!imageUrl) return;
-  try {
-    const localUri = await toLocalImageFile(imageUrl);
-    if (localUri) {
-      await Share.share(
-        Platform.OS === 'ios'
-          ? { url: localUri, message: caption || undefined }
-          : { message: caption || '', url: localUri }
-      );
-      return;
-    }
-    await Share.share({ message: caption ? `${caption}\n${imageUrl}` : imageUrl });
-  } catch {
-    // cancelled / failed — silent
-  }
-}
-/**
- * Share a single image (by URL) as an actual photo file, with optional caption.
- * Downloads the remote image to a local file then shares it. Falls back to
- * sharing the URL as text if the download fails.
- */
-export async function shareImageUrl(imageUrl: string | null | undefined, caption?: string): Promise<void> {
-  if (!imageUrl) return;
-  try {
-    const localUri = await toLocalImageFile(imageUrl);
-    if (localUri) {
-      await Share.share(
-        Platform.OS === 'ios'
-          ? { url: localUri, message: caption || undefined }
-          : { message: caption || '', url: localUri }
-      );
-      return;
-    }
-    await Share.share({ message: caption ? `${caption}\n${imageUrl}` : imageUrl });
-  } catch {
-    // cancelled / failed — silent
-  }
-}
-/**
  * Share a post as image + text. Always includes a link to the post, so there
  * is always something to share (never "nothing to share").
  */
@@ -118,7 +74,7 @@ export async function sharePost(post: Post | null | undefined): Promise<void> {
         await Share.share(
           Platform.OS === 'ios'
             ? { url: localUri, message: caption || undefined }
-            : { message: caption ? `${caption}` : '', url: localUri }
+            : { message: caption, url: localUri }
         );
         return;
       }
