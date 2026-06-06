@@ -51,17 +51,17 @@ async function fetchPost(id: string) {
 
 async function fetchProfile(id: string) {
   const byId = await sbGet(
-    `profiles?id=eq.${encodeURIComponent(id)}&select=id,username,display_name,emoji,bio,is_verified&limit=1`
+    `profiles?id=eq.${encodeURIComponent(id)}&select=id,username,display_name,emoji,bio,is_verified,banner_url&limit=1`
   );
   if (byId && byId[0]) return byId[0];
   const byName = await sbGet(
-    `profiles?username=eq.${encodeURIComponent(id)}&select=id,username,display_name,emoji,bio,is_verified&limit=1`
+    `profiles?username=eq.${encodeURIComponent(id)}&select=id,username,display_name,emoji,bio,is_verified,banner_url&limit=1`
   );
   return byName && byName[0] ? byName[0] : null;
 }
 
 const VERIFIED_SVG =
-  '<svg viewBox="0 0 24 24" width="20" height="20" fill="#3DA5F4" style="flex:0 0 auto"><path d="M12 2l2.4 1.8 3 .1 1 2.8 2.4 1.7-1 2.8 1 2.8-2.4 1.7-1 2.8-3 .1L12 22l-2.4-1.8-3-.1-1-2.8L3.2 15l1-2.8-1-2.8 2.4-1.7 1-2.8 3-.1z"/><path d="M10.6 14.6l-2.2-2.2-1.2 1.2 3.4 3.4 6-6-1.2-1.2z" fill="#fff"/></svg>';
+  '<svg viewBox="0 0 24 24" width="20" height="20" style="flex:0 0 auto" aria-label="verified"><path fill="#3DA5F4" d="M12 1.5l2.39 1.64 2.9-.18 1.05 2.71 2.43 1.59-.7 2.82.7 2.82-2.43 1.59-1.05 2.71-2.9-.18L12 22.5l-2.39-1.65-2.9.18-1.05-2.71-2.43-1.59.7-2.82-.7-2.82 2.43-1.59 1.05-2.71 2.9.18z"/><path fill="#fff" d="M10.5 15.2l-3-3 1.4-1.4 1.6 1.6 4-4 1.4 1.4z"/></svg>';
 
 interface PageOpts {
   kind: 'post' | 'profile' | 'generic';
@@ -72,13 +72,17 @@ interface PageOpts {
   emoji: string;
   verified?: boolean;
   subline?: string; // @username or tagline
+  banner?: string | null; // real profile banner image
   deepLink: string; // san-mes://... path
   bodyHtml: string;
 }
 
 function renderPage(opts: PageOpts): string {
-  const { title, description, ogImage, heading, emoji, verified, subline, deepLink, bodyHtml } = opts;
+  const { title, description, ogImage, heading, emoji, verified, subline, banner, deepLink, bodyHtml } = opts;
   const isProfile = opts.kind === 'profile';
+  const coverStyle = banner
+    ? `background-image:url('${escapeHtml(banner)}');background-size:cover;background-position:center;`
+    : 'background:linear-gradient(135deg,#F7A07E 0%,#E37857 55%,#D7625F 100%);';
   return `<!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -104,8 +108,8 @@ function renderPage(opts: PageOpts): string {
     body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#EDE4FB;min-height:100vh;min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:18px;color:#16181c;}
     .card{position:relative;background:#fff;border-radius:26px;width:100%;max-width:430px;overflow:hidden;box-shadow:0 20px 60px rgba(80,60,120,0.22);}
     /* Telegram-style cover banner */
-    .cover{height:132px;background:linear-gradient(135deg,#F7A07E 0%,#E37857 55%,#D7625F 100%);position:relative;}
-    .cover::after{content:'';position:absolute;inset:0;background:radial-gradient(circle at 78% 20%,rgba(255,255,255,0.28),transparent 45%);}
+    .cover{height:132px;position:relative;}
+    .cover::after{content:'';position:absolute;inset:0;background:radial-gradient(circle at 78% 20%,rgba(255,255,255,0.18),transparent 45%);}
     .avatar-wrap{position:absolute;left:24px;top:84px;}
     .avatar{width:96px;height:96px;border-radius:30px;background:#FFEFE6;border:4px solid #fff;display:flex;align-items:center;justify-content:center;font-size:50px;box-shadow:0 8px 20px rgba(0,0,0,0.12);}
     .body{padding:60px 24px 24px;}
@@ -124,7 +128,7 @@ function renderPage(opts: PageOpts): string {
 </head>
 <body>
   <div class="card">
-    <div class="cover"></div>
+    <div class="cover" style="${coverStyle}"></div>
     <div class="avatar-wrap"><div class="avatar">${emoji || '🌸'}</div></div>
     <div class="body">
       <div class="name-row">
@@ -187,8 +191,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
           const description = (text || 'Посмотри эту публикацию в San').slice(0, 160);
           const bodyHtml =
             (text ? `<div class="content">${escapeHtml(text)}</div>` : '') +
-            (img ? `<img class="photo" src="${escapeHtml(img)}" alt="">` : '') +
-            `<div class="stats"><span><b>${post.likes_count || 0}</b> ❤</span><span><b>${post.comments_count || 0}</b> 💬</span></div>`;
+            (img ? `<img class="photo" src="${escapeHtml(img)}" alt="">` : '');
           res.end(
             renderPage({
               kind: 'post',
@@ -223,6 +226,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
               emoji: profile.emoji,
               verified: !!profile.is_verified,
               subline: profile.username ? `@${profile.username}` : undefined,
+              banner: profile.banner_url || null,
               deepLink: `${APP_SCHEME}://profile/${profile.id || id}`,
               bodyHtml,
             })
