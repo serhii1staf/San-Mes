@@ -11,6 +11,8 @@ import { Text, Avatar } from '../../src/components/ui';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { UserBadge } from '../../src/components/ui/UserBadge';
 import { FormattedText } from '../../src/components/ui/FormattedText';
+import { LinkPreview } from '../../src/components/ui/LinkPreview';
+import { extractFirstUrl } from '../../src/services/linkPreview';
 import { CachedImage } from '../../src/components/ui/CachedImage';
 import { useAuthStore, useConnectivityStore } from '../../src/store';
 import { getComments, createComment, isRepost, parseImageUrls } from '../../src/lib/supabase';
@@ -176,6 +178,10 @@ export default function CommentsScreen() {
                   </View>
                 </View>
                 {mainContent ? <FormattedText style={{ fontSize: 15, lineHeight: 21, marginBottom: 8 }}>{mainContent}</FormattedText> : null}
+                {!repostInfo.isRepost && parseImageUrls(postData.image_url).length === 0 && (() => {
+                  const link = extractFirstUrl(mainContent);
+                  return link ? <View style={{ marginBottom: 8 }}><LinkPreview url={link} /></View> : null;
+                })()}
                 {!repostInfo.isRepost && (() => {
                   const imgs = parseImageUrls(postData.image_url);
                   if (imgs.length === 0) return null;
@@ -244,6 +250,10 @@ export default function CommentsScreen() {
                     <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ marginLeft: 4, flexShrink: 0 }}>{formatTime(item.created_at)}</Text>
                   </View>
                   <FormattedText style={{ marginTop: 3, fontSize: 14 }}>{item.content}</FormattedText>
+                  {(() => {
+                    const link = extractFirstUrl(item.content);
+                    return link ? <View style={{ marginTop: 6 }}><LinkPreview url={link} /></View> : null;
+                  })()}
                 </View>
               </View>
             )}

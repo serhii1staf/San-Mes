@@ -12,6 +12,8 @@ import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { CachedImage } from '../../src/components/ui/CachedImage';
 import { FormattedText } from '../../src/components/ui/FormattedText';
+import { LinkPreview } from '../../src/components/ui/LinkPreview';
+import { extractFirstUrl } from '../../src/services/linkPreview';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { UserBadge } from '../../src/components/ui/UserBadge';
 import { MessageContextMenu, MessageAction } from '../../src/components/ui/MessageContextMenu';
@@ -105,6 +107,14 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, hig
             {message.text ? (
               <FormattedText color={isOwn ? '#FFFFFF' : theme.colors.text.primary} linkColor={isOwn ? '#FFFFFF' : theme.colors.accent.primary} style={{ fontSize, fontFamily: fontFamilyStyle }}>{message.text}</FormattedText>
             ) : null}
+            {(() => {
+              const link = (!message.imageUrls || message.imageUrls.length === 0) ? extractFirstUrl(message.text) : null;
+              return link ? (
+                <View style={{ marginTop: 6, width: 240, maxWidth: '100%' }}>
+                  <LinkPreview url={link} />
+                </View>
+              ) : null;
+            })()}
             <Text variant="caption" color={isOwn ? 'rgba(255,255,255,0.6)' : theme.colors.text.tertiary} style={{ marginTop: 3, alignSelf: 'flex-end', fontSize: 10 }}>
               {formatMessageTime(message.createdAt)}
             </Text>
