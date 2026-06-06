@@ -12,22 +12,28 @@ import { UserBadge } from './UserBadge';
 import { extractFirstUrl } from '../../services/linkPreview';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
-const PREVIEW_MAX_HEIGHT = SCREEN_HEIGHT * 0.4;
+const PREVIEW_MAX_HEIGHT = SCREEN_HEIGHT * 0.45;
 const LONG_TEXT_THRESHOLD = 220;
 
-export type CommentAction = 'reply' | 'report';
+export type CommentAction = 'reply' | 'copy' | 'edit' | 'delete' | 'report';
 
 interface CommentContextMenuProps {
   visible: boolean;
   comment: any | null;
+  isOwn: boolean;
+  // Pre-parsed display body + quote (so the preview matches the list exactly)
+  displayBody?: string;
+  replyUser?: string;
+  replyText?: string;
   onClose: () => void;
   onAction: (action: CommentAction, comment: any) => void;
 }
 
 // Long-press menu for comments — same smooth slide-up + fade as the chat /
 // main-feed context menus. Shows a live preview of the held comment (including
-// any link/video preview) above the action sheet.
-export function CommentContextMenu({ visible, comment, onClose, onAction }: CommentContextMenuProps) {
+// any link/video preview) above the action sheet. The preview is wide so rich
+// previews (link/video cards) fit without being clipped.
+export function CommentContextMenu({ visible, comment, isOwn, displayBody, replyUser, replyText, onClose, onAction }: CommentContextMenuProps) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const slideAnim = useRef(new Animated.Value(40)).current;
@@ -58,13 +64,16 @@ export function CommentContextMenu({ visible, comment, onClose, onAction }: Comm
   if (!visible || !comment) return null;
 
   const profile = comment.profiles || {};
-  const content: string = comment.content || '';
-  const link = extractFirstUrl(content);
-  const isLong = content.length > LONG_TEXT_THRESHOLD;
+  const body: string = displayBody ?? comment.content ?? '';
+  const link = extractFirstUrl(body);
+  const isLong = body.length > LONG_TEXT_THRESHOLD;
 
-  const items: { action: CommentAction; icon: string; label: string; destructive?: boolean }[] = [
-    { action: 'reply', icon: 'corner-up-left', label: 'Ответить' },
-    { action: 'report', icon: 'flag', label: 'Пожаловаться', destructive: true },
+  const items: { action: CommentAction; icon: string; label: string; destructive?: boolean; show: boolean }[] = [
+    { action: 'reply', icon: 'corner-up-left', label: 'Ответить', show: true },
+    { action: 'copy', icon: 'copy', label: 'Копировать', show: !!body },
+    { action: 'edit', icon: 'edit-2', label: 'Редактировать', show: isOwn },
+    { action: 'delete', icon: 'trash-2', label: 'Удалить', destructive: true, show: isOwn },
+    { action: 'report', icon: 'flag', label: 'Пожаловаться', destructive: true, show: !isOwn },
   ];
 
   const previewInner = (
@@ -75,8 +84,15 @@ export function CommentContextMenu({ visible, comment, onClose, onAction }: Comm
         {profile.is_verified && <VerifiedBadge size={10} />}
         {profile.badge && <UserBadge badge={profile.badge} size="sm" />}
       </View>
-      {content ? (
-        <FormattedText color={theme.colors.text.primary} linkColor={theme.colors.accent.primary} style={{ fontSize: 15 }}>{content}</FormattedText>
+      {/* Quoted comment this one replies to */}
+      {replyUser ? (
+        <View style={{ paddingLeft: 8, borderLeftWidth: 2, borderLeftColor: theme.colors.accent.primary, marginBottom: 6 }}>
+          <Text variant="caption" weight="semibold" color={theme.colors.accent.primary} numberOfLines={1} style={{ fontSize: 11 }}>@{replyUser}</Text>
+          {replyText ? <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 11 }}>{replyText}</Text> : null}
+        </View>
+      ) : null}
+      {body ? (
+        <FormattedText color={theme.colors.text.primary} linkColor={theme.colors.accent.primary} style={{ fontSize: 15 }}>{body}</FormattedText>
       ) : null}
       {link ? (
         <View style={{ marginTop: 6 }}>
@@ -96,9 +112,9 @@ export function CommentContextMenu({ visible, comment, onClose, onAction }: Comm
           style={{ flex: 1, justifyContent: 'flex-end', paddingBottom: Math.max(insets.bottom, 16), opacity: fade, transform: [{ translateY: slideAnim }] }}
           pointerEvents="box-none"
         >
-          {/* Held comment preview */}
-          <View style={{ marginHorizontal: 16, marginBottom: 8, alignItems: 'flex-start' }} pointerEvents="box-none">
-            <View style={{ maxWidth: '92%', borderRadius: 18, backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF', overflow: 'hidden' }}>
+          {/* Held comment preview — wide so rich previews fit */}
+          <View style={{ marginHorizontal: 12, marginBottom: 8, alignItems: 'stretch' }} pointerEvents="box-none">
+            <View style={{ borderRadius: 18, backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF', overflow: 'hidden' }}>
               {isLong ? (
                 <ScrollView style={{ maxHeight: PREVIEW_MAX_HEIGHT }} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 14, paddingVertical: 12 }} bounces={false}>
                   {previewInner}
@@ -116,7 +132,7 @@ export function CommentContextMenu({ visible, comment, onClose, onAction }: Comm
             <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 6 }}>
               <View style={{ width: 40, height: 5, borderRadius: 3, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)' }} />
             </View>
-            {items.map((item) => {
+            {items.filter(i => i.show).map((item) => {
               const color = item.destructive ? '#FF3B30' : theme.colors.text.primary;
               return (
                 <Pressable key={item.action} onPress={() => dismiss(() => onAction(item.action, comment))} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 20 }}>

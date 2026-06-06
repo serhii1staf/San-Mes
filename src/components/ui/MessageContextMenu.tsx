@@ -69,6 +69,7 @@ export function MessageContextMenu({ visible, message, isOwn, bubbleColor, bubbl
 
   const hasImages = !!message.imageUrls && message.imageUrls.length > 0;
   const isLong = (message.text?.length || 0) > LONG_TEXT_THRESHOLD;
+  const hasLink = !hasImages && !!extractFirstUrl(message.text);
 
   const previewInner = (
     <>
@@ -110,9 +111,10 @@ export function MessageContextMenu({ visible, message, isOwn, bubbleColor, bubbl
           pointerEvents="box-none"
         >
           {/* Highlighted message preview — sizes to content; only scrolls when very long */}
-          <View style={{ marginHorizontal: 16, marginBottom: 8, alignItems: isOwn ? 'flex-end' : 'flex-start' }} pointerEvents="box-none">
+          <View style={{ marginHorizontal: 12, marginBottom: 8, alignItems: isOwn ? 'flex-end' : 'flex-start' }} pointerEvents="box-none">
             <View style={{
-              maxWidth: '85%',
+              maxWidth: hasLink ? '94%' : '85%',
+              minWidth: hasLink ? '80%' : undefined,
               borderRadius: bubbleRadius,
               backgroundColor: bubbleColor,
               borderBottomRightRadius: isOwn ? 4 : bubbleRadius,

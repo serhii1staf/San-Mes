@@ -111,9 +111,9 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
             {(() => {
               const link = (!message.imageUrls || message.imageUrls.length === 0) ? extractFirstUrl(message.text) : null;
               return link ? (
-                <View style={{ marginTop: 6, width: 280, maxWidth: '100%' }}>
+                <Pressable onLongPress={() => { triggerHaptic('medium'); onLongPress(message); }} delayLongPress={300} style={{ marginTop: 6, width: 280, maxWidth: '100%' }}>
                   <LinkPreview url={link} textColor={isOwn ? '#FFFFFF' : undefined} emoji={linkEmoji} />
-                </View>
+                </Pressable>
               ) : null;
             })()}
             <Text variant="caption" color={isOwn ? 'rgba(255,255,255,0.6)' : theme.colors.text.tertiary} style={{ marginTop: 3, alignSelf: 'flex-end', fontSize: 10 }}>
@@ -253,6 +253,24 @@ export default function ChatScreen() {
       scrollToEnd(false);
     }
   }, [chatMessages.length, scrollToEnd]);
+
+  // Robust initial scroll-to-bottom: when a chat first opens, images/previews
+  // load slightly after mount and grow the content, which can leave the list
+  // parked in the middle. We pin it to the newest message a few times during the
+  // first ~700ms, then stop so we never fight the user's own scrolling.
+  const didInitialScrollRef = useRef(false);
+  useEffect(() => {
+    didInitialScrollRef.current = false;
+  }, [id]);
+  useEffect(() => {
+    if (didInitialScrollRef.current) return;
+    if (!chatMessages.length) return;
+    didInitialScrollRef.current = true;
+    const timers = [0, 120, 350, 650].map((d) =>
+      setTimeout(() => { try { flatListRef.current?.scrollToEnd({ animated: false }); } catch {} }, d)
+    );
+    return () => timers.forEach(clearTimeout);
+  }, [id, chatMessages.length]);
 
   // ── Message search ──────────────────────────────────────────────────────────
   const openSearch = useCallback(() => {

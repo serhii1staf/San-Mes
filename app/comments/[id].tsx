@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, FlatList, TextInput, Pressable, Platform, ActivityIndicator, StyleSheet, Text as RNText, Modal } from 'react-native';
+import { View, FlatList, TextInput, Pressable, Platform, ActivityIndicator, StyleSheet, Text as RNText, Modal, Alert } from 'react-native';
 import { KeyboardStickyView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
 import Reanimated, { useAnimatedStyle } from 'react-native-reanimated';
+import * as Clipboard from 'expo-clipboard';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -15,26 +16,58 @@ import { LinkPreview } from '../../src/components/ui/LinkPreview';
 import { extractFirstUrl } from '../../src/services/linkPreview';
 import { CachedImage } from '../../src/components/ui/CachedImage';
 import { CommentContextMenu, CommentAction } from '../../src/components/ui/CommentContextMenu';
+import { SlideUpSheet } from '../../src/components/ui/SlideUpSheet';
 import { useAuthStore, useConnectivityStore } from '../../src/store';
-import { getComments, createComment, isRepost, parseImageUrls } from '../../src/lib/supabase';
+import { getComments, createComment, updateComment, deleteComment, isRepost, parseImageUrls } from '../../src/lib/supabase';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { playSendSound } from '../../src/utils/sounds';
 import { showToast } from '../../src/store/toastStore';
 
 const REPORT_CATS = ['Спам', 'Насилие', 'Ложная информация', 'Мошенничество', 'Оскорбления', 'Другое'];
 
-// Reply quoting without a schema change: a reply comment is stored as
-//   ::re::<username>|<quoted snippet>::<actual text>
-// We parse it back out on render to show a Telegram-style quote bar.
-const REPLY_RE = /^::re::([^|]*)\|([^:]*(?::(?!:)[^:]*)*)::/;
+// Reply quoting without a schema change. A reply comment is stored as:
+//   ::re:<base64(username)>:<base64(snippet)>::<actual body>
+// Base64 of the quoted parts guarantees the payload can never contain our
+// delimiters, so parsing is unambiguous (fixes the stray "re." / broken-quote bug).
+const REPLY_PREFIX = '::re:';
+function b64encode(s: string): string {
+  try { return global.btoa ? global.btoa(unescape(encodeURIComponent(s))) : Buffer.from(s, 'utf8').toString('base64'); }
+  catch { return ''; }
+}
+function b64decode(s: string): string {
+  try { return global.atob ? decodeURIComponent(escape(global.atob(s))) : Buffer.from(s, 'base64').toString('utf8'); }
+  catch { return ''; }
+}
 function encodeReply(username: string, snippet: string, body: string): string {
-  const safeSnippet = snippet.replace(/::/g, ': ').slice(0, 120);
-  return `::re::${username}|${safeSnippet}::${body}`;
+  const u = b64encode(username);
+  const sn = b64encode(snippet.slice(0, 140));
+  return `${REPLY_PREFIX}${u}:${sn}::${body}`;
 }
 function parseReply(content: string): { replyUser?: string; replyText?: string; body: string } {
-  const m = content.match(REPLY_RE);
-  if (!m) return { body: content };
-  return { replyUser: m[1], replyText: m[2], body: content.slice(m[0].length) };
+  if (content.startsWith(REPLY_PREFIX)) {
+    const rest = content.slice(REPLY_PREFIX.length);
+    const endIdx = rest.indexOf('::');
+    if (endIdx === -1) return { body: content };
+    const head = rest.slice(0, endIdx);
+    const body = rest.slice(endIdx + 2);
+    const sep = head.indexOf(':');
+    if (sep === -1) return { body };
+    const replyUser = b64decode(head.slice(0, sep));
+    const replyText = b64decode(head.slice(sep + 1));
+    return { replyUser: replyUser || undefined, replyText: replyText || undefined, body };
+  }
+  // Legacy format: ::re::<username>|<snippet>::<body>
+  if (content.startsWith('::re::')) {
+    const rest = content.slice(6);
+    const endIdx = rest.indexOf('::');
+    if (endIdx === -1) return { body: content };
+    const head = rest.slice(0, endIdx);
+    const body = rest.slice(endIdx + 2);
+    const bar = head.indexOf('|');
+    if (bar === -1) return { body };
+    return { replyUser: head.slice(0, bar) || undefined, replyText: head.slice(bar + 1) || undefined, body };
+  }
+  return { body: content };
 }
 
 export default function CommentsScreen() {
@@ -56,6 +89,7 @@ export default function CommentsScreen() {
   const [actionComment, setActionComment] = useState<any>(null); // long-pressed comment
   const [reportComment, setReportComment] = useState<any>(null); // comment being reported
   const [replyTo, setReplyTo] = useState<any>(null); // comment we are replying to
+  const [editing, setEditing] = useState<any>(null); // comment being edited
   const inputRef = useRef<TextInput>(null);
   const listRef = useRef<FlatList>(null);
 
@@ -125,8 +159,24 @@ export default function CommentsScreen() {
   const handleSend = async () => {
     if (!text.trim() || !user?.id || !postId) return;
     playSendSound();
-    // Embed a reply quote when replying to a comment (round-trips via marker).
     const body = text.trim();
+
+    // Edit mode: update the existing comment, preserving any reply-quote prefix.
+    if (editing) {
+      const parsed = parseReply(editing.content || '');
+      const newContent = parsed.replyUser
+        ? encodeReply(parsed.replyUser, parsed.replyText || '', body)
+        : body;
+      const editId = editing.id;
+      setText('');
+      setEditing(null);
+      // Optimistic local update
+      setComments((prev) => prev.map((c) => (c.id === editId ? { ...c, content: newContent } : c)));
+      await updateComment(editId, user.id, newContent);
+      return;
+    }
+
+    // Embed a reply quote when replying to a comment (round-trips via marker).
     const sendText = replyTo
       ? encodeReply(replyTo.profiles?.username || 'user', parseReply(replyTo.content || '').body, body)
       : body;
@@ -142,8 +192,38 @@ export default function CommentsScreen() {
     setIsSending(false);
   };
 
+  const handleMenuAction = (action: CommentAction, c: any) => {
+    const parsed = parseReply(c.content || '');
+    if (action === 'reply') {
+      startReply(c);
+    } else if (action === 'copy') {
+      Clipboard.setStringAsync(parsed.body);
+      showToast('Скопировано', 'check');
+    } else if (action === 'edit') {
+      setReplyTo(null);
+      setEditing(c);
+      setText(parsed.body);
+      setTimeout(() => inputRef.current?.focus(), 50);
+    } else if (action === 'delete') {
+      Alert.alert('Удалить комментарий?', '', [
+        { text: 'Отмена', style: 'cancel' },
+        {
+          text: 'Удалить', style: 'destructive', onPress: async () => {
+            if (!user?.id || !postId) return;
+            triggerHaptic('medium');
+            setComments((prev) => prev.filter((x) => x.id !== c.id));
+            await deleteComment(c.id, user.id, postId);
+          },
+        },
+      ]);
+    } else if (action === 'report') {
+      setTimeout(() => setReportComment(c), 220);
+    }
+  };
+
   const startReply = (comment: any) => {
     setActionComment(null);
+    setEditing(null);
     setReplyTo(comment);
     setTimeout(() => inputRef.current?.focus(), 50);
   };
@@ -295,7 +375,11 @@ export default function CommentsScreen() {
                   <FormattedText style={{ marginTop: 3, fontSize: 14 }}>{parsed.body}</FormattedText>
                   {(() => {
                     const link = extractFirstUrl(parsed.body);
-                    return link ? <View style={{ marginTop: 6 }}><LinkPreview url={link} /></View> : null;
+                    return link ? (
+                      <Pressable onLongPress={() => { triggerHaptic('medium'); setActionComment(item); }} delayLongPress={300} style={{ marginTop: 6 }}>
+                        <LinkPreview url={link} />
+                      </Pressable>
+                    ) : null;
                   })()}
                   {/* Reply action */}
                   <Pressable onPress={() => startReply(item)} hitSlop={6} style={{ marginTop: 4, alignSelf: 'flex-start' }}>
@@ -310,7 +394,18 @@ export default function CommentsScreen() {
 
         {/* Input area — sticks to keyboard (smooth, no lag) */}
         <KeyboardStickyView offset={{ closed: 0, opened: 0 }} style={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}>
-          {replyTo ? (
+          {editing ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 6, backgroundColor: bgColor }}>
+              <View style={{ width: 3, height: 30, borderRadius: 2, backgroundColor: theme.colors.accent.primary, marginRight: 8 }} />
+              <View style={{ flex: 1 }}>
+                <Text variant="caption" weight="semibold" color={theme.colors.accent.primary} numberOfLines={1} style={{ fontSize: 12 }}>Редактирование</Text>
+                <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 11 }}>{parseReply(editing.content || '').body}</Text>
+              </View>
+              <Pressable onPress={() => { setEditing(null); setText(''); }} hitSlop={8} style={{ padding: 4 }}>
+                <Feather name="x" size={18} color={theme.colors.text.tertiary} />
+              </Pressable>
+            </View>
+          ) : replyTo ? (
             <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 6, backgroundColor: bgColor }}>
               <View style={{ width: 3, height: 30, borderRadius: 2, backgroundColor: theme.colors.accent.primary, marginRight: 8 }} />
               <View style={{ flex: 1 }}>
@@ -335,39 +430,38 @@ export default function CommentsScreen() {
               />
             </View>
             <Pressable onPress={handleSend} disabled={!text.trim() || isSending} style={{ marginLeft: 10, width: 40, height: 40, borderRadius: 20, backgroundColor: text.trim() ? theme.colors.accent.primary : theme.colors.background.elevated, alignItems: 'center', justifyContent: 'center' }}>
-              <Feather name="send" size={16} color={text.trim() ? '#FFFFFF' : theme.colors.text.tertiary} />
+              <Feather name={editing ? 'check' : 'send'} size={16} color={text.trim() ? '#FFFFFF' : theme.colors.text.tertiary} />
             </Pressable>
           </Reanimated.View>
         </KeyboardStickyView>
 
         {/* Comment long-press menu — smooth slide-up (matches chat/feed) */}
-        <CommentContextMenu
-          visible={!!actionComment}
-          comment={actionComment}
-          onClose={() => setActionComment(null)}
-          onAction={(action: CommentAction, c: any) => {
-            if (action === 'reply') {
-              startReply(c);
-            } else if (action === 'report') {
-              setTimeout(() => setReportComment(c), 220);
-            }
-          }}
-        />
+        {(() => {
+          const parsed = actionComment ? parseReply(actionComment.content || '') : { body: '' as string, replyUser: undefined as string | undefined, replyText: undefined as string | undefined };
+          const isOwnComment = !!actionComment && !!user?.id && (actionComment.author_id === user.id || actionComment.profiles?.id === user.id);
+          return (
+            <CommentContextMenu
+              visible={!!actionComment}
+              comment={actionComment}
+              isOwn={isOwnComment}
+              displayBody={parsed.body}
+              replyUser={parsed.replyUser}
+              replyText={parsed.replyText}
+              onClose={() => setActionComment(null)}
+              onAction={handleMenuAction}
+            />
+          );
+        })()}
 
-        {/* Report categories */}
-        <Modal visible={!!reportComment} transparent animationType="fade" onRequestClose={() => setReportComment(null)}>
-          <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }} onPress={() => setReportComment(null)}>
-            <View style={{ margin: 8, backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF', borderRadius: 24, overflow: 'hidden' }}>
-              <Text variant="body" weight="semibold" align="center" style={{ paddingVertical: 12 }}>Причина жалобы</Text>
-              {REPORT_CATS.map((cat) => (
-                <Pressable key={cat} onPress={() => { triggerHaptic('medium'); setReportComment(null); showToast('Жалоба отправлена', 'flag'); }} style={{ paddingVertical: 14, paddingHorizontal: 20, borderTopWidth: 0.5, borderTopColor: theme.colors.border.light }}>
-                  <Text variant="body">{cat}</Text>
-                </Pressable>
-              ))}
-              <View style={{ height: 8 }} />
-            </View>
-          </Pressable>
-        </Modal>
+        {/* Report categories — smooth slide-up sheet (matches the dots menu) */}
+        <SlideUpSheet visible={!!reportComment} onClose={() => setReportComment(null)}>
+          <Text variant="body" weight="semibold" align="center" style={{ paddingVertical: 8 }}>Причина жалобы</Text>
+          {REPORT_CATS.map((cat) => (
+            <Pressable key={cat} onPress={() => { triggerHaptic('medium'); setReportComment(null); showToast('Жалоба отправлена', 'flag'); }} style={{ paddingVertical: 14, paddingHorizontal: 20, borderTopWidth: 0.5, borderTopColor: theme.colors.border.light }}>
+              <Text variant="body">{cat}</Text>
+            </Pressable>
+          ))}
+        </SlideUpSheet>
     </View>
   );
 }

@@ -607,6 +607,39 @@ export async function createComment(postId: string, authorId: string, content: s
   }
 }
 
+// Update a comment's content (author-scoped)
+export async function updateComment(commentId: string, authorId: string, content: string): Promise<{ error: string | null }> {
+  try {
+    const { error } = await supabase
+      .from('comments')
+      .update({ content })
+      .eq('id', commentId)
+      .eq('author_id', authorId);
+    return { error: error?.message || null };
+  } catch (e: any) {
+    return { error: e?.message || 'Unknown error' };
+  }
+}
+
+// Delete a comment (author-scoped) and decrement the post's comment count
+export async function deleteComment(commentId: string, authorId: string, postId: string): Promise<{ error: string | null }> {
+  try {
+    const { error } = await supabase
+      .from('comments')
+      .delete()
+      .eq('id', commentId)
+      .eq('author_id', authorId);
+    if (error) return { error: error.message };
+    const { data: post } = await supabase.from('posts').select('comments_count').eq('id', postId).single();
+    if (post) {
+      await supabase.from('posts').update({ comments_count: Math.max(0, (post.comments_count || 0) - 1) }).eq('id', postId);
+    }
+    return { error: null };
+  } catch (e: any) {
+    return { error: e?.message || 'Unknown error' };
+  }
+}
+
 // Follow a user
 export async function followUser(followerId: string, followingId: string): Promise<{ error: string | null }> {
   try {
