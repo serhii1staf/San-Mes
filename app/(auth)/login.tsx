@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react';
 import { View, ViewStyle, Pressable, TextInput, ActivityIndicator, Keyboard, TouchableWithoutFeedback } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
 import { useAuthStore } from '../../src/store';
@@ -59,22 +60,35 @@ export default function LoginScreen() {
   const containerStyle: ViewStyle = {
     flex: 1,
     backgroundColor: theme.colors.background.primary,
-    paddingTop: insets.top,
-    justifyContent: 'center',
-    paddingHorizontal: 32,
+    paddingTop: insets.top + 24,
+    paddingHorizontal: 28,
   };
+
+  const cardBg = theme.isDark ? theme.colors.background.elevated : '#FFFFFF';
 
   return (
     <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
     <View style={containerStyle}>
-      {/* Logo */}
-      <View style={{ alignItems: 'center', marginBottom: 32 }}>
-        <Text style={{ fontSize: 50 }}>🔐</Text>
-        <Text variant="heading" weight="bold" align="center" style={{ marginTop: 16 }}>
-          Вход
+      {/* Header */}
+      <View style={{ marginBottom: 36, marginTop: 12 }}>
+        <View
+          style={{
+            width: 64,
+            height: 64,
+            borderRadius: 18,
+            backgroundColor: theme.colors.accent.primary + '18',
+            alignItems: 'center',
+            justifyContent: 'center',
+            marginBottom: 20,
+          }}
+        >
+          <Feather name="lock" size={28} color={theme.colors.accent.primary} />
+        </View>
+        <Text weight="semibold" style={{ fontSize: 30, lineHeight: 40, marginBottom: 8 }}>
+          С возвращением!
         </Text>
-        <Text variant="body" color={theme.colors.text.secondary} align="center" style={{ marginTop: 8 }}>
-          Введи ключ устройства и код
+        <Text variant="body" color={theme.colors.text.secondary} style={{ fontSize: 16, lineHeight: 22 }}>
+          Введите ключ устройства и код для входа.
         </Text>
       </View>
 

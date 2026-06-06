@@ -1,29 +1,39 @@
-import React, { useState, useRef } from 'react';
-import { View, ViewStyle, Pressable, ScrollView, TextInput, Animated, Alert, Keyboard, TouchableWithoutFeedback, KeyboardAvoidingView, Platform, Text as RNText } from 'react-native';
+import React, { useState, useRef, useEffect } from 'react';
+import { View, ViewStyle, Pressable, ScrollView, TextInput, Animated, Alert, Keyboard, TouchableWithoutFeedback, Platform, Text as RNText } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
+import { EmojiPickerModal } from '../../src/components/ui/EmojiPickerModal';
 import { useAuthStore } from '../../src/store';
 import { registerUser } from '../../src/lib/supabase';
 
 function EmojiStep({ selected, onSelect }: { selected: string; onSelect: (e: string) => void }) {
   const theme = useTheme();
-  const inputRef = useRef<TextInput>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const glow = useRef(new Animated.Value(0)).current;
 
-  const handleChange = (t: string) => {
-    if (!t) return;
-    // Take the last emoji/character entered (use Array spread to respect surrogate pairs).
-    const chars = [...t];
-    const last = chars[chars.length - 1];
-    if (last) onSelect(last);
-    Keyboard.dismiss();
-  };
+  // Continuously animate the dashed ring through accent colours.
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(glow, { toValue: 1, duration: 1600, useNativeDriver: false }),
+        Animated.timing(glow, { toValue: 0, duration: 1600, useNativeDriver: false }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, []);
+
+  const borderColor = glow.interpolate({
+    inputRange: [0, 0.5, 1],
+    outputRange: ['#F09458', '#8B5CF6', '#22C55E'],
+  });
 
   return (
     <View>
-      <Text weight="bold" style={{ fontSize: 28, marginBottom: 10 }}>
+      <Text weight="semibold" style={{ fontSize: 28, lineHeight: 38, marginBottom: 10 }}>
         Установите Эмодзи!
       </Text>
       <Text variant="body" color={theme.colors.text.secondary} style={{ fontSize: 15, lineHeight: 21, marginBottom: 40 }}>
@@ -36,41 +46,35 @@ function EmojiStep({ selected, onSelect }: { selected: string; onSelect: (e: str
           <Text variant="caption" weight="semibold" color={theme.colors.text.secondary}>Выбрать эмодзи</Text>
         </View>
 
-        {/* Dashed circle with + or selected emoji */}
-        <Pressable
-          onPress={() => inputRef.current?.focus()}
-          style={{
-            width: 180,
-            height: 180,
-            borderRadius: 90,
-            borderWidth: 2.5,
-            borderColor: selected ? theme.colors.accent.primary : theme.colors.border.light,
-            borderStyle: 'dashed',
-            alignItems: 'center',
-            justifyContent: 'center',
-            backgroundColor: theme.colors.background.elevated,
-          }}
-        >
-          {selected ? (
-            <RNText style={{ fontSize: 90 }} allowFontScaling={false}>{selected}</RNText>
-          ) : (
-            <Feather name="plus" size={64} color={theme.colors.text.tertiary} />
-          )}
+        {/* Dashed circle with + or selected emoji — opens the emoji modal */}
+        <Pressable onPress={() => setPickerOpen(true)}>
+          <Animated.View
+            style={{
+              width: 180,
+              height: 180,
+              borderRadius: 90,
+              borderWidth: 3,
+              borderColor,
+              borderStyle: 'dashed',
+              alignItems: 'center',
+              justifyContent: 'center',
+              backgroundColor: theme.colors.background.elevated,
+            }}
+          >
+            {selected ? (
+              <RNText style={{ fontSize: 90 }} allowFontScaling={false}>{selected}</RNText>
+            ) : (
+              <Feather name="plus" size={64} color={theme.colors.text.tertiary} />
+            )}
+          </Animated.View>
         </Pressable>
-
-        {/* Hidden input that opens the keyboard for emoji entry */}
-        <TextInput
-          ref={inputRef}
-          value=""
-          onChangeText={handleChange}
-          style={{ position: 'absolute', opacity: 0, width: 1, height: 1 }}
-          autoCorrect={false}
-        />
 
         <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginTop: 28, fontSize: 12 }}>
           Выбранный эмодзи нельзя изменить
         </Text>
       </View>
+
+      <EmojiPickerModal visible={pickerOpen} onClose={() => setPickerOpen(false)} onSelect={onSelect} />
     </View>
   );
 }
@@ -92,7 +96,7 @@ function NameStep({
 
   return (
     <View>
-      <Text weight="bold" style={{ fontSize: 28, marginBottom: 10 }}>
+      <Text weight="semibold" style={{ fontSize: 28, lineHeight: 38, marginBottom: 10 }}>
         Давайте Знакомиться!
       </Text>
       <Text variant="body" color={theme.colors.text.secondary} style={{ fontSize: 15, lineHeight: 21, marginBottom: 28 }}>
@@ -341,11 +345,7 @@ export default function RegisterScreen() {
 
   return (
     <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
-    <KeyboardAvoidingView
-      style={containerStyle}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={0}
-    >
+    <View style={containerStyle}>
       {/* Step indicator */}
       <View style={{ flexDirection: 'row', paddingHorizontal: 32, marginBottom: 32, gap: 8 }}>
         {[0, 1, 2, 3].map((i) => (
@@ -362,7 +362,7 @@ export default function RegisterScreen() {
       </View>
 
       <ScrollView
-        contentContainerStyle={{ flexGrow: 1, paddingHorizontal: 32, paddingBottom: 32, justifyContent: step === 0 ? 'center' : 'flex-start' }}
+        contentContainerStyle={{ flexGrow: 1, paddingHorizontal: 32, paddingBottom: 32, justifyContent: 'flex-start' }}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
@@ -389,38 +389,68 @@ export default function RegisterScreen() {
       </ScrollView>
 
       {/* Bottom buttons */}
-      <View style={{ paddingHorizontal: 32, paddingBottom: insets.bottom + 16, gap: 12 }}>
-        <Pressable
-          onPress={handleNext}
-          disabled={!canContinue()}
-          style={{
-            paddingVertical: 16,
-            borderRadius: 16,
-            backgroundColor: canContinue() ? theme.colors.accent.primary : theme.colors.border.light,
-            alignItems: 'center',
-          }}
-        >
-          <Text variant="body" weight="semibold" color={canContinue() ? '#FFFFFF' : theme.colors.text.tertiary}>
-            {step === 3 ? 'Готово' : step <= 1 ? 'Продолжить' : 'Далее'}
-          </Text>
-        </Pressable>
-
+      <View style={{ paddingHorizontal: 32, paddingBottom: insets.bottom + 16 }}>
         {step > 0 ? (
-          <Pressable onPress={() => { setStep(step - 1); setError(''); }} style={{ alignItems: 'center', paddingVertical: 8 }}>
-            <Text variant="body" color={theme.colors.text.secondary}>Назад</Text>
-          </Pressable>
-        ) : (
-          <Pressable onPress={() => router.push('/(auth)/login')} style={{ alignItems: 'center', paddingVertical: 8 }}>
-            <Text variant="body" color={theme.colors.text.secondary}>
-              Уже есть аккаунт?{' '}
-              <Text variant="body" weight="semibold" color={theme.colors.accent.primary}>
-                Войти
+          <View style={{ flexDirection: 'row', gap: 12, alignItems: 'center' }}>
+            <Pressable
+              onPress={() => { setStep(step - 1); setError(''); }}
+              style={{
+                paddingVertical: 16,
+                paddingHorizontal: 24,
+                borderRadius: 16,
+                backgroundColor: theme.colors.background.elevated,
+                borderWidth: 1,
+                borderColor: theme.colors.border.light,
+                alignItems: 'center',
+              }}
+            >
+              <Text variant="body" weight="semibold" color={theme.colors.text.primary}>Назад</Text>
+            </Pressable>
+            <Pressable
+              onPress={handleNext}
+              disabled={!canContinue()}
+              style={{
+                flex: 1,
+                paddingVertical: 16,
+                borderRadius: 16,
+                backgroundColor: canContinue() ? theme.colors.accent.primary : theme.colors.border.light,
+                alignItems: 'center',
+              }}
+            >
+              <Text variant="body" weight="semibold" color={canContinue() ? '#FFFFFF' : theme.colors.text.tertiary}>
+                {step === 3 ? 'Готово' : 'Продолжить'}
               </Text>
-            </Text>
-          </Pressable>
+            </Pressable>
+          </View>
+        ) : (
+          <>
+            <Pressable
+              onPress={handleNext}
+              disabled={!canContinue()}
+              style={{
+                paddingVertical: 16,
+                borderRadius: 16,
+                backgroundColor: canContinue() ? theme.colors.accent.primary : theme.colors.border.light,
+                alignItems: 'center',
+                marginBottom: 12,
+              }}
+            >
+              <Text variant="body" weight="semibold" color={canContinue() ? '#FFFFFF' : theme.colors.text.tertiary}>
+                Продолжить
+              </Text>
+            </Pressable>
+            <Pressable onPress={() => router.push('/(auth)/login')} style={{ alignItems: 'center', paddingVertical: 8 }}>
+              <Text variant="body" color={theme.colors.text.secondary}>
+                Уже есть аккаунт?{' '}
+                <Text variant="body" weight="semibold" color={theme.colors.accent.primary}>
+                  Войти
+                </Text>
+              </Text>
+            </Pressable>
+          </>
         )}
       </View>
-    </KeyboardAvoidingView>
+    </View>
     </TouchableWithoutFeedback>
   );
 }
