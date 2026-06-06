@@ -18,6 +18,7 @@ import { MessageContextMenu, MessageAction } from '../../src/components/ui/Messa
 import { useChatStore, useEntityStore, useConnectivityStore } from '../../src/store';
 import { useChatSettingsStore, GLOBAL_CHAT_SETTINGS_KEY, DEFAULT_CHAT_SETTINGS } from '../../src/store/chatSettingsStore';
 import { supabase, uploadChatImage } from '../../src/lib/supabase';
+import { kvGetJSONSync, kvSetJSON, kvWarm } from '../../src/services/kvStore';
 import { mockMessages, mockConversations, formatMessageTime } from '../../src/utils/mockData';
 import { showToast } from '../../src/store/toastStore';
 import { ChatMessage } from '../../src/types';
@@ -192,8 +193,30 @@ export default function ChatScreen() {
   }, [participantId, conversation, cachedProfile]);
 
   useEffect(() => {
-    if (id && mockMessages[id]) setMessages(id, mockMessages[id]);
+    if (!id) return;
+    const cacheKey = `chat_messages:${id}`;
+    // 1) Instant hydrate from KV cache (MMKV sync, or AsyncStorage mirror after warm)
+    const hydrateFromCache = () => {
+      const cached = kvGetJSONSync<ChatMessage[]>(cacheKey, []);
+      if (cached.length > 0 && (useChatStore.getState().messages[id] || []).length === 0) {
+        setMessages(id, cached as any);
+      } else if (cached.length === 0 && mockMessages[id]) {
+        // Seed from mock only when there's nothing cached yet
+        setMessages(id, mockMessages[id]);
+      }
+    };
+    // Warm the AsyncStorage mirror first (no-op when MMKV is available), then hydrate.
+    kvWarm([cacheKey]).then(hydrateFromCache).catch(hydrateFromCache);
   }, [id]);
+
+  // Persist messages to KV cache whenever they change so they survive restart + work offline.
+  useEffect(() => {
+    if (!id) return;
+    const msgs = storeMessages[id];
+    if (msgs && msgs.length > 0) {
+      kvSetJSON(`chat_messages:${id}`, msgs);
+    }
+  }, [id, storeMessages]);
 
   const displayName = conversation?.participantName || profileData?.display_name || entityConv?.participantName || 'Чат';
   const displayEmoji = (conversation as any)?.participantEmoji || profileData?.emoji || entityConv?.participantEmoji || '😊';
