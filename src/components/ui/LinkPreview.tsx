@@ -5,37 +5,40 @@ import { router } from 'expo-router';
 import { useTheme } from '../../theme';
 import { Text } from './Text';
 import { CachedImage } from './CachedImage';
-import { MediaViewerModal, MediaViewerSource } from './MediaViewerModal';
+import { MediaViewerModal, MediaViewerSource, InlineVideoPlayer } from './MediaViewerModal';
 import { getLinkPreview, getCachedPreviewSync, LinkPreviewData } from '../../services/linkPreview';
 
-// Lightweight rich link preview (Discord / Telegram style).
+// Rich link preview.
 //
-// IMPORTANT design choices for performance & stability inside long lists:
-//   - The card NEVER mounts a WebView while in a list. It only renders a cached
-//     thumbnail image (CachedImage). This means scrolling back to an old
-//     preview does NOT reload anything and costs almost nothing.
-//   - Tapping a video opens the FULLSCREEN player modal (not inline), which
-//     avoids layout changes that would otherwise make the chat list jump.
-//   - Metadata is read synchronously from cache → instant, no flicker, no
-//     re-fetch on re-entering a screen. Nothing hits our server / database.
+// Two layouts:
+//   - VIDEO (YouTube/Vimeo): a BIG thumbnail (16:9). Tap → plays inline right
+//     in the card (no fullscreen jump). Thin rounded container.
+//   - LINK (our profile/post/media, other sites): a THIN row — small left
+//     thumbnail + site + title + description.
 //
-// `textColor` overrides text colors (e.g. white inside own chat bubbles).
-// `compact` renders an ultra-thin row (used for our own profile/post links).
+// Stability:
+//   - In a list the card shows only a cached image (no WebView) until the user
+//     taps play, so scrolling / re-entering never reloads or jumps.
+//   - Metadata is read synchronously from cache → instant, no flicker.
+//   - Nothing hits our server / database (CDN-cached unfurl + on-device cache).
+//
+// `textColor` overrides text colors (e.g. white in own chat bubbles).
 
 interface LinkPreviewProps {
   url: string;
   onError?: () => void;
   textColor?: string;
-  compact?: boolean;
 }
 
 const THUMB_RADIUS = 14;
 
-export function LinkPreview({ url, onError, textColor, compact }: LinkPreviewProps) {
+export function LinkPreview({ url, onError, textColor }: LinkPreviewProps) {
   const theme = useTheme();
   const cached = getCachedPreviewSync(url);
   const [data, setData] = useState<LinkPreviewData | null>(cached === undefined ? null : cached);
   const [resolved, setResolved] = useState<boolean>(cached !== undefined);
+  const [playing, setPlaying] = useState(false);
+  const [cardWidth, setCardWidth] = useState(0);
   const [fullscreen, setFullscreen] = useState<MediaViewerSource | null>(null);
   const mounted = useRef(true);
 
@@ -67,6 +70,8 @@ export function LinkPreview({ url, onError, textColor, compact }: LinkPreviewPro
   const accent = theme.colors.accent.primary;
   const subColor = textColor ? textColor : theme.colors.text.tertiary;
   const titleColor = textColor || theme.colors.text.primary;
+  const bg = theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.025)';
+  const border = theme.colors.border.light;
 
   const videoSource: MediaViewerSource | null =
     data?.provider === 'youtube' && data.videoId
@@ -75,15 +80,9 @@ export function LinkPreview({ url, onError, textColor, compact }: LinkPreviewPro
       ? { kind: 'vimeo', videoId: data.videoId }
       : null;
 
-  const handlePress = () => {
-    if (videoSource) {
-      setFullscreen(videoSource); // open fullscreen player
-      return;
-    }
-    if (data?.type === 'image' && data.image) {
-      setFullscreen({ kind: 'image', uri: data.image });
-      return;
-    }
+  const isVideo = !!videoSource || data?.type === 'video';
+
+  const openLink = () => {
     try {
       router.push({ pathname: '/browser', params: { url } });
     } catch {
@@ -91,23 +90,30 @@ export function LinkPreview({ url, onError, textColor, compact }: LinkPreviewPro
     }
   };
 
+  const handlePress = () => {
+    if (data?.type === 'image' && data.image) {
+      setFullscreen({ kind: 'image', uri: data.image });
+      return;
+    }
+    openLink();
+  };
+
   const fullscreenEl = <MediaViewerModal visible={!!fullscreen} source={fullscreen} onClose={() => setFullscreen(null)} />;
 
-  // Skeleton (thin, fixed height = no layout jump) during the first fetch.
+  // Skeleton (thin) during the first fetch.
   if (!resolved && !data) {
     return (
-      <Pressable onPress={handlePress} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6 }}>
         <Feather name="link" size={13} color={subColor} />
         <Text variant="caption" color={subColor} numberOfLines={1} style={{ flex: 1, fontSize: 12 }}>
           {url.replace(/^https?:\/\/(www\.)?/, '')}
         </Text>
-      </Pressable>
+      </View>
     );
   }
 
   if (!data) return null;
 
-  const isVideo = !!videoSource || data.type === 'video';
   const host = (() => {
     try {
       return new URL(url).hostname.replace(/^www\./, '');
@@ -116,8 +122,48 @@ export function LinkPreview({ url, onError, textColor, compact }: LinkPreviewPro
     }
   })();
 
-  // Compact / thin layout: a slim row with a small left thumbnail and text.
-  // Used everywhere (chat, comments) — no heavy container, expands full width.
+  // ─── VIDEO layout: big 16:9 thumbnail, inline play, thin rounded container ──
+  if (isVideo) {
+    return (
+      <>
+        {fullscreenEl}
+        <View
+          onLayout={(e) => {
+            const w = e.nativeEvent.layout.width;
+            if (w && Math.abs(w - cardWidth) > 1) setCardWidth(w);
+          }}
+          style={{ width: '100%', borderRadius: 16, overflow: 'hidden', backgroundColor: '#000' }}
+        >
+          {playing && videoSource && cardWidth > 0 ? (
+            <InlineVideoPlayer source={videoSource} width={cardWidth} />
+          ) : (
+            <Pressable onPress={() => (videoSource ? setPlaying(true) : openLink())}>
+              {data.image ? (
+                <CachedImage uri={data.image} style={{ width: '100%', aspectRatio: 16 / 9 }} resizeMode="cover" />
+              ) : (
+                <View style={{ width: '100%', aspectRatio: 16 / 9, backgroundColor: '#111' }} />
+              )}
+              {/* Play button */}
+              <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
+                <View style={{ width: 54, height: 54, borderRadius: 27, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: 'rgba(255,255,255,0.9)' }}>
+                  <Feather name="play" size={24} color="#FFFFFF" style={{ marginLeft: 3 }} />
+                </View>
+              </View>
+              {/* Site label */}
+              <View style={{ position: 'absolute', left: 8, bottom: 8, flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(0,0,0,0.55)', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, maxWidth: '90%' }}>
+                <Feather name="play-circle" size={10} color="#FFFFFF" />
+                <Text variant="caption" color="#FFFFFF" numberOfLines={1} style={{ fontSize: 10 }}>
+                  {data.title || data.siteName || host}
+                </Text>
+              </View>
+            </Pressable>
+          )}
+        </View>
+      </>
+    );
+  }
+
+  // ─── LINK layout: thin row (small thumbnail + text) ─────────────────────────
   return (
     <>
       {fullscreenEl}
@@ -132,21 +178,12 @@ export function LinkPreview({ url, onError, textColor, compact }: LinkPreviewPro
           borderLeftColor: textColor ? 'rgba(255,255,255,0.6)' : accent,
         }}
       >
-        {/* Left thumbnail (no webview — just a cached image) */}
         {data.image ? (
-          <View style={{ width: 64, height: 64, borderRadius: THUMB_RADIUS, overflow: 'hidden', backgroundColor: '#000' }}>
+          <View style={{ width: 60, height: 60, borderRadius: THUMB_RADIUS, overflow: 'hidden', backgroundColor: bg }}>
             <CachedImage uri={data.image} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
-            {isVideo && (
-              <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
-                <View style={{ width: 26, height: 26, borderRadius: 13, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.85)' }}>
-                  <Feather name="play" size={12} color="#FFFFFF" style={{ marginLeft: 2 }} />
-                </View>
-              </View>
-            )}
           </View>
         ) : null}
 
-        {/* Text */}
         <View style={{ flex: 1, paddingVertical: 2 }}>
           <Text variant="caption" weight="semibold" color={textColor || accent} numberOfLines={1} style={{ fontSize: 11, opacity: textColor ? 0.9 : 1 }}>
             {data.siteName || host}
@@ -156,7 +193,7 @@ export function LinkPreview({ url, onError, textColor, compact }: LinkPreviewPro
               {data.title}
             </Text>
           ) : null}
-          {!compact && data.description ? (
+          {data.description ? (
             <Text variant="caption" color={subColor} numberOfLines={2} style={{ fontSize: 11, lineHeight: 15, marginTop: 1, opacity: textColor ? 0.8 : 1 }}>
               {data.description}
             </Text>
