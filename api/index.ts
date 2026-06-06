@@ -208,7 +208,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
               verified: !!author.is_verified,
               subline: author.username ? `@${author.username}` : undefined,
               banner: author.banner_url || null,
-              deepLink: `${APP_SCHEME}://post/${id}`,
+              deepLink: `${APP_SCHEME}://comments/${id}`,
               bodyHtml,
             })
           );
