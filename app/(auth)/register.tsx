@@ -1,7 +1,8 @@
 import React, { useState, useRef } from 'react';
-import { View, ViewStyle, Pressable, ScrollView, TextInput, Animated, Alert, Keyboard, TouchableWithoutFeedback, Text as RNText } from 'react-native';
+import { View, ViewStyle, Pressable, ScrollView, TextInput, Animated, Alert, Keyboard, TouchableWithoutFeedback, KeyboardAvoidingView, Platform, Text as RNText } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
 import { useAuthStore } from '../../src/store';
@@ -65,46 +66,90 @@ function EmojiStep({ selected, onSelect }: { selected: string; onSelect: (e: str
   );
 }
 
-function NameStep({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+function NameStep({
+  name, onNameChange, username, onUsernameChange, usernameValid, bio, onBioChange,
+}: {
+  name: string;
+  onNameChange: (v: string) => void;
+  username: string;
+  onUsernameChange: (v: string) => void;
+  usernameValid: boolean;
+  bio: string;
+  onBioChange: (v: string) => void;
+}) {
   const theme = useTheme();
-  const isValid = value.length >= 4 && /^[a-zA-Z0-9_ ]+$/.test(value);
+  const fieldBg = theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)';
+  const cardBg = theme.isDark ? theme.colors.background.elevated : '#FFFFFF';
+
   return (
-    <View style={{ alignItems: 'center' }}>
-      <Text variant="heading" weight="bold" align="center">
-        Как тебя зовут?
+    <View>
+      <Text weight="bold" style={{ fontSize: 28, marginBottom: 10 }}>
+        Давайте Знакомиться!
       </Text>
-      <Text variant="body" color={theme.colors.text.secondary} align="center" style={{ marginTop: 8, marginBottom: 40 }}>
-        Только английские буквы, 4–16 символов
+      <Text variant="body" color={theme.colors.text.secondary} style={{ fontSize: 15, lineHeight: 21, marginBottom: 28 }}>
+        Введите своё имя и выберите уникальный юзернейм.
       </Text>
 
-      <TextInput
-        value={value}
-        onChangeText={(v) => onChange(v.slice(0, 16))}
-        placeholder="Your name"
-        placeholderTextColor={theme.colors.text.tertiary}
-        style={{
-          width: '100%',
-          fontSize: 20,
-          fontWeight: '600',
-          textAlign: 'center',
-          color: theme.colors.text.primary,
-          paddingVertical: 16,
-          borderBottomWidth: 2,
-          borderBottomColor: isValid ? theme.colors.accent.primary : value.length > 0 ? theme.colors.status.error : theme.colors.border.light,
-        }}
-        autoFocus
-        autoCapitalize="words"
-      />
-      {value.length > 0 && value.length < 4 && (
-        <Text variant="caption" color={theme.colors.status.error} style={{ marginTop: 8 }}>
-          Минимум 4 символа
+      <View style={{ backgroundColor: cardBg, borderRadius: 22, padding: 14, borderWidth: 1, borderColor: theme.colors.border.light }}>
+        {/* Name */}
+        <TextInput
+          value={name}
+          onChangeText={onNameChange}
+          placeholder="Ваше имя"
+          placeholderTextColor={theme.colors.text.tertiary}
+          style={{
+            backgroundColor: fieldBg,
+            borderRadius: 14,
+            paddingVertical: 16,
+            paddingHorizontal: 16,
+            fontSize: 16,
+            color: theme.colors.text.primary,
+            marginBottom: 12,
+          }}
+        />
+
+        {/* Username with checkmark */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: fieldBg, borderRadius: 14, paddingHorizontal: 16, marginBottom: 16 }}>
+          <Text variant="body" color={theme.colors.text.tertiary} style={{ fontSize: 16 }}>@</Text>
+          <TextInput
+            value={username}
+            onChangeText={onUsernameChange}
+            placeholder="username"
+            placeholderTextColor={theme.colors.text.tertiary}
+            autoCapitalize="none"
+            style={{ flex: 1, paddingVertical: 16, paddingLeft: 2, fontSize: 16, color: theme.colors.text.primary }}
+          />
+          {username.length >= 4 && (
+            <Feather
+              name={usernameValid ? 'check-circle' : 'x-circle'}
+              size={20}
+              color={usernameValid ? '#22C55E' : theme.colors.status.error}
+            />
+          )}
+        </View>
+
+        {/* Bio (optional) */}
+        <Text variant="body" weight="semibold" style={{ fontSize: 14, marginBottom: 8 }}>
+          Информация о себе
         </Text>
-      )}
-      {value.length > 0 && !/^[a-zA-Z0-9_ ]*$/.test(value) && (
-        <Text variant="caption" color={theme.colors.status.error} style={{ marginTop: 8 }}>
-          Только английские буквы и цифры
-        </Text>
-      )}
+        <TextInput
+          value={bio}
+          onChangeText={(v) => onBioChange(v.slice(0, 160))}
+          placeholder="Расскажите о своих интересах или просто напиши пару слов о себе..."
+          placeholderTextColor={theme.colors.text.tertiary}
+          multiline
+          style={{
+            backgroundColor: fieldBg,
+            borderRadius: 14,
+            paddingVertical: 14,
+            paddingHorizontal: 16,
+            fontSize: 14,
+            color: theme.colors.text.primary,
+            minHeight: 80,
+            textAlignVertical: 'top',
+          }}
+        />
+      </View>
     </View>
   );
 }
@@ -165,10 +210,30 @@ export default function RegisterScreen() {
   const [step, setStep] = useState(0);
   const [emoji, setEmoji] = useState('');
   const [name, setName] = useState('');
+  const [username, setUsername] = useState('');
+  const [usernameEdited, setUsernameEdited] = useState(false);
+  const [bio, setBio] = useState('');
   const [pin, setPin] = useState('');
   const [confirmPin, setConfirmPin] = useState('');
   const [error, setError] = useState('');
   const login = useAuthStore((s) => s.login);
+
+  // Auto-derive username from the display name until the user edits it manually.
+  const deriveUsername = (n: string) =>
+    n.toLowerCase().trim().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '').slice(0, 16);
+
+  const handleNameChange = (v: string) => {
+    const next = v.slice(0, 24);
+    setName(next);
+    if (!usernameEdited) setUsername(deriveUsername(next));
+    setError('');
+  };
+
+  const handleUsernameChange = (v: string) => {
+    setUsernameEdited(true);
+    setUsername(v.toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 16));
+    setError('');
+  };
 
   const BANNED_WORDS = [
     'fuck', 'shit', 'ass', 'bitch', 'dick', 'cock', 'pussy', 'nigger', 'nigga',
@@ -176,10 +241,17 @@ export default function RegisterScreen() {
     'hitler', 'kill', 'murder', 'terrorist', 'bomb', 'slave',
   ];
 
-  const isValidUsername = (val: string): boolean => {
-    const cleaned = val.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
-    if (cleaned.length < 4 || cleaned.length > 16) return false;
-    if (!/^[a-zA-Z0-9_ ]+$/.test(val)) return false;
+  const usernameValid = (val: string): boolean => {
+    if (val.length < 4 || val.length > 16) return false;
+    const lower = val.toLowerCase();
+    for (const word of BANNED_WORDS) {
+      if (lower.includes(word)) return false;
+    }
+    return true;
+  };
+
+  const nameValid = (val: string): boolean => {
+    if (val.trim().length < 2) return false;
     const lower = val.toLowerCase();
     for (const word of BANNED_WORDS) {
       if (lower.includes(word)) return false;
@@ -189,7 +261,7 @@ export default function RegisterScreen() {
 
   const canContinue = () => {
     if (step === 0) return emoji !== '';
-    if (step === 1) return isValidUsername(name);
+    if (step === 1) return nameValid(name) && usernameValid(username);
     if (step === 2) return pin.length === 4;
     if (step === 3) return confirmPin.length === 4;
     return false;
@@ -199,19 +271,7 @@ export default function RegisterScreen() {
     setError('');
     if (step === 0 && emoji) {
       setStep(1);
-    } else if (step === 1 && isValidUsername(name)) {
-      // Additional validation message
-      if (!/^[a-zA-Z0-9_ ]+$/.test(name)) {
-        setError('Только английские буквы и цифры');
-        return;
-      }
-      const lower = name.toLowerCase();
-      for (const word of BANNED_WORDS) {
-        if (lower.includes(word)) {
-          setError('Это имя недопустимо');
-          return;
-        }
-      }
+    } else if (step === 1 && nameValid(name) && usernameValid(username)) {
       setStep(2);
     } else if (step === 2 && pin.length === 4) {
       setStep(3);
@@ -228,11 +288,11 @@ export default function RegisterScreen() {
         deviceKey += chars[Math.floor(Math.random() * chars.length)];
       }
 
-      const username = name.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '') || 'user';
+      const finalUsername = (username || deriveUsername(name) || 'user').slice(0, 16);
 
       // Register in Supabase
       const { profile, error: regError } = await registerUser({
-        username,
+        username: finalUsername,
         displayName: name.trim(),
         emoji,
         pin,
@@ -253,7 +313,7 @@ export default function RegisterScreen() {
             emoji: profile.emoji,
             pin,
             deviceKey: profile.device_key,
-            bio: '',
+            bio: bio.trim(),
             badge: profile.badge || undefined,
             is_verified: profile.is_verified || false,
           },
@@ -272,7 +332,11 @@ export default function RegisterScreen() {
 
   return (
     <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
-    <View style={containerStyle}>
+    <KeyboardAvoidingView
+      style={containerStyle}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={0}
+    >
       {/* Step indicator */}
       <View style={{ flexDirection: 'row', paddingHorizontal: 32, marginBottom: 32, gap: 8 }}>
         {[0, 1, 2, 3].map((i) => (
@@ -289,12 +353,22 @@ export default function RegisterScreen() {
       </View>
 
       <ScrollView
-        contentContainerStyle={{ flexGrow: 1, paddingHorizontal: 32, paddingBottom: 32 }}
+        contentContainerStyle={{ flexGrow: 1, paddingHorizontal: 32, paddingBottom: 32, justifyContent: step === 1 ? 'center' : 'flex-start' }}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
         {step === 0 && <EmojiStep selected={emoji} onSelect={setEmoji} />}
-        {step === 1 && <NameStep value={name} onChange={setName} />}
+        {step === 1 && (
+          <NameStep
+            name={name}
+            onNameChange={handleNameChange}
+            username={username}
+            onUsernameChange={handleUsernameChange}
+            usernameValid={usernameValid(username)}
+            bio={bio}
+            onBioChange={setBio}
+          />
+        )}
         {step === 2 && <PinStep value={pin} onChange={setPin} title="Придумай код" subtitle="4 цифры для входа" />}
         {step === 3 && <PinStep value={confirmPin} onChange={setConfirmPin} title="Повтори код" subtitle="Введи код ещё раз" />}
 
@@ -318,7 +392,7 @@ export default function RegisterScreen() {
           }}
         >
           <Text variant="body" weight="semibold" color={canContinue() ? '#FFFFFF' : theme.colors.text.tertiary}>
-            {step === 3 ? 'Готово' : 'Далее'}
+            {step === 3 ? 'Готово' : step === 1 ? 'Продолжить' : 'Далее'}
           </Text>
         </Pressable>
 
@@ -337,7 +411,7 @@ export default function RegisterScreen() {
           </Pressable>
         )}
       </View>
-    </View>
+    </KeyboardAvoidingView>
     </TouchableWithoutFeedback>
   );
 }
