@@ -1,16 +1,20 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Политика конфиденциальности — San</title>
+  <title>Privacy Policy — San</title>
   <style>
     *{margin:0;padding:0;box-sizing:border-box}
     body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0f0f0f;color:#e8e8e8;line-height:1.6}
     .wrap{max-width:720px;margin:0 auto;padding:48px 24px 80px}
-    .logo{display:flex;align-items:center;gap:12px;margin-bottom:32px}
+    .top{display:flex;align-items:center;justify-content:space-between;margin-bottom:32px}
+    .logo{display:flex;align-items:center;gap:12px}
     .logo .badge{width:44px;height:44px;border-radius:12px;background:#F09458;display:flex;align-items:center;justify-content:center;font-weight:800;color:#fff;font-size:20px}
     .logo span{font-size:20px;font-weight:700}
+    .lang{display:flex;gap:6px}
+    .lang button{background:#1a1a1a;color:#bbb;border:1px solid #2a2a2a;border-radius:10px;padding:6px 12px;font-size:13px;font-weight:600;cursor:pointer}
+    .lang button.active{background:#F09458;color:#fff;border-color:#F09458}
     h1{font-size:30px;font-weight:700;margin-bottom:8px;color:#fff}
     .updated{color:#888;font-size:14px;margin-bottom:32px}
     h2{font-size:19px;font-weight:600;margin:28px 0 10px;color:#fff}
@@ -19,37 +23,88 @@
     a{color:#F09458;text-decoration:none}
     .nav{margin-top:40px;padding-top:24px;border-top:1px solid #222;display:flex;gap:18px;flex-wrap:wrap}
     .nav a{font-size:14px}
+    [data-lang]{display:none}
+    [data-lang].show{display:block}
   </style>
 </head>
 <body>
   <div class="wrap">
-    <div class="logo"><div class="badge">И</div><span>San</span></div>
-    <h1>Политика конфиденциальности</h1>
-    <div class="updated">Последнее обновление: 6 июня 2026</div>
-    <p>San уважает вашу конфиденциальность. Эта политика описывает, какие данные мы собираем и как их используем.</p>
-    <h2>Какие данные мы собираем</h2>
-    <ul>
-      <li>Имя, юзернейм, эмодзи-аватар и информацию профиля, которые вы указываете при регистрации.</li>
-      <li>Публикации, комментарии, сообщения и медиа, которые вы создаёте в приложении.</li>
-      <li>Технические данные устройства, необходимые для входа (идентификатор устройства).</li>
-    </ul>
-    <h2>Как мы используем данные</h2>
-    <ul>
-      <li>Для работы функций приложения: лента, чаты, профили, мини-приложения.</li>
-      <li>Для синхронизации и кэширования контента, чтобы приложение работало быстро и офлайн.</li>
-      <li>Мы не продаём ваши персональные данные третьим лицам.</li>
-    </ul>
-    <h2>Хранение данных</h2>
-    <p>Данные хранятся на защищённых серверах и локально на вашем устройстве для офлайн-доступа. Каждый аккаунт изолирован.</p>
-    <h2>Удаление данных</h2>
-    <p>Вы можете удалить свой аккаунт и связанные данные в настройках приложения или написав на <a href="mailto:support@san-m-app.com">support@san-m-app.com</a>.</p>
-    <h2>Контакты</h2>
-    <p>По вопросам конфиденциальности: <a href="mailto:support@san-m-app.com">support@san-m-app.com</a>.</p>
+    <div class="top">
+      <div class="logo"><div class="badge">И</div><span>San</span></div>
+      <div class="lang">
+        <button id="btn-en" onclick="setLang('en')">EN</button>
+        <button id="btn-ru" onclick="setLang('ru')">RU</button>
+      </div>
+    </div>
+
+    <!-- English -->
+    <div data-lang="en">
+      <h1>Privacy Policy</h1>
+      <div class="updated">Last updated: June 6, 2026</div>
+      <p>San respects your privacy. This policy explains what data we collect and how we use it.</p>
+      <h2>Data we collect</h2>
+      <ul>
+        <li>Name, username, emoji avatar and profile info you provide at sign-up.</li>
+        <li>Posts, comments, messages and media you create in the app.</li>
+        <li>Technical device data needed for sign-in (device identifier).</li>
+      </ul>
+      <h2>How we use data</h2>
+      <ul>
+        <li>To power app features: feed, chats, profiles, mini-apps.</li>
+        <li>To sync and cache content so the app is fast and works offline.</li>
+        <li>We do not sell your personal data to third parties.</li>
+      </ul>
+      <h2>Data storage</h2>
+      <p>Data is stored on secure servers and locally on your device for offline access. Each account is isolated.</p>
+      <h2>Data deletion</h2>
+      <p>You can delete your account and related data in the app settings or by emailing <a href="mailto:support@san-m-app.com">support@san-m-app.com</a>.</p>
+      <h2>Contact</h2>
+      <p>Privacy questions: <a href="mailto:support@san-m-app.com">support@san-m-app.com</a>.</p>
+    </div>
+
+    <!-- Russian -->
+    <div data-lang="ru">
+      <h1>Политика конфиденциальности</h1>
+      <div class="updated">Последнее обновление: 6 июня 2026</div>
+      <p>San уважает вашу конфиденциальность. Эта политика описывает, какие данные мы собираем и как их используем.</p>
+      <h2>Какие данные мы собираем</h2>
+      <ul>
+        <li>Имя, юзернейм, эмодзи-аватар и информацию профиля, которые вы указываете при регистрации.</li>
+        <li>Публикации, комментарии, сообщения и медиа, которые вы создаёте в приложении.</li>
+        <li>Технические данные устройства, необходимые для входа (идентификатор устройства).</li>
+      </ul>
+      <h2>Как мы используем данные</h2>
+      <ul>
+        <li>Для работы функций приложения: лента, чаты, профили, мини-приложения.</li>
+        <li>Для синхронизации и кэширования контента, чтобы приложение работало быстро и офлайн.</li>
+        <li>Мы не продаём ваши персональные данные третьим лицам.</li>
+      </ul>
+      <h2>Хранение данных</h2>
+      <p>Данные хранятся на защищённых серверах и локально на вашем устройстве для офлайн-доступа. Каждый аккаунт изолирован.</p>
+      <h2>Удаление данных</h2>
+      <p>Вы можете удалить свой аккаунт и связанные данные в настройках приложения или написав на <a href="mailto:support@san-m-app.com">support@san-m-app.com</a>.</p>
+      <h2>Контакты</h2>
+      <p>По вопросам конфиденциальности: <a href="mailto:support@san-m-app.com">support@san-m-app.com</a>.</p>
+    </div>
+
     <div class="nav">
-      <a href="./help.html">О приложении</a>
-      <a href="./privacy.html">Конфиденциальность</a>
-      <a href="./terms.html">Условия использования</a>
+      <a href="./help.html">About / О приложении</a>
+      <a href="./privacy.html">Privacy / Конфиденциальность</a>
+      <a href="./terms.html">Terms / Условия</a>
     </div>
   </div>
+
+  <script>
+    function setLang(l){
+      document.documentElement.lang = l;
+      document.querySelectorAll('[data-lang]').forEach(function(el){ el.classList.toggle('show', el.getAttribute('data-lang')===l); });
+      document.getElementById('btn-en').classList.toggle('active', l==='en');
+      document.getElementById('btn-ru').classList.toggle('active', l==='ru');
+      try{ localStorage.setItem('san_lang', l); }catch(e){}
+    }
+    var saved = 'en';
+    try{ saved = localStorage.getItem('san_lang') || 'en'; }catch(e){}
+    setLang(saved);
+  </script>
 </body>
 </html>

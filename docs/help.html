@@ -1,16 +1,20 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>О приложении — San</title>
+  <title>About — San</title>
   <style>
     *{margin:0;padding:0;box-sizing:border-box}
     body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0f0f0f;color:#e8e8e8;line-height:1.6}
     .wrap{max-width:720px;margin:0 auto;padding:48px 24px 80px}
-    .logo{display:flex;align-items:center;gap:12px;margin-bottom:32px}
+    .top{display:flex;align-items:center;justify-content:space-between;margin-bottom:32px}
+    .logo{display:flex;align-items:center;gap:12px}
     .logo .badge{width:44px;height:44px;border-radius:12px;background:#F09458;display:flex;align-items:center;justify-content:center;font-weight:800;color:#fff;font-size:20px}
     .logo span{font-size:20px;font-weight:700}
+    .lang{display:flex;gap:6px}
+    .lang button{background:#1a1a1a;color:#bbb;border:1px solid #2a2a2a;border-radius:10px;padding:6px 12px;font-size:13px;font-weight:600;cursor:pointer}
+    .lang button.active{background:#F09458;color:#fff;border-color:#F09458}
     h1{font-size:30px;font-weight:700;margin-bottom:8px;color:#fff}
     .updated{color:#888;font-size:14px;margin-bottom:32px}
     h2{font-size:19px;font-weight:600;margin:28px 0 10px;color:#fff}
@@ -19,29 +23,72 @@
     a{color:#F09458;text-decoration:none}
     .nav{margin-top:40px;padding-top:24px;border-top:1px solid #222;display:flex;gap:18px;flex-wrap:wrap}
     .nav a{font-size:14px}
+    [data-lang]{display:none}
+    [data-lang].show{display:block}
   </style>
 </head>
 <body>
   <div class="wrap">
-    <div class="logo"><div class="badge">И</div><span>San</span></div>
-    <h1>San — социальная сеть</h1>
-    <div class="updated">Присоединяйтесь к современному сообществу</div>
-    <p>San — это лёгкая и быстрая социальная сеть: лента публикаций, личные чаты, эмодзи-аватары, мини-приложения и виджеты на главном экране.</p>
-    <h2>Возможности</h2>
-    <ul>
-      <li>Публикации с фото, лайки, комментарии и репосты.</li>
-      <li>Личные сообщения с отправкой фото и поиском по переписке.</li>
-      <li>Полностью работает офлайн с мгновенной загрузкой из кэша.</li>
-      <li>Несколько аккаунтов на одном устройстве с изоляцией данных.</li>
-      <li>Смена иконки приложения и виджет ленты на главном экране.</li>
-    </ul>
-    <h2>Поддержка</h2>
-    <p>Нужна помощь? Напишите нам: <a href="mailto:support@san-m-app.com">support@san-m-app.com</a>.</p>
+    <div class="top">
+      <div class="logo"><div class="badge">И</div><span>San</span></div>
+      <div class="lang">
+        <button id="btn-en" onclick="setLang('en')">EN</button>
+        <button id="btn-ru" onclick="setLang('ru')">RU</button>
+      </div>
+    </div>
+
+    <!-- English -->
+    <div data-lang="en">
+      <h1>San — social network</h1>
+      <div class="updated">Join a modern community</div>
+      <p>San is a lightweight, fast social network: a post feed, private chats, emoji avatars, mini-apps and home-screen widgets.</p>
+      <h2>Features</h2>
+      <ul>
+        <li>Posts with photos, likes, comments and reposts.</li>
+        <li>Private messages with photo sending and in-chat search.</li>
+        <li>Works fully offline with instant cache-first loading.</li>
+        <li>Multiple accounts on one device with isolated data.</li>
+        <li>Custom app icon and a feed widget on the home screen.</li>
+      </ul>
+      <h2>Support</h2>
+      <p>Need help? Email us: <a href="mailto:support@san-m-app.com">support@san-m-app.com</a>.</p>
+    </div>
+
+    <!-- Russian -->
+    <div data-lang="ru">
+      <h1>San — социальная сеть</h1>
+      <div class="updated">Присоединяйтесь к современному сообществу</div>
+      <p>San — это лёгкая и быстрая социальная сеть: лента публикаций, личные чаты, эмодзи-аватары, мини-приложения и виджеты на главном экране.</p>
+      <h2>Возможности</h2>
+      <ul>
+        <li>Публикации с фото, лайки, комментарии и репосты.</li>
+        <li>Личные сообщения с отправкой фото и поиском по переписке.</li>
+        <li>Полностью работает офлайн с мгновенной загрузкой из кэша.</li>
+        <li>Несколько аккаунтов на одном устройстве с изоляцией данных.</li>
+        <li>Смена иконки приложения и виджет ленты на главном экране.</li>
+      </ul>
+      <h2>Поддержка</h2>
+      <p>Нужна помощь? Напишите нам: <a href="mailto:support@san-m-app.com">support@san-m-app.com</a>.</p>
+    </div>
+
     <div class="nav">
-      <a href="./help.html">О приложении</a>
-      <a href="./privacy.html">Конфиденциальность</a>
-      <a href="./terms.html">Условия использования</a>
+      <a href="./help.html">About / О приложении</a>
+      <a href="./privacy.html">Privacy / Конфиденциальность</a>
+      <a href="./terms.html">Terms / Условия</a>
     </div>
   </div>
+
+  <script>
+    function setLang(l){
+      document.documentElement.lang = l;
+      document.querySelectorAll('[data-lang]').forEach(function(el){ el.classList.toggle('show', el.getAttribute('data-lang')===l); });
+      document.getElementById('btn-en').classList.toggle('active', l==='en');
+      document.getElementById('btn-ru').classList.toggle('active', l==='ru');
+      try{ localStorage.setItem('san_lang', l); }catch(e){}
+    }
+    var saved = 'en';
+    try{ saved = localStorage.getItem('san_lang') || 'en'; }catch(e){}
+    setLang(saved);
+  </script>
 </body>
 </html>

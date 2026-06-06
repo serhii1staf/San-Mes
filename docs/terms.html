@@ -1,16 +1,20 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Условия использования — San</title>
+  <title>Terms of Use — San</title>
   <style>
     *{margin:0;padding:0;box-sizing:border-box}
     body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0f0f0f;color:#e8e8e8;line-height:1.6}
     .wrap{max-width:720px;margin:0 auto;padding:48px 24px 80px}
-    .logo{display:flex;align-items:center;gap:12px;margin-bottom:32px}
+    .top{display:flex;align-items:center;justify-content:space-between;margin-bottom:32px}
+    .logo{display:flex;align-items:center;gap:12px}
     .logo .badge{width:44px;height:44px;border-radius:12px;background:#F09458;display:flex;align-items:center;justify-content:center;font-weight:800;color:#fff;font-size:20px}
     .logo span{font-size:20px;font-weight:700}
+    .lang{display:flex;gap:6px}
+    .lang button{background:#1a1a1a;color:#bbb;border:1px solid #2a2a2a;border-radius:10px;padding:6px 12px;font-size:13px;font-weight:600;cursor:pointer}
+    .lang button.active{background:#F09458;color:#fff;border-color:#F09458}
     h1{font-size:30px;font-weight:700;margin-bottom:8px;color:#fff}
     .updated{color:#888;font-size:14px;margin-bottom:32px}
     h2{font-size:19px;font-weight:600;margin:28px 0 10px;color:#fff}
@@ -19,33 +23,80 @@
     a{color:#F09458;text-decoration:none}
     .nav{margin-top:40px;padding-top:24px;border-top:1px solid #222;display:flex;gap:18px;flex-wrap:wrap}
     .nav a{font-size:14px}
+    [data-lang]{display:none}
+    [data-lang].show{display:block}
   </style>
 </head>
 <body>
   <div class="wrap">
-    <div class="logo"><div class="badge">И</div><span>San</span></div>
-    <h1>Условия использования</h1>
-    <div class="updated">Последнее обновление: 6 июня 2026</div>
-    <p>Используя San, вы соглашаетесь с настоящими условиями.</p>
-    <h2>Допустимое использование</h2>
-    <ul>
-      <li>Запрещён контент, нарушающий законы, разжигающий ненависть, насилие или эксплуатацию.</li>
-      <li>Запрещены спам, мошенничество и выдача себя за других людей.</li>
-      <li>Вы несёте ответственность за контент, который публикуете.</li>
-    </ul>
-    <h2>Модерация</h2>
-    <p>Мы вправе удалять контент и блокировать аккаунты, нарушающие эти условия. В приложении есть функции жалоб и блокировки пользователей.</p>
-    <h2>Аккаунт</h2>
-    <p>Вход осуществляется по ключу устройства и PIN-коду. Храните их в безопасности — мы не сможем восстановить утерянный доступ.</p>
-    <h2>Отказ от ответственности</h2>
-    <p>Приложение предоставляется «как есть». Мы стремимся к стабильной работе, но не гарантируем отсутствие сбоев.</p>
-    <h2>Контакты</h2>
-    <p>Вопросы: <a href="mailto:support@san-m-app.com">support@san-m-app.com</a>.</p>
+    <div class="top">
+      <div class="logo"><div class="badge">И</div><span>San</span></div>
+      <div class="lang">
+        <button id="btn-en" onclick="setLang('en')">EN</button>
+        <button id="btn-ru" onclick="setLang('ru')">RU</button>
+      </div>
+    </div>
+
+    <!-- English -->
+    <div data-lang="en">
+      <h1>Terms of Use</h1>
+      <div class="updated">Last updated: June 6, 2026</div>
+      <p>By using San, you agree to these terms.</p>
+      <h2>Acceptable use</h2>
+      <ul>
+        <li>Content that breaks the law, incites hatred, violence or exploitation is prohibited.</li>
+        <li>Spam, fraud and impersonation of others are prohibited.</li>
+        <li>You are responsible for the content you publish.</li>
+      </ul>
+      <h2>Moderation</h2>
+      <p>We may remove content and block accounts that violate these terms. The app includes reporting and user-blocking features.</p>
+      <h2>Account</h2>
+      <p>Sign-in uses a device key and PIN. Keep them safe — we cannot recover lost access.</p>
+      <h2>Disclaimer</h2>
+      <p>The app is provided "as is". We aim for stable operation but do not guarantee an absence of errors.</p>
+      <h2>Contact</h2>
+      <p>Questions: <a href="mailto:support@san-m-app.com">support@san-m-app.com</a>.</p>
+    </div>
+
+    <!-- Russian -->
+    <div data-lang="ru">
+      <h1>Условия использования</h1>
+      <div class="updated">Последнее обновление: 6 июня 2026</div>
+      <p>Используя San, вы соглашаетесь с настоящими условиями.</p>
+      <h2>Допустимое использование</h2>
+      <ul>
+        <li>Запрещён контент, нарушающий законы, разжигающий ненависть, насилие или эксплуатацию.</li>
+        <li>Запрещены спам, мошенничество и выдача себя за других людей.</li>
+        <li>Вы несёте ответственность за контент, который публикуете.</li>
+      </ul>
+      <h2>Модерация</h2>
+      <p>Мы вправе удалять контент и блокировать аккаунты, нарушающие эти условия. В приложении есть функции жалоб и блокировки пользователей.</p>
+      <h2>Аккаунт</h2>
+      <p>Вход осуществляется по ключу устройства и PIN-коду. Храните их в безопасности — мы не сможем восстановить утерянный доступ.</p>
+      <h2>Отказ от ответственности</h2>
+      <p>Приложение предоставляется «как есть». Мы стремимся к стабильной работе, но не гарантируем отсутствие сбоев.</p>
+      <h2>Контакты</h2>
+      <p>Вопросы: <a href="mailto:support@san-m-app.com">support@san-m-app.com</a>.</p>
+    </div>
+
     <div class="nav">
-      <a href="./help.html">О приложении</a>
-      <a href="./privacy.html">Конфиденциальность</a>
-      <a href="./terms.html">Условия использования</a>
+      <a href="./help.html">About / О приложении</a>
+      <a href="./privacy.html">Privacy / Конфиденциальность</a>
+      <a href="./terms.html">Terms / Условия</a>
     </div>
   </div>
+
+  <script>
+    function setLang(l){
+      document.documentElement.lang = l;
+      document.querySelectorAll('[data-lang]').forEach(function(el){ el.classList.toggle('show', el.getAttribute('data-lang')===l); });
+      document.getElementById('btn-en').classList.toggle('active', l==='en');
+      document.getElementById('btn-ru').classList.toggle('active', l==='ru');
+      try{ localStorage.setItem('san_lang', l); }catch(e){}
+    }
+    var saved = 'en';
+    try{ saved = localStorage.getItem('san_lang') || 'en'; }catch(e){}
+    setLang(saved);
+  </script>
 </body>
 </html>
