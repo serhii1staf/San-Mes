@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, Pressable, Modal, Image, ActivityIndicator, Alert, Animated, Dimensions, ScrollView, Platform } from 'react-native';
+import { View, Pressable, Modal, Image, ActivityIndicator, Alert, Animated, Dimensions, Platform } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../../theme';
 import { Text } from './Text';
@@ -91,13 +91,13 @@ export function AppIconModal({ visible, onClose }: AppIconModalProps) {
                 Иконка на главном экране телефона
               </Text>
 
-              <ScrollView contentContainerStyle={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', paddingHorizontal: 16, paddingBottom: 20 }} showsVerticalScrollIndicator={false}>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', paddingHorizontal: 16, paddingBottom: 20 }}>
                 {ICONS.map((icon) => {
                   const selected = (icon.name ?? null) === (current ?? null);
                   const isApplying = applying === (icon.name ?? 'default');
                   return (
-                    <Pressable key={icon.label} onPress={() => handleSelect(icon)} style={{ width: '48%', alignItems: 'center', marginBottom: 16 }}>
-                      <View style={{ width: '100%', aspectRatio: 1, borderRadius: 28, overflow: 'hidden', borderWidth: selected ? 3 : 1, borderColor: selected ? theme.colors.accent.primary : theme.colors.border.light }}>
+                    <Pressable key={icon.label} onPress={() => handleSelect(icon)} style={{ width: '31%', alignItems: 'center', marginBottom: 12 }}>
+                      <View style={{ width: '100%', aspectRatio: 1, borderRadius: 22, overflow: 'hidden', borderWidth: selected ? 3 : 1, borderColor: selected ? theme.colors.accent.primary : theme.colors.border.light }}>
                         <Image source={icon.source} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
                         {isApplying && (
                           <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.35)', alignItems: 'center', justifyContent: 'center' }}>
@@ -105,15 +105,15 @@ export function AppIconModal({ visible, onClose }: AppIconModalProps) {
                           </View>
                         )}
                         {selected && !isApplying && (
-                          <View style={{ position: 'absolute', top: 8, right: 8, width: 26, height: 26, borderRadius: 13, backgroundColor: theme.colors.accent.primary, alignItems: 'center', justifyContent: 'center' }}>
-                            <Feather name="check" size={15} color="#FFF" />
+                          <View style={{ position: 'absolute', top: 6, right: 6, width: 24, height: 24, borderRadius: 12, backgroundColor: theme.colors.accent.primary, alignItems: 'center', justifyContent: 'center' }}>
+                            <Feather name="check" size={14} color="#FFF" />
                           </View>
                         )}
                       </View>
                     </Pressable>
                   );
                 })}
-              </ScrollView>
+              </View>
             </View>
           </Animated.View>
         </View>
