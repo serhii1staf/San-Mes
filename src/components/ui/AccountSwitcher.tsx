@@ -82,8 +82,12 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
     // Close modal immediately to avoid artifact
     onClose();
 
-    // Clear all cached data from previous account
-    await AsyncStorage.multiRemove(['@san:feed_posts', '@san:my_posts', 'mini-apps-cache', '@san:search_history']);
+    // Switch the cache namespace to the new account. We do NOT clear the previous
+    // account's cache — each account keeps its own namespace so switching back is instant.
+    const { setCacheAccount } = await import('../../services/cacheService');
+    const { setThrottleAccount } = await import('../../services/syncThrottle');
+    setCacheAccount(profile.id);
+    setThrottleAccount(profile.id);
     resetAllThrottles();
 
     // Login to new account
@@ -133,8 +137,11 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
     // Close modal immediately to avoid artifact
     onClose();
 
-    // Clear all cached data from previous account
-    await AsyncStorage.multiRemove(['@san:feed_posts', '@san:my_posts', 'mini-apps-cache', '@san:search_history']);
+    // Switch the cache namespace to the new account (keeps each account's data isolated).
+    const { setCacheAccount } = await import('../../services/cacheService');
+    const { setThrottleAccount } = await import('../../services/syncThrottle');
+    setCacheAccount(profile.id);
+    setThrottleAccount(profile.id);
     resetAllThrottles();
 
     addAccount({

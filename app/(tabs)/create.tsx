@@ -14,6 +14,7 @@ import { useConnectivityStore } from '../../src/store';
 import { createRepost, createPost, supabase, uploadPostImage, joinImageUrls } from '../../src/lib/supabase';
 import { queueMutation, generateTempId } from '../../src/services/offlineQueue';
 import { useEntityStore } from '../../src/services/entityStore';
+import { accountKey } from '../../src/services/cacheService';
 import { FormatHelpModal } from '../../src/components/ui/FormatHelpModal';
 
 const MAX_CHARS = 500;
@@ -292,22 +293,22 @@ export default function CreateScreen() {
           // Update AsyncStorage cache — find post by id and replace data
           const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
 
-          const feedCached = await AsyncStorage.getItem('@san:feed_posts');
+          const feedCached = await AsyncStorage.getItem(accountKey('@san:feed_posts'));
           if (feedCached) {
             const feedPosts = JSON.parse(feedCached);
             const updatedFeed = feedPosts.map((p: any) =>
               p.id === editingPostId ? { ...p, ...updatedPostData } : p
             );
-            await AsyncStorage.setItem('@san:feed_posts', JSON.stringify(updatedFeed));
+            await AsyncStorage.setItem(accountKey('@san:feed_posts'), JSON.stringify(updatedFeed));
           }
 
-          const myCached = await AsyncStorage.getItem('@san:my_posts');
+          const myCached = await AsyncStorage.getItem(accountKey('@san:my_posts'));
           if (myCached) {
             const myPosts = JSON.parse(myCached);
             const updatedMy = myPosts.map((p: any) =>
               p.id === editingPostId ? { ...p, ...updatedPostData } : p
             );
-            await AsyncStorage.setItem('@san:my_posts', JSON.stringify(updatedMy));
+            await AsyncStorage.setItem(accountKey('@san:my_posts'), JSON.stringify(updatedMy));
           }
 
           // Update Zustand store
@@ -377,14 +378,14 @@ export default function CreateScreen() {
 
             // Update feed cache
             const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
-            const feedCached = await AsyncStorage.getItem('@san:feed_posts');
+            const feedCached = await AsyncStorage.getItem(accountKey('@san:feed_posts'));
             const feedPosts = feedCached ? JSON.parse(feedCached) : [];
-            await AsyncStorage.setItem('@san:feed_posts', JSON.stringify([newPost, ...feedPosts].slice(0, 20)));
+            await AsyncStorage.setItem(accountKey('@san:feed_posts'), JSON.stringify([newPost, ...feedPosts].slice(0, 20)));
 
             // Update profile posts cache
-            const myCached = await AsyncStorage.getItem('@san:my_posts');
+            const myCached = await AsyncStorage.getItem(accountKey('@san:my_posts'));
             const myPosts = myCached ? JSON.parse(myCached) : [];
-            await AsyncStorage.setItem('@san:my_posts', JSON.stringify([newPost, ...myPosts].slice(0, 20)));
+            await AsyncStorage.setItem(accountKey('@san:my_posts'), JSON.stringify([newPost, ...myPosts].slice(0, 20)));
 
             // Update Zustand profile posts store so profile shows the new post immediately
             const currentProfilePosts = useFeedStore.getState().profilePosts;

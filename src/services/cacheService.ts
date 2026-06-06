@@ -65,11 +65,41 @@ export const KEYS = {
 
 export const MAX_FEED_POSTS = 200;
 
+// ─── Per-account namespacing ─────────────────────────────────────────────────
+// Every cache entry is scoped to the active account so switching accounts never
+// leaks one account's data into another. Switching back is instant (each account
+// keeps its own namespace in storage — nothing is destructively cleared).
+
+let activeAccountId = 'anon';
+
+/** Set the active account whose cache namespace should be used. Call on login/startup. */
+export function setCacheAccount(accountId: string | null | undefined): void {
+  activeAccountId = accountId || 'anon';
+}
+
+export function getCacheAccount(): string {
+  return activeAccountId;
+}
+
+/** Build a per-account storage key for raw AsyncStorage usage outside cacheService. */
+export function accountKey(baseKey: string): string {
+  return `@acc:${activeAccountId}:${baseKey}`;
+}
+
+// Keys that hold the same data for every account (no need to duplicate per account).
+const GLOBAL_KEY_PREFIXES = ['@san:profile:', '@san:all_profiles'];
+
+function namespaced(key: string): string {
+  // Global/shared entries (public profiles) stay un-namespaced to avoid redundant refetches.
+  if (GLOBAL_KEY_PREFIXES.some((p) => key.startsWith(p))) return key;
+  return `@acc:${activeAccountId}:${key}`;
+}
+
 // ─── Generic Helpers ─────────────────────────────────────────────────────────
 
 export async function cacheGet<T>(key: string, fallback: T): Promise<T> {
   try {
-    const raw = await AsyncStorage.getItem(key);
+    const raw = await AsyncStorage.getItem(namespaced(key));
     if (raw === null) return fallback;
     const parsed = JSON.parse(raw);
     if (parsed === null || parsed === undefined) return fallback;
@@ -82,7 +112,7 @@ export async function cacheGet<T>(key: string, fallback: T): Promise<T> {
 
 export async function cacheSet(key: string, value: unknown): Promise<void> {
   try {
-    await AsyncStorage.setItem(key, JSON.stringify(value));
+    await AsyncStorage.setItem(namespaced(key), JSON.stringify(value));
   } catch (e) {
     console.warn('[CacheService] Write failed for key:', key, e);
   }
@@ -90,7 +120,7 @@ export async function cacheSet(key: string, value: unknown): Promise<void> {
 
 export async function cacheRemove(key: string): Promise<void> {
   try {
-    await AsyncStorage.removeItem(key);
+    await AsyncStorage.removeItem(namespaced(key));
   } catch (e) {
     console.warn('[CacheService] Remove failed for key:', key, e);
   }

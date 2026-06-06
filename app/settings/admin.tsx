@@ -9,6 +9,7 @@ import { Text, Avatar } from '../../src/components/ui';
 import { CachedImage } from '../../src/components/ui/CachedImage';
 import { supabase, parseImageUrls, adminDeletePost } from '../../src/lib/supabase';
 import { useFeedStore } from '../../src/store/feedStore';
+import { accountKey } from '../../src/services/cacheService';
 import { formatTimeAgo } from '../../src/utils/mockData';
 
 const ADMIN_PASSWORD = 'V7k!Qm9@Lp2#xR8$Tw6ZcD4%yN';
@@ -83,15 +84,15 @@ export default function AdminScreen() {
 
         // Remove from AsyncStorage caches
         try {
-          const feedCached = await AsyncStorage.getItem('@san:feed_posts');
+          const feedCached = await AsyncStorage.getItem(accountKey('@san:feed_posts'));
           if (feedCached) {
             const posts = JSON.parse(feedCached).filter((p: any) => p.id !== postId);
-            await AsyncStorage.setItem('@san:feed_posts', JSON.stringify(posts));
+            await AsyncStorage.setItem(accountKey('@san:feed_posts'), JSON.stringify(posts));
           }
-          const myCached = await AsyncStorage.getItem('@san:my_posts');
+          const myCached = await AsyncStorage.getItem(accountKey('@san:my_posts'));
           if (myCached) {
             const posts = JSON.parse(myCached).filter((p: any) => p.id !== postId);
-            await AsyncStorage.setItem('@san:my_posts', JSON.stringify(posts));
+            await AsyncStorage.setItem(accountKey('@san:my_posts'), JSON.stringify(posts));
           }
         } catch {}
       }},

@@ -2,11 +2,14 @@ import { create } from 'zustand';
 import { persist, createJSONStorage, StateStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
+import { accountKey } from '../services/cacheService';
 
+// Per-account persist storage: the base name ('mini-apps-cache') is wrapped in
+// accountKey() so each account keeps its own mini-apps list namespace.
 const storage: StateStorage = {
-  setItem: async (name, value) => { await AsyncStorage.setItem(name, value); },
-  getItem: async (name) => { return await AsyncStorage.getItem(name); },
-  removeItem: async (name) => { await AsyncStorage.removeItem(name); },
+  setItem: async (name, value) => { await AsyncStorage.setItem(accountKey(name), value); },
+  getItem: async (name) => { return await AsyncStorage.getItem(accountKey(name)); },
+  removeItem: async (name) => { await AsyncStorage.removeItem(accountKey(name)); },
 };
 
 export interface MiniApp {

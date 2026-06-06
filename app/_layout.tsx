@@ -12,6 +12,8 @@ import { initRateLimits } from '../src/services/rateLimit';
 import { cacheCleanup } from '../src/services/cacheManager';
 import { useConnectivityStore } from '../src/services/connectivityMonitor';
 import { useEntityStore } from '../src/services/entityStore';
+import { setCacheAccount } from '../src/services/cacheService';
+import { setThrottleAccount } from '../src/services/syncThrottle';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -100,6 +102,11 @@ export default function RootLayout() {
       SplashScreen.hideAsync().catch(() => {});
       initRateLimits();
       cacheCleanup();
+      // Scope the cache to the logged-in account BEFORE hydrating, so each account
+      // loads only its own cached feed/conversations/etc. (Telegram-style isolation).
+      const currentUser = useAuthStore.getState().user;
+      setCacheAccount(currentUser?.id);
+      setThrottleAccount(currentUser?.id);
       // Reload cached data (feed, conversations, profiles) into memory so chats/posts
       // survive an app restart even before any network sync runs.
       useEntityStore.getState().hydrate();

@@ -10,6 +10,7 @@ import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { UserBadge } from '../../src/components/ui/UserBadge';
 import { getProfiles } from '../../src/lib/supabase';
 import { useMiniAppsStore } from '../../src/store/miniAppsStore';
+import { accountKey } from '../../src/services/cacheService';
 
 const SEARCH_HISTORY_KEY = '@san:search_history';
 
@@ -65,7 +66,7 @@ export default function SearchScreen() {
 
   const loadHistory = async () => {
     try {
-      const cached = await AsyncStorage.getItem(SEARCH_HISTORY_KEY);
+      const cached = await AsyncStorage.getItem(accountKey(SEARCH_HISTORY_KEY));
       if (cached) setHistory(JSON.parse(cached));
     } catch {}
   };
@@ -73,12 +74,12 @@ export default function SearchScreen() {
   const addToHistory = useCallback(async (profile: ProfileResult) => {
     const updated = [profile, ...history.filter(h => h.id !== profile.id)].slice(0, 10);
     setHistory(updated);
-    await AsyncStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(updated));
+    await AsyncStorage.setItem(accountKey(SEARCH_HISTORY_KEY), JSON.stringify(updated));
   }, [history]);
 
   const clearHistory = async () => {
     setHistory([]);
-    await AsyncStorage.removeItem(SEARCH_HISTORY_KEY);
+    await AsyncStorage.removeItem(accountKey(SEARCH_HISTORY_KEY));
   };
 
   const handleSelect = (item: ProfileResult) => {

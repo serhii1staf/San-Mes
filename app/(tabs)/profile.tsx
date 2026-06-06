@@ -24,6 +24,8 @@ import { openUrl } from '../../src/utils/openUrl';
 import { Post } from '../../src/types';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { formatTimeAgo } from '../../src/utils/mockData';
+import { accountKey } from '../../src/services/cacheService';
+import { shouldSync, resetThrottle } from '../../src/services/syncThrottle';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const MY_POSTS_CACHE_KEY = '@san:my_posts';
@@ -99,7 +101,7 @@ export default function ProfileScreen() {
   // 1. On mount: if store is empty, load from cache then fetch from Supabase
   useEffect(() => {
     if (userPosts.length > 0) return; // Store already has data — show instantly
-    AsyncStorage.getItem(MY_POSTS_CACHE_KEY).then((cached) => {
+    AsyncStorage.getItem(accountKey(MY_POSTS_CACHE_KEY)).then((cached) => {
       if (cached) {
         try {
           const parsed = JSON.parse(cached);
@@ -122,6 +124,8 @@ export default function ProfileScreen() {
   const loadMyPosts = useCallback(async () => {
     if (!user?.id) return;
     try {
+      // Throttle gate: skip network if recently synced (cache stays on screen)
+      if (!(await shouldSync('my_posts'))) return;
       const { data } = await supabase.from('posts').select('*').eq('author_id', user.id).order('created_at', { ascending: false }).limit(20);
       if (!data) return;
 
@@ -196,7 +200,7 @@ export default function ProfileScreen() {
         return post;
       });
       setProfilePosts(mapped);
-      AsyncStorage.setItem(MY_POSTS_CACHE_KEY, JSON.stringify(mapped)).catch(() => {});
+      AsyncStorage.setItem(accountKey(MY_POSTS_CACHE_KEY), JSON.stringify(mapped)).catch(() => {});
     } catch {}
   }, [user?.id]);
 
@@ -223,6 +227,7 @@ export default function ProfileScreen() {
   // Pull-to-refresh handler
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
+    resetThrottle('my_posts');
     await loadMyPosts();
     await loadFollows();
     setRefreshing(false);

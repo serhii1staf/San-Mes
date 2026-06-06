@@ -15,7 +15,8 @@ import { getPosts, isRepost, parseImageUrls, isImageSpoiler, toggleLike as apiTo
 import { useUpdateStore } from '../../src/store/updateStore';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { useConnectivityStore } from '../../src/services/connectivityMonitor';
-import { resetThrottle } from '../../src/services/syncThrottle';
+import { resetThrottle, shouldSync } from '../../src/services/syncThrottle';
+import { accountKey } from '../../src/services/cacheService';
 import { queueMutation } from '../../src/services/offlineQueue';
 
 const FEED_CACHE_KEY = '@san:feed_posts';
@@ -137,7 +138,7 @@ export default function FeedScreen() {
   // Reload from cache when tab gains focus (picks up new posts from create screen)
   useFocusEffect(
     useCallback(() => {
-      AsyncStorage.getItem(FEED_CACHE_KEY).then((cached) => {
+      AsyncStorage.getItem(accountKey(FEED_CACHE_KEY)).then((cached) => {
         if (cached) {
           try {
             const parsed = JSON.parse(cached);
@@ -161,7 +162,7 @@ export default function FeedScreen() {
     }
 
     // Store is empty — try loading from cache first
-    AsyncStorage.getItem(FEED_CACHE_KEY).then((cached) => {
+    AsyncStorage.getItem(accountKey(FEED_CACHE_KEY)).then((cached) => {
       if (cached) {
         try {
           const parsed = JSON.parse(cached);
@@ -193,6 +194,11 @@ export default function FeedScreen() {
 
   const loadFeed = useCallback(async () => {
     try {
+      // Throttle gate: skip network if recently synced (cache stays on screen)
+      if (!(await shouldSync('feed'))) {
+        setIsLoading(false);
+        return;
+      }
       const { posts: rawPosts, error } = await getPosts(FEED_LIMIT, 0);
       if (error || !rawPosts) {
         // Network error: preserve existing store data, hide loading
@@ -246,7 +252,7 @@ export default function FeedScreen() {
       setIsLoading(false);
 
       // Save to AsyncStorage cache (non-blocking)
-      AsyncStorage.setItem(FEED_CACHE_KEY, JSON.stringify(mapped)).catch(() => {});
+      AsyncStorage.setItem(accountKey(FEED_CACHE_KEY), JSON.stringify(mapped)).catch(() => {});
     } catch {
       // Network error: preserve existing store data, hide loading/refreshing
       setIsLoading(false);
@@ -300,7 +306,7 @@ export default function FeedScreen() {
       // Update store with fresh data
       setPosts(mapped);
       // Save to cache (non-blocking)
-      AsyncStorage.setItem(FEED_CACHE_KEY, JSON.stringify(mapped)).catch(() => {});
+      AsyncStorage.setItem(accountKey(FEED_CACHE_KEY), JSON.stringify(mapped)).catch(() => {});
     } catch {
       // Network error: preserve existing data from store
     }
