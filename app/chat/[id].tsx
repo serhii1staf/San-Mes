@@ -274,10 +274,24 @@ export default function ChatScreen() {
       selectionLimit: 6,
       quality: 1,
     });
-    if (!result.canceled && result.assets.length > 0) {
-      setPendingImages((prev) => [...prev, ...result.assets.map((a) => a.uri)].slice(0, 6));
-      triggerHaptic('light');
-    }
+    if (result.canceled || result.assets.length === 0) return;
+    triggerHaptic('light');
+
+    // Downscale picked images immediately to a display-friendly size so rendering
+    // (thumbnails, context-menu preview, viewer) stays smooth even offline, and the
+    // eventual upload is light. GIFs are left untouched to preserve animation.
+    const { manipulateAsync, SaveFormat } = await import('expo-image-manipulator');
+    const processed = await Promise.all(result.assets.map(async (a) => {
+      const isGif = (a.uri.split('.').pop() || '').toLowerCase() === 'gif';
+      if (isGif) return a.uri;
+      try {
+        const r = await manipulateAsync(a.uri, [{ resize: { width: 1280 } }], { compress: 0.6, format: SaveFormat.JPEG });
+        return r.uri;
+      } catch {
+        return a.uri;
+      }
+    }));
+    setPendingImages((prev) => [...prev, ...processed].slice(0, 6));
   }, []);
 
   const openImageViewer = useCallback((images: string[], index: number) => {
