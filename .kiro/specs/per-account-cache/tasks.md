@@ -55,14 +55,14 @@
 - [x] 6. Checkpoint — проверка после устранения утечек
   - Запустить `npm run ts:check`, убедиться в отсутствии ошибок типов на изменённых файлах. Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 7. Подготовить окружение property-based тестов
-  - [ ] 7.1* Установить и настроить fast-check + мок AsyncStorage
+- [x] 7. Подготовить окружение property-based тестов
+  - [x] 7.1* Установить и настроить fast-check + мок AsyncStorage
     - Установить dev-зависимость `fast-check`.
     - Настроить мок `@react-native-async-storage/async-storage` через `@react-native-async-storage/async-storage/jest/async-storage-mock` (in-memory) в jest-конфигурации/setup.
     - Каждый property-тест помечать комментарием-тегом: `// Feature: per-account-cache, Property {N}: {краткий текст свойства}`. Минимум 100 итераций (`{ numRuns: 100 }`).
     - _Requirements: 1.1, 12.3_
 
-- [ ] 8. Property-тесты на логику построения ключей (`cacheService`)
+- [x] 8. Property-тесты на логику построения ключей (`cacheService`)
   - [ ]* 8.1 Property-тест изоляции account-scoped ключей
     - **Property 1: Account-scoped ключи изолированы между аккаунтами**
     - Генерировать пары различных id аккаунтов и account-scoped базовые ключи; проверять различие `accountKey` для разных аккаунтов и детерминизм для одного.
@@ -98,7 +98,7 @@
     - Принудительно вызывать сбой чтения/записи мока и невалидный JSON; проверять возврат fallback и отсутствие throw.
     - **Validates: Requirements 13.1, 13.2, 13.3, 13.4**
 
-- [ ] 9. Property-тесты на тайминг троттла (`syncThrottle`)
+- [x] 9. Property-тесты на тайминг троттла (`syncThrottle`)
   - [ ]* 9.1 Property-тест подавления синхронизации внутри окна
     - **Property 6: shouldSync подавляет повторную синхронизацию внутри окна**
     - Генерировать ключ + интервал + смещения времени (мок `Date.now`); проверять, что после `true` повторный `shouldSync` внутри окна возвращает `false`, а после истечения окна — снова `true`.
@@ -109,7 +109,7 @@
     - Для подавлённого ключа вызывать `resetThrottle(key)`; проверять, что следующий `shouldSync(key)` возвращает `true`.
     - **Validates: Requirements 6.4, 11.1**
 
-- [ ] 10. Unit/example тесты на мутации экранов
+- [x] 10. Unit/example тесты на мутации экранов
   - [ ]* 10.1 Unit-тесты для `create.tsx` и `admin.tsx`
     - На моках AsyncStorage: после создания/редактирования поста кэш под `accountKey('@san:feed_posts')` и `accountKey('@san:my_posts')` содержит изменения; удаление в `admin.tsx` убирает пост из обоих namespaced-кэшей.
     - _Requirements: 2.3, 2.4, 11.3_
@@ -118,7 +118,7 @@
     - На моках AsyncStorage: добавление в историю и `clearHistory` затрагивают только `accountKey('@san:search_history')` активного аккаунта.
     - _Requirements: 3.3, 3.4_
 
-- [ ] 11. Final checkpoint — проверка полного покрытия
+- [x] 11. Final checkpoint — проверка полного покрытия
   - Запустить `npm test` и `npm run ts:check`. Ensure all tests pass, ask the user if questions arise.
 
 ## Notes
