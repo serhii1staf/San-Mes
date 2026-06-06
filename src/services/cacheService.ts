@@ -66,40 +66,36 @@ export const KEYS = {
 export const MAX_FEED_POSTS = 200;
 
 // ─── Per-account namespacing ─────────────────────────────────────────────────
-// Every cache entry is scoped to the active account so switching accounts never
-// leaks one account's data into another. Switching back is instant (each account
-// keeps its own namespace in storage — nothing is destructively cleared).
+// Namespacing lives in cacheAccount.ts (shared with kvStore.ts to avoid a cycle).
+// Re-exported here so existing imports from cacheService keep working unchanged.
 
-let activeAccountId = 'anon';
+import {
+  setCacheAccount,
+  getCacheAccount,
+  accountKey,
+  GLOBAL_KEY_PREFIXES,
+  namespaced,
+} from './cacheAccount';
 
-/** Set the active account whose cache namespace should be used. Call on login/startup. */
-export function setCacheAccount(accountId: string | null | undefined): void {
-  activeAccountId = accountId || 'anon';
-}
-
-export function getCacheAccount(): string {
-  return activeAccountId;
-}
-
-/** Build a per-account storage key for raw AsyncStorage usage outside cacheService. */
-export function accountKey(baseKey: string): string {
-  return `@acc:${activeAccountId}:${baseKey}`;
-}
-
-// Keys that hold the same data for every account (no need to duplicate per account).
-const GLOBAL_KEY_PREFIXES = ['@san:profile:', '@san:all_profiles'];
-
-function namespaced(key: string): string {
-  // Global/shared entries (public profiles) stay un-namespaced to avoid redundant refetches.
-  if (GLOBAL_KEY_PREFIXES.some((p) => key.startsWith(p))) return key;
-  return `@acc:${activeAccountId}:${key}`;
-}
+export { setCacheAccount, getCacheAccount, accountKey };
 
 // ─── Generic Helpers ─────────────────────────────────────────────────────────
+// Backed by MMKV (synchronous, native) when available, falling back to
+// AsyncStorage otherwise. Writes go to both so a later native build that enables
+// MMKV can still read data written in fallback mode, and vice-versa.
+
+import { isMMKVAvailable, kvGetStringRawSync, kvSetStringRaw, kvDeleteRaw } from './kvStore';
 
 export async function cacheGet<T>(key: string, fallback: T): Promise<T> {
   try {
-    const raw = await AsyncStorage.getItem(namespaced(key));
+    const nsKey = namespaced(key);
+    let raw: string | null = null;
+    if (isMMKVAvailable()) {
+      raw = kvGetStringRawSync(nsKey);
+    }
+    if (raw === null) {
+      raw = await AsyncStorage.getItem(nsKey);
+    }
     if (raw === null) return fallback;
     const parsed = JSON.parse(raw);
     if (parsed === null || parsed === undefined) return fallback;
@@ -112,7 +108,12 @@ export async function cacheGet<T>(key: string, fallback: T): Promise<T> {
 
 export async function cacheSet(key: string, value: unknown): Promise<void> {
   try {
-    await AsyncStorage.setItem(namespaced(key), JSON.stringify(value));
+    const nsKey = namespaced(key);
+    const serialized = JSON.stringify(value);
+    if (isMMKVAvailable()) {
+      kvSetStringRaw(nsKey, serialized);
+    }
+    await AsyncStorage.setItem(nsKey, serialized);
   } catch (e) {
     console.warn('[CacheService] Write failed for key:', key, e);
   }
@@ -120,7 +121,11 @@ export async function cacheSet(key: string, value: unknown): Promise<void> {
 
 export async function cacheRemove(key: string): Promise<void> {
   try {
-    await AsyncStorage.removeItem(namespaced(key));
+    const nsKey = namespaced(key);
+    if (isMMKVAvailable()) {
+      kvDeleteRaw(nsKey);
+    }
+    await AsyncStorage.removeItem(nsKey);
   } catch (e) {
     console.warn('[CacheService] Remove failed for key:', key, e);
   }

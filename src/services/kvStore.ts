@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { accountKey } from './cacheService';
+import { accountKey } from './cacheAccount';
 
 /**
  * kvStore — fast key/value layer for chat data (messages, conversations).
@@ -26,6 +26,37 @@ try {
 
 export function isMMKVAvailable(): boolean {
   return mmkv !== null;
+}
+
+// ─── Raw API (key is already namespaced by the caller) ─────────────────────────
+// Used by cacheService, which applies its own namespaced() before calling.
+
+export function kvGetStringRawSync(key: string): string | null {
+  if (!mmkv) return null;
+  try {
+    const v = mmkv.getString(key);
+    return v == null ? null : v;
+  } catch {
+    return null;
+  }
+}
+
+export function kvSetStringRaw(key: string, value: string): void {
+  if (!mmkv) return;
+  try {
+    mmkv.set(key, value);
+  } catch {
+    // ignore — AsyncStorage write in cacheService is the durable path
+  }
+}
+
+export function kvDeleteRaw(key: string): void {
+  if (!mmkv) return;
+  try {
+    mmkv.delete(key);
+  } catch {
+    // ignore
+  }
 }
 
 // In-memory mirror used only in AsyncStorage-fallback mode so that sync reads

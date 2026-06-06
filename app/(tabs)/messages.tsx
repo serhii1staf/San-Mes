@@ -11,6 +11,7 @@ import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { UserBadge } from '../../src/components/ui/UserBadge';
 import { useChatStore, useEntityStore, useAuthStore } from '../../src/store';
 import { syncConversations, syncProfiles } from '../../src/services/syncService';
+import { kvGetJSONSync, kvSetJSON, kvWarm } from '../../src/services/kvStore';
 import { useMiniAppsStore } from '../../src/store/miniAppsStore';
 import { useChatSettingsStore, GLOBAL_CHAT_SETTINGS_KEY } from '../../src/store/chatSettingsStore';
 import { triggerHaptic } from '../../src/utils/haptics';
@@ -191,6 +192,27 @@ export default function MessagesScreen() {
   const archived = useChatSettingsStore((s) => s.archived);
   const blocked = useChatSettingsStore((s) => s.blocked);
   const deleted = useChatSettingsStore((s) => s.deleted);
+
+  // Instant cache-first hydrate of the conversation list from MMKV (sync) so the
+  // chat list paints immediately on cold start, even offline, before any sync.
+  useEffect(() => {
+    const CONV_KV_KEY = 'conversations_list';
+    const hydrate = () => {
+      if (useEntityStore.getState().conversations.length > 0) return;
+      const cached = kvGetJSONSync<any[]>(CONV_KV_KEY, []);
+      if (cached.length > 0) {
+        useEntityStore.getState().setConversations(cached);
+      }
+    };
+    kvWarm([CONV_KV_KEY]).then(hydrate).catch(hydrate);
+  }, []);
+
+  // Persist the conversation list to MMKV whenever it changes (survives restart + offline).
+  useEffect(() => {
+    if (entityConversations.length > 0) {
+      kvSetJSON('conversations_list', entityConversations);
+    }
+  }, [entityConversations]);
 
   // Trigger syncConversations in background on mount
   useEffect(() => {
