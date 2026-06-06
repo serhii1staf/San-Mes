@@ -49,6 +49,13 @@ function AuthNavigationGuard({ children }: { children: React.ReactNode }) {
   if (!hasHydrated || showSplash || isLoggingOut) {
     return <CustomSplash />;
   }
+  // Synchronous guard: the moment auth is cleared (logout / delete account),
+  // render the splash immediately so no protected screen re-renders with a null
+  // user for even a single frame (that race was crashing the app on logout).
+  const inAuthGroup = segments[0] === '(auth)';
+  if (!isAuthenticated && !inAuthGroup) {
+    return <CustomSplash />;
+  }
   return <>{children}</>;
 }
 

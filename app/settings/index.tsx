@@ -4,6 +4,7 @@ import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
+import Constants from 'expo-constants';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
 import { AppIconModal } from '../../src/components/ui/AppIconModal';
@@ -74,6 +75,7 @@ export default function SettingsScreen() {
   const { logout } = useAuthStore();
   const { hapticEnabled, useInAppBrowser, setHaptic, setInAppBrowser } = useSettingsStore();
   const [iconModalVisible, setIconModalVisible] = useState(false);
+  const appVersion = Constants.expoConfig?.version || '1.0.0';
 
   // Hidden admin access: tap the "Безопасность" section title 6 times quickly.
   const adminTapCount = React.useRef(0);
@@ -96,10 +98,10 @@ export default function SettingsScreen() {
         text: 'Выйти',
         style: 'destructive',
         onPress: () => {
-          // Navigate away from the protected route FIRST, then clear auth on the
-          // next tick so no mounted screen reads a null user mid-render (avoids crash).
-          router.replace('/(auth)/welcome');
-          setTimeout(() => { logout(); }, 60);
+          // The root AuthNavigationGuard now swaps to the splash synchronously the
+          // instant auth clears, so no protected screen renders with a null user.
+          // Just clear auth; the guard handles the redirect safely.
+          logout();
         },
       },
     ]);
@@ -117,15 +119,19 @@ export default function SettingsScreen() {
           onPress: async () => {
             const uid = useAuthStore.getState().user?.id;
             if (!uid) return;
-            const { deleteAccount } = await import('../../src/lib/supabase');
-            const { error } = await deleteAccount(uid);
-            if (error) {
-              Alert.alert('Ошибка', error);
+            try {
+              const { deleteAccount } = await import('../../src/lib/supabase');
+              const { error } = await deleteAccount(uid);
+              if (error) {
+                Alert.alert('Ошибка', error);
+                return;
+              }
+            } catch (e: any) {
+              Alert.alert('Ошибка', e?.message || 'Не удалось удалить аккаунт');
               return;
             }
-            // Leave the protected route, then clear auth.
-            router.replace('/(auth)/welcome');
-            setTimeout(() => { logout(); }, 60);
+            // Guard handles the redirect synchronously once auth clears.
+            logout();
           },
         },
       ]
@@ -297,35 +303,46 @@ export default function SettingsScreen() {
           />
         </View>
 
-        {/* Logout */}
-        <Pressable
-          onPress={handleLogout}
-          style={{
-            paddingVertical: 16,
-            alignItems: 'center',
-            backgroundColor: theme.colors.background.elevated,
-            borderRadius: 16,
-            marginTop: 8,
-          }}
-        >
-          <Text variant="body" weight="semibold" color={theme.colors.status.error}>
-            Выйти
-          </Text>
-        </Pressable>
+        {/* Account actions: Logout + Delete side by side, version below */}
+        <View style={{ flexDirection: 'row', gap: 10, marginTop: 8 }}>
+          <Pressable
+            onPress={handleLogout}
+            style={{
+              flex: 1,
+              paddingVertical: 14,
+              alignItems: 'center',
+              justifyContent: 'center',
+              backgroundColor: theme.colors.background.elevated,
+              borderRadius: 14,
+            }}
+          >
+            <Text variant="body" weight="semibold" color={theme.colors.status.error}>
+              Выйти
+            </Text>
+          </Pressable>
+          <Pressable
+            onPress={handleDeleteAccount}
+            style={{
+              flex: 1,
+              paddingVertical: 14,
+              alignItems: 'center',
+              justifyContent: 'center',
+              backgroundColor: theme.colors.background.elevated,
+              borderRadius: 14,
+              borderWidth: 1,
+              borderColor: theme.colors.status.error + '40',
+            }}
+          >
+            <Text variant="body" weight="semibold" color={theme.colors.text.tertiary}>
+              Удалить аккаунт
+            </Text>
+          </Pressable>
+        </View>
 
-        {/* Delete account */}
-        <Pressable
-          onPress={handleDeleteAccount}
-          style={{
-            paddingVertical: 16,
-            alignItems: 'center',
-            marginTop: 10,
-          }}
-        >
-          <Text variant="caption" color={theme.colors.text.tertiary}>
-            Удалить аккаунт
-          </Text>
-        </Pressable>
+        {/* App version */}
+        <Text variant="caption" align="center" color={theme.colors.text.tertiary} style={{ marginTop: 14, fontSize: 11 }}>
+          Версия {appVersion}
+        </Text>
       </ScrollView>
 
       <AppIconModal visible={iconModalVisible} onClose={() => setIconModalVisible(false)} />
