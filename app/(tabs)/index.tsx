@@ -140,7 +140,10 @@ export default function FeedScreen() {
         id: p.id,
         authorName: p.authorName,
         authorEmoji: p.authorEmoji,
+        authorVerified: p.authorVerified,
         content: p.content,
+        imageUrl: p.imageUrl,
+        imageUrls: p.imageUrls,
       })), postCount);
     }
   }, [posts]);

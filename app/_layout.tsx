@@ -144,7 +144,6 @@ export default function RootLayout() {
           <Stack.Screen name="notifications" />
           <Stack.Screen name="settings/index" />
           <Stack.Screen name="settings/appearance" />
-          <Stack.Screen name="settings/app-icon" />
           <Stack.Screen name="settings/widget" />
           <Stack.Screen name="settings/storage" />
           <Stack.Screen name="settings/device-key" />

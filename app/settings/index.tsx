@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { View, ScrollView, Pressable, Switch, ViewStyle, Alert, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
+import { AppIconModal } from '../../src/components/ui/AppIconModal';
 import { useAuthStore } from '../../src/store';
 import { useSettingsStore } from '../../src/store/settingsStore';
 
@@ -72,6 +73,7 @@ export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
   const { logout } = useAuthStore();
   const { hapticEnabled, useInAppBrowser, setHaptic, setInAppBrowser } = useSettingsStore();
+  const [iconModalVisible, setIconModalVisible] = useState(false);
 
   const handleLogout = () => {
     Alert.alert('Выход', 'Вы уверены, что хотите выйти?', [
@@ -172,7 +174,7 @@ export default function SettingsScreen() {
           <SettingsRow
             icon="grid"
             label="Иконка приложения"
-            onPress={() => router.push('/settings/app-icon' as any)}
+            onPress={() => setIconModalVisible(true)}
           />
           <SettingsRow
             icon="layout"
@@ -251,6 +253,8 @@ export default function SettingsScreen() {
           </Text>
         </Pressable>
       </ScrollView>
+
+      <AppIconModal visible={iconModalVisible} onClose={() => setIconModalVisible(false)} />
     </View>
   );
 }
