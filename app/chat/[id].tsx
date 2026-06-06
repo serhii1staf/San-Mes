@@ -29,7 +29,7 @@ import { triggerHaptic } from '../../src/utils/haptics';
 const REPLY_THRESHOLD = 60;
 const SCREEN_WIDTH = Dimensions.get('window').width;
 
-function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, highlighted, onReply, onLongPress, onSwipeActive, onImagePress }: { message: ChatMessage; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string; highlighted?: boolean; onReply: (m: ChatMessage) => void; onLongPress: (m: ChatMessage) => void; onSwipeActive: (active: boolean) => void; onImagePress: (images: string[], index: number) => void }) {
+function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, linkEmoji, highlighted, onReply, onLongPress, onSwipeActive, onImagePress }: { message: ChatMessage; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string; linkEmoji?: string; highlighted?: boolean; onReply: (m: ChatMessage) => void; onLongPress: (m: ChatMessage) => void; onSwipeActive: (active: boolean) => void; onImagePress: (images: string[], index: number) => void }) {
   const theme = useTheme();
   const fontFamilyStyle = fontFamily === 'mono' ? 'monospace' : fontFamily === 'serif' ? 'serif' : undefined;
   const translateX = useRef(new Animated.Value(0)).current;
@@ -111,7 +111,7 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, hig
               const link = (!message.imageUrls || message.imageUrls.length === 0) ? extractFirstUrl(message.text) : null;
               return link ? (
                 <View style={{ marginTop: 6, width: 250, maxWidth: '100%' }}>
-                  <LinkPreview url={link} textColor={isOwn ? '#FFFFFF' : undefined} />
+                  <LinkPreview url={link} textColor={isOwn ? '#FFFFFF' : undefined} emoji={linkEmoji} />
                 </View>
               ) : null;
             })()}
@@ -489,6 +489,7 @@ export default function ChatScreen() {
         fontSize={chatSettings.fontSize}
         bubbleRadius={chatSettings.bubbleRadius}
         fontFamily={chatSettings.fontFamily}
+        linkEmoji={chatSettings.linkEmoji}
         highlighted={index === activeMatchIndex}
         onReply={startReply}
         onLongPress={openMenu}
@@ -496,7 +497,7 @@ export default function ChatScreen() {
         onImagePress={openImageViewer}
       />
     );
-  }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, startReply, handleSwipeActive, openImageViewer, parseMessage, activeMatchIndex, openMenu]);
+  }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, chatSettings.linkEmoji, startReply, handleSwipeActive, openImageViewer, parseMessage, activeMatchIndex, openMenu]);
 
   const banner = editing || replyTo;
   const menuIsOwn = menuMessage?.senderId === 'current';

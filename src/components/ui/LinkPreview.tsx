@@ -5,6 +5,7 @@ import { router } from 'expo-router';
 import { useTheme } from '../../theme';
 import { Text } from './Text';
 import { CachedImage } from './CachedImage';
+import { EmojiPattern } from './EmojiPattern';
 import { MediaViewerModal, MediaViewerSource, InlineVideoPlayer } from './MediaViewerModal';
 import { getLinkPreview, getCachedPreviewSync, LinkPreviewData } from '../../services/linkPreview';
 
@@ -28,11 +29,12 @@ interface LinkPreviewProps {
   url: string;
   onError?: () => void;
   textColor?: string;
+  emoji?: string; // decorative emoji pattern behind the link row (Telegram-style)
 }
 
 const THUMB_RADIUS = 14;
 
-export function LinkPreview({ url, onError, textColor }: LinkPreviewProps) {
+export function LinkPreview({ url, onError, textColor, emoji }: LinkPreviewProps) {
   const theme = useTheme();
   const cached = getCachedPreviewSync(url);
   const [data, setData] = useState<LinkPreviewData | null>(cached === undefined ? null : cached);
@@ -174,10 +176,17 @@ export function LinkPreview({ url, onError, textColor }: LinkPreviewProps) {
           alignItems: 'center',
           gap: 10,
           paddingLeft: 10,
+          paddingRight: emoji ? 8 : 0,
+          paddingVertical: emoji ? 6 : 0,
           borderLeftWidth: 2,
           borderLeftColor: textColor ? 'rgba(255,255,255,0.6)' : accent,
+          borderRadius: emoji ? 12 : 0,
+          overflow: 'hidden',
         }}
       >
+        {/* Decorative emoji pattern behind the row (faint, non-interactive) */}
+        {emoji ? <EmojiPattern emoji={emoji} opacity={textColor ? 0.18 : 0.1} /> : null}
+
         {data.image ? (
           <View style={{ width: 60, height: 60, borderRadius: THUMB_RADIUS, overflow: 'hidden', backgroundColor: bg }}>
             <CachedImage uri={data.image} style={{ width: '100%', height: '100%' }} resizeMode="cover" />

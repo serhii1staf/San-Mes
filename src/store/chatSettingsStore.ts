@@ -14,6 +14,7 @@ export interface ChatSettings {
   fontFamily: string; // 'system' | 'serif' | 'mono'
   localName?: string; // override display name
   bubbleRadius: number; // 12-24
+  linkEmoji?: string; // decorative emoji shown faintly in link-preview containers (Telegram-style)
 }
 
 // Special key for global/default chat settings (applies to all chats without their own overrides)

@@ -64,6 +64,7 @@ export default function ChatSettingsScreen() {
   const [bubbleRadius, setBubbleRadius] = useState(settings.bubbleRadius);
   const [fontFamily, setFontFamily] = useState(settings.fontFamily);
   const [backgroundImage, setBackgroundImage] = useState(settings.backgroundImage);
+  const [linkEmoji, setLinkEmoji] = useState(settings.linkEmoji);
 
   // Try to get participant info from entity store conversations
   const conversations = useEntityStore((s) => s.conversations);
@@ -83,7 +84,7 @@ export default function ChatSettingsScreen() {
   };
 
   const save = () => {
-    updateSettings(chatId, { localName: localName.trim() || undefined, fontSize, bubbleRadius, fontFamily, backgroundImage });
+    updateSettings(chatId, { localName: localName.trim() || undefined, fontSize, bubbleRadius, fontFamily, backgroundImage, linkEmoji });
     showToast('Сохранено', 'check');
     router.back();
   };
@@ -207,6 +208,29 @@ export default function ChatSettingsScreen() {
                   <Feather name="plus" size={14} color={theme.colors.text.secondary} />
                 </Pressable>
               </View>
+            </View>
+          </View>
+
+          {/* Link preview emoji pattern */}
+          <View style={[styles.section, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
+            <View style={{ padding: 14 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                <View style={[styles.iconCircle, { backgroundColor: theme.colors.accent.primary + '15' }]}>
+                  <Feather name="smile" size={16} color={theme.colors.accent.primary} />
+                </View>
+                <Text variant="body" style={{ flex: 1 }}>Эмодзи в превью ссылок</Text>
+                {linkEmoji ? <Text style={{ fontSize: 18 }} allowFontScaling={false}>{linkEmoji}</Text> : null}
+              </View>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingVertical: 2 }}>
+                <Pressable onPress={() => setLinkEmoji(undefined)} style={{ width: 44, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: !linkEmoji ? theme.colors.accent.primary + '20' : theme.colors.background.primary, borderWidth: 1, borderColor: !linkEmoji ? theme.colors.accent.primary : 'transparent' }}>
+                  <Feather name="slash" size={16} color={theme.colors.text.tertiary} />
+                </Pressable>
+                {['❤️','😍','🔥','⭐','🌸','😎','🎵','⚽','🎮','🍕','🚀','💎','🌙','☀️','🐱','🎁'].map((e) => (
+                  <Pressable key={e} onPress={() => setLinkEmoji(e)} style={{ width: 44, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: linkEmoji === e ? theme.colors.accent.primary + '20' : theme.colors.background.primary, borderWidth: 1, borderColor: linkEmoji === e ? theme.colors.accent.primary : 'transparent' }}>
+                    <Text style={{ fontSize: 22 }} allowFontScaling={false}>{e}</Text>
+                  </Pressable>
+                ))}
+              </ScrollView>
             </View>
           </View>
         </View>
