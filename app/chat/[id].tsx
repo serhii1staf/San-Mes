@@ -474,6 +474,12 @@ export default function ChatScreen() {
 
   const activeMatchIndex = searchMatches.length > 0 ? searchMatches[searchActiveIdx] : -1;
 
+  // Guard: ignore a new long-press while a menu is already open (prevents the
+  // app from freezing when the user rapidly long-presses / taps around).
+  const openMenu = useCallback((m: ChatMessage) => {
+    setMenuMessage((prev) => (prev ? prev : m));
+  }, []);
+
   const renderItem = useCallback(({ item, index }: { item: ChatMessage; index: number }) => {
     const m = parseMessage(item);
     return (
@@ -485,12 +491,12 @@ export default function ChatScreen() {
         fontFamily={chatSettings.fontFamily}
         highlighted={index === activeMatchIndex}
         onReply={startReply}
-        onLongPress={setMenuMessage}
+        onLongPress={openMenu}
         onSwipeActive={handleSwipeActive}
         onImagePress={openImageViewer}
       />
     );
-  }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, startReply, handleSwipeActive, openImageViewer, parseMessage, activeMatchIndex]);
+  }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, startReply, handleSwipeActive, openImageViewer, parseMessage, activeMatchIndex, openMenu]);
 
   const banner = editing || replyTo;
   const menuIsOwn = menuMessage?.senderId === 'current';
