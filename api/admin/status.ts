@@ -118,7 +118,9 @@ async function r2Usage(): Promise<{ bytes: number; objects: number; debug?: stri
       headers: { 'x-amz-content-sha256': payloadHash, 'x-amz-date': amzDate, Authorization: authorization },
     });
     if (!resp.ok) {
-      debug = `http ${resp.status}`;
+      let body = '';
+      try { body = (await resp.text()).slice(0, 200); } catch {}
+      debug = `http ${resp.status} ${body}`;
       break;
     }
     const xml = await resp.text();
