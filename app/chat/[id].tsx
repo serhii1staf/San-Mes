@@ -512,10 +512,23 @@ export default function ChatScreen() {
 
   const activeMatchIndex = searchMatches.length > 0 ? searchMatches[searchActiveIdx] : -1;
 
-  // Guard: ignore a new long-press while a menu is already open (prevents the
-  // app from freezing when the user rapidly long-presses / taps around).
+  // Guard against the freeze caused by rapid long-presses / taps while a menu is
+  // opening or closing. A short time-lock drops any repeat open within the
+  // window, and we never open a second menu while one is already shown. The lock
+  // is released a moment after the menu fully closes.
+  const menuLockRef = useRef(0);
   const openMenu = useCallback((m: ChatMessage) => {
-    setMenuMessage((prev) => (prev ? prev : m));
+    const now = Date.now();
+    if (now < menuLockRef.current) return;        // still locked from a recent open/close
+    menuLockRef.current = now + 500;               // lock the next 500ms
+    setMenuMessage((prev) => (prev ? prev : m));   // never replace an open menu
+  }, []);
+
+  const closeMenu = useCallback(() => {
+    setMenuMessage(null);
+    // Briefly keep the lock so a stray long-press during the close animation
+    // can't immediately reopen and stack another modal.
+    menuLockRef.current = Date.now() + 350;
   }, []);
 
   const renderItem = useCallback(({ item, index }: { item: ChatMessage; index: number }) => {
@@ -689,7 +702,7 @@ export default function ChatScreen() {
         bubbleTextColor={menuIsOwn ? '#FFFFFF' : theme.colors.text.primary}
         bubbleRadius={chatSettings.bubbleRadius}
         linkEmoji={chatSettings.linkEmoji}
-        onClose={() => setMenuMessage(null)}
+        onClose={closeMenu}
         onAction={handleMenuAction}
       />
 

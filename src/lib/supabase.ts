@@ -697,8 +697,13 @@ export async function getFollowCounts(userId: string): Promise<{ followers: numb
 // Permanently delete a user account and all associated data (App Store / Google Play requirement).
 export async function deleteAccount(userId: string): Promise<{ error: string | null }> {
   try {
+    // IMPORTANT: every delete goes through the service-role client (`storageClient`),
+    // which bypasses Row-Level Security. The anon client silently deletes 0 rows
+    // when RLS is enabled — that's why a "deleted" account could still log in.
+    const db = storageClient;
+
     // 1. Find the user's posts to clean their dependents and storage images.
-    const { data: posts } = await supabase.from('posts').select('id, image_url').eq('author_id', userId);
+    const { data: posts } = await db.from('posts').select('id, image_url').eq('author_id', userId);
     const postIds = (posts || []).map((p: any) => p.id);
 
     // 2. Delete images of the user's posts from storage.
@@ -712,50 +717,60 @@ export async function deleteAccount(userId: string): Promise<{ error: string | n
         }
       }
       if (files.length > 0) {
-        await storageClient.storage.from('post-images').remove(files);
+        await db.storage.from('post-images').remove(files);
       }
     } catch {}
 
     // 3. Delete likes/comments on the user's posts + reposts referencing them.
     if (postIds.length > 0) {
-      await supabase.from('likes').delete().in('post_id', postIds);
-      await supabase.from('comments').delete().in('post_id', postIds);
+      await db.from('likes').delete().in('post_id', postIds);
+      await db.from('comments').delete().in('post_id', postIds);
       for (const pid of postIds) {
-        await supabase.from('posts').delete().like('content', `::repost::${pid}%`);
+        await db.from('posts').delete().like('content', `::repost::${pid}%`);
       }
     }
 
     // 4. Delete the user's own likes, comments, follows (both directions), posts.
-    await supabase.from('likes').delete().eq('user_id', userId);
-    await supabase.from('comments').delete().eq('author_id', userId);
-    await supabase.from('follows').delete().eq('follower_id', userId);
-    await supabase.from('follows').delete().eq('following_id', userId);
-    await supabase.from('posts').delete().eq('author_id', userId);
+    await db.from('likes').delete().eq('user_id', userId);
+    await db.from('comments').delete().eq('author_id', userId);
+    await db.from('follows').delete().eq('follower_id', userId);
+    await db.from('follows').delete().eq('following_id', userId);
+    await db.from('posts').delete().eq('author_id', userId);
 
     // 5. Delete the user's messages and conversation memberships.
     //    Also delete the conversations themselves (and any remaining messages /
     //    memberships in them) so no trace of the user's chats remains.
     try {
-      const { data: myConvs } = await supabase
+      const { data: myConvs } = await db
         .from('conversation_participants')
         .select('conversation_id')
         .eq('user_id', userId);
       const convIds = (myConvs || []).map((c: any) => c.conversation_id).filter(Boolean);
-      await supabase.from('messages').delete().eq('sender_id', userId);
+      await db.from('messages').delete().eq('sender_id', userId);
       if (convIds.length > 0) {
-        await supabase.from('messages').delete().in('conversation_id', convIds);
-        await supabase.from('conversation_participants').delete().in('conversation_id', convIds);
-        await supabase.from('conversations').delete().in('id', convIds);
+        await db.from('messages').delete().in('conversation_id', convIds);
+        await db.from('conversation_participants').delete().in('conversation_id', convIds);
+        await db.from('conversations').delete().in('id', convIds);
       }
-      await supabase.from('conversation_participants').delete().eq('user_id', userId);
+      await db.from('conversation_participants').delete().eq('user_id', userId);
     } catch {}
 
     // 6. Delete mini-apps created by the user (if any).
-    try { await supabase.from('mini_apps').delete().eq('creator_id', userId); } catch {}
+    try { await db.from('mini_apps').delete().eq('creator_id', userId); } catch {}
 
     // 7. Finally delete the profile itself.
-    const { error } = await supabase.from('profiles').delete().eq('id', userId);
-    return { error: error?.message || null };
+    const { error } = await db.from('profiles').delete().eq('id', userId);
+    if (error) return { error: error.message };
+
+    // 8. VERIFY the profile is actually gone — the account must be impossible to
+    //    log back into. If the row still exists, report failure instead of a
+    //    false success.
+    const { data: stillThere } = await db.from('profiles').select('id').eq('id', userId).maybeSingle();
+    if (stillThere) {
+      return { error: 'Не удалось полностью удалить аккаунт. Попробуйте ещё раз.' };
+    }
+
+    return { error: null };
   } catch (e: any) {
     return { error: e?.message || 'Не удалось удалить аккаунт' };
   }

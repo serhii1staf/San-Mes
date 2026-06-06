@@ -228,6 +228,20 @@ export default function CommentsScreen() {
     setTimeout(() => inputRef.current?.focus(), 50);
   };
 
+  // Guard against rapid long-press stacking the menu (same fix as chat).
+  const menuLockRef = useRef(0);
+  const openCommentMenu = (c: any) => {
+    const now = Date.now();
+    if (now < menuLockRef.current) return;
+    menuLockRef.current = now + 500;
+    triggerHaptic('medium');
+    setActionComment((prev: any) => (prev ? prev : c));
+  };
+  const closeCommentMenu = () => {
+    setActionComment(null);
+    menuLockRef.current = Date.now() + 350;
+  };
+
   const formatTime = (dateStr: string) => {
     const diff = Date.now() - new Date(dateStr).getTime();
     const mins = Math.floor(diff / 60000);
@@ -352,7 +366,7 @@ export default function CommentsScreen() {
             renderItem={({ item }) => {
               const parsed = parseReply(item.content || '');
               return (
-              <Pressable onLongPress={() => { triggerHaptic('medium'); setActionComment(item); }} delayLongPress={300} style={{ flexDirection: 'row', marginBottom: 16 }}>
+              <Pressable onLongPress={() => openCommentMenu(item)} delayLongPress={300} style={{ flexDirection: 'row', marginBottom: 16 }}>
                 <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: item.profiles?.id || item.author_id } })}>
                   <Avatar emoji={item.profiles?.emoji || '😊'} size="sm" />
                 </Pressable>
@@ -376,7 +390,7 @@ export default function CommentsScreen() {
                   {(() => {
                     const link = extractFirstUrl(parsed.body);
                     return link ? (
-                      <Pressable onLongPress={() => { triggerHaptic('medium'); setActionComment(item); }} delayLongPress={300} style={{ marginTop: 6 }}>
+                      <Pressable onLongPress={() => openCommentMenu(item)} delayLongPress={300} style={{ marginTop: 6 }}>
                         <LinkPreview url={link} />
                       </Pressable>
                     ) : null;
@@ -447,7 +461,7 @@ export default function CommentsScreen() {
               displayBody={parsed.body}
               replyUser={parsed.replyUser}
               replyText={parsed.replyText}
-              onClose={() => setActionComment(null)}
+              onClose={closeCommentMenu}
               onAction={handleMenuAction}
             />
           );
