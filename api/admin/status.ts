@@ -79,10 +79,11 @@ function sha256hex(data: string): string {
 }
 
 // List objects and sum sizes + count, capped to stay fast.
-async function r2Usage(): Promise<{ bytes: number; objects: number }> {
+async function r2Usage(): Promise<{ bytes: number; objects: number; debug?: string }> {
   let bytes = 0;
   let objects = 0;
   let token: string | undefined;
+  let debug = '';
   const region = 'auto';
   const service = 's3';
 
@@ -116,10 +117,14 @@ async function r2Usage(): Promise<{ bytes: number; objects: number }> {
       method: 'GET',
       headers: { 'x-amz-content-sha256': payloadHash, 'x-amz-date': amzDate, Authorization: authorization },
     });
-    if (!resp.ok) break;
+    if (!resp.ok) {
+      debug = `http ${resp.status}`;
+      break;
+    }
     const xml = await resp.text();
 
     const sizeMatches = xml.match(/<Size>(\d+)<\/Size>/g) || [];
+    if (sizeMatches.length === 0) debug = `no-sizes len=${xml.length}`;
     for (const s of sizeMatches) {
       const n = parseInt(s.replace(/<\/?Size>/g, ''), 10);
       if (!isNaN(n)) {
@@ -135,7 +140,7 @@ async function r2Usage(): Promise<{ bytes: number; objects: number }> {
       break;
     }
   }
-  return { bytes, objects };
+  return { bytes, objects, debug };
 }
 
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
@@ -233,6 +238,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       dbLatencyMs: profiles.ms,
       storageBytes,
       storageObjects,
+      r2Debug: r2use.value?.debug || (r2use.ok ? '' : r2use.error),
     },
   });
 }
