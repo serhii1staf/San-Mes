@@ -4,24 +4,29 @@ import { accountKey } from './cacheAccount';
 /**
  * kvStore — fast key/value layer for chat data (messages, conversations).
  *
- * Uses react-native-mmkv (synchronous, native, Telegram-grade) when the native
- * module is available. Falls back gracefully to AsyncStorage + an in-memory
- * mirror when MMKV is NOT present (e.g. an OTA JS update that lands before the
- * matching native build is installed). This guarantees the app never crashes
- * because of a missing native module.
+ * NOTE: MMKV (react-native-mmkv v4 + Nitro) caused a hard native crash on launch
+ * with this Expo SDK 54 / RN 0.81 stack, so it is currently DISABLED. The layer
+ * transparently uses AsyncStorage (+ an in-memory mirror for sync reads). All
+ * functionality — chat persistence, per-account isolation — is preserved; we
+ * only lose MMKV's synchronous-read speed. Re-enable later once a compatible
+ * MMKV/Nitro combination is verified in a dedicated build.
  *
  * Every key is namespaced per account via accountKey(), so one account never
  * reads another account's chat data.
  */
 
+// Hard kill-switch. Keep false until MMKV is verified safe on this stack.
+const USE_MMKV = false;
+
 let mmkv: any = null;
-try {
-  // Lazy require so a missing native module degrades gracefully instead of crashing.
-  const { MMKV } = require('react-native-mmkv');
-  mmkv = new MMKV({ id: 'san-kv' });
-} catch (e) {
-  mmkv = null;
-  console.warn('[kvStore] MMKV native module unavailable — using AsyncStorage fallback.');
+if (USE_MMKV) {
+  try {
+    const { MMKV } = require('react-native-mmkv');
+    mmkv = new MMKV({ id: 'san-kv' });
+  } catch (e) {
+    mmkv = null;
+    console.warn('[kvStore] MMKV unavailable — using AsyncStorage fallback.');
+  }
 }
 
 export function isMMKVAvailable(): boolean {
