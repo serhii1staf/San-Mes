@@ -1,13 +1,15 @@
 import type { IncomingMessage, ServerResponse } from 'http';
+import crypto from 'crypto';
 
 // Admin "services status" endpoint. Returns a live health snapshot of the
 // backing services (Supabase DB, Cloudflare R2 media domain, Vercel runtime)
-// plus lightweight DB counters. Protected by the same admin password used in
-// the app's admin panel, sent via the `x-admin-key` header.
+// plus lightweight usage metrics with known limits (so the UI can draw bars):
+//   - R2 storage used vs the 10 GB free tier (measured via S3 ListObjects).
+//   - DB row counts (profiles / posts / comments).
+// Protected by the admin password via the `x-admin-key` header.
 //
-// Design: each check has its own short timeout and runs in parallel, so the
-// endpoint stays fast and never blocks on a slow dependency. No heavy queries
-// (only HEAD/count requests) — the database is barely touched.
+// Each check has its own timeout and they run in parallel, so the endpoint
+// stays fast. Heavy/streaming work is avoided; the database is barely touched.
 
 const ADMIN_PASSWORD = 'V7k!Qm9@Lp2#xR8$Tw6ZcD4%yN';
 
@@ -15,6 +17,15 @@ const SUPABASE_URL = 'https://ycwadqglcykcpucembjn.supabase.co';
 const SUPABASE_ANON_KEY =
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inljd2FkcWdsY3lrY3B1Y2VtYmpuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4Mjc2OTYsImV4cCI6MjA5NTQwMzY5Nn0.ZUr1YfN6pBp_AaUC1pZLKGApwgEXEiVw_w6w-yQjE_U';
 const R2_PUBLIC_BASE = 'https://media.san-m-app.com';
+
+// R2 S3 credentials (Object Read & Write) — used to measure storage usage.
+const R2_ACCOUNT_ID = '8e0d53f0faad2f48870d0a570dadd03f';
+const R2_ACCESS_KEY_ID = '648310b34064b4fb20f96585e25ced2f';
+const R2_SECRET_ACCESS_KEY = '6bb6d3c4bdd20d97afe13610e89c5817e2f1167905f047ef29c59ed607d2e577';
+const R2_BUCKET = 'san';
+const R2_HOST = `${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`;
+const R2_FREE_BYTES = 10 * 1024 * 1024 * 1024; // 10 GB free tier
+const SUPABASE_DB_FREE_BYTES = 500 * 1024 * 1024; // 500 MB free tier (Postgres)
 
 const TIMEOUT_MS = 4000;
 
@@ -58,6 +69,75 @@ async function tableCount(table: string): Promise<number> {
   return total ? parseInt(total, 10) : 0;
 }
 
+// ---- R2 storage usage via S3 ListObjectsV2 (SigV4 signed) ------------------
+
+function hmac(key: crypto.BinaryLike, data: string): Buffer {
+  return crypto.createHmac('sha256', key).update(data, 'utf8').digest();
+}
+function sha256hex(data: string): string {
+  return crypto.createHash('sha256').update(data, 'utf8').digest('hex');
+}
+
+// List objects and sum sizes + count, capped to stay fast.
+async function r2Usage(): Promise<{ bytes: number; objects: number }> {
+  let bytes = 0;
+  let objects = 0;
+  let token: string | undefined;
+  const region = 'auto';
+  const service = 's3';
+
+  for (let page = 0; page < 20; page++) {
+    const now = new Date();
+    const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, '');
+    const dateStamp = amzDate.slice(0, 8);
+
+    const params: Record<string, string> = { 'list-type': '2', 'max-keys': '1000' };
+    if (token) params['continuation-token'] = token;
+    const canonicalQuery = Object.keys(params)
+      .sort()
+      .map((k) => `${encodeURIComponent(k)}=${encodeURIComponent(params[k])}`)
+      .join('&');
+
+    const payloadHash = sha256hex('');
+    const canonicalHeaders = `host:${R2_HOST}\nx-amz-content-sha256:${payloadHash}\nx-amz-date:${amzDate}\n`;
+    const signedHeaders = 'host;x-amz-content-sha256;x-amz-date';
+    const canonicalRequest = ['GET', `/${R2_BUCKET}`, canonicalQuery, canonicalHeaders, signedHeaders, payloadHash].join('\n');
+    const scope = `${dateStamp}/${region}/${service}/aws4_request`;
+    const stringToSign = ['AWS4-HMAC-SHA256', amzDate, scope, sha256hex(canonicalRequest)].join('\n');
+    const kDate = hmac('AWS4' + R2_SECRET_ACCESS_KEY, dateStamp);
+    const kRegion = hmac(kDate, region);
+    const kService = hmac(kRegion, service);
+    const kSigning = hmac(kService, 'aws4_request');
+    const signature = crypto.createHmac('sha256', kSigning).update(stringToSign, 'utf8').digest('hex');
+    const authorization = `AWS4-HMAC-SHA256 Credential=${R2_ACCESS_KEY_ID}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
+
+    const url = `https://${R2_HOST}/${R2_BUCKET}?${canonicalQuery}`;
+    const resp = await fetchT(url, {
+      method: 'GET',
+      headers: { 'x-amz-content-sha256': payloadHash, 'x-amz-date': amzDate, Authorization: authorization },
+    });
+    if (!resp.ok) break;
+    const xml = await resp.text();
+
+    const sizeMatches = xml.match(/<Size>(\d+)<\/Size>/g) || [];
+    for (const s of sizeMatches) {
+      const n = parseInt(s.replace(/<\/?Size>/g, ''), 10);
+      if (!isNaN(n)) {
+        bytes += n;
+        objects += 1;
+      }
+    }
+    const truncated = /<IsTruncated>true<\/IsTruncated>/.test(xml);
+    const tokMatch = xml.match(/<NextContinuationToken>([^<]+)<\/NextContinuationToken>/);
+    if (truncated && tokMatch) {
+      token = tokMatch[1];
+    } else {
+      break;
+    }
+  }
+  return { bytes, objects };
+}
+
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
   if (req.method === 'OPTIONS') {
     res.statusCode = 204;
@@ -75,16 +155,19 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   }
 
   // Run all checks in parallel.
-  const [profiles, posts, comments, r2, vercelRegion] = await Promise.all([
+  const [profiles, posts, comments, r2, r2use, vercelRegion] = await Promise.all([
     timed(() => tableCount('profiles')),
     timed(() => tableCount('posts')),
     timed(() => tableCount('comments')),
     timed(() => fetchT(`${R2_PUBLIC_BASE}/test/hello.txt`, { method: 'GET' }).then((r) => r.ok)),
+    timed(() => r2Usage()),
     Promise.resolve(process.env.VERCEL_REGION || 'unknown'),
   ]);
 
   // Supabase is healthy if the count query (a real DB read) succeeded.
   const dbOk = profiles.ok;
+  const storageBytes = r2use.value?.bytes ?? 0;
+  const storageObjects = r2use.value?.objects ?? 0;
 
   const services = [
     {
@@ -110,14 +193,46 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     },
   ];
 
+  // Usage bars: value/limit pairs the UI can render as progress bars.
+  const profileCount = profiles.value ?? 0;
+  const postCount = posts.value ?? 0;
+  const commentCount = comments.value ?? 0;
+  // Rough DB size estimate: rows × avg bytes/row (no server-side stats on the
+  // free tier, so we approximate to drive the bar — clearly labelled as est.).
+  const estDbBytes = profileCount * 600 + postCount * 1200 + commentCount * 400;
+
+  const usage = [
+    {
+      key: 'r2_storage',
+      label: 'Хранилище R2 (медиа)',
+      used: storageBytes,
+      limit: R2_FREE_BYTES,
+      unit: 'bytes',
+      extra: `${storageObjects} файлов`,
+      measured: r2use.ok,
+    },
+    {
+      key: 'db_size',
+      label: 'База данных (оценка)',
+      used: estDbBytes,
+      limit: SUPABASE_DB_FREE_BYTES,
+      unit: 'bytes',
+      extra: `${profileCount + postCount + commentCount} строк`,
+      measured: false,
+    },
+  ];
+
   send(res, 200, {
     generatedAt: new Date().toISOString(),
     services,
+    usage,
     metrics: {
       profiles: profiles.value ?? null,
       posts: posts.value ?? null,
       comments: comments.value ?? null,
       dbLatencyMs: profiles.ms,
+      storageBytes,
+      storageObjects,
     },
   });
 }

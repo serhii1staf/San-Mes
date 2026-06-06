@@ -22,10 +22,20 @@ interface ServiceStatus {
   latencyMs: number;
   detail: string;
 }
+interface UsageItem {
+  key: string;
+  label: string;
+  used: number;
+  limit: number;
+  unit: string;
+  extra?: string;
+  measured: boolean;
+}
 interface StatusResponse {
   generatedAt: string;
   services: ServiceStatus[];
-  metrics: { profiles: number | null; posts: number | null; comments: number | null; dbLatencyMs: number };
+  usage?: UsageItem[];
+  metrics: { profiles: number | null; posts: number | null; comments: number | null; dbLatencyMs: number; storageBytes?: number; storageObjects?: number };
 }
 
 const BADGES = [
@@ -330,6 +340,16 @@ export default function AdminScreen() {
               </View>
             ))}
 
+            {/* Usage bars */}
+            {statusData.usage && statusData.usage.length > 0 && (
+              <>
+                <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginBottom: 8, marginTop: 16 }}>НАГРУЗКА И МЕСТО</Text>
+                {statusData.usage.map((u) => (
+                  <UsageBar key={u.key} theme={theme} item={u} />
+                ))}
+              </>
+            )}
+
             {/* Metrics */}
             <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginBottom: 8, marginTop: 16 }}>БАЗА ДАННЫХ</Text>
             <View style={{ flexDirection: 'row', gap: 8 }}>
@@ -407,6 +427,35 @@ function MetricCard({ theme, label, value }: { theme: any; label: string; value:
     <View style={{ flex: 1, backgroundColor: theme.colors.background.elevated, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: theme.colors.border.light, alignItems: 'center' }}>
       <Text variant="subheading" weight="bold" style={{ fontSize: 22 }}>{value ?? '—'}</Text>
       <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginTop: 2 }}>{label}</Text>
+    </View>
+  );
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} Б`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} КБ`;
+  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} МБ`;
+  return `${(n / 1024 / 1024 / 1024).toFixed(2)} ГБ`;
+}
+
+function UsageBar({ theme, item }: { theme: any; item: { label: string; used: number; limit: number; unit: string; extra?: string; measured: boolean } }) {
+  const ratio = item.limit > 0 ? Math.min(item.used / item.limit, 1) : 0;
+  const pct = Math.round(ratio * 100);
+  const color = ratio > 0.9 ? '#EF4444' : ratio > 0.7 ? '#F59E0B' : '#10B981';
+  const fmt = item.unit === 'bytes' ? formatBytes : (x: number) => String(x);
+  return (
+    <View style={{ backgroundColor: theme.colors.background.elevated, borderRadius: 16, padding: 14, marginBottom: 8, borderWidth: 1, borderColor: theme.colors.border.light }}>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+        <Text variant="caption" weight="semibold" numberOfLines={1} style={{ flex: 1 }}>{item.label}{!item.measured ? ' ~' : ''}</Text>
+        <Text variant="caption" weight="semibold" color={color}>{pct}%</Text>
+      </View>
+      <View style={{ height: 8, borderRadius: 4, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)', overflow: 'hidden' }}>
+        <View style={{ width: `${pct}%`, height: '100%', backgroundColor: color, borderRadius: 4 }} />
+      </View>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 }}>
+        <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{fmt(item.used)} из {fmt(item.limit)}</Text>
+        {item.extra ? <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{item.extra}</Text> : null}
+      </View>
     </View>
   );
 }
