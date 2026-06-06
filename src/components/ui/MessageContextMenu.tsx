@@ -36,16 +36,22 @@ export function MessageContextMenu({ visible, message, isOwn, bubbleColor, bubbl
   const fade = useRef(new Animated.Value(0)).current;
   // Guard so rapid taps can't start overlapping dismiss animations (which froze the app)
   const dismissing = useRef(false);
+  const animatingIn = useRef(false);
 
   useEffect(() => {
     if (visible) {
+      // Ignore a re-trigger while the open animation is already running.
+      if (animatingIn.current) return;
+      animatingIn.current = true;
       dismissing.current = false;
       slideAnim.setValue(40);
       fade.setValue(0);
       Animated.parallel([
         Animated.timing(slideAnim, { toValue: 0, duration: 240, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
         Animated.timing(fade, { toValue: 1, duration: 180, easing: Easing.out(Easing.quad), useNativeDriver: true }),
-      ]).start();
+      ]).start(() => { animatingIn.current = false; });
+    } else {
+      animatingIn.current = false;
     }
   }, [visible]);
 

@@ -571,22 +571,25 @@ export default function ChatScreen() {
   const activeMatchIndex = searchMatches.length > 0 ? searchMatches[searchActiveIdx] : -1;
 
   // Guard against the freeze caused by rapid long-presses / taps while a menu is
-  // opening or closing. A short time-lock drops any repeat open within the
-  // window, and we never open a second menu while one is already shown. The lock
-  // is released a moment after the menu fully closes.
+  // opening or closing. A time-lock drops any repeat open within the window, we
+  // never open a second menu while one is shown, and we defer the state update
+  // out of the gesture callback with requestAnimationFrame so the JS thread is
+  // never hit by a burst of synchronous opens.
   const menuLockRef = useRef(0);
   const openMenu = useCallback((m: ChatMessage) => {
     const now = Date.now();
     if (now < menuLockRef.current) return;        // still locked from a recent open/close
-    menuLockRef.current = now + 500;               // lock the next 500ms
-    setMenuMessage((prev) => (prev ? prev : m));   // never replace an open menu
+    menuLockRef.current = now + 600;               // lock the next 600ms
+    requestAnimationFrame(() => {
+      setMenuMessage((prev) => (prev ? prev : m));  // never replace an open menu
+    });
   }, []);
 
   const closeMenu = useCallback(() => {
     setMenuMessage(null);
-    // Briefly keep the lock so a stray long-press during the close animation
+    // Keep the lock through the close animation so a stray long-press during it
     // can't immediately reopen and stack another modal.
-    menuLockRef.current = Date.now() + 350;
+    menuLockRef.current = Date.now() + 450;
   }, []);
 
   const renderItem = useCallback(({ item, index }: { item: ChatMessage; index: number }) => {

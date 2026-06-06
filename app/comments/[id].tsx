@@ -180,8 +180,11 @@ export default function CommentsScreen() {
     }
 
     // Embed a reply quote when replying to a comment (round-trips via marker).
+    // For GIF comments, quote the word "GIF" instead of the raw ::gif:: marker.
+    const quotedBody = parseReply(replyTo?.content || '').body;
+    const quotedSnippet = parseGif(quotedBody) ? 'GIF' : quotedBody;
     const sendText = replyTo
-      ? encodeReply(replyTo.profiles?.username || 'user', parseReply(replyTo.content || '').body, body)
+      ? encodeReply(replyTo.profiles?.username || 'user', quotedSnippet, body)
       : body;
     setText('');
     setReplyTo(null);
