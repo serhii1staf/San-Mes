@@ -17,6 +17,7 @@ import { extractFirstUrl } from '../../src/services/linkPreview';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { UserBadge } from '../../src/components/ui/UserBadge';
 import { MessageContextMenu, MessageAction } from '../../src/components/ui/MessageContextMenu';
+import { ChatInputBar, ChatInputBarHandle } from '../../src/components/chat/ChatInputBar';
 import { useChatStore, useEntityStore, useConnectivityStore } from '../../src/store';
 import { useChatSettingsStore, GLOBAL_CHAT_SETTINGS_KEY, DEFAULT_CHAT_SETTINGS } from '../../src/store/chatSettingsStore';
 import { supabase, uploadChatImage } from '../../src/lib/supabase';
@@ -131,7 +132,6 @@ export default function ChatScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const { id, participantId: paramParticipantId } = useLocalSearchParams<{ id: string; participantId?: string }>();
-  const [inputText, setInputText] = useState('');
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
   const [editing, setEditing] = useState<ChatMessage | null>(null);
   const [menuMessage, setMenuMessage] = useState<ChatMessage | null>(null);
@@ -145,6 +145,7 @@ export default function ChatScreen() {
   const [searchActiveIdx, setSearchActiveIdx] = useState(0);
   const { messages: storeMessages, setMessages, addMessage } = useChatStore();
   const flatListRef = useRef<FlatList>(null);
+  const inputRef = useRef<ChatInputBarHandle>(null);
 
   const { progress, height: keyboardHeight } = useReanimatedKeyboardAnimation();
 
@@ -355,7 +356,7 @@ export default function ChatScreen() {
     } else if (action === 'edit') {
       setReplyTo(null);
       setEditing(message);
-      setInputText(message.text);
+      inputRef.current?.setText(message.text);
       // Load existing photos so they can be removed/replaced while editing
       setPendingImages(message.imageUrls || []);
     } else if (action === 'delete') {
@@ -372,12 +373,11 @@ export default function ChatScreen() {
     }
   }, [id, storeMessages, setMessages, startReply]);
 
-  const handleSend = async () => {
+  const handleSend = async (rawText: string) => {
     const hasImages = pendingImages.length > 0;
-    if ((!inputText.trim() && !hasImages) || !id) return;
+    if ((!rawText.trim() && !hasImages) || !id) return;
     triggerHaptic('medium');
-    const text = inputText.trim();
-    setInputText('');
+    const text = rawText.trim();
 
     if (editing) {
       // Re-upload any newly added local images (those that aren't already remote URLs)
@@ -566,7 +566,7 @@ export default function ChatScreen() {
               <Text variant="caption" weight="semibold" color={theme.colors.accent.primary} style={{ fontSize: 12 }}>{editing ? 'Редактирование' : 'Ответ на сообщение'}</Text>
               <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 12 }}>{banner.text || (banner.imageUrls && banner.imageUrls.length > 0 ? `📷 ${banner.imageUrls.length > 1 ? banner.imageUrls.length + ' фото' : 'Фото'}` : '')}</Text>
             </View>
-            <Pressable onPress={() => { setReplyTo(null); setEditing(null); setInputText(''); }} hitSlop={8}>
+            <Pressable onPress={() => { setReplyTo(null); setEditing(null); inputRef.current?.clear(); }} hitSlop={8}>
               <Feather name="x" size={18} color={theme.colors.text.tertiary} />
             </Pressable>
           </View>
@@ -586,24 +586,14 @@ export default function ChatScreen() {
           </View>
         )}
 
-        <Reanimated.View style={[{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: 8 }, inputRowStyle]}>
-          <Pressable onPress={pickImages} style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: theme.colors.background.elevated, borderWidth: 1, borderColor: theme.colors.border.light, alignItems: 'center', justifyContent: 'center', marginRight: 8 }}>
-            <Feather name="image" size={20} color={theme.colors.accent.primary} />
-          </Pressable>
-          <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 22, paddingHorizontal: 14, minHeight: 44, borderWidth: 1, borderColor: theme.colors.border.light }}>
-            <TextInput
-              value={inputText}
-              onChangeText={setInputText}
-              placeholder="Сообщение..."
-              placeholderTextColor={theme.colors.text.tertiary}
-              style={{ flex: 1, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular, maxHeight: 100, paddingVertical: Platform.OS === 'ios' ? 10 : 6 }}
-              multiline
-            />
-          </View>
-          <Pressable onPress={handleSend} style={{ marginLeft: 8, width: 44, height: 44, borderRadius: 22, backgroundColor: (inputText.trim() || pendingImages.length > 0) ? theme.colors.accent.primary : theme.colors.background.elevated, alignItems: 'center', justifyContent: 'center' }}>
-            <Feather name={editing ? 'check' : 'send'} size={18} color={(inputText.trim() || pendingImages.length > 0) ? '#FFFFFF' : theme.colors.text.tertiary} />
-          </Pressable>
-        </Reanimated.View>
+        <ChatInputBar
+          ref={inputRef}
+          isEditing={!!editing}
+          hasPendingImages={pendingImages.length > 0}
+          onSend={handleSend}
+          onPickImages={pickImages}
+          inputRowStyle={inputRowStyle}
+        />
       </KeyboardStickyView>
       )}
 

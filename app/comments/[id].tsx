@@ -14,6 +14,7 @@ import { FormattedText } from '../../src/components/ui/FormattedText';
 import { LinkPreview } from '../../src/components/ui/LinkPreview';
 import { extractFirstUrl } from '../../src/services/linkPreview';
 import { CachedImage } from '../../src/components/ui/CachedImage';
+import { CommentContextMenu, CommentAction } from '../../src/components/ui/CommentContextMenu';
 import { useAuthStore, useConnectivityStore } from '../../src/store';
 import { getComments, createComment, isRepost, parseImageUrls } from '../../src/lib/supabase';
 import { triggerHaptic } from '../../src/utils/haptics';
@@ -21,6 +22,20 @@ import { playSendSound } from '../../src/utils/sounds';
 import { showToast } from '../../src/store/toastStore';
 
 const REPORT_CATS = ['Спам', 'Насилие', 'Ложная информация', 'Мошенничество', 'Оскорбления', 'Другое'];
+
+// Reply quoting without a schema change: a reply comment is stored as
+//   ::re::<username>|<quoted snippet>::<actual text>
+// We parse it back out on render to show a Telegram-style quote bar.
+const REPLY_RE = /^::re::([^|]*)\|([^:]*(?::(?!:)[^:]*)*)::/;
+function encodeReply(username: string, snippet: string, body: string): string {
+  const safeSnippet = snippet.replace(/::/g, ': ').slice(0, 120);
+  return `::re::${username}|${safeSnippet}::${body}`;
+}
+function parseReply(content: string): { replyUser?: string; replyText?: string; body: string } {
+  const m = content.match(REPLY_RE);
+  if (!m) return { body: content };
+  return { replyUser: m[1], replyText: m[2], body: content.slice(m[0].length) };
+}
 
 export default function CommentsScreen() {
   const theme = useTheme();
@@ -110,9 +125,11 @@ export default function CommentsScreen() {
   const handleSend = async () => {
     if (!text.trim() || !user?.id || !postId) return;
     playSendSound();
-    // Prepend a @mention when replying to a comment.
-    const replyPrefix = replyTo?.profiles?.username ? `@${replyTo.profiles.username} ` : '';
-    const sendText = (replyPrefix + text.trim()).trim();
+    // Embed a reply quote when replying to a comment (round-trips via marker).
+    const body = text.trim();
+    const sendText = replyTo
+      ? encodeReply(replyTo.profiles?.username || 'user', parseReply(replyTo.content || '').body, body)
+      : body;
     setText('');
     setReplyTo(null);
     setIsSending(true);
@@ -252,7 +269,9 @@ export default function CommentsScreen() {
                 <Text variant="body" color={theme.colors.text.tertiary} style={{ marginTop: 8 }}>Пока нет комментариев</Text>
               </View>
             }
-            renderItem={({ item }) => (
+            renderItem={({ item }) => {
+              const parsed = parseReply(item.content || '');
+              return (
               <Pressable onLongPress={() => { triggerHaptic('medium'); setActionComment(item); }} delayLongPress={300} style={{ flexDirection: 'row', marginBottom: 16 }}>
                 <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: item.profiles?.id || item.author_id } })}>
                   <Avatar emoji={item.profiles?.emoji || '😊'} size="sm" />
@@ -264,9 +283,18 @@ export default function CommentsScreen() {
                     {item.profiles?.badge && <UserBadge badge={item.profiles.badge} size="sm" />}
                     <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ marginLeft: 4, flexShrink: 0 }}>{formatTime(item.created_at)}</Text>
                   </View>
-                  <FormattedText style={{ marginTop: 3, fontSize: 14 }}>{item.content}</FormattedText>
+                  {/* Quoted comment this one replies to */}
+                  {parsed.replyUser ? (
+                    <View style={{ flexDirection: 'row', marginTop: 4, paddingLeft: 8, borderLeftWidth: 2, borderLeftColor: theme.colors.accent.primary }}>
+                      <View style={{ flex: 1 }}>
+                        <Text variant="caption" weight="semibold" color={theme.colors.accent.primary} numberOfLines={1} style={{ fontSize: 11 }}>@{parsed.replyUser}</Text>
+                        {parsed.replyText ? <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 11 }}>{parsed.replyText}</Text> : null}
+                      </View>
+                    </View>
+                  ) : null}
+                  <FormattedText style={{ marginTop: 3, fontSize: 14 }}>{parsed.body}</FormattedText>
                   {(() => {
-                    const link = extractFirstUrl(item.content);
+                    const link = extractFirstUrl(parsed.body);
                     return link ? <View style={{ marginTop: 6 }}><LinkPreview url={link} /></View> : null;
                   })()}
                   {/* Reply action */}
@@ -275,7 +303,8 @@ export default function CommentsScreen() {
                   </Pressable>
                 </View>
               </Pressable>
-            )}
+              );
+            }}
           />
         )}
 
@@ -286,7 +315,7 @@ export default function CommentsScreen() {
               <View style={{ width: 3, height: 30, borderRadius: 2, backgroundColor: theme.colors.accent.primary, marginRight: 8 }} />
               <View style={{ flex: 1 }}>
                 <Text variant="caption" weight="semibold" color={theme.colors.accent.primary} numberOfLines={1} style={{ fontSize: 12 }}>Ответ @{replyTo.profiles?.username || 'user'}</Text>
-                <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 11 }}>{replyTo.content}</Text>
+                <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 11 }}>{parseReply(replyTo.content || '').body}</Text>
               </View>
               <Pressable onPress={() => setReplyTo(null)} hitSlop={8} style={{ padding: 4 }}>
                 <Feather name="x" size={18} color={theme.colors.text.tertiary} />
@@ -311,29 +340,19 @@ export default function CommentsScreen() {
           </Reanimated.View>
         </KeyboardStickyView>
 
-        {/* Comment action sheet (long-press) */}
-        <Modal visible={!!actionComment} transparent animationType="fade" onRequestClose={() => setActionComment(null)}>
-          <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }} onPress={() => setActionComment(null)}>
-            <View style={{ margin: 8, backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF', borderRadius: 24, overflow: 'hidden' }}>
-              <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 6 }}>
-                <View style={{ width: 40, height: 5, borderRadius: 3, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)' }} />
-              </View>
-              <Pressable onPress={() => startReply(actionComment)} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 20 }}>
-                <View style={{ width: 34, height: 34, borderRadius: 10, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)', alignItems: 'center', justifyContent: 'center' }}>
-                  <Feather name="corner-up-left" size={17} color={theme.colors.text.primary} />
-                </View>
-                <Text variant="body" style={{ marginLeft: 14 }}>Ответить</Text>
-              </Pressable>
-              <Pressable onPress={() => { const c = actionComment; setActionComment(null); setTimeout(() => setReportComment(c), 200); }} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 20 }}>
-                <View style={{ width: 34, height: 34, borderRadius: 10, backgroundColor: '#FF3B3010', alignItems: 'center', justifyContent: 'center' }}>
-                  <Feather name="flag" size={17} color="#FF3B30" />
-                </View>
-                <Text variant="body" color="#FF3B30" style={{ marginLeft: 14 }}>Пожаловаться</Text>
-              </Pressable>
-              <View style={{ height: 8 }} />
-            </View>
-          </Pressable>
-        </Modal>
+        {/* Comment long-press menu — smooth slide-up (matches chat/feed) */}
+        <CommentContextMenu
+          visible={!!actionComment}
+          comment={actionComment}
+          onClose={() => setActionComment(null)}
+          onAction={(action: CommentAction, c: any) => {
+            if (action === 'reply') {
+              startReply(c);
+            } else if (action === 'report') {
+              setTimeout(() => setReportComment(c), 220);
+            }
+          }}
+        />
 
         {/* Report categories */}
         <Modal visible={!!reportComment} transparent animationType="fade" onRequestClose={() => setReportComment(null)}>

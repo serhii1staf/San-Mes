@@ -14,11 +14,12 @@ interface EmojiPatternProps {
   seed?: string;
 }
 
-// Fixed, uniform-size emoji on the right side. Small count keeps it cheap.
+// Fixed, uniform-size emoji on the right side. Small count + small size keeps it
+// cheap and prevents clipping inside thin link rows.
 const SLOTS = [
-  { top: 2, right: 8 },
-  { top: 26, right: 30 },
-  { top: 14, right: 54 },
+  { top: 4, right: 8 },
+  { top: 22, right: 26 },
+  { top: 13, right: 46 },
 ];
 
 export const EmojiPattern = memo(function EmojiPattern({ emoji, opacity = 0.14 }: EmojiPatternProps) {
@@ -34,8 +35,8 @@ export const EmojiPattern = memo(function EmojiPattern({ emoji, opacity = 0.14 }
             position: 'absolute',
             top: p.top,
             right: p.right,
-            fontSize: 22,
-            lineHeight: 28,
+            fontSize: 16,
+            lineHeight: 20,
             opacity,
           }}
         >
