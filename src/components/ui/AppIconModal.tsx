@@ -96,8 +96,8 @@ export function AppIconModal({ visible, onClose }: AppIconModalProps) {
                   const selected = (icon.name ?? null) === (current ?? null);
                   const isApplying = applying === (icon.name ?? 'default');
                   return (
-                    <Pressable key={icon.label} onPress={() => handleSelect(icon)} style={{ width: '31%', alignItems: 'center', marginBottom: 18 }}>
-                      <View style={{ width: '100%', aspectRatio: 1, borderRadius: 18, overflow: 'hidden', borderWidth: selected ? 2.5 : 1, borderColor: selected ? theme.colors.accent.primary : theme.colors.border.light }}>
+                    <Pressable key={icon.label} onPress={() => handleSelect(icon)} style={{ width: '48%', alignItems: 'center', marginBottom: 16 }}>
+                      <View style={{ width: '100%', aspectRatio: 1, borderRadius: 28, overflow: 'hidden', borderWidth: selected ? 3 : 1, borderColor: selected ? theme.colors.accent.primary : theme.colors.border.light }}>
                         <Image source={icon.source} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
                         {isApplying && (
                           <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.35)', alignItems: 'center', justifyContent: 'center' }}>
@@ -105,14 +105,11 @@ export function AppIconModal({ visible, onClose }: AppIconModalProps) {
                           </View>
                         )}
                         {selected && !isApplying && (
-                          <View style={{ position: 'absolute', top: 6, right: 6, width: 22, height: 22, borderRadius: 11, backgroundColor: theme.colors.accent.primary, alignItems: 'center', justifyContent: 'center' }}>
-                            <Feather name="check" size={13} color="#FFF" />
+                          <View style={{ position: 'absolute', top: 8, right: 8, width: 26, height: 26, borderRadius: 13, backgroundColor: theme.colors.accent.primary, alignItems: 'center', justifyContent: 'center' }}>
+                            <Feather name="check" size={15} color="#FFF" />
                           </View>
                         )}
                       </View>
-                      <Text variant="caption" weight={selected ? 'semibold' : 'regular'} color={selected ? theme.colors.accent.primary : theme.colors.text.secondary} style={{ marginTop: 6 }} numberOfLines={1}>
-                        {icon.label}
-                      </Text>
                     </Pressable>
                   );
                 })}

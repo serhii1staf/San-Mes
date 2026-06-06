@@ -162,26 +162,6 @@ export default function SettingsScreen() {
             onPress={() => router.push('/notifications')}
           />
           <SettingsRow
-            icon="sun"
-            label="Внешний вид"
-            onPress={() => router.push('/settings/appearance')}
-          />
-          <SettingsRow
-            icon="type"
-            label="Шрифты"
-            onPress={() => router.push('/settings/fonts' as any)}
-          />
-          <SettingsRow
-            icon="grid"
-            label="Иконка приложения"
-            onPress={() => setIconModalVisible(true)}
-          />
-          <SettingsRow
-            icon="layout"
-            label="Виджет"
-            onPress={() => router.push('/settings/widget' as any)}
-          />
-          <SettingsRow
             icon="database"
             label="Данные и память"
             onPress={() => router.push('/settings/storage')}
@@ -212,6 +192,37 @@ export default function SettingsScreen() {
                 thumbColor="#FFFFFF"
               />
             }
+          />
+        </View>
+
+        {/* Оформление */}
+        <View style={sectionTitleStyle}>
+          <Text variant="body" weight="semibold" color={theme.colors.text.secondary}>
+            Оформление
+          </Text>
+        </View>
+        <View style={sectionCardStyle}>
+          <SettingsRow
+            icon="sun"
+            label="Внешний вид"
+            onPress={() => router.push('/settings/appearance')}
+            isFirst
+          />
+          <SettingsRow
+            icon="type"
+            label="Шрифты"
+            onPress={() => router.push('/settings/fonts' as any)}
+          />
+          <SettingsRow
+            icon="grid"
+            label="Иконка приложения"
+            onPress={() => setIconModalVisible(true)}
+          />
+          <SettingsRow
+            icon="layout"
+            label="Виджет"
+            onPress={() => router.push('/settings/widget' as any)}
+            isLast
           />
         </View>
 
