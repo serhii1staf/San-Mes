@@ -49,7 +49,7 @@ export default function WelcomeScreen() {
       {/* Help button top-right */}
       <View style={{ flexDirection: 'row', justifyContent: 'flex-end', paddingTop: 8 }}>
         <Pressable
-          onPress={() => Linking.openURL('https://san-m-app.com/help').catch(() => {})}
+          onPress={() => Linking.openURL('https://serhii1staf.github.io/San-Mes/help.html').catch(() => {})}
           style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: cardBg, borderWidth: 1, borderColor: cardBorder, alignItems: 'center', justifyContent: 'center' }}
         >
           <Feather name="help-circle" size={20} color={theme.colors.text.secondary} />
@@ -95,7 +95,7 @@ export default function WelcomeScreen() {
             weight="semibold"
             color={theme.colors.text.secondary}
             style={{ fontSize: 12 }}
-            onPress={() => Linking.openURL('https://san-m-app.com/terms').catch(() => {})}
+            onPress={() => Linking.openURL('https://serhii1staf.github.io/San-Mes/terms.html').catch(() => {})}
           >
             Политику использования
           </Text>{' '}
@@ -105,7 +105,7 @@ export default function WelcomeScreen() {
             weight="semibold"
             color={theme.colors.text.secondary}
             style={{ fontSize: 12 }}
-            onPress={() => Linking.openURL('https://san-m-app.com/privacy').catch(() => {})}
+            onPress={() => Linking.openURL('https://serhii1staf.github.io/San-Mes/privacy.html').catch(() => {})}
           >
             Политику конфиденциальности
           </Text>

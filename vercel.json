@@ -3,9 +3,6 @@
   "outputDirectory": ".",
   "rewrites": [
     { "source": "/.well-known/apple-app-site-association", "destination": "/api/.well-known/apple-app-site-association" },
-    { "source": "/privacy", "destination": "/api/legal" },
-    { "source": "/terms", "destination": "/api/legal" },
-    { "source": "/help", "destination": "/api/legal" },
     { "source": "/", "destination": "/api/index" },
     { "source": "/post/:id", "destination": "/api/index" },
     { "source": "/profile/:id", "destination": "/api/index" },
