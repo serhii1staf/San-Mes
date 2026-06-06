@@ -44,7 +44,7 @@ async function sbGet(path: string): Promise<any[] | null> {
 
 async function fetchPost(id: string) {
   const rows = await sbGet(
-    `posts?id=eq.${encodeURIComponent(id)}&select=id,content,image_url,created_at,likes_count,comments_count,author_id,profiles:author_id(username,display_name,emoji,is_verified)&limit=1`
+    `posts?id=eq.${encodeURIComponent(id)}&select=id,content,image_url,created_at,likes_count,comments_count,author_id,profiles:author_id(username,display_name,emoji,is_verified,banner_url)&limit=1`
   );
   return rows && rows[0] ? rows[0] : null;
 }
@@ -61,7 +61,7 @@ async function fetchProfile(id: string) {
 }
 
 const VERIFIED_SVG =
-  '<svg viewBox="0 0 24 24" width="20" height="20" style="flex:0 0 auto" aria-label="verified"><path fill="#3DA5F4" d="M12 1.5l2.39 1.64 2.9-.18 1.05 2.71 2.43 1.59-.7 2.82.7 2.82-2.43 1.59-1.05 2.71-2.9-.18L12 22.5l-2.39-1.65-2.9.18-1.05-2.71-2.43-1.59.7-2.82-.7-2.82 2.43-1.59 1.05-2.71 2.9.18z"/><path fill="#fff" d="M10.5 15.2l-3-3 1.4-1.4 1.6 1.6 4-4 1.4 1.4z"/></svg>';
+  '<svg viewBox="0 0 512 512" width="20" height="20" style="flex:0 0 auto" aria-label="verified"><path fill="#3DA5F4" d="M256 16l54 41 67-8 26 62 62 26-8 67 41 54-41 54 8 67-62 26-26 62-67-8-54 41-54-41-67 8-26-62-62-26 8-67-41-54 41-54-8-67 62-26 26-62 67 8z"/><path fill="#fff" d="M369 184L224 329l-81-81-31 31 112 112 176-176z"/></svg>';
 
 interface PageOpts {
   kind: 'post' | 'profile' | 'generic';
@@ -149,13 +149,18 @@ function renderPage(opts: PageOpts): string {
       var deep=${JSON.stringify(deepLink)};
       var store=${JSON.stringify(APP_STORE_LINK)};
       function openApp(){
-        var t=Date.now();
-        // Try to open the installed app via custom scheme.
+        var fired=false;
+        // If the app opens, the browser tab gets backgrounded/hidden. We watch
+        // for that and cancel the App Store fallback so the store never shows
+        // when the app actually opened.
+        function cancel(){ fired=true; }
+        document.addEventListener('visibilitychange',function(){ if(document.hidden) cancel(); });
+        window.addEventListener('pagehide',cancel);
+        window.addEventListener('blur',cancel);
+        // Attempt to open the installed app.
         window.location.href=deep;
-        // If still here after a moment, the app isn't installed → App Store.
-        setTimeout(function(){
-          if(Date.now()-t<1600){ window.location.href=store; }
-        },1200);
+        // Fallback to the App Store only if the app did NOT open.
+        setTimeout(function(){ if(!fired && !document.hidden){ window.location.href=store; } },1500);
       }
       var b=document.getElementById('openBtn');
       if(b) b.addEventListener('click',openApp);
@@ -202,6 +207,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
               emoji: author.emoji,
               verified: !!author.is_verified,
               subline: author.username ? `@${author.username}` : undefined,
+              banner: author.banner_url || null,
               deepLink: `${APP_SCHEME}://post/${id}`,
               bodyHtml,
             })
