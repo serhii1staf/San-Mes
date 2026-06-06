@@ -168,11 +168,6 @@ export default function ChatScreen() {
     paddingBottom: interpolate(progress.value, [0, 1], [inputBarBottomPad, 8], Extrapolation.CLAMP),
   }));
 
-  // Input row bottom padding: safe-area when keyboard closed → small gap when open (UI thread)
-  const inputRowStyle = useAnimatedStyle(() => ({
-    paddingBottom: interpolate(progress.value, [0, 1], [inputBarBottomPad, 8], Extrapolation.CLAMP),
-  }));
-
   // List bottom spacer matches the input bar's real height so the newest message keeps
   // a comfortable gap above the input (closed) and stays reachable above the keyboard (open).
   const INPUT_BAR_HEIGHT = 60;
