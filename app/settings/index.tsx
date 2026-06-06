@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, ScrollView, Pressable, Switch, ViewStyle, Alert, StyleSheet } from 'react-native';
+import { View, ScrollView, Pressable, Switch, ViewStyle, Alert, StyleSheet, Linking } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -243,7 +243,12 @@ export default function SettingsScreen() {
           <SettingsRow
             icon="shield"
             label="Политика конфиденциальности"
-            onPress={() => router.push('/settings/privacy')}
+            onPress={() => Linking.openURL('https://legal.san-m-app.com/privacy.html').catch(() => {})}
+          />
+          <SettingsRow
+            icon="file-text"
+            label="Условия использования"
+            onPress={() => Linking.openURL('https://legal.san-m-app.com/terms.html').catch(() => {})}
             isLast
           />
         </View>
