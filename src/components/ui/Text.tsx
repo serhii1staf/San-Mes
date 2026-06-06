@@ -13,6 +13,7 @@ interface TextProps {
   align?: TextStyle['textAlign'];
   style?: TextStyle;
   numberOfLines?: number;
+  onPress?: () => void;
 }
 
 export function Text({
@@ -23,6 +24,7 @@ export function Text({
   align,
   style,
   numberOfLines,
+  onPress,
 }: TextProps) {
   const theme = useTheme();
 
@@ -67,7 +69,7 @@ export function Text({
   };
 
   return (
-    <RNText style={[textStyle, style]} numberOfLines={numberOfLines}>
+    <RNText style={[textStyle, style]} numberOfLines={numberOfLines} onPress={onPress}>
       {children}
     </RNText>
   );

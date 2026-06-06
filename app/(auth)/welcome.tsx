@@ -49,7 +49,7 @@ export default function WelcomeScreen() {
       {/* Help button top-right */}
       <View style={{ flexDirection: 'row', justifyContent: 'flex-end', paddingTop: 8 }}>
         <Pressable
-          onPress={() => Linking.openURL('https://san-m-app.com').catch(() => {})}
+          onPress={() => Linking.openURL('https://san-m-app.com/help').catch(() => {})}
           style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: cardBg, borderWidth: 1, borderColor: cardBorder, alignItems: 'center', justifyContent: 'center' }}
         >
           <Feather name="help-circle" size={20} color={theme.colors.text.secondary} />
@@ -74,7 +74,7 @@ export default function WelcomeScreen() {
           <Image source={require('../../assets/icon.png')} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
         </View>
 
-        <Text weight="bold" style={{ fontSize: 30, marginBottom: 12 }}>
+        <Text weight="semibold" style={{ fontSize: 30, lineHeight: 40, marginBottom: 12 }}>
           Добро пожаловать!
         </Text>
         <Text variant="body" color={theme.colors.text.secondary} style={{ fontSize: 16, lineHeight: 22, marginBottom: 40 }}>
@@ -87,19 +87,31 @@ export default function WelcomeScreen() {
       </View>
 
       {/* Footer policy */}
-      <Pressable onPress={() => router.push('/settings/privacy')} style={{ paddingHorizontal: 8, paddingBottom: 12 }}>
+      <View style={{ paddingHorizontal: 8, paddingBottom: 12 }}>
         <Text variant="caption" align="center" color={theme.colors.text.tertiary} style={{ fontSize: 12, lineHeight: 17 }}>
           При входе в приложение вы принимаете{' '}
-          <Text variant="caption" weight="semibold" color={theme.colors.text.secondary} style={{ fontSize: 12 }}>
+          <Text
+            variant="caption"
+            weight="semibold"
+            color={theme.colors.text.secondary}
+            style={{ fontSize: 12 }}
+            onPress={() => Linking.openURL('https://san-m-app.com/terms').catch(() => {})}
+          >
             Политику использования
           </Text>{' '}
           и{' '}
-          <Text variant="caption" weight="semibold" color={theme.colors.text.secondary} style={{ fontSize: 12 }}>
+          <Text
+            variant="caption"
+            weight="semibold"
+            color={theme.colors.text.secondary}
+            style={{ fontSize: 12 }}
+            onPress={() => Linking.openURL('https://san-m-app.com/privacy').catch(() => {})}
+          >
             Политику конфиденциальности
           </Text>
           .
         </Text>
-      </Pressable>
+      </View>
     </View>
   );
 }
