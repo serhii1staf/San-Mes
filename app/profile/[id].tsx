@@ -694,7 +694,7 @@ export default function UserProfileScreen() {
                   <Feather name="edit-2" size={16} color="#FFFFFF" />
                 </Pressable>
               )}
-              <Pressable onPress={async () => { if (viewingImage) { try { await Share.share({ message: viewingImage.uri }); } catch {} } }} style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center' }}>
+              <Pressable onPress={async () => { if (viewingImage) { const post = displayPosts.find((p: any) => p.id === viewingImage.postId); const caption = post?.content || post?.originalPost?.content || ''; const { shareImageUrl } = require('../../src/utils/sharePost'); await shareImageUrl(viewingImage.uri, caption); } }} style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center' }}>
                 <Feather name="share" size={16} color="#FFFFFF" />
               </Pressable>
               {isOwnProfile && (

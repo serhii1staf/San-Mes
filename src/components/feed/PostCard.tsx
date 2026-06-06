@@ -10,6 +10,8 @@ import { VerifiedBadge } from '../ui/VerifiedBadge';
 import { UserBadge } from '../ui/UserBadge';
 import { FormattedText } from '../ui/FormattedText';
 import { SpoilerImage } from '../ui/SpoilerImage';
+import { LinkPreview } from '../ui/LinkPreview';
+import { extractFirstUrl } from '../../services/linkPreview';
 import { Post } from '../../types';
 import { formatTimeAgo } from '../../utils/mockData';
 import { triggerHaptic } from '../../utils/haptics';
@@ -83,6 +85,16 @@ export const PostCard = memo(function PostCard({ post, currentUserId, onLike, on
           <FormattedText style={{ fontSize: 14, lineHeight: 20 }}>{post.content}</FormattedText>
         </View>
       ) : null}
+
+      {/* Link preview — only when the post has a URL and no image of its own */}
+      {!post.isRepost && !hasImages && !hasSpoiler && (() => {
+        const link = extractFirstUrl(post.content);
+        return link ? (
+          <View style={{ paddingHorizontal: 16, paddingBottom: 10 }}>
+            <LinkPreview url={link} />
+          </View>
+        ) : null;
+      })()}
 
       {/* Original post embed (reposts) */}
       {post.isRepost && post.originalPost && (

@@ -13,6 +13,20 @@ import { accountKey } from '../../src/services/cacheService';
 import { formatTimeAgo } from '../../src/utils/mockData';
 
 const ADMIN_PASSWORD = 'V7k!Qm9@Lp2#xR8$Tw6ZcD4%yN';
+const STATUS_ENDPOINT = 'https://san-m-app.com/api/admin/status';
+
+interface ServiceStatus {
+  key: string;
+  name: string;
+  status: 'online' | 'degraded' | 'offline';
+  latencyMs: number;
+  detail: string;
+}
+interface StatusResponse {
+  generatedAt: string;
+  services: ServiceStatus[];
+  metrics: { profiles: number | null; posts: number | null; comments: number | null; dbLatencyMs: number };
+}
 
 const BADGES = [
   { key: 'developer', label: 'Разработчик', color: '#6366F1', icon: 'code' },
@@ -34,6 +48,36 @@ export default function AdminScreen() {
   const [loading, setLoading] = useState(false);
   const [showPostModal, setShowPostModal] = useState(false);
   const [selectedPost, setSelectedPost] = useState<any>(null);
+  const [showStatus, setShowStatus] = useState(false);
+  const [statusData, setStatusData] = useState<StatusResponse | null>(null);
+  const [statusLoading, setStatusLoading] = useState(false);
+  const [statusError, setStatusError] = useState<string | null>(null);
+
+  const loadStatus = useCallback(async () => {
+    setStatusLoading(true);
+    setStatusError(null);
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 12000);
+      const resp = await fetch(STATUS_ENDPOINT, {
+        headers: { 'x-admin-key': ADMIN_PASSWORD },
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      if (!resp.ok) throw new Error('Сервер вернул ' + resp.status);
+      const json = (await resp.json()) as StatusResponse;
+      setStatusData(json);
+    } catch (e: any) {
+      setStatusError(e?.message || 'Не удалось загрузить статус');
+    } finally {
+      setStatusLoading(false);
+    }
+  }, []);
+
+  const openStatus = () => {
+    setShowStatus(true);
+    loadStatus();
+  };
 
   const handleLogin = () => {
     if (password === ADMIN_PASSWORD) {
@@ -241,6 +285,75 @@ export default function AdminScreen() {
     );
   }
 
+  // Services / Status view
+  if (showStatus) {
+    const dot = (s: string) => (s === 'online' ? '#10B981' : s === 'degraded' ? '#F59E0B' : '#EF4444');
+    const dotLabel = (s: string) => (s === 'online' ? 'Онлайн' : s === 'degraded' ? 'Сбои' : 'Недоступно');
+    return (
+      <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', paddingTop: insets.top + 8, paddingBottom: 12, paddingHorizontal: 16, gap: 12 }}>
+          <Pressable onPress={() => setShowStatus(false)}>
+            <Feather name="chevron-left" size={24} color={theme.colors.text.primary} />
+          </Pressable>
+          <Feather name="activity" size={20} color={theme.colors.accent.primary} />
+          <Text variant="body" weight="bold" style={{ flex: 1 }}>Сервисы и нагрузка</Text>
+          <Pressable onPress={loadStatus} hitSlop={8} style={{ padding: 4 }}>
+            <Feather name="refresh-cw" size={18} color={theme.colors.text.secondary} />
+          </Pressable>
+        </View>
+
+        {statusLoading && !statusData ? (
+          <ActivityIndicator style={{ marginTop: 40 }} />
+        ) : statusError ? (
+          <View style={{ padding: 24, alignItems: 'center' }}>
+            <Feather name="alert-triangle" size={28} color="#F59E0B" />
+            <Text variant="body" color={theme.colors.text.secondary} align="center" style={{ marginTop: 12 }}>{statusError}</Text>
+            <Pressable onPress={loadStatus} style={{ marginTop: 16, paddingHorizontal: 20, paddingVertical: 10, borderRadius: 12, backgroundColor: theme.colors.accent.primary }}>
+              <Text variant="caption" color="#FFFFFF" weight="semibold">Повторить</Text>
+            </Pressable>
+          </View>
+        ) : statusData ? (
+          <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
+            {/* Services */}
+            <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginBottom: 8, marginTop: 4 }}>СЕРВИСЫ</Text>
+            {statusData.services.map((s) => (
+              <View key={s.key} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 16, padding: 14, marginBottom: 8, borderWidth: 1, borderColor: theme.colors.border.light, gap: 12 }}>
+                <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: dot(s.status) }} />
+                <View style={{ flex: 1 }}>
+                  <Text variant="body" weight="semibold" numberOfLines={1}>{s.name}</Text>
+                  <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ marginTop: 2 }}>{s.detail}</Text>
+                </View>
+                <View style={{ alignItems: 'flex-end' }}>
+                  <Text variant="caption" weight="semibold" color={dot(s.status)}>{dotLabel(s.status)}</Text>
+                  {s.latencyMs > 0 && <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 10, marginTop: 2 }}>{s.latencyMs} мс</Text>}
+                </View>
+              </View>
+            ))}
+
+            {/* Metrics */}
+            <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginBottom: 8, marginTop: 16 }}>БАЗА ДАННЫХ</Text>
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <MetricCard theme={theme} label="Профили" value={statusData.metrics.profiles} />
+              <MetricCard theme={theme} label="Посты" value={statusData.metrics.posts} />
+              <MetricCard theme={theme} label="Комменты" value={statusData.metrics.comments} />
+            </View>
+
+            <View style={{ marginTop: 16, backgroundColor: theme.colors.background.elevated, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: theme.colors.border.light }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
+                <Text variant="caption" color={theme.colors.text.tertiary}>Задержка БД</Text>
+                <Text variant="caption" weight="semibold">{statusData.metrics.dbLatencyMs} мс</Text>
+              </View>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                <Text variant="caption" color={theme.colors.text.tertiary}>Обновлено</Text>
+                <Text variant="caption" weight="semibold">{new Date(statusData.generatedAt).toLocaleTimeString('ru-RU')}</Text>
+              </View>
+            </View>
+          </ScrollView>
+        ) : null}
+      </View>
+    );
+  }
+
   // Users list
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
@@ -249,7 +362,11 @@ export default function AdminScreen() {
           <Feather name="chevron-left" size={24} color={theme.colors.text.primary} />
         </Pressable>
         <Feather name="shield" size={20} color={theme.colors.accent.primary} />
-        <Text variant="body" weight="bold">Админ-панель</Text>
+        <Text variant="body" weight="bold" style={{ flex: 1 }}>Админ-панель</Text>
+        <Pressable onPress={openStatus} hitSlop={8} style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10, backgroundColor: theme.colors.accent.primary + '18' }}>
+          <Feather name="activity" size={14} color={theme.colors.accent.primary} />
+          <Text variant="caption" weight="semibold" color={theme.colors.accent.primary}>Сервисы</Text>
+        </Pressable>
       </View>
 
       {loading ? <ActivityIndicator style={{ marginTop: 40 }} /> : (
@@ -281,6 +398,15 @@ export default function AdminScreen() {
           }}
         />
       )}
+    </View>
+  );
+}
+
+function MetricCard({ theme, label, value }: { theme: any; label: string; value: number | null }) {
+  return (
+    <View style={{ flex: 1, backgroundColor: theme.colors.background.elevated, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: theme.colors.border.light, alignItems: 'center' }}>
+      <Text variant="subheading" weight="bold" style={{ fontSize: 22 }}>{value ?? '—'}</Text>
+      <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginTop: 2 }}>{label}</Text>
     </View>
   );
 }

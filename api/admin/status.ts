@@ -75,14 +75,16 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   }
 
   // Run all checks in parallel.
-  const [db, profiles, posts, comments, r2, vercelRegion] = await Promise.all([
-    timed(() => fetchT(`${SUPABASE_URL}/rest/v1/?apikey=${SUPABASE_ANON_KEY}`, { method: 'GET' }).then((r) => r.ok || r.status === 404)),
+  const [profiles, posts, comments, r2, vercelRegion] = await Promise.all([
     timed(() => tableCount('profiles')),
     timed(() => tableCount('posts')),
     timed(() => tableCount('comments')),
     timed(() => fetchT(`${R2_PUBLIC_BASE}/test/hello.txt`, { method: 'GET' }).then((r) => r.ok)),
     Promise.resolve(process.env.VERCEL_REGION || 'unknown'),
   ]);
+
+  // Supabase is healthy if the count query (a real DB read) succeeded.
+  const dbOk = profiles.ok;
 
   const services = [
     {
@@ -95,9 +97,9 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     {
       key: 'supabase',
       name: 'Supabase (база данных)',
-      status: db.ok && db.value ? 'online' : 'degraded',
-      latencyMs: db.ms,
-      detail: db.ok ? 'REST API отвечает' : db.error || 'нет ответа',
+      status: dbOk ? 'online' : 'degraded',
+      latencyMs: profiles.ms,
+      detail: dbOk ? 'Запросы выполняются' : profiles.error || 'нет ответа',
     },
     {
       key: 'r2',
