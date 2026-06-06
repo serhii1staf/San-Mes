@@ -81,6 +81,7 @@ export interface Conversation {
   participantAvatar?: string;
   participantEmoji?: string;
   participantVerified?: boolean;
+  participantBadge?: string | null;
   lastMessage?: string;
   lastMessageAt?: string;
   unreadCount: number;

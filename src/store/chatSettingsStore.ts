@@ -22,11 +22,19 @@ export const GLOBAL_CHAT_SETTINGS_KEY = '__global__';
 interface ChatSettingsStore {
   settings: Record<string, ChatSettings>; // keyed by chatId (or GLOBAL key)
   archived: string[]; // archived chat IDs
+  blocked: string[]; // blocked chat IDs
+  deleted: string[]; // deleted chat IDs
   getSettings: (chatId: string) => ChatSettings;
   updateSettings: (chatId: string, updates: Partial<ChatSettings>) => void;
   archiveChat: (chatId: string) => void;
   unarchiveChat: (chatId: string) => void;
   isArchived: (chatId: string) => boolean;
+  blockChat: (chatId: string) => void;
+  unblockChat: (chatId: string) => void;
+  isBlocked: (chatId: string) => boolean;
+  deleteChat: (chatId: string) => void;
+  restoreChat: (chatId: string) => void;
+  isDeleted: (chatId: string) => boolean;
 }
 
 const DEFAULT_SETTINGS: ChatSettings = { fontSize: 15, fontFamily: 'system', bubbleRadius: 18 };
@@ -39,6 +47,8 @@ export const useChatSettingsStore = create<ChatSettingsStore>()(
     (set, get) => ({
       settings: {},
       archived: [],
+      blocked: [],
+      deleted: [],
       getSettings: (chatId) => {
         const state = get();
         const global = state.settings[GLOBAL_CHAT_SETTINGS_KEY];
@@ -47,9 +57,16 @@ export const useChatSettingsStore = create<ChatSettingsStore>()(
         return { ...DEFAULT_SETTINGS, ...global, ...specific };
       },
       updateSettings: (chatId, updates) => set((s) => ({ settings: { ...s.settings, [chatId]: { ...DEFAULT_SETTINGS, ...s.settings[chatId], ...updates } } })),
-      archiveChat: (chatId) => set((s) => ({ archived: [...s.archived.filter(id => id !== chatId), chatId] })),
+      // Archive: a chat is in exactly one of: normal / archived / blocked / deleted
+      archiveChat: (chatId) => set((s) => ({ archived: [...s.archived.filter(id => id !== chatId), chatId], blocked: s.blocked.filter(id => id !== chatId), deleted: s.deleted.filter(id => id !== chatId) })),
       unarchiveChat: (chatId) => set((s) => ({ archived: s.archived.filter(id => id !== chatId) })),
       isArchived: (chatId) => get().archived.includes(chatId),
+      blockChat: (chatId) => set((s) => ({ blocked: [...s.blocked.filter(id => id !== chatId), chatId], archived: s.archived.filter(id => id !== chatId), deleted: s.deleted.filter(id => id !== chatId) })),
+      unblockChat: (chatId) => set((s) => ({ blocked: s.blocked.filter(id => id !== chatId) })),
+      isBlocked: (chatId) => get().blocked.includes(chatId),
+      deleteChat: (chatId) => set((s) => ({ deleted: [...s.deleted.filter(id => id !== chatId), chatId], archived: s.archived.filter(id => id !== chatId), blocked: s.blocked.filter(id => id !== chatId) })),
+      restoreChat: (chatId) => set((s) => ({ deleted: s.deleted.filter(id => id !== chatId) })),
+      isDeleted: (chatId) => get().deleted.includes(chatId),
     }),
     { name: 'chat-settings', storage: createJSONStorage(() => storage) }
   )

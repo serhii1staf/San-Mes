@@ -364,7 +364,7 @@ export async function getConversations(userId: string): Promise<{ conversations:
     .select(`
       conversation_id,
       conversations:conversation_id (id, created_at),
-      profiles:user_id (id, username, display_name, emoji, is_verified)
+      profiles:user_id (id, username, display_name, emoji, is_verified, badge)
     `)
     .neq('user_id', userId);
 

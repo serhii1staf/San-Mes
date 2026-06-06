@@ -13,6 +13,7 @@ import { Text, Avatar } from '../../src/components/ui';
 import { CachedImage } from '../../src/components/ui/CachedImage';
 import { FormattedText } from '../../src/components/ui/FormattedText';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
+import { UserBadge } from '../../src/components/ui/UserBadge';
 import { MessageContextMenu, MessageAction } from '../../src/components/ui/MessageContextMenu';
 import { useChatStore, useEntityStore, useConnectivityStore } from '../../src/store';
 import { useChatSettingsStore, GLOBAL_CHAT_SETTINGS_KEY, DEFAULT_CHAT_SETTINGS } from '../../src/store/chatSettingsStore';
@@ -197,6 +198,7 @@ export default function ChatScreen() {
   const displayName = conversation?.participantName || profileData?.display_name || entityConv?.participantName || 'Чат';
   const displayEmoji = (conversation as any)?.participantEmoji || profileData?.emoji || entityConv?.participantEmoji || '😊';
   const displayVerified = profileData?.is_verified || cachedProfile?.is_verified || (entityConv as any)?.participantVerified || false;
+  const displayBadge = profileData?.badge || cachedProfile?.badge || (entityConv as any)?.participantBadge || null;
   const profileId = participantId;
 
   const scrollToEnd = useCallback((animated = true) => {
@@ -585,6 +587,7 @@ export default function ChatScreen() {
               >
                 <Text variant="caption" weight="semibold" numberOfLines={1} style={{ flexShrink: 1 }}>{displayName}</Text>
                 {displayVerified && <VerifiedBadge size={12} />}
+                {displayBadge && <UserBadge badge={displayBadge} size="sm" />}
               </Pressable>
             </View>
             <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId, fromChat: '1' } })} style={[styles.headerCircle, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light, overflow: 'hidden' }]}>

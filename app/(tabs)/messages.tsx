@@ -8,8 +8,9 @@ import ContextMenu from 'react-native-context-menu-view';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
+import { UserBadge } from '../../src/components/ui/UserBadge';
 import { useChatStore, useEntityStore, useAuthStore } from '../../src/store';
-import { syncConversations } from '../../src/services/syncService';
+import { syncConversations, syncProfiles } from '../../src/services/syncService';
 import { useMiniAppsStore } from '../../src/store/miniAppsStore';
 import { useChatSettingsStore, GLOBAL_CHAT_SETTINGS_KEY } from '../../src/store/chatSettingsStore';
 import { triggerHaptic } from '../../src/utils/haptics';
@@ -62,33 +63,61 @@ function MiniAppsRow() {
   );
 }
 
-function ConversationItem({ item, isArchived }: { item: Conversation; index: number; isArchived?: boolean }) {
-  const theme = useTheme();
+type ChatTab = 'chats' | 'apps' | 'archive' | 'blocked' | 'deleted';
 
-  const actions = isArchived
-    ? [
-        { title: 'Из архива', systemIcon: 'tray.and.arrow.up' },
-        { title: 'Настройки чата', systemIcon: 'gearshape' },
-        { title: 'Удалить', destructive: true, systemIcon: 'trash' },
-      ]
-    : [
-        { title: 'В архив', systemIcon: 'archivebox' },
-        { title: 'Настройки чата', systemIcon: 'gearshape' },
-        { title: 'Заблокировать', systemIcon: 'nosign' },
-        { title: 'Удалить', destructive: true, systemIcon: 'trash' },
-      ];
+function ConversationItem({ item, tab }: { item: Conversation; index: number; tab: ChatTab }) {
+  const theme = useTheme();
+  const store = useChatSettingsStore;
+
+  let actions: { title: string; systemIcon?: string; destructive?: boolean }[];
+  if (tab === 'archive') {
+    actions = [
+      { title: 'Из архива', systemIcon: 'tray.and.arrow.up' },
+      { title: 'Настройки чата', systemIcon: 'gearshape' },
+      { title: 'Удалить', destructive: true, systemIcon: 'trash' },
+    ];
+  } else if (tab === 'blocked') {
+    actions = [
+      { title: 'Разблокировать', systemIcon: 'checkmark.circle' },
+      { title: 'Удалить', destructive: true, systemIcon: 'trash' },
+    ];
+  } else if (tab === 'deleted') {
+    actions = [
+      { title: 'Восстановить', systemIcon: 'arrow.uturn.backward' },
+      { title: 'Удалить навсегда', destructive: true, systemIcon: 'trash' },
+    ];
+  } else {
+    actions = [
+      { title: 'В архив', systemIcon: 'archivebox' },
+      { title: 'Настройки чата', systemIcon: 'gearshape' },
+      { title: 'Заблокировать', systemIcon: 'nosign' },
+      { title: 'Удалить', destructive: true, systemIcon: 'trash' },
+    ];
+  }
 
   const handleAction = (e: any) => {
-    const idx = e.nativeEvent.index;
-    if (isArchived) {
-      if (idx === 0) { useChatSettingsStore.getState().unarchiveChat(item.id); triggerHaptic('medium'); }
-      if (idx === 1) router.push({ pathname: '/settings/chat-settings', params: { id: item.id } } as any);
-      if (idx === 2) Alert.alert('Удалить чат?', item.participantName, [{ text: 'Отмена' }, { text: 'Удалить', style: 'destructive' }]);
-    } else {
-      if (idx === 0) { useChatSettingsStore.getState().archiveChat(item.id); triggerHaptic('medium'); }
-      if (idx === 1) router.push({ pathname: '/settings/chat-settings', params: { id: item.id } } as any);
-      if (idx === 2) Alert.alert('Заблокировать?', item.participantName, [{ text: 'Отмена' }, { text: 'Заблокировать', style: 'destructive' }]);
-      if (idx === 3) Alert.alert('Удалить чат?', item.participantName, [{ text: 'Отмена' }, { text: 'Удалить', style: 'destructive' }]);
+    const title = (e.nativeEvent.name as string) || '';
+    triggerHaptic('medium');
+    const s = store.getState();
+    switch (title) {
+      case 'Из архива': s.unarchiveChat(item.id); break;
+      case 'В архив': s.archiveChat(item.id); break;
+      case 'Настройки чата': router.push({ pathname: '/settings/chat-settings', params: { id: item.id } } as any); break;
+      case 'Заблокировать':
+        Alert.alert('Заблокировать?', item.participantName, [
+          { text: 'Отмена', style: 'cancel' },
+          { text: 'Заблокировать', style: 'destructive', onPress: () => s.blockChat(item.id) },
+        ]);
+        break;
+      case 'Разблокировать': s.unblockChat(item.id); break;
+      case 'Восстановить': s.restoreChat(item.id); break;
+      case 'Удалить':
+        Alert.alert('Удалить чат?', item.participantName, [
+          { text: 'Отмена', style: 'cancel' },
+          { text: 'Удалить', style: 'destructive', onPress: () => s.deleteChat(item.id) },
+        ]);
+        break;
+      case 'Удалить навсегда': s.restoreChat(item.id); break; // remove from deleted list entirely (gone from all tabs)
     }
   };
 
@@ -112,6 +141,7 @@ function ConversationItem({ item, isArchived }: { item: Conversation; index: num
               {item.participantName}
             </Text>
             {item.participantVerified && <VerifiedBadge size={13} />}
+            {item.participantBadge && <UserBadge badge={item.participantBadge} size="sm" />}
           </View>
           {item.lastMessage ? (
             <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
@@ -157,13 +187,17 @@ export default function MessagesScreen() {
   const user = useAuthStore((s) => s.user);
   const [searchQuery, setSearchQuery] = useState('');
   const [showFabMenu, setShowFabMenu] = useState(false);
-  const [activeTab, setActiveTab] = useState<'chats' | 'apps' | 'archive'>('chats');
+  const [activeTab, setActiveTab] = useState<ChatTab>('chats');
   const archived = useChatSettingsStore((s) => s.archived);
+  const blocked = useChatSettingsStore((s) => s.blocked);
+  const deleted = useChatSettingsStore((s) => s.deleted);
 
   // Trigger syncConversations in background on mount
   useEffect(() => {
     if (user?.id) {
       syncConversations(user.id);
+      // Sync profiles too so verified badges / widgets resolve for chat participants
+      syncProfiles();
     }
   }, [user?.id]);
 
@@ -179,6 +213,7 @@ export default function MessagesScreen() {
         participantUsername: c.participantUsername,
         participantEmoji: c.participantEmoji,
         participantVerified: (c as any).participantVerified ?? profiles[c.participantId]?.is_verified ?? false,
+        participantBadge: (c as any).participantBadge ?? profiles[c.participantId]?.badge ?? null,
         lastMessage: c.lastMessage || '',
         lastMessageAt: c.lastMessageAt || '',
         unreadCount: 0,
@@ -188,11 +223,20 @@ export default function MessagesScreen() {
     return chatStoreConversations;
   }, [entityConversations, chatStoreConversations]);
 
-  const filtered = searchQuery
-    ? conversations.filter((c) => c.participantName.toLowerCase().includes(searchQuery.toLowerCase()))
-    : activeTab === 'archive'
-      ? conversations.filter(c => archived.includes(c.id))
-      : conversations.filter(c => !archived.includes(c.id));
+  // Filtering: each chat belongs to exactly one bucket. The "apps" tab shows no chats.
+  const filtered = useMemo(() => {
+    if (activeTab === 'apps') return [];
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      // Search only within non-deleted, non-blocked chats
+      return conversations.filter((c) => c.participantName.toLowerCase().includes(q) && !deleted.includes(c.id) && !blocked.includes(c.id));
+    }
+    if (activeTab === 'archive') return conversations.filter(c => archived.includes(c.id) && !deleted.includes(c.id) && !blocked.includes(c.id));
+    if (activeTab === 'blocked') return conversations.filter(c => blocked.includes(c.id) && !deleted.includes(c.id));
+    if (activeTab === 'deleted') return conversations.filter(c => deleted.includes(c.id));
+    // 'chats' — exclude archived, blocked, deleted
+    return conversations.filter(c => !archived.includes(c.id) && !blocked.includes(c.id) && !deleted.includes(c.id));
+  }, [conversations, activeTab, searchQuery, archived, blocked, deleted]);
 
   const containerStyle: ViewStyle = {
     flex: 1,
@@ -251,34 +295,47 @@ export default function MessagesScreen() {
       </View>
 
       {/* Category tabs */}
-      <View style={{ flexDirection: 'row', paddingHorizontal: theme.spacing.base, marginBottom: 8, gap: 8 }}>
-        {[{ key: 'chats', label: 'Чаты' }, { key: 'apps', label: 'Приложения' }, { key: 'archive', label: 'Архив' }].map(tab => (
-          <Pressable key={tab.key} onPress={() => setActiveTab(tab.key as any)} style={{ paddingHorizontal: 14, paddingVertical: 6, borderRadius: 16, backgroundColor: activeTab === tab.key ? theme.colors.accent.primary + '20' : 'transparent' }}>
-            <Text variant="caption" weight={activeTab === tab.key ? 'bold' : 'regular'} color={activeTab === tab.key ? theme.colors.accent.primary : theme.colors.text.tertiary} style={{ fontSize: 12 }}>{tab.label}</Text>
-          </Pressable>
-        ))}
+      <View style={{ marginBottom: 8 }}>
+        <FlatList
+          horizontal
+          data={[
+            { key: 'chats', label: 'Чаты' },
+            { key: 'apps', label: 'Приложения' },
+            { key: 'archive', label: 'Архив' },
+            { key: 'blocked', label: 'Заблокированные' },
+            { key: 'deleted', label: 'Удалённые' },
+          ]}
+          keyExtractor={(t) => t.key}
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ paddingHorizontal: theme.spacing.base, gap: 8 }}
+          renderItem={({ item: tab }) => (
+            <Pressable onPress={() => setActiveTab(tab.key as ChatTab)} style={{ paddingHorizontal: 14, paddingVertical: 6, borderRadius: 16, backgroundColor: activeTab === tab.key ? theme.colors.accent.primary + '20' : 'transparent' }}>
+              <Text variant="caption" weight={activeTab === tab.key ? 'bold' : 'regular'} color={activeTab === tab.key ? theme.colors.accent.primary : theme.colors.text.tertiary} style={{ fontSize: 12 }}>{tab.label}</Text>
+            </Pressable>
+          )}
+        />
       </View>
 
-      {/* AI Chat + Mini-apps (only in apps tab or chats tab) */}
+      {/* AI Chat (chats tab) + Mini-apps (apps tab) */}
       {activeTab === 'chats' && <AIConversationItem />}
       {activeTab === 'apps' && <MiniAppsRow />}
 
       {filtered.length === 0 ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingBottom: 100 }}>
-          <Feather name="message-circle" size={48} color={theme.colors.text.tertiary} />
+          <Feather name={activeTab === 'apps' ? 'grid' : activeTab === 'blocked' ? 'slash' : activeTab === 'deleted' ? 'trash-2' : activeTab === 'archive' ? 'archive' : 'message-circle'} size={48} color={theme.colors.text.tertiary} />
           <Text
             variant="body"
             color={theme.colors.text.tertiary}
             style={{ marginTop: theme.spacing.base, textAlign: 'center' }}
           >
-            Пока нет сообщений
+            {activeTab === 'apps' ? 'Нет приложений' : activeTab === 'blocked' ? 'Нет заблокированных' : activeTab === 'deleted' ? 'Нет удалённых' : activeTab === 'archive' ? 'Архив пуст' : 'Пока нет сообщений'}
           </Text>
         </View>
       ) : (
         <FlatList
           data={filtered}
           keyExtractor={(item) => item.id}
-          renderItem={({ item, index }) => <ConversationItem item={item} index={index} isArchived={archived.includes(item.id)} />}
+          renderItem={({ item, index }) => <ConversationItem item={item} index={index} tab={activeTab} />}
           contentContainerStyle={{ paddingBottom: 100 }}
           showsVerticalScrollIndicator={false}
         />
