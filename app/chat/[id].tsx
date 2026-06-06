@@ -218,7 +218,8 @@ export default function ChatScreen() {
     }
   }, [id, storeMessages]);
 
-  const displayName = conversation?.participantName || profileData?.display_name || entityConv?.participantName || 'Чат';
+  const chatLocalName = settingsMap[id || '']?.localName;
+  const displayName = chatLocalName || conversation?.participantName || profileData?.display_name || entityConv?.participantName || 'Чат';
   const displayEmoji = (conversation as any)?.participantEmoji || profileData?.emoji || entityConv?.participantEmoji || '😊';
   const displayVerified = profileData?.is_verified || cachedProfile?.is_verified || (entityConv as any)?.participantVerified || false;
   const displayBadge = profileData?.badge || cachedProfile?.badge || (entityConv as any)?.participantBadge || null;

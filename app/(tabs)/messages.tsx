@@ -69,6 +69,8 @@ type ChatTab = 'chats' | 'apps' | 'archive' | 'blocked' | 'deleted';
 function ConversationItem({ item, tab }: { item: Conversation; index: number; tab: ChatTab }) {
   const theme = useTheme();
   const store = useChatSettingsStore;
+  const localName = useChatSettingsStore((s) => s.settings[item.id]?.localName);
+  const displayName = localName || item.participantName;
 
   let actions: { title: string; systemIcon?: string; destructive?: boolean }[];
   if (tab === 'archive') {
@@ -139,7 +141,7 @@ function ConversationItem({ item, tab }: { item: Conversation; index: number; ta
         <View style={{ flex: 1, marginLeft: 12 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
             <Text variant="body" weight={item.unreadCount > 0 ? 'semibold' : 'regular'} numberOfLines={1} style={{ flexShrink: 1 }}>
-              {item.participantName}
+              {displayName}
             </Text>
             {item.participantVerified && <VerifiedBadge size={13} />}
             {item.participantBadge && <UserBadge badge={item.participantBadge} size="sm" />}

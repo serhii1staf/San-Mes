@@ -144,7 +144,8 @@ export default function ChatSettingsScreen() {
             )}
           </View>
 
-          {/* Local name */}
+          {/* Local name (per-chat only, not for global settings) */}
+          {!isGlobal && (
           <View style={[styles.section, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
             <View style={[styles.row, { paddingVertical: 8 }]}>
               <View style={[styles.iconCircle, { backgroundColor: theme.colors.accent.primary + '15' }]}>
@@ -159,6 +160,7 @@ export default function ChatSettingsScreen() {
               />
             </View>
           </View>
+          )}
 
           {/* Font size */}
           <View style={[styles.section, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
@@ -204,47 +206,6 @@ export default function ChatSettingsScreen() {
                 <Pressable onPress={() => setBubbleRadius(Math.min(24, bubbleRadius + 2))} style={[styles.stepper, { backgroundColor: theme.colors.background.primary }]}>
                   <Feather name="plus" size={14} color={theme.colors.text.secondary} />
                 </Pressable>
-              </View>
-            </View>
-          </View>
-
-          {/* Font family */}
-          <View style={[styles.section, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
-            <View style={{ padding: 14 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
-                <View style={[styles.iconCircle, { backgroundColor: theme.colors.accent.primary + '15' }]}>
-                  <Feather name="bold" size={16} color={theme.colors.accent.primary} />
-                </View>
-                <Text variant="body">Шрифт</Text>
-              </View>
-              <View style={{ flexDirection: 'row', gap: 8 }}>
-                {[
-                  { key: 'system', label: 'Системный' },
-                  { key: 'serif', label: 'Serif' },
-                  { key: 'mono', label: 'Mono' },
-                ].map(f => (
-                  <Pressable
-                    key={f.key}
-                    onPress={() => setFontFamily(f.key)}
-                    style={{
-                      flex: 1,
-                      paddingVertical: 10,
-                      borderRadius: 12,
-                      backgroundColor: fontFamily === f.key ? theme.colors.accent.primary : 'transparent',
-                      alignItems: 'center',
-                      borderWidth: 1,
-                      borderColor: fontFamily === f.key ? theme.colors.accent.primary : theme.colors.border.light,
-                    }}
-                  >
-                    <Text
-                      variant="caption"
-                      weight={fontFamily === f.key ? 'bold' : 'regular'}
-                      color={fontFamily === f.key ? '#FFFFFF' : theme.colors.text.primary}
-                    >
-                      {f.label}
-                    </Text>
-                  </Pressable>
-                ))}
               </View>
             </View>
           </View>
