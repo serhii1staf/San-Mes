@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { Platform } from 'react-native';
+import { uploadToR2, isR2PublicConfigured } from './r2';
 
 const SUPABASE_URL = 'https://ycwadqglcykcpucembjn.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inljd2FkcWdsY3lrY3B1Y2VtYmpuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4Mjc2OTYsImV4cCI6MjA5NTQwMzY5Nn0.ZUr1YfN6pBp_AaUC1pZLKGApwgEXEiVw_w6w-yQjE_U';
@@ -46,6 +47,14 @@ export async function uploadChatImage(imageUri: string): Promise<{ url: string |
     }
 
     const filename = `chat_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.${fileExt}`;
+
+    // Primary: upload to Cloudflare R2 (free egress, offloads Supabase traffic).
+    if (isR2PublicConfigured()) {
+      const r2 = await uploadToR2(finalUri, `chat/${filename}`, contentType);
+      if (r2.url) return { url: r2.url, error: null };
+      // If R2 fails for any reason, fall through to Supabase so chat still works.
+    }
+
     const formData = new FormData();
     formData.append('', { uri: finalUri, name: filename, type: contentType } as any);
 
@@ -93,6 +102,13 @@ export async function uploadPostImage(imageUri: string): Promise<{ url: string |
     }
 
     const filename = `post_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.${fileExt}`;
+
+    // Primary: upload to Cloudflare R2 (free egress, offloads Supabase traffic).
+    if (isR2PublicConfigured()) {
+      const r2 = await uploadToR2(finalUri, `post/${filename}`, contentType);
+      if (r2.url) return { url: r2.url, error: null };
+      // If R2 fails, fall through to Supabase so posting still works.
+    }
 
     // Use FormData approach which works correctly in React Native
     const formData = new FormData();
