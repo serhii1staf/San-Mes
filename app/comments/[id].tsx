@@ -176,7 +176,21 @@ export default function CommentsScreen() {
                   </View>
                 </View>
                 {mainContent ? <FormattedText style={{ fontSize: 15, lineHeight: 21, marginBottom: 8 }}>{mainContent}</FormattedText> : null}
-                {!repostInfo.isRepost && postData.image_url && <CachedImage uri={postData.image_url.split(',')[0]} style={{ width: '100%', height: 200, borderRadius: 12, marginBottom: 8 }} resizeMode="cover" />}
+                {!repostInfo.isRepost && (() => {
+                  const imgs = parseImageUrls(postData.image_url);
+                  if (imgs.length === 0) return null;
+                  if (imgs.length === 1) return <CachedImage uri={imgs[0]} style={{ width: '100%', height: 200, borderRadius: 12, marginBottom: 8 }} resizeMode="cover" />;
+                  return (
+                    <FlatList
+                      data={imgs}
+                      horizontal
+                      keyExtractor={(u, i) => u + i}
+                      showsHorizontalScrollIndicator={false}
+                      style={{ marginBottom: 8 }}
+                      renderItem={({ item }) => <CachedImage uri={item} style={{ width: 200, height: 200, borderRadius: 12, marginRight: 8 }} resizeMode="cover" />}
+                    />
+                  );
+                })()}
 
                 {/* Repost — embedded original post preview */}
                 {repostInfo.isRepost && (
@@ -190,7 +204,17 @@ export default function CommentsScreen() {
                         {origProfile?.username ? <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 11, flexShrink: 0 }}>@{origProfile.username}</Text> : null}
                       </View>
                       {repostOriginal.content ? <FormattedText style={{ fontSize: 13 }} color={theme.colors.text.secondary}>{repostOriginal.content}</FormattedText> : null}
-                      {origImages.length > 0 && <CachedImage uri={origImages[0]} style={{ width: '100%', height: 160, borderRadius: 10, marginTop: 6 }} resizeMode="cover" />}
+                      {origImages.length === 1 && <CachedImage uri={origImages[0]} style={{ width: '100%', height: 160, borderRadius: 10, marginTop: 6 }} resizeMode="cover" />}
+                      {origImages.length > 1 && (
+                        <FlatList
+                          data={origImages}
+                          horizontal
+                          keyExtractor={(u, i) => u + i}
+                          showsHorizontalScrollIndicator={false}
+                          style={{ marginTop: 6 }}
+                          renderItem={({ item }) => <CachedImage uri={item} style={{ width: 150, height: 150, borderRadius: 10, marginRight: 6 }} resizeMode="cover" />}
+                        />
+                      )}
                     </View>
                   ) : (
                     <View style={{ borderWidth: 1, borderColor: theme.colors.border.light, borderRadius: 14, padding: 14, alignItems: 'center' }}>

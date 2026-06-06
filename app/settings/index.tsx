@@ -96,10 +96,40 @@ export default function SettingsScreen() {
         text: 'Выйти',
         style: 'destructive',
         onPress: () => {
-          logout();
+          // Navigate away from the protected route FIRST, then clear auth on the
+          // next tick so no mounted screen reads a null user mid-render (avoids crash).
+          router.replace('/(auth)/welcome');
+          setTimeout(() => { logout(); }, 60);
         },
       },
     ]);
+  };
+
+  const handleDeleteAccount = () => {
+    Alert.alert(
+      'Удалить аккаунт?',
+      'Это действие необратимо. Все ваши данные — посты, комментарии, сообщения, подписки — будут удалены навсегда.',
+      [
+        { text: 'Отмена', style: 'cancel' },
+        {
+          text: 'Удалить навсегда',
+          style: 'destructive',
+          onPress: async () => {
+            const uid = useAuthStore.getState().user?.id;
+            if (!uid) return;
+            const { deleteAccount } = await import('../../src/lib/supabase');
+            const { error } = await deleteAccount(uid);
+            if (error) {
+              Alert.alert('Ошибка', error);
+              return;
+            }
+            // Leave the protected route, then clear auth.
+            router.replace('/(auth)/welcome');
+            setTimeout(() => { logout(); }, 60);
+          },
+        },
+      ]
+    );
   };
 
   const containerStyle: ViewStyle = {
@@ -280,6 +310,20 @@ export default function SettingsScreen() {
         >
           <Text variant="body" weight="semibold" color={theme.colors.status.error}>
             Выйти
+          </Text>
+        </Pressable>
+
+        {/* Delete account */}
+        <Pressable
+          onPress={handleDeleteAccount}
+          style={{
+            paddingVertical: 16,
+            alignItems: 'center',
+            marginTop: 10,
+          }}
+        >
+          <Text variant="caption" color={theme.colors.text.tertiary}>
+            Удалить аккаунт
           </Text>
         </Pressable>
       </ScrollView>

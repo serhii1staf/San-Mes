@@ -686,7 +686,7 @@ export default function UserProfileScreen() {
                 <Pressable onPress={() => { 
                   if (viewingImage) {
                     const post = displayPosts.find((p: any) => p.id === viewingImage.postId);
-                    useFeedStore.getState().setEditingPost({ id: viewingImage.postId, content: post?.content || '', imageUrl: viewingImage.uri });
+                    useFeedStore.getState().setEditingPost({ id: viewingImage.postId, content: post?.content || '', imageUrl: post?.imageUrl, imageUrls: post?.imageUrls && post.imageUrls.length > 0 ? post.imageUrls : (post?.imageUrl ? [post.imageUrl] : undefined) });
                   }
                   setViewingImage(null); 
                   router.push('/(tabs)/create'); 

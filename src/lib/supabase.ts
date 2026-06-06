@@ -71,27 +71,35 @@ export async function uploadChatImage(imageUri: string): Promise<{ url: string |
 // Upload post image to storage, return public URL
 export async function uploadPostImage(imageUri: string): Promise<{ url: string | null; error: string | null }> {
   try {
-    // Convert HEIC/HEIF to JPEG using expo-image-manipulator
+    // Compress + resize every image (resize to 1280px long edge, JPEG ~0.5 quality)
+    // so uploads/downloads stay in tens of KB instead of megabytes. This drastically
+    // cuts storage and egress traffic. GIFs are left untouched to keep animation.
     let finalUri = imageUri;
+    let contentType = 'image/jpeg';
+    let fileExt = 'jpg';
     const ext = imageUri.split('.').pop()?.toLowerCase() || 'jpg';
-    if (ext === 'heic' || ext === 'heif' || !ext.match(/^(jpg|jpeg|png|gif|webp)$/)) {
+
+    if (ext === 'gif') {
+      contentType = 'image/gif';
+      fileExt = 'gif';
+    } else {
       try {
         const { manipulateAsync, SaveFormat } = await import('expo-image-manipulator');
-        const result = await manipulateAsync(imageUri, [], { compress: 0.95, format: SaveFormat.JPEG });
+        const result = await manipulateAsync(imageUri, [{ resize: { width: 1280 } }], { compress: 0.5, format: SaveFormat.JPEG });
         finalUri = result.uri;
       } catch (e) {
-        // If manipulator fails, try uploading as-is
+        // If manipulator fails, upload as-is
       }
     }
 
-    const filename = `post_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.jpg`;
-    
+    const filename = `post_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.${fileExt}`;
+
     // Use FormData approach which works correctly in React Native
     const formData = new FormData();
     formData.append('', {
       uri: finalUri,
       name: filename,
-      type: 'image/jpeg',
+      type: contentType,
     } as any);
 
     const uploadUrl = `${SUPABASE_URL}/storage/v1/object/post-images/${filename}`;
@@ -108,7 +116,7 @@ export async function uploadPostImage(imageUri: string): Promise<{ url: string |
       const errText = await response.text();
       return { url: null, error: `Upload failed: ${errText}` };
     }
-    
+
     const { data } = supabase.storage.from('post-images').getPublicUrl(filename);
     return { url: data.publicUrl, error: null };
   } catch (e: any) {
@@ -634,5 +642,60 @@ export async function getFollowCounts(userId: string): Promise<{ followers: numb
     return { followers: followers || 0, following: following || 0 };
   } catch {
     return { followers: 0, following: 0 };
+  }
+}
+
+// Permanently delete a user account and all associated data (App Store / Google Play requirement).
+export async function deleteAccount(userId: string): Promise<{ error: string | null }> {
+  try {
+    // 1. Find the user's posts to clean their dependents and storage images.
+    const { data: posts } = await supabase.from('posts').select('id, image_url').eq('author_id', userId);
+    const postIds = (posts || []).map((p: any) => p.id);
+
+    // 2. Delete images of the user's posts from storage.
+    try {
+      const files: string[] = [];
+      for (const p of (posts || [])) {
+        const urls = parseImageUrls(p.image_url);
+        for (const u of urls) {
+          const name = u.split('/').pop();
+          if (name) files.push(name);
+        }
+      }
+      if (files.length > 0) {
+        await storageClient.storage.from('post-images').remove(files);
+      }
+    } catch {}
+
+    // 3. Delete likes/comments on the user's posts + reposts referencing them.
+    if (postIds.length > 0) {
+      await supabase.from('likes').delete().in('post_id', postIds);
+      await supabase.from('comments').delete().in('post_id', postIds);
+      for (const pid of postIds) {
+        await supabase.from('posts').delete().like('content', `::repost::${pid}%`);
+      }
+    }
+
+    // 4. Delete the user's own likes, comments, follows (both directions), posts.
+    await supabase.from('likes').delete().eq('user_id', userId);
+    await supabase.from('comments').delete().eq('author_id', userId);
+    await supabase.from('follows').delete().eq('follower_id', userId);
+    await supabase.from('follows').delete().eq('following_id', userId);
+    await supabase.from('posts').delete().eq('author_id', userId);
+
+    // 5. Delete the user's messages and conversation memberships.
+    try {
+      await supabase.from('messages').delete().eq('sender_id', userId);
+      await supabase.from('conversation_participants').delete().eq('user_id', userId);
+    } catch {}
+
+    // 6. Delete mini-apps created by the user (if any).
+    try { await supabase.from('mini_apps').delete().eq('creator_id', userId); } catch {}
+
+    // 7. Finally delete the profile itself.
+    const { error } = await supabase.from('profiles').delete().eq('id', userId);
+    return { error: error?.message || null };
+  } catch (e: any) {
+    return { error: e?.message || 'Не удалось удалить аккаунт' };
   }
 }
