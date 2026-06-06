@@ -5,49 +5,36 @@ import { router } from 'expo-router';
 import { useTheme } from '../../theme';
 import { Text } from './Text';
 import { CachedImage } from './CachedImage';
+import { MediaViewerModal, MediaViewerSource } from './MediaViewerModal';
 import { getLinkPreview, getCachedPreviewSync, LinkPreviewData } from '../../services/linkPreview';
 
 // Rich link preview card (Telegram / Discord style).
 //
-// Anti-flicker: on mount we synchronously read the in-memory cache, so a
-// preview that was already loaded shows INSTANTLY with no spinner and no
-// re-fetch when scrolling or switching screens. Only genuinely-new links do a
-// (cached, CDN-backed) network fetch. Nothing touches the database.
+// Behaviour on tap:
+//   - YouTube / Vimeo video → plays INLINE inside the app (embedded player,
+//     streamed from the provider — zero load on our server / database).
+//   - Direct image link → opens a full-screen in-app image viewer.
+//   - Anything else → opens the in-app browser.
+//
+// Anti-flicker: the in-memory cache is read synchronously on mount, so an
+// already-loaded preview renders instantly with no spinner and no re-fetch
+// when scrolling or switching screens.
 
 interface LinkPreviewProps {
   url: string;
   onError?: () => void;
 }
 
-// Open known video providers inside the app's in-app browser for playback;
-// everything else opens in the system browser.
-function openLink(url: string, data: LinkPreviewData | null) {
-  try {
-    if (data?.provider === 'youtube' && data.videoId) {
-      // Prefer the native YouTube app / system handling for real playback.
-      Linking.openURL(`https://www.youtube.com/watch?v=${data.videoId}`).catch(() => {
-        Linking.openURL(url).catch(() => {});
-      });
-      return;
-    }
-    // In-app browser for a smooth experience without leaving the app.
-    router.push({ pathname: '/browser', params: { url } });
-  } catch {
-    Linking.openURL(url).catch(() => {});
-  }
-}
-
 export function LinkPreview({ url, onError }: LinkPreviewProps) {
   const theme = useTheme();
-  // Seed from the synchronous memory cache to avoid any loading flicker.
   const cached = getCachedPreviewSync(url);
   const [data, setData] = useState<LinkPreviewData | null>(cached === undefined ? null : cached);
   const [resolved, setResolved] = useState<boolean>(cached !== undefined);
+  const [viewer, setViewer] = useState<MediaViewerSource | null>(null);
   const mounted = useRef(true);
 
   useEffect(() => {
     mounted.current = true;
-    // If we already have a synchronous cache hit, do nothing (no re-fetch).
     if (cached !== undefined) {
       if (!cached) onError?.();
       return () => {
@@ -71,12 +58,38 @@ export function LinkPreview({ url, onError }: LinkPreviewProps) {
     };
   }, [url]);
 
+  const handlePress = () => {
+    // Video → inline player.
+    if (data?.provider === 'youtube' && data.videoId) {
+      setViewer({ kind: 'youtube', videoId: data.videoId });
+      return;
+    }
+    if (data?.provider === 'vimeo' && data.videoId) {
+      setViewer({ kind: 'vimeo', videoId: data.videoId });
+      return;
+    }
+    // Direct image → in-app image viewer.
+    if (data?.type === 'image' && data.image) {
+      setViewer({ kind: 'image', uri: data.image });
+      return;
+    }
+    // Everything else → in-app browser (fallback to system browser).
+    try {
+      router.push({ pathname: '/browser', params: { url } });
+    } catch {
+      Linking.openURL(url).catch(() => {});
+    }
+  };
+
   const border = theme.colors.border.light;
   const accent = theme.colors.accent.primary;
   const bg = theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.025)';
 
+  const viewerEl = (
+    <MediaViewerModal visible={!!viewer} source={viewer} onClose={() => setViewer(null)} />
+  );
+
   // Skeleton placeholder (fixed height) while the FIRST fetch is in flight.
-  // Fixed size means the layout never jumps when the data arrives.
   if (!resolved && !data) {
     return (
       <View style={{ borderRadius: 16, overflow: 'hidden', backgroundColor: bg, borderWidth: 1, borderColor: border }}>
@@ -103,64 +116,67 @@ export function LinkPreview({ url, onError }: LinkPreviewProps) {
   })();
 
   return (
-    <Pressable
-      onPress={() => openLink(url, data)}
-      style={{
-        borderRadius: 16,
-        overflow: 'hidden',
-        backgroundColor: bg,
-        borderLeftWidth: 3,
-        borderLeftColor: accent,
-        borderTopWidth: 1,
-        borderRightWidth: 1,
-        borderBottomWidth: 1,
-        borderTopColor: border,
-        borderRightColor: border,
-        borderBottomColor: border,
-      }}
-    >
-      {data.image ? (
-        <View>
-          <CachedImage uri={data.image} style={{ width: '100%', height: 180 }} resizeMode="cover" />
-          {isVideo && (
-            <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
-              <View
-                style={{
-                  width: 56,
-                  height: 56,
-                  borderRadius: 28,
-                  backgroundColor: 'rgba(0,0,0,0.6)',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  borderWidth: 2,
-                  borderColor: 'rgba(255,255,255,0.85)',
-                }}
-              >
-                <Feather name="play" size={24} color="#FFFFFF" style={{ marginLeft: 3 }} />
+    <>
+      {viewerEl}
+      <Pressable
+        onPress={handlePress}
+        style={{
+          borderRadius: 16,
+          overflow: 'hidden',
+          backgroundColor: bg,
+          borderLeftWidth: 3,
+          borderLeftColor: accent,
+          borderTopWidth: 1,
+          borderRightWidth: 1,
+          borderBottomWidth: 1,
+          borderTopColor: border,
+          borderRightColor: border,
+          borderBottomColor: border,
+        }}
+      >
+        {data.image ? (
+          <View>
+            <CachedImage uri={data.image} style={{ width: '100%', height: 180 }} resizeMode="cover" />
+            {isVideo && (
+              <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
+                <View
+                  style={{
+                    width: 56,
+                    height: 56,
+                    borderRadius: 28,
+                    backgroundColor: 'rgba(0,0,0,0.6)',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    borderWidth: 2,
+                    borderColor: 'rgba(255,255,255,0.85)',
+                  }}
+                >
+                  <Feather name="play" size={24} color="#FFFFFF" style={{ marginLeft: 3 }} />
+                </View>
               </View>
-            </View>
-          )}
-        </View>
-      ) : null}
+            )}
+          </View>
+        ) : null}
 
-      <View style={{ padding: 12 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 3 }}>
-          <Feather name={isVideo ? 'play-circle' : 'link'} size={11} color={accent} />
-          <Text variant="caption" weight="semibold" color={accent} numberOfLines={1} style={{ flex: 1, fontSize: 11 }}>
-            {data.siteName || host}
-          </Text>
+        <View style={{ padding: 12 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 3 }}>
+            <Feather name={isVideo ? 'play-circle' : 'link'} size={11} color={accent} />
+            <Text variant="caption" weight="semibold" color={accent} numberOfLines={1} style={{ flex: 1, fontSize: 11 }}>
+              {data.siteName || host}
+            </Text>
+          </View>
+          {data.title ? (
+            <Text variant="body" weight="semibold" numberOfLines={2} style={{ fontSize: 14, lineHeight: 18, marginBottom: data.description ? 3 : 0 }}>
+              {data.title}
+            </Text>
+          ) : null}
+          {data.description ? (
+            <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={2} style={{ fontSize: 12, lineHeight: 16 }}>
+              {data.description}
+            </Text>
+          ) : null}
         </View>
-        {data.title ? (
-          <Text variant="body" weight="semibold" numberOfLines={2} style={{ fontSize: 14, lineHeight: 18, marginBottom: data.description ? 3 : 0 }}>
-            {data.title}
-          </Text>
-        ) : null}
-        {data.description ? (
-          <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={2} style={{ fontSize: 12, lineHeight: 16 }}>
-            {data.description}
-          </Text>
-        ) : null}
-      </View>
-    </Pressable>
+      </Pressable>
+    </>
   );
 }
