@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, ImageBackground, Alert, Animated, PanResponder, Modal, StatusBar, Dimensions } from 'react-native';
+import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, ImageBackground, Alert, Animated, PanResponder, Modal, StatusBar, Dimensions, Keyboard } from 'react-native';
 import { KeyboardStickyView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
 import Reanimated, { useAnimatedStyle, interpolate, Extrapolation } from 'react-native-reanimated';
 import * as Clipboard from 'expo-clipboard';
@@ -215,10 +215,14 @@ export default function ChatScreen() {
   }, []);
 
   const closeSearch = useCallback(() => {
-    setSearchMode(false);
+    // Dismiss the keyboard first so the bottom input bar doesn't get stuck at the
+    // keyboard's last position when it re-mounts (KeyboardStickyView).
+    Keyboard.dismiss();
     setSearchQuery('');
     setSearchMatches([]);
     setSearchActiveIdx(0);
+    // Exit search after the keyboard has had a frame to start closing.
+    setTimeout(() => setSearchMode(false), 50);
   }, []);
 
   const scrollToIndex = useCallback((index: number) => {
