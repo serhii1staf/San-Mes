@@ -69,6 +69,22 @@ async function tableCount(table: string): Promise<number> {
   return total ? parseInt(total, 10) : 0;
 }
 
+// Count rows matching a PostgREST filter (e.g. image_url=not.is.null).
+async function tableCountFilter(table: string, filter: string): Promise<number> {
+  const r = await fetchT(`${SUPABASE_URL}/rest/v1/${table}?select=id&${filter}`, {
+    method: 'HEAD',
+    headers: {
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+      Prefer: 'count=exact',
+      Range: '0-0',
+    },
+  });
+  const cr = r.headers.get('content-range') || '';
+  const total = cr.split('/')[1];
+  return total ? parseInt(total, 10) : 0;
+}
+
 // ---- R2 storage usage via S3 ListObjectsV2 (SigV4 signed) ------------------
 
 function hmac(key: crypto.BinaryLike, data: string): Buffer {
@@ -162,19 +178,29 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   }
 
   // Run all checks in parallel.
-  const [profiles, posts, comments, r2, r2use, vercelRegion] = await Promise.all([
+  const [profiles, posts, comments, r2, r2use, postsWithImg, vercelRegion] = await Promise.all([
     timed(() => tableCount('profiles')),
     timed(() => tableCount('posts')),
     timed(() => tableCount('comments')),
     timed(() => fetchT(`${R2_PUBLIC_BASE}/test/hello.txt`, { method: 'GET' }).then((r) => r.ok)),
     timed(() => r2Usage()),
+    timed(() => tableCountFilter('posts', 'image_url=not.is.null')),
     Promise.resolve(process.env.VERCEL_REGION || 'unknown'),
   ]);
 
   // Supabase is healthy if the count query (a real DB read) succeeded.
   const dbOk = profiles.ok;
-  const storageBytes = r2use.value?.bytes ?? 0;
-  const storageObjects = r2use.value?.objects ?? 0;
+
+  // R2 storage: prefer the live S3 measurement; if it failed (e.g. serverless
+  // clock skew breaks SigV4), fall back to an estimate from the number of
+  // posts that have images × our average compressed size (~180 KB).
+  const liveBytes = r2use.value?.bytes ?? 0;
+  const liveObjects = r2use.value?.objects ?? 0;
+  const measuredStorage = r2use.ok && liveObjects > 0;
+  const AVG_IMG_BYTES = 180 * 1024;
+  const estObjects = postsWithImg.value ?? 0;
+  const storageBytes = measuredStorage ? liveBytes : estObjects * AVG_IMG_BYTES;
+  const storageObjects = measuredStorage ? liveObjects : estObjects;
 
   const services = [
     {
@@ -216,7 +242,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       limit: R2_FREE_BYTES,
       unit: 'bytes',
       extra: `${storageObjects} файлов`,
-      measured: r2use.ok,
+      measured: measuredStorage,
     },
     {
       key: 'db_size',
