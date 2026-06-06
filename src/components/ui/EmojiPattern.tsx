@@ -4,31 +4,26 @@ import { View, Text as RNText, StyleSheet } from 'react-native';
 // Faint tiled emoji pattern used as a decorative background inside containers
 // (e.g. link previews), Telegram-style.
 //
-// Performance: it is pure (memoized), renders a fixed small grid of low-opacity
-// emoji as plain text (no images, no network, no animation) and is wrapped in a
-// non-interactive absolute layer, so it costs almost nothing and never reloads.
+// Performance: pure (memoized), renders a small set of low-opacity emoji as
+// plain text (no images, no network, no animation), wrapped in a
+// non-interactive absolute layer → costs almost nothing and never reloads.
 
 interface EmojiPatternProps {
   emoji?: string;
   opacity?: number;
-  color?: string; // optional tint via text color (emoji ignore color, but spacing dots use it)
 }
 
-// A compact staggered grid of positions (percentages) — looks like the
-// scattered pattern in the screenshot without overdrawing.
-const POSITIONS: { top: string; left: string; size: number; rot: number }[] = [
-  { top: '8%', left: '6%', size: 26, rot: -12 },
-  { top: '14%', left: '42%', size: 20, rot: 8 },
-  { top: '6%', left: '74%', size: 28, rot: 14 },
-  { top: '40%', left: '20%', size: 22, rot: -6 },
-  { top: '46%', left: '60%', size: 26, rot: 10 },
-  { top: '38%', left: '88%', size: 18, rot: -14 },
-  { top: '72%', left: '10%', size: 24, rot: 6 },
-  { top: '78%', left: '46%', size: 20, rot: -10 },
-  { top: '70%', left: '80%', size: 26, rot: 12 },
+// Scattered positions across the container. Each emoji is large and given
+// enough lineHeight/width so it is never clipped at the top.
+const POSITIONS: { top: number; right: number; size: number; rot: number }[] = [
+  { top: -6, right: 4, size: 40, rot: -12 },
+  { top: 10, right: 64, size: 30, rot: 10 },
+  { top: 28, right: 18, size: 36, rot: 14 },
+  { top: 4, right: 120, size: 26, rot: -8 },
+  { top: 34, right: 96, size: 30, rot: 8 },
 ];
 
-export const EmojiPattern = memo(function EmojiPattern({ emoji, opacity = 0.12 }: EmojiPatternProps) {
+export const EmojiPattern = memo(function EmojiPattern({ emoji, opacity = 0.14 }: EmojiPatternProps) {
   if (!emoji) return null;
   const items = useMemo(() => POSITIONS, []);
   return (
@@ -39,9 +34,13 @@ export const EmojiPattern = memo(function EmojiPattern({ emoji, opacity = 0.12 }
           allowFontScaling={false}
           style={{
             position: 'absolute',
-            top: p.top as any,
-            left: p.left as any,
+            top: p.top,
+            right: p.right,
             fontSize: p.size,
+            lineHeight: p.size + 6, // prevent top clipping
+            width: p.size + 10,
+            height: p.size + 10,
+            textAlign: 'center',
             opacity,
             transform: [{ rotate: `${p.rot}deg` }],
           }}

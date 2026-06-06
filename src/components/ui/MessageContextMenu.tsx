@@ -6,6 +6,8 @@ import { useTheme } from '../../theme';
 import { Text } from './Text';
 import { FormattedText } from './FormattedText';
 import { CachedImage } from './CachedImage';
+import { LinkPreview } from './LinkPreview';
+import { extractFirstUrl } from '../../services/linkPreview';
 import { ChatMessage } from '../../types';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -84,6 +86,14 @@ export function MessageContextMenu({ visible, message, isOwn, bubbleColor, bubbl
       {message.text ? (
         <FormattedText color={bubbleTextColor} linkColor={isOwn ? '#FFFFFF' : theme.colors.accent.primary} style={{ fontSize: 15 }}>{message.text}</FormattedText>
       ) : null}
+      {(() => {
+        const link = (!hasImages) ? extractFirstUrl(message.text) : null;
+        return link ? (
+          <View style={{ marginTop: 6 }}>
+            <LinkPreview url={link} textColor={isOwn ? '#FFFFFF' : undefined} />
+          </View>
+        ) : null;
+      })()}
     </>
   );
 

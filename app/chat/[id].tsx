@@ -110,7 +110,7 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
             {(() => {
               const link = (!message.imageUrls || message.imageUrls.length === 0) ? extractFirstUrl(message.text) : null;
               return link ? (
-                <View style={{ marginTop: 6, width: 250, maxWidth: '100%' }}>
+                <View style={{ marginTop: 6, width: 280, maxWidth: '100%' }}>
                   <LinkPreview url={link} textColor={isOwn ? '#FFFFFF' : undefined} emoji={linkEmoji} />
                 </View>
               ) : null;
@@ -238,6 +238,18 @@ export default function ChatScreen() {
   const scrollToEnd = useCallback((animated = true) => {
     requestAnimationFrame(() => flatListRef.current?.scrollToEnd({ animated }));
   }, []);
+
+  // Only auto-scroll to the bottom when the number of messages grows (new
+  // message / first load) — NOT on every content-size change. Otherwise tapping
+  // an inline video (which grows the row) would yank the list to the end.
+  const prevMsgCountRef = useRef(0);
+  const handleContentSizeChange = useCallback(() => {
+    const count = chatMessages.length;
+    if (count !== prevMsgCountRef.current) {
+      prevMsgCountRef.current = count;
+      scrollToEnd(false);
+    }
+  }, [chatMessages.length, scrollToEnd]);
 
   // ── Message search ──────────────────────────────────────────────────────────
   const openSearch = useCallback(() => {
@@ -525,7 +537,7 @@ export default function ChatScreen() {
         initialNumToRender={15}
         maxToRenderPerBatch={10}
         windowSize={9}
-        onContentSizeChange={() => scrollToEnd(false)}
+        onContentSizeChange={handleContentSizeChange}
         onScrollToIndexFailed={(info) => {
           // Item not measured yet — wait a frame then scroll to the offset estimate
           setTimeout(() => {
