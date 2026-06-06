@@ -14,5 +14,5 @@ module.exports = (config) => ({
     "com.apple.security.application-groups":
       config.ios.entitlements["com.apple.security.application-groups"],
   },
-  deploymentTarget: "16.0",
+  deploymentTarget: "17.0",
 });

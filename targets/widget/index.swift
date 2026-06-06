@@ -115,7 +115,19 @@ struct SanWidgetEntryView: View {
             }
         }
         .padding(12)
-        .containerBackground(for: .widget) { Color(.systemBackground) }
+        .widgetBackgroundCompat(Color(.systemBackground))
+    }
+}
+
+// iOS 17 requires containerBackground; iOS 16 uses a plain background.
+extension View {
+    @ViewBuilder
+    func widgetBackgroundCompat(_ color: Color) -> some View {
+        if #available(iOS 17.0, *) {
+            self.containerBackground(color, for: .widget)
+        } else {
+            self.background(color)
+        }
     }
 }
 
