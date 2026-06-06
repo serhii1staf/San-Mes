@@ -38,7 +38,7 @@ function AuthNavigationGuard({ children }: { children: React.ReactNode }) {
       setIsLoggingOut(true);
       // Navigate after a frame to let components unmount
       setTimeout(() => {
-        router.replace('/(auth)/register');
+        router.replace('/(auth)/welcome');
         setIsLoggingOut(false);
       }, 50);
     } else if (isAuthenticated && inAuthGroup) {
