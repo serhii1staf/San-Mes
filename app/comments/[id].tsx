@@ -17,6 +17,8 @@ import { extractFirstUrl } from '../../src/services/linkPreview';
 import { CachedImage } from '../../src/components/ui/CachedImage';
 import { CommentContextMenu, CommentAction } from '../../src/components/ui/CommentContextMenu';
 import { SlideUpSheet } from '../../src/components/ui/SlideUpSheet';
+import { GiphyPicker } from '../../src/components/ui/GiphyPicker';
+import { parseGif } from '../../src/services/giphy';
 import { useAuthStore, useConnectivityStore } from '../../src/store';
 import { getComments, createComment, updateComment, deleteComment, isRepost, parseImageUrls } from '../../src/lib/supabase';
 import { triggerHaptic } from '../../src/utils/haptics';
@@ -90,6 +92,7 @@ export default function CommentsScreen() {
   const [reportComment, setReportComment] = useState<any>(null); // comment being reported
   const [replyTo, setReplyTo] = useState<any>(null); // comment we are replying to
   const [editing, setEditing] = useState<any>(null); // comment being edited
+  const [gifPickerVisible, setGifPickerVisible] = useState(false);
   const inputRef = useRef<TextInput>(null);
   const listRef = useRef<FlatList>(null);
 
@@ -226,6 +229,23 @@ export default function CommentsScreen() {
     setEditing(null);
     setReplyTo(comment);
     setTimeout(() => inputRef.current?.focus(), 50);
+  };
+
+  // Send a GIF as a comment — stored with the ::gif:: marker, rendered as an
+  // animated image. No upload to our storage (GIPHY URL sent directly).
+  const sendGifComment = async (url: string) => {
+    if (!url || !user?.id || !postId) return;
+    triggerHaptic('light');
+    const content = `::gif::${url}`;
+    setReplyTo(null);
+    setIsSending(true);
+    const { error } = await createComment(postId, user.id, content);
+    if (!error) {
+      const { comments: data } = await getComments(postId);
+      setComments(data);
+      setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
+    }
+    setIsSending(false);
   };
 
   // Guard against rapid long-press stacking the menu (same fix as chat).
@@ -386,8 +406,16 @@ export default function CommentsScreen() {
                       </View>
                     </View>
                   ) : null}
-                  <FormattedText style={{ marginTop: 3, fontSize: 14 }}>{parsed.body}</FormattedText>
+                  {parseGif(parsed.body) ? null : <FormattedText style={{ marginTop: 3, fontSize: 14 }}>{parsed.body}</FormattedText>}
                   {(() => {
+                    const gif = parseGif(parsed.body);
+                    if (gif) {
+                      return (
+                        <Pressable onLongPress={() => openCommentMenu(item)} delayLongPress={300} style={{ marginTop: 6 }}>
+                          <CachedImage uri={gif} style={{ width: 160, height: 160, borderRadius: 14, backgroundColor: theme.colors.background.secondary }} resizeMode="cover" />
+                        </Pressable>
+                      );
+                    }
                     const link = extractFirstUrl(parsed.body);
                     return link ? (
                       <Pressable onLongPress={() => openCommentMenu(item)} delayLongPress={300} style={{ marginTop: 6 }}>
@@ -424,7 +452,7 @@ export default function CommentsScreen() {
               <View style={{ width: 3, height: 30, borderRadius: 2, backgroundColor: theme.colors.accent.primary, marginRight: 8 }} />
               <View style={{ flex: 1 }}>
                 <Text variant="caption" weight="semibold" color={theme.colors.accent.primary} numberOfLines={1} style={{ fontSize: 12 }}>Ответ @{replyTo.profiles?.username || 'user'}</Text>
-                <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 11 }}>{parseReply(replyTo.content || '').body}</Text>
+                <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 11 }}>{parseGif(parseReply(replyTo.content || '').body) ? 'GIF' : parseReply(replyTo.content || '').body}</Text>
               </View>
               <Pressable onPress={() => setReplyTo(null)} hitSlop={8} style={{ padding: 4 }}>
                 <Feather name="x" size={18} color={theme.colors.text.tertiary} />
@@ -442,6 +470,10 @@ export default function CommentsScreen() {
                 style={{ flex: 1, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular, maxHeight: 80 }}
                 multiline
               />
+              {/* GIF button inside the input, right side */}
+              <Pressable onPress={() => setGifPickerVisible(true)} hitSlop={8} style={{ marginLeft: 6, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8, backgroundColor: theme.colors.accent.primary + '18' }}>
+                <RNText style={{ fontSize: 11, fontWeight: '800', color: theme.colors.accent.primary }}>GIF</RNText>
+              </Pressable>
             </View>
             <Pressable onPress={handleSend} disabled={!text.trim() || isSending} style={{ marginLeft: 10, width: 40, height: 40, borderRadius: 20, backgroundColor: text.trim() ? theme.colors.accent.primary : theme.colors.background.elevated, alignItems: 'center', justifyContent: 'center' }}>
               <Feather name={editing ? 'check' : 'send'} size={16} color={text.trim() ? '#FFFFFF' : theme.colors.text.tertiary} />
@@ -452,6 +484,7 @@ export default function CommentsScreen() {
         {/* Comment long-press menu — smooth slide-up (matches chat/feed) */}
         {(() => {
           const parsed = actionComment ? parseReply(actionComment.content || '') : { body: '' as string, replyUser: undefined as string | undefined, replyText: undefined as string | undefined };
+          const gif = actionComment ? parseGif(parsed.body) : null;
           const isOwnComment = !!actionComment && !!user?.id && (actionComment.author_id === user.id || actionComment.profiles?.id === user.id);
           return (
             <CommentContextMenu
@@ -461,6 +494,7 @@ export default function CommentsScreen() {
               displayBody={parsed.body}
               replyUser={parsed.replyUser}
               replyText={parsed.replyText}
+              gifUrl={gif}
               onClose={closeCommentMenu}
               onAction={handleMenuAction}
             />
@@ -476,6 +510,9 @@ export default function CommentsScreen() {
             </Pressable>
           ))}
         </SlideUpSheet>
+
+        {/* GIF picker (GIPHY) */}
+        <GiphyPicker visible={gifPickerVisible} onClose={() => setGifPickerVisible(false)} onSelect={sendGifComment} />
     </View>
   );
 }

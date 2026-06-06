@@ -1,5 +1,5 @@
 import React, { memo, useState, useEffect, useImperativeHandle, forwardRef, useCallback } from 'react';
-import { View, TextInput, Pressable, Platform, StyleSheet } from 'react-native';
+import { View, TextInput, Pressable, Platform, StyleSheet, Text } from 'react-native';
 import Reanimated from 'react-native-reanimated';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../../theme';
@@ -25,11 +25,12 @@ interface ChatInputBarProps {
   hasPendingImages: boolean;
   onSend: (text: string) => void;
   onPickImages: () => void;
+  onOpenGif: () => void;
   inputRowStyle: any; // Reanimated animated style (paddingBottom)
 }
 
 export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProps>(function ChatInputBar(
-  { isEditing, hasPendingImages, onSend, onPickImages, inputRowStyle },
+  { isEditing, hasPendingImages, onSend, onPickImages, onOpenGif, inputRowStyle },
   ref,
 ) {
   const theme = useTheme();
@@ -63,6 +64,10 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
           style={{ flex: 1, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular, maxHeight: 100, paddingVertical: Platform.OS === 'ios' ? 10 : 6 }}
           multiline
         />
+        {/* GIF button inside the input, right side */}
+        <Pressable onPress={onOpenGif} hitSlop={8} style={{ marginLeft: 6, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8, backgroundColor: theme.colors.accent.primary + '18' }}>
+          <Text style={{ fontSize: 11, fontWeight: '800', color: theme.colors.accent.primary }}>GIF</Text>
+        </Pressable>
       </View>
       <Pressable onPress={handleSend} style={[styles.sendBtn, { backgroundColor: canSend ? theme.colors.accent.primary : theme.colors.background.elevated }]}>
         <Feather name={isEditing ? 'check' : 'send'} size={18} color={canSend ? '#FFFFFF' : theme.colors.text.tertiary} />

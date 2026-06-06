@@ -7,6 +7,7 @@ import { Text } from './Text';
 import { Avatar } from './Avatar';
 import { FormattedText } from './FormattedText';
 import { LinkPreview } from './LinkPreview';
+import { CachedImage } from './CachedImage';
 import { VerifiedBadge } from './VerifiedBadge';
 import { UserBadge } from './UserBadge';
 import { extractFirstUrl } from '../../services/linkPreview';
@@ -25,6 +26,7 @@ interface CommentContextMenuProps {
   displayBody?: string;
   replyUser?: string;
   replyText?: string;
+  gifUrl?: string | null;
   onClose: () => void;
   onAction: (action: CommentAction, comment: any) => void;
 }
@@ -33,7 +35,7 @@ interface CommentContextMenuProps {
 // main-feed context menus. Shows a live preview of the held comment (including
 // any link/video preview) above the action sheet. The preview is wide so rich
 // previews (link/video cards) fit without being clipped.
-export function CommentContextMenu({ visible, comment, isOwn, displayBody, replyUser, replyText, onClose, onAction }: CommentContextMenuProps) {
+export function CommentContextMenu({ visible, comment, isOwn, displayBody, replyUser, replyText, gifUrl, onClose, onAction }: CommentContextMenuProps) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const slideAnim = useRef(new Animated.Value(40)).current;
@@ -65,13 +67,13 @@ export function CommentContextMenu({ visible, comment, isOwn, displayBody, reply
 
   const profile = comment.profiles || {};
   const body: string = displayBody ?? comment.content ?? '';
-  const link = extractFirstUrl(body);
+  const link = !gifUrl ? extractFirstUrl(body) : null;
   const isLong = body.length > LONG_TEXT_THRESHOLD;
 
   const items: { action: CommentAction; icon: string; label: string; destructive?: boolean; show: boolean }[] = [
     { action: 'reply', icon: 'corner-up-left', label: 'Ответить', show: true },
-    { action: 'copy', icon: 'copy', label: 'Копировать', show: !!body },
-    { action: 'edit', icon: 'edit-2', label: 'Редактировать', show: isOwn },
+    { action: 'copy', icon: 'copy', label: 'Копировать', show: !!body && !gifUrl },
+    { action: 'edit', icon: 'edit-2', label: 'Редактировать', show: isOwn && !gifUrl },
     { action: 'delete', icon: 'trash-2', label: 'Удалить', destructive: true, show: isOwn },
     { action: 'report', icon: 'flag', label: 'Пожаловаться', destructive: true, show: !isOwn },
   ];
@@ -91,7 +93,9 @@ export function CommentContextMenu({ visible, comment, isOwn, displayBody, reply
           {replyText ? <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 11 }}>{replyText}</Text> : null}
         </View>
       ) : null}
-      {body ? (
+      {gifUrl ? (
+        <CachedImage uri={gifUrl} style={{ width: 160, height: 160, borderRadius: 14, backgroundColor: theme.colors.background.secondary }} resizeMode="cover" />
+      ) : body ? (
         <FormattedText color={theme.colors.text.primary} linkColor={theme.colors.accent.primary} style={{ fontSize: 15 }}>{body}</FormattedText>
       ) : null}
       {link ? (

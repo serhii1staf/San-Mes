@@ -18,6 +18,7 @@ import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { UserBadge } from '../../src/components/ui/UserBadge';
 import { MessageContextMenu, MessageAction } from '../../src/components/ui/MessageContextMenu';
 import { ChatInputBar, ChatInputBarHandle } from '../../src/components/chat/ChatInputBar';
+import { GiphyPicker } from '../../src/components/ui/GiphyPicker';
 import { useChatStore, useEntityStore, useConnectivityStore } from '../../src/store';
 import { useChatSettingsStore, GLOBAL_CHAT_SETTINGS_KEY, DEFAULT_CHAT_SETTINGS } from '../../src/store/chatSettingsStore';
 import { supabase, uploadChatImage } from '../../src/lib/supabase';
@@ -139,6 +140,7 @@ export default function ChatScreen() {
   const [pendingImages, setPendingImages] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
   const [viewerImages, setViewerImages] = useState<{ images: string[]; index: number } | null>(null);
+  const [gifPickerVisible, setGifPickerVisible] = useState(false);
   const [searchMode, setSearchMode] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchMatches, setSearchMatches] = useState<number[]>([]);
@@ -370,6 +372,62 @@ export default function ChatScreen() {
   const openImageViewer = useCallback((images: string[], index: number) => {
     setViewerImages({ images, index });
   }, []);
+
+  // Send a GIF (from GIPHY) as a message. We store the remote GIF URL directly in
+  // imageUrls — no upload to our storage (zero server load), and it renders +
+  // animates through the existing image path (expo-image animates GIFs).
+  const sendGif = useCallback((url: string) => {
+    if (!id || !url) return;
+    triggerHaptic('light');
+    const currentReply = replyTo;
+    setReplyTo(null);
+    const newMessage: ChatMessage = {
+      id: 'm-' + Date.now(),
+      conversationId: id,
+      senderId: 'current',
+      text: '',
+      createdAt: new Date().toISOString(),
+      isRead: true,
+      replyToId: currentReply?.id,
+      replyToText: currentReply?.text || (currentReply?.imageUrls && currentReply.imageUrls.length > 0 ? 'Фото' : undefined),
+      replyToIsOwn: currentReply ? currentReply.senderId === 'current' : undefined,
+      replyToImage: currentReply?.imageUrls?.[0],
+      imageUrls: [url],
+    };
+    addMessage(id, newMessage);
+    scrollToEnd();
+
+    // Persist to the DB (best-effort) using the same image marker scheme.
+    if (!useConnectivityStore.getState().isOnline) return;
+    (async () => {
+      try {
+        const { useAuthStore } = await import('../../src/store');
+        const user = useAuthStore.getState().user;
+        if (!user) return;
+        const { data: myConvs } = await supabase.from('conversation_participants').select('conversation_id').eq('user_id', user.id);
+        const { data: theirConvs } = await supabase.from('conversation_participants').select('conversation_id').eq('user_id', participantId);
+        let convId: string | null = null;
+        if (myConvs && theirConvs) {
+          const myIds = new Set(myConvs.map((c: any) => c.conversation_id));
+          const shared = theirConvs.find((c: any) => myIds.has(c.conversation_id));
+          if (shared) convId = shared.conversation_id;
+        }
+        if (!convId) {
+          const { data: newConv } = await supabase.from('conversations').insert({}).select().single();
+          if (newConv) {
+            convId = newConv.id;
+            await supabase.from('conversation_participants').insert([
+              { conversation_id: convId, user_id: user.id },
+              { conversation_id: convId, user_id: participantId },
+            ]);
+          }
+        }
+        if (convId) {
+          await supabase.from('messages').insert({ conversation_id: convId, sender_id: user.id, text: `::img::${url}::` });
+        }
+      } catch {}
+    })();
+  }, [id, replyTo, addMessage, scrollToEnd, participantId]);
 
   const handleMenuAction = useCallback((action: MessageAction, message: ChatMessage) => {
     if (action === 'copy') {
@@ -629,6 +687,7 @@ export default function ChatScreen() {
           hasPendingImages={pendingImages.length > 0}
           onSend={handleSend}
           onPickImages={pickImages}
+          onOpenGif={() => setGifPickerVisible(true)}
           inputRowStyle={inputRowStyle}
         />
       </KeyboardStickyView>
@@ -705,6 +764,9 @@ export default function ChatScreen() {
         onClose={closeMenu}
         onAction={handleMenuAction}
       />
+
+      {/* GIF picker (GIPHY) */}
+      <GiphyPicker visible={gifPickerVisible} onClose={() => setGifPickerVisible(false)} onSelect={sendGif} />
 
       {/* Fullscreen image viewer */}
       <Modal visible={!!viewerImages} transparent animationType="fade" onRequestClose={() => setViewerImages(null)} statusBarTranslucent>
