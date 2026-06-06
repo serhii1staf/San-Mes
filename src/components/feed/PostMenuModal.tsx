@@ -15,6 +15,7 @@ import { useAuthStore } from '../../store/authStore';
 import { useFeedStore } from '../../store/feedStore';
 import { deletePost } from '../../lib/supabase';
 import { showToast } from '../../store/toastStore';
+import { sharePost } from '../../utils/sharePost';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 const REPORT_CATS = ['Спам', 'Насилие', 'Ложная информация', 'Мошенничество', 'Нарушение авторских прав', 'Другое'];
@@ -95,7 +96,7 @@ export function PostMenuModal({ visible, post, onClose }: PostMenuModalProps) {
   const previewImage = post.isRepost && post.originalPost ? post.originalPost.imageUrl : post.imageUrl;
 
   const handleCopyLink = async () => { triggerHaptic('light'); await Clipboard.setStringAsync(`https://san-m-app.com/post/${post.id}`); showToast('Ссылка скопирована', 'link'); dismiss(); };
-  const handleShare = async () => { triggerHaptic('light'); try { await Share.share({ message: `${post.content || ''}\nhttps://san-m-app.com/post/${post.id}` }); } catch {} dismiss(); };
+  const handleShare = async () => { triggerHaptic('light'); await sharePost(post); dismiss(); };
   const handleDelete = () => {
     triggerHaptic('medium');
     Alert.alert('Удалить пост?', 'Это действие нельзя отменить', [

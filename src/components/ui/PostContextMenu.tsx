@@ -12,6 +12,7 @@ import { FormattedText } from './FormattedText';
 import { showToast } from '../../store/toastStore';
 import { formatTimeAgo } from '../../utils/mockData';
 import { Post } from '../../types';
+import { sharePost } from '../../utils/sharePost';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -70,9 +71,8 @@ export function PostContextMenu({ visible, post, isOwnPost, onClose, onDelete }:
 
   const handleShare = async () => {
     if (post) {
-      try {
-        await Share.share({ message: `${post.authorName}: ${post.content || ''}\nhttps://san-m-app.com/post/${post.id}` });
-      } catch {}
+      // Share the actual photo + text into other apps, not a link.
+      await sharePost(post);
     }
     dismiss();
   };

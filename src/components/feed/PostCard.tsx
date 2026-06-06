@@ -143,7 +143,7 @@ export const PostCard = memo(function PostCard({ post, currentUserId, onLike, on
         </Pressable>
 
         {/* Share */}
-        <Pressable onPress={async () => { triggerHaptic('light'); try { const { Share } = require('react-native'); await Share.share({ message: `${post.content || ''}\nhttps://san-m-app.com/post/${post.id}` }); } catch {} }} style={{ flexDirection: 'row', alignItems: 'center' }}>
+        <Pressable onPress={async () => { triggerHaptic('light'); try { const { sharePost } = require('../../utils/sharePost'); await sharePost(post); } catch {} }} style={{ flexDirection: 'row', alignItems: 'center' }}>
           <Feather name="send" size={15} color={theme.colors.text.tertiary} />
         </Pressable>
       </View>
