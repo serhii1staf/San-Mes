@@ -12,7 +12,7 @@ import { Platform } from 'react-native';
 
 const APP_GROUP = 'group.com.sanmes.app';
 const FEED_KEY = 'widget_feed_posts';
-const MAX_WIDGET_POSTS = 4;
+const DEFAULT_MAX_WIDGET_POSTS = 4;
 
 export interface WidgetPost {
   id: string;
@@ -29,21 +29,30 @@ try {
   ExtensionStorage = null;
 }
 
+/** True when the native widget module is present in the current build. */
+export function isWidgetAvailable(): boolean {
+  return Platform.OS === 'ios' && !!ExtensionStorage;
+}
+
 /**
  * Write the top feed posts to the shared App Group and reload the widget.
  * Accepts the app's view-model posts and maps them to the compact widget shape.
  */
-export function updateFeedWidget(posts: Array<{
-  id: string;
-  authorName?: string;
-  authorEmoji?: string;
-  content?: string;
-}>): void {
+export function updateFeedWidget(
+  posts: Array<{
+    id: string;
+    authorName?: string;
+    authorEmoji?: string;
+    content?: string;
+  }>,
+  maxPosts: number = DEFAULT_MAX_WIDGET_POSTS
+): void {
   if (Platform.OS !== 'ios' || !ExtensionStorage) return;
 
   try {
+    const limit = Math.max(1, Math.min(4, maxPosts));
     const mapped: WidgetPost[] = posts
-      .slice(0, MAX_WIDGET_POSTS)
+      .slice(0, limit)
       .map((p) => ({
         id: String(p.id),
         author: (p.authorName || 'User').slice(0, 40),
@@ -58,6 +67,16 @@ export function updateFeedWidget(posts: Array<{
     ExtensionStorage.reloadWidget();
   } catch {
     // Never let widget updates affect the app flow.
+  }
+}
+
+/** Force the home-screen widget to reload its timeline from the latest cached data. */
+export function reloadWidgetNow(): void {
+  if (Platform.OS !== 'ios' || !ExtensionStorage) return;
+  try {
+    ExtensionStorage.reloadWidget();
+  } catch {
+    // ignore
   }
 }
 

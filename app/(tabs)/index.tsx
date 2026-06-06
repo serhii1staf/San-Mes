@@ -18,6 +18,7 @@ import { useConnectivityStore } from '../../src/services/connectivityMonitor';
 import { resetThrottle, shouldSync } from '../../src/services/syncThrottle';
 import { accountKey } from '../../src/services/cacheService';
 import { updateFeedWidget } from '../../src/services/widgetBridge';
+import { useWidgetSettingsStore } from '../../src/store/widgetSettingsStore';
 import { queueMutation } from '../../src/services/offlineQueue';
 
 const FEED_CACHE_KEY = '@san:feed_posts';
@@ -134,12 +135,13 @@ export default function FeedScreen() {
   // or when the native widget module isn't in the build yet).
   useEffect(() => {
     if (posts.length > 0) {
+      const { postCount } = useWidgetSettingsStore.getState();
       updateFeedWidget(posts.map((p) => ({
         id: p.id,
         authorName: p.authorName,
         authorEmoji: p.authorEmoji,
         content: p.content,
-      })));
+      })), postCount);
     }
   }, [posts]);
   const [showUpdateModal, setShowUpdateModal] = useState(false);

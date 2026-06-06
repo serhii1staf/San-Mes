@@ -175,6 +175,11 @@ export default function SettingsScreen() {
             onPress={() => router.push('/settings/app-icon' as any)}
           />
           <SettingsRow
+            icon="layout"
+            label="Виджет"
+            onPress={() => router.push('/settings/widget' as any)}
+          />
+          <SettingsRow
             icon="database"
             label="Данные и память"
             onPress={() => router.push('/settings/storage')}
