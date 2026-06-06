@@ -110,8 +110,8 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, hig
             {(() => {
               const link = (!message.imageUrls || message.imageUrls.length === 0) ? extractFirstUrl(message.text) : null;
               return link ? (
-                <View style={{ marginTop: 6, width: 240, maxWidth: '100%' }}>
-                  <LinkPreview url={link} />
+                <View style={{ marginTop: 6, width: 250, maxWidth: '100%' }}>
+                  <LinkPreview url={link} textColor={isOwn ? '#FFFFFF' : undefined} />
                 </View>
               ) : null;
             })()}

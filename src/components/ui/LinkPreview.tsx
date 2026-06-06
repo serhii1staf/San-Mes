@@ -1,40 +1,42 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Pressable, Linking, ActivityIndicator } from 'react-native';
+import { View, Pressable, Linking } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import { WebView } from 'react-native-webview';
 import { useTheme } from '../../theme';
 import { Text } from './Text';
 import { CachedImage } from './CachedImage';
-import { MediaViewerModal, MediaViewerSource, playerHtml, baseUrlFor } from './MediaViewerModal';
+import { MediaViewerModal, MediaViewerSource, InlineVideoPlayer } from './MediaViewerModal';
 import { getLinkPreview, getCachedPreviewSync, LinkPreviewData } from '../../services/linkPreview';
 
 // Rich link preview card (Discord / Telegram style).
 //
 // Video behaviour (like Discord):
 //   - Tap the video thumbnail → an embedded player loads RIGHT IN THE CARD and
-//     starts playing. Video streams from YouTube/Vimeo (zero load on our
-//     server / database).
-//   - Tap the expand button → fullscreen player.
+//     plays (YouTube via the official IFrame API for reliability — no error 153).
+//   - Tap the maximize button → fullscreen player.
 // Image link → fullscreen image viewer. Other links → in-app browser.
 //
+// `textColor` lets callers (e.g. own chat bubbles) force readable colors.
 // Anti-flicker: in-memory cache is read synchronously, so loaded previews
 // render instantly with no spinner and no re-fetch on scroll / navigation.
 
 interface LinkPreviewProps {
   url: string;
   onError?: () => void;
+  textColor?: string; // override title/description color (e.g. white in own bubbles)
 }
 
 const PREVIEW_HEIGHT = 190;
+const FALLBACK_WIDTH = 280;
 
-export function LinkPreview({ url, onError }: LinkPreviewProps) {
+export function LinkPreview({ url, onError, textColor }: LinkPreviewProps) {
   const theme = useTheme();
   const cached = getCachedPreviewSync(url);
   const [data, setData] = useState<LinkPreviewData | null>(cached === undefined ? null : cached);
   const [resolved, setResolved] = useState<boolean>(cached !== undefined);
-  const [playing, setPlaying] = useState(false); // inline video playing in card
+  const [playing, setPlaying] = useState(false);
   const [fullscreen, setFullscreen] = useState<MediaViewerSource | null>(null);
+  const [cardWidth, setCardWidth] = useState(0);
   const mounted = useRef(true);
 
   useEffect(() => {
@@ -65,6 +67,8 @@ export function LinkPreview({ url, onError }: LinkPreviewProps) {
   const border = theme.colors.border.light;
   const accent = theme.colors.accent.primary;
   const bg = theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.025)';
+  const titleColor = textColor || theme.colors.text.primary;
+  const descColor = textColor || theme.colors.text.tertiary;
 
   const videoSource: MediaViewerSource | null = data?.provider === 'youtube' && data.videoId
     ? { kind: 'youtube', videoId: data.videoId }
@@ -74,7 +78,6 @@ export function LinkPreview({ url, onError }: LinkPreviewProps) {
 
   const handlePress = () => {
     if (videoSource) {
-      // Start inline playback right in the card.
       setPlaying(true);
       return;
     }
@@ -99,8 +102,8 @@ export function LinkPreview({ url, onError }: LinkPreviewProps) {
       <View style={{ borderRadius: 16, overflow: 'hidden', backgroundColor: bg, borderWidth: 1, borderColor: border }}>
         <View style={{ height: 4, backgroundColor: accent, opacity: 0.5 }} />
         <View style={{ padding: 12, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <Feather name="link" size={14} color={theme.colors.text.tertiary} />
-          <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ flex: 1 }}>
+          <Feather name="link" size={14} color={descColor} />
+          <Text variant="caption" color={descColor} numberOfLines={1} style={{ flex: 1 }}>
             {url.replace(/^https?:\/\/(www\.)?/, '')}
           </Text>
         </View>
@@ -119,11 +122,18 @@ export function LinkPreview({ url, onError }: LinkPreviewProps) {
     }
   })();
 
+  const effectiveWidth = cardWidth > 0 ? cardWidth : FALLBACK_WIDTH;
+
   return (
     <>
       {fullscreenEl}
       <View
+        onLayout={(e) => {
+          const w = e.nativeEvent.layout.width;
+          if (w && Math.abs(w - cardWidth) > 1) setCardWidth(w);
+        }}
         style={{
+          width: '100%',
           borderRadius: 16,
           overflow: 'hidden',
           backgroundColor: bg,
@@ -139,24 +149,15 @@ export function LinkPreview({ url, onError }: LinkPreviewProps) {
       >
         {/* Media area */}
         {playing && videoSource ? (
-          <View style={{ width: '100%', aspectRatio: 16 / 9, backgroundColor: '#000' }}>
-            <WebView
-              source={{ html: playerHtml(videoSource), baseUrl: baseUrlFor(videoSource) }}
-              style={{ flex: 1, backgroundColor: '#000' }}
-              allowsInlineMediaPlayback
-              mediaPlaybackRequiresUserAction={false}
-              javaScriptEnabled
-              domStorageEnabled
-              allowsFullscreenVideo
-              originWhitelist={['*']}
-              scrollEnabled={false}
-              startInLoadingState
-              renderLoading={() => (
-                <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: '#000' }}>
-                  <ActivityIndicator color="#FFFFFF" />
-                </View>
-              )}
-            />
+          <View style={{ position: 'relative' }}>
+            <InlineVideoPlayer source={videoSource} width={effectiveWidth} />
+            <Pressable
+              onPress={() => setFullscreen(videoSource)}
+              style={{ position: 'absolute', bottom: 8, right: 8, width: 30, height: 30, borderRadius: 15, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center' }}
+              hitSlop={8}
+            >
+              <Feather name="maximize-2" size={14} color="#FFFFFF" />
+            </Pressable>
           </View>
         ) : data.image ? (
           <Pressable onPress={handlePress}>
@@ -185,18 +186,18 @@ export function LinkPreview({ url, onError }: LinkPreviewProps) {
         {/* Text area (tap opens link / browser) */}
         <Pressable onPress={handlePress} style={{ padding: 12 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 3 }}>
-            <Feather name={isVideo ? 'play-circle' : 'link'} size={11} color={accent} />
-            <Text variant="caption" weight="semibold" color={accent} numberOfLines={1} style={{ flex: 1, fontSize: 11 }}>
+            <Feather name={isVideo ? 'play-circle' : 'link'} size={11} color={textColor || accent} />
+            <Text variant="caption" weight="semibold" color={textColor || accent} numberOfLines={1} style={{ flex: 1, fontSize: 11, opacity: textColor ? 0.9 : 1 }}>
               {data.siteName || host}
             </Text>
           </View>
           {data.title ? (
-            <Text variant="body" weight="semibold" numberOfLines={2} style={{ fontSize: 14, lineHeight: 18, marginBottom: data.description ? 3 : 0 }}>
+            <Text variant="body" weight="semibold" color={titleColor} numberOfLines={2} style={{ fontSize: 14, lineHeight: 18, marginBottom: data.description ? 3 : 0 }}>
               {data.title}
             </Text>
           ) : null}
           {data.description ? (
-            <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={2} style={{ fontSize: 12, lineHeight: 16 }}>
+            <Text variant="caption" color={descColor} numberOfLines={2} style={{ fontSize: 12, lineHeight: 16, opacity: textColor ? 0.85 : 1 }}>
               {data.description}
             </Text>
           ) : null}
