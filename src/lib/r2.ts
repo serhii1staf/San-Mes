@@ -21,9 +21,10 @@ const R2_BUCKET = 'san';
 const R2_ENDPOINT_HOST = `${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`;
 
 // Public base URL used to build the returned image URL.
-// This is the bucket's Public Development URL (pub-*.r2.dev), enabled in the
-// Cloudflare dashboard. Images are publicly readable at `${base}/${key}`.
-export let R2_PUBLIC_BASE_URL = 'https://pub-534cd44641e447b895f9e81e1f85403d.r2.dev';
+// This is the bucket's custom domain (a subdomain of your own domain), set up
+// in the Cloudflare R2 dashboard → Custom Domains. Images are publicly readable
+// at `${base}/${key}`. Using your own domain keeps all links on-brand.
+export let R2_PUBLIC_BASE_URL = 'https://media.san-m-app.com';
 
 /** Allow runtime override of the public base URL (e.g. from remote config). */
 export function setR2PublicBaseUrl(url: string) {
