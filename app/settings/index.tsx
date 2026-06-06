@@ -75,6 +75,20 @@ export default function SettingsScreen() {
   const { hapticEnabled, useInAppBrowser, setHaptic, setInAppBrowser } = useSettingsStore();
   const [iconModalVisible, setIconModalVisible] = useState(false);
 
+  // Hidden admin access: tap the "Безопасность" section title 6 times quickly.
+  const adminTapCount = React.useRef(0);
+  const adminLastTap = React.useRef(0);
+  const handleAdminTap = () => {
+    const now = Date.now();
+    if (now - adminLastTap.current > 2000) adminTapCount.current = 0;
+    adminLastTap.current = now;
+    adminTapCount.current++;
+    if (adminTapCount.current >= 6) {
+      adminTapCount.current = 0;
+      router.push('/settings/admin' as any);
+    }
+  };
+
   const handleLogout = () => {
     Alert.alert('Выход', 'Вы уверены, что хотите выйти?', [
       { text: 'Отмена', style: 'cancel' },
@@ -227,11 +241,11 @@ export default function SettingsScreen() {
         </View>
 
         {/* Безопасность */}
-        <View style={sectionTitleStyle}>
+        <Pressable onPress={handleAdminTap} style={sectionTitleStyle}>
           <Text variant="body" weight="semibold" color={theme.colors.text.secondary}>
             Безопасность
           </Text>
-        </View>
+        </Pressable>
         <View style={sectionCardStyle}>
           <SettingsRow
             icon="smartphone"

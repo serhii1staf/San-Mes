@@ -1,6 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { View, Pressable, TextInput, FlatList, ActivityIndicator, Dimensions, Text as RNText, Platform } from 'react-native';
-import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
+import { KeyboardStickyView } from 'react-native-keyboard-controller';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -152,7 +152,7 @@ export default function AIChatScreen() {
   const renderItem = useCallback(({ item }: { item: AIMessage }) => <MemoMessageBubble message={item} />, []);
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: theme.colors.background.primary }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0}>
+    <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
       {/* Header */}
       <View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100 }}>
         <LinearGradient colors={[theme.colors.background.primary, theme.colors.background.primary, theme.colors.background.primary + '00']} locations={[0, 0.7, 1]} style={{ paddingTop: insets.top + 8, paddingBottom: 20, paddingHorizontal: 16 }}>
@@ -180,7 +180,7 @@ export default function AIChatScreen() {
         data={invertedData}
         keyExtractor={item => item.id}
         inverted
-        contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8 }}
+        contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 72 + insets.bottom }}
         renderItem={renderItem}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
@@ -215,22 +215,24 @@ export default function AIChatScreen() {
         }
       />
 
-      {/* Input — no container, transparent background, messages pass through */}
-      <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 16 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'flex-end', backgroundColor: theme.isDark ? 'rgba(40,40,40,0.95)' : 'rgba(245,245,245,0.95)', borderRadius: 24, paddingHorizontal: 16, paddingVertical: 8, borderWidth: 1, borderColor: theme.colors.border.light }}>
-          <TextInput
-            value={input}
-            onChangeText={setInput}
-            placeholder="Напиши что-нибудь..."
-            placeholderTextColor={theme.colors.text.tertiary}
-            multiline
-            style={{ flex: 1, fontSize: 14, color: theme.colors.text.primary, maxHeight: 100, paddingVertical: 4 }}
-          />
-          <Pressable onPress={handleSend} disabled={!input.trim() || isLoading} style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: input.trim() ? theme.colors.accent.primary : 'transparent', alignItems: 'center', justifyContent: 'center', marginLeft: 8 }}>
-            <Feather name="send" size={14} color={input.trim() ? '#FFFFFF' : theme.colors.text.tertiary} />
-          </Pressable>
+      {/* Input — sticks to keyboard (smooth, no lag) */}
+      <KeyboardStickyView offset={{ closed: 0, opened: 0 }} style={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}>
+        <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: insets.bottom > 0 ? insets.bottom : 16, backgroundColor: theme.colors.background.primary }}>
+          <View style={{ flexDirection: 'row', alignItems: 'flex-end', backgroundColor: theme.isDark ? 'rgba(40,40,40,0.95)' : 'rgba(245,245,245,0.95)', borderRadius: 24, paddingHorizontal: 16, paddingVertical: 8, borderWidth: 1, borderColor: theme.colors.border.light }}>
+            <TextInput
+              value={input}
+              onChangeText={setInput}
+              placeholder="Напиши что-нибудь..."
+              placeholderTextColor={theme.colors.text.tertiary}
+              multiline
+              style={{ flex: 1, fontSize: 14, color: theme.colors.text.primary, maxHeight: 100, paddingVertical: 4 }}
+            />
+            <Pressable onPress={handleSend} disabled={!input.trim() || isLoading} style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: input.trim() ? theme.colors.accent.primary : 'transparent', alignItems: 'center', justifyContent: 'center', marginLeft: 8 }}>
+              <Feather name="send" size={14} color={input.trim() ? '#FFFFFF' : theme.colors.text.tertiary} />
+            </Pressable>
+          </View>
         </View>
-      </View>
-    </KeyboardAvoidingView>
+      </KeyboardStickyView>
+    </View>
   );
 }
