@@ -91,7 +91,7 @@ export function FormattedText({ children, style, color, linkColor }: FormattedTe
           case 'link':
             return (
               <RNText key={i} onPress={() => openUrl(part.content)} style={{ color: resolvedLinkColor, textDecorationLine: 'underline' }}>
-                {part.content}
+                {shortenUrl(part.content)}
               </RNText>
             );
 
@@ -106,6 +106,29 @@ export function FormattedText({ children, style, color, linkColor }: FormattedTe
 interface TextPart {
   type: 'text' | 'bold' | 'italic' | 'strike' | 'underline' | 'code' | 'spoiler' | 'mention' | 'hashtag' | 'link';
   content: string;
+}
+
+// Display links compactly: strip protocol/www and, for our own deep links,
+// show just the domain + section (e.g. "san-m-app.com/post") instead of the
+// long id. The full URL is still used for the tap action. Pure + cheap.
+function shortenUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.replace(/^www\./, '');
+    const seg = u.pathname.split('/').filter(Boolean);
+    if (seg.length === 0) return host;
+    // For known sections keep only the section name, drop the long id.
+    if (seg[0] === 'post' || seg[0] === 'profile' || seg[0] === 'comments') {
+      return `${host}/${seg[0]}`;
+    }
+    // Otherwise show host + first segment, truncated.
+    const tail = seg[0].length > 16 ? seg[0].slice(0, 15) + '…' : seg[0];
+    return `${host}/${tail}`;
+  } catch {
+    // Not a parseable URL — strip protocol and clip length.
+    const clean = url.replace(/^https?:\/\/(www\.)?/, '');
+    return clean.length > 30 ? clean.slice(0, 29) + '…' : clean;
+  }
 }
 
 function parseFormatting(text: string): TextPart[] {

@@ -672,6 +672,7 @@ export default function ChatScreen() {
         bubbleColor={menuIsOwn ? theme.colors.accent.primary : theme.colors.background.tertiary}
         bubbleTextColor={menuIsOwn ? '#FFFFFF' : theme.colors.text.primary}
         bubbleRadius={chatSettings.bubbleRadius}
+        linkEmoji={chatSettings.linkEmoji}
         onClose={() => setMenuMessage(null)}
         onAction={handleMenuAction}
       />

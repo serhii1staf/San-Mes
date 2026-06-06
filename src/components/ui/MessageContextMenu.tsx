@@ -24,11 +24,12 @@ interface MessageContextMenuProps {
   bubbleColor: string;
   bubbleTextColor: string;
   bubbleRadius: number;
+  linkEmoji?: string;
   onClose: () => void;
   onAction: (action: MessageAction, message: ChatMessage) => void;
 }
 
-export function MessageContextMenu({ visible, message, isOwn, bubbleColor, bubbleTextColor, bubbleRadius, onClose, onAction }: MessageContextMenuProps) {
+export function MessageContextMenu({ visible, message, isOwn, bubbleColor, bubbleTextColor, bubbleRadius, linkEmoji, onClose, onAction }: MessageContextMenuProps) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const slideAnim = useRef(new Animated.Value(40)).current;
@@ -90,7 +91,7 @@ export function MessageContextMenu({ visible, message, isOwn, bubbleColor, bubbl
         const link = (!hasImages) ? extractFirstUrl(message.text) : null;
         return link ? (
           <View style={{ marginTop: 6 }}>
-            <LinkPreview url={link} textColor={isOwn ? '#FFFFFF' : undefined} />
+            <LinkPreview url={link} textColor={isOwn ? '#FFFFFF' : undefined} emoji={linkEmoji} />
           </View>
         ) : null;
       })()}

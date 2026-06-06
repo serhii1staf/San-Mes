@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, FlatList, TextInput, Pressable, Platform, ActivityIndicator, StyleSheet, Text as RNText } from 'react-native';
+import { View, FlatList, TextInput, Pressable, Platform, ActivityIndicator, StyleSheet, Text as RNText, Modal } from 'react-native';
 import { KeyboardStickyView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
 import Reanimated, { useAnimatedStyle } from 'react-native-reanimated';
 import { useLocalSearchParams, router } from 'expo-router';
@@ -18,6 +18,9 @@ import { useAuthStore, useConnectivityStore } from '../../src/store';
 import { getComments, createComment, isRepost, parseImageUrls } from '../../src/lib/supabase';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { playSendSound } from '../../src/utils/sounds';
+import { showToast } from '../../src/store/toastStore';
+
+const REPORT_CATS = ['Спам', 'Насилие', 'Ложная информация', 'Мошенничество', 'Оскорбления', 'Другое'];
 
 export default function CommentsScreen() {
   const theme = useTheme();
@@ -35,6 +38,9 @@ export default function CommentsScreen() {
   const [isSending, setIsSending] = useState(false);
   const [postData, setPostData] = useState<any>(null);
   const [repostOriginal, setRepostOriginal] = useState<any>(null);
+  const [actionComment, setActionComment] = useState<any>(null); // long-pressed comment
+  const [reportComment, setReportComment] = useState<any>(null); // comment being reported
+  const [replyTo, setReplyTo] = useState<any>(null); // comment we are replying to
   const inputRef = useRef<TextInput>(null);
   const listRef = useRef<FlatList>(null);
 
@@ -104,8 +110,11 @@ export default function CommentsScreen() {
   const handleSend = async () => {
     if (!text.trim() || !user?.id || !postId) return;
     playSendSound();
-    const sendText = text.trim();
+    // Prepend a @mention when replying to a comment.
+    const replyPrefix = replyTo?.profiles?.username ? `@${replyTo.profiles.username} ` : '';
+    const sendText = (replyPrefix + text.trim()).trim();
     setText('');
+    setReplyTo(null);
     setIsSending(true);
     const { error } = await createComment(postId, user.id, sendText);
     if (!error) {
@@ -114,6 +123,12 @@ export default function CommentsScreen() {
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
     }
     setIsSending(false);
+  };
+
+  const startReply = (comment: any) => {
+    setActionComment(null);
+    setReplyTo(comment);
+    setTimeout(() => inputRef.current?.focus(), 50);
   };
 
   const formatTime = (dateStr: string) => {
@@ -238,7 +253,7 @@ export default function CommentsScreen() {
               </View>
             }
             renderItem={({ item }) => (
-              <View style={{ flexDirection: 'row', marginBottom: 16 }}>
+              <Pressable onLongPress={() => { triggerHaptic('medium'); setActionComment(item); }} delayLongPress={300} style={{ flexDirection: 'row', marginBottom: 16 }}>
                 <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: item.profiles?.id || item.author_id } })}>
                   <Avatar emoji={item.profiles?.emoji || '😊'} size="sm" />
                 </Pressable>
@@ -254,14 +269,30 @@ export default function CommentsScreen() {
                     const link = extractFirstUrl(item.content);
                     return link ? <View style={{ marginTop: 6 }}><LinkPreview url={link} /></View> : null;
                   })()}
+                  {/* Reply action */}
+                  <Pressable onPress={() => startReply(item)} hitSlop={6} style={{ marginTop: 4, alignSelf: 'flex-start' }}>
+                    <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>Ответить</Text>
+                  </Pressable>
                 </View>
-              </View>
+              </Pressable>
             )}
           />
         )}
 
         {/* Input area — sticks to keyboard (smooth, no lag) */}
         <KeyboardStickyView offset={{ closed: 0, opened: 0 }} style={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}>
+          {replyTo ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 6, backgroundColor: bgColor }}>
+              <View style={{ width: 3, height: 30, borderRadius: 2, backgroundColor: theme.colors.accent.primary, marginRight: 8 }} />
+              <View style={{ flex: 1 }}>
+                <Text variant="caption" weight="semibold" color={theme.colors.accent.primary} numberOfLines={1} style={{ fontSize: 12 }}>Ответ @{replyTo.profiles?.username || 'user'}</Text>
+                <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 11 }}>{replyTo.content}</Text>
+              </View>
+              <Pressable onPress={() => setReplyTo(null)} hitSlop={8} style={{ padding: 4 }}>
+                <Feather name="x" size={18} color={theme.colors.text.tertiary} />
+              </Pressable>
+            </View>
+          ) : null}
           <Reanimated.View style={[{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: 8, backgroundColor: bgColor }, inputPadStyle]}>
             <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 22, paddingHorizontal: 16, paddingVertical: 10, borderWidth: 1, borderColor: theme.colors.border.light }}>
               <TextInput
@@ -279,6 +310,45 @@ export default function CommentsScreen() {
             </Pressable>
           </Reanimated.View>
         </KeyboardStickyView>
+
+        {/* Comment action sheet (long-press) */}
+        <Modal visible={!!actionComment} transparent animationType="fade" onRequestClose={() => setActionComment(null)}>
+          <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }} onPress={() => setActionComment(null)}>
+            <View style={{ margin: 8, backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF', borderRadius: 24, overflow: 'hidden' }}>
+              <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 6 }}>
+                <View style={{ width: 40, height: 5, borderRadius: 3, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)' }} />
+              </View>
+              <Pressable onPress={() => startReply(actionComment)} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 20 }}>
+                <View style={{ width: 34, height: 34, borderRadius: 10, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)', alignItems: 'center', justifyContent: 'center' }}>
+                  <Feather name="corner-up-left" size={17} color={theme.colors.text.primary} />
+                </View>
+                <Text variant="body" style={{ marginLeft: 14 }}>Ответить</Text>
+              </Pressable>
+              <Pressable onPress={() => { const c = actionComment; setActionComment(null); setTimeout(() => setReportComment(c), 200); }} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 20 }}>
+                <View style={{ width: 34, height: 34, borderRadius: 10, backgroundColor: '#FF3B3010', alignItems: 'center', justifyContent: 'center' }}>
+                  <Feather name="flag" size={17} color="#FF3B30" />
+                </View>
+                <Text variant="body" color="#FF3B30" style={{ marginLeft: 14 }}>Пожаловаться</Text>
+              </Pressable>
+              <View style={{ height: 8 }} />
+            </View>
+          </Pressable>
+        </Modal>
+
+        {/* Report categories */}
+        <Modal visible={!!reportComment} transparent animationType="fade" onRequestClose={() => setReportComment(null)}>
+          <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }} onPress={() => setReportComment(null)}>
+            <View style={{ margin: 8, backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF', borderRadius: 24, overflow: 'hidden' }}>
+              <Text variant="body" weight="semibold" align="center" style={{ paddingVertical: 12 }}>Причина жалобы</Text>
+              {REPORT_CATS.map((cat) => (
+                <Pressable key={cat} onPress={() => { triggerHaptic('medium'); setReportComment(null); showToast('Жалоба отправлена', 'flag'); }} style={{ paddingVertical: 14, paddingHorizontal: 20, borderTopWidth: 0.5, borderTopColor: theme.colors.border.light }}>
+                  <Text variant="body">{cat}</Text>
+                </Pressable>
+              ))}
+              <View style={{ height: 8 }} />
+            </View>
+          </Pressable>
+        </Modal>
     </View>
   );
 }

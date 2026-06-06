@@ -185,7 +185,7 @@ export function LinkPreview({ url, onError, textColor, emoji }: LinkPreviewProps
         }}
       >
         {/* Decorative emoji pattern behind the row (faint, non-interactive) */}
-        {emoji ? <EmojiPattern emoji={emoji} opacity={textColor ? 0.18 : 0.1} /> : null}
+        {emoji ? <EmojiPattern emoji={emoji} opacity={textColor ? 0.18 : 0.12} seed={url} /> : null}
 
         {data.image ? (
           <View style={{ width: 60, height: 60, borderRadius: THUMB_RADIUS, overflow: 'hidden', backgroundColor: bg }}>
