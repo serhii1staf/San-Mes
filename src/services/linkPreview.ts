@@ -70,6 +70,19 @@ function fresh(entry: CacheEntry | null | undefined): boolean {
 }
 
 /**
+ * Synchronous read from the in-memory cache only. Returns:
+ *   - the data (or null for "no preview") when a fresh entry exists,
+ *   - undefined when nothing is cached yet (caller should fetch).
+ * Lets components render cached previews instantly with no loading flicker.
+ */
+export function getCachedPreviewSync(url: string): LinkPreviewData | null | undefined {
+  if (!url) return null;
+  const mem = memCache.get(url);
+  if (fresh(mem)) return mem!.d;
+  return undefined;
+}
+
+/**
  * Get a link preview for a URL. Returns cached data instantly when available,
  * otherwise fetches once (dedupes concurrent calls) and caches the result.
  * Returns null when there is no usable preview.
