@@ -219,14 +219,16 @@ export default function ChatScreen() {
     kvWarm([cacheKey]).then(hydrateFromCache).catch(hydrateFromCache);
   }, [id]);
 
-  // Persist messages to KV cache whenever they change so they survive restart + work offline.
+  // Persist messages to KV cache whenever THIS chat's messages change.
+  // Depend on the specific chat array (not the whole map) to avoid extra work
+  // when other chats update.
+  const myMessages = storeMessages[id || ''];
   useEffect(() => {
     if (!id) return;
-    const msgs = storeMessages[id];
-    if (msgs && msgs.length > 0) {
-      kvSetJSON(`chat_messages:${id}`, msgs);
+    if (myMessages && myMessages.length > 0) {
+      kvSetJSON(`chat_messages:${id}`, myMessages);
     }
-  }, [id, storeMessages]);
+  }, [id, myMessages]);
 
   const chatLocalName = settingsMap[id || '']?.localName;
   const displayName = chatLocalName || conversation?.participantName || profileData?.display_name || entityConv?.participantName || 'Чат';
@@ -533,9 +535,9 @@ export default function ChatScreen() {
         scrollEnabled={scrollEnabled}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
-        removeClippedSubviews={false}
-        initialNumToRender={15}
-        maxToRenderPerBatch={10}
+        removeClippedSubviews={true}
+        initialNumToRender={12}
+        maxToRenderPerBatch={8}
         windowSize={9}
         onContentSizeChange={handleContentSizeChange}
         onScrollToIndexFailed={(info) => {
