@@ -8,59 +8,68 @@ import { Text } from '../../src/components/ui';
 import { useAuthStore } from '../../src/store';
 import { registerUser } from '../../src/lib/supabase';
 
-const EMOJIS = [
-  '😊', '😎', '🥰', '🤩', '😇', '🦊', '🐱', '🐶',
-  '🦁', '🐼', '🐨', '🦋', '🌸', '🌺', '🍀', '✨',
-  '🔥', '💎', '🎭', '🎨', '🎵', '🌙', '☀️', '🌈',
-  '🍄', '🪷', '🫧', '🧿', '💫', '🪐', '🌊', '🍂',
-];
-
 function EmojiStep({ selected, onSelect }: { selected: string; onSelect: (e: string) => void }) {
   const theme = useTheme();
+  const inputRef = useRef<TextInput>(null);
+
+  const handleChange = (t: string) => {
+    if (!t) return;
+    // Take the last emoji/character entered (use Array spread to respect surrogate pairs).
+    const chars = [...t];
+    const last = chars[chars.length - 1];
+    if (last) onSelect(last);
+    Keyboard.dismiss();
+  };
+
   return (
-    <View style={{ alignItems: 'center' }}>
-      <Text variant="heading" weight="bold" align="center">
-        Выбери аватар
+    <View>
+      <Text weight="bold" style={{ fontSize: 28, marginBottom: 10 }}>
+        Установите Эмодзи!
       </Text>
-      <Text variant="body" color={theme.colors.text.secondary} align="center" style={{ marginTop: 8, marginBottom: 32 }}>
-        Это твоя эмодзи-аватарка
+      <Text variant="body" color={theme.colors.text.secondary} style={{ fontSize: 15, lineHeight: 21, marginBottom: 40 }}>
+        Наконец, давайте выберем эмодзи.
       </Text>
 
-      {/* Selected emoji preview */}
-      <View style={{
-        width: 96,
-        height: 96,
-        borderRadius: 48,
-        backgroundColor: theme.colors.background.elevated,
-        alignItems: 'center',
-        justifyContent: 'center',
-        marginBottom: 32,
-        borderWidth: 2,
-        borderColor: selected ? theme.colors.accent.primary : theme.colors.border.light,
-      }}>
-        <RNText style={{ fontSize: 36 }} allowFontScaling={false}>{selected || '?'}</RNText>
-      </View>
+      <View style={{ alignItems: 'center' }}>
+        {/* Bubble label */}
+        <View style={{ backgroundColor: theme.colors.background.elevated, paddingHorizontal: 16, paddingVertical: 8, borderRadius: 16, marginBottom: 18, borderWidth: 1, borderColor: theme.colors.border.light }}>
+          <Text variant="caption" weight="semibold" color={theme.colors.text.secondary}>Выбрать эмодзи</Text>
+        </View>
 
-      {/* Emoji grid */}
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 12 }}>
-        {EMOJIS.map((emoji) => (
-          <Pressable
-            key={emoji}
-            onPress={() => onSelect(emoji)}
-            style={{
-              width: 52,
-              height: 52,
-              borderRadius: 16,
-              backgroundColor: selected === emoji ? theme.colors.accent.primary + '20' : theme.colors.background.elevated,
-              alignItems: 'center',
-              justifyContent: 'center',
-              borderWidth: selected === emoji ? 2 : 0,
-              borderColor: theme.colors.accent.primary,
-            }}
-          >
-            <RNText style={{ fontSize: 22 }} allowFontScaling={false}>{emoji}</RNText>
-          </Pressable>
-        ))}
+        {/* Dashed circle with + or selected emoji */}
+        <Pressable
+          onPress={() => inputRef.current?.focus()}
+          style={{
+            width: 180,
+            height: 180,
+            borderRadius: 90,
+            borderWidth: 2.5,
+            borderColor: selected ? theme.colors.accent.primary : theme.colors.border.light,
+            borderStyle: 'dashed',
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: theme.colors.background.elevated,
+          }}
+        >
+          {selected ? (
+            <RNText style={{ fontSize: 90 }} allowFontScaling={false}>{selected}</RNText>
+          ) : (
+            <Feather name="plus" size={64} color={theme.colors.text.tertiary} />
+          )}
+        </Pressable>
+
+        {/* Hidden input that opens the keyboard for emoji entry */}
+        <TextInput
+          ref={inputRef}
+          value=""
+          onChangeText={handleChange}
+          style={{ position: 'absolute', opacity: 0, width: 1, height: 1 }}
+          autoCorrect={false}
+        />
+
+        <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginTop: 28, fontSize: 12 }}>
+          Выбранный эмодзи нельзя изменить
+        </Text>
       </View>
     </View>
   );
@@ -260,8 +269,8 @@ export default function RegisterScreen() {
   };
 
   const canContinue = () => {
-    if (step === 0) return emoji !== '';
-    if (step === 1) return nameValid(name) && usernameValid(username);
+    if (step === 0) return nameValid(name) && usernameValid(username);
+    if (step === 1) return emoji !== '';
     if (step === 2) return pin.length === 4;
     if (step === 3) return confirmPin.length === 4;
     return false;
@@ -269,9 +278,9 @@ export default function RegisterScreen() {
 
   const handleNext = async () => {
     setError('');
-    if (step === 0 && emoji) {
+    if (step === 0 && nameValid(name) && usernameValid(username)) {
       setStep(1);
-    } else if (step === 1 && nameValid(name) && usernameValid(username)) {
+    } else if (step === 1 && emoji) {
       setStep(2);
     } else if (step === 2 && pin.length === 4) {
       setStep(3);
@@ -353,12 +362,11 @@ export default function RegisterScreen() {
       </View>
 
       <ScrollView
-        contentContainerStyle={{ flexGrow: 1, paddingHorizontal: 32, paddingBottom: 32, justifyContent: step === 1 ? 'center' : 'flex-start' }}
+        contentContainerStyle={{ flexGrow: 1, paddingHorizontal: 32, paddingBottom: 32, justifyContent: step === 0 ? 'center' : 'flex-start' }}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        {step === 0 && <EmojiStep selected={emoji} onSelect={setEmoji} />}
-        {step === 1 && (
+        {step === 0 && (
           <NameStep
             name={name}
             onNameChange={handleNameChange}
@@ -369,6 +377,7 @@ export default function RegisterScreen() {
             onBioChange={setBio}
           />
         )}
+        {step === 1 && <EmojiStep selected={emoji} onSelect={setEmoji} />}
         {step === 2 && <PinStep value={pin} onChange={setPin} title="Придумай код" subtitle="4 цифры для входа" />}
         {step === 3 && <PinStep value={confirmPin} onChange={setConfirmPin} title="Повтори код" subtitle="Введи код ещё раз" />}
 
@@ -392,7 +401,7 @@ export default function RegisterScreen() {
           }}
         >
           <Text variant="body" weight="semibold" color={canContinue() ? '#FFFFFF' : theme.colors.text.tertiary}>
-            {step === 3 ? 'Готово' : step === 1 ? 'Продолжить' : 'Далее'}
+            {step === 3 ? 'Готово' : step <= 1 ? 'Продолжить' : 'Далее'}
           </Text>
         </Pressable>
 
