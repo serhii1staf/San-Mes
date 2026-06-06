@@ -48,8 +48,8 @@ export const PostCard = memo(function PostCard({ post, currentUserId, onLike, on
       {/* Repost indicator */}
       {post.isRepost && (
         <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: 10, gap: 6 }}>
-          <Feather name="repeat" size={12} color={theme.colors.text.tertiary} />
-          <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{post.authorName} репостнул(а)</Text>
+          <Feather name="repeat" size={12} color={theme.colors.text.tertiary} style={{ flexShrink: 0 }} />
+          <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11, flexShrink: 1 }} numberOfLines={1}>{post.authorName} репостнул(а)</Text>
         </View>
       )}
 
