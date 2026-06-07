@@ -66,7 +66,7 @@ function MiniAppsRow() {
 
 type ChatTab = 'chats' | 'apps' | 'archive' | 'blocked' | 'deleted';
 
-function ConversationItem({ item, tab }: { item: Conversation; index: number; tab: ChatTab }) {
+function ConversationItemBase({ item, tab }: { item: Conversation; index: number; tab: ChatTab }) {
   const theme = useTheme();
   const store = useChatSettingsStore;
   const localName = useChatSettingsStore((s) => s.settings[item.id]?.localName);
@@ -181,6 +181,19 @@ function ConversationItem({ item, tab }: { item: Conversation; index: number; ta
     </ContextMenu>
   );
 }
+
+// Memoized so typing in search / unrelated state changes don't re-render every
+// conversation row. Re-renders only when this row's own data or tab changes.
+const ConversationItem = React.memo(ConversationItemBase, (prev, next) =>
+  prev.tab === next.tab &&
+  prev.item.id === next.item.id &&
+  prev.item.lastMessage === next.item.lastMessage &&
+  prev.item.unreadCount === next.item.unreadCount &&
+  prev.item.participantName === next.item.participantName &&
+  prev.item.participantEmoji === next.item.participantEmoji &&
+  prev.item.participantVerified === next.item.participantVerified &&
+  prev.item.participantBadge === next.item.participantBadge
+);
 
 export default function MessagesScreen() {
   const theme = useTheme();
@@ -365,6 +378,10 @@ export default function MessagesScreen() {
           )}
           contentContainerStyle={{ paddingBottom: 100 }}
           showsVerticalScrollIndicator={false}
+          removeClippedSubviews={true}
+          initialNumToRender={12}
+          maxToRenderPerBatch={10}
+          windowSize={9}
         />
       )}
 

@@ -32,7 +32,9 @@ export function FormattedText({ children, style, color, linkColor }: FormattedTe
     setRevealedSpoilers(prev => new Set(prev).add(index));
   };
 
-  const parts = parseFormatting(children);
+  // Parsing runs a regex over the text; memoize per-string so re-renders (theme,
+  // scroll, sibling updates) don't re-parse. Big win for long feeds/chats.
+  const parts = React.useMemo(() => parseFormatting(children), [children]);
   let spoilerIdx = 0;
 
   return (
@@ -131,7 +133,26 @@ function shortenUrl(url: string): string {
   }
 }
 
+// Module-level parse cache: the same text often renders many times (list
+// recycling, navigation back-and-forth). Caching the parsed parts avoids
+// re-running the regex. Bounded to keep memory tiny.
+const parseCache = new Map<string, TextPart[]>();
+const PARSE_CACHE_MAX = 500;
+
 function parseFormatting(text: string): TextPart[] {
+  const cached = parseCache.get(text);
+  if (cached) return cached;
+  const result = parseFormattingUncached(text);
+  if (parseCache.size >= PARSE_CACHE_MAX) {
+    // Drop the oldest entry (first inserted) to bound memory.
+    const firstKey = parseCache.keys().next().value;
+    if (firstKey !== undefined) parseCache.delete(firstKey);
+  }
+  parseCache.set(text, result);
+  return result;
+}
+
+function parseFormattingUncached(text: string): TextPart[] {
   const parts: TextPart[] = [];
   // Regex for all format patterns (URLs first so they aren't broken by other rules)
   const regex = /(https?:\/\/[^\s]+)|(\*\*(.+?)\*\*)|(\*(.+?)\*)|(~~(.+?)~~)|(__(.+?)__)|(`(.+?)`)|(\|\|(.+?)\|\|)|(@(\w+))|(#(\w+))/g;
