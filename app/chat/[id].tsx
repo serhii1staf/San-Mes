@@ -279,44 +279,11 @@ export default function ChatScreen() {
   const displayBadge = profileData?.badge || cachedProfile?.badge || (entityConv as any)?.participantBadge || null;
   const profileId = participantId;
 
-  const scrollToEnd = useCallback((animated = true) => {
-    requestAnimationFrame(() => flatListRef.current?.scrollToEnd({ animated }));
+  // Inverted list: the newest message is at scroll offset 0, so "scroll to end"
+  // (newest) = scroll to offset 0. No manual scroll needed on open.
+  const scrollToEnd = useCallback((_animated = true) => {
+    requestAnimationFrame(() => { try { flatListRef.current?.scrollToOffset({ offset: 0, animated: _animated }); } catch {} });
   }, []);
-
-  // Auto-scroll only when NEW messages arrive after the initial mount. The first
-  // content-size change is the initial layout — we skip scrolling there because
-  // justifyContent:'flex-end' already places content at the bottom (scrolling
-  // there caused the visible auto-scroll the user saw on open).
-  const prevMsgCountRef = useRef(0);
-  const mountedOnceRef = useRef(false);
-  const handleContentSizeChange = useCallback(() => {
-    const count = chatMessages.length;
-    if (!mountedOnceRef.current) {
-      mountedOnceRef.current = true;
-      prevMsgCountRef.current = count;
-      return; // initial layout — already at bottom via flex-end
-    }
-    if (count !== prevMsgCountRef.current) {
-      prevMsgCountRef.current = count;
-      scrollToEnd(false);
-    }
-  }, [chatMessages.length, scrollToEnd]);
-
-  // The list uses contentContainerStyle justifyContent:'flex-end', so messages
-  // are already pinned to the bottom on the very first paint — no initial
-  // scroll-to-end is needed (that was causing the visible auto-scroll). We only
-  // pin again silently once, very late, to absorb any late-loaded image heights.
-  const didInitialScrollRef = useRef(false);
-  useEffect(() => {
-    didInitialScrollRef.current = false;
-  }, [id]);
-  useEffect(() => {
-    if (didInitialScrollRef.current) return;
-    if (!chatMessages.length) return;
-    didInitialScrollRef.current = true;
-    const t = setTimeout(() => { try { flatListRef.current?.scrollToEnd({ animated: false }); } catch {} }, 400);
-    return () => clearTimeout(t);
-  }, [id, chatMessages.length]);
 
   // ── Message search ──────────────────────────────────────────────────────────
   const openSearch = useCallback(() => {
@@ -335,10 +302,12 @@ export default function ChatScreen() {
     setTimeout(() => setSearchMode(false), 50);
   }, []);
 
+  // Search match indices are in original order; map to the inverted list index.
   const scrollToIndex = useCallback((index: number) => {
     if (index < 0 || index >= chatMessages.length) return;
+    const invIndex = chatMessages.length - 1 - index;
     try {
-      flatListRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.5 });
+      flatListRef.current?.scrollToIndex({ index: invIndex, animated: true, viewPosition: 0.5 });
     } catch {}
   }, [chatMessages.length]);
 
@@ -607,6 +576,16 @@ export default function ChatScreen() {
   }, []);
 
   const activeMatchIndex = searchMatches.length > 0 ? searchMatches[searchActiveIdx] : -1;
+  const activeMatchId = activeMatchIndex >= 0 && activeMatchIndex < chatMessages.length ? chatMessages[activeMatchIndex]?.id : null;
+
+  // Inverted data: render newest-first so the FlatList's natural bottom is the
+  // latest message (no scrolling needed). Memoized to avoid re-reversing on every
+  // keystroke / re-render.
+  const invertedMessages = useMemo(() => {
+    const arr = chatMessages.slice();
+    arr.reverse();
+    return arr;
+  }, [chatMessages]);
 
   // Guard against the freeze caused by rapid long-presses / taps while a menu is
   // opening or closing. A time-lock drops any repeat open within the window, we
@@ -630,7 +609,7 @@ export default function ChatScreen() {
     menuLockRef.current = Date.now() + 450;
   }, []);
 
-  const renderItem = useCallback(({ item, index }: { item: ChatMessage; index: number }) => {
+  const renderItem = useCallback(({ item }: { item: ChatMessage; index: number }) => {
     const m = parseMessage(item);
     return (
       <MemoMessageBubble
@@ -640,14 +619,14 @@ export default function ChatScreen() {
         bubbleRadius={chatSettings.bubbleRadius}
         fontFamily={chatSettings.fontFamily}
         linkEmoji={chatSettings.linkEmoji}
-        highlighted={index === activeMatchIndex}
+        highlighted={item.id === activeMatchId}
         onReply={startReply}
         onLongPress={openMenu}
         onSwipeActive={handleSwipeActive}
         onImagePress={openImageViewer}
       />
     );
-  }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, chatSettings.linkEmoji, startReply, handleSwipeActive, openImageViewer, parseMessage, activeMatchIndex, openMenu]);
+  }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, chatSettings.linkEmoji, startReply, handleSwipeActive, openImageViewer, parseMessage, activeMatchId, openMenu]);
 
   const banner = editing || replyTo;
   const menuIsOwn = menuMessage?.senderId === 'current';
@@ -658,15 +637,19 @@ export default function ChatScreen() {
         <ImageBackground source={{ uri: chatSettings.backgroundImage }} style={StyleSheet.absoluteFill} resizeMode="cover" />
       )}
 
-      {/* Messages fill the whole screen; newest at the bottom; scroll behind the input to the very bottom */}
+      {/* Inverted list — newest message sits at the bottom with NO scrolling
+          needed (exactly like the AI chat). This removes the open-at-top-then-
+          jump-to-bottom behaviour entirely and makes keyboard handling trivial. */}
       <FlatList
         ref={flatListRef}
-        data={chatMessages}
+        data={invertedMessages}
         style={StyleSheet.absoluteFill}
         keyExtractor={(item) => item.id}
         renderItem={renderItem}
-        contentContainerStyle={{ flexGrow: 1, justifyContent: 'flex-end', paddingTop: headerContentHeight + 8 }}
-        ListFooterComponent={<Reanimated.View style={listFooterStyle} />}
+        inverted
+        contentContainerStyle={{ paddingBottom: 8 }}
+        ListHeaderComponent={<Reanimated.View style={listFooterStyle} />}
+        ListFooterComponent={<View style={{ height: headerContentHeight + 8 }} />}
         showsVerticalScrollIndicator={false}
         scrollEnabled={scrollEnabled}
         keyboardShouldPersistTaps="handled"
@@ -675,9 +658,7 @@ export default function ChatScreen() {
         initialNumToRender={12}
         maxToRenderPerBatch={8}
         windowSize={9}
-        onContentSizeChange={handleContentSizeChange}
         onScrollToIndexFailed={(info) => {
-          // Item not measured yet — wait a frame then scroll to the offset estimate
           setTimeout(() => {
             try { flatListRef.current?.scrollToIndex({ index: info.index, animated: true, viewPosition: 0.5 }); } catch {}
           }, 120);

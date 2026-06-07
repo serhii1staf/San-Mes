@@ -84,9 +84,13 @@ export default function ProfileScreen() {
   const { user, updateProfile } = useAuthStore();
   const { profilePosts: userPosts, setProfilePosts, profileScrollOffset, setProfileScrollOffset } = useFeedStore();
   const postEmoji = useProfileAppearanceStore((s) => s.postEmoji);
-  // Windowing: render posts in chunks so switching to the "Posts" tab never has
-  // to mount dozens of cards at once (that caused the freeze). Grows on scroll.
-  const [visibleCount, setVisibleCount] = useState(8);
+  // Windowing: render posts in small chunks so switching to the "Posts" tab never
+  // has to mount many cards (each with gesture handlers) at once. Grows on scroll.
+  const [visibleCount, setVisibleCount] = useState(4);
+  // Posts cards are heavier (gesture handlers + images). Gate their mount one
+  // frame after the tab activates so the tab highlight switches instantly and the
+  // heavy mount happens off the tap's critical path (no perceived freeze).
+  const [postsReady, setPostsReady] = useState(true);
   const [activeTab, setActiveTab] = useState<TabName>('posts');
   const [followCounts, setFollowCounts] = useState({ followers: 0, following: 0 });
   const [showQR, setShowQR] = useState(false);
@@ -276,11 +280,11 @@ export default function ProfileScreen() {
           {userLinks.length > 0 && <View style={{ flexDirection: 'row', marginTop: 8, gap: 8 }}>{userLinks.map((link, idx) => <SocialLinkIcon key={idx} type={link.type} url={link.url} />)}</View>}
         </View>
         <View style={{ marginTop: 16, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border.light }}>
-          <View style={{ flexDirection: 'row' }}>{tabs.map((tab) => (<Pressable key={tab.key} onPress={() => { triggerHaptic('selection'); setActiveTab(tab.key); }} style={{ flex: 1, alignItems: 'center', paddingVertical: 11 }}><Text variant="caption" weight={activeTab === tab.key ? 'bold' : 'regular'} color={activeTab === tab.key ? theme.colors.text.primary : theme.colors.text.tertiary}>{tab.label}</Text></Pressable>))}</View>
+          <View style={{ flexDirection: 'row' }}>{tabs.map((tab) => (<Pressable key={tab.key} onPress={() => { triggerHaptic('selection'); if (tab.key === 'posts') { setPostsReady(false); requestAnimationFrame(() => setActiveTab('posts')); setTimeout(() => setPostsReady(true), 16); } else { setActiveTab(tab.key); } }} style={{ flex: 1, alignItems: 'center', paddingVertical: 11 }}><Text variant="caption" weight={activeTab === tab.key ? 'bold' : 'regular'} color={activeTab === tab.key ? theme.colors.text.primary : theme.colors.text.tertiary}>{tab.label}</Text></Pressable>))}</View>
           <View style={{ position: 'absolute', bottom: 0, height: 2, backgroundColor: theme.colors.accent.primary, width: SCREEN_WIDTH / 4, left: tabs.findIndex(t => t.key === activeTab) * (SCREEN_WIDTH / 4) }} />
         </View>
         {activeTab === 'posts' && (userPosts.length === 0 ? <View style={{ alignItems: 'center', paddingVertical: 40 }}><Text variant="caption" color={theme.colors.text.tertiary}>Ещё нет публикаций</Text></View> : (
-          <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>{userPosts.slice(0, visibleCount).map(post => (
+          <View style={{ paddingHorizontal: 16, paddingTop: 12, minHeight: 200 }}>{postsReady ? userPosts.slice(0, visibleCount).map(post => (
             <ProfilePostCard
               key={post.id}
               post={post}
@@ -293,7 +297,7 @@ export default function ProfileScreen() {
               onLongPress={(p) => setContextPost(p)}
               onImagePress={(uri, postId, allImages) => setViewingImage({ uri, postId, allImages })}
             />
-          ))}</View>
+          )) : null}</View>
         ))}
         {activeTab !== 'posts' && <View style={{ alignItems: 'center', paddingVertical: 40 }}><Text variant="caption" color={theme.colors.text.tertiary}>Пока пусто</Text></View>}
       </Animated.ScrollView>
