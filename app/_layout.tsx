@@ -7,6 +7,7 @@ import { ThemeProvider, useTheme } from '../src/theme';
 import { fontAssets } from '../src/theme/fonts';
 import { useAuthStore } from '../src/store';
 import { BrowserMiniBar } from '../src/components/ui/BrowserMiniBar';
+import { MusicMiniBar } from '../src/components/ui/MusicMiniBar';
 import { Toast } from '../src/components/ui/Toast';
 import { initRateLimits } from '../src/services/rateLimit';
 import { cacheCleanup } from '../src/services/cacheManager';
@@ -137,12 +138,14 @@ export default function RootLayout() {
     <ThemeProvider>
       <AuthNavigationGuard>
         <BrowserMiniBar />
+        <MusicMiniBar />
         <Toast />
         <Stack screenOptions={{ headerShown: false }}>
           <Stack.Screen name="(tabs)" />
           <Stack.Screen name="(auth)" />
           <Stack.Screen name="chat/[id]" />
           <Stack.Screen name="chat/ai" />
+          <Stack.Screen name="chat/music" />
           <Stack.Screen name="profile/edit" options={{ presentation: 'transparentModal', animation: 'fade', headerShown: false, contentStyle: { backgroundColor: 'transparent' } }} />
           <Stack.Screen name="profile/[id]" />
           <Stack.Screen name="comments/[id]" />

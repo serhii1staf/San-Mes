@@ -36,6 +36,25 @@ function AIConversationItem() {
   );
 }
 
+function MusicConversationItem() {
+  const theme = useTheme();
+  return (
+    <Pressable onPress={() => router.push('/chat/music' as any)} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: theme.spacing.md, paddingHorizontal: theme.spacing.base }}>
+      <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: theme.colors.accent.primary + '15', alignItems: 'center', justifyContent: 'center', overflow: 'visible' }}>
+        <RNText style={{ fontSize: 22 }} allowFontScaling={false}>🎵</RNText>
+      </View>
+      <View style={{ flex: 1, marginLeft: theme.spacing.md }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Text variant="body" weight="semibold">Музыка</Text>
+          <VerifiedBadge size={12} />
+        </View>
+        <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>Найти и слушать песни</Text>
+      </View>
+      <Feather name="chevron-right" size={16} color={theme.colors.text.tertiary} />
+    </Pressable>
+  );
+}
+
 function MiniAppsRow() {
   const theme = useTheme();
   const { apps, loadApps } = useMiniAppsStore();
@@ -355,6 +374,7 @@ export default function MessagesScreen() {
 
       {/* AI Chat (chats tab) + Mini-apps (apps tab) */}
       {activeTab === 'chats' && <AIConversationItem />}
+      {activeTab === 'chats' && <MusicConversationItem />}
       {activeTab === 'apps' && <MiniAppsRow />}
 
       {filtered.length === 0 ? (
@@ -397,6 +417,11 @@ export default function MessagesScreen() {
             <Pressable onPress={() => { setShowFabMenu(false); router.push('/chat/ai' as any); }} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, gap: 10 }}>
               <Feather name="cpu" size={16} color={theme.colors.accent.primary} />
               <Text variant="caption" weight="medium">San AI</Text>
+            </Pressable>
+            <View style={{ height: 0.5, backgroundColor: theme.colors.border.light }} />
+            <Pressable onPress={() => { setShowFabMenu(false); router.push('/chat/music' as any); }} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, gap: 10 }}>
+              <Feather name="music" size={16} color={theme.colors.accent.primary} />
+              <Text variant="caption" weight="medium">Музыка</Text>
             </Pressable>
             <View style={{ height: 0.5, backgroundColor: theme.colors.border.light }} />
             <Pressable onPress={() => { setShowFabMenu(false); router.push({ pathname: '/settings/chat-settings', params: { id: GLOBAL_CHAT_SETTINGS_KEY } } as any); }} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, gap: 10 }}>

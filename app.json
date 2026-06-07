@@ -15,7 +15,8 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.sanmes.app",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "UIBackgroundModes": ["audio"]
       },
       "entitlements": {
         "com.apple.security.application-groups": ["group.com.sanmes.app"]
