@@ -408,6 +408,7 @@ export default function FeedScreen() {
         contentContainerStyle={{ paddingHorizontal: theme.spacing.base, paddingBottom: 100, paddingTop: headerContentHeight }}
         showsVerticalScrollIndicator={false}
         removeClippedSubviews={true}
+        initialNumToRender={6}
         maxToRenderPerBatch={5}
         windowSize={7}
         refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={theme.colors.accent.primary} progressViewOffset={headerContentHeight} />}
