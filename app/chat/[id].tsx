@@ -226,6 +226,18 @@ export default function ChatScreen() {
   // Depend on the specific chat array (not the whole map) to avoid extra work
   // when other chats update.
   const myMessages = storeMessages[id || ''];
+
+  // Warm the image cache for the most recent messages so they appear instantly
+  // (no black flash) when the chat opens — Telegram-style.
+  useEffect(() => {
+    if (!myMessages || myMessages.length === 0) return;
+    const recent = myMessages.slice(-20);
+    const uris: string[] = [];
+    for (const m of recent) {
+      if ((m as any).imageUrls) for (const u of (m as any).imageUrls) uris.push(u);
+    }
+    if (uris.length) { import('../../src/components/ui/CachedImage').then(({ prefetchImages }) => prefetchImages(uris)).catch(() => {}); }
+  }, [id]);
   useEffect(() => {
     if (!id) return;
     if (myMessages && myMessages.length > 0) {

@@ -294,6 +294,12 @@ export default function UserProfileScreen() {
     syncProfile(id);
     syncUserPosts(id);
 
+    // Warm the image cache for this profile's banner so it appears instantly.
+    import('../../src/components/ui/CachedImage').then(({ prefetchImages }) => {
+      const p: any = useEntityStore.getState().profiles[id];
+      if (p?.banner_url) prefetchImages([p.banner_url]);
+    }).catch(() => {});
+
     // Load follow counts from Supabase (keep direct call for counts display)
     getFollowCounts(id).then((counts) => setFollowCounts(counts)).catch(() => {});
   }, [id]);

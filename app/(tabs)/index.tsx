@@ -8,6 +8,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
 import { PostCard } from '../../src/components/feed/PostCard';
+import { prefetchImages } from '../../src/components/ui/CachedImage';
 import { PostMenuModal } from '../../src/components/feed/PostMenuModal';
 import { useFeedStore, useAuthStore } from '../../src/store';
 import { Post } from '../../src/types';
@@ -140,6 +141,8 @@ export default function FeedScreen() {
   // or when the native widget module isn't in the build yet).
   useEffect(() => {
     if (posts.length > 0) {
+      // Warm the image cache for the first screenful so scrolling is instant.
+      prefetchImages(posts.slice(0, 12).flatMap((p) => [p.imageUrl, ...(p.imageUrls || []), p.originalPost?.imageUrl]));
       const { postCount } = useWidgetSettingsStore.getState();
       updateFeedWidget(posts.map((p) => ({
         id: p.id,

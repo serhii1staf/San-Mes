@@ -3,6 +3,17 @@ import { ImageStyle, StyleProp } from 'react-native';
 import { Image } from 'expo-image';
 
 /**
+ * Prefetch a batch of remote images into expo-image's disk+memory cache so they
+ * appear instantly when the user scrolls to them (Telegram-style). Cheap, fire-
+ * and-forget, deduped by expo-image internally.
+ */
+export function prefetchImages(uris: (string | null | undefined)[]): void {
+  const list = uris.filter((u): u is string => !!u && u.startsWith('http')).slice(0, 30);
+  if (list.length === 0) return;
+  try { Image.prefetch(list, { cachePolicy: 'memory-disk' }); } catch {}
+}
+
+/**
  * CachedImage — uses expo-image for native disk caching (like Telegram).
  * Features:
  * - memory + disk cache so images stay instant when re-entering a screen

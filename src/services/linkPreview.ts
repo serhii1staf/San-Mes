@@ -10,6 +10,7 @@
 // CDN), so the app stays light and the database is never involved.
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { kvGetStringRawSync, kvSetStringRaw, isMMKVAvailable } from './kvStore';
 
 const UNFURL_ENDPOINT = 'https://san-m-app.com/api/unfurl';
 const CACHE_PREFIX = '@san:lp:'; // link-preview cache (global, not per-account — previews are public)
@@ -58,6 +59,10 @@ async function readPersisted(url: string): Promise<CacheEntry | null> {
 }
 
 async function writePersisted(url: string, entry: CacheEntry): Promise<void> {
+  // Synchronous MMKV mirror for instant cold-start reads.
+  if (isMMKVAvailable()) {
+    try { kvSetStringRaw(keyFor(url), JSON.stringify(entry)); } catch {}
+  }
   try {
     await AsyncStorage.setItem(keyFor(url), JSON.stringify(entry));
   } catch {
@@ -70,15 +75,29 @@ function fresh(entry: CacheEntry | null | undefined): boolean {
 }
 
 /**
- * Synchronous read from the in-memory cache only. Returns:
+ * Synchronous read from caches. Returns:
  *   - the data (or null for "no preview") when a fresh entry exists,
  *   - undefined when nothing is cached yet (caller should fetch).
- * Lets components render cached previews instantly with no loading flicker.
+ * Reads the in-memory cache first, then the synchronous MMKV mirror — so even on
+ * a COLD start a previously-seen preview renders instantly with zero flicker.
  */
 export function getCachedPreviewSync(url: string): LinkPreviewData | null | undefined {
   if (!url) return null;
   const mem = memCache.get(url);
   if (fresh(mem)) return mem!.d;
+  // MMKV mirror (sync) — promotes into memCache for next time.
+  if (isMMKVAvailable()) {
+    try {
+      const raw = kvGetStringRawSync(keyFor(url));
+      if (raw) {
+        const entry = JSON.parse(raw) as CacheEntry;
+        if (fresh(entry)) {
+          memCache.set(url, entry);
+          return entry.d;
+        }
+      }
+    } catch {}
+  }
   return undefined;
 }
 
