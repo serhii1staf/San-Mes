@@ -31,7 +31,7 @@ export function MusicMiniBar() {
   const onMusicScreen = pathname === '/chat/music';
   const show = !!current && !onMusicScreen;
 
-  const slide = useRef(new Animated.Value(-120)).current;
+  const slide = useRef(new Animated.Value(-220)).current;
   const dragY = useRef(new Animated.Value(0)).current;
 
   const panResponder = useRef(
@@ -40,7 +40,7 @@ export function MusicMiniBar() {
       onPanResponderMove: (_, g) => { if (g.dy < 0) dragY.setValue(g.dy); },
       onPanResponderRelease: (_, g) => {
         if (g.dy < -40 || g.vy < -0.4) {
-          Animated.timing(dragY, { toValue: -160, duration: 160, useNativeDriver: true }).start(() => {
+          Animated.timing(dragY, { toValue: -220, duration: 160, useNativeDriver: true }).start(() => {
             dragY.setValue(0);
             useMusicStore.getState().stop();
           });
@@ -52,7 +52,7 @@ export function MusicMiniBar() {
   ).current;
 
   useEffect(() => {
-    Animated.spring(slide, { toValue: show ? 0 : -120, useNativeDriver: true, tension: 70, friction: 12 }).start();
+    Animated.spring(slide, { toValue: show ? 0 : -220, useNativeDriver: true, tension: 70, friction: 12 }).start();
   }, [show]);
 
   if (!current) return null;

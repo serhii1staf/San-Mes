@@ -45,22 +45,21 @@ export const useMusicStore = create<MusicState>((set, get) => ({
   isLoading: false,
 
   play: async (track: Track) => {
-    // Same track tapped again → just toggle.
+    // Same track tapped again → just toggle play/pause.
     if (get().current?.id === track.id && sound) {
       await get().toggle();
       return;
     }
     set({ isLoading: true, current: track, positionMs: 0, durationMs: track.durationMs });
     await ensureAudioMode();
-    // Unload the previous sound before loading a new one (only one in memory).
     if (sound) {
       try { await sound.unloadAsync(); } catch {}
       sound = null;
     }
     try {
       const { sound: s } = await Audio.Sound.createAsync(
-        { uri: track.previewUrl },
-        { shouldPlay: true },
+        { uri: track.streamUrl },
+        { shouldPlay: true, progressUpdateIntervalMillis: 500 },
         (status: AVPlaybackStatus) => {
           if (!status.isLoaded) return;
           set({
@@ -68,9 +67,7 @@ export const useMusicStore = create<MusicState>((set, get) => ({
             positionMs: status.positionMillis || 0,
             durationMs: status.durationMillis || track.durationMs,
           });
-          if (status.didJustFinish) {
-            set({ isPlaying: false, positionMs: 0 });
-          }
+          if (status.didJustFinish) set({ isPlaying: false, positionMs: 0 });
         }
       );
       sound = s;
