@@ -295,25 +295,19 @@ export default function ChatScreen() {
     }
   }, [chatMessages.length, scrollToEnd]);
 
-  // The list uses contentContainerStyle justifyContent:'flex-end', so content is
-  // already pinned to the bottom on the first paint. We keep it invisible for a
-  // couple of frames only to absorb late-growing image heights, then reveal —
-  // short enough that it feels instant, long enough to hide any reflow.
+  // The list uses contentContainerStyle justifyContent:'flex-end', so messages
+  // are pinned to the bottom on the very first paint (data is already present
+  // synchronously). Just keep it pinned as late-loading images grow content.
   const didInitialScrollRef = useRef(false);
-  const [listReady, setListReady] = useState(false);
   useEffect(() => {
     didInitialScrollRef.current = false;
-    setListReady(false);
   }, [id]);
   useEffect(() => {
     if (didInitialScrollRef.current) return;
-    if (!chatMessages.length) { setListReady(true); return; }
+    if (!chatMessages.length) return;
     didInitialScrollRef.current = true;
-    const timers = [0, 90].map((d) =>
-      setTimeout(() => {
-        try { flatListRef.current?.scrollToEnd({ animated: false }); } catch {}
-        if (d === 90) setListReady(true);
-      }, d)
+    const timers = [60, 220, 450].map((d) =>
+      setTimeout(() => { try { flatListRef.current?.scrollToEnd({ animated: false }); } catch {} }, d)
     );
     return () => timers.forEach(clearTimeout);
   }, [id, chatMessages.length]);
@@ -662,7 +656,7 @@ export default function ChatScreen() {
       <FlatList
         ref={flatListRef}
         data={chatMessages}
-        style={[StyleSheet.absoluteFill, { opacity: listReady ? 1 : 0 }]}
+        style={StyleSheet.absoluteFill}
         keyExtractor={(item) => item.id}
         renderItem={renderItem}
         contentContainerStyle={{ flexGrow: 1, justifyContent: 'flex-end', paddingTop: headerContentHeight + 8 }}

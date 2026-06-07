@@ -7,6 +7,7 @@ import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
 import { useThemeStore, FONT_FAMILIES, FONT_SIZES } from '../../src/store/themeStore';
 import { useProfileAppearanceStore } from '../../src/store/profileAppearanceStore';
+import { SlideUpSheet } from '../../src/components/ui/SlideUpSheet';
 
 const PROFILE_EMOJI_CHOICES = ['❤️', '⭐', '🔥', '✨', '🌸', '🌟', '💜', '🦋', '🍀', '🌈', '⚡', '🎵', '😎', '👑', '🎨', '🌊', '🍑', '🐱', '🎮', '☕'];
 
@@ -114,27 +115,20 @@ export default function FontsScreen() {
         </Pressable>
       </ScrollView>
 
-      {/* Emoji picker modal */}
-      <Modal visible={emojiModal} transparent animationType="fade" onRequestClose={() => setEmojiModal(false)} statusBarTranslucent>
-        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' }} onPress={() => setEmojiModal(false)}>
-          <Pressable onPress={() => {}} style={{ backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF', borderTopLeftRadius: 28, borderTopRightRadius: 28, paddingBottom: insets.bottom + 16, paddingTop: 10, paddingHorizontal: 16 }}>
-            <View style={{ alignItems: 'center', paddingBottom: 8 }}>
-              <View style={{ width: 40, height: 5, borderRadius: 3, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)' }} />
-            </View>
-            <Text variant="body" weight="bold" align="center" style={{ marginBottom: 14 }}>Эмодзи в карточках</Text>
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 12 }}>
-              <Pressable onPress={() => { setPostEmoji(''); setEmojiModal(false); }} style={{ width: 52, height: 52, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: postEmoji === '' ? theme.colors.accent.primary : theme.colors.border.light, backgroundColor: postEmoji === '' ? theme.colors.accent.primary + '15' : 'transparent' }}>
-                <Feather name="slash" size={18} color={theme.colors.text.tertiary} />
-              </Pressable>
-              {PROFILE_EMOJI_CHOICES.map((e) => (
-                <Pressable key={e} onPress={() => { setPostEmoji(e); setEmojiModal(false); }} style={{ width: 52, height: 52, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: postEmoji === e ? theme.colors.accent.primary : theme.colors.border.light, backgroundColor: postEmoji === e ? theme.colors.accent.primary + '15' : 'transparent' }}>
-                  <RNText style={{ fontSize: 26 }} allowFontScaling={false}>{e}</RNText>
-                </Pressable>
-              ))}
-            </View>
+      {/* Emoji picker — same sheet style as the feed three-dots menu */}
+      <SlideUpSheet visible={emojiModal} onClose={() => setEmojiModal(false)}>
+        <Text variant="body" weight="bold" align="center" style={{ marginBottom: 14 }}>Эмодзи в карточках</Text>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 12, paddingHorizontal: 12 }}>
+          <Pressable onPress={() => { setPostEmoji(''); setEmojiModal(false); }} style={{ width: 52, height: 52, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: postEmoji === '' ? theme.colors.accent.primary : theme.colors.border.light, backgroundColor: postEmoji === '' ? theme.colors.accent.primary + '15' : 'transparent' }}>
+            <Feather name="slash" size={18} color={theme.colors.text.tertiary} />
           </Pressable>
-        </Pressable>
-      </Modal>
+          {PROFILE_EMOJI_CHOICES.map((e) => (
+            <Pressable key={e} onPress={() => { setPostEmoji(e); setEmojiModal(false); }} style={{ width: 52, height: 52, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: postEmoji === e ? theme.colors.accent.primary : theme.colors.border.light, backgroundColor: postEmoji === e ? theme.colors.accent.primary + '15' : 'transparent' }}>
+              <RNText style={{ fontSize: 26 }} allowFontScaling={false}>{e}</RNText>
+            </Pressable>
+          ))}
+        </View>
+      </SlideUpSheet>
     </View>
   );
 }

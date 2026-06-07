@@ -347,7 +347,7 @@ export default function ProfileScreen() {
                   const link = extractFirstUrl(post.content || origPost?.content || '');
                   return link ? (
                     <Pressable onLongPress={() => { triggerHaptic('medium'); setContextPost(post); }} delayLongPress={400} style={{ marginBottom: 6 }}>
-                      <LinkPreview url={link} />
+                      <LinkPreview url={link} static />
                     </Pressable>
                   ) : null;
                 })()}

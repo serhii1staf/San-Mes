@@ -599,7 +599,7 @@ export default function UserProfileScreen() {
                     const link = extractFirstUrl(post.content || origPost?.content || '');
                     return link ? (
                       <Pressable onLongPress={() => { triggerHaptic('medium'); setContextPost({ ...post, authorName: displayProfile.display_name, authorUsername: displayProfile.username, authorEmoji: displayProfile.emoji || '😊', authorVerified: displayProfile.is_verified, authorBadge: displayProfile.badge, authorId: displayProfile.id }); }} delayLongPress={400} style={{ marginBottom: 6 }}>
-                        <LinkPreview url={link} />
+                        <LinkPreview url={link} static />
                       </Pressable>
                     ) : null;
                   })()}
