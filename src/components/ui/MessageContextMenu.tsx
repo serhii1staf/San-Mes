@@ -98,7 +98,7 @@ export function MessageContextMenu({ visible, message, isOwn, bubbleColor, bubbl
       ) : null}
       {hasLink ? (
         <View style={{ marginTop: 6, width: 280, maxWidth: '100%' }}>
-          <LinkPreview url={extractFirstUrl(message.text)!} textColor={isOwn ? '#FFFFFF' : undefined} emoji={linkEmoji} />
+          <LinkPreview url={extractFirstUrl(message.text)!} textColor={isOwn ? '#FFFFFF' : undefined} emoji={linkEmoji} static />
         </View>
       ) : null}
     </>

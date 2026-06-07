@@ -30,11 +30,12 @@ interface LinkPreviewProps {
   onError?: () => void;
   textColor?: string;
   emoji?: string; // decorative emoji pattern behind the link row (Telegram-style)
+  static?: boolean; // when true, never mount a WebView/player (used inside context menus)
 }
 
 const THUMB_RADIUS = 14;
 
-export function LinkPreview({ url, onError, textColor, emoji }: LinkPreviewProps) {
+export function LinkPreview({ url, onError, textColor, emoji, static: isStatic }: LinkPreviewProps) {
   const theme = useTheme();
   const cached = getCachedPreviewSync(url);
   const [data, setData] = useState<LinkPreviewData | null>(cached === undefined ? null : cached);
@@ -100,7 +101,7 @@ export function LinkPreview({ url, onError, textColor, emoji }: LinkPreviewProps
     openLink();
   };
 
-  const fullscreenEl = <MediaViewerModal visible={!!fullscreen} source={fullscreen} onClose={() => setFullscreen(null)} />;
+  const fullscreenEl = isStatic ? null : <MediaViewerModal visible={!!fullscreen} source={fullscreen} onClose={() => setFullscreen(null)} />;
 
   // Skeleton (thin) during the first fetch.
   if (!resolved && !data) {
@@ -136,10 +137,10 @@ export function LinkPreview({ url, onError, textColor, emoji }: LinkPreviewProps
           }}
           style={{ width: '100%', borderRadius: 16, overflow: 'hidden', backgroundColor: '#000' }}
         >
-          {playing && videoSource && cardWidth > 0 ? (
+          {playing && videoSource && cardWidth > 0 && !isStatic ? (
             <InlineVideoPlayer source={videoSource} width={cardWidth} />
           ) : (
-            <Pressable onPress={() => (videoSource ? setPlaying(true) : openLink())}>
+            <Pressable onPress={() => { if (isStatic) return; videoSource ? setPlaying(true) : openLink(); }}>
               {data.image ? (
                 <CachedImage uri={data.image} style={{ width: '100%', aspectRatio: 16 / 9 }} resizeMode="cover" />
               ) : (

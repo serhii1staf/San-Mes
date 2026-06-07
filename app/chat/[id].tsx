@@ -283,10 +283,12 @@ export default function ChatScreen() {
     if (didInitialScrollRef.current) return;
     if (!chatMessages.length) { setListReady(true); return; }
     didInitialScrollRef.current = true;
-    const timers = [0, 60, 160, 360, 650].map((d) =>
+    // Pin to the bottom several times WHILE the list is still invisible, then
+    // reveal once on the final pin — so the scroll-into-place is never seen.
+    const timers = [0, 80, 200, 380].map((d) =>
       setTimeout(() => {
         try { flatListRef.current?.scrollToEnd({ animated: false }); } catch {}
-        if (d >= 60) setListReady(true);
+        if (d === 380) setListReady(true);
       }, d)
     );
     return () => timers.forEach(clearTimeout);

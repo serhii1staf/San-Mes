@@ -100,7 +100,7 @@ export function CommentContextMenu({ visible, comment, isOwn, displayBody, reply
       ) : null}
       {link ? (
         <View style={{ marginTop: 6 }}>
-          <LinkPreview url={link} />
+          <LinkPreview url={link} static />
         </View>
       ) : null}
     </>
