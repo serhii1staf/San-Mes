@@ -19,6 +19,7 @@ import { CommentContextMenu, CommentAction } from '../../src/components/ui/Comme
 import { SlideUpSheet } from '../../src/components/ui/SlideUpSheet';
 import { GiphyPicker } from '../../src/components/ui/GiphyPicker';
 import { parseGif } from '../../src/services/giphy';
+import { kvGetJSONSync, kvSetJSON } from '../../src/services/kvStore';
 import { useAuthStore, useConnectivityStore } from '../../src/store';
 import { getComments, createComment, updateComment, deleteComment, isRepost, parseImageUrls } from '../../src/lib/supabase';
 import { triggerHaptic } from '../../src/utils/haptics';
@@ -93,9 +94,13 @@ export default function CommentsScreen() {
   });
   const { id: postId } = useLocalSearchParams<{ id: string }>();
   const { user } = useAuthStore();
-  const [comments, setComments] = useState<any[]>([]);
+  const [comments, setComments] = useState<any[]>(() => {
+    try { return postId ? kvGetJSONSync<any[]>(`comments:${postId}`, []) : []; } catch { return []; }
+  });
   const [text, setText] = useState('');
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(() => {
+    try { return !(postId && kvGetJSONSync<any[]>(`comments:${postId}`, []).length > 0); } catch { return true; }
+  });
   const [isSending, setIsSending] = useState(false);
   const [postData, setPostData] = useState<any>(null);
   const [repostOriginal, setRepostOriginal] = useState<any>(null);
@@ -137,10 +142,12 @@ export default function CommentsScreen() {
 
   const loadComments = async () => {
     if (!postId) return;
-    setIsLoading(true);
+    // Don't show the spinner if we already painted cached comments.
+    if (comments.length === 0) setIsLoading(true);
     const { comments: data } = await getComments(postId);
     setComments(data);
     setIsLoading(false);
+    kvSetJSON(`comments:${postId}`, data);
     // Scroll to last comment
     if (data.length > 0) {
       setTimeout(() => listRef.current?.scrollToEnd({ animated: false }), 150);
@@ -205,6 +212,7 @@ export default function CommentsScreen() {
     if (!error) {
       const { comments: data } = await getComments(postId);
       setComments(data);
+      kvSetJSON(`comments:${postId}`, data);
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
     }
     setIsSending(false);
@@ -258,6 +266,7 @@ export default function CommentsScreen() {
     if (!error) {
       const { comments: data } = await getComments(postId);
       setComments(data);
+      kvSetJSON(`comments:${postId}`, data);
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
     }
     setIsSending(false);
