@@ -82,13 +82,11 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
 
     saveCurrentAccount();
 
-    // Switch the cache namespace to the new account. We do NOT clear the previous
-    // account's cache — each account keeps its own namespace so switching back is instant.
-    const { setCacheAccount } = await import('../../services/cacheService');
-    const { setThrottleAccount } = await import('../../services/syncThrottle');
-    setCacheAccount(profile.id);
-    setThrottleAccount(profile.id);
-    resetAllThrottles();
+    // Re-scope cache + flush previous account's in-memory data (Telegram-style
+    // isolation). A reload follows, but this guarantees no cross-account bleed
+    // even if reload is unavailable (dev client).
+    const { switchAccount } = await import('../../services/accountSwitch');
+    switchAccount(profile.id);
 
     // Persist the new account to the auth store BEFORE reloading so the fresh
     // launch comes up already logged into the target account.
@@ -142,12 +140,9 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
     // Save current and switch
     saveCurrentAccount();
 
-    // Switch the cache namespace to the new account (keeps each account's data isolated).
-    const { setCacheAccount } = await import('../../services/cacheService');
-    const { setThrottleAccount } = await import('../../services/syncThrottle');
-    setCacheAccount(profile.id);
-    setThrottleAccount(profile.id);
-    resetAllThrottles();
+    // Re-scope cache + flush previous account's in-memory data.
+    const { switchAccount } = await import('../../services/accountSwitch');
+    switchAccount(profile.id);
 
     addAccount({
       id: profile.id,

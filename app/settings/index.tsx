@@ -98,9 +98,9 @@ export default function SettingsScreen() {
         text: 'Выйти',
         style: 'destructive',
         onPress: () => {
-          // The root AuthNavigationGuard now swaps to the splash synchronously the
-          // instant auth clears, so no protected screen renders with a null user.
-          // Just clear auth; the guard handles the redirect safely.
+          // Flush this account's in-memory data and re-scope cache to anon so the
+          // next account never sees the previous one's feed/chats/profile.
+          try { require('../../src/services/accountSwitch').switchAccount(null); } catch {}
           logout();
         },
       },

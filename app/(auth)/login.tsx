@@ -35,6 +35,11 @@ export default function LoginScreen() {
       return;
     }
 
+    // Re-scope cache + flush previous account's in-memory data BEFORE setting the
+    // new user, so nothing bleeds across accounts.
+    const { switchAccount } = require('../../src/services/accountSwitch');
+    switchAccount(profile.id);
+
     login(
       {
         id: profile.id,

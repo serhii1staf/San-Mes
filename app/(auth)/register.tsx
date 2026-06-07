@@ -318,6 +318,8 @@ export default function RegisterScreen() {
       }
 
       if (profile) {
+        const { switchAccount } = require('../../src/services/accountSwitch');
+        switchAccount(profile.id);
         login(
           {
             id: profile.id,
