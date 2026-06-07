@@ -17,6 +17,7 @@ import { triggerHaptic } from '../../src/utils/haptics';
 import { useConnectivityStore } from '../../src/services/connectivityMonitor';
 import { resetThrottle, shouldSync } from '../../src/services/syncThrottle';
 import { accountKey } from '../../src/services/cacheService';
+import { kvGetJSONSync, kvSetJSON } from '../../src/services/kvStore';
 import { updateFeedWidget } from '../../src/services/widgetBridge';
 import { useWidgetSettingsStore } from '../../src/store/widgetSettingsStore';
 import { queueMutation } from '../../src/services/offlineQueue';
@@ -128,7 +129,11 @@ export default function FeedScreen() {
   const insets = useSafeAreaInsets();
   const { user } = useAuthStore();
   const { isRefreshing, setRefreshing } = useFeedStore();
-  const [posts, setPosts] = useState<Post[]>([]);
+  // Hydrate the feed SYNCHRONOUSLY from MMKV on the very first render so the list
+  // paints with content immediately — no empty→fill flicker, instant offline.
+  const [posts, setPosts] = useState<Post[]>(() => {
+    try { return kvGetJSONSync<Post[]>(FEED_CACHE_KEY, []); } catch { return []; }
+  });
   const [menuPost, setMenuPost] = useState<Post | null>(null);
 
   // Keep the iOS home-screen widget in sync with the latest feed (no-op on Android
@@ -148,50 +153,33 @@ export default function FeedScreen() {
     }
   }, [posts]);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(() => {
+    try { return kvGetJSONSync<Post[]>(FEED_CACHE_KEY, []).length === 0; } catch { return true; }
+  });
   const hasFetched = useRef(false);
 
   const { status: updateStatus, progress: updateProgress, message: updateMessage, checkForUpdate, applyUpdate } = useUpdateStore();
   const isOnline = useConnectivityStore((s) => s.isOnline);
 
-  // Reload from cache when tab gains focus (picks up new posts from create screen)
+  // Reload from cache when tab gains focus (picks up new posts from create screen).
+  // Synchronous MMKV read → no flicker, no async gap.
   useFocusEffect(
     useCallback(() => {
-      AsyncStorage.getItem(accountKey(FEED_CACHE_KEY)).then((cached) => {
-        if (cached) {
-          try {
-            const parsed = JSON.parse(cached);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              setPosts(parsed);
-              setIsLoading(false);
-            }
-          } catch {}
+      try {
+        const parsed = kvGetJSONSync<Post[]>(FEED_CACHE_KEY, []);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setPosts(parsed);
+          setIsLoading(false);
         }
-      }).catch(() => {});
+      } catch {}
     }, [])
   );
 
-  // On first mount: if store is empty — load from cache then from Supabase
-  // If store already has posts — display instantly without network request
+  // On first mount: posts are already hydrated synchronously from MMKV above, so
+  // there's nothing to load from cache here. Just make sure the spinner is hidden
+  // when we already have data.
   useEffect(() => {
-    if (posts.length > 0) {
-      // Store already has data — show instantly, no fetch needed
-      setIsLoading(false);
-      return;
-    }
-
-    // Store is empty — try loading from cache first
-    AsyncStorage.getItem(accountKey(FEED_CACHE_KEY)).then((cached) => {
-      if (cached) {
-        try {
-          const parsed = JSON.parse(cached);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            setPosts(parsed);
-            setIsLoading(false);
-          }
-        } catch {}
-      }
-    }).catch(() => {});
+    if (posts.length > 0) setIsLoading(false);
   }, []);
 
   // Fetch fresh data from Supabase (once, only if store was empty)
@@ -270,7 +258,8 @@ export default function FeedScreen() {
       setPosts(mapped);
       setIsLoading(false);
 
-      // Save to AsyncStorage cache (non-blocking)
+      // Save to cache (MMKV sync mirror + AsyncStorage), non-blocking.
+      kvSetJSON(FEED_CACHE_KEY, mapped);
       AsyncStorage.setItem(accountKey(FEED_CACHE_KEY), JSON.stringify(mapped)).catch(() => {});
     } catch {
       // Network error: preserve existing store data, hide loading/refreshing
@@ -324,7 +313,8 @@ export default function FeedScreen() {
 
       // Update store with fresh data
       setPosts(mapped);
-      // Save to cache (non-blocking)
+      // Save to cache (MMKV sync mirror + AsyncStorage), non-blocking.
+      kvSetJSON(FEED_CACHE_KEY, mapped);
       AsyncStorage.setItem(accountKey(FEED_CACHE_KEY), JSON.stringify(mapped)).catch(() => {});
     } catch {
       // Network error: preserve existing data from store
