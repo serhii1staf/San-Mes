@@ -322,6 +322,10 @@ export default function CommentsScreen() {
             keyExtractor={(item) => item.id}
             contentContainerStyle={{ paddingHorizontal: 20, paddingTop: headerContentHeight, paddingBottom: 80 + insets.bottom }}
             showsVerticalScrollIndicator={false}
+            removeClippedSubviews={true}
+            initialNumToRender={10}
+            maxToRenderPerBatch={8}
+            windowSize={9}
             ListHeaderComponent={postData ? (() => {
               const repostInfo = isRepost(postData.content || '');
               const repostComment = repostInfo.isRepost ? (repostInfo.comment || '') : '';
