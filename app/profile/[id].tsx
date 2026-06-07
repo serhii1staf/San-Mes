@@ -236,6 +236,7 @@ export default function UserProfileScreen() {
   const [showMenu, setShowMenu] = useState(false);
   const [viewingImage, setViewingImage] = useState<{ uri: string; postId: string; allImages?: string[] } | null>(null);
   const [contextPost, setContextPost] = useState<any>(null);
+  const [visibleCount, setVisibleCount] = useState(8);
   const scrollY = useRef(new Animated.Value(0)).current;
   const headerOpacity = scrollY.interpolate({ inputRange: [0, 50, 120], outputRange: [0, 0, 1], extrapolate: 'clamp' });
   const buttonsTranslateX = scrollY.interpolate({ inputRange: [0, 180, 250], outputRange: [0, 0, -60], extrapolate: 'clamp' });
@@ -462,6 +463,7 @@ export default function UserProfileScreen() {
         bounces={false}
         onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true })}
         scrollEventThrottle={16}
+        onMomentumScrollEnd={(e) => { const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent; if (contentOffset.y + layoutMeasurement.height >= contentSize.height - 600) { setVisibleCount((c) => (c < displayPosts.length ? c + 8 : c)); } }}
         contentContainerStyle={{ paddingBottom: 100 }}
       >
         {/* Banner */}
@@ -526,14 +528,14 @@ export default function UserProfileScreen() {
           <View style={{ alignItems: 'center', paddingVertical: 40 }}><Text variant="caption" color={theme.colors.text.tertiary}>Ещё нет публикаций</Text></View>
         ) : (
           <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
-            {displayPosts.map((post: any) => {
+            {displayPosts.slice(0, visibleCount).map((post: any) => {
               const postImages: string[] = post.imageUrls && post.imageUrls.length > 0 ? post.imageUrls : post.imageUrl ? [post.imageUrl] : [];
               const hasImage = postImages.length > 0;
               const isRepostPost = post.isRepost;
               const origPost = post.originalPost;
               return (
               <SwipeablePostCard key={post.id} shareText={`${displayProfile.display_name}: ${post.content || ''}\nhttps://san-m-app.com/post/${post.id}`}>
-              <Pressable onPress={() => router.push({ pathname: '/comments/[id]', params: { id: post.id } })} onLongPress={() => { triggerHaptic('medium'); setContextPost({ ...post, authorName: displayProfile.display_name, authorUsername: displayProfile.username, authorEmoji: displayProfile.emoji || '😊', authorVerified: displayProfile.is_verified, authorBadge: displayProfile.badge, authorId: displayProfile.id }); }} delayLongPress={400} style={{ flexDirection: 'row', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.75)', borderRadius: 28, padding: 10, marginBottom: 12, borderWidth: 1, borderColor: theme.isDark ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.4)', shadowColor: theme.isDark ? '#000' : '#c8a060', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.12, shadowRadius: 20, elevation: 4, overflow: 'hidden' }}>
+              <Pressable onPress={() => router.push({ pathname: '/comments/[id]', params: { id: post.id } })} onLongPress={() => { triggerHaptic('medium'); setContextPost({ ...post, authorName: displayProfile.display_name, authorUsername: displayProfile.username, authorEmoji: displayProfile.emoji || '😊', authorVerified: displayProfile.is_verified, authorBadge: displayProfile.badge, authorId: displayProfile.id }); }} delayLongPress={400} style={{ flexDirection: 'row', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.75)', borderRadius: 28, padding: 10, marginBottom: 12, borderWidth: 1, borderColor: theme.isDark ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.4)', overflow: 'hidden' }}>
                 {/* Left: Image grid thumbnail */}
                 {hasImage ? (
                   <Pressable onPress={() => setViewingImage({ uri: postImages[0], postId: post.id, allImages: postImages })}>

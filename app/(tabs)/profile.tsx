@@ -83,6 +83,9 @@ export default function ProfileScreen() {
   const { user, updateProfile } = useAuthStore();
   const { profilePosts: userPosts, setProfilePosts, profileScrollOffset, setProfileScrollOffset } = useFeedStore();
   const postEmoji = useProfileAppearanceStore((s) => s.postEmoji);
+  // Windowing: render posts in chunks so switching to the "Posts" tab never has
+  // to mount dozens of cards at once (that caused the freeze). Grows on scroll.
+  const [visibleCount, setVisibleCount] = useState(8);
   const [activeTab, setActiveTab] = useState<TabName>('posts');
   const [followCounts, setFollowCounts] = useState({ followers: 0, following: 0 });
   const [showQR, setShowQR] = useState(false);
@@ -255,7 +258,7 @@ export default function ProfileScreen() {
         <Animated.View style={{ transform: [{ translateX: buttonsTranslateX }] }}><Pressable onPress={() => { triggerHaptic('light'); setShowQR(true); }} style={{ borderRadius: 17, overflow: 'hidden' }}><BlurView intensity={80} tint="dark" style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center' }}><FontAwesome5 name="qrcode" size={15} color="#FFFFFF" /></BlurView></Pressable></Animated.View>
         <Animated.View style={{ transform: [{ translateX: settingsTranslateX }] }}><Pressable onPress={() => { triggerHaptic('light'); router.push('/settings'); }} style={{ borderRadius: 17, overflow: 'hidden' }}><BlurView intensity={80} tint="dark" style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center' }}><Feather name="settings" size={16} color="#FFFFFF" /></BlurView></Pressable></Animated.View>
       </View>
-      <Animated.ScrollView ref={scrollViewRef} showsVerticalScrollIndicator={false} bounces={false} onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true })} scrollEventThrottle={16} contentContainerStyle={{ paddingBottom: 100 }}>
+      <Animated.ScrollView ref={scrollViewRef} showsVerticalScrollIndicator={false} bounces={false} onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true })} scrollEventThrottle={16} onMomentumScrollEnd={(e) => { const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent; if (contentOffset.y + layoutMeasurement.height >= contentSize.height - 600) { setVisibleCount((c) => (c < userPosts.length ? c + 8 : c)); } }} contentContainerStyle={{ paddingBottom: 100 }}>
         <View style={{ height: 200, backgroundColor: theme.colors.accent.primary + '20' }}>{bannerUrl ? <CachedImage uri={bannerUrl} style={{ width: '100%', height: '100%' }} resizeMode="cover" /> : null}<LinearGradient colors={['transparent', theme.colors.background.primary]} style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 60 }} /></View>
         <View style={{ paddingHorizontal: 16, marginTop: -90 }}>
           <Pressable onPress={() => setShowAccountSwitcher(true)}><View style={{ width: 72, height: 72, borderRadius: 36, overflow: 'hidden', borderWidth: 3, borderColor: theme.colors.background.primary, backgroundColor: theme.isDark ? 'rgba(30,30,30,0.85)' : 'rgba(255,255,255,0.85)', alignItems: 'center', justifyContent: 'center' }}><Avatar emoji={user.emoji} size="lg" /></View></Pressable>
@@ -276,7 +279,7 @@ export default function ProfileScreen() {
           <View style={{ position: 'absolute', bottom: 0, height: 2, backgroundColor: theme.colors.accent.primary, width: SCREEN_WIDTH / 4, left: tabs.findIndex(t => t.key === activeTab) * (SCREEN_WIDTH / 4) }} />
         </View>
         {activeTab === 'posts' && (userPosts.length === 0 ? <View style={{ alignItems: 'center', paddingVertical: 40 }}><Text variant="caption" color={theme.colors.text.tertiary}>Ещё нет публикаций</Text></View> : (
-          <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>{userPosts.map(post => {
+          <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>{userPosts.slice(0, visibleCount).map(post => {
             const origPost = post.originalPost;
             const imgs = post.imageUrls && post.imageUrls.length > 0 ? post.imageUrls : post.imageUrl ? [post.imageUrl] : (origPost?.imageUrls && origPost.imageUrls.length > 0 ? origPost.imageUrls : origPost?.imageUrl ? [origPost.imageUrl] : []);
             const hasImage = imgs.length > 0;

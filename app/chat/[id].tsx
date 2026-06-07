@@ -158,23 +158,35 @@ export default function ChatScreen() {
   const entityConv = entityConversations.find(c => c.id === id);
   const participantId = paramParticipantId || entityConv?.participantId || (conversation as any)?.participantId || id;
 
-  const chatMessages = (storeMessages[id || ''] || []) as ChatMessage[];
-
-  // Seed the store SYNCHRONOUSLY on first render from the MMKV cache so messages
-  // are on screen in the very first frame (no blank flash). useState initializer
-  // runs during render, before paint — unlike a useEffect which defers a tick.
-  const seededRef = useRef<string | null>(null);
-  if (id && seededRef.current !== id && (storeMessages[id] || []).length === 0) {
-    seededRef.current = id;
+  // Synchronously read this chat's cached messages ONCE so the very first render
+  // already has content (no blank frame). Memoized per id so it's a single MMKV
+  // read, not on every render.
+  const seedMessages = useMemo<ChatMessage[]>(() => {
+    if (!id) return [];
+    if ((storeMessages[id] || []).length > 0) return storeMessages[id] as ChatMessage[];
     try {
       const cached = kvGetJSONSync<ChatMessage[]>(`chat_messages:${id}`, []);
-      if (cached.length > 0) {
-        setMessages(id, cached as any);
-      } else if (mockMessages[id]) {
-        setMessages(id, mockMessages[id]);
-      }
+      if (cached.length > 0) return cached;
+      if (mockMessages[id]) return mockMessages[id] as ChatMessage[];
     } catch {}
-  }
+    return [];
+  }, [id]);
+
+  // Use the store value when present, else the synchronous seed — so the list is
+  // never empty on the first frame if a cache exists.
+  const storeChat = (storeMessages[id || ''] || []) as ChatMessage[];
+  const chatMessages = storeChat.length > 0 ? storeChat : seedMessages;
+
+  // Push the seed into the store once (after paint) so edits/sends work normally.
+  const seededRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!id) return;
+    if (seededRef.current === id) return;
+    seededRef.current = id;
+    if ((useChatStore.getState().messages[id] || []).length === 0 && seedMessages.length > 0) {
+      setMessages(id, seedMessages as any);
+    }
+  }, [id, seedMessages]);
 
   const settingsMap = useChatSettingsStore((s) => s.settings);
   const chatSettings = useMemo(() => {
@@ -283,11 +295,10 @@ export default function ChatScreen() {
     }
   }, [chatMessages.length, scrollToEnd]);
 
-  // Robust initial scroll-to-bottom: when a chat first opens, images/previews
-  // load slightly after mount and grow the content, which can leave the list
-  // parked in the middle. We keep the list invisible until it's pinned to the
-  // newest message, then fade it in — so the user never SEES the jump. A few
-  // re-pins during the first ~700ms absorb late-loading image/preview heights.
+  // The list uses contentContainerStyle justifyContent:'flex-end', so content is
+  // already pinned to the bottom on the first paint. We keep it invisible for a
+  // couple of frames only to absorb late-growing image heights, then reveal —
+  // short enough that it feels instant, long enough to hide any reflow.
   const didInitialScrollRef = useRef(false);
   const [listReady, setListReady] = useState(false);
   useEffect(() => {
@@ -298,12 +309,10 @@ export default function ChatScreen() {
     if (didInitialScrollRef.current) return;
     if (!chatMessages.length) { setListReady(true); return; }
     didInitialScrollRef.current = true;
-    // Pin to the bottom several times WHILE the list is still invisible, then
-    // reveal once on the final pin — so the scroll-into-place is never seen.
-    const timers = [0, 80, 200, 380].map((d) =>
+    const timers = [0, 90].map((d) =>
       setTimeout(() => {
         try { flatListRef.current?.scrollToEnd({ animated: false }); } catch {}
-        if (d === 380) setListReady(true);
+        if (d === 90) setListReady(true);
       }, d)
     );
     return () => timers.forEach(clearTimeout);
