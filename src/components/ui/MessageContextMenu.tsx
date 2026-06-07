@@ -1,5 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { View, Pressable, Modal, Animated, Dimensions, ScrollView, StatusBar } from 'react-native';
+import React, { useEffect, useRef } from 'react';
+import { View, Pressable, Animated, Dimensions, ScrollView, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme';
@@ -28,14 +28,15 @@ interface MessageContextMenuProps {
   onAction: (action: MessageAction, message: ChatMessage) => void;
 }
 
-// Long-press message menu. Uses the SAME proven animation structure as the feed's
-// three-dots menu (PostMenuModal): spring slide-up from the bottom, a separate
-// 0.4 backdrop, an `isClosing` guard, and a short delay before onClose. This
-// structure is freeze-proof under rapid open/close because:
-//   - the heavy preview content is only mounted once `visible` is true,
-//   - a single `isClosing` ref serializes the close animation,
-//   - the backdrop and the sheet are siblings (no full-screen Pressable wrapping
-//     the animated sheet, which previously caused gesture/animation contention).
+// Long-press message menu.
+//
+// IMPORTANT: this is an IN-SCREEN absolute overlay, NOT a native <Modal>. The chat
+// screen already hosts other native modals (GIF picker, image viewer, video
+// player). On Android only one native modal can be presented at a time, so rapidly
+// opening this menu while another modal is mid-transition deadlocked the native
+// view hierarchy and froze the whole app. Rendering as a sibling absolute layer
+// inside the screen removes that contention entirely — open/close is pure JS +
+// Animated and can never collide with another modal.
 export function MessageContextMenu({ visible, message, isOwn, bubbleColor, bubbleTextColor, bubbleRadius, linkEmoji, onClose, onAction }: MessageContextMenuProps) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
@@ -59,14 +60,15 @@ export function MessageContextMenu({ visible, message, isOwn, bubbleColor, bubbl
     if (isClosing.current) return;
     isClosing.current = true;
     Animated.parallel([
-      Animated.timing(slideAnim, { toValue: SCREEN_HEIGHT, duration: 250, useNativeDriver: true }),
-      Animated.timing(backdropAnim, { toValue: 0, duration: 250, useNativeDriver: true }),
+      Animated.timing(slideAnim, { toValue: SCREEN_HEIGHT, duration: 220, useNativeDriver: true }),
+      Animated.timing(backdropAnim, { toValue: 0, duration: 220, useNativeDriver: true }),
     ]).start(() => {
-      setTimeout(() => { onClose(); cb?.(); }, 30);
+      onClose();
+      if (cb) setTimeout(cb, 20);
     });
   };
 
-  if (!message) return null;
+  if (!visible || !message) return null;
 
   const items: { action: MessageAction; icon: string; label: string; destructive?: boolean; show: boolean }[] = [
     { action: 'reply', icon: 'corner-up-left', label: 'Ответить', show: true },
@@ -105,61 +107,58 @@ export function MessageContextMenu({ visible, message, isOwn, bubbleColor, bubbl
   );
 
   return (
-    <Modal visible={visible} transparent animationType="none" onRequestClose={() => dismiss()} statusBarTranslucent>
-      <StatusBar hidden />
-      <View style={{ flex: 1 }}>
-        {/* Backdrop (separate sibling — tap to dismiss) */}
-        <Animated.View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', opacity: backdropAnim }}>
-          <Pressable style={{ flex: 1 }} onPress={() => dismiss()} />
-        </Animated.View>
+    <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+      {/* Backdrop — tap to dismiss */}
+      <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.5)', opacity: backdropAnim }]}>
+        <Pressable style={{ flex: 1 }} onPress={() => dismiss()} />
+      </Animated.View>
 
-        {/* Sheet */}
-        <View style={{ flex: 1, justifyContent: 'flex-end', paddingBottom: Math.max(insets.bottom, 16) }} pointerEvents="box-none">
-          <Animated.View style={{ transform: [{ translateY: slideAnim }] }} pointerEvents="box-none">
-            {/* Highlighted message preview */}
-            <View style={{ marginHorizontal: 12, marginBottom: 8, alignItems: isOwn ? 'flex-end' : 'flex-start' }} pointerEvents="box-none">
-              <View style={{
-                maxWidth: hasLink ? '94%' : '85%',
-                minWidth: hasLink ? '80%' : undefined,
-                borderRadius: bubbleRadius,
-                backgroundColor: bubbleColor,
-                borderBottomRightRadius: isOwn ? 4 : bubbleRadius,
-                borderBottomLeftRadius: isOwn ? bubbleRadius : 4,
-                overflow: 'hidden',
-              }}>
-                {isLong ? (
-                  <ScrollView style={{ maxHeight: PREVIEW_MAX_HEIGHT }} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 14, paddingVertical: 10 }} bounces={false}>
-                    {previewInner}
-                  </ScrollView>
-                ) : (
-                  <View style={{ paddingHorizontal: 14, paddingVertical: 10 }}>
-                    {previewInner}
+      {/* Sheet */}
+      <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, paddingBottom: Math.max(insets.bottom, 16) }} pointerEvents="box-none">
+        <Animated.View style={{ transform: [{ translateY: slideAnim }] }} pointerEvents="box-none">
+          {/* Highlighted message preview */}
+          <View style={{ marginHorizontal: 12, marginBottom: 8, alignItems: isOwn ? 'flex-end' : 'flex-start' }} pointerEvents="box-none">
+            <View style={{
+              maxWidth: hasLink ? '94%' : '85%',
+              minWidth: hasLink ? '80%' : undefined,
+              borderRadius: bubbleRadius,
+              backgroundColor: bubbleColor,
+              borderBottomRightRadius: isOwn ? 4 : bubbleRadius,
+              borderBottomLeftRadius: isOwn ? bubbleRadius : 4,
+              overflow: 'hidden',
+            }}>
+              {isLong ? (
+                <ScrollView style={{ maxHeight: PREVIEW_MAX_HEIGHT }} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 14, paddingVertical: 10 }} bounces={false}>
+                  {previewInner}
+                </ScrollView>
+              ) : (
+                <View style={{ paddingHorizontal: 14, paddingVertical: 10 }}>
+                  {previewInner}
+                </View>
+              )}
+            </View>
+          </View>
+
+          {/* Menu */}
+          <View style={{ marginHorizontal: 8, backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF', borderRadius: 28, overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.12, shadowRadius: 16, elevation: 10 }}>
+            <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 6 }}>
+              <View style={{ width: 40, height: 5, borderRadius: 3, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)' }} />
+            </View>
+            {items.filter(i => i.show).map((item) => {
+              const color = item.destructive ? '#FF3B30' : theme.colors.text.primary;
+              return (
+                <Pressable key={item.action} onPress={() => dismiss(() => onAction(item.action, message))} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 20 }}>
+                  <View style={{ width: 34, height: 34, borderRadius: 10, backgroundColor: item.destructive ? '#FF3B3010' : (theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)'), alignItems: 'center', justifyContent: 'center' }}>
+                    <Feather name={item.icon as any} size={17} color={color} />
                   </View>
-                )}
-              </View>
-            </View>
-
-            {/* Menu */}
-            <View style={{ marginHorizontal: 8, backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF', borderRadius: 28, overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.12, shadowRadius: 16, elevation: 10 }}>
-              <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 6 }}>
-                <View style={{ width: 40, height: 5, borderRadius: 3, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)' }} />
-              </View>
-              {items.filter(i => i.show).map((item) => {
-                const color = item.destructive ? '#FF3B30' : theme.colors.text.primary;
-                return (
-                  <Pressable key={item.action} onPress={() => dismiss(() => onAction(item.action, message))} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 20 }}>
-                    <View style={{ width: 34, height: 34, borderRadius: 10, backgroundColor: item.destructive ? '#FF3B3010' : (theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)'), alignItems: 'center', justifyContent: 'center' }}>
-                      <Feather name={item.icon as any} size={17} color={color} />
-                    </View>
-                    <Text variant="body" color={color} style={{ marginLeft: 14 }}>{item.label}</Text>
-                  </Pressable>
-                );
-              })}
-              <View style={{ height: 8 }} />
-            </View>
-          </Animated.View>
-        </View>
+                  <Text variant="body" color={color} style={{ marginLeft: 14 }}>{item.label}</Text>
+                </Pressable>
+              );
+            })}
+            <View style={{ height: 8 }} />
+          </View>
+        </Animated.View>
       </View>
-    </Modal>
+    </View>
   );
 }

@@ -774,18 +774,24 @@ export default function ChatScreen() {
         )}
       </View>
 
-      {/* Long-press message menu */}
-      <MessageContextMenu
-        visible={!!menuMessage}
-        message={menuMessage}
-        isOwn={menuIsOwn}
-        bubbleColor={menuIsOwn ? theme.colors.accent.primary : theme.colors.background.tertiary}
-        bubbleTextColor={menuIsOwn ? '#FFFFFF' : theme.colors.text.primary}
-        bubbleRadius={chatSettings.bubbleRadius}
-        linkEmoji={chatSettings.linkEmoji}
-        onClose={closeMenu}
-        onAction={handleMenuAction}
-      />
+      {/* Long-press message menu — in-screen overlay (not a native Modal) so it
+          can never deadlock with the GIF/image/video modals. High zIndex keeps it
+          above the input bar and header. */}
+      {!!menuMessage && (
+        <View pointerEvents="box-none" style={[StyleSheet.absoluteFill, { zIndex: 1000 }]}>
+          <MessageContextMenu
+            visible={!!menuMessage}
+            message={menuMessage}
+            isOwn={menuIsOwn}
+            bubbleColor={menuIsOwn ? theme.colors.accent.primary : theme.colors.background.tertiary}
+            bubbleTextColor={menuIsOwn ? '#FFFFFF' : theme.colors.text.primary}
+            bubbleRadius={chatSettings.bubbleRadius}
+            linkEmoji={chatSettings.linkEmoji}
+            onClose={closeMenu}
+            onAction={handleMenuAction}
+          />
+        </View>
+      )}
 
       {/* GIF picker (GIPHY) */}
       <GiphyPicker visible={gifPickerVisible} onClose={() => setGifPickerVisible(false)} onSelect={sendGif} />
