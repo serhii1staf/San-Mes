@@ -27,17 +27,19 @@ export interface GiphyItem {
 function mapItem(g: any): GiphyItem | null {
   try {
     const images = g.images || {};
-    const preview = images.fixed_width_small || images.fixed_width || images.downsized;
-    const send = images.fixed_width || images.downsized_medium || images.downsized || preview;
-    if (!preview?.url || !send?.url) return null;
+    const preview = images.fixed_width_small || images.fixed_width || images.downsized || images.preview_gif || images.original;
+    const send = images.fixed_width || images.downsized_medium || images.downsized || images.original || preview;
+    const previewUrl = preview?.url || send?.url;
+    const sendUrl = send?.url || preview?.url;
+    if (!previewUrl || !sendUrl) return null;
     return {
       id: g.id,
-      previewUrl: preview.url,
-      previewWidth: Number(preview.width) || 100,
-      previewHeight: Number(preview.height) || 100,
-      sendUrl: send.url,
-      width: Number(send.width) || 200,
-      height: Number(send.height) || 200,
+      previewUrl,
+      previewWidth: Number(preview?.width) || 100,
+      previewHeight: Number(preview?.height) || 100,
+      sendUrl,
+      width: Number(send?.width) || 200,
+      height: Number(send?.height) || 200,
     };
   } catch {
     return null;
@@ -57,14 +59,14 @@ async function fetchGifs(url: string): Promise<GiphyItem[]> {
 }
 
 export async function getTrendingGifs(limit = 24, offset = 0): Promise<GiphyItem[]> {
-  const url = `${BASE}/trending?api_key=${GIPHY_API_KEY}&limit=${limit}&offset=${offset}&rating=pg-13&bundle=fixed_width_small`;
+  const url = `${BASE}/trending?api_key=${GIPHY_API_KEY}&limit=${limit}&offset=${offset}&rating=pg-13`;
   return fetchGifs(url);
 }
 
 export async function searchGifs(query: string, limit = 24, offset = 0): Promise<GiphyItem[]> {
   const q = query.trim();
   if (!q) return getTrendingGifs(limit, offset);
-  const url = `${BASE}/search?api_key=${GIPHY_API_KEY}&q=${encodeURIComponent(q)}&limit=${limit}&offset=${offset}&rating=pg-13&lang=ru&bundle=fixed_width_small`;
+  const url = `${BASE}/search?api_key=${GIPHY_API_KEY}&q=${encodeURIComponent(q)}&limit=${limit}&offset=${offset}&rating=pg-13&lang=ru`;
   return fetchGifs(url);
 }
 
@@ -78,4 +80,15 @@ export function parseGif(text: string | undefined | null): string | null {
   if (!text || !text.startsWith(GIF_PREFIX)) return null;
   const url = text.slice(GIF_PREFIX.length).trim();
   return url || null;
+}
+
+// Small in-memory cache of the trending list so reopening the picker doesn't
+// re-hit the API (the beta key is limited to 100 requests/hour). Lives for the
+// app session.
+let trendingCache: GiphyItem[] | null = null;
+export function getCachedTrending(): GiphyItem[] | null {
+  return trendingCache;
+}
+export function setCachedTrending(items: GiphyItem[]) {
+  if (items.length > 0) trendingCache = items;
 }

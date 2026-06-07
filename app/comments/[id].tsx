@@ -28,9 +28,10 @@ import { showToast } from '../../src/store/toastStore';
 const REPORT_CATS = ['Спам', 'Насилие', 'Ложная информация', 'Мошенничество', 'Оскорбления', 'Другое'];
 
 // Reply quoting without a schema change. A reply comment is stored as:
-//   ::re:<base64(username)>:<base64(snippet)>::<actual body>
+//   ::re:<base64(username)>:<base64(snippet)>:<base64(gifUrl)>::<actual body>
 // Base64 of the quoted parts guarantees the payload can never contain our
-// delimiters, so parsing is unambiguous (fixes the stray "re." / broken-quote bug).
+// delimiters, so parsing is unambiguous. The gif segment lets a reply to a GIF
+// comment render a mini GIF thumbnail instead of plain text.
 const REPLY_PREFIX = '::re:';
 function b64encode(s: string): string {
   try { return global.btoa ? global.btoa(unescape(encodeURIComponent(s))) : Buffer.from(s, 'utf8').toString('base64'); }
@@ -40,23 +41,24 @@ function b64decode(s: string): string {
   try { return global.atob ? decodeURIComponent(escape(global.atob(s))) : Buffer.from(s, 'base64').toString('utf8'); }
   catch { return ''; }
 }
-function encodeReply(username: string, snippet: string, body: string): string {
+function encodeReply(username: string, snippet: string, body: string, gifUrl?: string): string {
   const u = b64encode(username);
   const sn = b64encode(snippet.slice(0, 140));
-  return `${REPLY_PREFIX}${u}:${sn}::${body}`;
+  const gif = b64encode(gifUrl || '');
+  return `${REPLY_PREFIX}${u}:${sn}:${gif}::${body}`;
 }
-function parseReply(content: string): { replyUser?: string; replyText?: string; body: string } {
+function parseReply(content: string): { replyUser?: string; replyText?: string; replyGif?: string; body: string } {
   if (content.startsWith(REPLY_PREFIX)) {
     const rest = content.slice(REPLY_PREFIX.length);
     const endIdx = rest.indexOf('::');
     if (endIdx === -1) return { body: content };
     const head = rest.slice(0, endIdx);
     const body = rest.slice(endIdx + 2);
-    const sep = head.indexOf(':');
-    if (sep === -1) return { body };
-    const replyUser = b64decode(head.slice(0, sep));
-    const replyText = b64decode(head.slice(sep + 1));
-    return { replyUser: replyUser || undefined, replyText: replyText || undefined, body };
+    const parts = head.split(':');
+    const replyUser = b64decode(parts[0] || '');
+    const replyText = b64decode(parts[1] || '');
+    const replyGif = parts.length > 2 ? b64decode(parts[2] || '') : '';
+    return { replyUser: replyUser || undefined, replyText: replyText || undefined, replyGif: replyGif || undefined, body };
   }
   // Legacy format: ::re::<username>|<snippet>::<body>
   if (content.startsWith('::re::')) {
@@ -180,11 +182,12 @@ export default function CommentsScreen() {
     }
 
     // Embed a reply quote when replying to a comment (round-trips via marker).
-    // For GIF comments, quote the word "GIF" instead of the raw ::gif:: marker.
+    // For GIF comments, carry the GIF URL so the quote renders a mini thumbnail.
     const quotedBody = parseReply(replyTo?.content || '').body;
-    const quotedSnippet = parseGif(quotedBody) ? 'GIF' : quotedBody;
+    const quotedGif = parseGif(quotedBody);
+    const quotedSnippet = quotedGif ? '' : quotedBody;
     const sendText = replyTo
-      ? encodeReply(replyTo.profiles?.username || 'user', quotedSnippet, body)
+      ? encodeReply(replyTo.profiles?.username || 'user', quotedSnippet, body, quotedGif || undefined)
       : body;
     setText('');
     setReplyTo(null);
@@ -402,11 +405,21 @@ export default function CommentsScreen() {
                   </View>
                   {/* Quoted comment this one replies to */}
                   {parsed.replyUser ? (
-                    <View style={{ flexDirection: 'row', marginTop: 4, paddingLeft: 8, borderLeftWidth: 2, borderLeftColor: theme.colors.accent.primary }}>
-                      <View style={{ flex: 1 }}>
-                        <Text variant="caption" weight="semibold" color={theme.colors.accent.primary} numberOfLines={1} style={{ fontSize: 11 }}>@{parsed.replyUser}</Text>
-                        {parsed.replyText ? <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 11 }}>{parsed.replyText}</Text> : null}
-                      </View>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, paddingLeft: 8, borderLeftWidth: 2, borderLeftColor: theme.colors.accent.primary }}>
+                      {parsed.replyGif ? (
+                        <>
+                          <CachedImage uri={parsed.replyGif} style={{ width: 28, height: 28, borderRadius: 6, marginRight: 6, backgroundColor: theme.colors.background.secondary }} resizeMode="cover" />
+                          <View style={{ flex: 1 }}>
+                            <Text variant="caption" weight="semibold" color={theme.colors.accent.primary} numberOfLines={1} style={{ fontSize: 11 }}>@{parsed.replyUser}</Text>
+                            <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 11 }}>GIF</Text>
+                          </View>
+                        </>
+                      ) : (
+                        <View style={{ flex: 1 }}>
+                          <Text variant="caption" weight="semibold" color={theme.colors.accent.primary} numberOfLines={1} style={{ fontSize: 11 }}>@{parsed.replyUser}</Text>
+                          {parsed.replyText ? <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 11 }}>{parsed.replyText}</Text> : null}
+                        </View>
+                      )}
                     </View>
                   ) : null}
                   {parseGif(parsed.body) ? null : <FormattedText style={{ marginTop: 3, fontSize: 14 }}>{parsed.body}</FormattedText>}
@@ -453,6 +466,11 @@ export default function CommentsScreen() {
           ) : replyTo ? (
             <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 6, backgroundColor: bgColor }}>
               <View style={{ width: 3, height: 30, borderRadius: 2, backgroundColor: theme.colors.accent.primary, marginRight: 8 }} />
+              {(() => {
+                const rb = parseReply(replyTo.content || '').body;
+                const rgif = parseGif(rb);
+                return rgif ? <CachedImage uri={rgif} style={{ width: 30, height: 30, borderRadius: 6, marginRight: 8, backgroundColor: theme.colors.background.secondary }} resizeMode="cover" /> : null;
+              })()}
               <View style={{ flex: 1 }}>
                 <Text variant="caption" weight="semibold" color={theme.colors.accent.primary} numberOfLines={1} style={{ fontSize: 12 }}>Ответ @{replyTo.profiles?.username || 'user'}</Text>
                 <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 11 }}>{parseGif(parseReply(replyTo.content || '').body) ? 'GIF' : parseReply(replyTo.content || '').body}</Text>

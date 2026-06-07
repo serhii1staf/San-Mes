@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme';
 import { Text } from './Text';
 import { CachedImage } from './CachedImage';
-import { getTrendingGifs, searchGifs, GiphyItem } from '../../services/giphy';
+import { getTrendingGifs, searchGifs, getCachedTrending, setCachedTrending, GiphyItem } from '../../services/giphy';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const SHEET_MARGIN = 10;
@@ -42,9 +42,21 @@ export function GiphyPicker({ visible, onClose, onSelect }: GiphyPickerProps) {
 
   const load = useCallback(async (q: string, offset: number) => {
     const reqId = ++reqIdRef.current;
+    // Serve trending from the session cache instantly (saves API quota — the
+    // beta key is limited to 100 req/hour).
+    if (!q.trim() && offset === 0) {
+      const cached = getCachedTrending();
+      if (cached && cached.length > 0) {
+        setGifs(cached);
+        offsetRef.current = cached.length;
+        setLoading(false);
+        return;
+      }
+    }
     if (offset === 0) setLoading(true); else setLoadingMore(true);
     const items = q.trim() ? await searchGifs(q, 24, offset) : await getTrendingGifs(24, offset);
     if (reqId !== reqIdRef.current) return; // stale response
+    if (!q.trim() && offset === 0) setCachedTrending(items);
     offsetRef.current = offset + items.length;
     setGifs((prev) => (offset === 0 ? items : [...prev, ...items]));
     setLoading(false);
@@ -61,14 +73,15 @@ export function GiphyPicker({ visible, onClose, onSelect }: GiphyPickerProps) {
         Animated.timing(fade, { toValue: 1, duration: 200, easing: Easing.out(Easing.quad), useNativeDriver: true }),
         Animated.timing(slide, { toValue: 0, duration: 240, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
       ]).start();
-      load('', 0);
+      // Initial load handled by the debounced query effect below (avoids a
+      // duplicate request that would burn the rate limit twice as fast).
     }
   }, [visible]);
 
-  // Debounced search
+  // Debounced search; also performs the initial trending load on open.
   useEffect(() => {
     if (!visible) return;
-    const t = setTimeout(() => load(query, 0), 350);
+    const t = setTimeout(() => load(query, 0), query.trim() ? 350 : 0);
     return () => clearTimeout(t);
   }, [query, visible, load]);
 
@@ -80,7 +93,11 @@ export function GiphyPicker({ visible, onClose, onSelect }: GiphyPickerProps) {
     Animated.parallel([
       Animated.timing(fade, { toValue: 0, duration: 180, easing: Easing.in(Easing.quad), useNativeDriver: true }),
       Animated.timing(slide, { toValue: 24, duration: 180, easing: Easing.in(Easing.cubic), useNativeDriver: true }),
-    ]).start(() => {
+    ]).start(({ finished }) => {
+      if (!finished) return;
+      // Snap fully transparent before unmount so no residual frame flashes.
+      fade.setValue(0);
+      slide.setValue(24);
       setMounted(false);
       setQuery('');
       setGifs([]);
@@ -116,13 +133,13 @@ export function GiphyPicker({ visible, onClose, onSelect }: GiphyPickerProps) {
           position: 'absolute',
           left: SHEET_MARGIN,
           right: SHEET_MARGIN,
-          bottom: Math.max(insets.bottom, 10),
-          height: '68%',
+          bottom: Math.max(insets.bottom, 8),
+          height: '60%',
           opacity: fade,
           transform: [{ translateY: slide }],
         }}
       >
-        <View style={{ flex: 1, backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF', borderRadius: 24, overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.18, shadowRadius: 20, elevation: 12 }}>
+        <View style={{ flex: 1, backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF', borderRadius: 36, overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.18, shadowRadius: 20, elevation: 12 }}>
           {/* Grabber */}
           <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 4 }}>
             <View style={{ width: 40, height: 5, borderRadius: 3, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)' }} />
