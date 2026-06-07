@@ -1,19 +1,19 @@
 // Music search + streaming via the Audius API.
 //
-// Why Audius: open, free, no API key, and — crucially — it serves FULL-LENGTH
-// tracks (not 30s previews), legally (royalty-free / artist-uploaded catalogue).
-// Streams are plain HTTPS URLs that expo-av plays directly, so it's fully
-// OTA-compatible and puts zero load on our own server.
+// Why Audius: open, free, no API key, and serves FULL-LENGTH tracks (not 30s
+// previews), legally. Streams are plain HTTPS URLs that expo-av plays directly,
+// so it's fully OTA-compatible with zero load on our own server.
 //
-// Flow:
-//   1. Resolve a healthy discovery node from https://api.audius.co (cached).
-//   2. Search:   {host}/v1/tracks/search?query=...&app_name=San-Mes
-//   3. Stream:   {host}/v1/tracks/{id}/stream?app_name=San-Mes  (302 → audio)
+// We hit a list of known-good discovery hosts in order (api.audius.co serves the
+// public API too), trying the next one on any failure or empty result.
 
 const APP_NAME = 'San-Mes';
-const BOOTSTRAP = 'https://api.audius.co';
-const FALLBACK_HOSTS = [
+
+const HOSTS = [
+  'https://api.audius.co',
   'https://discoveryprovider.audius.co',
+  'https://discoveryprovider2.audius.co',
+  'https://discoveryprovider3.audius.co',
   'https://audius-discovery-1.cultur3stake.com',
   'https://blockdaemon-audius-discovery-1.bdnodes.net',
 ];
@@ -27,31 +27,10 @@ export interface Track {
   durationMs: number;
 }
 
-let cachedHost: string | null = null;
-let hostPromise: Promise<string> | null = null;
-
-async function resolveHost(): Promise<string> {
-  if (cachedHost) return cachedHost;
-  if (hostPromise) return hostPromise;
-  hostPromise = (async () => {
-    try {
-      const res = await fetch(BOOTSTRAP);
-      const json = await res.json();
-      const hosts: string[] = Array.isArray(json?.data) ? json.data : [];
-      if (hosts.length > 0) {
-        cachedHost = hosts[Math.floor(Math.random() * Math.min(hosts.length, 5))];
-        return cachedHost!;
-      }
-    } catch {}
-    cachedHost = FALLBACK_HOSTS[0];
-    return cachedHost!;
-  })();
-  return hostPromise;
-}
-
 function mapTrack(t: any, host: string): Track | null {
   if (!t?.id || !t?.title) return null;
-  const art = t.artwork?.['480x480'] || t.artwork?.['150x150'] || t.artwork?.['1000x1000'] || '';
+  const aw = t.artwork || {};
+  const art = aw['480x480'] || aw['150x150'] || aw['1000x1000'] || '';
   return {
     id: String(t.id),
     title: t.title,
@@ -62,25 +41,30 @@ function mapTrack(t: any, host: string): Track | null {
   };
 }
 
-export async function searchTracks(query: string, limit = 15): Promise<Track[]> {
+async function fetchJson(url: string, timeoutMs = 7000): Promise<any | null> {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timer);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+export async function searchTracks(query: string, limit = 20): Promise<Track[]> {
   const q = query.trim();
   if (!q) return [];
-  let host = await resolveHost();
-  const attempt = async (h: string) => {
-    const url = `${h}/v1/tracks/search?query=${encodeURIComponent(q)}&app_name=${APP_NAME}`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error('bad status');
-    const json = await res.json();
+  for (const host of HOSTS) {
+    const url = `${host}/v1/tracks/search?query=${encodeURIComponent(q)}&app_name=${APP_NAME}`;
+    const json = await fetchJson(url);
     const results: any[] = Array.isArray(json?.data) ? json.data : [];
-    return results.map((t) => mapTrack(t, h)).filter((x): x is Track => !!x).slice(0, limit);
-  };
-  try {
-    return await attempt(host);
-  } catch {
-    // Discovery node may be down — try fallbacks once.
-    for (const h of FALLBACK_HOSTS) {
-      try { cachedHost = h; return await attempt(h); } catch {}
+    if (results.length > 0) {
+      const mapped = results.map((t) => mapTrack(t, host)).filter((x): x is Track => !!x);
+      if (mapped.length > 0) return mapped.slice(0, limit);
     }
-    return [];
   }
+  return [];
 }

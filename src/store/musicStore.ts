@@ -12,6 +12,7 @@ import { Track } from '../services/musicService';
 
 interface MusicState {
   current: Track | null;
+  recent: Track[];
   isPlaying: boolean;
   positionMs: number;
   durationMs: number;
@@ -39,6 +40,7 @@ async function ensureAudioMode() {
 
 export const useMusicStore = create<MusicState>((set, get) => ({
   current: null,
+  recent: [],
   isPlaying: false,
   positionMs: 0,
   durationMs: 0,
@@ -51,6 +53,8 @@ export const useMusicStore = create<MusicState>((set, get) => ({
       return;
     }
     set({ isLoading: true, current: track, positionMs: 0, durationMs: track.durationMs });
+    // Track recents (most-recent first, unique, capped at 12) for the expandable widget.
+    set((s) => ({ recent: [track, ...s.recent.filter((t) => t.id !== track.id)].slice(0, 12) }));
     await ensureAudioMode();
     if (sound) {
       try { await sound.unloadAsync(); } catch {}
