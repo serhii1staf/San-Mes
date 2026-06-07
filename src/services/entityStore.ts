@@ -15,6 +15,33 @@ import {
 
 export type { LocalPost, LocalProfile, LocalConversation, LocalMessage };
 
+// ─── Debounced cache persistence ─────────────────────────────────────────────
+// Writing the whole profiles/posts map on every single upsert would hammer the
+// device under load. We coalesce writes: schedule one flush ~600ms after the
+// last change, so a burst of upserts results in a single storage write.
+let profilesFlushTimer: ReturnType<typeof setTimeout> | null = null;
+let postsFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleProfilesFlush(getMap: () => LocalProfile[]) {
+  if (profilesFlushTimer) clearTimeout(profilesFlushTimer);
+  profilesFlushTimer = setTimeout(() => {
+    profilesFlushTimer = null;
+    import('./cacheService').then(({ cacheAllProfiles }) => {
+      cacheAllProfiles(getMap()).catch(() => {});
+    }).catch(() => {});
+  }, 600);
+}
+
+function schedulePostsFlush(getPosts: () => LocalPost[]) {
+  if (postsFlushTimer) clearTimeout(postsFlushTimer);
+  postsFlushTimer = setTimeout(() => {
+    postsFlushTimer = null;
+    import('./cacheService').then(({ cacheFeed }) => {
+      cacheFeed(getPosts()).catch(() => {});
+    }).catch(() => {});
+  }, 600);
+}
+
 // ─── Validation Guards ───────────────────────────────────────────────────────
 
 export function isValidPost(data: unknown): data is LocalPost {
@@ -145,10 +172,12 @@ export const useEntityStore = create<EntityState>()((set, get) => ({
       return { posts: newPosts };
     });
 
-    // Persist to cache in background (non-blocking)
-    const state = get();
-    const allPosts = state.feedIds.map((id) => state.posts[id]).filter(Boolean) as LocalPost[];
-    cacheFeed(allPosts).catch(() => {});
+    // Coalesced persist of the most-recent posts (capped in cacheFeed) so viewed
+    // profiles' posts survive an offline restart, not only the home feed.
+    schedulePostsFlush(() => {
+      const all = Object.values(get().posts) as LocalPost[];
+      return all.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    });
   },
 
   upsertProfile: (profile: LocalProfile) => {
@@ -158,8 +187,10 @@ export const useEntityStore = create<EntityState>()((set, get) => ({
       profiles: { ...state.profiles, [profile.id]: profile },
     }));
 
-    // Persist to cache in background (non-blocking)
+    // Persist this profile individually + schedule a coalesced write of the full
+    // profiles map so ANY viewed profile survives an offline restart.
     cacheProfile(profile.id, profile).catch(() => {});
+    scheduleProfilesFlush(() => Object.values(get().profiles));
   },
 
   removePost: (id: string) => {
