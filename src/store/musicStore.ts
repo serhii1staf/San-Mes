@@ -81,12 +81,28 @@ export const useMusicStore = create<MusicState>((set, get) => ({
   },
 
   toggle: async () => {
-    if (!sound) return;
+    if (!sound) {
+      // Nothing loaded but we have a current track → (re)load and play it.
+      const cur = get().current;
+      if (cur) await get().play(cur);
+      return;
+    }
     try {
       const status = await sound.getStatusAsync();
-      if (!status.isLoaded) return;
+      if (!status.isLoaded) {
+        const cur = get().current;
+        if (cur) await get().play(cur);
+        return;
+      }
       if (status.isPlaying) { await sound.pauseAsync(); set({ isPlaying: false }); }
-      else { await sound.playAsync(); set({ isPlaying: true }); }
+      else {
+        // Preview finished → restart from 0.
+        if (status.positionMillis >= (status.durationMillis || 1) - 200) {
+          await sound.setPositionAsync(0);
+        }
+        await sound.playAsync();
+        set({ isPlaying: true });
+      }
     } catch {}
   },
 

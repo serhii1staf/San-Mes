@@ -119,6 +119,7 @@ export default function AIChatScreen() {
   useEffect(() => {
     loadChatHistory().then(saved => { if (saved.length > 0) setMessages(saved); });
     getRemainingRequests().then(setRemaining);
+    try { require('../../src/store/specialChatsStore').useSpecialChatsStore.getState().markOpened('ai'); } catch {}
   }, []);
 
   const handleSend = useCallback(async () => {

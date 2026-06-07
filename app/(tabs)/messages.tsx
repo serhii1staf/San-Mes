@@ -14,6 +14,7 @@ import { syncConversations, syncProfiles } from '../../src/services/syncService'
 import { kvGetJSONSync, kvSetJSON, kvWarm } from '../../src/services/kvStore';
 import { useMiniAppsStore } from '../../src/store/miniAppsStore';
 import { useChatSettingsStore, GLOBAL_CHAT_SETTINGS_KEY } from '../../src/store/chatSettingsStore';
+import { useSpecialChatsStore } from '../../src/store/specialChatsStore';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { Conversation } from '../../src/types';
 
@@ -226,6 +227,23 @@ export default function MessagesScreen() {
   const archived = useChatSettingsStore((s) => s.archived);
   const blocked = useChatSettingsStore((s) => s.blocked);
   const deleted = useChatSettingsStore((s) => s.deleted);
+  const aiLastOpened = useSpecialChatsStore((s) => s.aiLastOpened);
+  const musicLastOpened = useSpecialChatsStore((s) => s.musicLastOpened);
+
+  // Built-in chats (San AI, Music) appear ONLY after being opened, ordered by
+  // most-recently-opened first — just like normal conversations by activity.
+  const specialChats = useMemo(() => {
+    const items: { key: 'ai' | 'music'; ts: number }[] = [];
+    if (aiLastOpened) items.push({ key: 'ai', ts: aiLastOpened });
+    if (musicLastOpened) items.push({ key: 'music', ts: musicLastOpened });
+    items.sort((a, b) => b.ts - a.ts);
+    if (items.length === 0) return null;
+    return (
+      <View>
+        {items.map((it) => it.key === 'ai' ? <AIConversationItem key="ai" /> : <MusicConversationItem key="music" />)}
+      </View>
+    );
+  }, [aiLastOpened, musicLastOpened]);
 
   // Instant cache-first hydrate of the conversation list from MMKV (sync) so the
   // chat list paints immediately on cold start, even offline, before any sync.
@@ -373,11 +391,12 @@ export default function MessagesScreen() {
       </View>
 
       {/* AI Chat (chats tab) + Mini-apps (apps tab) */}
-      {activeTab === 'chats' && <AIConversationItem />}
-      {activeTab === 'chats' && <MusicConversationItem />}
+      {/* AI Chat + Music (chats tab) — only shown once opened, newest first */}
+      {activeTab === 'chats' && !searchQuery && specialChats}
       {activeTab === 'apps' && <MiniAppsRow />}
 
       {filtered.length === 0 ? (
+        (activeTab === 'chats' && specialChats && !searchQuery) ? null : (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingBottom: 100 }}>
           <Feather name={activeTab === 'apps' ? 'grid' : activeTab === 'blocked' ? 'slash' : activeTab === 'deleted' ? 'trash-2' : activeTab === 'archive' ? 'archive' : 'message-circle'} size={48} color={theme.colors.text.tertiary} />
           <Text
@@ -388,6 +407,7 @@ export default function MessagesScreen() {
             {activeTab === 'apps' ? 'Нет приложений' : activeTab === 'blocked' ? 'Нет заблокированных' : activeTab === 'deleted' ? 'Нет удалённых' : activeTab === 'archive' ? 'Архив пуст' : 'Пока нет сообщений'}
           </Text>
         </View>
+        )
       ) : (
         <FlatList
           data={filtered}
