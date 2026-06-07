@@ -28,11 +28,12 @@ import { showToast } from '../../src/store/toastStore';
 const REPORT_CATS = ['Спам', 'Насилие', 'Ложная информация', 'Мошенничество', 'Оскорбления', 'Другое'];
 
 // Reply quoting without a schema change. A reply comment is stored as:
-//   ::re:<base64(username)>:<base64(snippet)>:<base64(gifUrl)>::<actual body>
-// Base64 of the quoted parts guarantees the payload can never contain our
-// delimiters, so parsing is unambiguous. The gif segment lets a reply to a GIF
-// comment render a mini GIF thumbnail instead of plain text.
-const REPLY_PREFIX = '::re:';
+//   ::re::<base64(JSON{u, sn, gif})>::<actual body>
+// The quote metadata is packed into a SINGLE base64 blob. Base64's alphabet
+// never contains ':' , so the first "::" after the blob is unambiguously the
+// body terminator — this fixes the earlier bug where an empty segment produced a
+// stray "::" that truncated the body (showing a raw base64 string).
+const REPLY_PREFIX = '::re::';
 function b64encode(s: string): string {
   try { return global.btoa ? global.btoa(unescape(encodeURIComponent(s))) : Buffer.from(s, 'utf8').toString('base64'); }
   catch { return ''; }
@@ -42,34 +43,42 @@ function b64decode(s: string): string {
   catch { return ''; }
 }
 function encodeReply(username: string, snippet: string, body: string, gifUrl?: string): string {
-  const u = b64encode(username);
-  const sn = b64encode(snippet.slice(0, 140));
-  const gif = b64encode(gifUrl || '');
-  return `${REPLY_PREFIX}${u}:${sn}:${gif}::${body}`;
+  const meta = JSON.stringify({ u: username || '', sn: (snippet || '').slice(0, 140), gif: gifUrl || '' });
+  return `${REPLY_PREFIX}${b64encode(meta)}::${body}`;
 }
 function parseReply(content: string): { replyUser?: string; replyText?: string; replyGif?: string; body: string } {
+  // New format: ::re::<base64(json)>::<body>
   if (content.startsWith(REPLY_PREFIX)) {
     const rest = content.slice(REPLY_PREFIX.length);
     const endIdx = rest.indexOf('::');
     if (endIdx === -1) return { body: content };
-    const head = rest.slice(0, endIdx);
+    const blob = rest.slice(0, endIdx);
     const body = rest.slice(endIdx + 2);
-    const parts = head.split(':');
-    const replyUser = b64decode(parts[0] || '');
-    const replyText = b64decode(parts[1] || '');
-    const replyGif = parts.length > 2 ? b64decode(parts[2] || '') : '';
-    return { replyUser: replyUser || undefined, replyText: replyText || undefined, replyGif: replyGif || undefined, body };
+    try {
+      const meta = JSON.parse(b64decode(blob));
+      return {
+        replyUser: meta.u || undefined,
+        replyText: meta.sn || undefined,
+        replyGif: meta.gif || undefined,
+        body,
+      };
+    } catch {
+      return { body };
+    }
   }
-  // Legacy format: ::re::<username>|<snippet>::<body>
-  if (content.startsWith('::re::')) {
-    const rest = content.slice(6);
+  // Legacy A: ::re:<b64(u)>:<b64(sn)>[:<b64(gif)>]::<body>
+  if (content.startsWith('::re:')) {
+    const rest = content.slice('::re:'.length);
     const endIdx = rest.indexOf('::');
-    if (endIdx === -1) return { body: content };
-    const head = rest.slice(0, endIdx);
-    const body = rest.slice(endIdx + 2);
-    const bar = head.indexOf('|');
-    if (bar === -1) return { body };
-    return { replyUser: head.slice(0, bar) || undefined, replyText: head.slice(bar + 1) || undefined, body };
+    if (endIdx !== -1) {
+      const head = rest.slice(0, endIdx);
+      const body = rest.slice(endIdx + 2);
+      const parts = head.split(':');
+      const u = b64decode(parts[0] || '');
+      const sn = b64decode(parts[1] || '');
+      const gif = parts.length > 2 ? b64decode(parts[2] || '') : '';
+      if (u || sn || gif) return { replyUser: u || undefined, replyText: sn || undefined, replyGif: gif || undefined, body };
+    }
   }
   return { body: content };
 }
@@ -170,7 +179,7 @@ export default function CommentsScreen() {
     if (editing) {
       const parsed = parseReply(editing.content || '');
       const newContent = parsed.replyUser
-        ? encodeReply(parsed.replyUser, parsed.replyText || '', body)
+        ? encodeReply(parsed.replyUser, parsed.replyText || '', body, parsed.replyGif)
         : body;
       const editId = editing.id;
       setText('');

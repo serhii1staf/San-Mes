@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { View, Pressable, Modal, TextInput, FlatList, Animated, StatusBar, Easing, Dimensions, ActivityIndicator, Keyboard } from 'react-native';
+import { View, Pressable, Modal, TextInput, FlatList, Animated, StatusBar, Dimensions, ActivityIndicator, Keyboard } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme';
@@ -7,7 +7,7 @@ import { Text } from './Text';
 import { CachedImage } from './CachedImage';
 import { getTrendingGifs, searchGifs, getCachedTrending, setCachedTrending, GiphyItem } from '../../services/giphy';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const SHEET_MARGIN = 10;
 const NUM_COLS = 3;
 const GRID_PAD = 10;
@@ -21,16 +21,17 @@ interface GiphyPickerProps {
   onSelect: (url: string) => void;
 }
 
-// GIF picker — a floating rounded card that dissolves in/out (fade + slight
-// slide), the same feel as the app's other sheets. It never touches the screen
-// edges, and it ALWAYS dismisses the keyboard on close so the underlying chat /
-// comment input bar (KeyboardStickyView) can't get stuck mid-screen.
+// GIF picker — uses the EXACT same open/close/dim animation as the main feed's
+// three-dots menu (PostMenuModal): spring slide-up from the bottom, a 0.4 black
+// backdrop that fades in over 200ms, and a 250ms slide-down + fade-out on close.
+// It also always dismisses the keyboard on close so the underlying chat / comment
+// input bar (KeyboardStickyView) can't get stuck mid-screen.
 export function GiphyPicker({ visible, onClose, onSelect }: GiphyPickerProps) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
-  const fade = useRef(new Animated.Value(0)).current;
-  const slide = useRef(new Animated.Value(24)).current;
-  const dismissing = useRef(false);
+  const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
+  const backdropAnim = useRef(new Animated.Value(0)).current;
+  const isClosing = useRef(false);
   const [mounted, setMounted] = useState(false);
 
   const [query, setQuery] = useState('');
@@ -66,12 +67,12 @@ export function GiphyPicker({ visible, onClose, onSelect }: GiphyPickerProps) {
   useEffect(() => {
     if (visible) {
       setMounted(true);
-      dismissing.current = false;
-      fade.setValue(0);
-      slide.setValue(24);
+      isClosing.current = false;
+      slideAnim.setValue(SCREEN_HEIGHT);
+      backdropAnim.setValue(0);
       Animated.parallel([
-        Animated.timing(fade, { toValue: 1, duration: 200, easing: Easing.out(Easing.quad), useNativeDriver: true }),
-        Animated.timing(slide, { toValue: 0, duration: 240, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+        Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 50, friction: 9 }),
+        Animated.timing(backdropAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
       ]).start();
       // Initial load handled by the debounced query effect below (avoids a
       // duplicate request that would burn the rate limit twice as fast).
@@ -86,22 +87,20 @@ export function GiphyPicker({ visible, onClose, onSelect }: GiphyPickerProps) {
   }, [query, visible, load]);
 
   const dismiss = useCallback(() => {
-    if (dismissing.current) return;
-    dismissing.current = true;
+    if (isClosing.current) return;
+    isClosing.current = true;
     // Dismiss the keyboard FIRST so the underlying input bar settles back down.
     Keyboard.dismiss();
     Animated.parallel([
-      Animated.timing(fade, { toValue: 0, duration: 180, easing: Easing.in(Easing.quad), useNativeDriver: true }),
-      Animated.timing(slide, { toValue: 24, duration: 180, easing: Easing.in(Easing.cubic), useNativeDriver: true }),
-    ]).start(({ finished }) => {
-      if (!finished) return;
-      // Snap fully transparent before unmount so no residual frame flashes.
-      fade.setValue(0);
-      slide.setValue(24);
-      setMounted(false);
-      setQuery('');
-      setGifs([]);
-      onClose();
+      Animated.timing(slideAnim, { toValue: SCREEN_HEIGHT, duration: 250, useNativeDriver: true }),
+      Animated.timing(backdropAnim, { toValue: 0, duration: 250, useNativeDriver: true }),
+    ]).start(() => {
+      setTimeout(() => {
+        setMounted(false);
+        setQuery('');
+        setGifs([]);
+        onClose();
+      }, 30);
     });
   }, [onClose]);
 
@@ -121,8 +120,8 @@ export function GiphyPicker({ visible, onClose, onSelect }: GiphyPickerProps) {
   return (
     <Modal visible={visible || mounted} transparent animationType="none" onRequestClose={dismiss} statusBarTranslucent>
       <StatusBar hidden />
-      {/* Backdrop — tap anywhere outside the card to close */}
-      <Animated.View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', opacity: fade }}>
+      {/* Backdrop — same 0.4 black dim as the feed menu */}
+      <Animated.View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)', opacity: backdropAnim }}>
         <Pressable style={{ flex: 1 }} onPress={dismiss} />
       </Animated.View>
 
@@ -135,8 +134,8 @@ export function GiphyPicker({ visible, onClose, onSelect }: GiphyPickerProps) {
           right: SHEET_MARGIN,
           bottom: Math.max(insets.bottom, 8),
           height: '60%',
-          opacity: fade,
-          transform: [{ translateY: slide }],
+          opacity: backdropAnim,
+          transform: [{ translateY: slideAnim }],
         }}
       >
         <View style={{ flex: 1, backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF', borderRadius: 36, overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.18, shadowRadius: 20, elevation: 12 }}>
