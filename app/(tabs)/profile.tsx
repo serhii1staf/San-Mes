@@ -15,6 +15,7 @@ import { UserBadge } from '../../src/components/ui/UserBadge';
 import { FormattedText } from '../../src/components/ui/FormattedText';
 import { LinkPreview } from '../../src/components/ui/LinkPreview';
 import { extractFirstUrl } from '../../src/services/linkPreview';
+import { kvGetJSONSync, kvSetJSON } from '../../src/services/kvStore';
 import { AccountSwitcher } from '../../src/components/ui/AccountSwitcher';
 import { PostContextMenu } from '../../src/components/ui/PostContextMenu';
 import { SwipeablePostCard } from '../../src/components/ui/SwipeablePostCard';
@@ -100,19 +101,14 @@ export default function ProfileScreen() {
   const scrollViewRef = useRef<any>(null);
   const hasRestoredScroll = useRef(false);
 
-  // 1. On mount: if store is empty, load from cache then fetch from Supabase
+  // 1. On mount: if store is empty, hydrate synchronously from MMKV (instant, no
+  // flicker) then fetch fresh in the background.
   useEffect(() => {
     if (userPosts.length > 0) return; // Store already has data — show instantly
-    AsyncStorage.getItem(accountKey(MY_POSTS_CACHE_KEY)).then((cached) => {
-      if (cached) {
-        try {
-          const parsed = JSON.parse(cached);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            setProfilePosts(parsed);
-          }
-        } catch {}
-      }
-    }).catch(() => {});
+    try {
+      const parsed = kvGetJSONSync<any[]>(MY_POSTS_CACHE_KEY, []);
+      if (Array.isArray(parsed) && parsed.length > 0) setProfilePosts(parsed);
+    } catch {}
   }, []);
 
   // 2. Fetch fresh data once (if not already fetched)
@@ -202,6 +198,7 @@ export default function ProfileScreen() {
         return post;
       });
       setProfilePosts(mapped);
+      kvSetJSON(MY_POSTS_CACHE_KEY, mapped);
       AsyncStorage.setItem(accountKey(MY_POSTS_CACHE_KEY), JSON.stringify(mapped)).catch(() => {});
     } catch {}
   }, [user?.id]);
