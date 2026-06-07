@@ -58,7 +58,7 @@ export function SlideUpSheet({ visible, onClose, children }: SlideUpSheetProps) 
 
         <View style={{ flex: 1, justifyContent: 'flex-end' }} pointerEvents="box-none">
           <Animated.View style={{ transform: [{ translateY: slideAnim }] }}>
-            <View style={{ marginHorizontal: 8, marginBottom: Math.max(insets.bottom, 16), backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF', borderRadius: 28, shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.12, shadowRadius: 16, elevation: 10 }}>
+            <View style={{ marginHorizontal: 8, marginBottom: Math.max(insets.bottom, 16), backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF', borderRadius: 40, shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.12, shadowRadius: 16, elevation: 10 }}>
               <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 4 }}>
                 <View style={{ width: 40, height: 5, borderRadius: 3, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)' }} />
               </View>

@@ -283,12 +283,19 @@ export default function ChatScreen() {
     requestAnimationFrame(() => flatListRef.current?.scrollToEnd({ animated }));
   }, []);
 
-  // Only auto-scroll to the bottom when the number of messages grows (new
-  // message / first load) — NOT on every content-size change. Otherwise tapping
-  // an inline video (which grows the row) would yank the list to the end.
+  // Auto-scroll only when NEW messages arrive after the initial mount. The first
+  // content-size change is the initial layout — we skip scrolling there because
+  // justifyContent:'flex-end' already places content at the bottom (scrolling
+  // there caused the visible auto-scroll the user saw on open).
   const prevMsgCountRef = useRef(0);
+  const mountedOnceRef = useRef(false);
   const handleContentSizeChange = useCallback(() => {
     const count = chatMessages.length;
+    if (!mountedOnceRef.current) {
+      mountedOnceRef.current = true;
+      prevMsgCountRef.current = count;
+      return; // initial layout — already at bottom via flex-end
+    }
     if (count !== prevMsgCountRef.current) {
       prevMsgCountRef.current = count;
       scrollToEnd(false);
@@ -296,8 +303,9 @@ export default function ChatScreen() {
   }, [chatMessages.length, scrollToEnd]);
 
   // The list uses contentContainerStyle justifyContent:'flex-end', so messages
-  // are pinned to the bottom on the very first paint (data is already present
-  // synchronously). Just keep it pinned as late-loading images grow content.
+  // are already pinned to the bottom on the very first paint — no initial
+  // scroll-to-end is needed (that was causing the visible auto-scroll). We only
+  // pin again silently once, very late, to absorb any late-loaded image heights.
   const didInitialScrollRef = useRef(false);
   useEffect(() => {
     didInitialScrollRef.current = false;
@@ -306,10 +314,8 @@ export default function ChatScreen() {
     if (didInitialScrollRef.current) return;
     if (!chatMessages.length) return;
     didInitialScrollRef.current = true;
-    const timers = [60, 220, 450].map((d) =>
-      setTimeout(() => { try { flatListRef.current?.scrollToEnd({ animated: false }); } catch {} }, d)
-    );
-    return () => timers.forEach(clearTimeout);
+    const t = setTimeout(() => { try { flatListRef.current?.scrollToEnd({ animated: false }); } catch {} }, 400);
+    return () => clearTimeout(t);
   }, [id, chatMessages.length]);
 
   // ── Message search ──────────────────────────────────────────────────────────

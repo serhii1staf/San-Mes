@@ -9,7 +9,7 @@ import { useThemeStore, FONT_FAMILIES, FONT_SIZES } from '../../src/store/themeS
 import { useProfileAppearanceStore } from '../../src/store/profileAppearanceStore';
 import { SlideUpSheet } from '../../src/components/ui/SlideUpSheet';
 
-const PROFILE_EMOJI_CHOICES = ['❤️', '⭐', '🔥', '✨', '🌸', '🌟', '💜', '🦋', '🍀', '🌈', '⚡', '🎵', '😎', '👑', '🎨', '🌊', '🍑', '🐱', '🎮', '☕'];
+const PROFILE_EMOJI_CHOICES = ['❤️', '🧡', '💛', '💚', '💙', '💜', '🖤', '🤍', '⭐', '🌟', '✨', '💫', '🔥', '⚡', '🌈', '☀️', '🌙', '🌸', '🌺', '🌹', '🌻', '🌼', '🍀', '🌿', '🦋', '🐱', '🐶', '🐼', '🦊', '🐰', '🍑', '🍓', '🍉', '🍒', '🎵', '🎶', '🎨', '🎮', '👑', '😎', '🥰', '😇', '🤩', '💎', '🌊', '☕', '🍕', '⚽'];
 
 export default function FontsScreen() {
   const theme = useTheme();
@@ -117,17 +117,19 @@ export default function FontsScreen() {
 
       {/* Emoji picker — same sheet style as the feed three-dots menu */}
       <SlideUpSheet visible={emojiModal} onClose={() => setEmojiModal(false)}>
-        <Text variant="body" weight="bold" align="center" style={{ marginBottom: 14 }}>Эмодзи в карточках</Text>
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 12, paddingHorizontal: 12 }}>
-          <Pressable onPress={() => { setPostEmoji(''); setEmojiModal(false); }} style={{ width: 52, height: 52, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: postEmoji === '' ? theme.colors.accent.primary : theme.colors.border.light, backgroundColor: postEmoji === '' ? theme.colors.accent.primary + '15' : 'transparent' }}>
-            <Feather name="slash" size={18} color={theme.colors.text.tertiary} />
-          </Pressable>
-          {PROFILE_EMOJI_CHOICES.map((e) => (
-            <Pressable key={e} onPress={() => { setPostEmoji(e); setEmojiModal(false); }} style={{ width: 52, height: 52, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: postEmoji === e ? theme.colors.accent.primary : theme.colors.border.light, backgroundColor: postEmoji === e ? theme.colors.accent.primary + '15' : 'transparent' }}>
-              <RNText style={{ fontSize: 26 }} allowFontScaling={false}>{e}</RNText>
+        <Text variant="body" weight="bold" align="center" style={{ marginBottom: 12 }}>Эмодзи в карточках</Text>
+        <ScrollView style={{ maxHeight: 320 }} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 14, paddingBottom: 4 }}>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 10 }}>
+            <Pressable onPress={() => { setPostEmoji(''); setEmojiModal(false); }} style={{ width: 50, height: 50, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: postEmoji === '' ? theme.colors.accent.primary : theme.colors.border.light, backgroundColor: postEmoji === '' ? theme.colors.accent.primary + '15' : 'transparent' }}>
+              <Feather name="slash" size={18} color={theme.colors.text.tertiary} />
             </Pressable>
-          ))}
-        </View>
+            {PROFILE_EMOJI_CHOICES.map((e) => (
+              <Pressable key={e} onPress={() => { setPostEmoji(e); setEmojiModal(false); }} style={{ width: 50, height: 50, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: postEmoji === e ? theme.colors.accent.primary : theme.colors.border.light, backgroundColor: postEmoji === e ? theme.colors.accent.primary + '15' : 'transparent' }}>
+                <RNText style={{ fontSize: 26 }} allowFontScaling={false}>{e}</RNText>
+              </Pressable>
+            ))}
+          </View>
+        </ScrollView>
       </SlideUpSheet>
     </View>
   );

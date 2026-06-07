@@ -15,6 +15,7 @@ import { UserBadge } from '../../src/components/ui/UserBadge';
 import { FormattedText } from '../../src/components/ui/FormattedText';
 import { LinkPreview } from '../../src/components/ui/LinkPreview';
 import { EmojiPattern } from '../../src/components/ui/EmojiPattern';
+import { ProfilePostCard } from '../../src/components/profile/ProfilePostCard';
 import { useProfileAppearanceStore } from '../../src/store/profileAppearanceStore';
 import { extractFirstUrl } from '../../src/services/linkPreview';
 import { kvGetJSONSync, kvSetJSON } from '../../src/services/kvStore';
@@ -279,87 +280,20 @@ export default function ProfileScreen() {
           <View style={{ position: 'absolute', bottom: 0, height: 2, backgroundColor: theme.colors.accent.primary, width: SCREEN_WIDTH / 4, left: tabs.findIndex(t => t.key === activeTab) * (SCREEN_WIDTH / 4) }} />
         </View>
         {activeTab === 'posts' && (userPosts.length === 0 ? <View style={{ alignItems: 'center', paddingVertical: 40 }}><Text variant="caption" color={theme.colors.text.tertiary}>Ещё нет публикаций</Text></View> : (
-          <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>{userPosts.slice(0, visibleCount).map(post => {
-            const origPost = post.originalPost;
-            const imgs = post.imageUrls && post.imageUrls.length > 0 ? post.imageUrls : post.imageUrl ? [post.imageUrl] : (origPost?.imageUrls && origPost.imageUrls.length > 0 ? origPost.imageUrls : origPost?.imageUrl ? [origPost.imageUrl] : []);
-            const hasImage = imgs.length > 0;
-            const isRepostPost = post.isRepost;
-            return (
-            <SwipeablePostCard key={post.id} shareText={`${user.displayName}: ${post.content || ''}\nhttps://san-m-app.com/post/${post.id}`}>
-            <Pressable onPress={() => router.push({ pathname: '/comments/[id]', params: { id: post.id } })} onLongPress={() => { triggerHaptic('medium'); setContextPost(post); }} delayLongPress={400} style={{ flexDirection: 'row', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.75)', borderRadius: 28, padding: 10, marginBottom: 12, borderWidth: 1, borderColor: theme.isDark ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.4)', overflow: 'hidden' }}>
-              {postEmoji ? <EmojiPattern emoji={postEmoji} opacity={theme.isDark ? 0.12 : 0.10} /> : null}
-              {/* Left: Image grid thumbnail */}
-              {hasImage ? (
-                <Pressable onPress={() => setViewingImage({ uri: imgs[0], postId: post.id, allImages: imgs })}>
-                  <View style={{ width: 100, height: 100, borderRadius: 20, overflow: 'hidden' }}>
-                    {imgs.length === 1 ? (
-                      <CachedImage uri={imgs[0]} style={{ width: 100, height: 100 }} resizeMode="cover" />
-                    ) : imgs.length === 2 ? (
-                      <View style={{ flexDirection: 'row', width: 100, height: 100 }}>
-                        <CachedImage uri={imgs[0]} style={{ width: 49, height: 100 }} resizeMode="cover" />
-                        <View style={{ width: 2 }} />
-                        <CachedImage uri={imgs[1]} style={{ width: 49, height: 100 }} resizeMode="cover" />
-                      </View>
-                    ) : imgs.length === 3 ? (
-                      <View style={{ flexDirection: 'row', width: 100, height: 100 }}>
-                        <CachedImage uri={imgs[0]} style={{ width: 49, height: 100 }} resizeMode="cover" />
-                        <View style={{ width: 2 }} />
-                        <View style={{ width: 49, height: 100 }}>
-                          <CachedImage uri={imgs[1]} style={{ width: 49, height: 49 }} resizeMode="cover" />
-                          <View style={{ height: 2 }} />
-                          <CachedImage uri={imgs[2]} style={{ width: 49, height: 49 }} resizeMode="cover" />
-                        </View>
-                      </View>
-                    ) : (
-                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', width: 100, height: 100 }}>
-                        {imgs.slice(0, 4).map((imgUri, idx) => (
-                          <CachedImage key={idx} uri={imgUri} style={{ width: 49, height: 49, marginRight: idx % 2 === 0 ? 2 : 0, marginBottom: idx < 2 ? 2 : 0 }} resizeMode="cover" />
-                        ))}
-                      </View>
-                    )}
-                  </View>
-                </Pressable>
-              ) : isRepostPost ? (
-                <View style={{ width: 100, height: 100, borderRadius: 20, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)', alignItems: 'center', justifyContent: 'center' }}>
-                  <Feather name="repeat" size={24} color={theme.colors.text.tertiary} />
-                  <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 9, marginTop: 4 }}>Репост</Text>
-                </View>
-              ) : null}
-              {/* Right: Info */}
-              <View style={{ flex: 1, marginLeft: (hasImage || isRepostPost) ? 14 : 4, justifyContent: 'center' }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                  <Avatar emoji={user.emoji} size="xs" />
-                  <Text variant="caption" weight="semibold" numberOfLines={1} style={{ flexShrink: 1 }}>{user.displayName}</Text>
-                  {user.is_verified && <VerifiedBadge size={11} />}
-                  {user.badge && <UserBadge badge={user.badge} size="sm" />}
-                  <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 10, flexShrink: 0 }}>· {formatTimeAgo(post.createdAt)}</Text>
-                </View>
-                {isRepostPost && origPost && (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 }}>
-                    <Feather name="repeat" size={10} color={theme.colors.accent.primary} />
-                    <Text variant="caption" color={theme.colors.accent.primary} numberOfLines={1} style={{ fontSize: 10, flexShrink: 1 }}>от {origPost.authorName}</Text>
-                  </View>
-                )}
-                {isRepostPost && !origPost && <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 }}><Feather name="repeat" size={10} color={theme.colors.accent.primary} /><Text variant="caption" color={theme.colors.accent.primary} style={{ fontSize: 10 }}>Репост</Text></View>}
-                {(post.content || (origPost?.content)) ? <FormattedText style={{ fontSize: 12, marginBottom: 6 }} color={theme.colors.text.secondary}>{post.content || origPost?.content || ''}</FormattedText> : null}
-                {/* Link preview when the post has no image (Telegram-style, instant from cache) */}
-                {!hasImage && (() => {
-                  const link = extractFirstUrl(post.content || origPost?.content || '');
-                  return link ? (
-                    <Pressable onLongPress={() => { triggerHaptic('medium'); setContextPost(post); }} delayLongPress={400} style={{ marginBottom: 6 }}>
-                      <LinkPreview url={link} static />
-                    </Pressable>
-                  ) : null;
-                })()}
-                <View style={{ flexDirection: 'row', gap: 12 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}><Feather name="heart" size={12} color={theme.colors.text.tertiary} /><Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{post.likesCount}</Text></View>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}><Feather name="message-circle" size={12} color={theme.colors.text.tertiary} /><Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{post.commentsCount}</Text></View>
-                </View>
-              </View>
-            </Pressable>
-            </SwipeablePostCard>
-            );
-          })}</View>
+          <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>{userPosts.slice(0, visibleCount).map(post => (
+            <ProfilePostCard
+              key={post.id}
+              post={post}
+              authorName={user.displayName || ''}
+              authorEmoji={user.emoji || '😊'}
+              authorVerified={user.is_verified}
+              authorBadge={user.badge}
+              shareText={`${user.displayName}: ${post.content || ''}\nhttps://san-m-app.com/post/${post.id}`}
+              postEmoji={postEmoji}
+              onLongPress={(p) => setContextPost(p)}
+              onImagePress={(uri, postId, allImages) => setViewingImage({ uri, postId, allImages })}
+            />
+          ))}</View>
         ))}
         {activeTab !== 'posts' && <View style={{ alignItems: 'center', paddingVertical: 40 }}><Text variant="caption" color={theme.colors.text.tertiary}>Пока пусто</Text></View>}
       </Animated.ScrollView>
