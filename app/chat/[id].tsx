@@ -160,6 +160,22 @@ export default function ChatScreen() {
 
   const chatMessages = (storeMessages[id || ''] || []) as ChatMessage[];
 
+  // Seed the store SYNCHRONOUSLY on first render from the MMKV cache so messages
+  // are on screen in the very first frame (no blank flash). useState initializer
+  // runs during render, before paint — unlike a useEffect which defers a tick.
+  const seededRef = useRef<string | null>(null);
+  if (id && seededRef.current !== id && (storeMessages[id] || []).length === 0) {
+    seededRef.current = id;
+    try {
+      const cached = kvGetJSONSync<ChatMessage[]>(`chat_messages:${id}`, []);
+      if (cached.length > 0) {
+        setMessages(id, cached as any);
+      } else if (mockMessages[id]) {
+        setMessages(id, mockMessages[id]);
+      }
+    } catch {}
+  }
+
   const settingsMap = useChatSettingsStore((s) => s.settings);
   const chatSettings = useMemo(() => {
     const global = settingsMap[GLOBAL_CHAT_SETTINGS_KEY];
@@ -205,21 +221,20 @@ export default function ChatScreen() {
     }
   }, [participantId, conversation, cachedProfile]);
 
+  // Fallback for devices without MMKV: warm the AsyncStorage mirror, then hydrate
+  // if the synchronous seed above found nothing.
   useEffect(() => {
     if (!id) return;
+    if ((useChatStore.getState().messages[id] || []).length > 0) return;
     const cacheKey = `chat_messages:${id}`;
-    // 1) Instant hydrate from KV cache (MMKV sync, or AsyncStorage mirror after warm)
-    const hydrateFromCache = () => {
+    kvWarm([cacheKey]).then(() => {
       const cached = kvGetJSONSync<ChatMessage[]>(cacheKey, []);
       if (cached.length > 0 && (useChatStore.getState().messages[id] || []).length === 0) {
         setMessages(id, cached as any);
-      } else if (cached.length === 0 && mockMessages[id]) {
-        // Seed from mock only when there's nothing cached yet
+      } else if (cached.length === 0 && mockMessages[id] && (useChatStore.getState().messages[id] || []).length === 0) {
         setMessages(id, mockMessages[id]);
       }
-    };
-    // Warm the AsyncStorage mirror first (no-op when MMKV is available), then hydrate.
-    kvWarm([cacheKey]).then(hydrateFromCache).catch(hydrateFromCache);
+    }).catch(() => {});
   }, [id]);
 
   // Persist messages to KV cache whenever THIS chat's messages change.

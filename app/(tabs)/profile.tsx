@@ -283,8 +283,8 @@ export default function ProfileScreen() {
             const isRepostPost = post.isRepost;
             return (
             <SwipeablePostCard key={post.id} shareText={`${user.displayName}: ${post.content || ''}\nhttps://san-m-app.com/post/${post.id}`}>
-            <Pressable onPress={() => router.push({ pathname: '/comments/[id]', params: { id: post.id } })} onLongPress={() => { triggerHaptic('medium'); setContextPost(post); }} delayLongPress={400} style={{ flexDirection: 'row', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.75)', borderRadius: 28, padding: 10, marginBottom: 12, borderWidth: 1, borderColor: theme.isDark ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.4)', shadowColor: theme.isDark ? '#000' : '#c8a060', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.12, shadowRadius: 20, elevation: 4, overflow: 'hidden' }}>
-              {postEmoji ? <EmojiPattern emoji={postEmoji} opacity={theme.isDark ? 0.12 : 0.10} dense /> : null}
+            <Pressable onPress={() => router.push({ pathname: '/comments/[id]', params: { id: post.id } })} onLongPress={() => { triggerHaptic('medium'); setContextPost(post); }} delayLongPress={400} style={{ flexDirection: 'row', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.75)', borderRadius: 28, padding: 10, marginBottom: 12, borderWidth: 1, borderColor: theme.isDark ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.4)', overflow: 'hidden' }}>
+              {postEmoji ? <EmojiPattern emoji={postEmoji} opacity={theme.isDark ? 0.12 : 0.10} /> : null}
               {/* Left: Image grid thumbnail */}
               {hasImage ? (
                 <Pressable onPress={() => setViewingImage({ uri: imgs[0], postId: post.id, allImages: imgs })}>

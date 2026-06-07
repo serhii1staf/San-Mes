@@ -12,31 +12,21 @@ interface EmojiPatternProps {
   emoji?: string;
   opacity?: number;
   seed?: string;
-  dense?: boolean; // more emoji, covering the right side (e.g. profile post cards)
 }
 
-// Fixed, uniform-size emoji on the right side. Small count + small size keeps it
-// cheap and prevents clipping inside thin link rows.
+// Three small emoji on the right — deliberately minimal so it never weighs on
+// rendering. Fixed, deterministic positions → rendered once, no reshuffle.
 const SLOTS = [
-  { top: 4, right: 8 },
-  { top: 22, right: 26 },
-  { top: 13, right: 46 },
+  { top: 8, right: 10 },
+  { top: 30, right: 28 },
+  { top: 52, right: 12 },
 ];
 
-// Denser, evenly-tiled set for larger containers (profile cards). Still a fixed,
-// deterministic layout → rendered once, never re-shuffles, negligible cost.
-const DENSE_SLOTS = [
-  { top: 4, right: 8 }, { top: 6, right: 34 }, { top: 2, right: 60 }, { top: 8, right: 86 },
-  { top: 30, right: 18 }, { top: 34, right: 46 }, { top: 30, right: 72 }, { top: 36, right: 98 },
-  { top: 58, right: 6 }, { top: 60, right: 32 }, { top: 56, right: 60 }, { top: 62, right: 88 },
-];
-
-export const EmojiPattern = memo(function EmojiPattern({ emoji, opacity = 0.14, dense }: EmojiPatternProps) {
+export const EmojiPattern = memo(function EmojiPattern({ emoji, opacity = 0.14 }: EmojiPatternProps) {
   if (!emoji) return null;
-  const slots = dense ? DENSE_SLOTS : SLOTS;
   return (
     <View pointerEvents="none" style={[StyleSheet.absoluteFill, { overflow: 'hidden' }]}>
-      {slots.map((p, i) => (
+      {SLOTS.map((p, i) => (
         <RNText
           key={i}
           allowFontScaling={false}
@@ -44,8 +34,8 @@ export const EmojiPattern = memo(function EmojiPattern({ emoji, opacity = 0.14, 
             position: 'absolute',
             top: p.top,
             right: p.right,
-            fontSize: 16,
-            lineHeight: 20,
+            fontSize: 15,
+            lineHeight: 18,
             opacity,
           }}
         >

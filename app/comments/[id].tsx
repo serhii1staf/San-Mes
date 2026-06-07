@@ -142,16 +142,28 @@ export default function CommentsScreen() {
 
   const loadComments = async () => {
     if (!postId) return;
+    // Offline: never hang on a network call. Show whatever is cached (already
+    // seeded synchronously) and stop the spinner immediately.
+    if (!useConnectivityStore.getState().isOnline) {
+      setIsLoading(false);
+      return;
+    }
     // Don't show the spinner if we already painted cached comments.
     if (comments.length === 0) setIsLoading(true);
-    const { comments: data } = await getComments(postId);
-    setComments(data);
+    // Safety: never let the spinner spin forever if the request stalls.
+    const safety = setTimeout(() => setIsLoading(false), 8000);
+    try {
+      const { comments: data } = await getComments(postId);
+      if (Array.isArray(data)) {
+        setComments(data);
+        kvSetJSON(`comments:${postId}`, data);
+        if (data.length > 0) {
+          setTimeout(() => listRef.current?.scrollToEnd({ animated: false }), 150);
+        }
+      }
+    } catch {}
+    clearTimeout(safety);
     setIsLoading(false);
-    kvSetJSON(`comments:${postId}`, data);
-    // Scroll to last comment
-    if (data.length > 0) {
-      setTimeout(() => listRef.current?.scrollToEnd({ animated: false }), 150);
-    }
   };
 
   // If this post is a repost, resolve the original post (with author) to render a proper preview

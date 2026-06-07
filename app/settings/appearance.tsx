@@ -8,7 +8,6 @@ import { Text } from '../../src/components/ui';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { useThemeStore, ACCENT_COLORS, AccentColor } from '../../src/store/themeStore';
 import { useAuthStore } from '../../src/store/authStore';
-import { useProfileAppearanceStore } from '../../src/store/profileAppearanceStore';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const CARD_WIDTH = SCREEN_WIDTH * 0.72;
@@ -114,7 +113,6 @@ export default function AppearanceScreen() {
   const { mode, accent, setAccent, aiThemes } = useThemeStore();
   const removeAiTheme = (key: string) => useThemeStore.setState((s) => ({ aiThemes: s.aiThemes.filter(t => t.key !== key) }));
   const { user } = useAuthStore();
-  const { postEmoji, setPostEmoji } = useProfileAppearanceStore();
   const isDark = mode === 'dark';
   const allThemes = [...ACCENT_COLORS, ...aiThemes];
   const scrollRef = useRef<ScrollView>(null);
@@ -196,7 +194,7 @@ export default function AppearanceScreen() {
         </View>
 
         {/* Theme name + delete for AI themes */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 16, marginBottom: 16, gap: 8 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 16, marginBottom: 24, gap: 8 }}>
           <Text variant="body" weight="bold" align="center">
             {allThemes[activeIndex]?.label || ''}
           </Text>
@@ -206,24 +204,7 @@ export default function AppearanceScreen() {
             </Pressable>
           )}
         </View>
-
-        {/* Profile post emoji picker (decorative, behind your post cards) */}
-        <View style={{ paddingHorizontal: 20, marginBottom: 24 }}>
-          <Text variant="caption" color={theme.colors.text.tertiary} align="center" style={{ marginBottom: 10 }}>Эмодзи в карточках профиля</Text>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 10 }}>
-            <Pressable onPress={() => setPostEmoji('')} style={{ width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: postEmoji === '' ? theme.colors.accent.primary : theme.colors.border.light, backgroundColor: postEmoji === '' ? theme.colors.accent.primary + '15' : 'transparent' }}>
-              <Feather name="slash" size={16} color={theme.colors.text.tertiary} />
-            </Pressable>
-            {PROFILE_EMOJI_CHOICES.map((e) => (
-              <Pressable key={e} onPress={() => setPostEmoji(e)} style={{ width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: postEmoji === e ? theme.colors.accent.primary : theme.colors.border.light, backgroundColor: postEmoji === e ? theme.colors.accent.primary + '15' : 'transparent' }}>
-                <Text style={{ fontSize: 20 }}>{e}</Text>
-              </Pressable>
-            ))}
-          </View>
-        </View>
       </View>
     </View>
   );
 }
-
-const PROFILE_EMOJI_CHOICES = ['❤️', '⭐', '🔥', '✨', '🌸', '🌟', '💜', '🦋', '🍀', '🌈', '⚡', '🎵'];
