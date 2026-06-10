@@ -64,7 +64,7 @@ function SettingsRow({
         style={{
           width: 36,
           height: 36,
-          borderRadius: 10,
+          borderRadius: 18,
           backgroundColor: image ? 'transparent' : theme.colors.background.secondary,
           alignItems: 'center',
           justifyContent: 'center',
@@ -73,7 +73,7 @@ function SettingsRow({
         }}
       >
         {image ? (
-          <Image source={image} style={{ width: 36, height: 36 }} resizeMode="cover" />
+          <Image source={image} style={{ width: 36, height: 36, borderRadius: 18 }} resizeMode="contain" />
         ) : icon ? (
           <Feather name={icon as keyof typeof Feather.glyphMap} size={18} color={theme.colors.text.secondary} />
         ) : null}
@@ -179,7 +179,7 @@ export default function SettingsScreen() {
 
   const sectionCardStyle: ViewStyle = {
     backgroundColor: theme.colors.background.elevated,
-    borderRadius: 16,
+    borderRadius: 24,
     marginBottom: 24,
     overflow: 'hidden',
   };
