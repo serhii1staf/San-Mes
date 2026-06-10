@@ -64,14 +64,10 @@ function SettingsRow({
         style={{
           width: 36,
           height: 36,
-          // No background when an image icon is provided — the PNG is a full
-          // 1024×1024 squircle tile that already has its own colored fill
-          // inside transparent rounded corners. Painting any colored square
-          // behind it would expose its own square corners outside the
-          // squircle (which is what looked "sharp" before). For Feather
-          // fallback icons (no PNG), keep the soft colored disc and round it
-          // to a full circle so it visually matches.
           borderRadius: 18,
+          // Transparent so the PNG's own squircle shape (with already-rounded
+          // corners and transparent area outside it) is what the user sees. No
+          // gray box behind = no perceived sharp corners.
           backgroundColor: image ? 'transparent' : theme.colors.background.secondary,
           alignItems: 'center',
           justifyContent: 'center',
@@ -79,8 +75,10 @@ function SettingsRow({
         }}
       >
         {image ? (
-          // Fill the whole tile so the PNG's own squircle = the visible icon.
-          <Image source={image} style={{ width: 36, height: 36 }} resizeMode="contain" />
+          // 32×32 image inside a 36×36 tile leaves 2px of breathing room on
+          // every side, which visually softens the squircle's corners further
+          // (a Telegram-style "padded squircle" look).
+          <Image source={image} style={{ width: 32, height: 32 }} resizeMode="contain" />
         ) : icon ? (
           <Feather name={icon as keyof typeof Feather.glyphMap} size={18} color={theme.colors.text.secondary} />
         ) : null}

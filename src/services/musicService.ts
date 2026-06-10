@@ -160,11 +160,11 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-async function fetchJson(url: string, timeoutMs = 6000): Promise<any | null> {
+async function fetchJson(url: string, timeoutMs = 6000, init?: RequestInit): Promise<any | null> {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
-    const res = await fetch(url, { signal: controller.signal });
+    const res = await fetch(url, { ...init, signal: controller.signal });
     clearTimeout(timer);
     if (!res.ok) return null;
     return await res.json();
@@ -172,6 +172,11 @@ async function fetchJson(url: string, timeoutMs = 6000): Promise<any | null> {
     return null;
   }
 }
+
+// Many CDN endpoints (SoundCloud especially) reject requests without a UA, so
+// every outbound music request gets a desktop UA. RN's bare fetch sends none.
+const BROWSER_UA =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15';
 
 // Query a single Audius host (one search call). Returns mapped tracks or [].
 async function audiusSearch(host: string, query: string): Promise<Track[]> {
@@ -209,6 +214,15 @@ async function itunesSearch(query: string, limit: number): Promise<Track[]> {
 
 const SC_CLIENT_KEY = 'soundcloud_client_id';
 const SC_CLIENT_TTL_MS = 24 * 60 * 60 * 1000;
+// Last-resort fallback — SoundCloud rotates these every few months but at any
+// given moment many work for weeks. If the homepage scrape fails we try this
+// list before giving up. Add fresh ones as needed; the live extraction is
+// always preferred.
+const SC_FALLBACK_CLIENT_IDS = [
+  'iZIs9mchVcX5lhVRyQGGAYlNPVldzAoX',
+  '2t9loNQH90kzJcsFCODdigxfp325aq4z',
+  'eGWfNJiC0gLKyz3D1AmzREpaCJB1H0HK',
+];
 let scClientCache: { id: string; ts: number } | null = null;
 
 async function getSoundCloudClientId(): Promise<string | null> {
@@ -224,37 +238,54 @@ async function getSoundCloudClientId(): Promise<string | null> {
       return persisted.id;
     }
   } catch {}
-  // 3. Extract from soundcloud.com. The homepage references several JS
-  //    bundles; one of them defines `client_id:"..."`. We fetch them in
-  //    parallel and return the first match.
+  // 3. Extract from soundcloud.com. Send a browser UA so the CDN actually
+  //    serves the JS bundles (without UA it sometimes returns a stub).
   try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 6000);
-    const homepage = await fetch('https://soundcloud.com/', { signal: ctrl.signal });
+    const homepage = await fetch('https://soundcloud.com/', {
+      signal: ctrl.signal,
+      headers: { 'User-Agent': BROWSER_UA, 'Accept': 'text/html' },
+    });
     clearTimeout(t);
-    if (!homepage.ok) return null;
-    const html = await homepage.text();
-    // Find every <script src="https://a-v2.sndcdn.com/assets/X.js"> URL.
-    const scriptUrls = Array.from(html.matchAll(/https:\/\/a-v2\.sndcdn\.com\/assets\/[^"]+\.js/g)).map((m) => m[0]);
-    if (scriptUrls.length === 0) return null;
-    // Try the bundles in parallel; resolve with the first one that yields an id.
-    const bundles = await Promise.all(scriptUrls.slice(0, 6).map(async (u) => {
-      try {
-        const r = await fetch(u);
-        if (!r.ok) return null;
-        const txt = await r.text();
-        const m = txt.match(/client_id\s*[:=]\s*"([a-zA-Z0-9]{20,40})"/);
-        return m ? m[1] : null;
-      } catch { return null; }
-    }));
-    const id = bundles.find((x): x is string => !!x);
-    if (!id) return null;
-    scClientCache = { id, ts: Date.now() };
-    try { kvSetJSON(SC_CLIENT_KEY, scClientCache); } catch {}
-    return id;
-  } catch {
-    return null;
+    if (homepage.ok) {
+      const html = await homepage.text();
+      const scriptUrls = Array.from(html.matchAll(/https:\/\/a-v2\.sndcdn\.com\/assets\/[^"]+\.js/g)).map((m) => m[0]);
+      if (scriptUrls.length > 0) {
+        const bundles = await Promise.all(scriptUrls.slice(0, 6).map(async (u) => {
+          try {
+            const r = await fetch(u, { headers: { 'User-Agent': BROWSER_UA } });
+            if (!r.ok) return null;
+            const txt = await r.text();
+            const m = txt.match(/client_id\s*[:=]\s*"([a-zA-Z0-9]{20,40})"/);
+            return m ? m[1] : null;
+          } catch { return null; }
+        }));
+        const id = bundles.find((x): x is string => !!x);
+        if (id) {
+          scClientCache = { id, ts: Date.now() };
+          try { kvSetJSON(SC_CLIENT_KEY, scClientCache); } catch {}
+          return id;
+        }
+      }
+    }
+  } catch {}
+  // 4. Fallback list — try each until one works for a tiny test request.
+  for (const candidate of SC_FALLBACK_CLIENT_IDS) {
+    try {
+      const test = await fetchJson(
+        `https://api-v2.soundcloud.com/search/tracks?q=test&limit=1&client_id=${candidate}`,
+        4000,
+        { headers: { 'User-Agent': BROWSER_UA } },
+      );
+      if (test && Array.isArray(test.collection)) {
+        scClientCache = { id: candidate, ts: Date.now() };
+        try { kvSetJSON(SC_CLIENT_KEY, scClientCache); } catch {}
+        return candidate;
+      }
+    } catch {}
   }
+  return null;
 }
 
 // Resolve a SoundCloud track's playable HTTPS stream URL (progressive MP3 if
@@ -263,13 +294,16 @@ async function resolveSoundCloudStream(rawTrack: any, clientId: string): Promise
   try {
     const transcodings: any[] = rawTrack?.media?.transcodings || [];
     if (!transcodings.length) return null;
-    // Prefer progressive MP3; HLS works too but is more expensive on weak devices.
     const progressive = transcodings.find((t) => t?.format?.protocol === 'progressive');
     const chosen = progressive || transcodings[0];
     const transcodingUrl = chosen?.url;
     if (!transcodingUrl) return null;
     const sep = transcodingUrl.includes('?') ? '&' : '?';
-    const json = await fetchJson(`${transcodingUrl}${sep}client_id=${clientId}`, 5000);
+    const json = await fetchJson(
+      `${transcodingUrl}${sep}client_id=${clientId}`,
+      5000,
+      { headers: { 'User-Agent': BROWSER_UA } },
+    );
     return json?.url || null;
   } catch {
     return null;
@@ -295,7 +329,7 @@ async function soundcloudSearch(query: string, limit: number): Promise<Track[]> 
   const clientId = await getSoundCloudClientId();
   if (!clientId) return [];
   const url = `https://api-v2.soundcloud.com/search/tracks?q=${encodeURIComponent(query)}&limit=${limit}&client_id=${clientId}`;
-  const json = await fetchJson(url, 5000);
+  const json = await fetchJson(url, 5000, { headers: { 'User-Agent': BROWSER_UA } });
   const collection: any[] = Array.isArray(json?.collection) ? json.collection : [];
   if (!collection.length) return [];
   // Resolve stream urls in parallel — SoundCloud requires a separate call per
@@ -411,10 +445,20 @@ export async function searchTracks(query: string, limit = 20): Promise<Track[]> 
     }
   }
 
-  // Rank. Primary: relevance score desc. Secondary: full-length before preview
-  // (Number(false) - Number(true) = -1, so isPreview=false sorts earlier).
-  const ranked = Array.from(dedupedByTitleArtist.values())
-    .map((t) => ({ t, score: scoreTrackRelevance(t, q) }))
+  // Rank by relevance score, then prefer full-length over preview on ties.
+  // Track scoring is derived from BOTH the original query and (when cyrillic)
+  // its transliteration, so an English-titled song matched via "Линда" → "Linda"
+  // still scores well.
+  //
+  // Relevance filter: when there's at least one well-matching track in the
+  // pool, drop everything with score 0 — those are SoundCloud/iTunes search
+  // results that came back for unrelated reasons (their search is loose). If
+  // EVERY result scores 0 we keep them all so the user still sees something.
+  const scored = Array.from(dedupedByTitleArtist.values())
+    .map((t) => ({ t, score: scoreTrackRelevance(t, q) }));
+  const hasMatch = scored.some((x) => x.score > 0);
+  const filtered = hasMatch ? scored.filter((x) => x.score > 0) : scored;
+  const ranked = filtered
     .sort((a, b) => (b.score - a.score) || (Number(a.t.isPreview) - Number(b.t.isPreview)))
     .map((x) => x.t);
 
