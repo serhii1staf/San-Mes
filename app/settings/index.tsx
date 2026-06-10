@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, ScrollView, Pressable, Switch, ViewStyle, Alert, StyleSheet, Linking, Image, ImageSourcePropType } from 'react-native';
+import { View, ScrollView, Pressable, Switch, ViewStyle, Alert, StyleSheet, Linking } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -11,25 +11,27 @@ import { AppIconModal } from '../../src/components/ui/AppIconModal';
 import { useAuthStore } from '../../src/store';
 import { useSettingsStore } from '../../src/store/settingsStore';
 
-// Pre-resolved at bundle time — zero network, instant from disk (like Telegram).
-const SETTINGS_ICONS = {
-  profile: require('../../assets/settings-icons/tg_settings_profile_1024.png'),
-  notifications: require('../../assets/settings-icons/tg_settings_notifications_1024.png'),
-  dataMemory: require('../../assets/settings-icons/tg_settings_data_memory_1024.png'),
-  haptic: require('../../assets/settings-icons/tg_settings_haptic_feedback_1024.png'),
-  browser: require('../../assets/settings-icons/tg_settings_in_app_browser_1024.png'),
-  appearance: require('../../assets/settings-icons/tg_settings_appearance_1024.png'),
-  fonts: require('../../assets/settings-icons/tg_settings_fonts_1024.png'),
-  appIcons: require('../../assets/settings-icons/tg_settings_app_icons_1024.png'),
-  widget: require('../../assets/settings-icons/tg_settings_widget_1024.png'),
-  device: require('../../assets/settings-icons/tg_settings_device_1024.png'),
-  privacy: require('../../assets/settings-icons/tg_settings_privacy_policy_1024.png'),
-  terms: require('../../assets/settings-icons/tg_settings_terms_of_use_1024.png'),
+// Per-row tint pairs (icon color + soft tile bg) — picked to be readable in
+// both light and dark mode without being eye-piercing. Same hue family as
+// system iOS Settings but desaturated.
+const ICON_TINTS = {
+  blue:    { fg: '#0A84FF', bg: 'rgba(10,132,255,0.16)'   },
+  red:     { fg: '#FF453A', bg: 'rgba(255,69,58,0.16)'    },
+  orange:  { fg: '#FF9F0A', bg: 'rgba(255,159,10,0.16)'   },
+  yellow:  { fg: '#FFD60A', bg: 'rgba(255,214,10,0.18)'   },
+  green:   { fg: '#30D158', bg: 'rgba(48,209,88,0.16)'    },
+  teal:    { fg: '#40C8E0', bg: 'rgba(64,200,224,0.16)'   },
+  cyan:    { fg: '#64D2FF', bg: 'rgba(100,210,255,0.16)'  },
+  indigo:  { fg: '#5E5CE6', bg: 'rgba(94,92,230,0.16)'    },
+  purple:  { fg: '#BF5AF2', bg: 'rgba(191,90,242,0.16)'   },
+  pink:    { fg: '#FF66D9', bg: 'rgba(255,102,217,0.16)'  },
+  gray:    { fg: '#8E8E93', bg: 'rgba(142,142,147,0.18)'  },
 } as const;
+type IconTint = keyof typeof ICON_TINTS;
 
 function SettingsRow({
   icon,
-  image,
+  iconTint,
   label,
   value,
   onPress,
@@ -37,8 +39,8 @@ function SettingsRow({
   rightElement,
   isLast,
 }: {
-  icon?: string;
-  image?: ImageSourcePropType;
+  icon: keyof typeof Feather.glyphMap;
+  iconTint: IconTint;
   label: string;
   value?: string;
   onPress?: () => void;
@@ -48,6 +50,7 @@ function SettingsRow({
   isLast?: boolean;
 }) {
   const theme = useTheme();
+  const tint = ICON_TINTS[iconTint];
   return (
     <Pressable
       onPress={onPress}
@@ -62,25 +65,18 @@ function SettingsRow({
     >
       <View
         style={{
-          width: 36,
-          height: 36,
-          borderRadius: 18,
-          backgroundColor: image ? 'transparent' : theme.colors.background.secondary,
+          width: 32,
+          height: 32,
+          // Round-rectangle iOS-Settings-style tile (~44% radius). Slightly
+          // less than full-circle keeps the shape recognizable at this size.
+          borderRadius: 14,
+          backgroundColor: tint.bg,
           alignItems: 'center',
           justifyContent: 'center',
           marginRight: 14,
         }}
       >
-        {image ? (
-          // 30×30 inside 36×36 leaves 3px of breathing room on every side.
-          // borderRadius:15 on the Image itself = full circle, clips the PNG
-          // squircle's outer corners further so the icon reads as a fully
-          // rounded tile (not a squircle). Source PNG is 1024×1024 → on a 30px
-          // render even @3x is 90px source which keeps the icon crisp.
-          <Image source={image} style={{ width: 30, height: 30, borderRadius: 15 }} resizeMode="cover" />
-        ) : icon ? (
-          <Feather name={icon as keyof typeof Feather.glyphMap} size={18} color={theme.colors.text.secondary} />
-        ) : null}
+        <Feather name={icon} size={17} color={tint.fg} />
       </View>
       <Text variant="body" style={{ flex: 1 }}>{label}</Text>
       {value && (
@@ -234,23 +230,27 @@ export default function SettingsScreen() {
         </View>
         <View style={sectionCardStyle}>
           <SettingsRow
-            image={SETTINGS_ICONS.profile}
+            icon="user"
+            iconTint="blue"
             label="Профиль"
             onPress={() => router.push('/profile/edit')}
             isFirst
           />
           <SettingsRow
-            image={SETTINGS_ICONS.notifications}
+            icon="bell"
+            iconTint="red"
             label="Уведомления"
             onPress={() => router.push('/notifications')}
           />
           <SettingsRow
-            image={SETTINGS_ICONS.dataMemory}
+            icon="hard-drive"
+            iconTint="green"
             label="Данные и память"
             onPress={() => router.push('/settings/storage')}
           />
           <SettingsRow
-            image={SETTINGS_ICONS.haptic}
+            icon="zap"
+            iconTint="orange"
             label="Вибро-отклик"
             showChevron={false}
             rightElement={
@@ -263,7 +263,8 @@ export default function SettingsScreen() {
             }
           />
           <SettingsRow
-            image={SETTINGS_ICONS.browser}
+            icon="globe"
+            iconTint="cyan"
             label="Встроенный браузер"
             showChevron={false}
             isLast
@@ -286,23 +287,27 @@ export default function SettingsScreen() {
         </View>
         <View style={sectionCardStyle}>
           <SettingsRow
-            image={SETTINGS_ICONS.appearance}
+            icon="droplet"
+            iconTint="purple"
             label="Внешний вид"
             onPress={() => router.push('/settings/appearance')}
             isFirst
           />
           <SettingsRow
-            image={SETTINGS_ICONS.fonts}
+            icon="type"
+            iconTint="indigo"
             label="Шрифты"
             onPress={() => router.push('/settings/fonts' as any)}
           />
           <SettingsRow
-            image={SETTINGS_ICONS.appIcons}
+            icon="grid"
+            iconTint="pink"
             label="Иконка приложения"
             onPress={() => setIconModalVisible(true)}
           />
           <SettingsRow
-            image={SETTINGS_ICONS.widget}
+            icon="layout"
+            iconTint="teal"
             label="Виджет"
             onPress={() => router.push('/settings/widget' as any)}
             isLast
@@ -317,19 +322,22 @@ export default function SettingsScreen() {
         </Pressable>
         <View style={sectionCardStyle}>
           <SettingsRow
-            image={SETTINGS_ICONS.device}
+            icon="smartphone"
+            iconTint="blue"
             label="Устройства"
             value="2"
             onPress={() => router.push('/settings/device-key')}
             isFirst
           />
           <SettingsRow
-            image={SETTINGS_ICONS.privacy}
+            icon="shield"
+            iconTint="gray"
             label="Политика конфиденциальности"
             onPress={() => Linking.openURL('https://legal.san-m-app.com/privacy.html').catch(() => {})}
           />
           <SettingsRow
-            image={SETTINGS_ICONS.terms}
+            icon="file-text"
+            iconTint="gray"
             label="Условия использования"
             onPress={() => Linking.openURL('https://legal.san-m-app.com/terms.html').catch(() => {})}
             isLast

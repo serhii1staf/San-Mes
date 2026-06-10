@@ -243,34 +243,59 @@ export default function MusicChatScreen() {
             </View>
           ) : null}
 
-          <View style={{ flexDirection: 'row', alignItems: 'flex-end', backgroundColor: theme.isDark ? 'rgba(40,40,40,0.95)' : 'rgba(245,245,245,0.95)', borderRadius: 24, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: theme.colors.border.light, minHeight: 44 }}>
-            <TextInput
-              value={input}
-              onChangeText={setInput}
-              placeholder="Название песни или исполнителя..."
-              placeholderTextColor={theme.colors.text.tertiary}
-              multiline
-              textAlignVertical="center"
-              style={{ flex: 1, fontSize: 14, color: theme.colors.text.primary, maxHeight: 100, paddingTop: 0, paddingBottom: 0, minHeight: 22, lineHeight: 20, alignSelf: 'center', marginLeft: 4 }}
-              onSubmitEditing={handleSend}
-              returnKeyType="search"
-              onContentSizeChange={() => { LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); }}
-            />
-            {/* Commands pill — collapses to icon-only as soon as the user types
-                so the input never gets cramped. Press toggles the drawer. */}
+          <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 8 }}>
+            {/* Commands button — sits OUTSIDE the text input, on the left,
+                mirroring the photo/attachment button in the regular chat. */}
             <Pressable
               onPress={() => { triggerHaptic('light'); LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); setCommandsOpen((v) => !v); }}
               hitSlop={6}
-              style={{ alignSelf: 'flex-end', flexDirection: 'row', alignItems: 'center', gap: 4, height: 32, paddingHorizontal: showCommandLabel ? 10 : 0, width: showCommandLabel ? undefined : 32, justifyContent: 'center', borderRadius: 16, backgroundColor: commandsOpen ? theme.colors.accent.primary : (theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'), marginLeft: 6, marginBottom: 2 }}
+              style={{
+                height: 44,
+                paddingHorizontal: showCommandLabel ? 14 : 0,
+                width: showCommandLabel ? undefined : 44,
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 6,
+                borderRadius: 22,
+                borderWidth: 1,
+                borderColor: theme.colors.border.light,
+                backgroundColor: commandsOpen ? theme.colors.accent.primary : theme.colors.background.elevated,
+              }}
             >
-              <Feather name="command" size={13} color={commandsOpen ? '#FFFFFF' : theme.colors.text.secondary} />
+              <Feather name="command" size={16} color={commandsOpen ? '#FFFFFF' : theme.colors.accent.primary} />
+              {/* Label is rendered while it has room (empty input). When the
+                  user starts typing the parent View animates the button width
+                  via LayoutAnimation, so the label fades/collapses smoothly
+                  instead of disappearing instantly. */}
               {showCommandLabel ? (
-                <Text variant="caption" weight="semibold" color={commandsOpen ? '#FFFFFF' : theme.colors.text.secondary} style={{ fontSize: 11 }}>Команды</Text>
+                <Text variant="caption" weight="semibold" color={commandsOpen ? '#FFFFFF' : theme.colors.accent.primary} style={{ fontSize: 12 }} numberOfLines={1}>Команды</Text>
               ) : null}
             </Pressable>
-            <Pressable onPress={handleSend} disabled={!input.trim() || isSearching} style={{ alignSelf: 'flex-end', width: 32, height: 32, borderRadius: 16, backgroundColor: input.trim() ? theme.colors.accent.primary : 'transparent', alignItems: 'center', justifyContent: 'center', marginLeft: 6, marginBottom: 2 }}>
-              <Feather name="search" size={14} color={input.trim() ? '#FFFFFF' : theme.colors.text.tertiary} />
-            </Pressable>
+            <View style={{ flex: 1, flexDirection: 'row', alignItems: 'flex-end', backgroundColor: theme.isDark ? 'rgba(40,40,40,0.95)' : 'rgba(245,245,245,0.95)', borderRadius: 24, paddingHorizontal: 16, paddingVertical: 8, borderWidth: 1, borderColor: theme.colors.border.light, minHeight: 44 }}>
+              <TextInput
+                value={input}
+                onChangeText={(t) => {
+                  // When transitioning between empty/non-empty, animate the
+                  // commands button's width so its label collapses smoothly.
+                  if ((t.length === 0) !== (input.length === 0)) {
+                    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                  }
+                  setInput(t);
+                }}
+                placeholder="Название песни или исполнителя..."
+                placeholderTextColor={theme.colors.text.tertiary}
+                multiline
+                textAlignVertical="center"
+                style={{ flex: 1, fontSize: 14, color: theme.colors.text.primary, maxHeight: 100, paddingTop: 0, paddingBottom: 0, minHeight: 22, lineHeight: 20, alignSelf: 'center' }}
+                onSubmitEditing={handleSend}
+                returnKeyType="search"
+                onContentSizeChange={() => { LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); }}
+              />
+              <Pressable onPress={handleSend} disabled={!input.trim() || isSearching} style={{ alignSelf: 'flex-end', width: 32, height: 32, borderRadius: 16, backgroundColor: input.trim() ? theme.colors.accent.primary : 'transparent', alignItems: 'center', justifyContent: 'center', marginLeft: 8, marginBottom: 2 }}>
+                <Feather name="search" size={14} color={input.trim() ? '#FFFFFF' : theme.colors.text.tertiary} />
+              </Pressable>
+            </View>
           </View>
         </Reanimated.View>
       </KeyboardStickyView>
