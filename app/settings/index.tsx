@@ -65,9 +65,6 @@ function SettingsRow({
           width: 36,
           height: 36,
           borderRadius: 18,
-          // Transparent so the PNG's own squircle shape (with already-rounded
-          // corners and transparent area outside it) is what the user sees. No
-          // gray box behind = no perceived sharp corners.
           backgroundColor: image ? 'transparent' : theme.colors.background.secondary,
           alignItems: 'center',
           justifyContent: 'center',
@@ -75,10 +72,12 @@ function SettingsRow({
         }}
       >
         {image ? (
-          // 32×32 image inside a 36×36 tile leaves 2px of breathing room on
-          // every side, which visually softens the squircle's corners further
-          // (a Telegram-style "padded squircle" look).
-          <Image source={image} style={{ width: 32, height: 32 }} resizeMode="contain" />
+          // 30×30 inside 36×36 leaves 3px of breathing room on every side.
+          // borderRadius:15 on the Image itself = full circle, clips the PNG
+          // squircle's outer corners further so the icon reads as a fully
+          // rounded tile (not a squircle). Source PNG is 1024×1024 → on a 30px
+          // render even @3x is 90px source which keeps the icon crisp.
+          <Image source={image} style={{ width: 30, height: 30, borderRadius: 15 }} resizeMode="cover" />
         ) : icon ? (
           <Feather name={icon as keyof typeof Feather.glyphMap} size={18} color={theme.colors.text.secondary} />
         ) : null}
