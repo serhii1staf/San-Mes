@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { View, Pressable, ActivityIndicator, Dimensions, Image, Animated, Modal, Share, Alert, RefreshControl, ScrollView, InteractionManager } from 'react-native';
 import { Feather, FontAwesome5 } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
@@ -83,7 +83,12 @@ export default function ProfileScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const { user, updateProfile } = useAuthStore();
-  const { profilePosts: userPosts, setProfilePosts, profileScrollOffset, setProfileScrollOffset } = useFeedStore();
+  // Individual selectors avoid re-rendering this screen on every unrelated
+  // change to the feed store (e.g., feed list updates, refresh flag flips).
+  const userPosts = useFeedStore((s) => s.profilePosts);
+  const setProfilePosts = useFeedStore((s) => s.setProfilePosts);
+  const profileScrollOffset = useFeedStore((s) => s.profileScrollOffset);
+  const setProfileScrollOffset = useFeedStore((s) => s.setProfileScrollOffset);
   const postEmoji = useProfileAppearanceStore((s) => s.postEmoji);
   // Windowing: render posts in small chunks so switching to the "Posts" tab never
   // has to mount many cards (each with gesture handlers) at once. Grows on scroll.
@@ -262,15 +267,28 @@ export default function ProfileScreen() {
     setRefreshing(false);
   }, [loadMyPosts, loadFollows]);
 
+  // Animated values for the scroll-based header. Created once and memoized so
+  // each interpolation is allocated only one node instead of one-per-render.
+  // Declared BEFORE any conditional returns to keep hook order stable.
+  const scrollY = useRef(new Animated.Value(0)).current;
+  const headerOpacity = useMemo(
+    () => scrollY.interpolate({ inputRange: [0, 50, 120], outputRange: [0, 0, 1], extrapolate: 'clamp' }),
+    [scrollY],
+  );
+  const buttonsTranslateX = useMemo(
+    () => scrollY.interpolate({ inputRange: [0, 180, 250], outputRange: [0, 0, -60], extrapolate: 'clamp' }),
+    [scrollY],
+  );
+  const settingsTranslateX = useMemo(
+    () => scrollY.interpolate({ inputRange: [0, 180, 250], outputRange: [0, 0, 60], extrapolate: 'clamp' }),
+    [scrollY],
+  );
+
   if (!user) return <View style={{ flex: 1, backgroundColor: theme.colors.background.primary, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator size="large" color={theme.colors.accent.primary} /></View>;
 
   const userLinks: { type: string; url: string }[] = (user as any).links || [];
   const bannerUrl = (user as any)?.bannerUrl;
   const tabs: { key: TabName; label: string }[] = [{ key: 'posts', label: 'Посты' }, { key: 'replies', label: 'Ответы' }, { key: 'media', label: 'Медиа' }, { key: 'likes', label: 'Лайки' }];
-  const scrollY = useRef(new Animated.Value(0)).current;
-  const headerOpacity = scrollY.interpolate({ inputRange: [0, 50, 120], outputRange: [0, 0, 1], extrapolate: 'clamp' });
-  const buttonsTranslateX = scrollY.interpolate({ inputRange: [0, 180, 250], outputRange: [0, 0, -60], extrapolate: 'clamp' });
-  const settingsTranslateX = scrollY.interpolate({ inputRange: [0, 180, 250], outputRange: [0, 0, 60], extrapolate: 'clamp' });
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(`https://san-m-app.com/profile/${user.id}`)}`;
 
   return (

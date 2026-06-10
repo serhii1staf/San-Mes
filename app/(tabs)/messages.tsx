@@ -218,7 +218,10 @@ const ConversationItem = React.memo(ConversationItemBase, (prev, next) =>
 export default function MessagesScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
-  const { conversations: chatStoreConversations } = useChatStore();
+  // Individual selector — subscribing to the whole store via destructuring
+  // would re-render this screen on every unrelated chat-store change (e.g.,
+  // typing into a chat input updates messages elsewhere in the store).
+  const chatStoreConversations = useChatStore((s) => s.conversations);
   const entityConversations = useEntityStore((s) => s.conversations);
   const user = useAuthStore((s) => s.user);
   const [searchQuery, setSearchQuery] = useState('');

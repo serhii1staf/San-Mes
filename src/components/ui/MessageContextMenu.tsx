@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import { View, Pressable, Animated, Dimensions, ScrollView, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -10,9 +10,13 @@ import { LinkPreview } from './LinkPreview';
 import { extractFirstUrl } from '../../services/linkPreview';
 import { ChatMessage } from '../../types';
 
-const { height: SCREEN_HEIGHT } = Dimensions.get('window');
-const PREVIEW_MAX_HEIGHT = SCREEN_HEIGHT * 0.4;
-const LONG_TEXT_THRESHOLD = 220;
+const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = Dimensions.get('window');
+
+// Approximate height of the menu sheet portion (handle + items + paddings).
+// We use this to compute a safe preview maxHeight so the highlighted bubble
+// never pushes itself off the top of the screen on very long messages.
+const MENU_BASE_HEIGHT = 96; // handle (~21) + bottom (~8) + outer paddings/shadows
+const MENU_ITEM_HEIGHT = 62; // padding 14*2 + icon row ~34
 
 export type MessageAction = 'reply' | 'copy' | 'edit' | 'delete';
 
@@ -68,18 +72,80 @@ export function MessageContextMenu({ visible, message, isOwn, bubbleColor, bubbl
     });
   };
 
+  // Compute action items + the menu height up-front so we can derive a safe
+  // preview maxHeight. This is the key to preventing the bubble preview from
+  // overflowing the top of the screen on long/formatted messages with link
+  // previews and multiple photos.
+  const items = useMemo(() => {
+    if (!message) return [] as { action: MessageAction; icon: string; label: string; destructive?: boolean }[];
+    const list: { action: MessageAction; icon: string; label: string; destructive?: boolean }[] = [
+      { action: 'reply', icon: 'corner-up-left', label: 'Ответить' },
+    ];
+    if (message.text) list.push({ action: 'copy', icon: 'copy', label: 'Копировать' });
+    if (isOwn && message.text) list.push({ action: 'edit', icon: 'edit-2', label: 'Редактировать' });
+    if (isOwn) list.push({ action: 'delete', icon: 'trash-2', label: 'Удалить', destructive: true });
+    return list;
+  }, [message, isOwn]);
+
   if (!visible || !message) return null;
 
-  const items: { action: MessageAction; icon: string; label: string; destructive?: boolean; show: boolean }[] = [
-    { action: 'reply', icon: 'corner-up-left', label: 'Ответить', show: true },
-    { action: 'copy', icon: 'copy', label: 'Копировать', show: !!message.text },
-    { action: 'edit', icon: 'edit-2', label: 'Редактировать', show: isOwn && !!message.text },
-    { action: 'delete', icon: 'trash-2', label: 'Удалить', destructive: true, show: isOwn },
-  ];
-
   const hasImages = !!message.imageUrls && message.imageUrls.length > 0;
-  const isLong = (message.text?.length || 0) > LONG_TEXT_THRESHOLD;
+  const imageCount = hasImages ? message.imageUrls!.length : 0;
   const hasLink = !hasImages && !!extractFirstUrl(message.text);
+
+  // Reserve space for: menu sheet + bottom inset + top inset + safety gap.
+  const menuHeight = MENU_BASE_HEIGHT + items.length * MENU_ITEM_HEIGHT;
+  const previewMaxHeight = Math.max(
+    160,
+    SCREEN_HEIGHT - menuHeight - insets.top - insets.bottom - 40,
+  );
+
+  // Image preview layout:
+  //  - 1 photo: large square (up to 220px wide / aspect-friendly)
+  //  - 2 photos: two columns of equal width
+  //  - 3 photos: three columns, smaller
+  //  - 4–6 photos: 3-column grid (wraps to 2 rows automatically)
+  //  - 7+: same 3-column grid, but wraps to more rows; ScrollView handles overflow
+  // All photos are shown — never sliced — and the surrounding ScrollView
+  // makes long stacks scrollable rather than cropped.
+  const renderImages = () => {
+    if (!hasImages) return null;
+    if (imageCount === 1) {
+      return (
+        <View style={{ marginBottom: message.text ? 6 : 0 }}>
+          <CachedImage uri={message.imageUrls![0]} style={{ width: 220, height: 220, borderRadius: 12 }} resizeMode="cover" />
+        </View>
+      );
+    }
+    // Multi-image grid sized to the bubble's interior width (bubble maxWidth ~85% of screen, minus 28 padding).
+    // Use a sensible cap so the grid never gets visually noisy.
+    const containerWidth = Math.min(SCREEN_WIDTH * 0.85 - 28, 320);
+    const gap = 4;
+    let cols: number;
+    let cellSize: number;
+    if (imageCount === 2) {
+      cols = 2;
+      cellSize = (containerWidth - gap) / 2;
+    } else if (imageCount === 3) {
+      cols = 3;
+      cellSize = (containerWidth - 2 * gap) / 3;
+    } else {
+      cols = 3;
+      cellSize = (containerWidth - 2 * gap) / 3;
+    }
+    return (
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap, marginBottom: message.text ? 6 : 0, width: containerWidth }}>
+        {message.imageUrls!.map((uri, idx) => (
+          <CachedImage
+            key={idx}
+            uri={uri}
+            style={{ width: cellSize, height: cellSize, borderRadius: 10 }}
+            resizeMode="cover"
+          />
+        ))}
+      </View>
+    );
+  };
 
   const previewInner = (
     <>
@@ -88,13 +154,7 @@ export function MessageContextMenu({ visible, message, isOwn, bubbleColor, bubbl
           <Text variant="caption" color={isOwn ? 'rgba(255,255,255,0.7)' : theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 11 }}>{message.replyToText}</Text>
         </View>
       ) : null}
-      {hasImages ? (
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginBottom: message.text ? 6 : 0 }}>
-          {message.imageUrls!.slice(0, 4).map((uri, idx) => (
-            <CachedImage key={idx} uri={uri} style={{ width: message.imageUrls!.length === 1 ? 160 : 76, height: message.imageUrls!.length === 1 ? 160 : 76, borderRadius: 10 }} resizeMode="cover" />
-          ))}
-        </View>
-      ) : null}
+      {renderImages()}
       {message.text ? (
         <FormattedText color={bubbleTextColor} linkColor={isOwn ? '#FFFFFF' : theme.colors.accent.primary} style={{ fontSize: 15 }}>{message.text}</FormattedText>
       ) : null}
@@ -116,7 +176,8 @@ export function MessageContextMenu({ visible, message, isOwn, bubbleColor, bubbl
       {/* Sheet */}
       <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, paddingBottom: Math.max(insets.bottom, 16) }} pointerEvents="box-none">
         <Animated.View style={{ transform: [{ translateY: slideAnim }] }} pointerEvents="box-none">
-          {/* Highlighted message preview */}
+          {/* Highlighted message preview — always scrollable so long/multi-photo
+              previews never push the bubble off the top of the screen. */}
           <View style={{ marginHorizontal: 12, marginBottom: 8, alignItems: isOwn ? 'flex-end' : 'flex-start' }} pointerEvents="box-none">
             <View style={{
               maxWidth: hasLink ? '94%' : '85%',
@@ -127,15 +188,14 @@ export function MessageContextMenu({ visible, message, isOwn, bubbleColor, bubbl
               borderBottomLeftRadius: isOwn ? bubbleRadius : 4,
               overflow: 'hidden',
             }}>
-              {isLong ? (
-                <ScrollView style={{ maxHeight: PREVIEW_MAX_HEIGHT }} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 14, paddingVertical: 10 }} bounces={false}>
-                  {previewInner}
-                </ScrollView>
-              ) : (
-                <View style={{ paddingHorizontal: 14, paddingVertical: 10 }}>
-                  {previewInner}
-                </View>
-              )}
+              <ScrollView
+                style={{ maxHeight: previewMaxHeight }}
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={{ paddingHorizontal: 14, paddingVertical: 10 }}
+                bounces={false}
+              >
+                {previewInner}
+              </ScrollView>
             </View>
           </View>
 
@@ -144,7 +204,7 @@ export function MessageContextMenu({ visible, message, isOwn, bubbleColor, bubbl
             <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 6 }}>
               <View style={{ width: 40, height: 5, borderRadius: 3, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)' }} />
             </View>
-            {items.filter(i => i.show).map((item) => {
+            {items.map((item) => {
               const color = item.destructive ? '#FF3B30' : theme.colors.text.primary;
               return (
                 <Pressable key={item.action} onPress={() => dismiss(() => onAction(item.action, message))} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 20 }}>

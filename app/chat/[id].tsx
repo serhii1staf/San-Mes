@@ -177,7 +177,13 @@ export default function ChatScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchMatches, setSearchMatches] = useState<number[]>([]);
   const [searchActiveIdx, setSearchActiveIdx] = useState(0);
-  const { messages: storeMessages, setMessages, addMessage } = useChatStore();
+  // Individual selectors — destructuring `useChatStore()` subscribes to the
+  // whole store and re-renders this (already heavy) chat on any unrelated
+  // store change. Selecting each field independently keeps re-renders tied
+  // to the data this screen actually reads.
+  const storeMessages = useChatStore((s) => s.messages);
+  const setMessages = useChatStore((s) => s.setMessages);
+  const addMessage = useChatStore((s) => s.addMessage);
   const flatListRef = useRef<FlatList>(null);
   const inputRef = useRef<ChatInputBarHandle>(null);
 

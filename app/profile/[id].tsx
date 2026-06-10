@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, useCallback } from 'react';
+import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { View, Pressable, ActivityIndicator, Image, Dimensions, Modal, Animated, Share, Alert, ScrollView as RNScrollView, StatusBar, InteractionManager } from 'react-native';
 import { Feather, FontAwesome5 } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -72,7 +72,7 @@ function SocialLinkIcon({ type, url }: { type: string; url: string }) {
   );
 }
 
-function ProfileMenuModal({ visible, profile, onClose }: { visible: boolean; profile: any; onClose: () => void }) {
+function ProfileMenuModalImpl({ visible, profile, onClose }: { visible: boolean; profile: any; onClose: () => void }) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
@@ -223,6 +223,11 @@ function MenuItem({ icon, label, onPress, theme, destructive }: { icon: string; 
   );
 }
 
+// Memoize the menu modal so it doesn't re-render when the parent screen
+// re-renders (e.g., on every scroll-driven Animated update or unrelated state
+// change). It only depends on `visible`, `profile`, and `onClose`.
+const ProfileMenuModal = React.memo(ProfileMenuModalImpl);
+
 export default function UserProfileScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
@@ -243,11 +248,29 @@ export default function UserProfileScreen() {
   // (each with its own gesture handlers + images) at once.
   const [visibleCount, setVisibleCount] = useState(6);
   const scrollY = useRef(new Animated.Value(0)).current;
-  const headerOpacity = scrollY.interpolate({ inputRange: [0, 50, 120], outputRange: [0, 0, 1], extrapolate: 'clamp' });
-  const buttonsTranslateX = scrollY.interpolate({ inputRange: [0, 180, 250], outputRange: [0, 0, -60], extrapolate: 'clamp' });
-  const menuTranslateX = scrollY.interpolate({ inputRange: [0, 180, 250], outputRange: [0, 0, 60], extrapolate: 'clamp' });
-  const badgeOpacity = scrollY.interpolate({ inputRange: [180, 220], outputRange: [0, 1], extrapolate: 'clamp' });
-  const badgeTranslateY = scrollY.interpolate({ inputRange: [180, 220], outputRange: [20, 0], extrapolate: 'clamp' });
+  // Memoize interpolations so each is allocated once, not per-render. Each
+  // re-render of this screen otherwise creates 5 new AnimatedInterpolation
+  // nodes that the same scrollY then has to drive.
+  const headerOpacity = useMemo(
+    () => scrollY.interpolate({ inputRange: [0, 50, 120], outputRange: [0, 0, 1], extrapolate: 'clamp' }),
+    [scrollY],
+  );
+  const buttonsTranslateX = useMemo(
+    () => scrollY.interpolate({ inputRange: [0, 180, 250], outputRange: [0, 0, -60], extrapolate: 'clamp' }),
+    [scrollY],
+  );
+  const menuTranslateX = useMemo(
+    () => scrollY.interpolate({ inputRange: [0, 180, 250], outputRange: [0, 0, 60], extrapolate: 'clamp' }),
+    [scrollY],
+  );
+  const badgeOpacity = useMemo(
+    () => scrollY.interpolate({ inputRange: [180, 220], outputRange: [0, 1], extrapolate: 'clamp' }),
+    [scrollY],
+  );
+  const badgeTranslateY = useMemo(
+    () => scrollY.interpolate({ inputRange: [180, 220], outputRange: [20, 0], extrapolate: 'clamp' }),
+    [scrollY],
+  );
 
   // Read profile from entity store (cached)
   const cachedProfile = useEntityStore((s) => s.profiles[id ?? '']);
@@ -321,17 +344,30 @@ export default function UserProfileScreen() {
 
   // Display posts mapped for UI — resolve reposts
   const [resolvedOriginals, setResolvedOriginals] = useState<Record<string, any>>({});
+  // Track which original-post IDs are already resolved OR currently being
+  // fetched so we never re-issue the same `.in()` query when `userPosts`
+  // updates from background sync. Without this, every store mutation that
+  // reorders/refreshes userPosts would re-fetch the same originals.
+  const requestedOriginalIds = useRef<Set<string>>(new Set());
 
   // Fetch original posts for reposts in this profile
   useEffect(() => {
     const repostOriginalIds: string[] = [];
     for (const p of userPosts) {
       const ri = isRepost(p.content || '');
-      if (ri.isRepost && ri.originalPostId && !resolvedOriginals[ri.originalPostId]) {
+      if (
+        ri.isRepost &&
+        ri.originalPostId &&
+        !resolvedOriginals[ri.originalPostId] &&
+        !requestedOriginalIds.current.has(ri.originalPostId)
+      ) {
         repostOriginalIds.push(ri.originalPostId);
       }
     }
     if (repostOriginalIds.length === 0) return;
+    // Mark as requested up-front so concurrent runs of this effect (triggered
+    // by rapid userPosts changes) don't issue duplicate queries.
+    for (const oid of repostOriginalIds) requestedOriginalIds.current.add(oid);
     supabase.from('posts').select('*, profiles:author_id (display_name, username, emoji)').in('id', repostOriginalIds).then(({ data }) => {
       if (!data) return;
       const map: Record<string, any> = { ...resolvedOriginals };
@@ -340,9 +376,15 @@ export default function UserProfileScreen() {
       const deeperIds: string[] = [];
       for (const o of data) {
         const ori = isRepost(o.content || '');
-        if (ori.isRepost && ori.originalPostId && !map[ori.originalPostId]) deeperIds.push(ori.originalPostId);
+        if (
+          ori.isRepost &&
+          ori.originalPostId &&
+          !map[ori.originalPostId] &&
+          !requestedOriginalIds.current.has(ori.originalPostId)
+        ) deeperIds.push(ori.originalPostId);
       }
       if (deeperIds.length > 0) {
+        for (const oid of deeperIds) requestedOriginalIds.current.add(oid);
         supabase.from('posts').select('*, profiles:author_id (display_name, username, emoji)').in('id', deeperIds).then(({ data: deep }) => {
           if (deep) { for (const dp of deep) map[dp.id] = dp; }
           setResolvedOriginals(map);
@@ -419,6 +461,10 @@ export default function UserProfileScreen() {
   const handlePostImagePress = useCallback((uri: string, postId: string, allImages: string[]) => {
     setViewingImage({ uri, postId, allImages });
   }, []);
+
+  // Stable close handler so the memoized ProfileMenuModal doesn't see a fresh
+  // function on every parent render and skip its memo bailout.
+  const handleCloseMenu = useCallback(() => setShowMenu(false), []);
 
   const handleFollow = async () => {
     if (!currentUser?.id || !id) return;
@@ -605,7 +651,7 @@ export default function UserProfileScreen() {
         </Animated.View>
       )}
 
-      <ProfileMenuModal visible={showMenu} profile={displayProfile} onClose={() => setShowMenu(false)} />
+      <ProfileMenuModal visible={showMenu} profile={displayProfile} onClose={handleCloseMenu} />
 
       {/* Fullscreen Image Viewer */}
       <Modal visible={!!viewingImage} transparent animationType="none" onRequestClose={() => setViewingImage(null)} statusBarTranslucent>
