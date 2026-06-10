@@ -136,28 +136,31 @@ export const useMusicStore = create<MusicState>((set, get) => ({
       if (cur) await get().play(cur);
       return;
     }
-    // OPTIMISTIC UI: flip the visible state immediately (before any await) so
-    // the play/pause button responds the same frame the user taps it. Without
-    // this, getStatusAsync + pauseAsync/playAsync introduces a 100–300 ms gap
-    // where the icon stays stuck and feels broken on weak devices / Telegram
-    // WebView. We roll back if the native call ultimately fails.
+    // Optimistic UI flip BEFORE the native call so the icon responds the same
+    // frame the user taps it. Rolled back on failure.
     const wantPlay = !get().isPlaying;
     set({ isPlaying: wantPlay });
     try {
-      if (wantPlay) {
-        // Track may have ended (preview reached the end) — rewind so the next
-        // playAsync() actually starts audio instead of staying at duration.
-        const status = await sound.getStatusAsync();
-        if (status.isLoaded && status.positionMillis >= (status.durationMillis || 1) - 200) {
-          await sound.setPositionAsync(0);
+      // Use a single setStatusAsync call instead of pause/playAsync — it's the
+      // atomic API expo-av exposes for "set the desired playback state" and is
+      // significantly more reliable across iOS / Android / Telegram WebView.
+      // Also rewinds in the same call when the preview reached its end.
+      const status = await sound.getStatusAsync();
+      if (!status.isLoaded) {
+        // Sound was implicitly unloaded (e.g., audio focus loss) — reload.
+        const cur = get().current;
+        if (cur) {
+          set({ isPlaying: false });
+          await get().play(cur);
         }
-        await sound.playAsync();
-      } else {
-        await sound.pauseAsync();
+        return;
       }
+      const atEnd = status.positionMillis >= (status.durationMillis || 1) - 200;
+      await sound.setStatusAsync({
+        shouldPlay: wantPlay,
+        positionMillis: wantPlay && atEnd ? 0 : undefined,
+      });
     } catch {
-      // Native call failed — restore the previous visible state so the icon
-      // matches reality.
       set({ isPlaying: !wantPlay });
     }
   },
