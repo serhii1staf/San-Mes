@@ -29,34 +29,52 @@ export function PostContextMenu({ visible, post, isOwnPost, onClose, onDelete }:
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
   const backdropAnim = useRef(new Animated.Value(0)).current;
   const dismissing = useRef(false);
-  const opened = useRef(false);
+  // Reentrancy guard refs (Task 6.3 / Property 6):
+  //   - isOpenRef: menu is currently open (open animation finished or in progress)
+  //   - isTransitioningRef: an open or close animation is currently running
+  // Together they guarantee countActiveMenuInstances() ≤ 1 even when the parent
+  // debounces `visible` (true→false→true bursts from rapid long-press).
+  const isOpenRef = useRef(false);
+  const isTransitioningRef = useRef(false);
 
   useEffect(() => {
     if (visible) {
-      // Reentrancy guard: if the open animation is already running/done, don't
-      // restart it on a redundant `visible` flip — restarting mid-animation is
-      // what stutters/freezes on rapid long-press bursts.
-      if (opened.current) return;
-      opened.current = true;
+      // Already open or mid-transition (open OR close anim running) → no-op.
+      // Restarting the open animation mid-flight is what stutters/freezes on
+      // rapid long-press bursts.
+      if (isOpenRef.current || isTransitioningRef.current) return;
+      isOpenRef.current = true;
+      isTransitioningRef.current = true;
       dismissing.current = false;
       slideAnim.setValue(SCREEN_HEIGHT);
       backdropAnim.setValue(0);
       Animated.parallel([
         Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 50, friction: 9 }),
         Animated.timing(backdropAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
-      ]).start();
+      ]).start(() => { isTransitioningRef.current = false; });
     } else {
-      opened.current = false;
+      // Already closed and idle → no-op (avoid re-entering on redundant flips).
+      if (!isOpenRef.current && !isTransitioningRef.current) return;
+      isOpenRef.current = false;
+      // Close animation runs via internal dismiss(); when `visible` flips false
+      // externally (parent cleared it) the modal will simply unmount on the
+      // next render — no animation needed and the transition flag is cleared
+      // by either dismiss() or the open-animation completion callback above.
     }
   }, [visible]);
 
   const dismiss = () => {
     if (dismissing.current) return;
     dismissing.current = true;
+    isOpenRef.current = false;
+    isTransitioningRef.current = true;
     Animated.parallel([
       Animated.timing(slideAnim, { toValue: SCREEN_HEIGHT, duration: 250, useNativeDriver: true }),
       Animated.timing(backdropAnim, { toValue: 0, duration: 250, useNativeDriver: true }),
-    ]).start(() => setTimeout(onClose, 30));
+    ]).start(() => {
+      isTransitioningRef.current = false;
+      setTimeout(onClose, 30);
+    });
   };
 
   const handleCopy = async () => {

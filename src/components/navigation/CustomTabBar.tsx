@@ -14,7 +14,7 @@ const ICON_NAMES: Record<string, keyof typeof Feather.glyphMap> = {
   profile: 'user',
 };
 
-function TabBarButton({
+const TabBarButton = React.memo(function TabBarButton({
   isFocused,
   onPress,
   onLongPress,
@@ -51,9 +51,9 @@ function TabBarButton({
       </View>
     </Pressable>
   );
-}
+});
 
-export function CustomTabBar({ state, navigation }: BottomTabBarProps) {
+export const CustomTabBar = React.memo(function CustomTabBar({ state, navigation }: BottomTabBarProps) {
   const theme = useTheme();
   const bgColor = theme.colors.background.primary;
   const bgTransparent = bgColor + '00';
@@ -83,7 +83,7 @@ export function CustomTabBar({ state, navigation }: BottomTabBarProps) {
       </View>
     </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   wrapper: {

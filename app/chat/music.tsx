@@ -10,7 +10,7 @@ import { BlurView } from 'expo-blur';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
-import { CachedImage } from '../../src/components/ui/CachedImage';
+import { TrackResultCard } from '../../src/components/ui/TrackResultCard';
 import { searchTracks, Track } from '../../src/services/musicService';
 import { useMusicStore } from '../../src/store/musicStore';
 import { kvGetJSONSync, kvSetJSON } from '../../src/services/kvStore';
@@ -19,46 +19,6 @@ import { triggerHaptic } from '../../src/utils/haptics';
 interface MusicMessage { id: string; query: string; track?: Track | null; tracks?: Track[]; ts: number }
 
 const HISTORY_KEY = 'music_chat_history';
-
-function fmtTime(ms: number): string {
-  const s = Math.max(0, Math.floor(ms / 1000));
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
-}
-
-function TrackCard({ track }: { track: Track }) {
-  const theme = useTheme();
-  const current = useMusicStore((s) => s.current);
-  const isPlaying = useMusicStore((s) => s.isPlaying);
-  const positionMs = useMusicStore((s) => s.positionMs);
-  const durationMs = useMusicStore((s) => s.durationMs);
-  const play = useMusicStore((s) => s.play);
-  const active = current?.id === track.id;
-  const progress = active && durationMs > 0 ? Math.min(1, positionMs / durationMs) : 0;
-  return (
-    <Pressable onPress={() => { triggerHaptic('light'); play(track); }} style={{ backgroundColor: active ? theme.colors.accent.primary + '15' : (theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)'), borderRadius: 16, padding: 8, borderWidth: active ? 1 : 0, borderColor: theme.colors.accent.primary }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-        <CachedImage uri={track.artwork} style={{ width: 52, height: 52, borderRadius: 10, backgroundColor: 'rgba(0,0,0,0.1)' }} resizeMode="cover" />
-        <View style={{ flex: 1, marginLeft: 10, marginRight: 8 }}>
-          <Text variant="caption" weight="semibold" numberOfLines={1} style={{ fontSize: 13 }}>{track.title}</Text>
-          <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 11 }}>{track.artist}</Text>
-        </View>
-        <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: theme.colors.accent.primary, alignItems: 'center', justifyContent: 'center' }}>
-          <Feather name={active && isPlaying ? 'pause' : 'play'} size={16} color="#FFFFFF" style={active && isPlaying ? undefined : { marginLeft: 2 }} />
-        </View>
-      </View>
-      {active ? (
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 }}>
-          <View style={{ flex: 1, height: 3, borderRadius: 2, backgroundColor: theme.colors.border.light, overflow: 'hidden' }}>
-            <View style={{ height: '100%', width: `${progress * 100}%`, backgroundColor: theme.colors.accent.primary, borderRadius: 2 }} />
-          </View>
-          <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 10 }}>{fmtTime(positionMs)} / {fmtTime(durationMs)}</Text>
-        </View>
-      ) : null}
-    </Pressable>
-  );
-}
-
-const MemoTrackCard = React.memo(TrackCard, (p, n) => p.track.id === n.track.id);
 
 export default function MusicChatScreen() {
   const theme = useTheme();
@@ -120,7 +80,7 @@ export default function MusicChatScreen() {
         {hasResults ? (
           <View style={{ alignSelf: 'flex-start', width: '88%', gap: 8 }}>
             {tracks.map((t) => (
-              <MemoTrackCard key={t.id} track={t} />
+              <TrackResultCard key={t.id} track={t} />
             ))}
           </View>
         ) : done ? (
@@ -176,21 +136,7 @@ export default function MusicChatScreen() {
         initialNumToRender={12}
         maxToRenderPerBatch={8}
         windowSize={9}
-        ListHeaderComponent={
-          <>
-            {isSearching ? (
-              <View style={{ paddingBottom: 8 }}>
-                <View style={{ borderRadius: 14, overflow: 'hidden', alignSelf: 'flex-start' }}>
-                  <BlurView intensity={80} tint="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 7 }}>
-                    <ActivityIndicator size="small" color="#FFFFFF" />
-                    <Text style={{ fontSize: 11, color: '#FFFFFF', fontWeight: '500' }}>Ищу...</Text>
-                  </BlurView>
-                </View>
-              </View>
-            ) : null}
-            <Reanimated.View style={headerSpacerStyle} />
-          </>
-        }
+        ListHeaderComponent={<Reanimated.View style={headerSpacerStyle} />}
         ListFooterComponent={<View style={{ height: insets.top + 72 }} />}
         ListEmptyComponent={
           <View style={{ alignItems: 'center', paddingVertical: 60, transform: [{ scaleY: -1 }] }}>

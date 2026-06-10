@@ -123,7 +123,15 @@ export function MusicMiniBar() {
             <CachedImage uri={current.artwork} style={styles.art} resizeMode="cover" />
             <View style={{ flex: 1, marginLeft: 10, marginRight: 8 }}>
               <Text variant="caption" weight="semibold" numberOfLines={1} style={{ fontSize: 12 }}>{current.title}</Text>
-              <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 11 }}>{current.artist}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ flexShrink: 1, fontSize: 11 }}>{current.artist}</Text>
+                {/* Quiet "30 с" pill marks iTunes preview clips so the user knows playback is shortened. */}
+                {current.isPreview ? (
+                  <View style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}>
+                    <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 9 }}>30 с</Text>
+                  </View>
+                ) : null}
+              </View>
               <ProgressBar />
             </View>
             <Pressable onPress={() => { toggle(); scheduleCollapse(); }} hitSlop={8} style={[styles.btn, { backgroundColor: theme.colors.accent.primary }]}>

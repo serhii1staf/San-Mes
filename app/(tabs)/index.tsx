@@ -169,16 +169,20 @@ export default function FeedScreen() {
   const isOnline = useConnectivityStore((s) => s.isOnline);
 
   // Reload from cache when tab gains focus (picks up new posts from create screen).
-  // Synchronous MMKV read → no flicker, no async gap.
+  // Synchronous MMKV read deferred via InteractionManager so the tab-switch frame
+  // is never blocked — keeps navigation buttery on weak devices.
   useFocusEffect(
     useCallback(() => {
-      try {
-        const parsed = kvGetJSONSync<Post[]>(FEED_CACHE_KEY, []);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setPosts(parsed);
-          setIsLoading(false);
-        }
-      } catch {}
+      const handle = InteractionManager.runAfterInteractions(() => {
+        try {
+          const parsed = kvGetJSONSync<Post[]>(FEED_CACHE_KEY, []);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setPosts(parsed);
+            setIsLoading(false);
+          }
+        } catch {}
+      });
+      return () => handle.cancel();
     }, [])
   );
 
@@ -339,24 +343,41 @@ export default function FeedScreen() {
     apiToggleLike(user.id, postId).catch(() => {});
   }, [user?.id]);
 
+  // Stable callbacks for PostCard so its React.memo isn't busted by new function
+  // references on every render of FeedScreen.
+  const handleComment = useCallback((postId: string) => {
+    router.push({ pathname: '/comments/[id]', params: { id: postId } });
+  }, []);
+
+  const handleFollow = useCallback((userId: string) => {
+    triggerHaptic('medium');
+    queueMutation('follow', { followerId: user?.id, followingId: userId });
+  }, [user?.id]);
+
+  const handleShare = useCallback((postId: string) => {
+    if (!user?.id) return;
+    triggerHaptic('medium');
+    useFeedStore.getState().setPendingRepost(postId);
+    router.push('/(tabs)/create');
+  }, [user?.id]);
+
+  const handleMenu = useCallback((post: Post) => {
+    setMenuPost(post);
+  }, []);
+
   const renderPost = useCallback(({ item }: { item: Post }) => (
     <View>
       <PostCard
         post={item}
         currentUserId={user?.id}
-        onComment={(postId) => router.push({ pathname: '/comments/[id]', params: { id: postId } })}
-        onLike={(postId) => handleToggleLike(postId)}
-        onFollow={(userId) => { triggerHaptic('medium'); queueMutation('follow', { followerId: user?.id, followingId: userId }); }}
-        onShare={(postId) => {
-          if (!user?.id) return;
-          triggerHaptic('medium');
-          useFeedStore.getState().setPendingRepost(postId);
-          router.push('/(tabs)/create');
-        }}
-        onMenu={(post) => setMenuPost(post)}
+        onComment={handleComment}
+        onLike={handleToggleLike}
+        onFollow={handleFollow}
+        onShare={handleShare}
+        onMenu={handleMenu}
       />
     </View>
-  ), [handleToggleLike, user?.id]);
+  ), [user?.id, handleComment, handleToggleLike, handleFollow, handleShare, handleMenu]);
 
   const bgColor = theme.colors.background.primary;
   const bgTransparent = bgColor + '00';

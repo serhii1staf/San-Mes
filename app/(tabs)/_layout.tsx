@@ -3,58 +3,50 @@ import { Tabs } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { CustomTabBar } from '../../src/components/navigation/CustomTabBar';
 
+// Stable references for `tabBar`/`screenOptions`/`tabBarIcon` so React Navigation
+// doesn't see new prop identities on every render of the parent layout.
+
+const renderTabBar = (props: React.ComponentProps<typeof CustomTabBar>) => (
+  <CustomTabBar {...props} />
+);
+
+const screenOptions = {
+  headerShown: false,
+  sceneStyle: { backgroundColor: 'transparent' as const },
+};
+
+type TabBarIconProps = { color: string; size: number };
+
+const HomeTabIcon = ({ color, size }: TabBarIconProps) => (
+  <Feather name="home" size={size} color={color} />
+);
+const SearchTabIcon = ({ color, size }: TabBarIconProps) => (
+  <Feather name="search" size={size} color={color} />
+);
+const CreateTabIcon = ({ color, size }: TabBarIconProps) => (
+  <Feather name="plus-circle" size={size} color={color} />
+);
+const MessagesTabIcon = ({ color, size }: TabBarIconProps) => (
+  <Feather name="message-circle" size={size} color={color} />
+);
+const ProfileTabIcon = ({ color, size }: TabBarIconProps) => (
+  <Feather name="user" size={size} color={color} />
+);
+
+const homeOptions = { title: 'Home', tabBarIcon: HomeTabIcon };
+const searchOptions = { title: 'Search', tabBarIcon: SearchTabIcon };
+const createOptions = { title: 'Новый пост', headerShown: false, tabBarIcon: CreateTabIcon };
+const messagesOptions = { title: 'Messages', tabBarIcon: MessagesTabIcon };
+const profileOptions = { title: 'Profile', tabBarIcon: ProfileTabIcon };
+
 export default function TabLayout() {
   return (
-    <Tabs
-      tabBar={(props) => <CustomTabBar {...props} />}
-      screenOptions={{ headerShown: false, sceneStyle: { backgroundColor: 'transparent' } }}
-    >
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: 'Home',
-          tabBarIcon: ({ color, size }) => (
-            <Feather name="home" size={size} color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="search"
-        options={{
-          title: 'Search',
-          tabBarIcon: ({ color, size }) => (
-            <Feather name="search" size={size} color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="create"
-        options={{
-          title: 'Новый пост',
-          headerShown: false,
-          tabBarIcon: ({ color, size }) => (
-            <Feather name="plus-circle" size={size} color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="messages"
-        options={{
-          title: 'Messages',
-          tabBarIcon: ({ color, size }) => (
-            <Feather name="message-circle" size={size} color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="profile"
-        options={{
-          title: 'Profile',
-          tabBarIcon: ({ color, size }) => (
-            <Feather name="user" size={size} color={color} />
-          ),
-        }}
-      />
+    <Tabs tabBar={renderTabBar} screenOptions={screenOptions}>
+      <Tabs.Screen name="index" options={homeOptions} />
+      <Tabs.Screen name="search" options={searchOptions} />
+      <Tabs.Screen name="create" options={createOptions} />
+      <Tabs.Screen name="messages" options={messagesOptions} />
+      <Tabs.Screen name="profile" options={profileOptions} />
     </Tabs>
   );
 }

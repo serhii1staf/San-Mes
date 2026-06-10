@@ -19,6 +19,7 @@ import { UserBadge } from '../../src/components/ui/UserBadge';
 import { MessageContextMenu, MessageAction } from '../../src/components/ui/MessageContextMenu';
 import { ChatInputBar, ChatInputBarHandle } from '../../src/components/chat/ChatInputBar';
 import { GiphyPicker } from '../../src/components/ui/GiphyPicker';
+import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
 import { useChatStore, useEntityStore, useConnectivityStore } from '../../src/store';
 import { useChatSettingsStore, GLOBAL_CHAT_SETTINGS_KEY, DEFAULT_CHAT_SETTINGS } from '../../src/store/chatSettingsStore';
 import { supabase, uploadChatImage } from '../../src/lib/supabase';
@@ -113,7 +114,13 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
               const link = (!message.imageUrls || message.imageUrls.length === 0) ? extractFirstUrl(message.text) : null;
               return link ? (
                 <Pressable onLongPress={() => { triggerHaptic('medium'); onLongPress(message); }} delayLongPress={300} style={{ marginTop: 6, width: 280, maxWidth: '100%' }}>
-                  <LinkPreview url={link} textColor={isOwn ? '#FFFFFF' : undefined} emoji={linkEmoji} />
+                  <LinkPreview
+                    url={link}
+                    textColor={isOwn ? '#FFFFFF' : undefined}
+                    emoji={linkEmoji}
+                    onLongPress={() => { triggerHaptic('medium'); onLongPress(message); }}
+                    delayLongPress={300}
+                  />
                 </Pressable>
               ) : null;
             })()}
@@ -139,6 +146,7 @@ const MemoMessageBubble = React.memo(MessageBubble, (prev, next) => {
     pm.createdAt === nm.createdAt &&
     pm.replyToText === nm.replyToText &&
     pm.replyToImage === nm.replyToImage &&
+    pm.replyToIsOwn === nm.replyToIsOwn &&
     (pm.imageUrls === nm.imageUrls ||
       (pm.imageUrls?.length === nm.imageUrls?.length &&
         (pm.imageUrls || []).every((u, i) => u === nm.imageUrls?.[i]))) &&
@@ -157,7 +165,9 @@ export default function ChatScreen() {
   const { id, participantId: paramParticipantId } = useLocalSearchParams<{ id: string; participantId?: string }>();
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
   const [editing, setEditing] = useState<ChatMessage | null>(null);
-  const [menuMessage, setMenuMessage] = useState<ChatMessage | null>(null);
+  // Long-press menu opener — see useContextMenuGuard for the rate-limit/raf
+  // semantics that prevent rapid long-press storms from freezing the JS thread.
+  const { target: actionMessage, open: openMenu, close: closeMenu } = useContextMenuGuard<ChatMessage>({ lockMs: 500, closeLockMs: 350 });
   const [scrollEnabled, setScrollEnabled] = useState(true);
   const [pendingImages, setPendingImages] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -610,26 +620,8 @@ export default function ChatScreen() {
   }, [chatMessages]);
 
   // Guard against the freeze caused by rapid long-presses / taps while a menu is
-  // opening or closing. A time-lock drops any repeat open within the window, we
-  // never open a second menu while one is shown, and we defer the state update
-  // out of the gesture callback with requestAnimationFrame so the JS thread is
-  // never hit by a burst of synchronous opens.
-  const menuLockRef = useRef(0);
-  const openMenu = useCallback((m: ChatMessage) => {
-    const now = Date.now();
-    if (now < menuLockRef.current) return;        // still locked from a recent open/close
-    menuLockRef.current = now + 600;               // lock the next 600ms
-    requestAnimationFrame(() => {
-      setMenuMessage((prev) => (prev ? prev : m));  // never replace an open menu
-    });
-  }, []);
-
-  const closeMenu = useCallback(() => {
-    setMenuMessage(null);
-    // Keep the lock through the close animation so a stray long-press during it
-    // can't immediately reopen and stack another modal.
-    menuLockRef.current = Date.now() + 450;
-  }, []);
+  // opening or closing — see `useContextMenuGuard` (declared above with the
+  // other hooks) for the time-lock + requestAnimationFrame defer.
 
   const renderItem = useCallback(({ item }: { item: ChatMessage; index: number }) => {
     const m = parseMessage(item);
@@ -651,7 +643,7 @@ export default function ChatScreen() {
   }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, chatSettings.linkEmoji, startReply, handleSwipeActive, openImageViewer, parseMessage, activeMatchId, openMenu]);
 
   const banner = editing || replyTo;
-  const menuIsOwn = menuMessage?.senderId === 'current';
+  const menuIsOwn = actionMessage?.senderId === 'current';
 
   return (
     <View style={{ flex: 1, backgroundColor: bgColor }}>
@@ -799,11 +791,11 @@ export default function ChatScreen() {
       {/* Long-press message menu — in-screen overlay (not a native Modal) so it
           can never deadlock with the GIF/image/video modals. High zIndex keeps it
           above the input bar and header. */}
-      {!!menuMessage && (
+      {!!actionMessage && (
         <View pointerEvents="box-none" style={[StyleSheet.absoluteFill, { zIndex: 1000 }]}>
           <MessageContextMenu
-            visible={!!menuMessage}
-            message={menuMessage}
+            visible={!!actionMessage}
+            message={actionMessage}
             isOwn={menuIsOwn}
             bubbleColor={menuIsOwn ? theme.colors.accent.primary : theme.colors.background.tertiary}
             bubbleTextColor={menuIsOwn ? '#FFFFFF' : theme.colors.text.primary}

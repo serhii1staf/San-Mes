@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { View, Pressable, ActivityIndicator, Dimensions, Image, Animated, Modal, Share, Alert, RefreshControl, ScrollView } from 'react-native';
+import { View, Pressable, ActivityIndicator, Dimensions, Image, Animated, Modal, Share, Alert, RefreshControl, ScrollView, InteractionManager } from 'react-native';
 import { Feather, FontAwesome5 } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -113,22 +113,31 @@ export default function ProfileScreen() {
   const scrollViewRef = useRef<any>(null);
   const hasRestoredScroll = useRef(false);
 
-  // 1. On mount: if store is empty, hydrate synchronously from MMKV (instant, no
-  // flicker) then fetch fresh in the background.
+  // 1. On mount: if store is empty, hydrate from MMKV (instant, no flicker)
+  // then fetch fresh in the background. The MMKV read is synchronous so we
+  // defer it via InteractionManager to keep the tab-switch frame buttery on
+  // weak devices — same approach as (tabs)/index.tsx.
   useEffect(() => {
     if (userPosts.length > 0) return; // Store already has data — show instantly
-    try {
-      const parsed = kvGetJSONSync<any[]>(MY_POSTS_CACHE_KEY, []);
-      if (Array.isArray(parsed) && parsed.length > 0) setProfilePosts(parsed);
-    } catch {}
+    const handle = InteractionManager.runAfterInteractions(() => {
+      try {
+        const parsed = kvGetJSONSync<any[]>(MY_POSTS_CACHE_KEY, []);
+        if (Array.isArray(parsed) && parsed.length > 0) setProfilePosts(parsed);
+      } catch {}
+    });
+    return () => handle.cancel();
   }, []);
 
-  // 2. Fetch fresh data once (if not already fetched)
+  // 2. Fetch fresh data once (if not already fetched). Defer until after
+  // interactions so we never compete with the navigation transition.
   useEffect(() => {
     if (hasFetched.current || !user?.id) return;
     hasFetched.current = true;
-    loadMyPosts();
-    loadFollows();
+    const handle = InteractionManager.runAfterInteractions(() => {
+      loadMyPosts();
+      loadFollows();
+    });
+    return () => handle.cancel();
   }, [user?.id]);
 
   const loadMyPosts = useCallback(async () => {
@@ -235,6 +244,15 @@ export default function ProfileScreen() {
     }, [profileScrollOffset])
   );
 
+  // Stable callbacks for the memoized post card so reference equality holds.
+  const handlePostLongPress = useCallback((p: any) => {
+    openContextMenu(p);
+  }, [openContextMenu]);
+
+  const handlePostImagePress = useCallback((uri: string, postId: string, allImages: string[]) => {
+    setViewingImage({ uri, postId, allImages });
+  }, []);
+
   // Pull-to-refresh handler
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -295,8 +313,8 @@ export default function ProfileScreen() {
               authorBadge={user.badge}
               shareText={`${user.displayName}: ${post.content || ''}\nhttps://san-m-app.com/post/${post.id}`}
               postEmoji={postEmoji}
-              onLongPress={(p) => openContextMenu(p)}
-              onImagePress={(uri, postId, allImages) => setViewingImage({ uri, postId, allImages })}
+              onLongPress={handlePostLongPress}
+              onImagePress={handlePostImagePress}
             />
           )) : null}</View>
         ))}

@@ -27,6 +27,10 @@ export interface Track {
   streamUrl: string;   // full-length stream (expo-av plays it)
   durationMs: number;
   sourceHost: string;  // discovery host the track came from — streamUrl is derived from it
+  // True when the streamUrl is a 30-second preview (iTunes); false for full-length
+  // tracks (Audius). Used to prefer full-length over previews when ranking and to
+  // surface a small "30 с" badge in the UI.
+  isPreview: boolean;
 }
 
 function mapTrack(t: any, host: string): Track | null {
@@ -43,6 +47,8 @@ function mapTrack(t: any, host: string): Track | null {
     streamUrl: `${host}/v1/tracks/${t.id}/stream?app_name=${APP_NAME}`,
     durationMs: (Number(t.duration) || 0) * 1000,
     sourceHost: host,
+    // Audius serves full-length tracks, never 30-second previews.
+    isPreview: false,
   };
 }
 
@@ -152,9 +158,34 @@ export async function searchTracks(query: string, limit = 20): Promise<Track[]> 
 
   if (byId.size === 0) return [];
 
-  const ranked = Array.from(byId.values())
+  // ---- Dedupe by (title, artist) -------------------------------------------
+  // Audius and iTunes can both return the same song under different ids
+  // (e.g., a popular release exists as both a full-length on Audius and a
+  // 30-second preview on iTunes). Collapse those into one entry per
+  // (normalize(title), normalize(artist)) pair, preferring the higher-scoring
+  // result. On a score tie, prefer the full-length over the 30s preview.
+  const dedupedByTitleArtist = new Map<string, Track>();
+  for (const t of byId.values()) {
+    const key = `${normalize(t.title)}|||${normalize(t.artist)}`;
+    const existing = dedupedByTitleArtist.get(key);
+    if (!existing) {
+      dedupedByTitleArtist.set(key, t);
+      continue;
+    }
+    const sExisting = scoreTrackRelevance(existing, q);
+    const sNew = scoreTrackRelevance(t, q);
+    if (sNew > sExisting) {
+      dedupedByTitleArtist.set(key, t);
+    } else if (sNew === sExisting && existing.isPreview && !t.isPreview) {
+      dedupedByTitleArtist.set(key, t);
+    }
+  }
+
+  // Rank by relevance (primary) and prefer full-length over previews on ties
+  // (secondary). `Number(false) - Number(true) = -1`, so non-previews come first.
+  const ranked = Array.from(dedupedByTitleArtist.values())
     .map((t) => ({ t, score: scoreTrackRelevance(t, q) }))
-    .sort((a, b) => b.score - a.score)
+    .sort((a, b) => (b.score - a.score) || (Number(a.t.isPreview) - Number(b.t.isPreview)))
     .map((x) => x.t);
 
   return ranked.slice(0, limit);
@@ -173,5 +204,7 @@ function mapItunesTrack(t: any): Track | null {
     streamUrl: t.previewUrl, // 30s preview — expo-av plays it directly
     durationMs: Number(t.trackTimeMillis) || 30000,
     sourceHost: previewHost,
+    // iTunes Search returns 30-second previews, not the full track.
+    isPreview: true,
   };
 }

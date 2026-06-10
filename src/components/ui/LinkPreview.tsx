@@ -31,11 +31,19 @@ interface LinkPreviewProps {
   textColor?: string;
   emoji?: string; // decorative emoji pattern behind the link row (Telegram-style)
   static?: boolean; // when true, never mount a WebView/player (used inside context menus)
+  // Forwarded long-press from the parent message bubble. RN does not bubble
+  // long-press through a child touch responder, so when this preview is rendered
+  // inside a chat/comment bubble whose parent wants to open a context menu on
+  // long-press, the parent must pass its handler in here so the inner Pressable
+  // (link row / video thumbnail) wires it up too. Otherwise the inner Pressable
+  // would swallow the gesture and the bubble's onLongPress would never fire.
+  onLongPress?: () => void;
+  delayLongPress?: number;
 }
 
 const THUMB_RADIUS = 14;
 
-export function LinkPreview({ url, onError, textColor, emoji, static: isStatic }: LinkPreviewProps) {
+export function LinkPreview({ url, onError, textColor, emoji, static: isStatic, onLongPress, delayLongPress }: LinkPreviewProps) {
   const theme = useTheme();
   const cached = getCachedPreviewSync(url);
   const [data, setData] = useState<LinkPreviewData | null>(cached === undefined ? null : cached);
@@ -140,7 +148,11 @@ export function LinkPreview({ url, onError, textColor, emoji, static: isStatic }
           {playing && videoSource && cardWidth > 0 && !isStatic ? (
             <InlineVideoPlayer source={videoSource} width={cardWidth} />
           ) : (
-            <Pressable onPress={() => { if (isStatic) return; videoSource ? setPlaying(true) : openLink(); }}>
+            <Pressable
+              onPress={() => { if (isStatic) return; videoSource ? setPlaying(true) : openLink(); }}
+              onLongPress={onLongPress}
+              delayLongPress={delayLongPress}
+            >
               {data.image ? (
                 <CachedImage uri={data.image} style={{ width: '100%', aspectRatio: 16 / 9 }} resizeMode="cover" />
               ) : (
@@ -172,6 +184,8 @@ export function LinkPreview({ url, onError, textColor, emoji, static: isStatic }
       {fullscreenEl}
       <Pressable
         onPress={handlePress}
+        onLongPress={onLongPress}
+        delayLongPress={delayLongPress}
         style={{
           flexDirection: 'row',
           alignItems: 'center',

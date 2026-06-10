@@ -464,7 +464,7 @@ export default function CommentsScreen() {
                     const link = extractFirstUrl(parsed.body);
                     return link ? (
                       <Pressable onLongPress={() => openCommentMenu(item)} delayLongPress={300} style={{ marginTop: 6 }}>
-                        <LinkPreview url={link} />
+                        <LinkPreview url={link} onLongPress={() => openCommentMenu(item)} delayLongPress={300} />
                       </Pressable>
                     ) : null;
                   })()}

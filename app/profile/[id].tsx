@@ -1,5 +1,5 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { View, Pressable, ActivityIndicator, Image, Dimensions, Modal, Animated, Share, Alert, ScrollView as RNScrollView, StatusBar } from 'react-native';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
+import { View, Pressable, ActivityIndicator, Image, Dimensions, Modal, Animated, Share, Alert, ScrollView as RNScrollView, StatusBar, InteractionManager } from 'react-native';
 import { Feather, FontAwesome5 } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -22,11 +22,8 @@ import { formatTimeAgo } from '../../src/utils/mockData';
 import { CachedImage } from '../../src/components/ui/CachedImage';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { UserBadge } from '../../src/components/ui/UserBadge';
-import { FormattedText } from '../../src/components/ui/FormattedText';
-import { LinkPreview } from '../../src/components/ui/LinkPreview';
-import { extractFirstUrl } from '../../src/services/linkPreview';
 import { PostContextMenu } from '../../src/components/ui/PostContextMenu';
-import { SwipeablePostCard } from '../../src/components/ui/SwipeablePostCard';
+import { UserProfilePostCard } from '../../src/components/ui/UserProfilePostCard';
 import { PanResponder } from 'react-native';
 import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
 
@@ -234,10 +231,17 @@ export default function UserProfileScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [followCounts, setFollowCounts] = useState({ followers: 0, following: 0 });
   const [activeTab, setActiveTab] = useState<TabName>('posts');
+  // Posts cards are heavy (gesture handlers + images). Gate their mount one frame
+  // after the tab activates so the tab highlight switches instantly and the heavy
+  // mount happens off the tap's critical path — same approach as (tabs)/profile.tsx.
+  const [postsReady, setPostsReady] = useState(true);
   const [showMenu, setShowMenu] = useState(false);
   const [viewingImage, setViewingImage] = useState<{ uri: string; postId: string; allImages?: string[] } | null>(null);
   const { target: contextPost, open: openContextMenu, close: closeContextMenu } = useContextMenuGuard<any>();
-  const [visibleCount, setVisibleCount] = useState(8);
+  // Windowing: render posts in small chunks. Smaller default + smaller increments
+  // keep the first frame of the "Posts" tab cheap and avoid mounting many cards
+  // (each with its own gesture handlers + images) at once.
+  const [visibleCount, setVisibleCount] = useState(6);
   const scrollY = useRef(new Animated.Value(0)).current;
   const headerOpacity = scrollY.interpolate({ inputRange: [0, 50, 120], outputRange: [0, 0, 1], extrapolate: 'clamp' });
   const buttonsTranslateX = scrollY.interpolate({ inputRange: [0, 180, 250], outputRange: [0, 0, -60], extrapolate: 'clamp' });
@@ -292,18 +296,24 @@ export default function UserProfileScreen() {
       }).catch(() => setIsLoading(false));
     }
 
-    // Trigger background sync for profile and user posts
-    syncProfile(id);
-    syncUserPosts(id);
+    // Defer the heavier follow-up work (background sync, image prefetch, follow
+    // counts) until after the navigation transition into this screen has
+    // settled — keeps the open animation smooth on weak devices.
+    const handle = InteractionManager.runAfterInteractions(() => {
+      // Trigger background sync for profile and user posts
+      syncProfile(id);
+      syncUserPosts(id);
 
-    // Warm the image cache for this profile's banner so it appears instantly.
-    import('../../src/components/ui/CachedImage').then(({ prefetchImages }) => {
-      const p: any = useEntityStore.getState().profiles[id];
-      if (p?.banner_url) prefetchImages([p.banner_url]);
-    }).catch(() => {});
+      // Warm the image cache for this profile's banner so it appears instantly.
+      import('../../src/components/ui/CachedImage').then(({ prefetchImages }) => {
+        const p: any = useEntityStore.getState().profiles[id];
+        if (p?.banner_url) prefetchImages([p.banner_url]);
+      }).catch(() => {});
 
-    // Load follow counts from Supabase (keep direct call for counts display)
-    getFollowCounts(id).then((counts) => setFollowCounts(counts)).catch(() => {});
+      // Load follow counts from Supabase (keep direct call for counts display)
+      getFollowCounts(id).then((counts) => setFollowCounts(counts)).catch(() => {});
+    });
+    return () => handle.cancel();
   }, [id]);
 
   // Display profile: prefer cached from store, fallback to direct fetch
@@ -400,6 +410,16 @@ export default function UserProfileScreen() {
     });
   }, [userPosts, resolvedOriginals]);
 
+  // Stable callbacks for the memoized post card so it can short-circuit on
+  // reference equality instead of receiving fresh inline lambdas every render.
+  const handlePostLongPress = useCallback((enrichedPost: any) => {
+    openContextMenu(enrichedPost);
+  }, [openContextMenu]);
+
+  const handlePostImagePress = useCallback((uri: string, postId: string, allImages: string[]) => {
+    setViewingImage({ uri, postId, allImages });
+  }, []);
+
   const handleFollow = async () => {
     if (!currentUser?.id || !id) return;
     triggerHaptic('medium');
@@ -464,7 +484,7 @@ export default function UserProfileScreen() {
         bounces={false}
         onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true })}
         scrollEventThrottle={16}
-        onMomentumScrollEnd={(e) => { const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent; if (contentOffset.y + layoutMeasurement.height >= contentSize.height - 600) { setVisibleCount((c) => (c < displayPosts.length ? c + 8 : c)); } }}
+        onMomentumScrollEnd={(e) => { const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent; if (contentOffset.y + layoutMeasurement.height >= contentSize.height - 600) { setVisibleCount((c) => (c < displayPosts.length ? c + 4 : c)); } }}
         contentContainerStyle={{ paddingBottom: 100 }}
       >
         {/* Banner */}
@@ -516,7 +536,19 @@ export default function UserProfileScreen() {
         <View style={{ marginTop: 16, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border.light }}>
           <View style={{ flexDirection: 'row' }}>
             {tabs.map((tab) => (
-              <Pressable key={tab.key} onPress={() => { triggerHaptic('selection'); setActiveTab(tab.key); }} style={{ flex: 1, alignItems: 'center', paddingVertical: 11 }}>
+              <Pressable key={tab.key} onPress={() => {
+                triggerHaptic('selection');
+                if (tab.key === 'posts') {
+                  // Defer mounting heavy post cards by one frame so the tab
+                  // highlight switches instantly and the list mount happens
+                  // off the tap's critical path.
+                  setPostsReady(false);
+                  requestAnimationFrame(() => setActiveTab('posts'));
+                  setTimeout(() => setPostsReady(true), 16);
+                } else {
+                  setActiveTab(tab.key);
+                }
+              }} style={{ flex: 1, alignItems: 'center', paddingVertical: 11 }}>
                 <Text variant="caption" weight={activeTab === tab.key ? 'bold' : 'regular'} color={activeTab === tab.key ? theme.colors.text.primary : theme.colors.text.tertiary}>{tab.label}</Text>
               </Pressable>
             ))}
@@ -528,91 +560,21 @@ export default function UserProfileScreen() {
         {activeTab === 'posts' && (displayPosts.length === 0 ? (
           <View style={{ alignItems: 'center', paddingVertical: 40 }}><Text variant="caption" color={theme.colors.text.tertiary}>Ещё нет публикаций</Text></View>
         ) : (
-          <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
-            {displayPosts.slice(0, visibleCount).map((post: any) => {
-              const postImages: string[] = post.imageUrls && post.imageUrls.length > 0 ? post.imageUrls : post.imageUrl ? [post.imageUrl] : [];
-              const hasImage = postImages.length > 0;
-              const isRepostPost = post.isRepost;
-              const origPost = post.originalPost;
-              return (
-              <SwipeablePostCard key={post.id} shareText={`${displayProfile.display_name}: ${post.content || ''}\nhttps://san-m-app.com/post/${post.id}`}>
-              <Pressable onPress={() => router.push({ pathname: '/comments/[id]', params: { id: post.id } })} onLongPress={() => { triggerHaptic('medium'); openContextMenu({ ...post, authorName: displayProfile.display_name, authorUsername: displayProfile.username, authorEmoji: displayProfile.emoji || '😊', authorVerified: displayProfile.is_verified, authorBadge: displayProfile.badge, authorId: displayProfile.id }); }} delayLongPress={400} style={{ flexDirection: 'row', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.75)', borderRadius: 28, padding: 10, marginBottom: 12, borderWidth: 1, borderColor: theme.isDark ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.4)', overflow: 'hidden' }}>
-                {/* Left: Image grid thumbnail */}
-                {hasImage ? (
-                  <Pressable onPress={() => setViewingImage({ uri: postImages[0], postId: post.id, allImages: postImages })}>
-                    <View style={{ width: 100, height: 100, borderRadius: 20, overflow: 'hidden' }}>
-                      {postImages.length === 1 ? (
-                        <CachedImage uri={postImages[0]} style={{ width: 100, height: 100 }} resizeMode="cover" />
-                      ) : postImages.length === 2 ? (
-                        <View style={{ flexDirection: 'row', width: 100, height: 100 }}>
-                          <CachedImage uri={postImages[0]} style={{ width: 49, height: 100 }} resizeMode="cover" />
-                          <View style={{ width: 2 }} />
-                          <CachedImage uri={postImages[1]} style={{ width: 49, height: 100 }} resizeMode="cover" />
-                        </View>
-                      ) : postImages.length === 3 ? (
-                        <View style={{ flexDirection: 'row', width: 100, height: 100 }}>
-                          <CachedImage uri={postImages[0]} style={{ width: 49, height: 100 }} resizeMode="cover" />
-                          <View style={{ width: 2 }} />
-                          <View style={{ width: 49, height: 100 }}>
-                            <CachedImage uri={postImages[1]} style={{ width: 49, height: 49 }} resizeMode="cover" />
-                            <View style={{ height: 2 }} />
-                            <CachedImage uri={postImages[2]} style={{ width: 49, height: 49 }} resizeMode="cover" />
-                          </View>
-                        </View>
-                      ) : (
-                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', width: 100, height: 100 }}>
-                          {postImages.slice(0, 4).map((imgUri: string, idx: number) => (
-                            <CachedImage key={idx} uri={imgUri} style={{ width: 49, height: 49, marginRight: idx % 2 === 0 ? 2 : 0, marginBottom: idx < 2 ? 2 : 0 }} resizeMode="cover" />
-                          ))}
-                        </View>
-                      )}
-                      {isRepostPost && (
-                        <View style={{ position: 'absolute', top: 4, left: 4, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 8, paddingHorizontal: 5, paddingVertical: 2, flexDirection: 'row', alignItems: 'center', gap: 2 }}>
-                          <Feather name="repeat" size={8} color="#FFFFFF" />
-                        </View>
-                      )}
-                    </View>
-                  </Pressable>
-                ) : isRepostPost ? (
-                  <View style={{ width: 100, height: 100, borderRadius: 20, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)', alignItems: 'center', justifyContent: 'center' }}>
-                    <Feather name="repeat" size={24} color={theme.colors.text.tertiary} />
-                    <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 9, marginTop: 4 }}>Репост</Text>
-                  </View>
-                ) : null}
-                {/* Right: Info */}
-                <View style={{ flex: 1, marginLeft: (hasImage || isRepostPost) ? 14 : 4, justifyContent: 'center' }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                    <Avatar emoji={displayProfile.emoji || '😊'} size="xs" />
-                    <Text variant="caption" weight="semibold" numberOfLines={1} style={{ flexShrink: 1 }}>{displayProfile.display_name}</Text>
-                    {displayProfile.is_verified && <VerifiedBadge size={11} />}
-                    {displayProfile.badge && <UserBadge badge={displayProfile.badge} size="sm" />}
-                    <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 10, flexShrink: 0 }}>· {formatTimeAgo(post.createdAt)}</Text>
-                  </View>
-                  {isRepostPost && origPost && (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 }}>
-                      <Feather name="repeat" size={10} color={theme.colors.accent.primary} />
-                      <Text variant="caption" color={theme.colors.accent.primary} numberOfLines={1} style={{ fontSize: 10, flexShrink: 1 }}>от {origPost.authorName}</Text>
-                    </View>
-                  )}
-                  {(post.content || origPost?.content) ? <FormattedText style={{ fontSize: 12, marginBottom: 6 }} color={theme.colors.text.secondary}>{post.content || origPost?.content || ''}</FormattedText> : null}
-                  {/* Link preview when the post has no image (Telegram-style, instant from cache) */}
-                  {!hasImage && (() => {
-                    const link = extractFirstUrl(post.content || origPost?.content || '');
-                    return link ? (
-                      <Pressable onLongPress={() => { triggerHaptic('medium'); openContextMenu({ ...post, authorName: displayProfile.display_name, authorUsername: displayProfile.username, authorEmoji: displayProfile.emoji || '😊', authorVerified: displayProfile.is_verified, authorBadge: displayProfile.badge, authorId: displayProfile.id }); }} delayLongPress={400} style={{ marginBottom: 6 }}>
-                        <LinkPreview url={link} static />
-                      </Pressable>
-                    ) : null;
-                  })()}
-                  <View style={{ flexDirection: 'row', gap: 12 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}><Feather name="heart" size={12} color={theme.colors.text.tertiary} /><Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{post.likesCount}</Text></View>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}><Feather name="message-circle" size={12} color={theme.colors.text.tertiary} /><Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{post.commentsCount}</Text></View>
-                  </View>
-                </View>
-              </Pressable>
-              </SwipeablePostCard>
-              );
-            })}
+          <View style={{ paddingHorizontal: 16, paddingTop: 12, minHeight: 200 }}>
+            {postsReady ? displayPosts.slice(0, visibleCount).map((post: any) => (
+              <UserProfilePostCard
+                key={post.id}
+                post={post}
+                authorName={displayProfile.display_name}
+                authorUsername={displayProfile.username}
+                authorEmoji={displayProfile.emoji || '😊'}
+                authorVerified={displayProfile.is_verified}
+                authorBadge={displayProfile.badge}
+                authorId={displayProfile.id}
+                onLongPress={handlePostLongPress}
+                onImagePress={handlePostImagePress}
+              />
+            )) : null}
           </View>
         ))}
         {activeTab !== 'posts' && <View style={{ alignItems: 'center', paddingVertical: 40 }}><Text variant="caption" color={theme.colors.text.tertiary}>Пока пусто</Text></View>}
