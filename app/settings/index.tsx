@@ -64,7 +64,7 @@ function SettingsRow({
         style={{
           width: 36,
           height: 36,
-          borderRadius: 18,
+          borderRadius: 10,
           backgroundColor: image ? 'transparent' : theme.colors.background.secondary,
           alignItems: 'center',
           justifyContent: 'center',
@@ -73,7 +73,7 @@ function SettingsRow({
         }}
       >
         {image ? (
-          <Image source={image} style={{ width: 36, height: 36, borderRadius: 18 }} resizeMode="contain" />
+          <Image source={image} style={{ width: 38, height: 38 }} resizeMode="cover" />
         ) : icon ? (
           <Feather name={icon as keyof typeof Feather.glyphMap} size={18} color={theme.colors.text.secondary} />
         ) : null}
