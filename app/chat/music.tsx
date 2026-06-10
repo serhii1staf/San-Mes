@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
-import { View, Pressable, TextInput, FlatList, ActivityIndicator, Text as RNText, Platform, LayoutAnimation, UIManager, Alert } from 'react-native';
+import { View, Pressable, TextInput, FlatList, ActivityIndicator, Text as RNText, Platform, LayoutAnimation, UIManager, Alert, Animated } from 'react-native';
 import { KeyboardStickyView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
 import Reanimated, { useAnimatedStyle } from 'react-native-reanimated';
 import { Feather } from '@expo/vector-icons';
@@ -12,6 +12,7 @@ import { Text } from '../../src/components/ui';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { TrackResultCard } from '../../src/components/ui/TrackResultCard';
 import { AuthorInfoModal } from '../../src/components/ui/AuthorInfoModal';
+import { PlaylistSheet } from '../../src/components/ui/PlaylistSheet';
 import { searchTracks, Track } from '../../src/services/musicService';
 import { useMusicStore } from '../../src/store/musicStore';
 import { kvGetJSONSync, kvSetJSON } from '../../src/services/kvStore';
@@ -21,16 +22,14 @@ interface MusicMessage { id: string; query: string; track?: Track | null; tracks
 
 const HISTORY_KEY = 'music_chat_history';
 
-// Available slash-style commands users can quickly run from the input bar.
 type CommandId = 'last' | 'clear' | 'playlist';
 interface CommandDef { id: CommandId; icon: string; label: string; description: string }
 const COMMANDS: CommandDef[] = [
   { id: 'last', icon: 'rotate-cw', label: 'Последняя музыка', description: 'Снова найти то, что искали в прошлый раз' },
-  { id: 'clear', icon: 'eraser', label: 'Очистить текст', description: 'Стереть переписку, найденная музыка останется в виджете' },
-  { id: 'playlist', icon: 'list', label: 'Создать плейлист', description: 'Скоро: соберём плейлист из найденных треков' },
+  { id: 'clear', icon: 'eraser', label: 'Очистить текст', description: 'Скрыть свои сообщения, найденная музыка останется' },
+  { id: 'playlist', icon: 'list', label: 'Создать плейлист', description: 'Собрать все найденные треки в один список' },
 ];
 
-// Enable LayoutAnimation on Android (no-op on iOS).
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
@@ -43,10 +42,10 @@ export default function MusicChatScreen() {
   });
   const [input, setInput] = useState('');
   const [isSearching, setIsSearching] = useState(false);
-  // Synchronous re-entrancy guard — see below.
   const inFlightRef = useRef(false);
   const [authorTrack, setAuthorTrack] = useState<Track | null>(null);
   const [commandsOpen, setCommandsOpen] = useState(false);
+  const [playlistOpen, setPlaylistOpen] = useState(false);
   const listRef = useRef<FlatList>(null);
 
   const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
@@ -63,7 +62,25 @@ export default function MusicChatScreen() {
     try { require('../../src/store/specialChatsStore').useSpecialChatsStore.getState().markOpened('music'); } catch {}
   }, []);
 
-  // Run a search for `q` — extracted so commands ("last") can re-trigger it.
+  // ── Commands button — animated label/width ──────────────────────────────────
+  // Both the label opacity AND the button width are driven by a single Animated
+  // value (1 = expanded, 0 = collapsed). Opacity animates twice as fast as the
+  // width so the text fades out BEFORE the button shrinks — that prevents the
+  // "text gets squished and then disappears" look. RN width animations can't
+  // use the native driver, so the width interpolation runs on the JS thread —
+  // it's a single tween of one View per keystroke transition, not a hot path.
+  const commandExpand = useRef(new Animated.Value(1)).current; // 1 = full pill, 0 = icon only
+  useEffect(() => {
+    Animated.timing(commandExpand, {
+      toValue: input.length === 0 ? 1 : 0,
+      duration: 200,
+      useNativeDriver: false, // width can't be driven natively
+    }).start();
+  }, [input.length === 0]);
+  const commandWidth = commandExpand.interpolate({ inputRange: [0, 1], outputRange: [44, 124] });
+  const commandLabelOpacity = commandExpand.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, 0, 1] });
+
+  // ── Search ──────────────────────────────────────────────────────────────────
   const runSearch = useCallback(async (q: string) => {
     if (!q || isSearching || inFlightRef.current) return;
     inFlightRef.current = true;
@@ -87,40 +104,56 @@ export default function MusicChatScreen() {
   }, [input, runSearch]);
 
   // ── Commands ────────────────────────────────────────────────────────────────
-  // The "Команды" button on the input bar opens this drawer; the drawer is
-  // anchored ABOVE the keyboard so it sits between header and input.
+  // Unique tracks across the whole transcript — used both by "Создать плейлист"
+  // and as an availability check (don't bother showing an empty playlist).
+  const allUniqueTracks = useMemo<Track[]>(() => {
+    const seen = new Set<string>();
+    const out: Track[] = [];
+    for (const m of messages) {
+      const list = m.tracks || (m.track ? [m.track] : []);
+      for (const t of list) {
+        if (!seen.has(t.id)) { seen.add(t.id); out.push(t); }
+      }
+    }
+    return out;
+  }, [messages]);
+
   const runCommand = useCallback((id: CommandId) => {
     setCommandsOpen(false);
     triggerHaptic('light');
     if (id === 'last') {
-      // Replay the most recent user query (ignores in-flight rows that have no
-      // results yet — those will retry on their own).
       const last = [...messages].reverse().find((m) => m.tracks !== undefined && m.tracks.length > 0);
       if (last) void runSearch(last.query);
       else Alert.alert('Нет последнего поиска', 'Сначала найдите что-нибудь.');
     } else if (id === 'clear') {
-      // Clear the chat transcript but keep the now-playing track active so the
-      // user can keep listening; the floating widget continues to show it.
-      Alert.alert('Очистить переписку?', 'Найденная музыка продолжит играть.', [
+      // "Очистить текст" — wipe every USER QUERY bubble but keep the track
+      // cards (so the music history stays visible) AND keep playback going
+      // (the music store is untouched, the floating widget keeps playing).
+      // Empty `query` is the signal to renderItem that the user bubble should
+      // not be drawn. Messages with no tracks (failed/in-flight searches)
+      // become empty and are filtered out.
+      Alert.alert('Очистить текст?', 'Найденная музыка и воспроизведение останутся.', [
         { text: 'Отмена', style: 'cancel' },
-        { text: 'Очистить', style: 'destructive', onPress: () => setMessages([]) },
+        {
+          text: 'Очистить', style: 'destructive', onPress: () => {
+            setMessages((prev) =>
+              prev
+                .filter((m) => (m.tracks && m.tracks.length > 0) || !!m.track)
+                .map((m) => ({ ...m, query: '' })),
+            );
+          },
+        },
       ]);
     } else if (id === 'playlist') {
-      Alert.alert('Скоро', 'Сборка плейлиста появится в следующем обновлении.');
+      if (allUniqueTracks.length === 0) {
+        Alert.alert('Плейлист пуст', 'Сначала найдите хотя бы один трек.');
+      } else {
+        setPlaylistOpen(true);
+      }
     }
-  }, [messages, runSearch]);
+  }, [messages, runSearch, allUniqueTracks.length]);
 
-  const invertedData = React.useMemo(() => [...messages].reverse(), [messages]);
-
-  // Pick the freshest track to show in the "About author" modal — most-recent
-  // search result, or the currently playing one if it's older.
-  const latestTrack = useMemo<Track | null>(() => {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const t = messages[i].tracks?.[0] || messages[i].track;
-      if (t) return t;
-    }
-    return null;
-  }, [messages]);
+  const invertedData = useMemo(() => [...messages].reverse(), [messages]);
 
   const renderItem = useCallback(({ item, index }: { item: MusicMessage; index: number }) => {
     const tracks: Track[] = item.tracks && item.tracks.length
@@ -128,15 +161,16 @@ export default function MusicChatScreen() {
       : (item.track ? [item.track] : []);
     const hasResults = tracks.length > 0;
     const done = item.tracks !== undefined || item.track !== undefined;
-    // `index` is the inverted-list index — index 0 is the newest message.
-    // Show the "Об авторе" button only on the newest results bubble so the
-    // chat doesn't get cluttered with one button per old search.
     const isNewestResults = index === 0 && hasResults;
     return (
       <View style={{ marginBottom: 12 }}>
-        <View style={{ alignSelf: 'flex-end', maxWidth: '80%', backgroundColor: theme.colors.accent.primary, borderRadius: 18, borderBottomRightRadius: 6, paddingHorizontal: 14, paddingVertical: 9, marginBottom: 8 }}>
-          <Text variant="body" color="#FFFFFF" style={{ fontSize: 14 }}>{item.query}</Text>
-        </View>
+        {/* User query bubble — rendered only when query is non-empty so the
+            "Очистить текст" command can hide all queries at once. */}
+        {item.query ? (
+          <View style={{ alignSelf: 'flex-end', maxWidth: '80%', backgroundColor: theme.colors.accent.primary, borderRadius: 18, borderBottomRightRadius: 6, paddingHorizontal: 14, paddingVertical: 9, marginBottom: 8 }}>
+            <Text variant="body" color="#FFFFFF" style={{ fontSize: 14 }}>{item.query}</Text>
+          </View>
+        ) : null}
         {hasResults ? (
           <View style={{ alignSelf: 'flex-start', width: '88%', gap: 8 }}>
             {tracks.map((t) => (
@@ -165,10 +199,6 @@ export default function MusicChatScreen() {
       </View>
     );
   }, [theme]);
-
-  // While typing, the "Команды" pill collapses to an icon-only button so the
-  // input has room to grow. Empty input → full label is shown.
-  const showCommandLabel = input.length === 0;
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
@@ -219,10 +249,11 @@ export default function MusicChatScreen() {
         }
       />
 
-      {/* Input bar with commands drawer */}
+      {/* Input bar */}
       <KeyboardStickyView offset={{ closed: 0, opened: 0 }} style={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}>
         <Reanimated.View style={[{ paddingHorizontal: 16, paddingTop: 8, backgroundColor: theme.colors.background.primary }, inputPadStyle]}>
-          {/* Commands drawer — slides in above the input row when toggled. */}
+          {/* Commands drawer — anchored ABOVE the input row, slides in via
+              LayoutAnimation when toggled. */}
           {commandsOpen ? (
             <View style={{ marginBottom: 8, backgroundColor: theme.colors.background.elevated, borderRadius: 18, borderWidth: 1, borderColor: theme.colors.border.light, overflow: 'hidden' }}>
               {COMMANDS.map((c, i) => (
@@ -244,45 +275,51 @@ export default function MusicChatScreen() {
           ) : null}
 
           <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 8 }}>
-            {/* Commands button — sits OUTSIDE the text input, on the left,
-                mirroring the photo/attachment button in the regular chat. */}
-            <Pressable
-              onPress={() => { triggerHaptic('light'); LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); setCommandsOpen((v) => !v); }}
-              hitSlop={6}
-              style={{
-                height: 44,
-                paddingHorizontal: showCommandLabel ? 14 : 0,
-                width: showCommandLabel ? undefined : 44,
-                flexDirection: 'row',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 6,
-                borderRadius: 22,
-                borderWidth: 1,
-                borderColor: theme.colors.border.light,
-                backgroundColor: commandsOpen ? theme.colors.accent.primary : theme.colors.background.elevated,
-              }}
-            >
-              <Feather name="command" size={16} color={commandsOpen ? '#FFFFFF' : theme.colors.accent.primary} />
-              {/* Label is rendered while it has room (empty input). When the
-                  user starts typing the parent View animates the button width
-                  via LayoutAnimation, so the label fades/collapses smoothly
-                  instead of disappearing instantly. */}
-              {showCommandLabel ? (
-                <Text variant="caption" weight="semibold" color={commandsOpen ? '#FFFFFF' : theme.colors.accent.primary} style={{ fontSize: 12 }} numberOfLines={1}>Команды</Text>
-              ) : null}
-            </Pressable>
-            <View style={{ flex: 1, flexDirection: 'row', alignItems: 'flex-end', backgroundColor: theme.isDark ? 'rgba(40,40,40,0.95)' : 'rgba(245,245,245,0.95)', borderRadius: 24, paddingHorizontal: 16, paddingVertical: 8, borderWidth: 1, borderColor: theme.colors.border.light, minHeight: 44 }}>
+            {/* Commands button — same VISUAL height as the input bubble (40px),
+                width animates between full label (124) and icon-only (44) via
+                a single Animated.Value. Label fades out faster than the width
+                shrinks so the text never looks "squished".
+                NOTE on perf: width can't go through the native driver, but
+                this is one View that animates only on empty↔non-empty
+                transitions (~once per typing session), not per keystroke.
+                Opacity could go through native, but pinning both to the same
+                JS-driven value keeps them perfectly in sync. */}
+            <Animated.View style={{ width: commandWidth, height: 40, alignSelf: 'flex-end' }}>
+              <Pressable
+                onPress={() => { triggerHaptic('light'); setCommandsOpen((v) => !v); }}
+                hitSlop={6}
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 6,
+                  borderRadius: 20,
+                  backgroundColor: commandsOpen ? theme.colors.accent.primary : (theme.isDark ? 'rgba(40,40,40,0.95)' : 'rgba(245,245,245,0.95)'),
+                  borderWidth: 1,
+                  borderColor: theme.colors.border.light,
+                }}
+              >
+                <Feather name="command" size={15} color={commandsOpen ? '#FFFFFF' : theme.colors.accent.primary} />
+                {/* Label is always mounted but its opacity animates so the
+                    transition reads as a smooth fade rather than a pop. */}
+                <Animated.Text
+                  numberOfLines={1}
+                  style={{
+                    fontSize: 12,
+                    fontWeight: '600',
+                    color: commandsOpen ? '#FFFFFF' : theme.colors.accent.primary,
+                    opacity: commandLabelOpacity,
+                  }}
+                >Команды</Animated.Text>
+              </Pressable>
+            </Animated.View>
+
+            <View style={{ flex: 1, flexDirection: 'row', alignItems: 'flex-end', backgroundColor: theme.isDark ? 'rgba(40,40,40,0.95)' : 'rgba(245,245,245,0.95)', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 6, borderWidth: 1, borderColor: theme.colors.border.light, minHeight: 40 }}>
               <TextInput
                 value={input}
-                onChangeText={(t) => {
-                  // When transitioning between empty/non-empty, animate the
-                  // commands button's width so its label collapses smoothly.
-                  if ((t.length === 0) !== (input.length === 0)) {
-                    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-                  }
-                  setInput(t);
-                }}
+                onChangeText={setInput}
                 placeholder="Название песни или исполнителя..."
                 placeholderTextColor={theme.colors.text.tertiary}
                 multiline
@@ -292,16 +329,16 @@ export default function MusicChatScreen() {
                 returnKeyType="search"
                 onContentSizeChange={() => { LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); }}
               />
-              <Pressable onPress={handleSend} disabled={!input.trim() || isSearching} style={{ alignSelf: 'flex-end', width: 32, height: 32, borderRadius: 16, backgroundColor: input.trim() ? theme.colors.accent.primary : 'transparent', alignItems: 'center', justifyContent: 'center', marginLeft: 8, marginBottom: 2 }}>
-                <Feather name="search" size={14} color={input.trim() ? '#FFFFFF' : theme.colors.text.tertiary} />
+              <Pressable onPress={handleSend} disabled={!input.trim() || isSearching} style={{ alignSelf: 'flex-end', width: 28, height: 28, borderRadius: 14, backgroundColor: input.trim() ? theme.colors.accent.primary : 'transparent', alignItems: 'center', justifyContent: 'center', marginLeft: 8, marginBottom: 1 }}>
+                <Feather name="search" size={13} color={input.trim() ? '#FFFFFF' : theme.colors.text.tertiary} />
               </Pressable>
             </View>
           </View>
         </Reanimated.View>
       </KeyboardStickyView>
 
-      {/* Author info — native iOS pageSheet so the OS handles slide-up + drag-to-close. */}
       <AuthorInfoModal visible={!!authorTrack} track={authorTrack} onClose={() => setAuthorTrack(null)} />
+      <PlaylistSheet visible={playlistOpen} tracks={allUniqueTracks} onClose={() => setPlaylistOpen(false)} />
     </View>
   );
 }
