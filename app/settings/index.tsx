@@ -64,18 +64,22 @@ function SettingsRow({
         style={{
           width: 36,
           height: 36,
-          // Soft, almost-round container (~50% radius) — matches iOS/Telegram
-          // settings tile look. Image inside is also fully rounded so the icon
-          // and its bg blend into a single soft circle without hard corners.
+          // Circular tile (50% radius) — matches iOS / Telegram settings.
           borderRadius: 18,
-          backgroundColor: image ? 'transparent' : theme.colors.background.secondary,
+          // ALWAYS render the soft tile background, even when an image icon is
+          // provided. Without `backgroundColor` here the round shape is
+          // invisible (the image is square and shows hard corners).
+          backgroundColor: theme.colors.background.secondary,
+          // Clip whatever is inside (square PNG icons included) to the round
+          // container so the corners are visibly rounded.
+          overflow: 'hidden',
           alignItems: 'center',
           justifyContent: 'center',
           marginRight: 14,
         }}
       >
         {image ? (
-          <Image source={image} style={{ width: 30, height: 30, borderRadius: 15 }} />
+          <Image source={image} style={{ width: 36, height: 36 }} resizeMode="cover" />
         ) : icon ? (
           <Feather name={icon as keyof typeof Feather.glyphMap} size={18} color={theme.colors.text.secondary} />
         ) : null}

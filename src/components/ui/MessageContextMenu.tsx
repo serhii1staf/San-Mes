@@ -94,44 +94,41 @@ export function MessageContextMenu({ visible, message, isOwn, bubbleColor, bubbl
   const hasLink = !hasImages && !!extractFirstUrl(message.text);
 
   // Reserve space for: menu sheet + bottom inset + top inset + safety gap.
+  // The menu MUST stay fully visible — it's the entire reason the user
+  // long-pressed in the first place. Cap preview at 45% of the screen so it
+  // never dominates, even on shorter devices.
   const menuHeight = MENU_BASE_HEIGHT + items.length * MENU_ITEM_HEIGHT;
+  const availableForPreview = SCREEN_HEIGHT - menuHeight - insets.top - insets.bottom - 60;
   const previewMaxHeight = Math.max(
-    160,
-    SCREEN_HEIGHT - menuHeight - insets.top - insets.bottom - 40,
+    120,
+    Math.min(availableForPreview, SCREEN_HEIGHT * 0.45),
   );
 
-  // Image preview layout:
-  //  - 1 photo: large square (up to 220px wide / aspect-friendly)
-  //  - 2 photos: two columns of equal width
-  //  - 3 photos: three columns, smaller
-  //  - 4–6 photos: 3-column grid (wraps to 2 rows automatically)
-  //  - 7+: same 3-column grid, but wraps to more rows; ScrollView handles overflow
-  // All photos are shown — never sliced — and the surrounding ScrollView
-  // makes long stacks scrollable rather than cropped.
+  // Image preview layout — sized to keep ALL photos visible inside the
+  // preview's height budget. We pick a cell size that fits the row count we
+  // expect for a given image count.
   const renderImages = () => {
     if (!hasImages) return null;
     if (imageCount === 1) {
       return (
         <View style={{ marginBottom: message.text ? 6 : 0 }}>
-          <CachedImage uri={message.imageUrls![0]} style={{ width: 220, height: 220, borderRadius: 12 }} resizeMode="cover" />
+          <CachedImage uri={message.imageUrls![0]} style={{ width: 200, height: 200, borderRadius: 12 }} resizeMode="cover" />
         </View>
       );
     }
-    // Multi-image grid sized to the bubble's interior width (bubble maxWidth ~85% of screen, minus 28 padding).
-    // Use a sensible cap so the grid never gets visually noisy.
-    const containerWidth = Math.min(SCREEN_WIDTH * 0.85 - 28, 320);
+    // Bubble inner width: bubble maxWidth ~85% of screen − 28 padding, capped.
+    const containerWidth = Math.min(SCREEN_WIDTH * 0.85 - 28, 300);
     const gap = 4;
-    let cols: number;
     let cellSize: number;
     if (imageCount === 2) {
-      cols = 2;
-      cellSize = (containerWidth - gap) / 2;
+      cellSize = (containerWidth - gap) / 2; // ~148
     } else if (imageCount === 3) {
-      cols = 3;
-      cellSize = (containerWidth - 2 * gap) / 3;
+      cellSize = (containerWidth - 2 * gap) / 3; // ~97
     } else {
-      cols = 3;
-      cellSize = (containerWidth - 2 * gap) / 3;
+      // 4–6 photos in a 3-column grid → keep cells small (76px) so the whole
+      // 2-row grid stays well within `previewMaxHeight` and the menu below
+      // stays visible. 7+ wraps further; ScrollView handles overflow.
+      cellSize = 76;
     }
     return (
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap, marginBottom: message.text ? 6 : 0, width: containerWidth }}>
@@ -159,7 +156,9 @@ export function MessageContextMenu({ visible, message, isOwn, bubbleColor, bubbl
         <FormattedText color={bubbleTextColor} linkColor={isOwn ? '#FFFFFF' : theme.colors.accent.primary} style={{ fontSize: 15 }}>{message.text}</FormattedText>
       ) : null}
       {hasLink ? (
-        <View style={{ marginTop: 6, width: 280, maxWidth: '100%' }}>
+        // Cap the link preview height so video/rich previews don't blow up the
+        // bubble. Anything taller scrolls inside the surrounding ScrollView.
+        <View style={{ marginTop: 6, width: 260, maxWidth: '100%', maxHeight: 170, overflow: 'hidden' }}>
           <LinkPreview url={extractFirstUrl(message.text)!} textColor={isOwn ? '#FFFFFF' : undefined} emoji={linkEmoji} static />
         </View>
       ) : null}
