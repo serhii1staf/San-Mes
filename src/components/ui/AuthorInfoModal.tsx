@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Modal, Pressable, ScrollView, Linking, StyleSheet, ActivityIndicator, Animated, Dimensions, PanResponder } from 'react-native';
+import { View, Modal, Pressable, ScrollView, Linking, Animated, Dimensions, PanResponder, ActivityIndicator, StatusBar } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme';
@@ -7,13 +7,9 @@ import { Text } from './Text';
 import { CachedImage } from './CachedImage';
 import { Track } from '../../services/musicService';
 import { triggerHaptic } from '../../utils/haptics';
+import { kvGetJSONSync, kvSetJSON } from '../../services/kvStore';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
-// Sheet occupies a comfortable ~62% of the screen and is inset from every edge
-// so it never touches them — Telegram-style floating card.
-const SHEET_HEIGHT = Math.min(560, SCREEN_HEIGHT * 0.62);
-// How far the user has to drag down before we treat it as a dismiss intent.
-const DISMISS_THRESHOLD = SHEET_HEIGHT * 0.25;
 
 interface AuthorInfoModalProps {
   visible: boolean;
@@ -31,92 +27,100 @@ interface AuthorInfo {
   url?: string;
 }
 
-// Floating bottom sheet with author details. Custom rather than the iOS
-// pageSheet so:
-//   - it's inset from every screen edge (margins instead of edge-to-edge),
-//   - drag-to-close uses our own PanResponder (smooth, no first-tap-misses
-//     and no half-open artefacts the system pageSheet sometimes produces),
-//   - the same UI works identically on iOS and Android.
+// Per-track in-memory cache so re-opening the same author doesn't re-fetch.
+// Mirrored to MMKV with a generous 24h TTL — author profiles barely change.
+const memCache = new Map<string, AuthorInfo>();
+const KV_PREFIX = 'author_info:';
+const KV_TTL_MS = 24 * 60 * 60 * 1000;
+
+function readCached(trackId: string): AuthorInfo | null {
+  const mem = memCache.get(trackId);
+  if (mem) return mem;
+  try {
+    const persisted = kvGetJSONSync<{ ts: number; data: AuthorInfo } | null>(KV_PREFIX + trackId, null);
+    if (persisted && Date.now() - persisted.ts < KV_TTL_MS) {
+      memCache.set(trackId, persisted.data);
+      return persisted.data;
+    }
+  } catch {}
+  return null;
+}
+
+function writeCached(trackId: string, data: AuthorInfo): void {
+  memCache.set(trackId, data);
+  try { kvSetJSON(KV_PREFIX + trackId, { ts: Date.now(), data }); } catch {}
+}
+
+// Author info sheet — same chrome as the feed PostMenuModal so the music chat
+// uses the platform's familiar bottom-sheet shape (rounded 28, side margin 8,
+// shadow, drag-to-close, dismiss-on-backdrop).
+//
+// Cached: when the user reopens for the same track we render instantly from
+// cache; the background refetch only happens if the cache is empty.
 export function AuthorInfoModal({ visible, track, onClose }: AuthorInfoModalProps) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
-  const [info, setInfo] = useState<AuthorInfo | null>(null);
+  // Seed from cache so the sheet content is visible IMMEDIATELY on second open.
+  const [info, setInfo] = useState<AuthorInfo | null>(() => track ? readCached(track.id) : null);
   const [loading, setLoading] = useState(false);
 
-  // Animated state. `translateY` drives both the open/close transitions and
-  // the live drag. `backdrop` cross-fades the dim background.
-  const translateY = useRef(new Animated.Value(SHEET_HEIGHT + 60)).current;
-  const backdrop = useRef(new Animated.Value(0)).current;
-  // True for the duration of the dismiss animation so any further pan events
-  // are ignored — prevents the "sometimes doesn't close on first swipe" feel.
-  const closing = useRef(false);
+  const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
+  const backdropAnim = useRef(new Animated.Value(0)).current;
+  const dragY = useRef(new Animated.Value(0)).current;
+  const isClosing = useRef(false);
 
-  // Open animation when `visible` flips on.
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (_, g) => g.dy > 10,
+      onPanResponderMove: (_, g) => { if (g.dy > 0) dragY.setValue(g.dy); },
+      onPanResponderRelease: (_, g) => {
+        if (g.dy > 80 || g.vy > 0.5) dismiss();
+        else Animated.spring(dragY, { toValue: 0, useNativeDriver: true, tension: 120, friction: 10 }).start();
+      },
+    })
+  ).current;
+
+  // Open animation + cached/network fetch.
   useEffect(() => {
-    if (visible) {
-      closing.current = false;
-      translateY.setValue(SHEET_HEIGHT + 60);
-      backdrop.setValue(0);
-      Animated.parallel([
-        Animated.spring(translateY, { toValue: 0, useNativeDriver: true, tension: 60, friction: 11 }),
-        Animated.timing(backdrop, { toValue: 1, duration: 200, useNativeDriver: true }),
-      ]).start();
+    if (!visible) return;
+    isClosing.current = false;
+    dragY.setValue(0);
+    slideAnim.setValue(SCREEN_HEIGHT);
+    backdropAnim.setValue(0);
+    Animated.parallel([
+      Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 50, friction: 9 }),
+      Animated.timing(backdropAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
+    ]).start();
+
+    if (!track) return;
+    const cached = readCached(track.id);
+    if (cached) {
+      setInfo(cached);
+      setLoading(false);
+      return;
     }
-  }, [visible]);
-
-  // Fetch author meta only when we actually need it.
-  useEffect(() => {
-    if (!visible || !track) return;
-    let cancelled = false;
-    setInfo(null);
+    // Cold cache — show what we have synchronously (artist name) and load.
+    setInfo({ name: track.artist || 'Unknown' });
     setLoading(true);
+    let cancelled = false;
     fetchAuthorInfo(track).then((data) => {
-      if (!cancelled) {
-        setInfo(data);
-        setLoading(false);
-      }
+      if (cancelled) return;
+      writeCached(track.id, data);
+      setInfo(data);
+      setLoading(false);
     });
     return () => { cancelled = true; };
   }, [visible, track?.id]);
 
-  const animateClose = () => {
-    if (closing.current) return;
-    closing.current = true;
+  const dismiss = () => {
+    if (isClosing.current) return;
+    isClosing.current = true;
     Animated.parallel([
-      Animated.timing(translateY, { toValue: SHEET_HEIGHT + 60, duration: 220, useNativeDriver: true }),
-      Animated.timing(backdrop, { toValue: 0, duration: 200, useNativeDriver: true }),
-    ]).start(() => {
-      onClose();
-    });
+      Animated.timing(slideAnim, { toValue: SCREEN_HEIGHT, duration: 250, useNativeDriver: true }),
+      Animated.timing(backdropAnim, { toValue: 0, duration: 250, useNativeDriver: true }),
+    ]).start(() => setTimeout(onClose, 30));
   };
-
-  // Pan handler — claim only clearly-vertical downward gestures so the inner
-  // ScrollView still owns its own scroll, and so a tap on a button never
-  // accidentally arms a dismiss.
-  const panResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => false,
-      onMoveShouldSetPanResponder: (_, g) => g.dy > 8 && Math.abs(g.dy) > Math.abs(g.dx) * 1.5,
-      onPanResponderMove: (_, g) => {
-        if (closing.current) return;
-        if (g.dy > 0) translateY.setValue(g.dy);
-      },
-      onPanResponderRelease: (_, g) => {
-        if (closing.current) return;
-        // Either pulled past the threshold OR flicked downward → dismiss.
-        if (g.dy > DISMISS_THRESHOLD || g.vy > 0.6) {
-          animateClose();
-        } else {
-          Animated.spring(translateY, { toValue: 0, useNativeDriver: true, tension: 90, friction: 11 }).start();
-        }
-      },
-      onPanResponderTerminate: () => {
-        if (!closing.current) {
-          Animated.spring(translateY, { toValue: 0, useNativeDriver: true, tension: 90, friction: 11 }).start();
-        }
-      },
-    }),
-  ).current;
 
   if (!track) return null;
 
@@ -127,127 +131,107 @@ export function AuthorInfoModal({ visible, track, onClose }: AuthorInfoModalProp
     return String(n);
   };
 
-  // Side margins keep the sheet off the edges. Bottom margin sits above the
-  // home indicator. SHEET_HEIGHT is fixed so the sheet always stops at the
-  // same place no matter how tall the device.
-  const sheetBottomMargin = Math.max(insets.bottom, 12) + 8;
+  const translateY = Animated.add(slideAnim, dragY);
+  const sheetBg = theme.isDark ? theme.colors.background.elevated : '#FFFFFF';
 
   return (
-    <Modal visible={visible} transparent animationType="none" onRequestClose={animateClose} statusBarTranslucent>
-      <View style={StyleSheet.absoluteFill}>
-        {/* Backdrop — tap to dismiss, fades in/out */}
-        <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.5)', opacity: backdrop }]}>
-          <Pressable style={{ flex: 1 }} onPress={animateClose} />
+    <Modal visible={visible} transparent animationType="none" onRequestClose={dismiss} statusBarTranslucent>
+      <StatusBar hidden />
+      <View style={{ flex: 1 }}>
+        {/* Backdrop */}
+        <Animated.View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)', opacity: backdropAnim }}>
+          <Pressable style={{ flex: 1 }} onPress={dismiss} />
         </Animated.View>
 
-        {/* Floating sheet — inset from edges, animated translate */}
-        <Animated.View
-          style={{
-            position: 'absolute',
-            left: 12,
-            right: 12,
-            bottom: sheetBottomMargin,
-            height: SHEET_HEIGHT,
-            backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF',
-            borderRadius: 24,
-            overflow: 'hidden',
-            shadowColor: '#000',
-            shadowOffset: { width: 0, height: 8 },
-            shadowOpacity: 0.22,
-            shadowRadius: 24,
-            elevation: 14,
-            transform: [{ translateY }],
-          }}
-        >
-          {/* Drag handle area — only this region claims pan gestures so the
-              ScrollView below scrolls normally. */}
-          <View {...panResponder.panHandlers} style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 6 }}>
-            <View style={{ width: 40, height: 5, borderRadius: 3, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.12)' }} />
-          </View>
-
-          {/* Header */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingBottom: 8 }}>
-            <Text variant="body" weight="bold" style={{ fontSize: 16 }}>Об авторе</Text>
-            <Pressable onPress={animateClose} hitSlop={8} style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)', alignItems: 'center', justifyContent: 'center' }}>
-              <Feather name="x" size={16} color={theme.colors.text.primary} />
-            </Pressable>
-          </View>
-
-          <ScrollView
-            contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 20 }}
-            showsVerticalScrollIndicator={false}
-            // Disable bounce so the user's dismiss-pull at the top doesn't
-            // get caught by a rubber-band; the sheet's own pan handles it.
-            bounces={false}
-          >
-            <View style={{ alignItems: 'center', paddingTop: 4, paddingBottom: 16 }}>
-              {info?.avatar ? (
-                <CachedImage uri={info.avatar} style={{ width: 80, height: 80, borderRadius: 40, backgroundColor: theme.colors.background.secondary }} resizeMode="cover" />
-              ) : (
-                <View style={{ width: 80, height: 80, borderRadius: 40, backgroundColor: theme.colors.background.secondary, alignItems: 'center', justifyContent: 'center' }}>
-                  <Feather name="user" size={32} color={theme.colors.text.tertiary} />
-                </View>
-              )}
-              <Text variant="body" weight="bold" style={{ marginTop: 10, fontSize: 17 }} numberOfLines={1}>{info?.name || track.artist || 'Unknown'}</Text>
-              {info?.handle ? (
-                <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginTop: 2 }}>@{info.handle}</Text>
-              ) : null}
-            </View>
-
-            {(info?.followers != null || info?.trackCount != null) && (
-              <View style={{ flexDirection: 'row', justifyContent: 'space-around', paddingVertical: 12, marginBottom: 14, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)', borderRadius: 14 }}>
-                {info?.trackCount != null && (
-                  <View style={{ alignItems: 'center' }}>
-                    <Text variant="body" weight="bold">{formatCount(info.trackCount)}</Text>
-                    <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>треков</Text>
-                  </View>
-                )}
-                {info?.followers != null && (
-                  <View style={{ alignItems: 'center' }}>
-                    <Text variant="body" weight="bold">{formatCount(info.followers)}</Text>
-                    <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>подписчиков</Text>
-                  </View>
-                )}
+        {/* Sheet — anchored to bottom, height grows with content (capped). */}
+        <View style={{ flex: 1, justifyContent: 'flex-end' }} pointerEvents="box-none">
+          <Animated.View style={{ transform: [{ translateY }] }} {...panResponder.panHandlers}>
+            <View style={{ marginHorizontal: 8, marginBottom: 16, backgroundColor: sheetBg, borderRadius: 28, shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.12, shadowRadius: 16, elevation: 10 }}>
+              {/* Handle */}
+              <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 6 }}>
+                <View style={{ width: 40, height: 5, borderRadius: 3, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)' }} />
               </View>
-            )}
 
-            {info?.bio ? (
-              <View style={{ marginBottom: 14, padding: 14, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)', borderRadius: 14 }}>
-                <Text variant="caption" weight="semibold" color={theme.colors.text.tertiary} style={{ marginBottom: 4, textTransform: 'uppercase', fontSize: 10 }}>Биография</Text>
-                <Text variant="body" style={{ fontSize: 13, lineHeight: 19 }}>{info.bio}</Text>
+              {/* Title row */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingBottom: 4 }}>
+                <Text variant="body" weight="semibold" style={{ fontSize: 15 }}>Об авторе</Text>
+                <Pressable onPress={dismiss} hitSlop={8} style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', alignItems: 'center', justifyContent: 'center' }}>
+                  <Feather name="x" size={14} color={theme.colors.text.primary} />
+                </Pressable>
               </View>
-            ) : null}
 
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 6, marginBottom: 12 }}>
-              <Feather name="music" size={11} color={theme.colors.text.tertiary} />
-              <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 10 }}>
-                Источник: {track.sourceHost.includes('soundcloud') ? 'SoundCloud' : track.sourceHost.includes('itunes') ? 'iTunes' : track.sourceHost.includes('audius') ? 'Audius' : track.sourceHost}
-              </Text>
-            </View>
-
-            {info?.url ? (
-              <Pressable
-                onPress={() => { triggerHaptic('light'); Linking.openURL(info.url!).catch(() => {}); }}
-                style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 12, borderRadius: 12, backgroundColor: theme.colors.accent.primary }}
+              {/* Body — capped so the sheet stops growing on huge bios. */}
+              <ScrollView
+                style={{ maxHeight: SCREEN_HEIGHT * 0.55 }}
+                contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 8, paddingBottom: Math.max(insets.bottom, 8) + 16 }}
+                showsVerticalScrollIndicator={false}
+                bounces={false}
               >
-                <Feather name="external-link" size={14} color="#FFFFFF" />
-                <Text variant="body" weight="semibold" color="#FFFFFF" style={{ fontSize: 14 }}>Открыть профиль</Text>
-              </Pressable>
-            ) : null}
+                {/* Identity */}
+                <View style={{ alignItems: 'center', paddingTop: 4, paddingBottom: 14 }}>
+                  {info?.avatar ? (
+                    <CachedImage uri={info.avatar} style={{ width: 76, height: 76, borderRadius: 38, backgroundColor: theme.colors.background.secondary }} resizeMode="cover" />
+                  ) : (
+                    <View style={{ width: 76, height: 76, borderRadius: 38, backgroundColor: theme.colors.background.secondary, alignItems: 'center', justifyContent: 'center' }}>
+                      <Feather name="user" size={30} color={theme.colors.text.tertiary} />
+                    </View>
+                  )}
+                  <Text variant="body" weight="bold" style={{ marginTop: 10, fontSize: 17 }} numberOfLines={1}>{info?.name || track.artist || 'Unknown'}</Text>
+                  {info?.handle ? (
+                    <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginTop: 2 }}>@{info.handle}</Text>
+                  ) : null}
+                </View>
 
-            {loading ? (
-              <View style={{ paddingVertical: 12, alignItems: 'center' }}>
-                <ActivityIndicator size="small" color={theme.colors.accent.primary} />
-              </View>
-            ) : null}
+                {(info?.followers != null || info?.trackCount != null) && (
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-around', paddingVertical: 12, marginBottom: 12, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)', borderRadius: 14 }}>
+                    {info?.trackCount != null && (
+                      <View style={{ alignItems: 'center' }}>
+                        <Text variant="body" weight="bold">{formatCount(info.trackCount)}</Text>
+                        <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>треков</Text>
+                      </View>
+                    )}
+                    {info?.followers != null && (
+                      <View style={{ alignItems: 'center' }}>
+                        <Text variant="body" weight="bold">{formatCount(info.followers)}</Text>
+                        <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>подписчиков</Text>
+                      </View>
+                    )}
+                  </View>
+                )}
 
-            {!loading && !info ? (
-              <Text variant="caption" color={theme.colors.text.tertiary} align="center" style={{ paddingVertical: 12 }}>
-                Информация об авторе недоступна
-              </Text>
-            ) : null}
-          </ScrollView>
-        </Animated.View>
+                {info?.bio ? (
+                  <View style={{ marginBottom: 12, padding: 12, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)', borderRadius: 14 }}>
+                    <Text variant="caption" weight="semibold" color={theme.colors.text.tertiary} style={{ marginBottom: 4, textTransform: 'uppercase', fontSize: 10 }}>Биография</Text>
+                    <Text variant="body" style={{ fontSize: 13, lineHeight: 19 }}>{info.bio}</Text>
+                  </View>
+                ) : null}
+
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 4, marginBottom: 10 }}>
+                  <Feather name="music" size={11} color={theme.colors.text.tertiary} />
+                  <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 10 }}>
+                    Источник: {track.sourceHost.includes('soundcloud') ? 'SoundCloud' : track.sourceHost.includes('itunes') ? 'iTunes' : track.sourceHost.includes('audius') ? 'Audius' : track.sourceHost}
+                  </Text>
+                </View>
+
+                {info?.url ? (
+                  <Pressable
+                    onPress={() => { triggerHaptic('light'); Linking.openURL(info.url!).catch(() => {}); }}
+                    style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 12, borderRadius: 12, backgroundColor: theme.colors.accent.primary }}
+                  >
+                    <Feather name="external-link" size={14} color="#FFFFFF" />
+                    <Text variant="body" weight="semibold" color="#FFFFFF" style={{ fontSize: 14 }}>Открыть профиль</Text>
+                  </Pressable>
+                ) : null}
+
+                {loading && !info ? (
+                  <View style={{ paddingVertical: 12, alignItems: 'center' }}>
+                    <ActivityIndicator size="small" color={theme.colors.accent.primary} />
+                  </View>
+                ) : null}
+              </ScrollView>
+            </View>
+          </Animated.View>
+        </View>
       </View>
     </Modal>
   );
@@ -278,22 +262,14 @@ async function fetchAuthorInfo(track: Track): Promise<AuthorInfo> {
         }
       }
     } else if (track.id.startsWith('sc-')) {
-      return {
-        ...fallback,
-        url: `https://soundcloud.com/search/people?q=${encodeURIComponent(track.artist)}`,
-      };
+      return { ...fallback, url: `https://soundcloud.com/search/people?q=${encodeURIComponent(track.artist)}` };
     } else if (track.id.startsWith('itunes-')) {
       const res = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(track.artist)}&entity=musicArtist&limit=1`, { signal: ctrl.signal });
       clearTimeout(timeout);
       if (res.ok) {
         const json = await res.json();
         const a = Array.isArray(json?.results) ? json.results[0] : null;
-        if (a) {
-          return {
-            name: a.artistName || fallback.name,
-            url: a.artistLinkUrl,
-          };
-        }
+        if (a) return { name: a.artistName || fallback.name, url: a.artistLinkUrl };
       }
     }
   } catch {}

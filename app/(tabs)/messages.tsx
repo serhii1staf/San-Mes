@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { View, FlatList, Pressable, ViewStyle, TextInput, StyleSheet, Text as RNText, Alert } from 'react-native';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { View, FlatList, Pressable, ViewStyle, TextInput, StyleSheet, Text as RNText, Alert, Animated, Easing } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -14,47 +14,11 @@ import { syncConversations, syncProfiles } from '../../src/services/syncService'
 import { kvGetJSONSync, kvSetJSON, kvWarm } from '../../src/services/kvStore';
 import { useMiniAppsStore } from '../../src/store/miniAppsStore';
 import { useChatSettingsStore, GLOBAL_CHAT_SETTINGS_KEY } from '../../src/store/chatSettingsStore';
-import { useSpecialChatsStore } from '../../src/store/specialChatsStore';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { Conversation } from '../../src/types';
 
-function AIConversationItem() {
-  const theme = useTheme();
-  return (
-    <Pressable onPress={() => router.push('/chat/ai' as any)} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: theme.spacing.md, paddingHorizontal: theme.spacing.base }}>
-      <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: theme.colors.accent.primary + '15', alignItems: 'center', justifyContent: 'center', overflow: 'visible' }}>
-        <RNText style={{ fontSize: 22 }} allowFontScaling={false}>🤖</RNText>
-      </View>
-      <View style={{ flex: 1, marginLeft: theme.spacing.md }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-          <Text variant="body" weight="semibold">San AI</Text>
-          <VerifiedBadge size={12} />
-        </View>
-        <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>Ассистент • темы, профиль, настройки</Text>
-      </View>
-      <Feather name="chevron-right" size={16} color={theme.colors.text.tertiary} />
-    </Pressable>
-  );
-}
-
-function MusicConversationItem() {
-  const theme = useTheme();
-  return (
-    <Pressable onPress={() => router.push('/chat/music' as any)} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: theme.spacing.md, paddingHorizontal: theme.spacing.base }}>
-      <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: theme.colors.accent.primary + '15', alignItems: 'center', justifyContent: 'center', overflow: 'visible' }}>
-        <RNText style={{ fontSize: 22 }} allowFontScaling={false}>🎵</RNText>
-      </View>
-      <View style={{ flex: 1, marginLeft: theme.spacing.md }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-          <Text variant="body" weight="semibold">Музыка</Text>
-          <VerifiedBadge size={12} />
-        </View>
-        <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>Найти и слушать песни</Text>
-      </View>
-      <Feather name="chevron-right" size={16} color={theme.colors.text.tertiary} />
-    </Pressable>
-  );
-}
+function AIConversationItem() { return null; }
+function MusicConversationItem() { return null; }
 
 function MiniAppsRow() {
   const theme = useTheme();
@@ -225,28 +189,14 @@ export default function MessagesScreen() {
   const entityConversations = useEntityStore((s) => s.conversations);
   const user = useAuthStore((s) => s.user);
   const [searchQuery, setSearchQuery] = useState('');
-  const [showFabMenu, setShowFabMenu] = useState(false);
   const [activeTab, setActiveTab] = useState<ChatTab>('chats');
   const archived = useChatSettingsStore((s) => s.archived);
   const blocked = useChatSettingsStore((s) => s.blocked);
   const deleted = useChatSettingsStore((s) => s.deleted);
-  const aiLastOpened = useSpecialChatsStore((s) => s.aiLastOpened);
-  const musicLastOpened = useSpecialChatsStore((s) => s.musicLastOpened);
 
-  // Built-in chats (San AI, Music) appear ONLY after being opened, ordered by
-  // most-recently-opened first — just like normal conversations by activity.
-  const specialChats = useMemo(() => {
-    const items: { key: 'ai' | 'music'; ts: number }[] = [];
-    if (aiLastOpened) items.push({ key: 'ai', ts: aiLastOpened });
-    if (musicLastOpened) items.push({ key: 'music', ts: musicLastOpened });
-    items.sort((a, b) => b.ts - a.ts);
-    if (items.length === 0) return null;
-    return (
-      <View>
-        {items.map((it) => it.key === 'ai' ? <AIConversationItem key="ai" /> : <MusicConversationItem key="music" />)}
-      </View>
-    );
-  }, [aiLastOpened, musicLastOpened]);
+  // San AI / Music chats are no longer surfaced in this list — they live
+  // exclusively behind the FAB. The list shows only real conversations.
+  const specialChats = null;
 
   // Instant cache-first hydrate of the conversation list from MMKV (sync) so the
   // chat list paints immediately on cold start, even offline, before any sync.
@@ -428,55 +378,145 @@ export default function MessagesScreen() {
         />
       )}
 
-      {/* FAB with popup menu */}
-      {showFabMenu && (
-        <Pressable onPress={() => setShowFabMenu(false)} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 200 }}>
-          <View style={{ position: 'absolute', bottom: 164, right: theme.spacing.lg, backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF', borderRadius: 16, overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 12, elevation: 8, borderWidth: 0.5, borderColor: theme.colors.border.light }}>
-            <Pressable onPress={() => { setShowFabMenu(false); router.push('/settings/mini-apps' as any); }} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, gap: 10 }}>
-              <Feather name="grid" size={16} color={theme.colors.accent.primary} />
-              <Text variant="caption" weight="medium">Мини-приложения</Text>
-            </Pressable>
-            <View style={{ height: 0.5, backgroundColor: theme.colors.border.light }} />
-            <Pressable onPress={() => { setShowFabMenu(false); router.push('/chat/ai' as any); }} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, gap: 10 }}>
-              <Feather name="cpu" size={16} color={theme.colors.accent.primary} />
-              <Text variant="caption" weight="medium">San AI</Text>
-            </Pressable>
-            <View style={{ height: 0.5, backgroundColor: theme.colors.border.light }} />
-            <Pressable onPress={() => { setShowFabMenu(false); router.push('/chat/music' as any); }} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, gap: 10 }}>
-              <Feather name="music" size={16} color={theme.colors.accent.primary} />
-              <Text variant="caption" weight="medium">Музыка</Text>
-            </Pressable>
-            <View style={{ height: 0.5, backgroundColor: theme.colors.border.light }} />
-            <Pressable onPress={() => { setShowFabMenu(false); router.push({ pathname: '/settings/chat-settings', params: { id: GLOBAL_CHAT_SETTINGS_KEY } } as any); }} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, gap: 10 }}>
-              <Feather name="settings" size={16} color={theme.colors.text.secondary} />
-              <Text variant="caption" weight="medium">Настройка чатов</Text>
-            </Pressable>
-          </View>
-        </Pressable>
-      )}
+      {/* FAB + popup menu — Apple-style: scale-and-fade out of the FAB itself
+          (origin = bottom-right of the FAB). Single Animated value drives both
+          scale (0.6→1) and opacity so the menu visually grows out of the
+          button. Closing reverses the same spring. Origin via transform
+          translation keeps the GPU on the native driver throughout. */}
+      <FabWithMenu />
+    </View>
+  );
+}
+
+// Standalone subcomponent — keeps the screen's own re-renders independent of
+// FAB animation state, and isolates the Animated.Value lifecycle.
+function FabWithMenu() {
+  const theme = useTheme();
+  const [open, setOpen] = useState(false);
+  // Mounted holds the menu in the tree during the close animation so the
+  // exit tween can play before unmount. open = visible state, mounted = in tree.
+  const [mounted, setMounted] = useState(false);
+  const anim = useRef(new Animated.Value(0)).current; // 0 = closed, 1 = open
+
+  useEffect(() => {
+    if (open) {
+      setMounted(true);
+      Animated.spring(anim, { toValue: 1, useNativeDriver: true, tension: 70, friction: 12 }).start();
+    } else if (mounted) {
+      Animated.timing(anim, { toValue: 0, duration: 180, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start(() => setMounted(false));
+    }
+  }, [open]);
+
+  const toggle = () => { triggerHaptic('light'); setOpen((v) => !v); };
+  const navigate = (action: () => void) => {
+    setOpen(false);
+    // Defer navigation by one frame so the FAB icon has a chance to swap to
+    // the closed state before the next screen mounts — feels much smoother.
+    requestAnimationFrame(action);
+  };
+
+  // Single source of truth for both transforms — interpolated for each
+  // animated property. This way the close tween is exactly the inverse of the
+  // open spring, no double-anim glue.
+  const menuOpacity = anim;
+  const menuScale = anim.interpolate({ inputRange: [0, 1], outputRange: [0.55, 1] });
+  // Translation pulls the menu UP from the FAB position so it appears to
+  // "grow out" of the button instead of dropping in from above.
+  const menuTranslateY = anim.interpolate({ inputRange: [0, 1], outputRange: [40, 0] });
+  // Backdrop fades a touch slower so it doesn't snap.
+  const backdropOpacity = anim.interpolate({ inputRange: [0, 1], outputRange: [0, 1] });
+  // FAB icon rotates 45° to morph "edit"→"x" without swapping the icon mid-frame.
+  const fabIconRotate = anim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '45deg'] });
+
+  return (
+    <>
+      {mounted ? (
+        <>
+          {/* Backdrop — tap anywhere to close. */}
+          <Animated.View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.18)', opacity: backdropOpacity, zIndex: 200 }}>
+            <Pressable style={{ flex: 1 }} onPress={() => setOpen(false)} />
+          </Animated.View>
+
+          {/* Menu — anchored above the FAB; transformOrigin = bottom-right via
+              translate so scale grows out of the FAB. */}
+          <Animated.View
+            // pointerEvents=none on closed → no taps on collapsed (invisible) menu.
+            pointerEvents={open ? 'auto' : 'none'}
+            style={{
+              position: 'absolute',
+              bottom: 164,
+              right: 24,
+              opacity: menuOpacity,
+              transform: [
+                { translateY: menuTranslateY },
+                // Anchor the scale to the bottom-right so it appears to grow
+                // out of the FAB's center.
+                { translateX: 110 }, { translateY: 110 },
+                { scale: menuScale },
+                { translateX: -110 }, { translateY: -110 },
+              ],
+              backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF',
+              borderRadius: 18,
+              overflow: 'hidden',
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: 6 },
+              shadowOpacity: 0.18,
+              shadowRadius: 20,
+              elevation: 14,
+              borderWidth: 0.5,
+              borderColor: theme.colors.border.light,
+              zIndex: 201,
+              minWidth: 220,
+            }}
+          >
+            <FabMenuItem icon="grid" label="Мини-приложения" tint={theme.colors.accent.primary} onPress={() => navigate(() => router.push('/settings/mini-apps' as any))} />
+            <FabSeparator color={theme.colors.border.light} />
+            <FabMenuItem icon="cpu" label="San AI" tint={theme.colors.accent.primary} onPress={() => navigate(() => router.push('/chat/ai' as any))} />
+            <FabSeparator color={theme.colors.border.light} />
+            <FabMenuItem icon="music" label="Музыка" tint={theme.colors.accent.primary} onPress={() => navigate(() => router.push('/chat/music' as any))} />
+            <FabSeparator color={theme.colors.border.light} />
+            <FabMenuItem icon="settings" label="Настройка чатов" tint={theme.colors.text.secondary} onPress={() => navigate(() => router.push({ pathname: '/settings/chat-settings', params: { id: GLOBAL_CHAT_SETTINGS_KEY } } as any))} />
+          </Animated.View>
+        </>
+      ) : null}
 
       <Pressable
-        onPress={() => setShowFabMenu(!showFabMenu)}
+        onPress={toggle}
         style={{
           position: 'absolute',
           bottom: 100,
-          right: theme.spacing.lg,
+          right: 24,
           width: 56,
           height: 56,
           borderRadius: 28,
           backgroundColor: theme.colors.accent.primary,
           alignItems: 'center',
           justifyContent: 'center',
-          elevation: 4,
+          elevation: 6,
           shadowColor: '#000',
-          shadowOffset: { width: 0, height: 2 },
-          shadowOpacity: 0.2,
-          shadowRadius: 4,
-          zIndex: 201,
+          shadowOffset: { width: 0, height: 4 },
+          shadowOpacity: 0.22,
+          shadowRadius: 8,
+          zIndex: 202,
         }}
       >
-        <Feather name={showFabMenu ? 'x' : 'edit'} size={22} color={theme.colors.text.inverse} />
+        <Animated.View style={{ transform: [{ rotate: fabIconRotate }] }}>
+          <Feather name="edit" size={22} color="#FFFFFF" />
+        </Animated.View>
       </Pressable>
-    </View>
+    </>
   );
+}
+
+function FabMenuItem({ icon, label, tint, onPress }: { icon: string; label: string; tint: string; onPress: () => void }) {
+  return (
+    <Pressable onPress={onPress} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 13, gap: 12 }}>
+      <Feather name={icon as any} size={16} color={tint} />
+      <Text variant="caption" weight="medium" style={{ fontSize: 13 }}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function FabSeparator({ color }: { color: string }) {
+  return <View style={{ height: 0.5, backgroundColor: color }} />;
 }
