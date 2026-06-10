@@ -127,7 +127,29 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
   );
 }
 
-const MemoMessageBubble = React.memo(MessageBubble);
+const MemoMessageBubble = React.memo(MessageBubble, (prev, next) => {
+  // Callbacks are stabilized with useCallback in the screen, so we compare only
+  // the data that actually affects this bubble's output. This stops the whole
+  // list from re-rendering when unrelated state (typing, scroll, search) changes.
+  const pm = prev.message;
+  const nm = next.message;
+  return (
+    pm.id === nm.id &&
+    pm.text === nm.text &&
+    pm.createdAt === nm.createdAt &&
+    pm.replyToText === nm.replyToText &&
+    pm.replyToImage === nm.replyToImage &&
+    (pm.imageUrls === nm.imageUrls ||
+      (pm.imageUrls?.length === nm.imageUrls?.length &&
+        (pm.imageUrls || []).every((u, i) => u === nm.imageUrls?.[i]))) &&
+    prev.isOwn === next.isOwn &&
+    prev.fontSize === next.fontSize &&
+    prev.bubbleRadius === next.bubbleRadius &&
+    prev.fontFamily === next.fontFamily &&
+    prev.linkEmoji === next.linkEmoji &&
+    prev.highlighted === next.highlighted
+  );
+});
 
 export default function ChatScreen() {
   const theme = useTheme();

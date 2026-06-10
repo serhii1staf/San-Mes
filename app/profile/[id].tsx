@@ -28,6 +28,7 @@ import { extractFirstUrl } from '../../src/services/linkPreview';
 import { PostContextMenu } from '../../src/components/ui/PostContextMenu';
 import { SwipeablePostCard } from '../../src/components/ui/SwipeablePostCard';
 import { PanResponder } from 'react-native';
+import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const SCREEN_HEIGHT = Dimensions.get('window').height;
@@ -235,7 +236,7 @@ export default function UserProfileScreen() {
   const [activeTab, setActiveTab] = useState<TabName>('posts');
   const [showMenu, setShowMenu] = useState(false);
   const [viewingImage, setViewingImage] = useState<{ uri: string; postId: string; allImages?: string[] } | null>(null);
-  const [contextPost, setContextPost] = useState<any>(null);
+  const { target: contextPost, open: openContextMenu, close: closeContextMenu } = useContextMenuGuard<any>();
   const [visibleCount, setVisibleCount] = useState(8);
   const scrollY = useRef(new Animated.Value(0)).current;
   const headerOpacity = scrollY.interpolate({ inputRange: [0, 50, 120], outputRange: [0, 0, 1], extrapolate: 'clamp' });
@@ -535,7 +536,7 @@ export default function UserProfileScreen() {
               const origPost = post.originalPost;
               return (
               <SwipeablePostCard key={post.id} shareText={`${displayProfile.display_name}: ${post.content || ''}\nhttps://san-m-app.com/post/${post.id}`}>
-              <Pressable onPress={() => router.push({ pathname: '/comments/[id]', params: { id: post.id } })} onLongPress={() => { triggerHaptic('medium'); setContextPost({ ...post, authorName: displayProfile.display_name, authorUsername: displayProfile.username, authorEmoji: displayProfile.emoji || '😊', authorVerified: displayProfile.is_verified, authorBadge: displayProfile.badge, authorId: displayProfile.id }); }} delayLongPress={400} style={{ flexDirection: 'row', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.75)', borderRadius: 28, padding: 10, marginBottom: 12, borderWidth: 1, borderColor: theme.isDark ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.4)', overflow: 'hidden' }}>
+              <Pressable onPress={() => router.push({ pathname: '/comments/[id]', params: { id: post.id } })} onLongPress={() => { triggerHaptic('medium'); openContextMenu({ ...post, authorName: displayProfile.display_name, authorUsername: displayProfile.username, authorEmoji: displayProfile.emoji || '😊', authorVerified: displayProfile.is_verified, authorBadge: displayProfile.badge, authorId: displayProfile.id }); }} delayLongPress={400} style={{ flexDirection: 'row', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.75)', borderRadius: 28, padding: 10, marginBottom: 12, borderWidth: 1, borderColor: theme.isDark ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.4)', overflow: 'hidden' }}>
                 {/* Left: Image grid thumbnail */}
                 {hasImage ? (
                   <Pressable onPress={() => setViewingImage({ uri: postImages[0], postId: post.id, allImages: postImages })}>
@@ -598,7 +599,7 @@ export default function UserProfileScreen() {
                   {!hasImage && (() => {
                     const link = extractFirstUrl(post.content || origPost?.content || '');
                     return link ? (
-                      <Pressable onLongPress={() => { triggerHaptic('medium'); setContextPost({ ...post, authorName: displayProfile.display_name, authorUsername: displayProfile.username, authorEmoji: displayProfile.emoji || '😊', authorVerified: displayProfile.is_verified, authorBadge: displayProfile.badge, authorId: displayProfile.id }); }} delayLongPress={400} style={{ marginBottom: 6 }}>
+                      <Pressable onLongPress={() => { triggerHaptic('medium'); openContextMenu({ ...post, authorName: displayProfile.display_name, authorUsername: displayProfile.username, authorEmoji: displayProfile.emoji || '😊', authorVerified: displayProfile.is_verified, authorBadge: displayProfile.badge, authorId: displayProfile.id }); }} delayLongPress={400} style={{ marginBottom: 6 }}>
                         <LinkPreview url={link} static />
                       </Pressable>
                     ) : null;
@@ -725,7 +726,7 @@ export default function UserProfileScreen() {
           </View>
         </View>
       </Modal>
-      <PostContextMenu visible={!!contextPost} post={contextPost} isOwnPost={isOwnProfile} onClose={() => setContextPost(null)} onDelete={isOwnProfile ? async (postId) => { if (currentUser?.id) { await deletePost(postId, currentUser.id); } setContextPost(null); } : undefined} />
+      <PostContextMenu visible={!!contextPost} post={contextPost} isOwnPost={isOwnProfile} onClose={closeContextMenu} onDelete={isOwnProfile ? async (postId) => { if (currentUser?.id) { await deletePost(postId, currentUser.id); } closeContextMenu(); } : undefined} />
     </View>
   );
 }

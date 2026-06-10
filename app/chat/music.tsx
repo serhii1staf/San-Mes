@@ -16,7 +16,7 @@ import { useMusicStore } from '../../src/store/musicStore';
 import { kvGetJSONSync, kvSetJSON } from '../../src/services/kvStore';
 import { triggerHaptic } from '../../src/utils/haptics';
 
-interface MusicMessage { id: string; query: string; track: Track | null; ts: number }
+interface MusicMessage { id: string; query: string; track?: Track | null; tracks?: Track[]; ts: number }
 
 const HISTORY_KEY = 'music_chat_history';
 
@@ -90,35 +90,45 @@ export default function MusicChatScreen() {
     triggerHaptic('light');
     setInput('');
     const msgId = Date.now().toString();
-    setMessages((prev) => [...prev, { id: msgId, query: q, track: null, ts: Date.now() }]);
+    setMessages((prev) => [...prev, { id: msgId, query: q, tracks: [], ts: Date.now() }]);
     setIsSearching(true);
-    const results = await searchTracks(q, 1);
-    const track = results[0] || null;
-    setMessages((prev) => prev.map((m) => (m.id === msgId ? { ...m, track } : m)));
+    const results = await searchTracks(q);
+    setMessages((prev) => prev.map((m) => (m.id === msgId ? { ...m, tracks: results } : m)));
     setIsSearching(false);
-    if (track) useMusicStore.getState().play(track);
+    // Autoplay the single most relevant result.
+    if (results[0]) useMusicStore.getState().play(results[0]);
   }, [input, isSearching]);
 
   const invertedData = React.useMemo(() => [...messages].reverse(), [messages]);
 
-  const renderItem = useCallback(({ item }: { item: MusicMessage }) => (
-    <View style={{ marginBottom: 12 }}>
-      {/* User's query bubble */}
-      <View style={{ alignSelf: 'flex-end', maxWidth: '80%', backgroundColor: theme.colors.accent.primary, borderRadius: 18, borderBottomRightRadius: 6, paddingHorizontal: 14, paddingVertical: 9, marginBottom: 8 }}>
-        <Text variant="body" color="#FFFFFF" style={{ fontSize: 14 }}>{item.query}</Text>
+  const renderItem = useCallback(({ item }: { item: MusicMessage }) => {
+    // Support both the new multi-result shape and any legacy single-track history.
+    const tracks: Track[] = item.tracks && item.tracks.length
+      ? item.tracks
+      : (item.track ? [item.track] : []);
+    const hasResults = tracks.length > 0;
+    const done = item.tracks !== undefined || item.track !== undefined;
+    return (
+      <View style={{ marginBottom: 12 }}>
+        {/* User's query bubble */}
+        <View style={{ alignSelf: 'flex-end', maxWidth: '80%', backgroundColor: theme.colors.accent.primary, borderRadius: 18, borderBottomRightRadius: 6, paddingHorizontal: 14, paddingVertical: 9, marginBottom: 8 }}>
+          <Text variant="body" color="#FFFFFF" style={{ fontSize: 14 }}>{item.query}</Text>
+        </View>
+        {/* Results */}
+        {hasResults ? (
+          <View style={{ alignSelf: 'flex-start', width: '88%', gap: 8 }}>
+            {tracks.map((t) => (
+              <MemoTrackCard key={t.id} track={t} />
+            ))}
+          </View>
+        ) : done ? (
+          <View style={{ alignSelf: 'flex-start', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', borderRadius: 16, paddingHorizontal: 14, paddingVertical: 10 }}>
+            <Text variant="caption" color={theme.colors.text.tertiary}>Не найдено</Text>
+          </View>
+        ) : null}
       </View>
-      {/* Result */}
-      {item.track ? (
-        <View style={{ alignSelf: 'flex-start', width: '88%' }}>
-          <MemoTrackCard track={item.track} />
-        </View>
-      ) : (
-        <View style={{ alignSelf: 'flex-start', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', borderRadius: 16, paddingHorizontal: 14, paddingVertical: 10 }}>
-          <Text variant="caption" color={theme.colors.text.tertiary}>Не найдено</Text>
-        </View>
-      )}
-    </View>
-  ), [theme]);
+    );
+  }, [theme]);
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>

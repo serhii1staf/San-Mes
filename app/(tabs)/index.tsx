@@ -1,5 +1,5 @@
 import React, { useEffect, useCallback, useState, useRef } from 'react';
-import { View, FlatList, RefreshControl, Pressable, StyleSheet, ActivityIndicator, Modal } from 'react-native';
+import { View, FlatList, RefreshControl, Pressable, StyleSheet, ActivityIndicator, Modal, InteractionManager } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
@@ -139,8 +139,11 @@ export default function FeedScreen() {
 
   // Keep the iOS home-screen widget in sync with the latest feed (no-op on Android
   // or when the native widget module isn't in the build yet).
+  // Deferred via InteractionManager so it never blocks the frame when switching
+  // tabs or when new posts arrive — keeps navigation buttery on weak devices.
   useEffect(() => {
-    if (posts.length > 0) {
+    if (posts.length === 0) return;
+    const handle = InteractionManager.runAfterInteractions(() => {
       // Warm the image cache for the first screenful so scrolling is instant.
       prefetchImages(posts.slice(0, 12).flatMap((p) => [p.imageUrl, ...(p.imageUrls || []), p.originalPost?.imageUrl]));
       const { postCount } = useWidgetSettingsStore.getState();
@@ -153,7 +156,8 @@ export default function FeedScreen() {
         imageUrl: p.imageUrl,
         imageUrls: p.imageUrls,
       })), postCount);
-    }
+    });
+    return () => handle.cancel();
   }, [posts]);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [isLoading, setIsLoading] = useState(() => {

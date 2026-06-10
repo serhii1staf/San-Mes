@@ -41,9 +41,14 @@ export function CommentContextMenu({ visible, comment, isOwn, displayBody, reply
   const slideAnim = useRef(new Animated.Value(40)).current;
   const fade = useRef(new Animated.Value(0)).current;
   const dismissing = useRef(false);
+  const opened = useRef(false);
 
   useEffect(() => {
     if (visible) {
+      // Reentrancy guard: don't restart the open animation on a redundant
+      // `visible` flip (rapid long-press bursts) — restarting mid-animation stalls.
+      if (opened.current) return;
+      opened.current = true;
       dismissing.current = false;
       slideAnim.setValue(40);
       fade.setValue(0);
@@ -51,6 +56,8 @@ export function CommentContextMenu({ visible, comment, isOwn, displayBody, reply
         Animated.timing(slideAnim, { toValue: 0, duration: 240, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
         Animated.timing(fade, { toValue: 1, duration: 180, easing: Easing.out(Easing.quad), useNativeDriver: true }),
       ]).start();
+    } else {
+      opened.current = false;
     }
   }, [visible]);
 

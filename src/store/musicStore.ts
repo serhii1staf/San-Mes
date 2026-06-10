@@ -6,9 +6,12 @@ import { Track } from '../services/musicService';
 // playback continues while the user navigates between screens, and the floating
 // mini-player (MusicMiniBar) can control it from anywhere.
 //
-// Performance: only ONE Sound is ever loaded at a time (previous is unloaded
-// before the next loads), status updates are throttled by expo-av itself, and
-// the store holds primitives so subscribers re-render minimally.
+// Performance & correctness: only ONE Sound is ever active. `play()` calls are
+// SERIALIZED through a promise chain and guarded by a monotonic generation
+// token, so rapid overlapping calls (re-entering the music chat, autoplay racing
+// a manual tap) can never leave two sounds playing at once. Status callbacks are
+// tagged with the generation that created them and ignored once stale, so an
+// orphaned previous-track callback can't clobber the current track's state.
 
 interface MusicState {
   current: Track | null;
@@ -26,6 +29,12 @@ interface MusicState {
 let sound: Audio.Sound | null = null;
 let audioModeSet = false;
 
+// Monotonic token: every play()/stop() bumps it. Any async continuation or
+// status callback whose captured token != playGen is stale and must no-op.
+let playGen = 0;
+// Serializes async playback transitions so unload→create can't interleave.
+let playChain: Promise<void> = Promise.resolve();
+
 async function ensureAudioMode() {
   if (audioModeSet) return;
   try {
@@ -38,6 +47,16 @@ async function ensureAudioMode() {
   } catch {}
 }
 
+// Fully tear down the active sound. Safe to call repeatedly.
+async function unloadActiveSound() {
+  const s = sound;
+  sound = null;
+  if (s) {
+    try { await s.stopAsync(); } catch {}
+    try { await s.unloadAsync(); } catch {}
+  }
+}
+
 export const useMusicStore = create<MusicState>((set, get) => ({
   current: null,
   recent: [],
@@ -47,38 +66,63 @@ export const useMusicStore = create<MusicState>((set, get) => ({
   isLoading: false,
 
   play: async (track: Track) => {
-    // Same track tapped again → just toggle play/pause.
+    // Same track tapped again → just toggle play/pause (no reload, no race).
     if (get().current?.id === track.id && sound) {
       await get().toggle();
       return;
     }
+
+    // Claim a new generation up-front so any in-flight older play() bails out.
+    const myGen = ++playGen;
+
     set({ isLoading: true, current: track, positionMs: 0, durationMs: track.durationMs });
-    // Track recents (most-recent first, unique, capped at 12) for the expandable widget.
+    // Track recents (most-recent first, unique, capped at 12) for the widget.
     set((s) => ({ recent: [track, ...s.recent.filter((t) => t.id !== track.id)].slice(0, 12) }));
-    await ensureAudioMode();
-    if (sound) {
-      try { await sound.unloadAsync(); } catch {}
-      sound = null;
-    }
-    try {
-      const { sound: s } = await Audio.Sound.createAsync(
-        { uri: track.streamUrl },
-        { shouldPlay: true, progressUpdateIntervalMillis: 500 },
-        (status: AVPlaybackStatus) => {
-          if (!status.isLoaded) return;
-          set({
-            isPlaying: status.isPlaying,
-            positionMs: status.positionMillis || 0,
-            durationMs: status.durationMillis || track.durationMs,
-          });
-          if (status.didJustFinish) set({ isPlaying: false, positionMs: 0 });
+
+    // Serialize the actual load so two rapid play() calls run strictly in order;
+    // each step re-checks `myGen` and aborts the moment a newer call supersedes it.
+    playChain = playChain.then(async () => {
+      if (myGen !== playGen) return; // superseded before we even started loading
+
+      await ensureAudioMode();
+      if (myGen !== playGen) return;
+
+      // Always tear down the previous sound BEFORE creating the next one.
+      await unloadActiveSound();
+      if (myGen !== playGen) return;
+
+      try {
+        const { sound: s } = await Audio.Sound.createAsync(
+          { uri: track.streamUrl },
+          { shouldPlay: true, progressUpdateIntervalMillis: 500 },
+          (status: AVPlaybackStatus) => {
+            // Stale callback from a superseded track → ignore entirely.
+            if (myGen !== playGen) return;
+            if (!status.isLoaded) return;
+            set({
+              isPlaying: status.isPlaying,
+              positionMs: status.positionMillis || 0,
+              durationMs: status.durationMillis || track.durationMs,
+            });
+            if (status.didJustFinish) set({ isPlaying: false, positionMs: 0 });
+          }
+        );
+
+        // A newer play() won the race while we were creating → discard this one.
+        if (myGen !== playGen) {
+          try { await s.stopAsync(); } catch {}
+          try { await s.unloadAsync(); } catch {}
+          return;
         }
-      );
-      sound = s;
-      set({ isLoading: false, isPlaying: true });
-    } catch {
-      set({ isLoading: false, isPlaying: false });
-    }
+
+        sound = s;
+        set({ isLoading: false, isPlaying: true });
+      } catch {
+        if (myGen === playGen) set({ isLoading: false, isPlaying: false });
+      }
+    });
+
+    await playChain;
   },
 
   toggle: async () => {
@@ -113,10 +157,9 @@ export const useMusicStore = create<MusicState>((set, get) => ({
   },
 
   stop: async () => {
-    if (sound) {
-      try { await sound.stopAsync(); await sound.unloadAsync(); } catch {}
-      sound = null;
-    }
+    // Invalidate any in-flight play() so a pending load won't resurrect playback.
+    playGen++;
+    await unloadActiveSound();
     set({ current: null, isPlaying: false, positionMs: 0, durationMs: 0 });
   },
 }));

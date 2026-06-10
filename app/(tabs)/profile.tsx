@@ -23,6 +23,7 @@ import { AccountSwitcher } from '../../src/components/ui/AccountSwitcher';
 import { PostContextMenu } from '../../src/components/ui/PostContextMenu';
 import { SwipeablePostCard } from '../../src/components/ui/SwipeablePostCard';
 import { showToast } from '../../src/store/toastStore';
+import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
 import { useAuthStore } from '../../src/store';
 import { useFeedStore } from '../../src/store/feedStore';
 import { isRepost, parseImageUrls, getFollowCounts, supabase, deletePost } from '../../src/lib/supabase';
@@ -96,7 +97,7 @@ export default function ProfileScreen() {
   const [showQR, setShowQR] = useState(false);
   const [viewingImage, setViewingImage] = useState<{ uri: string; postId: string; allImages?: string[] } | null>(null);
   const [showAccountSwitcher, setShowAccountSwitcher] = useState(false);
-  const [contextPost, setContextPost] = useState<any>(null);
+  const { target: contextPost, open: openContextMenu, close: closeContextMenu } = useContextMenuGuard<any>();
 
   // Sync badge/is_verified from DB on mount (in case it changed via admin panel)
   useEffect(() => {
@@ -294,7 +295,7 @@ export default function ProfileScreen() {
               authorBadge={user.badge}
               shareText={`${user.displayName}: ${post.content || ''}\nhttps://san-m-app.com/post/${post.id}`}
               postEmoji={postEmoji}
-              onLongPress={(p) => setContextPost(p)}
+              onLongPress={(p) => openContextMenu(p)}
               onImagePress={(uri, postId, allImages) => setViewingImage({ uri, postId, allImages })}
             />
           )) : null}</View>
@@ -388,7 +389,7 @@ export default function ProfileScreen() {
         </View>
       </Modal>
       <AccountSwitcher visible={showAccountSwitcher} onClose={() => setShowAccountSwitcher(false)} />
-      <PostContextMenu visible={!!contextPost} post={contextPost} isOwnPost={true} onClose={() => setContextPost(null)} onDelete={async (postId) => { if (user?.id) { await deletePost(postId, user.id); useFeedStore.getState().removePost(postId); loadMyPosts(); showToast('Пост удалён', 'trash-2'); } }} />
+      <PostContextMenu visible={!!contextPost} post={contextPost} isOwnPost={true} onClose={closeContextMenu} onDelete={async (postId) => { if (user?.id) { await deletePost(postId, user.id); useFeedStore.getState().removePost(postId); loadMyPosts(); showToast('Пост удалён', 'trash-2'); } }} />
     </View>
   );
 }

@@ -29,9 +29,15 @@ export function PostContextMenu({ visible, post, isOwnPost, onClose, onDelete }:
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
   const backdropAnim = useRef(new Animated.Value(0)).current;
   const dismissing = useRef(false);
+  const opened = useRef(false);
 
   useEffect(() => {
     if (visible) {
+      // Reentrancy guard: if the open animation is already running/done, don't
+      // restart it on a redundant `visible` flip — restarting mid-animation is
+      // what stutters/freezes on rapid long-press bursts.
+      if (opened.current) return;
+      opened.current = true;
       dismissing.current = false;
       slideAnim.setValue(SCREEN_HEIGHT);
       backdropAnim.setValue(0);
@@ -39,6 +45,8 @@ export function PostContextMenu({ visible, post, isOwnPost, onClose, onDelete }:
         Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 50, friction: 9 }),
         Animated.timing(backdropAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
       ]).start();
+    } else {
+      opened.current = false;
     }
   }, [visible]);
 
