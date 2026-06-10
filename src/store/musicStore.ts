@@ -132,23 +132,30 @@ export const useMusicStore = create<MusicState>((set, get) => ({
       if (cur) await get().play(cur);
       return;
     }
+    // OPTIMISTIC UI: flip the visible state immediately (before any await) so
+    // the play/pause button responds the same frame the user taps it. Without
+    // this, getStatusAsync + pauseAsync/playAsync introduces a 100–300 ms gap
+    // where the icon stays stuck and feels broken on weak devices / Telegram
+    // WebView. We roll back if the native call ultimately fails.
+    const wantPlay = !get().isPlaying;
+    set({ isPlaying: wantPlay });
     try {
-      const status = await sound.getStatusAsync();
-      if (!status.isLoaded) {
-        const cur = get().current;
-        if (cur) await get().play(cur);
-        return;
-      }
-      if (status.isPlaying) { await sound.pauseAsync(); set({ isPlaying: false }); }
-      else {
-        // Preview finished → restart from 0.
-        if (status.positionMillis >= (status.durationMillis || 1) - 200) {
+      if (wantPlay) {
+        // Track may have ended (preview reached the end) — rewind so the next
+        // playAsync() actually starts audio instead of staying at duration.
+        const status = await sound.getStatusAsync();
+        if (status.isLoaded && status.positionMillis >= (status.durationMillis || 1) - 200) {
           await sound.setPositionAsync(0);
         }
         await sound.playAsync();
-        set({ isPlaying: true });
+      } else {
+        await sound.pauseAsync();
       }
-    } catch {}
+    } catch {
+      // Native call failed — restore the previous visible state so the icon
+      // matches reality.
+      set({ isPlaying: !wantPlay });
+    }
   },
 
   seek: async (ms: number) => {
