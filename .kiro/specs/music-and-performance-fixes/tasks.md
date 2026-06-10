@@ -166,7 +166,7 @@
 
 - [x] 11. Блок D — Дополнительные музыкальные UX‑дефекты и long‑press на превью
 
-  - [ ] 11.1 Убрать двойной индикатор поиска в `app/chat/music.tsx` (1.14)
+  - [x] 11.1 Убрать двойной индикатор поиска в `app/chat/music.tsx` (1.14)
     - Удалить глобальный индикатор из `ListHeaderComponent` (BlurView «Ищу...»)
     - Оставить ровно один inline‑индикатор внутри сообщения‑баббла, привязанный к `msg.id`, активный когда `tracks === undefined`
     - _Bug_Condition: isBugCondition_DoubleIndicator(X)_

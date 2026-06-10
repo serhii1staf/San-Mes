@@ -7,6 +7,10 @@
 // We hit a list of known-good discovery hosts in order (api.audius.co serves the
 // public API too). Results from the first responsive hosts are merged and
 // deduplicated so search recall is high, then ranked by relevance to the query.
+//
+// Audius-only by design: previously we fell back to iTunes Search for popular
+// commercial releases, but iTunes only exposes 30-second `previewUrl` clips —
+// users complained that "the song cuts off". Full-length only now.
 
 const APP_NAME = 'San-Mes';
 
@@ -115,11 +119,10 @@ async function fetchJson(url: string, timeoutMs = 7000): Promise<any | null> {
 }
 
 /**
- * Search for tracks across Audius discovery hosts AND iTunes Search.
+ * Search for tracks across Audius discovery hosts (full-length only).
  *
- * Recall: Audius covers user-uploaded full-length tracks (mostly indie/electronic);
- * iTunes Search covers virtually any commercial release (30s previews). Both pools
- * are merged and ranked by relevance so a normal song title finds SOMETHING.
+ * Recall: Audius hosts user-uploaded full-length tracks. We hit the discovery
+ * pool in order and merge results until we have enough or run out of hosts.
  *
  * Resilience: every host failure/timeout is swallowed; an offline device simply
  * yields `[]` without throwing.
@@ -131,7 +134,7 @@ export async function searchTracks(query: string, limit = 20): Promise<Track[]> 
   const byId = new Map<string, Track>();
   const POOL_TARGET = Math.max(limit * 2, 30);
 
-  // ---- Audius (full-length tracks when available) --------------------------
+  // ---- Audius (full-length tracks) -----------------------------------------
   for (const host of HOSTS) {
     const url = `${host}/v1/tracks/search?query=${encodeURIComponent(q)}&app_name=${APP_NAME}`;
     const json = await fetchJson(url);
@@ -143,27 +146,12 @@ export async function searchTracks(query: string, limit = 20): Promise<Track[]> 
     if (byId.size >= POOL_TARGET) break;
   }
 
-  // ---- iTunes Search (preview fallback for mainstream releases) ------------
-  // Free, no API key, returns 30-second previewUrl. Critical for finding the
-  // popular songs that Audius simply doesn't have.
-  if (byId.size < limit) {
-    const itunesUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(q)}&media=music&entity=song&limit=${limit}`;
-    const itunesJson = await fetchJson(itunesUrl);
-    const itunesResults: any[] = Array.isArray(itunesJson?.results) ? itunesJson.results : [];
-    for (const raw of itunesResults) {
-      const mapped = mapItunesTrack(raw);
-      if (mapped && !byId.has(mapped.id)) byId.set(mapped.id, mapped);
-    }
-  }
-
   if (byId.size === 0) return [];
 
   // ---- Dedupe by (title, artist) -------------------------------------------
-  // Audius and iTunes can both return the same song under different ids
-  // (e.g., a popular release exists as both a full-length on Audius and a
-  // 30-second preview on iTunes). Collapse those into one entry per
-  // (normalize(title), normalize(artist)) pair, preferring the higher-scoring
-  // result. On a score tie, prefer the full-length over the 30s preview.
+  // The same Audius track can show up under multiple ids (e.g., when a user
+  // re-uploads). Collapse those into one entry per (normalize(title),
+  // normalize(artist)) pair, preferring the higher-scoring result.
   const dedupedByTitleArtist = new Map<string, Track>();
   for (const t of byId.values()) {
     const key = `${normalize(t.title)}|||${normalize(t.artist)}`;
@@ -176,35 +164,14 @@ export async function searchTracks(query: string, limit = 20): Promise<Track[]> 
     const sNew = scoreTrackRelevance(t, q);
     if (sNew > sExisting) {
       dedupedByTitleArtist.set(key, t);
-    } else if (sNew === sExisting && existing.isPreview && !t.isPreview) {
-      dedupedByTitleArtist.set(key, t);
     }
   }
 
-  // Rank by relevance (primary) and prefer full-length over previews on ties
-  // (secondary). `Number(false) - Number(true) = -1`, so non-previews come first.
+  // Rank by relevance.
   const ranked = Array.from(dedupedByTitleArtist.values())
     .map((t) => ({ t, score: scoreTrackRelevance(t, q) }))
-    .sort((a, b) => (b.score - a.score) || (Number(a.t.isPreview) - Number(b.t.isPreview)))
+    .sort((a, b) => b.score - a.score)
     .map((x) => x.t);
 
   return ranked.slice(0, limit);
-}
-
-function mapItunesTrack(t: any): Track | null {
-  if (!t?.trackId || !t?.previewUrl || !t?.trackName) return null;
-  // 100x100 → bump to 600x600 for crisp artwork in chat cards.
-  const art: string = (t.artworkUrl100 || t.artworkUrl60 || '').replace(/100x100bb\.jpg$/, '600x600bb.jpg');
-  const previewHost = new URL(t.previewUrl).origin;
-  return {
-    id: `itunes-${t.trackId}`,
-    title: t.trackName,
-    artist: t.artistName || '',
-    artwork: art,
-    streamUrl: t.previewUrl, // 30s preview — expo-av plays it directly
-    durationMs: Number(t.trackTimeMillis) || 30000,
-    sourceHost: previewHost,
-    // iTunes Search returns 30-second previews, not the full track.
-    isPreview: true,
-  };
 }

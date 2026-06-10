@@ -64,7 +64,9 @@ function SettingsRow({
         style={{
           width: 36,
           height: 36,
-          borderRadius: 10,
+          // Squircle-style rounding (~40% of side) — closer to iOS Telegram /
+          // System Settings tile look. Keeps icons readable while softening corners.
+          borderRadius: 14,
           backgroundColor: image ? 'transparent' : theme.colors.background.secondary,
           alignItems: 'center',
           justifyContent: 'center',
@@ -72,7 +74,7 @@ function SettingsRow({
         }}
       >
         {image ? (
-          <Image source={image} style={{ width: 30, height: 30, borderRadius: 11 }} />
+          <Image source={image} style={{ width: 30, height: 30, borderRadius: 12 }} />
         ) : icon ? (
           <Feather name={icon as keyof typeof Feather.glyphMap} size={18} color={theme.colors.text.secondary} />
         ) : null}

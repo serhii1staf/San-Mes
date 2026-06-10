@@ -28,6 +28,11 @@ export default function MusicChatScreen() {
   });
   const [input, setInput] = useState('');
   const [isSearching, setIsSearching] = useState(false);
+  // Synchronous re-entrancy guard: `isSearching` is reactive state and there's
+  // a microtask gap between submit and the state actually flipping, so a fast
+  // double-tap (or onSubmitEditing + button press firing back-to-back) used to
+  // slip past the `isSearching` check and fire two identical searches.
+  const inFlightRef = useRef(false);
   const listRef = useRef<FlatList>(null);
 
   const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
@@ -46,7 +51,10 @@ export default function MusicChatScreen() {
 
   const handleSend = useCallback(async () => {
     const q = input.trim();
-    if (!q || isSearching) return;
+    if (!q || isSearching || inFlightRef.current) return;
+    // Lock synchronously BEFORE any await so a second invocation in the same
+    // tick (Enter + tap) bails out instantly.
+    inFlightRef.current = true;
     triggerHaptic('light');
     setInput('');
     const msgId = Date.now().toString();
@@ -54,11 +62,15 @@ export default function MusicChatScreen() {
     // so the row shows the searching indicator instead of a premature "not found".
     setMessages((prev) => [...prev, { id: msgId, query: q, ts: Date.now() }]);
     setIsSearching(true);
-    const results = await searchTracks(q);
-    setMessages((prev) => prev.map((m) => (m.id === msgId ? { ...m, tracks: results } : m)));
-    setIsSearching(false);
-    // Autoplay the single most relevant result.
-    if (results[0]) useMusicStore.getState().play(results[0]);
+    try {
+      const results = await searchTracks(q);
+      setMessages((prev) => prev.map((m) => (m.id === msgId ? { ...m, tracks: results } : m)));
+      // Autoplay the single most relevant result.
+      if (results[0]) useMusicStore.getState().play(results[0]);
+    } finally {
+      setIsSearching(false);
+      inFlightRef.current = false;
+    }
   }, [input, isSearching]);
 
   const invertedData = React.useMemo(() => [...messages].reverse(), [messages]);
@@ -152,14 +164,15 @@ export default function MusicChatScreen() {
       {/* Input */}
       <KeyboardStickyView offset={{ closed: 0, opened: 0 }} style={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}>
         <Reanimated.View style={[{ paddingHorizontal: 16, paddingTop: 8, backgroundColor: theme.colors.background.primary }, inputPadStyle]}>
-          <View style={{ flexDirection: 'row', alignItems: 'flex-end', backgroundColor: theme.isDark ? 'rgba(40,40,40,0.95)' : 'rgba(245,245,245,0.95)', borderRadius: 24, paddingHorizontal: 16, paddingVertical: 8, borderWidth: 1, borderColor: theme.colors.border.light }}>
+          <View style={{ flexDirection: 'row', alignItems: 'flex-end', backgroundColor: theme.isDark ? 'rgba(40,40,40,0.95)' : 'rgba(245,245,245,0.95)', borderRadius: 24, paddingHorizontal: 16, paddingVertical: 8, borderWidth: 1, borderColor: theme.colors.border.light, minHeight: 44 }}>
             <TextInput
               value={input}
               onChangeText={setInput}
               placeholder="Название песни или исполнителя..."
               placeholderTextColor={theme.colors.text.tertiary}
               multiline
-              style={{ flex: 1, fontSize: 14, color: theme.colors.text.primary, maxHeight: 100, paddingVertical: 4 }}
+              textAlignVertical="center"
+              style={{ flex: 1, fontSize: 14, color: theme.colors.text.primary, maxHeight: 100, paddingTop: 0, paddingBottom: 0, minHeight: 22, lineHeight: 20, alignSelf: 'center' }}
               onSubmitEditing={handleSend}
               returnKeyType="search"
             />
