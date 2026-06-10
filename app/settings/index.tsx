@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, ScrollView, Pressable, Switch, ViewStyle, Alert, StyleSheet, Linking } from 'react-native';
+import { View, ScrollView, Pressable, Switch, ViewStyle, Alert, StyleSheet, Linking, Image, ImageSourcePropType } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -11,8 +11,25 @@ import { AppIconModal } from '../../src/components/ui/AppIconModal';
 import { useAuthStore } from '../../src/store';
 import { useSettingsStore } from '../../src/store/settingsStore';
 
+// Pre-resolved at bundle time — zero network, instant from disk (like Telegram).
+const SETTINGS_ICONS = {
+  profile: require('../../assets/settings-icons/tg_settings_profile_1024.png'),
+  notifications: require('../../assets/settings-icons/tg_settings_notifications_1024.png'),
+  dataMemory: require('../../assets/settings-icons/tg_settings_data_memory_1024.png'),
+  haptic: require('../../assets/settings-icons/tg_settings_haptic_feedback_1024.png'),
+  browser: require('../../assets/settings-icons/tg_settings_in_app_browser_1024.png'),
+  appearance: require('../../assets/settings-icons/tg_settings_appearance_1024.png'),
+  fonts: require('../../assets/settings-icons/tg_settings_fonts_1024.png'),
+  appIcons: require('../../assets/settings-icons/tg_settings_app_icons_1024.png'),
+  widget: require('../../assets/settings-icons/tg_settings_widget_1024.png'),
+  device: require('../../assets/settings-icons/tg_settings_device_1024.png'),
+  privacy: require('../../assets/settings-icons/tg_settings_privacy_policy_1024.png'),
+  terms: require('../../assets/settings-icons/tg_settings_terms_of_use_1024.png'),
+} as const;
+
 function SettingsRow({
   icon,
+  image,
   label,
   value,
   onPress,
@@ -20,7 +37,8 @@ function SettingsRow({
   rightElement,
   isLast,
 }: {
-  icon: string;
+  icon?: string;
+  image?: ImageSourcePropType;
   label: string;
   value?: string;
   onPress?: () => void;
@@ -47,13 +65,18 @@ function SettingsRow({
           width: 36,
           height: 36,
           borderRadius: 10,
-          backgroundColor: theme.colors.background.secondary,
+          backgroundColor: image ? 'transparent' : theme.colors.background.secondary,
           alignItems: 'center',
           justifyContent: 'center',
           marginRight: 14,
+          overflow: 'hidden',
         }}
       >
-        <Feather name={icon as keyof typeof Feather.glyphMap} size={18} color={theme.colors.text.secondary} />
+        {image ? (
+          <Image source={image} style={{ width: 36, height: 36 }} resizeMode="cover" />
+        ) : icon ? (
+          <Feather name={icon as keyof typeof Feather.glyphMap} size={18} color={theme.colors.text.secondary} />
+        ) : null}
       </View>
       <Text variant="body" style={{ flex: 1 }}>{label}</Text>
       {value && (
@@ -207,23 +230,23 @@ export default function SettingsScreen() {
         </View>
         <View style={sectionCardStyle}>
           <SettingsRow
-            icon="user"
+            image={SETTINGS_ICONS.profile}
             label="Профиль"
             onPress={() => router.push('/profile/edit')}
             isFirst
           />
           <SettingsRow
-            icon="bell"
+            image={SETTINGS_ICONS.notifications}
             label="Уведомления"
             onPress={() => router.push('/notifications')}
           />
           <SettingsRow
-            icon="database"
+            image={SETTINGS_ICONS.dataMemory}
             label="Данные и память"
             onPress={() => router.push('/settings/storage')}
           />
           <SettingsRow
-            icon="smartphone"
+            image={SETTINGS_ICONS.haptic}
             label="Вибро-отклик"
             showChevron={false}
             rightElement={
@@ -236,7 +259,7 @@ export default function SettingsScreen() {
             }
           />
           <SettingsRow
-            icon="globe"
+            image={SETTINGS_ICONS.browser}
             label="Встроенный браузер"
             showChevron={false}
             isLast
@@ -259,23 +282,23 @@ export default function SettingsScreen() {
         </View>
         <View style={sectionCardStyle}>
           <SettingsRow
-            icon="sun"
+            image={SETTINGS_ICONS.appearance}
             label="Внешний вид"
             onPress={() => router.push('/settings/appearance')}
             isFirst
           />
           <SettingsRow
-            icon="type"
+            image={SETTINGS_ICONS.fonts}
             label="Шрифты"
             onPress={() => router.push('/settings/fonts' as any)}
           />
           <SettingsRow
-            icon="grid"
+            image={SETTINGS_ICONS.appIcons}
             label="Иконка приложения"
             onPress={() => setIconModalVisible(true)}
           />
           <SettingsRow
-            icon="layout"
+            image={SETTINGS_ICONS.widget}
             label="Виджет"
             onPress={() => router.push('/settings/widget' as any)}
             isLast
@@ -290,19 +313,19 @@ export default function SettingsScreen() {
         </Pressable>
         <View style={sectionCardStyle}>
           <SettingsRow
-            icon="smartphone"
+            image={SETTINGS_ICONS.device}
             label="Устройства"
             value="2"
             onPress={() => router.push('/settings/device-key')}
             isFirst
           />
           <SettingsRow
-            icon="shield"
+            image={SETTINGS_ICONS.privacy}
             label="Политика конфиденциальности"
             onPress={() => Linking.openURL('https://legal.san-m-app.com/privacy.html').catch(() => {})}
           />
           <SettingsRow
-            icon="file-text"
+            image={SETTINGS_ICONS.terms}
             label="Условия использования"
             onPress={() => Linking.openURL('https://legal.san-m-app.com/terms.html').catch(() => {})}
             isLast
