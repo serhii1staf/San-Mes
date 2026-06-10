@@ -95,13 +95,14 @@ export function MessageContextMenu({ visible, message, isOwn, bubbleColor, bubbl
 
   // Reserve space for: menu sheet + bottom inset + top inset + safety gap.
   // The menu MUST stay fully visible — it's the entire reason the user
-  // long-pressed in the first place. Cap preview at 45% of the screen so it
-  // never dominates, even on shorter devices.
+  // long-pressed in the first place. Hard-cap preview at the SMALLER of the
+  // available room and 280px so even a 6-photo grid + text + link preview
+  // can't push the menu off the screen.
   const menuHeight = MENU_BASE_HEIGHT + items.length * MENU_ITEM_HEIGHT;
   const availableForPreview = SCREEN_HEIGHT - menuHeight - insets.top - insets.bottom - 60;
   const previewMaxHeight = Math.max(
-    120,
-    Math.min(availableForPreview, SCREEN_HEIGHT * 0.45),
+    100,
+    Math.min(availableForPreview, 280),
   );
 
   // Image preview layout — sized to keep ALL photos visible inside the

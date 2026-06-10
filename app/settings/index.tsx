@@ -64,14 +64,13 @@ function SettingsRow({
         style={{
           width: 36,
           height: 36,
-          // Circular tile (50% radius) — matches iOS / Telegram settings.
+          // Circular tile (50% radius). Apply borderRadius BOTH to the wrapper
+          // (so the visible bg is a circle) AND to a circular Image inside (so
+          // the PNG's own corners are visibly clipped on every RN renderer —
+          // some iOS versions ignore overflow:hidden on the parent for child
+          // <Image>).
           borderRadius: 18,
-          // ALWAYS render the soft tile background, even when an image icon is
-          // provided. Without `backgroundColor` here the round shape is
-          // invisible (the image is square and shows hard corners).
           backgroundColor: theme.colors.background.secondary,
-          // Clip whatever is inside (square PNG icons included) to the round
-          // container so the corners are visibly rounded.
           overflow: 'hidden',
           alignItems: 'center',
           justifyContent: 'center',
@@ -79,7 +78,11 @@ function SettingsRow({
         }}
       >
         {image ? (
-          <Image source={image} style={{ width: 36, height: 36 }} resizeMode="cover" />
+          <Image
+            source={image}
+            style={{ width: 36, height: 36, borderRadius: 18 }}
+            resizeMode="cover"
+          />
         ) : icon ? (
           <Feather name={icon as keyof typeof Feather.glyphMap} size={18} color={theme.colors.text.secondary} />
         ) : null}

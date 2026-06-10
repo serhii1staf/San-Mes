@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { View, Pressable, StyleSheet, Animated, PanResponder, ScrollView, LayoutAnimation, Platform, UIManager } from 'react-native';
+import { View, Pressable, StyleSheet, Animated, PanResponder, ScrollView, LayoutAnimation, Platform, UIManager, Linking } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -143,6 +143,22 @@ export function MusicMiniBar() {
               </Pressable>
             )}
           </Pressable>
+
+          {/* For iTunes 30 s previews show a one-tap shortcut to YouTube Music
+              so the user can listen to the full track. Hidden for full-length
+              Audius tracks (no need). */}
+          {current.isPreview ? (
+            <Pressable
+              onPress={() => {
+                const q = `${current.title} ${current.artist}`.trim();
+                Linking.openURL(`https://music.youtube.com/search?q=${encodeURIComponent(q)}`).catch(() => {});
+              }}
+              style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 8, paddingVertical: 6, borderRadius: 10, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}
+            >
+              <Feather name="external-link" size={11} color={theme.colors.text.secondary} />
+              <Text variant="caption" weight="semibold" color={theme.colors.text.secondary} style={{ fontSize: 10 }}>Слушать целиком в YouTube Music</Text>
+            </Pressable>
+          ) : null}
 
           {/* Expanded queue of recent tracks */}
           {expanded && queue.length > 0 && (

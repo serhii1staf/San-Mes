@@ -99,8 +99,12 @@ export const useMusicStore = create<MusicState>((set, get) => ({
             // Stale callback from a superseded track → ignore entirely.
             if (myGen !== playGen) return;
             if (!status.isLoaded) return;
+            // Only reflect POSITION/DURATION from the native callback. We do
+            // NOT mirror `status.isPlaying` because the callback fires with a
+            // delay (~50–200 ms) and would clobber the optimistic UI state set
+            // synchronously by toggle()/play(). The store's `isPlaying` is the
+            // single source of truth and is updated by play/toggle/stop only.
             set({
-              isPlaying: status.isPlaying,
               positionMs: status.positionMillis || 0,
               durationMs: status.durationMillis || track.durationMs,
             });
