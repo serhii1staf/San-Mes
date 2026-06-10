@@ -90,7 +90,9 @@ export default function MusicChatScreen() {
     triggerHaptic('light');
     setInput('');
     const msgId = Date.now().toString();
-    setMessages((prev) => [...prev, { id: msgId, query: q, tracks: [], ts: Date.now() }]);
+    // Push an "in-flight" message — `tracks` stays undefined until search completes,
+    // so the row shows the searching indicator instead of a premature "not found".
+    setMessages((prev) => [...prev, { id: msgId, query: q, ts: Date.now() }]);
     setIsSearching(true);
     const results = await searchTracks(q);
     setMessages((prev) => prev.map((m) => (m.id === msgId ? { ...m, tracks: results } : m)));
@@ -102,7 +104,8 @@ export default function MusicChatScreen() {
   const invertedData = React.useMemo(() => [...messages].reverse(), [messages]);
 
   const renderItem = useCallback(({ item }: { item: MusicMessage }) => {
-    // Support both the new multi-result shape and any legacy single-track history.
+    // Search is "done" only when we've written tracks/track on the message.
+    // Until then we render an in-flight bubble (indicator) instead of "Не найдено".
     const tracks: Track[] = item.tracks && item.tracks.length
       ? item.tracks
       : (item.track ? [item.track] : []);
@@ -114,7 +117,6 @@ export default function MusicChatScreen() {
         <View style={{ alignSelf: 'flex-end', maxWidth: '80%', backgroundColor: theme.colors.accent.primary, borderRadius: 18, borderBottomRightRadius: 6, paddingHorizontal: 14, paddingVertical: 9, marginBottom: 8 }}>
           <Text variant="body" color="#FFFFFF" style={{ fontSize: 14 }}>{item.query}</Text>
         </View>
-        {/* Results */}
         {hasResults ? (
           <View style={{ alignSelf: 'flex-start', width: '88%', gap: 8 }}>
             {tracks.map((t) => (
@@ -125,7 +127,14 @@ export default function MusicChatScreen() {
           <View style={{ alignSelf: 'flex-start', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', borderRadius: 16, paddingHorizontal: 14, paddingVertical: 10 }}>
             <Text variant="caption" color={theme.colors.text.tertiary}>Не найдено</Text>
           </View>
-        ) : null}
+        ) : (
+          // In-flight: show an inline indicator on the message itself so each search
+          // has its own context, not just the global header indicator.
+          <View style={{ alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 8 }}>
+            <ActivityIndicator size="small" color={theme.colors.accent.primary} />
+            <Text variant="caption" color={theme.colors.text.tertiary}>Ищу…</Text>
+          </View>
+        )}
       </View>
     );
   }, [theme]);

@@ -109,14 +109,11 @@ async function fetchJson(url: string, timeoutMs = 7000): Promise<any | null> {
 }
 
 /**
- * Search for tracks across Audius discovery hosts.
+ * Search for tracks across Audius discovery hosts AND iTunes Search.
  *
- * Recall: queries hosts in order and MERGES results (deduplicated by track id)
- * until we have a healthy candidate pool, instead of stopping at the first
- * non-empty host. This finds far more matches for arbitrary queries.
- *
- * Relevance: the merged pool is ranked by `scoreTrackRelevance` so the result
- * the user actually searched for surfaces first.
+ * Recall: Audius covers user-uploaded full-length tracks (mostly indie/electronic);
+ * iTunes Search covers virtually any commercial release (30s previews). Both pools
+ * are merged and ranked by relevance so a normal song title finds SOMETHING.
  *
  * Resilience: every host failure/timeout is swallowed; an offline device simply
  * yields `[]` without throwing.
@@ -126,9 +123,9 @@ export async function searchTracks(query: string, limit = 20): Promise<Track[]> 
   if (!q) return [];
 
   const byId = new Map<string, Track>();
-  // Pool size target — enough to rank well without over-fetching on weak devices.
   const POOL_TARGET = Math.max(limit * 2, 30);
 
+  // ---- Audius (full-length tracks when available) --------------------------
   for (const host of HOSTS) {
     const url = `${host}/v1/tracks/search?query=${encodeURIComponent(q)}&app_name=${APP_NAME}`;
     const json = await fetchJson(url);
@@ -137,8 +134,20 @@ export async function searchTracks(query: string, limit = 20): Promise<Track[]> 
       const mapped = mapTrack(raw, host);
       if (mapped && !byId.has(mapped.id)) byId.set(mapped.id, mapped);
     }
-    // Stop early once we have a strong enough candidate pool from healthy hosts.
     if (byId.size >= POOL_TARGET) break;
+  }
+
+  // ---- iTunes Search (preview fallback for mainstream releases) ------------
+  // Free, no API key, returns 30-second previewUrl. Critical for finding the
+  // popular songs that Audius simply doesn't have.
+  if (byId.size < limit) {
+    const itunesUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(q)}&media=music&entity=song&limit=${limit}`;
+    const itunesJson = await fetchJson(itunesUrl);
+    const itunesResults: any[] = Array.isArray(itunesJson?.results) ? itunesJson.results : [];
+    for (const raw of itunesResults) {
+      const mapped = mapItunesTrack(raw);
+      if (mapped && !byId.has(mapped.id)) byId.set(mapped.id, mapped);
+    }
   }
 
   if (byId.size === 0) return [];
@@ -149,4 +158,20 @@ export async function searchTracks(query: string, limit = 20): Promise<Track[]> 
     .map((x) => x.t);
 
   return ranked.slice(0, limit);
+}
+
+function mapItunesTrack(t: any): Track | null {
+  if (!t?.trackId || !t?.previewUrl || !t?.trackName) return null;
+  // 100x100 → bump to 600x600 for crisp artwork in chat cards.
+  const art: string = (t.artworkUrl100 || t.artworkUrl60 || '').replace(/100x100bb\.jpg$/, '600x600bb.jpg');
+  const previewHost = new URL(t.previewUrl).origin;
+  return {
+    id: `itunes-${t.trackId}`,
+    title: t.trackName,
+    artist: t.artistName || '',
+    artwork: art,
+    streamUrl: t.previewUrl, // 30s preview — expo-av plays it directly
+    durationMs: Number(t.trackTimeMillis) || 30000,
+    sourceHost: previewHost,
+  };
 }

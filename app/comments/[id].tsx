@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { View, FlatList, TextInput, Pressable, Platform, ActivityIndicator, StyleSheet, Text as RNText, Modal, Alert } from 'react-native';
 import { KeyboardStickyView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
 import Reanimated, { useAnimatedStyle } from 'react-native-reanimated';
@@ -14,6 +14,7 @@ import { UserBadge } from '../../src/components/ui/UserBadge';
 import { FormattedText } from '../../src/components/ui/FormattedText';
 import { LinkPreview } from '../../src/components/ui/LinkPreview';
 import { extractFirstUrl } from '../../src/services/linkPreview';
+import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
 import { CachedImage } from '../../src/components/ui/CachedImage';
 import { CommentContextMenu, CommentAction } from '../../src/components/ui/CommentContextMenu';
 import { SlideUpSheet } from '../../src/components/ui/SlideUpSheet';
@@ -104,7 +105,7 @@ export default function CommentsScreen() {
   const [isSending, setIsSending] = useState(false);
   const [postData, setPostData] = useState<any>(null);
   const [repostOriginal, setRepostOriginal] = useState<any>(null);
-  const [actionComment, setActionComment] = useState<any>(null); // long-pressed comment
+  const { target: actionComment, open: openMenu, close: closeMenu } = useContextMenuGuard<any>();
   const [reportComment, setReportComment] = useState<any>(null); // comment being reported
   const [replyTo, setReplyTo] = useState<any>(null); // comment we are replying to
   const [editing, setEditing] = useState<any>(null); // comment being edited
@@ -260,7 +261,7 @@ export default function CommentsScreen() {
   };
 
   const startReply = (comment: any) => {
-    setActionComment(null);
+    closeMenu();
     setEditing(null);
     setReplyTo(comment);
     setTimeout(() => inputRef.current?.focus(), 50);
@@ -284,19 +285,13 @@ export default function CommentsScreen() {
     setIsSending(false);
   };
 
-  // Guard against rapid long-press stacking the menu (same fix as chat).
-  const menuLockRef = useRef(0);
-  const openCommentMenu = (c: any) => {
-    const now = Date.now();
-    if (now < menuLockRef.current) return;
-    menuLockRef.current = now + 500;
+  // Long-press menu opener — wraps the guard with the haptic + edge cases that
+  // belong here (we still want haptic feedback only for accepted opens).
+  const openCommentMenu = useCallback((c: any) => {
     triggerHaptic('medium');
-    setActionComment((prev: any) => (prev ? prev : c));
-  };
-  const closeCommentMenu = () => {
-    setActionComment(null);
-    menuLockRef.current = Date.now() + 350;
-  };
+    openMenu(c);
+  }, [openMenu]);
+  const closeCommentMenu = closeMenu;
 
   const formatTime = (dateStr: string) => {
     const diff = Date.now() - new Date(dateStr).getTime();
@@ -427,7 +422,7 @@ export default function CommentsScreen() {
               const parsed = parseReply(item.content || '');
               return (
               <Pressable onLongPress={() => openCommentMenu(item)} delayLongPress={300} style={{ flexDirection: 'row', marginBottom: 16 }}>
-                <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: item.profiles?.id || item.author_id } })}>
+                <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: item.profiles?.id || item.author_id } })} onLongPress={() => openCommentMenu(item)} delayLongPress={300}>
                   <Avatar emoji={item.profiles?.emoji || '😊'} size="sm" />
                 </Pressable>
                 <View style={{ marginLeft: 10, flex: 1 }}>
@@ -474,7 +469,7 @@ export default function CommentsScreen() {
                     ) : null;
                   })()}
                   {/* Reply action */}
-                  <Pressable onPress={() => startReply(item)} hitSlop={6} style={{ marginTop: 4, alignSelf: 'flex-start' }}>
+                  <Pressable onPress={() => startReply(item)} onLongPress={() => openCommentMenu(item)} delayLongPress={300} hitSlop={6} style={{ marginTop: 4, alignSelf: 'flex-start' }}>
                     <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>Ответить</Text>
                   </Pressable>
                 </View>

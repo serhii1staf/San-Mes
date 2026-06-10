@@ -72,7 +72,7 @@ function SettingsRow({
         }}
       >
         {image ? (
-          <Image source={image} style={{ width: 30, height: 30, borderRadius: 8 }} />
+          <Image source={image} style={{ width: 30, height: 30, borderRadius: 11 }} />
         ) : icon ? (
           <Feather name={icon as keyof typeof Feather.glyphMap} size={18} color={theme.colors.text.secondary} />
         ) : null}
