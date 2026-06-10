@@ -64,25 +64,23 @@ function SettingsRow({
         style={{
           width: 36,
           height: 36,
-          // Circular tile (50% radius). Apply borderRadius BOTH to the wrapper
-          // (so the visible bg is a circle) AND to a circular Image inside (so
-          // the PNG's own corners are visibly clipped on every RN renderer —
-          // some iOS versions ignore overflow:hidden on the parent for child
-          // <Image>).
+          // No background when an image icon is provided — the PNG is a full
+          // 1024×1024 squircle tile that already has its own colored fill
+          // inside transparent rounded corners. Painting any colored square
+          // behind it would expose its own square corners outside the
+          // squircle (which is what looked "sharp" before). For Feather
+          // fallback icons (no PNG), keep the soft colored disc and round it
+          // to a full circle so it visually matches.
           borderRadius: 18,
-          backgroundColor: theme.colors.background.secondary,
-          overflow: 'hidden',
+          backgroundColor: image ? 'transparent' : theme.colors.background.secondary,
           alignItems: 'center',
           justifyContent: 'center',
           marginRight: 14,
         }}
       >
         {image ? (
-          <Image
-            source={image}
-            style={{ width: 36, height: 36, borderRadius: 18 }}
-            resizeMode="cover"
-          />
+          // Fill the whole tile so the PNG's own squircle = the visible icon.
+          <Image source={image} style={{ width: 36, height: 36 }} resizeMode="contain" />
         ) : icon ? (
           <Feather name={icon as keyof typeof Feather.glyphMap} size={18} color={theme.colors.text.secondary} />
         ) : null}

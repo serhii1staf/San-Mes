@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef } from 'react';
-import { View, Pressable, Animated, Dimensions, ScrollView, StyleSheet } from 'react-native';
+import { View, Pressable, Animated, Dimensions, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme';
@@ -93,17 +93,13 @@ export function MessageContextMenu({ visible, message, isOwn, bubbleColor, bubbl
   const imageCount = hasImages ? message.imageUrls!.length : 0;
   const hasLink = !hasImages && !!extractFirstUrl(message.text);
 
-  // Reserve space for: menu sheet + bottom inset + top inset + safety gap.
-  // The menu MUST stay fully visible — it's the entire reason the user
-  // long-pressed in the first place. Hard-cap preview at the SMALLER of the
-  // available room and 280px so even a 6-photo grid + text + link preview
-  // can't push the menu off the screen.
-  const menuHeight = MENU_BASE_HEIGHT + items.length * MENU_ITEM_HEIGHT;
-  const availableForPreview = SCREEN_HEIGHT - menuHeight - insets.top - insets.bottom - 60;
-  const previewMaxHeight = Math.max(
-    100,
-    Math.min(availableForPreview, 280),
-  );
+  // Hard cap. The bubble preview is purely INFORMATIONAL — it shows the user
+  // which message they long-pressed. The actions menu underneath is what they
+  // came for, so the preview must NEVER push the menu off the screen.
+  // 220px fits 6 photos in a 3×2 grid (cells 64px) + a short text line; longer
+  // content gets truncated by overflow:hidden, not by a scroll view (which on
+  // some iOS builds didn't shrink-wrap correctly and rendered at full max).
+  const PREVIEW_HARD_CAP = 220;
 
   // Image preview layout — sized to keep ALL photos visible inside the
   // preview's height budget. We pick a cell size that fits the row count we
@@ -113,23 +109,22 @@ export function MessageContextMenu({ visible, message, isOwn, bubbleColor, bubbl
     if (imageCount === 1) {
       return (
         <View style={{ marginBottom: message.text ? 6 : 0 }}>
-          <CachedImage uri={message.imageUrls![0]} style={{ width: 200, height: 200, borderRadius: 12 }} resizeMode="cover" />
+          <CachedImage uri={message.imageUrls![0]} style={{ width: 160, height: 160, borderRadius: 12 }} resizeMode="cover" />
         </View>
       );
     }
     // Bubble inner width: bubble maxWidth ~85% of screen − 28 padding, capped.
-    const containerWidth = Math.min(SCREEN_WIDTH * 0.85 - 28, 300);
+    const containerWidth = Math.min(SCREEN_WIDTH * 0.85 - 28, 280);
     const gap = 4;
     let cellSize: number;
     if (imageCount === 2) {
-      cellSize = (containerWidth - gap) / 2; // ~148
+      cellSize = (containerWidth - gap) / 2; // ~138
     } else if (imageCount === 3) {
-      cellSize = (containerWidth - 2 * gap) / 3; // ~97
+      cellSize = (containerWidth - 2 * gap) / 3; // ~90
     } else {
-      // 4–6 photos in a 3-column grid → keep cells small (76px) so the whole
-      // 2-row grid stays well within `previewMaxHeight` and the menu below
-      // stays visible. 7+ wraps further; ScrollView handles overflow.
-      cellSize = 76;
+      // 4–6 photos in a 3-column grid. 64px cells × 2 rows + 4px gap = 132px,
+      // which keeps the whole preview comfortably inside PREVIEW_HARD_CAP (220).
+      cellSize = 64;
     }
     return (
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap, marginBottom: message.text ? 6 : 0, width: containerWidth }}>
@@ -157,9 +152,10 @@ export function MessageContextMenu({ visible, message, isOwn, bubbleColor, bubbl
         <FormattedText color={bubbleTextColor} linkColor={isOwn ? '#FFFFFF' : theme.colors.accent.primary} style={{ fontSize: 15 }}>{message.text}</FormattedText>
       ) : null}
       {hasLink ? (
-        // Cap the link preview height so video/rich previews don't blow up the
-        // bubble. Anything taller scrolls inside the surrounding ScrollView.
-        <View style={{ marginTop: 6, width: 260, maxWidth: '100%', maxHeight: 170, overflow: 'hidden' }}>
+        // Cap link preview height so video/rich previews don't blow up the
+        // bubble. Width: 100% of bubble interior (no fixed 260) so the bubble
+        // can still shrink-wrap to its content.
+        <View style={{ marginTop: 6, maxHeight: 110, overflow: 'hidden' }}>
           <LinkPreview url={extractFirstUrl(message.text)!} textColor={isOwn ? '#FFFFFF' : undefined} emoji={linkEmoji} static />
         </View>
       ) : null}
@@ -176,26 +172,23 @@ export function MessageContextMenu({ visible, message, isOwn, bubbleColor, bubbl
       {/* Sheet */}
       <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, paddingBottom: Math.max(insets.bottom, 16) }} pointerEvents="box-none">
         <Animated.View style={{ transform: [{ translateY: slideAnim }] }} pointerEvents="box-none">
-          {/* Highlighted message preview — always scrollable so long/multi-photo
-              previews never push the bubble off the top of the screen. */}
+          {/* Highlighted message preview — strictly capped at PREVIEW_HARD_CAP
+              with overflow:hidden so the bubble shrinks to the content but is
+              never taller than the cap, regardless of platform/RN version
+              quirks with ScrollView shrink-wrap behaviour. */}
           <View style={{ marginHorizontal: 12, marginBottom: 8, alignItems: isOwn ? 'flex-end' : 'flex-start' }} pointerEvents="box-none">
             <View style={{
-              maxWidth: hasLink ? '94%' : '85%',
-              minWidth: hasLink ? '80%' : undefined,
+              maxWidth: '85%',
+              maxHeight: PREVIEW_HARD_CAP,
               borderRadius: bubbleRadius,
               backgroundColor: bubbleColor,
               borderBottomRightRadius: isOwn ? 4 : bubbleRadius,
               borderBottomLeftRadius: isOwn ? bubbleRadius : 4,
               overflow: 'hidden',
+              paddingHorizontal: 14,
+              paddingVertical: 10,
             }}>
-              <ScrollView
-                style={{ maxHeight: previewMaxHeight }}
-                showsVerticalScrollIndicator={false}
-                contentContainerStyle={{ paddingHorizontal: 14, paddingVertical: 10 }}
-                bounces={false}
-              >
-                {previewInner}
-              </ScrollView>
+              {previewInner}
             </View>
           </View>
 

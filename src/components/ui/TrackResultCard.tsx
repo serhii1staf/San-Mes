@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Pressable, Linking } from 'react-native';
+import { View, Pressable } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../../theme';
 import { Text } from './Text';
@@ -11,14 +11,6 @@ import { triggerHaptic } from '../../utils/haptics';
 function fmtTime(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
-}
-
-// "Listen full" deep link for preview-only tracks (iTunes 30 s). Opens the
-// YouTube Music app if installed, otherwise falls back to the web search page.
-function openFullVersion(track: Track) {
-  const q = `${track.title} ${track.artist}`.trim();
-  const url = `https://music.youtube.com/search?q=${encodeURIComponent(q)}`;
-  Linking.openURL(url).catch(() => {});
 }
 
 // Memoized search-result track card. Extracted from app/chat/music.tsx so the
@@ -62,17 +54,6 @@ function TrackResultCardBase({ track }: { track: Track }) {
           </View>
           <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 10 }}>{fmtTime(positionMs)} / {fmtTime(durationMs)}</Text>
         </View>
-      ) : null}
-      {/* For 30-second previews offer a one-tap escape hatch to YouTube Music
-          where the full track plays. Stops the parent press from also firing. */}
-      {track.isPreview ? (
-        <Pressable
-          onPress={(e) => { e.stopPropagation(); triggerHaptic('light'); openFullVersion(track); }}
-          style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 8, paddingVertical: 7, borderRadius: 10, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}
-        >
-          <Feather name="external-link" size={12} color={theme.colors.text.secondary} />
-          <Text variant="caption" weight="semibold" color={theme.colors.text.secondary} style={{ fontSize: 11 }}>Слушать целиком в YouTube Music</Text>
-        </Pressable>
       ) : null}
     </Pressable>
   );

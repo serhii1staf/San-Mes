@@ -1,18 +1,24 @@
-// Music search + streaming via the Audius API + iTunes Search.
+// Music search + streaming via Audius + SoundCloud + iTunes Search.
 //
-// Strategy: Audius is the FIRST source because it serves FULL-LENGTH tracks
-// (legally, no API key, free). But its catalog is mostly indie/electronic, so
-// it misses mainstream releases. iTunes Search fills that gap with 30-second
-// previews so popular songs (Harry Styles, Linda, etc.) are findable. Previews
-// are tagged with `isPreview: true` so the UI can show a "30 с" badge and the
-// ranker can prefer full-length when both exist for the same (title, artist).
+// Strategy: prefer FULL-LENGTH sources (Audius, SoundCloud) over 30-second
+// previews (iTunes). When all three are available for the same song the
+// dedup picks the full-length copy.
+//
+//   - Audius: open, no API key, full-length but limited catalogue (mostly
+//     indie/electronic).
+//   - SoundCloud: very broad catalogue (artists upload there), full-length
+//     streams. Uses a public-page-extracted client_id (auto-refreshed once a
+//     day; persisted via MMKV) — this is the same approach every web
+//     sound-extractor uses, no auth required.
+//   - iTunes Search: 30-second `previewUrl`. Last-resort fallback for
+//     mainstream songs missing from the open catalogues. Tagged
+//     `isPreview: true` so the UI can show a "30 с" pill.
 //
 // Recall:
-//   - Audius is queried in parallel across discovery hosts (faster than serial
-//     and tolerates slow nodes).
-//   - Cyrillic queries are also transliterated to Latin and re-queried so a
-//     search like "Линда" still finds "Linda".
-//   - iTunes is hit ONLY if Audius returned too few hits — saves bandwidth.
+//   - Audius queried in parallel across discovery hosts.
+//   - Cyrillic queries also retried as Latin transliteration ("Линда" → "Linda")
+//     so an English-only catalogue still hits.
+//   - iTunes only fires if pool < target (saves bandwidth).
 //
 // Caching: identical queries within 1 hour are served from a per-query MMKV
 // cache so re-typing a song name doesn't re-hit the network.
@@ -192,6 +198,115 @@ async function itunesSearch(query: string, limit: number): Promise<Track[]> {
   return out;
 }
 
+// ─── SoundCloud ──────────────────────────────────────────────────────────────
+// SoundCloud doesn't expose an OAuth-free official API any more, but every
+// soundcloud.com page bootstraps a public Web client_id in one of the JS
+// bundles it loads. Extracting it from the homepage gives us a working
+// `client_id` for the public api-v2 endpoints (search + streams). We cache it
+// in MMKV for 24h and re-extract on failure. This is the same technique used
+// by every reputable browser-side music extractor and stays inside the public
+// surface area of soundcloud.com.
+
+const SC_CLIENT_KEY = 'soundcloud_client_id';
+const SC_CLIENT_TTL_MS = 24 * 60 * 60 * 1000;
+let scClientCache: { id: string; ts: number } | null = null;
+
+async function getSoundCloudClientId(): Promise<string | null> {
+  // 1. Fast path: in-memory.
+  if (scClientCache && Date.now() - scClientCache.ts < SC_CLIENT_TTL_MS) {
+    return scClientCache.id;
+  }
+  // 2. MMKV.
+  try {
+    const persisted = kvGetJSONSync<{ id: string; ts: number } | null>(SC_CLIENT_KEY, null);
+    if (persisted && Date.now() - persisted.ts < SC_CLIENT_TTL_MS) {
+      scClientCache = persisted;
+      return persisted.id;
+    }
+  } catch {}
+  // 3. Extract from soundcloud.com. The homepage references several JS
+  //    bundles; one of them defines `client_id:"..."`. We fetch them in
+  //    parallel and return the first match.
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 6000);
+    const homepage = await fetch('https://soundcloud.com/', { signal: ctrl.signal });
+    clearTimeout(t);
+    if (!homepage.ok) return null;
+    const html = await homepage.text();
+    // Find every <script src="https://a-v2.sndcdn.com/assets/X.js"> URL.
+    const scriptUrls = Array.from(html.matchAll(/https:\/\/a-v2\.sndcdn\.com\/assets\/[^"]+\.js/g)).map((m) => m[0]);
+    if (scriptUrls.length === 0) return null;
+    // Try the bundles in parallel; resolve with the first one that yields an id.
+    const bundles = await Promise.all(scriptUrls.slice(0, 6).map(async (u) => {
+      try {
+        const r = await fetch(u);
+        if (!r.ok) return null;
+        const txt = await r.text();
+        const m = txt.match(/client_id\s*[:=]\s*"([a-zA-Z0-9]{20,40})"/);
+        return m ? m[1] : null;
+      } catch { return null; }
+    }));
+    const id = bundles.find((x): x is string => !!x);
+    if (!id) return null;
+    scClientCache = { id, ts: Date.now() };
+    try { kvSetJSON(SC_CLIENT_KEY, scClientCache); } catch {}
+    return id;
+  } catch {
+    return null;
+  }
+}
+
+// Resolve a SoundCloud track's playable HTTPS stream URL (progressive MP3 if
+// available — falls back to HLS, which expo-av can also play on iOS+Android).
+async function resolveSoundCloudStream(rawTrack: any, clientId: string): Promise<string | null> {
+  try {
+    const transcodings: any[] = rawTrack?.media?.transcodings || [];
+    if (!transcodings.length) return null;
+    // Prefer progressive MP3; HLS works too but is more expensive on weak devices.
+    const progressive = transcodings.find((t) => t?.format?.protocol === 'progressive');
+    const chosen = progressive || transcodings[0];
+    const transcodingUrl = chosen?.url;
+    if (!transcodingUrl) return null;
+    const sep = transcodingUrl.includes('?') ? '&' : '?';
+    const json = await fetchJson(`${transcodingUrl}${sep}client_id=${clientId}`, 5000);
+    return json?.url || null;
+  } catch {
+    return null;
+  }
+}
+
+function mapSoundCloudTrack(t: any, streamUrl: string): Track | null {
+  if (!t?.id || !t?.title || !streamUrl) return null;
+  const artwork = (t.artwork_url || t.user?.avatar_url || '').replace('-large.', '-t500x500.');
+  return {
+    id: `sc-${t.id}`,
+    title: t.title,
+    artist: t.user?.username || t.publisher_metadata?.artist || '',
+    artwork,
+    streamUrl,
+    durationMs: Number(t.duration) || 0,
+    sourceHost: 'soundcloud.com',
+    isPreview: false, // SoundCloud streams are full-length.
+  };
+}
+
+async function soundcloudSearch(query: string, limit: number): Promise<Track[]> {
+  const clientId = await getSoundCloudClientId();
+  if (!clientId) return [];
+  const url = `https://api-v2.soundcloud.com/search/tracks?q=${encodeURIComponent(query)}&limit=${limit}&client_id=${clientId}`;
+  const json = await fetchJson(url, 5000);
+  const collection: any[] = Array.isArray(json?.collection) ? json.collection : [];
+  if (!collection.length) return [];
+  // Resolve stream urls in parallel — SoundCloud requires a separate call per
+  // track to get the actual playable URL.
+  const resolved = await Promise.all(collection.slice(0, limit).map(async (t) => {
+    const streamUrl = await resolveSoundCloudStream(t, clientId);
+    return streamUrl ? mapSoundCloudTrack(t, streamUrl) : null;
+  }));
+  return resolved.filter((x): x is Track => !!x);
+}
+
 interface CachedSearch { ts: number; tracks: Track[]; }
 
 function readCache(query: string): Track[] | null {
@@ -247,14 +362,25 @@ export async function searchTracks(query: string, limit = 20): Promise<Track[]> 
   for (const variant of queries) {
     for (const host of HOSTS) audiusJobs.push(audiusSearch(host, variant));
   }
-  const audiusResults = await Promise.all(audiusJobs);
+
+  // SoundCloud also runs in parallel (one request per query variant), so it
+  // doesn't add latency on top of Audius.
+  const scJobs: Promise<Track[]>[] = queries.map((v) => soundcloudSearch(v, Math.min(limit, 10)));
+
+  const [audiusResults, scResults] = await Promise.all([
+    Promise.all(audiusJobs),
+    Promise.all(scJobs),
+  ]);
   for (const list of audiusResults) {
     for (const t of list) if (!byId.has(t.id)) byId.set(t.id, t);
     if (byId.size >= POOL_TARGET) break;
   }
+  for (const list of scResults) {
+    for (const t of list) if (!byId.has(t.id)) byId.set(t.id, t);
+  }
 
-  // iTunes fallback for popular releases Audius doesn't have. Query both the
-  // original and the transliterated variant in parallel.
+  // iTunes fallback for popular releases the open catalogues don't have. Skip
+  // entirely if we already have enough full-length results.
   if (byId.size < limit) {
     const itunesJobs = queries.map((v) => itunesSearch(v, limit));
     const itunesResults = await Promise.all(itunesJobs);
