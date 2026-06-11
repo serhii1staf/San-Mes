@@ -170,3 +170,71 @@ export async function kvWarm(baseKeys: string[]): Promise<void> {
     // ignore — sync reads return null until data is written
   }
 }
+
+// ─── Enumeration / size inspection ────────────────────────────────────────-
+
+/**
+ * Return every key + the byte size of its stored string. MMKV stores raw
+ * UTF-8, so `length` of the JSON-serialized string is a tight upper bound on
+ * the actual bytes (within ~1 % for ASCII-heavy data, within ~2 × for
+ * Cyrillic — close enough for a "Storage" usage screen).
+ *
+ * Returns the RAW (already-namespaced) keys, not base keys, so callers can
+ * pattern-match on prefixes like `:@san:feed_posts` to bucket entries by
+ * category.
+ */
+export async function kvAllEntries(): Promise<Array<{ key: string; bytes: number }>> {
+  const out: Array<{ key: string; bytes: number }> = [];
+  if (mmkv) {
+    try {
+      const keys: string[] = mmkv.getAllKeys() || [];
+      for (const k of keys) {
+        const v = mmkv.getString(k);
+        out.push({ key: k, bytes: v ? byteLength(v) : 0 });
+      }
+      return out;
+    } catch {
+      // fall through to AsyncStorage path
+    }
+  }
+  try {
+    const keys = await AsyncStorage.getAllKeys();
+    const pairs = await AsyncStorage.multiGet(keys as string[]);
+    for (const [k, v] of pairs) {
+      out.push({ key: k, bytes: v ? byteLength(v) : 0 });
+    }
+  } catch {
+    // ignore
+  }
+  return out;
+}
+
+/**
+ * Delete every raw key matching one of the supplied predicates. Used by the
+ * "clear category" buttons on the storage screen.
+ */
+export function kvDeleteRawKeys(keys: string[]): void {
+  if (mmkv) {
+    for (const k of keys) {
+      try { mmkv.delete(k); } catch {}
+    }
+  }
+  for (const k of keys) {
+    delete memMirror[k];
+    AsyncStorage.removeItem(k).catch(() => {});
+  }
+}
+
+// UTF-8 byte length of a JS string. (string.length counts UTF-16 code units;
+// for Cyrillic each code unit is 2 bytes in UTF-8, so we walk the string.)
+function byteLength(s: string): number {
+  let n = 0;
+  for (let i = 0; i < s.length; i++) {
+    const code = s.charCodeAt(i);
+    if (code < 0x80) n += 1;
+    else if (code < 0x800) n += 2;
+    else if (code >= 0xD800 && code <= 0xDBFF) { n += 4; i++; } // surrogate pair
+    else n += 3;
+  }
+  return n;
+}

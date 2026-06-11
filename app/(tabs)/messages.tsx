@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { View, FlatList, Pressable, ViewStyle, TextInput, StyleSheet, Text as RNText, Alert, Animated, Easing } from 'react-native';
+import { View, FlatList, Pressable, ViewStyle, TextInput, StyleSheet, Text as RNText, Alert, Animated, Easing, InteractionManager } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -425,9 +425,14 @@ function FabWithMenu() {
   const toggle = useCallback(() => { triggerHaptic('light'); setOpen((v) => !v); }, []);
   const navigate = useCallback((action: () => void) => {
     setOpen(false);
-    // Navigation fires immediately so the next screen starts loading right
-    // away. The close spring runs on the native driver in parallel.
-    action();
+    // Defer the route push until React has a chance to commit the closed
+    // state and the close-spring has flushed at least its first native
+    // frame. Without this, the new screen's mount work blocks the JS
+    // thread mid-animation and the user sees a stutter at the tail of
+    // the close. InteractionManager runs the callback after current
+    // interactions/animations are done, so the menu finishes closing
+    // cleanly before navigation kicks off.
+    InteractionManager.runAfterInteractions(action);
   }, []);
 
   // Single source of truth for both transforms — interpolated for each

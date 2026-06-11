@@ -62,6 +62,8 @@ interface MediaTag { icon: string; label: string }
 function mediaTagsFor(text: string): MediaTag[] {
   if (!text) return [];
   const tags: MediaTag[] = [];
+  // Reply context first — most informative tag for "X replied" notifications.
+  if (text.startsWith(REPLY_TOKEN)) tags.push({ icon: 'corner-up-left', label: 'Ответ' });
   if (text.includes(GIF_TOKEN)) tags.push({ icon: 'image', label: 'Гифка' });
   // After stripping the marker tokens, look for a bare URL in the residual
   // text — covers comments that pasted a YouTube/article link, an image
