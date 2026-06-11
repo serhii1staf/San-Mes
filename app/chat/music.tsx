@@ -13,7 +13,7 @@ import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { TrackResultCard } from '../../src/components/ui/TrackResultCard';
 import { AuthorInfoModal } from '../../src/components/ui/AuthorInfoModal';
 import { PlaylistSheet } from '../../src/components/ui/PlaylistSheet';
-import { searchTracks, Track } from '../../src/services/musicService';
+import { searchTracks, classifyMusicInput, Track } from '../../src/services/musicService';
 import { useMusicStore } from '../../src/store/musicStore';
 import { kvGetJSONSync, kvSetJSON } from '../../src/services/kvStore';
 import { triggerHaptic } from '../../src/utils/haptics';
@@ -114,6 +114,30 @@ export default function MusicChatScreen() {
   // ── Search ──────────────────────────────────────────────────────────────────
   const runSearch = useCallback(async (q: string) => {
     if (!q || isSearching || inFlightRef.current) return;
+
+    // If the user pasted a URL, route it before falling through to text search.
+    // Direct audio links play immediately; known video hosts get an explanation
+    // (we cannot legally extract their streams — see Apple §3.3.4.A.i and the
+    // platform TOS).
+    const intent = classifyMusicInput(q);
+    if (intent.kind === 'video-host') {
+      Alert.alert(
+        'Не получится загрузить',
+        `Ссылки с ${intent.host} требуют извлечения аудио с серверной стороны, что нарушает условия платформы и правила App Store. Поддерживаются только прямые ссылки на аудиофайлы (.mp3, .m4a, .ogg и т. п.).`,
+      );
+      setInput('');
+      return;
+    }
+    if (intent.kind === 'audio') {
+      triggerHaptic('light');
+      setInput('');
+      const msgId = Date.now().toString();
+      setMessages((prev) => [...prev, { id: msgId, query: q, ts: Date.now(), tracks: [intent.track] }]);
+      useMusicStore.getState().addDiscovered([intent.track]);
+      useMusicStore.getState().play(intent.track);
+      return;
+    }
+
     inFlightRef.current = true;
     triggerHaptic('light');
     setInput('');
@@ -362,7 +386,7 @@ export default function MusicChatScreen() {
               <TextInput
                 value={input}
                 onChangeText={setInput}
-                placeholder="Название песни..."
+                placeholder="Название песни или ссылка..."
                 placeholderTextColor={theme.colors.text.tertiary}
                 multiline
                 textAlignVertical="center"

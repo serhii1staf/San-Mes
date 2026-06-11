@@ -59,7 +59,13 @@ export function MusicBottomIndicator() {
   const show = !!current && !inMusicChat && !playerOpen;
 
   // Slide-in/out from below — native-driven so it stays smooth on weak devices.
-  const slideY = useRef(new Animated.Value(80)).current;
+  // Initial offset is large enough to fully clear the screen bottom: indicator
+  // sits at `bottom: 102` and is ~60 tall, so 180 px of downward translation
+  // puts the entire card below the device's bottom edge before showing. The
+  // result: it spawns from off-screen and rises into place rather than
+  // appearing in the middle of the tab-bar area.
+  const HIDDEN_Y = 180;
+  const slideY = useRef(new Animated.Value(HIDDEN_Y)).current;
   // Horizontal swipe-to-dismiss offset.
   const dragX = useRef(new Animated.Value(0)).current;
   const dismissing = useRef(false);
@@ -79,7 +85,7 @@ export function MusicBottomIndicator() {
       dragX.setValue(0);
       dismissing.current = false;
     }
-    Animated.spring(slideY, { toValue: show ? 0 : 80, useNativeDriver: true, tension: 60, friction: 11 }).start();
+    Animated.spring(slideY, { toValue: show ? 0 : HIDDEN_Y, useNativeDriver: true, tension: 60, friction: 11 }).start();
   }, [show]);
 
   // Pan responder only claims the gesture on clear HORIZONTAL movement so

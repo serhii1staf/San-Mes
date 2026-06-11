@@ -466,3 +466,106 @@ export async function searchTracks(query: string, limit = 20): Promise<Track[]> 
   writeCache(q, top);
   return top;
 }
+
+
+// ── Direct-URL support ──────────────────────────────────────────────────────
+// When the user types a URL into the music chat we try to treat it as a
+// track instead of a search query. Two cases are supported safely:
+//
+//   1. Direct audio file URLs — anything ending in a recognised audio
+//      extension (.mp3, .m4a, .ogg, .wav, .flac, .aac, .opus). expo-av plays
+//      these natively. The user supplies the link, so the licensing
+//      responsibility sits with them, and the audio bytes never pass through
+//      our servers (Apple §3.3.4.A.i compliance).
+//
+//   2. Podcast/RSS audio enclosures — same as (1), since podcast hosts
+//      typically expose direct .mp3 URLs.
+//
+// What we deliberately DON'T do: video-platform stream extraction (YouTube,
+// TikTok, Instagram, Discord/Telegram media). Those require server-side
+// extraction tooling (yt-dlp et al.) that violates the platforms' TOS and
+// would put us at risk under §3.3.4.A.i ("must be wholly-owned or licensed").
+// `recogniseVideoHost` exists to route those URLs to a clear user-facing
+// message rather than silently failing.
+
+const AUDIO_EXTENSIONS = ['.mp3', '.m4a', '.ogg', '.wav', '.flac', '.aac', '.opus', '.weba'];
+
+const VIDEO_HOSTS = [
+  'youtube.com', 'youtu.be', 'm.youtube.com', 'music.youtube.com',
+  'tiktok.com', 'vm.tiktok.com',
+  'instagram.com',
+  'discord.com', 'discord.gg', 'cdn.discordapp.com',
+  't.me', 'telegram.me',
+  'vimeo.com',
+  'twitch.tv',
+];
+
+export type UrlIntent =
+  | { kind: 'audio'; track: Track }
+  | { kind: 'video-host'; host: string }
+  | { kind: 'unsupported' };
+
+function looksLikeUrl(s: string): boolean {
+  return /^https?:\/\//i.test(s.trim());
+}
+
+function recogniseVideoHost(host: string): string | null {
+  const h = host.toLowerCase();
+  for (const v of VIDEO_HOSTS) {
+    if (h === v || h.endsWith('.' + v)) return v;
+  }
+  return null;
+}
+
+function prettyFromUrl(u: URL): { title: string; artist: string } {
+  // Extract the file basename (last path segment, no extension, %20→space).
+  const segments = u.pathname.split('/').filter(Boolean);
+  const last = segments[segments.length - 1] || u.hostname;
+  const decoded = decodeURIComponent(last).replace(/\.[a-z0-9]+$/i, '');
+  // "Artist - Title" is a common file-naming convention; split if present.
+  const dash = decoded.indexOf(' - ');
+  if (dash > 0) {
+    return {
+      artist: decoded.slice(0, dash).trim(),
+      title: decoded.slice(dash + 3).trim(),
+    };
+  }
+  return { title: decoded || u.hostname, artist: u.hostname };
+}
+
+/**
+ * Inspect a user-typed string and return what we should do with it.
+ *   - `audio` → play as a track immediately.
+ *   - `video-host` → tell the user we can't extract from that platform.
+ *   - `unsupported` → fall through to normal text search.
+ */
+export function classifyMusicInput(input: string): UrlIntent {
+  const s = input.trim();
+  if (!looksLikeUrl(s)) return { kind: 'unsupported' };
+
+  let url: URL;
+  try { url = new URL(s); } catch { return { kind: 'unsupported' }; }
+
+  // Strip query/hash for extension matching but preserve full URL for streaming.
+  const path = url.pathname.toLowerCase();
+  const hasAudioExt = AUDIO_EXTENSIONS.some((ext) => path.endsWith(ext));
+  if (hasAudioExt) {
+    const { title, artist } = prettyFromUrl(url);
+    const track: Track = {
+      id: `direct:${s}`,
+      title,
+      artist,
+      artwork: '',
+      streamUrl: s,
+      durationMs: 0, // unknown until expo-av loads it; UI handles 0 fine
+      sourceHost: url.hostname,
+      isPreview: false,
+    };
+    return { kind: 'audio', track };
+  }
+
+  const videoHost = recogniseVideoHost(url.hostname);
+  if (videoHost) return { kind: 'video-host', host: videoHost };
+
+  return { kind: 'unsupported' };
+}
