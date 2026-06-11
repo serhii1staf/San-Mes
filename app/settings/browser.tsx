@@ -93,6 +93,31 @@ function PositionCard({
 }) {
   const cardBg = theme.isDark ? theme.colors.background.elevated : '#FFFFFF';
   const accent = theme.colors.accent.primary;
+  const screenBg = theme.isDark ? '#000' : '#F5F5F7';
+  const subtle = theme.isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)';
+  const stroke = theme.isDark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.10)';
+
+  // The mini "browser pill" used inside the preview, styled to match the
+  // real widget — pill shape on top, rounded-rectangle band on bottom.
+  const renderPill = () => {
+    if (kind === 'top') {
+      return (
+        <View style={{ position: 'absolute', top: 8, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 6, paddingVertical: 3, borderRadius: 8, backgroundColor: theme.isDark ? 'rgba(40,40,40,0.9)' : 'rgba(255,255,255,0.95)', borderWidth: 0.5, borderColor: stroke, gap: 3 }}>
+          <View style={{ width: 5, height: 5, borderRadius: 1, backgroundColor: accent }} />
+          <View style={{ width: 22, height: 3, borderRadius: 1.5, backgroundColor: subtle }} />
+          <View style={{ width: 4, height: 4, backgroundColor: subtle, borderRadius: 1 }} />
+        </View>
+      );
+    }
+    return (
+      <View style={{ position: 'absolute', bottom: 14, left: 0, right: 0, height: 14, borderTopLeftRadius: 6, borderTopRightRadius: 6, backgroundColor: cardBg, borderWidth: 0.5, borderColor: stroke, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 4, gap: 3 }}>
+        <View style={{ width: 5, height: 5, borderRadius: 1, backgroundColor: accent }} />
+        <View style={{ width: 18, height: 3, borderRadius: 1.5, backgroundColor: subtle, flex: 1 }} />
+        <View style={{ width: 4, height: 4, backgroundColor: subtle, borderRadius: 1 }} />
+      </View>
+    );
+  };
+
   return (
     <Pressable
       onPress={onPress}
@@ -105,22 +130,97 @@ function PositionCard({
         borderColor: active ? accent : theme.colors.border.light,
       }}
     >
-      {/* Tiny phone illustration */}
-      <View style={{ aspectRatio: 9 / 16, borderRadius: 12, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)', borderWidth: 1, borderColor: theme.colors.border.light, padding: 4, justifyContent: 'space-between', overflow: 'hidden' }}>
-        {kind === 'top' && (
-          <View style={{ height: 8, borderRadius: 4, backgroundColor: accent + '99', marginBottom: 4 }} />
-        )}
-        <View style={{ flex: 1, justifyContent: 'flex-end', gap: 4 }}>
-          <View style={{ height: 4, borderRadius: 2, backgroundColor: theme.colors.border.medium, width: '70%' }} />
-          <View style={{ height: 4, borderRadius: 2, backgroundColor: theme.colors.border.medium, width: '90%' }} />
-          <View style={{ height: 4, borderRadius: 2, backgroundColor: theme.colors.border.medium, width: '50%' }} />
+      {/* Mini phone — proportions roughly match a real device */}
+      <View
+        style={{
+          aspectRatio: 9 / 18,
+          borderRadius: 14,
+          backgroundColor: screenBg,
+          borderWidth: 1.5,
+          borderColor: stroke,
+          overflow: 'hidden',
+          padding: 6,
+          paddingTop: 10,
+          paddingBottom: 4,
+        }}
+      >
+        {/* Notch */}
+        <View style={{ position: 'absolute', top: 3, left: 0, right: 0, alignItems: 'center' }}>
+          <View style={{ width: 22, height: 4, borderRadius: 2, backgroundColor: theme.isDark ? '#000' : '#222' }} />
         </View>
-        {kind === 'bottom' && (
-          <View style={{ height: 8, borderTopLeftRadius: 4, borderTopRightRadius: 4, backgroundColor: accent + '99', marginTop: 4 }} />
-        )}
-        {/* Faux tab bar */}
-        <View style={{ height: 6, borderRadius: 3, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.10)', marginTop: 4 }} />
+
+        {/* Header — app title + bell */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+          <View style={{ width: 14, height: 5, borderRadius: 1, backgroundColor: theme.colors.text.primary, opacity: 0.7 }} />
+          <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: subtle }} />
+        </View>
+
+        {/* Feed cards — 3 pieces with avatar + lines + image */}
+        {[0, 1, 2].map((i) => (
+          <View
+            key={i}
+            style={{
+              backgroundColor: cardBg,
+              borderRadius: 5,
+              padding: 4,
+              marginBottom: 4,
+              borderWidth: 0.5,
+              borderColor: stroke,
+            }}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, marginBottom: 3 }}>
+              <View style={{ width: 7, height: 7, borderRadius: 3.5, backgroundColor: accent + '99' }} />
+              <View style={{ flex: 1 }}>
+                <View style={{ width: '70%', height: 2.5, borderRadius: 1, backgroundColor: theme.colors.text.primary, opacity: 0.6 }} />
+                <View style={{ width: '50%', height: 2, borderRadius: 1, backgroundColor: subtle, marginTop: 1.5 }} />
+              </View>
+            </View>
+            {i === 1 ? (
+              <View style={{ height: 14, borderRadius: 3, backgroundColor: subtle }} />
+            ) : (
+              <>
+                <View style={{ width: '95%', height: 2, borderRadius: 1, backgroundColor: subtle, marginBottom: 2 }} />
+                <View style={{ width: '70%', height: 2, borderRadius: 1, backgroundColor: subtle }} />
+              </>
+            )}
+          </View>
+        ))}
+
+        {/* Tab bar — floating pill with 5 dots */}
+        <View
+          style={{
+            position: 'absolute',
+            left: 6,
+            right: 6,
+            bottom: kind === 'bottom' ? 32 : 6,
+            height: 12,
+            borderRadius: 6,
+            backgroundColor: cardBg,
+            borderWidth: 0.5,
+            borderColor: stroke,
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'space-around',
+            paddingHorizontal: 4,
+          }}
+        >
+          {[0, 1, 2, 3, 4].map((d) => (
+            <View
+              key={d}
+              style={{
+                width: 4,
+                height: 4,
+                borderRadius: 2,
+                backgroundColor: d === 0 ? accent : subtle,
+              }}
+            />
+          ))}
+        </View>
+
+        {/* The browser pill */}
+        {renderPill()}
       </View>
+
       <Text variant="caption" weight="semibold" align="center" style={{ marginTop: 10, color: active ? accent : theme.colors.text.primary }}>
         {label}
       </Text>
