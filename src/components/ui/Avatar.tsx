@@ -1,7 +1,8 @@
 import React, { memo } from 'react';
-import { View, Image, ViewStyle, TextStyle, Text as RNText, Platform } from 'react-native';
+import { View, ViewStyle, TextStyle, Text as RNText, Platform } from 'react-native';
 import { useTheme } from '../../theme';
 import { Text } from './Text';
+import { CachedImage } from './CachedImage';
 
 type AvatarSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
 
@@ -93,9 +94,10 @@ export const Avatar = memo(function Avatar({
   if (source) {
     return (
       <View style={[containerStyle, style]}>
-        <Image
-          source={{ uri: source }}
+        <CachedImage
+          uri={source}
           style={{ width: dimension, height: dimension }}
+          proxyWidth={dimension}
         />
       </View>
     );

@@ -535,7 +535,7 @@ export default function UserProfileScreen() {
       >
         {/* Banner */}
         <View style={{ height: 200, backgroundColor: theme.colors.accent.primary + '20' }}>
-          {bannerUrl ? <Image source={{ uri: bannerUrl }} style={{ width: '100%', height: '100%' }} resizeMode="cover" /> : null}
+          {bannerUrl ? <CachedImage uri={bannerUrl} style={{ width: '100%', height: '100%' }} resizeMode="cover" proxyWidth={800} /> : null}
           <LinearGradient colors={['transparent', theme.colors.background.primary]} style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 60 }} />
         </View>
 

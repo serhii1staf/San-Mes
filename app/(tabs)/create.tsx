@@ -8,6 +8,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import * as ImagePicker from 'expo-image-picker';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
+import { CachedImage } from '../../src/components/ui/CachedImage';
 import { useAuthStore } from '../../src/store/authStore';
 import { useFeedStore } from '../../src/store/feedStore';
 import { useConnectivityStore } from '../../src/store';
@@ -516,7 +517,7 @@ export default function CreateScreen() {
               </Pressable>
             </View>
             {repostData.content && <Text variant="body" numberOfLines={3} style={{ paddingHorizontal: 12, paddingBottom: 12 }}>{repostData.content}</Text>}
-            {repostData.imageUrl && <Image source={{ uri: repostData.imageUrl }} style={{ width: '100%', height: 120 }} resizeMode="cover" />}
+            {repostData.imageUrl && <CachedImage uri={repostData.imageUrl} style={{ width: '100%', height: 120 }} resizeMode="cover" proxyWidth={500} />}
           </View>
         )}
 
