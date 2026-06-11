@@ -1,4 +1,4 @@
-import React, { memo } from 'react';
+import React, { memo, useState, useEffect } from 'react';
 import { ImageStyle, StyleProp, StyleSheet } from 'react-native';
 import { Image } from 'expo-image';
 
@@ -101,10 +101,15 @@ export const CachedImage = memo(function CachedImage({
   noProxy,
   ...props
 }: CachedImageProps) {
+  // Reset proxy-failure state when the source URL changes — otherwise a row
+  // recycled in a list would keep falling back forever after a single bad URL.
+  const [proxyFailed, setProxyFailed] = useState(false);
+  useEffect(() => { setProxyFailed(false); }, [uri]);
+
   if (!uri) return null;
 
   let finalUri = uri;
-  if (!noProxy) {
+  if (!noProxy && !proxyFailed) {
     const flat = StyleSheet.flatten(style) as ImageStyle | undefined;
     const styleW = typeof flat?.width === 'number' ? flat.width : undefined;
     finalUri = proxiedImageUrl(uri, proxyWidth ?? styleW);
@@ -121,6 +126,15 @@ export const CachedImage = memo(function CachedImage({
       // Reuse the cached frame immediately; only fade the first time.
       transition={120}
       recyclingKey={finalUri}
+      // If the proxy fails (e.g. weserv can't fetch a private/odd host), fall
+      // back to the original URL so the image still loads. Without this any
+      // URL the proxy can't see (private buckets, signed URLs, less-common
+      // CDNs in unfurl thumbnails) silently shows nothing.
+      onError={() => {
+        if (!noProxy && !proxyFailed && finalUri !== uri) {
+          setProxyFailed(true);
+        }
+      }}
       {...props}
     />
   );
