@@ -17,6 +17,7 @@ import { useConnectivityStore } from '../src/services/connectivityMonitor';
 import { useEntityStore } from '../src/services/entityStore';
 import { setCacheAccount } from '../src/services/cacheService';
 import { setThrottleAccount } from '../src/services/syncThrottle';
+import { useT } from '../src/i18n/store';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -79,6 +80,7 @@ function ThemedShell({ children }: { children: React.ReactNode }) {
 
 function CustomSplash() {
   const theme = useTheme();
+  const t = useT();
   // Splash only needs the display name — subscribe to that field, not the
   // whole user object, so unrelated profile updates don't re-trigger the
   // mount animation.
@@ -105,7 +107,7 @@ function CustomSplash() {
           <RNText style={{ fontSize: 28, fontWeight: '700', color: theme.colors.text.primary }}>San</RNText>
           {displayName && (
             <RNText numberOfLines={1} style={{ fontSize: 13, color: theme.colors.text.tertiary, marginTop: 2 }}>
-              Привет, {displayName}
+              {t('splash.greeting', undefined, { name: displayName })}
             </RNText>
           )}
         </Animated.View>
@@ -204,6 +206,7 @@ export default function RootLayout() {
               <Stack.Screen name="settings/mini-apps" />
               <Stack.Screen name="settings/chat-settings" />
               <Stack.Screen name="settings/browser" />
+              <Stack.Screen name="settings/language" />
             </Stack>
           </View>
           <BrowserBottomBand />

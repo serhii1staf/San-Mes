@@ -35,7 +35,7 @@ const ProfileTabIcon = ({ color, size }: TabBarIconProps) => (
 
 const homeOptions = { title: 'Home', tabBarIcon: HomeTabIcon };
 const searchOptions = { title: 'Search', tabBarIcon: SearchTabIcon };
-const createOptions = { title: 'Новый пост', headerShown: false, tabBarIcon: CreateTabIcon };
+const createOptions = { title: 'Create', headerShown: false, tabBarIcon: CreateTabIcon };
 const messagesOptions = { title: 'Messages', tabBarIcon: MessagesTabIcon };
 const profileOptions = { title: 'Profile', tabBarIcon: ProfileTabIcon };
 

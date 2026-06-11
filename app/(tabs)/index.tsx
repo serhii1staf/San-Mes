@@ -23,6 +23,7 @@ import { kvGetJSONSync, kvSetJSON } from '../../src/services/kvStore';
 import { updateFeedWidget } from '../../src/services/widgetBridge';
 import { useWidgetSettingsStore } from '../../src/store/widgetSettingsStore';
 import { queueMutation } from '../../src/services/offlineQueue';
+import { useT } from '../../src/i18n/store';
 
 const FEED_CACHE_KEY = '@san:feed_posts';
 const FEED_LIMIT = 20;
@@ -70,12 +71,13 @@ function NotificationBellBadge({ accent, bg }: { accent: string; bg: string }) {
 
 function FeedHeader() {
   const theme = useTheme();
+  const t = useT();
   return (
     <View style={{ alignItems: 'center', paddingVertical: 40 }}>
       <Text style={{ fontSize: 40 }}>📝</Text>
-      <Text variant="body" weight="semibold" style={{ marginTop: 12 }}>Пока нет публикаций</Text>
+      <Text variant="body" weight="semibold" style={{ marginTop: 12 }}>{t('feed.empty')}</Text>
       <Text variant="caption" color={theme.colors.text.secondary} align="center" style={{ marginTop: 4, paddingHorizontal: 32 }}>
-        Подпишись на людей или создай свой первый пост
+        {t('feed.empty_hint')}
       </Text>
     </View>
   );
@@ -170,6 +172,7 @@ function mapRawPost(p: any, postsById: Record<string, any>): Post | null {
 export default function FeedScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const t = useT();
   // Subscribe field-by-field — pulling the whole user object from useAuthStore
   // re-renders the entire feed screen on any unrelated profile change.
   const userId = useAuthStore((s) => s.user?.id);
@@ -464,13 +467,13 @@ export default function FeedScreen() {
             {!isOnline && (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(255,59,48,0.12)', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 }}>
                 <ActivityIndicator size={10} color="#FF3B30" />
-                <Text variant="caption" color="#FF3B30" style={{ fontSize: 10 }}>Оффлайн</Text>
+                <Text variant="caption" color="#FF3B30" style={{ fontSize: 10 }}>{t('feed.offline')}</Text>
               </View>
             )}
             {(updateStatus === 'checking' || updateStatus === 'downloading' || updateStatus === 'ready') && (
               <Pressable onPress={() => setShowUpdateModal(true)} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: theme.colors.accent.primary + '15', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 }}>
                 {updateStatus !== 'ready' ? <ActivityIndicator size={11} color={theme.colors.accent.primary} /> : <Feather name="check-circle" size={12} color={theme.colors.accent.primary} />}
-                <Text variant="caption" color={theme.colors.accent.primary} style={{ fontSize: 11 }}>{updateStatus === 'ready' ? 'Готово' : `${Math.round(updateProgress)}%`}</Text>
+                <Text variant="caption" color={theme.colors.accent.primary} style={{ fontSize: 11 }}>{updateStatus === 'ready' ? t('feed.update_ready') : `${Math.round(updateProgress)}%`}</Text>
               </Pressable>
             )}
           </View>
@@ -504,10 +507,10 @@ export default function FeedScreen() {
             <View style={{ marginHorizontal: 8, marginBottom: 16, backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF', borderRadius: 28, overflow: 'hidden' }}>
               <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 6 }}><View style={{ width: 40, height: 5, borderRadius: 3, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)' }} /></View>
               <View style={{ paddingHorizontal: 20, paddingBottom: 20 }}>
-                <Text variant="body" weight="bold" align="center" style={{ marginBottom: 16 }}>Обновление</Text>
+                <Text variant="body" weight="bold" align="center" style={{ marginBottom: 16 }}>{t('feed.update_title')}</Text>
                 <View style={{ height: 6, backgroundColor: theme.colors.border.light, borderRadius: 3, marginBottom: 12, overflow: 'hidden' }}><View style={{ height: '100%', width: `${Math.min(updateProgress, 100)}%`, backgroundColor: theme.colors.accent.primary, borderRadius: 3 }} /></View>
                 <Text variant="caption" color={theme.colors.text.tertiary} align="center" style={{ marginBottom: 16 }}>{Math.round(updateProgress)}%</Text>
-                {updateStatus === 'ready' && (<Pressable onPress={applyUpdate} style={{ backgroundColor: theme.colors.accent.primary, borderRadius: 14, paddingVertical: 14, alignItems: 'center' }}><Text variant="body" weight="semibold" color="#FFFFFF">Перезапустить</Text></Pressable>)}
+                {updateStatus === 'ready' && (<Pressable onPress={applyUpdate} style={{ backgroundColor: theme.colors.accent.primary, borderRadius: 14, paddingVertical: 14, alignItems: 'center' }}><Text variant="body" weight="semibold" color="#FFFFFF">{t('feed.update_restart')}</Text></Pressable>)}
               </View>
             </View>
           </View>

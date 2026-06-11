@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
 import { useSettingsStore } from '../../src/store/settingsStore';
+import { useT } from '../../src/i18n/store';
 import { triggerHaptic } from '../../src/utils/haptics';
 
 // Browser-specific settings: in-app browser toggle + position of the
@@ -15,6 +16,7 @@ import { triggerHaptic } from '../../src/utils/haptics';
 export default function BrowserSettingsScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const t = useT();
   const useInAppBrowser = useSettingsStore((s) => s.useInAppBrowser);
   const setInAppBrowser = useSettingsStore((s) => s.setInAppBrowser);
   const browserWidgetPosition = useSettingsStore((s) => s.browserWidgetPosition);
@@ -28,7 +30,7 @@ export default function BrowserSettingsScreen() {
         <Pressable onPress={() => router.back()} hitSlop={10} style={{ padding: 4 }}>
           <Feather name="chevron-left" size={24} color={theme.colors.text.primary} />
         </Pressable>
-        <Text variant="body" weight="bold" style={{ flex: 1, textAlign: 'center', marginRight: 32 }}>Браузер</Text>
+        <Text variant="body" weight="bold" style={{ flex: 1, textAlign: 'center', marginRight: 32 }}>{t('browser_settings.title')}</Text>
       </View>
 
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100 }}>
@@ -38,7 +40,7 @@ export default function BrowserSettingsScreen() {
             <View style={{ width: 32, height: 32, borderRadius: 9, backgroundColor: 'rgba(100,210,255,0.16)', alignItems: 'center', justifyContent: 'center', marginRight: 14 }}>
               <Feather name="globe" size={17} color="#64D2FF" />
             </View>
-            <Text variant="body" style={{ flex: 1 }}>Встроенный браузер</Text>
+            <Text variant="body" style={{ flex: 1 }}>{t('browser_settings.in_app_label')}</Text>
             <Switch
               value={useInAppBrowser}
               onValueChange={setInAppBrowser}
@@ -50,18 +52,18 @@ export default function BrowserSettingsScreen() {
 
         {/* Position picker — visual side-by-side cards */}
         <Text variant="caption" weight="semibold" color={theme.colors.text.secondary} style={{ marginLeft: 4, marginBottom: 8, textTransform: 'uppercase', fontSize: 11 }}>
-          Положение мини-виджета
+          {t('browser_settings.position_label')}
         </Text>
         <View style={{ flexDirection: 'row', gap: 12, marginBottom: 12 }}>
           <PositionCard
-            label="Сверху"
+            label={t('browser_settings.position_top')}
             active={browserWidgetPosition === 'top'}
             onPress={() => { triggerHaptic('selection'); setBrowserWidgetPosition('top'); }}
             theme={theme}
             kind="top"
           />
           <PositionCard
-            label="Снизу"
+            label={t('browser_settings.position_bottom')}
             active={browserWidgetPosition === 'bottom'}
             onPress={() => { triggerHaptic('selection'); setBrowserWidgetPosition('bottom'); }}
             theme={theme}
@@ -69,9 +71,7 @@ export default function BrowserSettingsScreen() {
           />
         </View>
         <Text variant="caption" color={theme.colors.text.tertiary} style={{ paddingHorizontal: 4 }}>
-          Когда вы сворачиваете браузер или мини-приложение, плашка с названием
-          сайта появится в выбранном месте. Нажмите по ней чтобы вернуться,
-          крестик — чтобы закрыть сессию.
+          {t('browser_settings.position_hint')}
         </Text>
       </ScrollView>
     </View>

@@ -10,6 +10,7 @@ import { Text } from '../../src/components/ui';
 import { AppIconModal } from '../../src/components/ui/AppIconModal';
 import { useAuthStore } from '../../src/store';
 import { useSettingsStore } from '../../src/store/settingsStore';
+import { useT } from '../../src/i18n/store';
 
 // Per-row tint pairs (icon color + soft tile bg) — picked to be readable in
 // both light and dark mode without being eye-piercing. Same hue family as
@@ -97,6 +98,7 @@ function SettingsRow({
 export default function SettingsScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const t = useT();
   const { logout } = useAuthStore();
   // Field-level selectors — pulling the whole settings store re-rendered
   // the screen on every unrelated state change.
@@ -223,7 +225,7 @@ export default function SettingsScreen() {
           >
             <Feather name="chevron-left" size={24} color={theme.colors.text.primary} />
           </Pressable>
-          <Text variant="subheading" weight="bold">Настройки</Text>
+          <Text variant="subheading" weight="bold">{t('settings.title')}</Text>
         </View>
       </View>
 
@@ -258,7 +260,7 @@ export default function SettingsScreen() {
           <SettingsRow
             icon="zap"
             iconTint="orange"
-            label="Вибро-отклик"
+            label={t('settings.haptic')}
             showChevron={false}
             rightElement={
               <Switch
@@ -272,8 +274,8 @@ export default function SettingsScreen() {
           <SettingsRow
             icon="globe"
             iconTint="cyan"
-            label="Браузер"
-            value={useInAppBrowser ? 'Встроенный' : 'Внешний'}
+            label={t('settings.browser')}
+            value={useInAppBrowser ? t('settings.browser.in_app') : t('settings.browser.external')}
             isLast
             onPress={() => router.push('/settings/browser')}
           />
@@ -282,22 +284,28 @@ export default function SettingsScreen() {
         {/* Оформление */}
         <View style={sectionTitleStyle}>
           <Text variant="body" weight="semibold" color={theme.colors.text.secondary}>
-            Оформление
+            {t('settings.section.appearance', 'Оформление')}
           </Text>
         </View>
         <View style={sectionCardStyle}>
           <SettingsRow
             icon="droplet"
             iconTint="purple"
-            label="Внешний вид"
+            label={t('settings.appearance')}
             onPress={() => router.push('/settings/appearance')}
             isFirst
           />
           <SettingsRow
             icon="type"
             iconTint="indigo"
-            label="Шрифты"
+            label={t('settings.fonts')}
             onPress={() => router.push('/settings/fonts' as any)}
+          />
+          <SettingsRow
+            icon="globe"
+            iconTint="teal"
+            label={t('settings.language')}
+            onPress={() => router.push('/settings/language' as any)}
           />
           <SettingsRow
             icon="grid"
@@ -358,7 +366,7 @@ export default function SettingsScreen() {
             }}
           >
             <Text variant="body" weight="semibold" color={theme.colors.status.error}>
-              Выйти
+              {t('settings.logout')}
             </Text>
           </Pressable>
           <Pressable

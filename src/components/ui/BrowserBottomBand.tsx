@@ -13,6 +13,7 @@ import { Text } from './Text';
 import { CachedImage } from './CachedImage';
 import { useBrowserStore } from '../../store/browserStore';
 import { useSettingsStore } from '../../store/settingsStore';
+import { useT } from '../../i18n/store';
 import { triggerHaptic } from '../../utils/haptics';
 
 // Bottom-docked browser/mini-app session band.
@@ -41,6 +42,7 @@ const FADE_OUT_DURATION = 180;
 
 export function BrowserBottomBand() {
   const theme = useTheme();
+  const t = useT();
   const minimizedUrl = useBrowserStore((s) => s.minimizedUrl);
   const minimizedDomain = useBrowserStore((s) => s.minimizedDomain);
   const minimizedFavicon = useBrowserStore((s) => s.minimizedFavicon);
@@ -183,7 +185,7 @@ export function BrowserBottomBand() {
               </View>
             ) : null}
             <Text variant="body" weight="semibold" numberOfLines={1} style={{ color: theme.colors.text.primary, maxWidth: 220 }}>
-              {minimizedDomain || 'Браузер'}
+              {minimizedDomain || t('browser.pill_default')}
             </Text>
           </View>
 

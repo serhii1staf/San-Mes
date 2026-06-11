@@ -33,6 +33,7 @@ import { triggerHaptic } from '../../src/utils/haptics';
 import { formatTimeAgo } from '../../src/utils/mockData';
 import { accountKey } from '../../src/services/cacheService';
 import { shouldSync, resetThrottle } from '../../src/services/syncThrottle';
+import { useT } from '../../src/i18n/store';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const MY_POSTS_CACHE_KEY = '@san:my_posts';
@@ -82,6 +83,7 @@ function SocialLinkIcon({ type, url }: { type: string; url: string }) {
 export default function ProfileScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const t = useT();
   // Selectors over destructuring — pulling the whole user object re-rendered
   // the profile screen on every unrelated profile field change (badge sync, etc.)
   const user = useAuthStore((s) => s.user);
@@ -291,7 +293,7 @@ export default function ProfileScreen() {
 
   const userLinks: { type: string; url: string }[] = (user as any).links || [];
   const bannerUrl = (user as any)?.bannerUrl;
-  const tabs: { key: TabName; label: string }[] = [{ key: 'posts', label: 'Посты' }, { key: 'replies', label: 'Ответы' }, { key: 'media', label: 'Медиа' }, { key: 'likes', label: 'Лайки' }];
+  const tabs: { key: TabName; label: string }[] = [{ key: 'posts', label: t('profile.posts') }, { key: 'replies', label: t('profile.replies') }, { key: 'media', label: t('profile.media') }, { key: 'likes', label: t('profile.likes') }];
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(`https://san-m-app.com/profile/${user.id}`)}`;
 
   return (
@@ -309,12 +311,12 @@ export default function ProfileScreen() {
           <Pressable onPress={() => setShowAccountSwitcher(true)}><View style={{ width: 72, height: 72, borderRadius: 36, overflow: 'hidden', borderWidth: 3, borderColor: theme.colors.background.primary, backgroundColor: theme.isDark ? 'rgba(30,30,30,0.85)' : 'rgba(255,255,255,0.85)', alignItems: 'center', justifyContent: 'center' }}><Avatar emoji={user.emoji} size="lg" /></View></Pressable>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}>
             <View style={{ flex: 1, marginRight: 8 }}><View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}><Text variant="body" weight="bold" numberOfLines={1} style={{ flexShrink: 1 }}>{user.displayName}</Text>{user.is_verified && <VerifiedBadge size={13} />}{user.badge && <UserBadge badge={user.badge} size="sm" />}</View><Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>@{user.username}</Text></View>
-            <Pressable onPress={() => { triggerHaptic('light'); router.push('/profile/edit'); }} style={{ borderRadius: 20, overflow: 'hidden', flexShrink: 0 }}><BlurView intensity={80} tint="dark" style={{ paddingHorizontal: 16, paddingVertical: 7 }}><Text variant="caption" weight="semibold" color="#FFFFFF">Редактировать</Text></BlurView></Pressable>
+            <Pressable onPress={() => { triggerHaptic('light'); router.push('/profile/edit'); }} style={{ borderRadius: 20, overflow: 'hidden', flexShrink: 0 }}><BlurView intensity={80} tint="dark" style={{ paddingHorizontal: 16, paddingVertical: 7 }}><Text variant="caption" weight="semibold" color="#FFFFFF">{t('profile.edit')}</Text></BlurView></Pressable>
           </View>
           <View style={{ flexDirection: 'row', marginTop: 10, gap: 16 }}>
-            <Text variant="caption"><Text variant="caption" weight="bold">{userPosts.length}</Text> <Text variant="caption" color={theme.colors.text.tertiary}>posts</Text></Text>
-            <Text variant="caption"><Text variant="caption" weight="bold">{followCounts.following}</Text> <Text variant="caption" color={theme.colors.text.tertiary}>following</Text></Text>
-            <Text variant="caption"><Text variant="caption" weight="bold">{followCounts.followers}</Text> <Text variant="caption" color={theme.colors.text.tertiary}>followers</Text></Text>
+            <Text variant="caption"><Text variant="caption" weight="bold">{userPosts.length}</Text> <Text variant="caption" color={theme.colors.text.tertiary}>{t('profile.posts_count')}</Text></Text>
+            <Text variant="caption"><Text variant="caption" weight="bold">{followCounts.following}</Text> <Text variant="caption" color={theme.colors.text.tertiary}>{t('profile.following')}</Text></Text>
+            <Text variant="caption"><Text variant="caption" weight="bold">{followCounts.followers}</Text> <Text variant="caption" color={theme.colors.text.tertiary}>{t('profile.followers')}</Text></Text>
           </View>
           {user.bio ? <LinkedText style={{ marginTop: 8 }}>{user.bio}</LinkedText> : null}
           {userLinks.length > 0 && <View style={{ flexDirection: 'row', marginTop: 8, gap: 8 }}>{userLinks.map((link, idx) => <SocialLinkIcon key={idx} type={link.type} url={link.url} />)}</View>}
@@ -323,7 +325,7 @@ export default function ProfileScreen() {
           <View style={{ flexDirection: 'row' }}>{tabs.map((tab) => (<Pressable key={tab.key} onPress={() => { triggerHaptic('selection'); if (tab.key === 'posts') { setPostsReady(false); requestAnimationFrame(() => setActiveTab('posts')); setTimeout(() => setPostsReady(true), 16); } else { setActiveTab(tab.key); } }} style={{ flex: 1, alignItems: 'center', paddingVertical: 11 }}><Text variant="caption" weight={activeTab === tab.key ? 'bold' : 'regular'} color={activeTab === tab.key ? theme.colors.text.primary : theme.colors.text.tertiary}>{tab.label}</Text></Pressable>))}</View>
           <View style={{ position: 'absolute', bottom: 0, height: 2, backgroundColor: theme.colors.accent.primary, width: SCREEN_WIDTH / 4, left: tabs.findIndex(t => t.key === activeTab) * (SCREEN_WIDTH / 4) }} />
         </View>
-        {activeTab === 'posts' && (userPosts.length === 0 ? <View style={{ alignItems: 'center', paddingVertical: 40 }}><Text variant="caption" color={theme.colors.text.tertiary}>Ещё нет публикаций</Text></View> : (
+        {activeTab === 'posts' && (userPosts.length === 0 ? <View style={{ alignItems: 'center', paddingVertical: 40 }}><Text variant="caption" color={theme.colors.text.tertiary}>{t('profile.no_posts')}</Text></View> : (
           <View style={{ paddingHorizontal: 16, paddingTop: 12, minHeight: 200 }}>{postsReady ? userPosts.slice(0, visibleCount).map(post => (
             <ProfilePostCard
               key={post.id}
@@ -339,13 +341,13 @@ export default function ProfileScreen() {
             />
           )) : null}</View>
         ))}
-        {activeTab !== 'posts' && <View style={{ alignItems: 'center', paddingVertical: 40 }}><Text variant="caption" color={theme.colors.text.tertiary}>Пока пусто</Text></View>}
+        {activeTab !== 'posts' && <View style={{ alignItems: 'center', paddingVertical: 40 }}><Text variant="caption" color={theme.colors.text.tertiary}>{t('profile.empty_section')}</Text></View>}
       </Animated.ScrollView>
       <Modal visible={showQR} transparent animationType="fade" onRequestClose={() => setShowQR(false)} statusBarTranslucent>
         <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', alignItems: 'center', justifyContent: 'center' }} onPress={() => setShowQR(false)}>
-          <Text variant="body" weight="bold" color="#FFFFFF" style={{ marginBottom: 20 }}>Мой QR-код</Text>
+          <Text variant="body" weight="bold" color="#FFFFFF" style={{ marginBottom: 20 }}>{t('profile.qr_title')}</Text>
           <View style={{ backgroundColor: '#FFF', borderRadius: 20, padding: 20 }}><Image source={{ uri: qrUrl }} style={{ width: 200, height: 200 }} resizeMode="contain" /></View>
-          <Text variant="caption" color="#FFFFFF" style={{ marginTop: 20, opacity: 0.7 }}>Нажмите чтобы закрыть</Text>
+          <Text variant="caption" color="#FFFFFF" style={{ marginTop: 20, opacity: 0.7 }}>{t('profile.qr_close_hint')}</Text>
         </Pressable>
       </Modal>
 
@@ -370,7 +372,7 @@ export default function ProfileScreen() {
                           <Text variant="caption" weight="semibold" color="#FFFFFF" style={{ fontSize: 11 }}>{displayName}</Text>
                           {user?.is_verified && <VerifiedBadge size={10} />}
                         </View>
-                        {isRepostViewing && <Text variant="caption" color="rgba(255,255,255,0.5)" numberOfLines={1} style={{ fontSize: 9 }}>репост от {user?.displayName}</Text>}
+                        {isRepostViewing && <Text variant="caption" color="rgba(255,255,255,0.5)" numberOfLines={1} style={{ fontSize: 9 }}>{t('profile.repost_from', undefined, { name: user?.displayName || '' })}</Text>}
                         {!isRepostViewing && viewingImage && <Text variant="caption" color="rgba(255,255,255,0.6)" style={{ fontSize: 9 }}>{formatTimeAgo(post?.createdAt || '')}</Text>}
                       </View>
                     </>
@@ -420,7 +422,7 @@ export default function ProfileScreen() {
               <Pressable onPress={async () => { if (viewingImage) { const ep = userPosts.find(p => p.id === viewingImage.postId); const { shareImageUrl } = require('../../src/utils/sharePost'); await shareImageUrl(viewingImage.uri, ep?.content); } }} style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center' }}>
                 <Feather name="share" size={17} color="#FFFFFF" />
               </Pressable>
-              <Pressable onPress={() => { if (viewingImage && user?.id) { Alert.alert('Удалить пост?', 'Это действие нельзя отменить', [{ text: 'Отмена', style: 'cancel' }, { text: 'Удалить', style: 'destructive', onPress: async () => { await deletePost(viewingImage.postId, user.id); setViewingImage(null); loadMyPosts(); } }]); } }} style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: 'rgba(255,60,50,0.2)', alignItems: 'center', justifyContent: 'center' }}>
+              <Pressable onPress={() => { if (viewingImage && user?.id) { Alert.alert(t('profile.delete_post_title'), t('profile.delete_post_msg'), [{ text: t('common.cancel'), style: 'cancel' }, { text: t('common.delete'), style: 'destructive', onPress: async () => { await deletePost(viewingImage.postId, user.id); setViewingImage(null); loadMyPosts(); } }]); } }} style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: 'rgba(255,60,50,0.2)', alignItems: 'center', justifyContent: 'center' }}>
                 <Feather name="trash-2" size={17} color="#FF3B30" />
               </Pressable>
             </View>

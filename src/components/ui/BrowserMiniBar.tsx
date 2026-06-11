@@ -9,6 +9,7 @@ import { Text } from './Text';
 import { CachedImage } from './CachedImage';
 import { useBrowserStore } from '../../store/browserStore';
 import { useSettingsStore } from '../../store/settingsStore';
+import { useT } from '../../i18n/store';
 import { triggerHaptic } from '../../utils/haptics';
 
 // Browser / mini-app "minimised session" pill.
@@ -27,6 +28,7 @@ const DISMISS_VY = -0.4;
 
 export function BrowserMiniBar() {
   const theme = useTheme();
+  const t = useT();
   const insets = useSafeAreaInsets();
   const minimizedUrl = useBrowserStore((s) => s.minimizedUrl);
   const minimizedDomain = useBrowserStore((s) => s.minimizedDomain);
@@ -143,7 +145,7 @@ export function BrowserMiniBar() {
             <Feather name="globe" size={14} color={theme.colors.text.tertiary} />
           )}
           <Text variant="caption" weight="semibold" numberOfLines={1} style={{ fontSize: 12, maxWidth: 180 }}>
-            {minimizedDomain || 'Браузер'}
+            {minimizedDomain || t('browser.pill_default')}
           </Text>
           <Pressable onPress={handleClose} hitSlop={8} style={{ padding: 2 }}>
             <Feather name="x" size={14} color={theme.colors.text.tertiary} />
