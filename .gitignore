@@ -40,5 +40,6 @@ coverage/
 AuthKey_*.p8
 credentials.json
 tokim
+eple.txt
 build-info.json
 DEPLOY.md
