@@ -63,7 +63,18 @@ function AuthNavigationGuard({ children }: { children: React.ReactNode }) {
   if (!isAuthenticated && !inAuthGroup) {
     return <CustomSplash />;
   }
-  return <>{children}</>;
+  // The whole tree is wrapped in a themed background so any 1-pixel layout
+  // gap (e.g. between the Stack and the bottom-docked browser band when
+  // its height animates) gets the app's real background colour rather than
+  // whatever sits behind us (which can be the OS default white in some
+  // edge cases — that was the "white seam" the user saw at the bottom of
+  // the screen for a frame after dismissing the band).
+  return <ThemedShell>{children}</ThemedShell>;
+}
+
+function ThemedShell({ children }: { children: React.ReactNode }) {
+  const theme = useTheme();
+  return <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>{children}</View>;
 }
 
 function CustomSplash() {

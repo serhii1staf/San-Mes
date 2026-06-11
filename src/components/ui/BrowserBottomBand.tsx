@@ -79,15 +79,16 @@ export function BrowserBottomBand() {
 
   const containerStyle = useAnimatedStyle(() => {
     // Tighten the gap to the floating tab bar — but ONLY while the band is
-    // actually showing. Linearly interpolate the negative top margin with
-    // the band's height so when the band is fully collapsed (height 0)
-    // marginTop is also 0 → no permanent layout shift across the rest of
-    // the app. Without this the Stack above us was always shrunk by 14px,
-    // which is why the input field and tab bar appeared lower in chats.
+    // actually showing. We use translateY (a transform, handled by the
+    // native compositor) instead of marginTop, because animating margin
+    // causes the parent flex column to reflow on every frame, which in
+    // practice produced occasional 1-pixel "white seams" between the
+    // band and the tab bar mid-animation. Transforms don't affect layout
+    // so the parent stays still; only the band's pixels shift.
     const progress = heightSV.value / BAND_HEIGHT;
     return {
       height: heightSV.value,
-      marginTop: -14 * progress,
+      transform: [{ translateY: -14 * progress }],
     };
   });
   const innerStyle = useAnimatedStyle(() => ({
