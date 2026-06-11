@@ -1,7 +1,13 @@
 import React, { useEffect } from 'react';
-import { View, Pressable, Platform, UIManager, LayoutAnimation, Text as RNText } from 'react-native';
+import { View, Pressable, Text as RNText } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withTiming,
+  Easing,
+} from 'react-native-reanimated';
 import { useTheme } from '../../theme';
 import { Text } from './Text';
 import { CachedImage } from './CachedImage';
@@ -11,42 +17,27 @@ import { triggerHaptic } from '../../utils/haptics';
 
 // Bottom-docked browser/mini-app session band.
 //
-// SINGLE animation only — LayoutAnimation interpolates the band's height
-// between 0 and BAND_HEIGHT. The tab bar (which floats inside the Stack
-// above us in a flex column) slides up/down in lockstep because the column
-// reflows to the new height. There is no separate slide-of-content because
-// running two animations in series produced a visible "ghost" frame at
-// dismiss time — the layout shrunk AFTER the content faded, so a black
-// rectangle was briefly left over. With a single height animation the
-// content disappears together with the height and everything moves as
-// one piece.
+// Animation strategy: a SINGLE Reanimated shared value (`heightSV`) drives
+// the band's outer height between 0 and BAND_HEIGHT. Because this height
+// lives in a flex column above the band's parent, the surrounding layout
+// reflows on every frame — the floating tab bar inside the Stack rides
+// upward/downward in lockstep, with no separate animation.
 //
-// The container has its top corners rounded AND a solid background so the
-// rounded corners blend with the app background instead of letting the
-// underlying screen show through (which the user saw as "black squares
-// in the corners").
+// The component is ALWAYS mounted (no `return null`). When the session is
+// dismissed the height collapses to 0 (and content fades to 0 first), so
+// nothing unmounts mid-animation. That's what removed the previous
+// "white flash" — LayoutAnimation was scheduling unmount slightly out of
+// step with the height change, briefly leaving an empty rectangle on
+// screen.
+//
+// All animation runs on the UI thread (Reanimated worklets), so weak
+// devices stay smooth.
 
-const BAND_HEIGHT = 56; // outer band height — drives the layout shift
-
-// Enable LayoutAnimation on Android (it's iOS-only by default).
-if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
-  UIManager.setLayoutAnimationEnabledExperimental(true);
-}
-
-const ENTER_CONFIG: LayoutAnimationConfig = {
-  duration: 360,
-  create:  { type: 'easeInEaseOut', property: 'opacity' },
-  update:  { type: 'easeInEaseOut' },
-  delete:  { type: 'easeInEaseOut', property: 'opacity' },
-};
-type LayoutAnimationConfig = Parameters<typeof LayoutAnimation.configureNext>[0];
-
-const EXIT_CONFIG: LayoutAnimationConfig = {
-  duration: 320,
-  create:  { type: 'easeInEaseOut', property: 'opacity' },
-  update:  { type: 'easeInEaseOut' },
-  delete:  { type: 'easeInEaseOut', property: 'opacity' },
-};
+const BAND_HEIGHT = 56;
+const ENTER_DURATION = 380;
+const EXIT_DURATION = 320;
+const FADE_IN_DURATION = 240;
+const FADE_OUT_DURATION = 180;
 
 export function BrowserBottomBand() {
   const theme = useTheme();
@@ -60,16 +51,41 @@ export function BrowserBottomBand() {
 
   const visible = !!minimizedUrl && position === 'bottom';
 
-  // Schedule a layout animation BEFORE the next render that mounts/unmounts
-  // the band. This makes the height change interpolate smoothly and the
-  // tab bar above us slide along with it, in a single continuous motion.
-  useEffect(() => {
-    LayoutAnimation.configureNext(visible ? ENTER_CONFIG : EXIT_CONFIG);
-  }, [visible]);
+  const heightSV = useSharedValue(0);
+  const opacitySV = useSharedValue(0);
 
-  if (!visible) return null;
+  useEffect(() => {
+    if (visible) {
+      heightSV.value = withTiming(BAND_HEIGHT, {
+        duration: ENTER_DURATION,
+        // ease-out cubic: starts fast, ends slowly — matches a sheet rising
+        // from below into place, with no abrupt landing.
+        easing: Easing.out(Easing.cubic),
+      });
+      opacitySV.value = withTiming(1, { duration: FADE_IN_DURATION, easing: Easing.out(Easing.cubic) });
+    } else {
+      // Fade content slightly faster than the height collapse so the moving
+      // strip is empty by the time it finishes shrinking — no half-shown
+      // text mid-fold.
+      opacitySV.value = withTiming(0, { duration: FADE_OUT_DURATION, easing: Easing.in(Easing.cubic) });
+      heightSV.value = withTiming(0, {
+        duration: EXIT_DURATION,
+        // ease-in cubic: starts gently, ends fast — feels like the band
+        // tucks itself away under the tab bar.
+        easing: Easing.in(Easing.cubic),
+      });
+    }
+  }, [visible, heightSV, opacitySV]);
+
+  const containerStyle = useAnimatedStyle(() => ({
+    height: heightSV.value,
+  }));
+  const innerStyle = useAnimatedStyle(() => ({
+    opacity: opacitySV.value,
+  }));
 
   const handleOpen = () => {
+    if (!visible) return;
     triggerHaptic('light');
     const state = useBrowserStore.getState();
     if (state.isMiniApp) {
@@ -81,76 +97,97 @@ export function BrowserBottomBand() {
   };
 
   const handleClose = () => {
+    if (!visible) return;
     triggerHaptic('light');
-    // Pre-arm the exit animation so the immediately-following unmount
-    // (caused by clearMinimized → visible flips to false) animates on the
-    // same frame instead of snapping.
-    LayoutAnimation.configureNext(EXIT_CONFIG);
     clearMinimized();
   };
 
-  // Negative top margin pulls the band a few pixels closer to the tab bar
-  // so the gap between them feels like a small breath rather than a wide
-  // empty strip. The tab bar's own marginBottom (24) still gives a clean
-  // separation; we just trim it visually.
+  // Negative top margin tightens the gap to the floating tab bar so it
+  // reads as a small breath, not a wide empty strip.
   return (
-    <View
-      style={{
-        height: BAND_HEIGHT,
-        marginTop: -10,
-        backgroundColor: theme.colors.background.primary,
-        borderTopLeftRadius: 22,
-        borderTopRightRadius: 22,
-        borderTopWidth: 0.5,
-        borderLeftWidth: 0.5,
-        borderRightWidth: 0.5,
-        borderColor: theme.colors.border.light,
-        overflow: 'hidden',
-      }}
+    <Animated.View
+      style={[
+        {
+          overflow: 'hidden',
+          marginTop: -14,
+          backgroundColor: theme.colors.background.primary,
+          borderTopLeftRadius: 22,
+          borderTopRightRadius: 22,
+          borderTopWidth: 0.5,
+          borderLeftWidth: 0.5,
+          borderRightWidth: 0.5,
+          borderColor: theme.colors.border.light,
+        },
+        containerStyle,
+      ]}
+      pointerEvents={visible ? 'auto' : 'none'}
     >
-      <Pressable
-        onPress={handleOpen}
-        style={{
-          flex: 1,
-          flexDirection: 'row',
-          alignItems: 'center',
-          paddingLeft: 18,
-          paddingRight: 6,
-        }}
-      >
-        <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, gap: 10 }}>
-          {isMiniApp && minimizedEmoji ? (
-            <RNText style={{ fontSize: 18 }} allowFontScaling={false}>{minimizedEmoji}</RNText>
-          ) : minimizedFavicon ? (
-            <View
-              style={{
-                width: 22,
-                height: 22,
-                borderRadius: 5,
-                overflow: 'hidden',
-                backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
-              }}
-            >
-              <CachedImage uri={minimizedFavicon} style={{ width: 22, height: 22 }} proxyWidth={64} />
-            </View>
-          ) : (
-            <Feather name="globe" size={18} color={theme.colors.text.tertiary} />
-          )}
-          <Text variant="body" weight="semibold" numberOfLines={1} style={{ flex: 1, color: theme.colors.text.primary }}>
-            {minimizedDomain || 'Браузер'}
-          </Text>
-        </View>
-
-        {/* Close — pulled in from the right edge so it isn't glued to the
-            screen border. */}
+      <Animated.View style={[{ height: BAND_HEIGHT }, innerStyle]}>
         <Pressable
-          onPress={handleClose}
-          hitSlop={10}
-          style={{ width: 40, height: 40, alignItems: 'center', justifyContent: 'center', marginRight: 6 }}
+          onPress={handleOpen}
+          style={{
+            flex: 1,
+            flexDirection: 'row',
+            alignItems: 'center',
+            // Symmetric horizontal padding so the centered title sits
+            // visually in the middle without being shoved by the close
+            // button on the right.
+            paddingHorizontal: 12,
+          }}
         >
-          <Feather name="x" size={22} color={theme.colors.text.primary} />
+          {/* Left spacer matches close-button width so the absolutely
+              centered title is visually centered between them. */}
+          <View style={{ width: 36 }} />
+
+          {/* Title + favicon — absolutely centered in the band, ignoring
+              the side controls so it stays dead-center regardless of
+              domain length (truncates with ellipsis). */}
+          <View
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              left: 0,
+              right: 0,
+              top: 0,
+              bottom: 0,
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 8,
+              paddingHorizontal: 60,
+            }}
+          >
+            {isMiniApp && minimizedEmoji ? (
+              <RNText style={{ fontSize: 18 }} allowFontScaling={false}>{minimizedEmoji}</RNText>
+            ) : minimizedFavicon ? (
+              <View
+                style={{
+                  width: 22,
+                  height: 22,
+                  borderRadius: 5,
+                  overflow: 'hidden',
+                  backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
+                }}
+              >
+                <CachedImage uri={minimizedFavicon} style={{ width: 22, height: 22 }} proxyWidth={64} />
+              </View>
+            ) : null}
+            <Text variant="body" weight="semibold" numberOfLines={1} style={{ color: theme.colors.text.primary, maxWidth: 220 }}>
+              {minimizedDomain || 'Браузер'}
+            </Text>
+          </View>
+
+          {/* Close button — pulled in from the right edge. */}
+          <View style={{ flex: 1 }} />
+          <Pressable
+            onPress={handleClose}
+            hitSlop={10}
+            style={{ width: 36, height: 36, alignItems: 'center', justifyContent: 'center', marginRight: 8 }}
+          >
+            <Feather name="x" size={22} color={theme.colors.text.primary} />
+          </Pressable>
         </Pressable>
-      </Pressable>
-    </View>
+      </Animated.View>
+    </Animated.View>
   );
 }
