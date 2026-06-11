@@ -170,8 +170,11 @@ function mapRawPost(p: any, postsById: Record<string, any>): Post | null {
 export default function FeedScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
-  const { user } = useAuthStore();
-  const { isRefreshing, setRefreshing } = useFeedStore();
+  // Subscribe field-by-field — pulling the whole user object from useAuthStore
+  // re-renders the entire feed screen on any unrelated profile change.
+  const userId = useAuthStore((s) => s.user?.id);
+  const isRefreshing = useFeedStore((s) => s.isRefreshing);
+  const setRefreshing = useFeedStore((s) => s.setRefreshing);
   // Hydrate the feed SYNCHRONOUSLY from MMKV on the very first render so the list
   // paints with content immediately — no empty→fill flicker, instant offline.
   const [posts, setPosts] = useState<Post[]>(() => {
@@ -207,7 +210,12 @@ export default function FeedScreen() {
   });
   const hasFetched = useRef(false);
 
-  const { status: updateStatus, progress: updateProgress, message: updateMessage, checkForUpdate, applyUpdate } = useUpdateStore();
+  // Subscribe to update store fields individually so the feed screen doesn't
+  // re-render on every progress tick of an OTA download.
+  const updateStatus = useUpdateStore((s) => s.status);
+  const updateProgress = useUpdateStore((s) => s.progress);
+  const checkForUpdate = useUpdateStore((s) => s.checkForUpdate);
+  const applyUpdate = useUpdateStore((s) => s.applyUpdate);
   const isOnline = useConnectivityStore((s) => s.isOnline);
 
   // Reload from cache when tab gains focus (picks up new posts from create screen).
@@ -376,14 +384,14 @@ export default function FeedScreen() {
   }, [setPosts, setRefreshing]);
 
   const handleToggleLike = useCallback((postId: string) => {
-    if (!user?.id) return;
+    if (!userId) return;
     // Optimistic update locally
     setPosts(prev => prev.map(p =>
       p.id === postId ? { ...p, isLiked: !p.isLiked, likesCount: p.isLiked ? p.likesCount - 1 : p.likesCount + 1 } : p
     ));
     // Send to server (fire and forget)
-    apiToggleLike(user.id, postId).catch(() => {});
-  }, [user?.id]);
+    apiToggleLike(userId, postId).catch(() => {});
+  }, [userId]);
 
   // Stable callbacks for PostCard so its React.memo isn't busted by new function
   // references on every render of FeedScreen.
@@ -391,17 +399,17 @@ export default function FeedScreen() {
     router.push({ pathname: '/comments/[id]', params: { id: postId } });
   }, []);
 
-  const handleFollow = useCallback((userId: string) => {
+  const handleFollow = useCallback((targetUserId: string) => {
     triggerHaptic('medium');
-    queueMutation('follow', { followerId: user?.id, followingId: userId });
-  }, [user?.id]);
+    queueMutation('follow', { followerId: userId, followingId: targetUserId });
+  }, [userId]);
 
   const handleShare = useCallback((postId: string) => {
-    if (!user?.id) return;
+    if (!userId) return;
     triggerHaptic('medium');
     useFeedStore.getState().setPendingRepost(postId);
     router.push('/(tabs)/create');
-  }, [user?.id]);
+  }, [userId]);
 
   const handleMenu = useCallback((post: Post) => {
     setMenuPost(post);
@@ -411,7 +419,7 @@ export default function FeedScreen() {
     <View>
       <PostCard
         post={item}
-        currentUserId={user?.id}
+        currentUserId={userId}
         onComment={handleComment}
         onLike={handleToggleLike}
         onFollow={handleFollow}
@@ -419,7 +427,7 @@ export default function FeedScreen() {
         onMenu={handleMenu}
       />
     </View>
-  ), [user?.id, handleComment, handleToggleLike, handleFollow, handleShare, handleMenu]);
+  ), [userId, handleComment, handleToggleLike, handleFollow, handleShare, handleMenu]);
 
   const bgColor = theme.colors.background.primary;
   const bgTransparent = bgColor + '00';

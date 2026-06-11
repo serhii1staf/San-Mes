@@ -31,7 +31,14 @@ const DISMISS_VY = -0.4; // fling velocity that counts as dismiss
 export function BrowserMiniBar() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
-  const { minimizedUrl, minimizedDomain, minimizedFavicon, minimizedEmoji, isMiniApp, clearMinimized } = useBrowserStore();
+  // Subscribe field-by-field so unrelated browser-store updates (history,
+  // open-tabs, etc.) don't re-render this top-level widget.
+  const minimizedUrl = useBrowserStore((s) => s.minimizedUrl);
+  const minimizedDomain = useBrowserStore((s) => s.minimizedDomain);
+  const minimizedFavicon = useBrowserStore((s) => s.minimizedFavicon);
+  const minimizedEmoji = useBrowserStore((s) => s.minimizedEmoji);
+  const isMiniApp = useBrowserStore((s) => s.isMiniApp);
+  const clearMinimized = useBrowserStore((s) => s.clearMinimized);
   const slideAnim = useRef(new Animated.Value(-60)).current;
   const opacityAnim = useRef(new Animated.Value(0)).current;
   const dragY = useRef(new Animated.Value(0)).current;

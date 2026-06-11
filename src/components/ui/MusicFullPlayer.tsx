@@ -33,7 +33,17 @@ const SLIDER_THUMB = 14;
 const SLIDER_TRACK_H = 4;
 const SLIDER_AREA_H = 32;
 
+// Lightweight outer component — subscribes ONLY to `playerOpen`. The heavy
+// content with its 500ms-cadence positionMs subscription is only mounted when
+// the player is actually open. Before this split the root tree re-rendered
+// every 500ms while music played, even with the player dismissed.
 export function MusicFullPlayer() {
+  const playerOpen = useMusicStore((s) => s.playerOpen);
+  if (!playerOpen) return null;
+  return <MusicFullPlayerContent />;
+}
+
+function MusicFullPlayerContent() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
 
@@ -50,18 +60,18 @@ export function MusicFullPlayer() {
   const play = useMusicStore((s) => s.play);
 
   // Slide animation. translateY=0 → fully open. translateY=SCREEN_HEIGHT → off-screen.
+  // The component is now only mounted when the player is open, so the entry
+  // spring runs once on mount.
   const slide = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
   const dragY = useRef(new Animated.Value(0)).current;
   const closing = useRef(false);
 
   React.useEffect(() => {
-    if (playerOpen) {
-      closing.current = false;
-      slide.setValue(SCREEN_HEIGHT);
-      dragY.setValue(0);
-      Animated.spring(slide, { toValue: 0, useNativeDriver: true, tension: 65, friction: 12 }).start();
-    }
-  }, [playerOpen]);
+    closing.current = false;
+    slide.setValue(SCREEN_HEIGHT);
+    dragY.setValue(0);
+    Animated.spring(slide, { toValue: 0, useNativeDriver: true, tension: 65, friction: 12 }).start();
+  }, []);
 
   const animateClose = useCallback(() => {
     if (closing.current) return;
@@ -181,7 +191,7 @@ export function MusicFullPlayer() {
   const translateY = Animated.add(slide, dragY);
 
   return (
-    <Modal visible={playerOpen} transparent animationType="none" statusBarTranslucent onRequestClose={animateClose}>
+    <Modal visible transparent animationType="none" statusBarTranslucent onRequestClose={animateClose}>
       <StatusBar hidden />
       <View style={StyleSheet.absoluteFill}>
         {/* Backdrop — tap dismisses. */}

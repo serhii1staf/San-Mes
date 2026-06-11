@@ -13,7 +13,12 @@ import { useToastStore } from '../../store/toastStore';
 export function Toast() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
-  const { message, icon, visible, hide } = useToastStore();
+  // Field-by-field selectors — pulling the whole toast store re-rendered
+  // this top-level component on every unrelated state change.
+  const message = useToastStore((s) => s.message);
+  const icon = useToastStore((s) => s.icon);
+  const visible = useToastStore((s) => s.visible);
+  const hide = useToastStore((s) => s.hide);
   const slideAnim = useRef(new Animated.Value(-60)).current;
   const opacityAnim = useRef(new Animated.Value(0)).current;
 

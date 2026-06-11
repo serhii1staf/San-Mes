@@ -21,7 +21,11 @@ import { KeyboardProvider } from 'react-native-keyboard-controller';
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
 function AuthNavigationGuard({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, hasHydrated } = useAuthStore();
+  // Subscribe to ONLY the two flags we actually care about. Pulling the whole
+  // auth store re-renders the entire navigation stack on every profile field
+  // update (badge, displayName, etc.) — that was a major source of jank.
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const hasHydrated = useAuthStore((s) => s.hasHydrated);
   const segments = useSegments();
   const router = useRouter();
   const [showSplash, setShowSplash] = useState(true);
@@ -63,7 +67,10 @@ function AuthNavigationGuard({ children }: { children: React.ReactNode }) {
 
 function CustomSplash() {
   const theme = useTheme();
-  const { user } = useAuthStore();
+  // Splash only needs the display name — subscribe to that field, not the
+  // whole user object, so unrelated profile updates don't re-trigger the
+  // mount animation.
+  const displayName = useAuthStore((s) => s.user?.displayName);
   const logoAnim = useRef(new Animated.Value(-40)).current;
   const textAnim = useRef(new Animated.Value(40)).current;
   const opacityAnim = useRef(new Animated.Value(0)).current;
@@ -84,9 +91,9 @@ function CustomSplash() {
         </Animated.View>
         <Animated.View style={{ transform: [{ translateX: textAnim }], opacity: opacityAnim, flexShrink: 1 }}>
           <RNText style={{ fontSize: 28, fontWeight: '700', color: theme.colors.text.primary }}>San</RNText>
-          {user?.displayName && (
+          {displayName && (
             <RNText numberOfLines={1} style={{ fontSize: 13, color: theme.colors.text.tertiary, marginTop: 2 }}>
-              Привет, {user.displayName}
+              Привет, {displayName}
             </RNText>
           )}
         </Animated.View>
@@ -107,20 +114,31 @@ export default function RootLayout() {
   const ready = fontsLoaded || fontError !== null || fontTimeout;
 
   useEffect(() => {
-    if (ready) {
-      SplashScreen.hideAsync().catch(() => {});
+    if (!ready) return;
+
+    SplashScreen.hideAsync().catch(() => {});
+
+    // Phase 1 — must run before any feed/conversation hydration so each
+    // account loads its own slice of the cache (Telegram-style isolation).
+    // These are pure synchronous setters, not network calls.
+    const currentUser = useAuthStore.getState().user;
+    setCacheAccount(currentUser?.id);
+    setThrottleAccount(currentUser?.id);
+
+    // Phase 2 — hydrate cached data so screens have content on first paint.
+    useEntityStore.getState().hydrate();
+
+    // Phase 3 — non-critical setup. Defer to the next idle frame so the
+    // first render lands without competing for the JS thread. On weak
+    // devices this is the difference between "tap profile and freeze for
+    // a frame" and "instant transition".
+    const idle = setTimeout(() => {
       initRateLimits();
       cacheCleanup();
-      // Scope the cache to the logged-in account BEFORE hydrating, so each account
-      // loads only its own cached feed/conversations/etc. (Telegram-style isolation).
-      const currentUser = useAuthStore.getState().user;
-      setCacheAccount(currentUser?.id);
-      setThrottleAccount(currentUser?.id);
-      // Reload cached data (feed, conversations, profiles) into memory so chats/posts
-      // survive an app restart even before any network sync runs.
-      useEntityStore.getState().hydrate();
       useConnectivityStore.getState().start();
-    }
+    }, 0);
+
+    return () => clearTimeout(idle);
   }, [ready]);
 
   useEffect(() => {
