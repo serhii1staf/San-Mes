@@ -102,10 +102,8 @@ export default function SettingsScreen() {
   // the screen on every unrelated state change.
   const hapticEnabled = useSettingsStore((s) => s.hapticEnabled);
   const useInAppBrowser = useSettingsStore((s) => s.useInAppBrowser);
-  const browserWidgetPosition = useSettingsStore((s) => s.browserWidgetPosition);
   const setHaptic = useSettingsStore((s) => s.setHaptic);
   const setInAppBrowser = useSettingsStore((s) => s.setInAppBrowser);
-  const setBrowserWidgetPosition = useSettingsStore((s) => s.setBrowserWidgetPosition);
   const [iconModalVisible, setIconModalVisible] = useState(false);
   const appVersion = Constants.expoConfig?.version || '1.0.0';
 
@@ -276,6 +274,7 @@ export default function SettingsScreen() {
             iconTint="cyan"
             label="Встроенный браузер"
             showChevron={false}
+            isLast
             rightElement={
               <Switch
                 value={useInAppBrowser}
@@ -284,24 +283,6 @@ export default function SettingsScreen() {
                 thumbColor="#FFFFFF"
               />
             }
-          />
-          <SettingsRow
-            icon="layout"
-            iconTint="indigo"
-            label="Положение мини-виджета"
-            value={browserWidgetPosition === 'bottom' ? 'Снизу' : 'Сверху'}
-            isLast
-            onPress={() => {
-              Alert.alert(
-                'Положение мини-виджета',
-                'Где показывать пилюлю свёрнутого браузера?',
-                [
-                  { text: 'Сверху', onPress: () => setBrowserWidgetPosition('top') },
-                  { text: 'Снизу',  onPress: () => setBrowserWidgetPosition('bottom') },
-                  { text: 'Отмена', style: 'cancel' },
-                ],
-              );
-            }}
           />
         </View>
 

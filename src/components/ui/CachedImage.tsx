@@ -42,6 +42,15 @@ export function proxiedImageUrl(uri: string, displayWidth?: number): string {
   // Private / signed URLs — weserv can't fetch them, and the per-request
   // signature would defeat caching anyway.
   if (uri.indexOf('token=') !== -1 || uri.indexOf('Signature=') !== -1) return uri;
+  // GIFs must not be proxied: weserv re-encodes to WebP by default and
+  // animations get flattened to the first frame. Sending output=gif keeps
+  // them animated but breaks decoding on some devices, so we just skip the
+  // proxy entirely and serve the original URL — the upstream is fast enough
+  // for the small number of GIFs in chat.
+  const lower = uri.toLowerCase();
+  const qIdx = lower.indexOf('?');
+  const path = qIdx >= 0 ? lower.slice(0, qIdx) : lower;
+  if (path.endsWith('.gif')) return uri;
 
   const stripped = uri.replace(/^https?:\/\//, '');
   const w = displayWidth && displayWidth > 0

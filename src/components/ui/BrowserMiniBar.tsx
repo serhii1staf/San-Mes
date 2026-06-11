@@ -142,8 +142,12 @@ export function BrowserMiniBar() {
   const containerPosStyle = isBottom
     ? {
         position: 'absolute' as const,
-        bottom: insets.bottom + TAB_BAR_TOTAL_HEIGHT + PILL_BOTTOM_GAP,
-        alignSelf: 'center' as const,
+        // Full-width strip docked directly under the floating tab bar.
+        // Matches the Telegram-style "minimised session" reminder bar that
+        // sits as a separate band, not a floating pill.
+        left: 0,
+        right: 0,
+        bottom: insets.bottom,
         zIndex: 200,
       }
     : {
@@ -153,11 +157,65 @@ export function BrowserMiniBar() {
         zIndex: 200,
       };
 
-  // Bottom variant uses a more pronounced pill radius and slightly bigger
-  // padding so it visually mirrors the floating tab bar above which it sits.
-  const PILL_RADIUS = isBottom ? 22 : 16;
-  const PILL_PAD_H = isBottom ? 16 : 12;
-  const PILL_PAD_V = isBottom ? 10 : 8;
+  if (isBottom) {
+    // Docked full-width band: rectangle with rounded top corners only, X on
+    // the left, title centered. Pure surface (no blur halo) so it reads as
+    // an extension of the tab-bar layer rather than a separate pill.
+    const bandBg = theme.isDark ? 'rgba(20,20,20,0.95)' : 'rgba(255,255,255,0.95)';
+    const titleColor = theme.colors.text.primary;
+    const subColor = theme.colors.text.tertiary;
+    return (
+      <Animated.View
+        {...pan.panHandlers}
+        style={{
+          ...containerPosStyle,
+          transform: [{ translateY: Animated.add(slideAnim, dragY) }],
+          opacity: opacityAnim,
+        }}
+      >
+        <Pressable onPress={handleOpen} style={{ overflow: 'hidden', borderTopLeftRadius: 16, borderTopRightRadius: 16 }}>
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              paddingLeft: 8,
+              paddingRight: 16,
+              paddingVertical: 14,
+              backgroundColor: bandBg,
+              borderTopWidth: 0.5,
+              borderTopColor: theme.colors.border.light,
+            }}
+          >
+            <Pressable
+              onPress={handleClose}
+              hitSlop={10}
+              style={{ width: 36, height: 36, alignItems: 'center', justifyContent: 'center' }}
+            >
+              <Feather name="x" size={20} color={titleColor} />
+            </Pressable>
+            <View style={{ flex: 1, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8 }}>
+              {isMiniApp && minimizedEmoji ? (
+                <RNText style={{ fontSize: 14 }} allowFontScaling={false}>{minimizedEmoji}</RNText>
+              ) : minimizedFavicon ? (
+                <View style={{ width: 16, height: 16, borderRadius: 4, overflow: 'hidden', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}>
+                  <CachedImage uri={minimizedFavicon} style={{ width: 16, height: 16 }} proxyWidth={48} />
+                </View>
+              ) : null}
+              <Text variant="body" weight="semibold" numberOfLines={1} style={{ color: titleColor }}>
+                {minimizedDomain || 'Браузер'}
+              </Text>
+            </View>
+            <View style={{ width: 36 }} />
+          </View>
+        </Pressable>
+      </Animated.View>
+    );
+  }
+
+  // Top variant — small floating pill (legacy default).
+  const PILL_RADIUS = 16;
+  const PILL_PAD_H = 12;
+  const PILL_PAD_V = 8;
 
   return (
     <Animated.View
