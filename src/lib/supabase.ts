@@ -473,12 +473,25 @@ export async function loadProfileMeta(userId: string): Promise<{ meta: ProfileMe
   }
 }
 
-// Upload banner image to storage, return public URL
+// Upload banner image to storage, return public URL.
+// Preserves animated formats (GIF / animated WebP) by detecting the source
+// extension instead of forcing JPEG.
 export async function uploadBanner(userId: string, imageUri: string): Promise<{ url: string | null; error: string | null }> {
   try {
-    const ext = imageUri.includes('.png') ? 'png' : 'jpg';
+    const lower = imageUri.toLowerCase();
+    let ext: 'gif' | 'png' | 'webp' | 'jpg' = 'jpg';
+    let mimeType: string = 'image/jpeg';
+    if (lower.endsWith('.gif') || lower.includes('.gif?')) {
+      ext = 'gif';
+      mimeType = 'image/gif';
+    } else if (lower.endsWith('.png') || lower.includes('.png?')) {
+      ext = 'png';
+      mimeType = 'image/png';
+    } else if (lower.endsWith('.webp') || lower.includes('.webp?')) {
+      ext = 'webp';
+      mimeType = 'image/webp';
+    }
     const path = `banners/${userId}.${ext}`;
-    const mimeType = ext === 'png' ? 'image/png' : 'image/jpeg';
     
     // Use FormData approach which works correctly in React Native
     const formData = new FormData();

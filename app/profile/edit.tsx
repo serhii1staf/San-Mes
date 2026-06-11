@@ -188,9 +188,13 @@ export default function EditProfileScreen() {
     if (status !== 'granted') return;
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
-      allowsEditing: true,
-      aspect: [3, 1],
-      quality: 0.7,
+      // Do NOT enable allowsEditing — iOS' built-in crop converts animated
+      // GIFs to a single static frame and re-encodes as JPEG. Same goes for
+      // the `quality` setting which forces JPEG re-encoding. The banner is
+      // already shown at a fixed 3:1 region with `resizeMode: 'cover'`, so
+      // we don't need a crop step. This keeps GIFs animated end-to-end.
+      allowsEditing: false,
+      quality: 1.0,
     });
     if (!result.canceled && result.assets[0]) {
       setBannerUri(result.assets[0].uri);

@@ -7,6 +7,7 @@ import { ThemeProvider, useTheme } from '../src/theme';
 import { fontAssets } from '../src/theme/fonts';
 import { useAuthStore } from '../src/store';
 import { BrowserMiniBar } from '../src/components/ui/BrowserMiniBar';
+import { BrowserBottomBand } from '../src/components/ui/BrowserBottomBand';
 import { MusicBottomIndicator } from '../src/components/ui/MusicBottomIndicator';
 import { MusicFullPlayer } from '../src/components/ui/MusicFullPlayer';
 import { Toast } from '../src/components/ui/Toast';
@@ -160,29 +161,41 @@ export default function RootLayout() {
         <MusicBottomIndicator />
         <MusicFullPlayer />
         <Toast />
-        <Stack screenOptions={{ headerShown: false }}>
-          <Stack.Screen name="(tabs)" />
-          <Stack.Screen name="(auth)" />
-          <Stack.Screen name="chat/[id]" />
-          <Stack.Screen name="chat/ai" />
-          <Stack.Screen name="chat/music" />
-          <Stack.Screen name="profile/edit" options={{ presentation: 'transparentModal', animation: 'fade', headerShown: false, contentStyle: { backgroundColor: 'transparent' } }} />
-          <Stack.Screen name="profile/[id]" />
-          <Stack.Screen name="comments/[id]" />
-          <Stack.Screen name="browser" options={{ presentation: 'modal', headerShown: false, animation: 'slide_from_bottom' }} />
-          <Stack.Screen name="mini-app" options={{ presentation: 'fullScreenModal', headerShown: false, animation: 'slide_from_bottom' }} />
-          <Stack.Screen name="notifications" />
-          <Stack.Screen name="settings/index" />
-          <Stack.Screen name="settings/appearance" />
-          <Stack.Screen name="settings/widget" />
-          <Stack.Screen name="settings/storage" />
-          <Stack.Screen name="settings/device-key" />
-          <Stack.Screen name="settings/privacy" />
-          <Stack.Screen name="settings/admin" />
-          <Stack.Screen name="settings/fonts" />
-          <Stack.Screen name="settings/mini-apps" />
-          <Stack.Screen name="settings/chat-settings" />
-        </Stack>
+        {/* The Stack + bottom-docked browser band sit in a single flex column.
+            When the band appears (settings: bottom-position) it occupies its
+            own height inside this column, which pushes the entire Stack
+            (including the floating tab bar absolutely positioned inside it)
+            upward by exactly that height — i.e. the app "lifts" rather than
+            the band overlaying. The transition is smoothed by LayoutAnimation
+            inside BrowserBottomBand. */}
+        <View style={styles.rootColumn}>
+          <View style={styles.stackWrapper}>
+            <Stack screenOptions={{ headerShown: false }}>
+              <Stack.Screen name="(tabs)" />
+              <Stack.Screen name="(auth)" />
+              <Stack.Screen name="chat/[id]" />
+              <Stack.Screen name="chat/ai" />
+              <Stack.Screen name="chat/music" />
+              <Stack.Screen name="profile/edit" options={{ presentation: 'transparentModal', animation: 'fade', headerShown: false, contentStyle: { backgroundColor: 'transparent' } }} />
+              <Stack.Screen name="profile/[id]" />
+              <Stack.Screen name="comments/[id]" />
+              <Stack.Screen name="browser" options={{ presentation: 'modal', headerShown: false, animation: 'slide_from_bottom' }} />
+              <Stack.Screen name="mini-app" options={{ presentation: 'fullScreenModal', headerShown: false, animation: 'slide_from_bottom' }} />
+              <Stack.Screen name="notifications" />
+              <Stack.Screen name="settings/index" />
+              <Stack.Screen name="settings/appearance" />
+              <Stack.Screen name="settings/widget" />
+              <Stack.Screen name="settings/storage" />
+              <Stack.Screen name="settings/device-key" />
+              <Stack.Screen name="settings/privacy" />
+              <Stack.Screen name="settings/admin" />
+              <Stack.Screen name="settings/fonts" />
+              <Stack.Screen name="settings/mini-apps" />
+              <Stack.Screen name="settings/chat-settings" />
+            </Stack>
+          </View>
+          <BrowserBottomBand />
+        </View>
       </AuthNavigationGuard>
     </ThemeProvider>
     </KeyboardProvider>
@@ -191,4 +204,6 @@ export default function RootLayout() {
 
 const styles = StyleSheet.create({
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#141414' },
+  rootColumn: { flex: 1 },
+  stackWrapper: { flex: 1 },
 });
