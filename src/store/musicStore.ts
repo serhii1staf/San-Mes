@@ -20,6 +20,14 @@ interface MusicState {
   positionMs: number;
   durationMs: number;
   isLoading: boolean;
+  // UI: 'full' = floating top mini-bar; 'collapsed' = thin indicator above the
+  // tab bar. Swipe-up on the mini-bar collapses it (does NOT stop playback).
+  widgetMode: 'full' | 'collapsed';
+  // True when the full-screen player is presented over the app.
+  playerOpen: boolean;
+  setWidgetMode: (m: 'full' | 'collapsed') => void;
+  openPlayer: () => void;
+  closePlayer: () => void;
   play: (track: Track) => Promise<void>;
   toggle: () => Promise<void>;
   seek: (ms: number) => Promise<void>;
@@ -64,6 +72,12 @@ export const useMusicStore = create<MusicState>((set, get) => ({
   positionMs: 0,
   durationMs: 0,
   isLoading: false,
+  widgetMode: 'full',
+  playerOpen: false,
+
+  setWidgetMode: (m) => set({ widgetMode: m }),
+  openPlayer: () => set({ playerOpen: true }),
+  closePlayer: () => set({ playerOpen: false }),
 
   play: async (track: Track) => {
     // Same track tapped again → just toggle play/pause (no reload, no race).
@@ -174,6 +188,6 @@ export const useMusicStore = create<MusicState>((set, get) => ({
     // Invalidate any in-flight play() so a pending load won't resurrect playback.
     playGen++;
     await unloadActiveSound();
-    set({ current: null, isPlaying: false, positionMs: 0, durationMs: 0 });
+    set({ current: null, isPlaying: false, positionMs: 0, durationMs: 0, widgetMode: 'full', playerOpen: false });
   },
 }));

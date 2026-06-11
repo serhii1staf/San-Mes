@@ -63,22 +63,21 @@ export default function MusicChatScreen() {
   }, []);
 
   // ── Commands button — animated label/width ──────────────────────────────────
-  // Both the label opacity AND the button width are driven by a single Animated
-  // value (1 = expanded, 0 = collapsed). Opacity animates twice as fast as the
-  // width so the text fades out BEFORE the button shrinks — that prevents the
-  // "text gets squished and then disappears" look. RN width animations can't
-  // use the native driver, so the width interpolation runs on the JS thread —
-  // it's a single tween of one View per keystroke transition, not a hot path.
-  const commandExpand = useRef(new Animated.Value(1)).current; // 1 = full pill, 0 = icon only
+  // Collapsed = 40×40 circle (matches the input bubble's height exactly).
+  // Expanded  = 124×40 pill with the "Команды" label.
+  // Two animated values are derived from a single source so the label opacity
+  // finishes BEFORE the width fully shrinks — that prevents the icon from
+  // briefly drifting toward the right edge as the pill collapses.
+  const commandExpand = useRef(new Animated.Value(1)).current; // 1 = expanded, 0 = collapsed
   useEffect(() => {
     Animated.timing(commandExpand, {
       toValue: input.length === 0 ? 1 : 0,
-      duration: 200,
-      useNativeDriver: false, // width can't be driven natively
+      duration: 220,
+      useNativeDriver: false, // width can't go through the native driver
     }).start();
   }, [input.length === 0]);
-  const commandWidth = commandExpand.interpolate({ inputRange: [0, 1], outputRange: [44, 124] });
-  const commandLabelOpacity = commandExpand.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, 0, 1] });
+  const commandWidth = commandExpand.interpolate({ inputRange: [0, 1], outputRange: [40, 124] });
+  const commandLabelOpacity = commandExpand.interpolate({ inputRange: [0, 0.55, 1], outputRange: [0, 0, 1] });
 
   // ── Search ──────────────────────────────────────────────────────────────────
   const runSearch = useCallback(async (q: string) => {
@@ -295,6 +294,10 @@ export default function MusicChatScreen() {
                   alignItems: 'center',
                   justifyContent: 'center',
                   gap: 6,
+                  // 20 = 50% of 40, so collapsed (40×40) renders as a perfect
+                  // circle with the icon visually centred. The pill state is
+                  // 124×40 — its corners are still 20px which keeps the rounded
+                  // capsule shape consistent.
                   borderRadius: 20,
                   backgroundColor: commandsOpen ? theme.colors.accent.primary : (theme.isDark ? 'rgba(40,40,40,0.95)' : 'rgba(245,245,245,0.95)'),
                   borderWidth: 1,
@@ -302,8 +305,6 @@ export default function MusicChatScreen() {
                 }}
               >
                 <Feather name="command" size={15} color={commandsOpen ? '#FFFFFF' : theme.colors.accent.primary} />
-                {/* Label is always mounted but its opacity animates so the
-                    transition reads as a smooth fade rather than a pop. */}
                 <Animated.Text
                   numberOfLines={1}
                   style={{

@@ -56,7 +56,13 @@ export function MusicMiniBar() {
   const stop = useMusicStore((s) => s.stop);
 
   const onMusicScreen = pathname === '/chat/music';
-  const show = !!current && !onMusicScreen;
+  const widgetMode = useMusicStore((s) => s.widgetMode);
+  const setWidgetMode = useMusicStore((s) => s.setWidgetMode);
+  // Show the floating top mini-bar only when:
+  //   - a track is loaded,
+  //   - the user is not on the music chat (the chat already shows controls),
+  //   - the widget hasn't been collapsed into the bottom indicator.
+  const show = !!current && !onMusicScreen && widgetMode === 'full';
 
   const slide = useRef(new Animated.Value(-260)).current;
   const dragY = useRef(new Animated.Value(0)).current;
@@ -69,9 +75,11 @@ export function MusicMiniBar() {
       onPanResponderMove: (_, g) => { if (g.dy < 0) dragY.setValue(g.dy); },
       onPanResponderRelease: (_, g) => {
         if (g.dy < -40 || g.vy < -0.4) {
+          // Swipe up COLLAPSES the widget into the bottom indicator. Playback
+          // keeps going — only the close ("x") button explicitly stops audio.
           Animated.timing(dragY, { toValue: -260, duration: 160, useNativeDriver: true }).start(() => {
             dragY.setValue(0);
-            useMusicStore.getState().stop();
+            useMusicStore.getState().setWidgetMode('collapsed');
           });
         } else {
           Animated.spring(dragY, { toValue: 0, useNativeDriver: true, tension: 120, friction: 10 }).start();

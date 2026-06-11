@@ -8,6 +8,8 @@ import { fontAssets } from '../src/theme/fonts';
 import { useAuthStore } from '../src/store';
 import { BrowserMiniBar } from '../src/components/ui/BrowserMiniBar';
 import { MusicMiniBar } from '../src/components/ui/MusicMiniBar';
+import { MusicBottomIndicator } from '../src/components/ui/MusicBottomIndicator';
+import { MusicFullPlayer } from '../src/components/ui/MusicFullPlayer';
 import { Toast } from '../src/components/ui/Toast';
 import { initRateLimits } from '../src/services/rateLimit';
 import { cacheCleanup } from '../src/services/cacheManager';
@@ -139,6 +141,8 @@ export default function RootLayout() {
       <AuthNavigationGuard>
         <BrowserMiniBar />
         <MusicMiniBar />
+        <MusicBottomIndicator />
+        <MusicFullPlayer />
         <Toast />
         <Stack screenOptions={{ headerShown: false }}>
           <Stack.Screen name="(tabs)" />
