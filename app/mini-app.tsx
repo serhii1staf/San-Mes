@@ -160,14 +160,14 @@ export default function MiniAppScreen() {
           zIndex 60 keeps them ABOVE the loading overlay (zIndex 40) so they
           stay tappable even while a page is loading or hung offline. */}
       <View style={{ position: 'absolute', top: insets.top + 8, left: 16, right: 16, zIndex: 60, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Pressable onPress={handleMinimize} style={{ borderRadius: 13, overflow: 'hidden' }}>
-          <BlurView intensity={80} tint="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 9, paddingVertical: 5 }}>
+        <Pressable onPress={handleMinimize} style={{ borderRadius: 14, overflow: 'hidden' }}>
+          <BlurView intensity={80} tint="dark" style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10 }}>
             <Feather name="chevron-down" size={12} color="#FFFFFF" />
             <Text style={{ fontSize: 10, color: '#FFFFFF', fontWeight: '500' }}>Свернуть</Text>
           </BlurView>
         </Pressable>
-        <View style={{ borderRadius: 13, overflow: 'hidden' }}>
-          <BlurView intensity={80} tint="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 11, paddingVertical: 5 }}>
+        <View style={{ borderRadius: 14, overflow: 'hidden' }}>
+          <BlurView intensity={80} tint="dark" style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 12 }}>
             <Pressable onPress={() => { triggerHaptic('light'); setReportOpen(true); }} hitSlop={6}>
               <Feather name="flag" size={13} color="#FFFFFF" />
             </Pressable>
