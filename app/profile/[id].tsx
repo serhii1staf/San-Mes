@@ -602,28 +602,37 @@ export default function UserProfileScreen() {
           <View style={{ position: 'absolute', bottom: 0, height: 2, backgroundColor: theme.colors.accent.primary, width: SCREEN_WIDTH / 4, left: tabs.findIndex(t => t.key === activeTab) * (SCREEN_WIDTH / 4) }} />
         </View>
 
-        {/* Content */}
-        {activeTab === 'posts' && (displayPosts.length === 0 ? (
-          <View style={{ alignItems: 'center', paddingVertical: 40 }}><Text variant="caption" color={theme.colors.text.tertiary}>Ещё нет публикаций</Text></View>
-        ) : (
-          <View style={{ paddingHorizontal: 16, paddingTop: 12, minHeight: 200 }}>
-            {postsReady ? displayPosts.slice(0, visibleCount).map((post: any) => (
-              <UserProfilePostCard
-                key={post.id}
-                post={post}
-                authorName={displayProfile.display_name}
-                authorUsername={displayProfile.username}
-                authorEmoji={displayProfile.emoji || '😊'}
-                authorVerified={displayProfile.is_verified}
-                authorBadge={displayProfile.badge}
-                authorId={displayProfile.id}
-                onLongPress={handlePostLongPress}
-                onImagePress={handlePostImagePress}
-              />
-            )) : null}
-          </View>
-        ))}
-        {activeTab !== 'posts' && <View style={{ alignItems: 'center', paddingVertical: 40 }}><Text variant="caption" color={theme.colors.text.tertiary}>Пока пусто</Text></View>}
+        {/* Content — every tab is rendered ONCE and kept mounted; switching
+            between them only flips `display`. Without this, navigating away
+            from "Посты" and back unmounts every UserProfilePostCard, then
+            re-mounts them all — that mount cost is the ~200 ms stutter the
+            user reported when toggling tabs. Cards still bail out via
+            React.memo on subsequent re-renders, so always-mounted is cheap. */}
+        <View style={{ display: activeTab === 'posts' ? 'flex' : 'none' }}>
+          {displayPosts.length === 0 ? (
+            <View style={{ alignItems: 'center', paddingVertical: 40 }}><Text variant="caption" color={theme.colors.text.tertiary}>Ещё нет публикаций</Text></View>
+          ) : (
+            <View style={{ paddingHorizontal: 16, paddingTop: 12, minHeight: 200 }}>
+              {postsReady ? displayPosts.slice(0, visibleCount).map((post: any) => (
+                <UserProfilePostCard
+                  key={post.id}
+                  post={post}
+                  authorName={displayProfile.display_name}
+                  authorUsername={displayProfile.username}
+                  authorEmoji={displayProfile.emoji || '😊'}
+                  authorVerified={displayProfile.is_verified}
+                  authorBadge={displayProfile.badge}
+                  authorId={displayProfile.id}
+                  onLongPress={handlePostLongPress}
+                  onImagePress={handlePostImagePress}
+                />
+              )) : null}
+            </View>
+          )}
+        </View>
+        <View style={{ display: activeTab !== 'posts' ? 'flex' : 'none', alignItems: 'center', paddingVertical: 40 }}>
+          <Text variant="caption" color={theme.colors.text.tertiary}>Пока пусто</Text>
+        </View>
       </Animated.ScrollView>
 
       {/* Bottom gradient - always visible */}

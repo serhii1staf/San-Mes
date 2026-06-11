@@ -617,6 +617,7 @@ export default function ChatScreen() {
   const activeMatchId = activeMatchIndex >= 0 && activeMatchIndex < chatMessages.length ? chatMessages[activeMatchIndex]?.id : null;
 
   // Inverted data: render newest-first so the FlatList's natural bottom is the
+  // newest message — no auto-scroll-to-end needed.
   // latest message (no scrolling needed). Memoized to avoid re-reversing on every
   // keystroke / re-render.
   const invertedMessages = useMemo(() => {
@@ -648,6 +649,17 @@ export default function ChatScreen() {
     );
   }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, chatSettings.linkEmoji, startReply, handleSwipeActive, openImageViewer, parseMessage, activeMatchId, openMenu]);
 
+  // Stable callback refs for FlatList — without these, every parent render
+  // hands FlatList fresh function identities and breaks its row recycling
+  // shortcuts. Both functions only close over `flatListRef.current`, so they
+  // never need to change.
+  const chatKeyExtractor = useCallback((item: ChatMessage) => item.id, []);
+  const onScrollToIndexFailedCb = useCallback((info: { index: number; averageItemLength: number; highestMeasuredFrameIndex: number }) => {
+    setTimeout(() => {
+      try { flatListRef.current?.scrollToIndex({ index: info.index, animated: true, viewPosition: 0.5 }); } catch {}
+    }, 120);
+  }, []);
+
   const banner = editing || replyTo;
   const menuIsOwn = actionMessage?.senderId === 'current';
 
@@ -664,7 +676,7 @@ export default function ChatScreen() {
         ref={flatListRef}
         data={invertedMessages}
         style={StyleSheet.absoluteFill}
-        keyExtractor={(item) => item.id}
+        keyExtractor={chatKeyExtractor}
         renderItem={renderItem}
         inverted
         contentContainerStyle={{ paddingBottom: 8 }}
@@ -678,11 +690,11 @@ export default function ChatScreen() {
         initialNumToRender={12}
         maxToRenderPerBatch={8}
         windowSize={9}
-        onScrollToIndexFailed={(info) => {
-          setTimeout(() => {
-            try { flatListRef.current?.scrollToIndex({ index: info.index, animated: true, viewPosition: 0.5 }); } catch {}
-          }, 120);
-        }}
+        // Larger update batching window — keeps cell mounting from competing
+        // with scroll gestures on weak devices. Default is 50 ms; bumping to
+        // 80 ms is invisible to the user and lets scroll frames win.
+        updateCellsBatchingPeriod={80}
+        onScrollToIndexFailed={onScrollToIndexFailedCb}
       />
 
       {/* Input bar sticks to the keyboard top; hidden while searching */}
