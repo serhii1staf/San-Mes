@@ -3,7 +3,7 @@ import { View, Pressable, TextInput, FlatList, ActivityIndicator, Text as RNText
 import { KeyboardStickyView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
 import Reanimated, { useAnimatedStyle } from 'react-native-reanimated';
 import { Feather } from '@expo/vector-icons';
-import { router, useFocusEffect } from 'expo-router';
+import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
@@ -78,15 +78,13 @@ export default function MusicChatScreen() {
 
   // Tell the global music indicator to hide while we're on this screen — the
   // chat already has its own player UI inline, so the floating widget would
-  // duplicate controls. useFocusEffect fires AFTER the screen is visible and
-  // BEFORE it leaves, so the indicator is reliably hidden during the entire
-  // visit (no pathname-race flicker).
-  useFocusEffect(
-    useCallback(() => {
-      useMusicStore.getState().setInMusicChat(true);
-      return () => { useMusicStore.getState().setInMusicChat(false); };
-    }, []),
-  );
+  // duplicate controls. Plain mount/unmount is more reliable than focus
+  // events: useFocusEffect from expo-router can have a tick-of-delay on
+  // mount, which lets the widget flash for ~one frame.
+  useEffect(() => {
+    useMusicStore.getState().setInMusicChat(true);
+    return () => { useMusicStore.getState().setInMusicChat(false); };
+  }, []);
 
   // ── Commands button — animated label/width ──────────────────────────────────
   // Collapsed = 40×40 circle (matches the input bubble's height exactly).

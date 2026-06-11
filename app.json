@@ -8,6 +8,10 @@
     "scheme": "san-mes",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
+    "locales": {
+      "en": "./locales/en.json",
+      "ru": "./locales/ru.json"
+    },
     "splash": {
       "backgroundColor": "#141414"
     },

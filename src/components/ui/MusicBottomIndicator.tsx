@@ -45,6 +45,7 @@ const InlineProgress = React.memo(function InlineProgress({ accent, track }: { a
 export function MusicBottomIndicator() {
   const theme = useTheme();
   const current = useMusicStore((s) => s.current);
+  const currentId = current?.id ?? null;
   const isPlaying = useMusicStore((s) => s.isPlaying);
   const playerOpen = useMusicStore((s) => s.playerOpen);
   const inMusicChat = useMusicStore((s) => s.inMusicChat);
@@ -53,7 +54,7 @@ export function MusicBottomIndicator() {
   const stop = useMusicStore((s) => s.stop);
 
   // Hide while the music chat is focused — the chat already has its own
-  // player UI inline. The flag is driven by `useFocusEffect` in the chat,
+  // player UI inline. The flag is driven by mount/unmount in the chat,
   // which is more reliable than usePathname() (no transition races).
   const show = !!current && !inMusicChat && !playerOpen;
 
@@ -63,15 +64,22 @@ export function MusicBottomIndicator() {
   const dragX = useRef(new Animated.Value(0)).current;
   const dismissing = useRef(false);
 
+  // Reset the swipe state any time a NEW track starts. Without this, dragX
+  // (which lives in a ref) could be stuck at ±SCREEN_WIDTH from a previous
+  // dismiss, making the next-track render appear off-screen for one frame.
   useEffect(() => {
-    Animated.spring(slideY, { toValue: show ? 0 : 80, useNativeDriver: true, tension: 60, friction: 11 }).start();
-    if (show) {
-      // Reset drag when the indicator becomes visible again (e.g., user
-      // started a new track after dismissing). Without this, a previous
-      // dismissed state could persist.
+    if (currentId) {
       dragX.setValue(0);
       dismissing.current = false;
     }
+  }, [currentId]);
+
+  useEffect(() => {
+    if (show) {
+      dragX.setValue(0);
+      dismissing.current = false;
+    }
+    Animated.spring(slideY, { toValue: show ? 0 : 80, useNativeDriver: true, tension: 60, friction: 11 }).start();
   }, [show]);
 
   // Pan responder only claims the gesture on clear HORIZONTAL movement so
@@ -95,14 +103,18 @@ export function MusicBottomIndicator() {
         const dismiss = Math.abs(g.dx) > DISMISS_DX || Math.abs(g.vx) > DISMISS_VX;
         if (dismiss) {
           dismissing.current = true;
-          const target = g.dx < 0 ? -SCREEN_WIDTH : SCREEN_WIDTH;
-          // Continue the swipe out using whatever velocity the user gave it,
-          // then nuke playback. The store reset (current → null) makes
-          // `show` go false on the next render and the View unmounts.
-          Animated.timing(dragX, { toValue: target, duration: 180, useNativeDriver: true }).start(() => {
+          // Slide further than the screen edge so even on devices where the
+          // shadow extends ~16 px past the card, no edge artefact remains
+          // visible by the time the dismiss animation finishes.
+          const target = g.dx < 0 ? -SCREEN_WIDTH * 1.25 : SCREEN_WIDTH * 1.25;
+          // Continue the swipe out using whatever velocity the user gave it.
+          Animated.timing(dragX, { toValue: target, duration: 200, useNativeDriver: true }).start(() => {
             triggerHaptic('light');
             stop();
-            // Defensive: reset for the next time a track plays.
+            // After stop() the component returns null on the next render
+            // (current === null), unmounting the entire tree. Reset dragX
+            // to 0 so the NEXT mount (when a new track plays) starts clean
+            // and doesn't render off-screen for a frame.
             dragX.setValue(0);
             dismissing.current = false;
           });
@@ -138,11 +150,20 @@ export function MusicBottomIndicator() {
           slide-Y wrapper, keeping the two animations independent. */}
       <Animated.View
         {...pan.panHandlers}
+        // pointerEvents tied to the global show flag so the dismissed-and-
+        // animating-out card can never re-claim a touch mid-flight.
+        pointerEvents={show && !playerOpen ? 'auto' : 'none'}
         style={{
           transform: [{ translateX: dragX }],
           // Fade out as the user pulls — gives clear visual feedback that the
-          // gesture is going to commit.
-          opacity: dragX.interpolate({ inputRange: [-SCREEN_WIDTH, -DISMISS_DX, 0, DISMISS_DX, SCREEN_WIDTH], outputRange: [0, 0.5, 1, 0.5, 0] }),
+          // gesture is going to commit. Endpoints at ±SCREEN_WIDTH * 1.25
+          // match the dismiss target so opacity hits 0 just as the card
+          // finishes its slide-off, leaving zero ghost frames.
+          opacity: dragX.interpolate({
+            inputRange: [-SCREEN_WIDTH * 1.25, -DISMISS_DX, 0, DISMISS_DX, SCREEN_WIDTH * 1.25],
+            outputRange: [0, 0.55, 1, 0.55, 0],
+            extrapolate: 'clamp',
+          }),
         }}
       >
         {/* Card body — borderRadius/marginHorizontal mirror the CustomTabBar

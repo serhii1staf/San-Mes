@@ -1,0 +1,5 @@
+{
+  "NSPhotoLibraryUsageDescription": "San uses your photo library so you can attach images to posts, comments, and chat messages, and so you can set a profile picture, banner, or chat background.",
+  "NSPhotoLibraryAddUsageDescription": "San saves screenshots of posts to your photo library when you tap Save.",
+  "NSCameraUsageDescription": "San uses the camera so you can take a photo to attach to a post."
+}
