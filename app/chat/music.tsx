@@ -3,7 +3,7 @@ import { View, Pressable, TextInput, FlatList, ActivityIndicator, Text as RNText
 import { KeyboardStickyView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
 import Reanimated, { useAnimatedStyle } from 'react-native-reanimated';
 import { Feather } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
@@ -76,9 +76,21 @@ export default function MusicChatScreen() {
     try { require('../../src/store/specialChatsStore').useSpecialChatsStore.getState().markOpened('music'); } catch {}
   }, []);
 
+  // Tell the global music indicator to hide while we're on this screen — the
+  // chat already has its own player UI inline, so the floating widget would
+  // duplicate controls. useFocusEffect fires AFTER the screen is visible and
+  // BEFORE it leaves, so the indicator is reliably hidden during the entire
+  // visit (no pathname-race flicker).
+  useFocusEffect(
+    useCallback(() => {
+      useMusicStore.getState().setInMusicChat(true);
+      return () => { useMusicStore.getState().setInMusicChat(false); };
+    }, []),
+  );
+
   // ── Commands button — animated label/width ──────────────────────────────────
   // Collapsed = 40×40 circle (matches the input bubble's height exactly).
-  // Expanded  = 124×40 pill with the "Команды" label.
+  // Expanded  = 110×40 pill with the "Команды" label.
   // Two animated values are derived from a single source so the label opacity
   // finishes BEFORE the width fully shrinks — that prevents the icon from
   // briefly drifting toward the right edge as the pill collapses.
@@ -90,7 +102,15 @@ export default function MusicChatScreen() {
       useNativeDriver: false, // width can't go through the native driver
     }).start();
   }, [input.length === 0]);
-  const commandWidth = commandExpand.interpolate({ inputRange: [0, 1], outputRange: [40, 124] });
+  // Single source of truth → 4 derived values, all in lock-step:
+  //   width      40 ↔ 110   (whole pill)
+  //   labelW      0 ↔  64   (animated text width — collapses to 0 so flex
+  //                          centering treats the icon as the only content)
+  //   labelML     0 ↔   5   (gap between icon and text)
+  //   labelOpac   0 ↔   1   (text fades out a touch before width hits zero)
+  const commandWidth = commandExpand.interpolate({ inputRange: [0, 1], outputRange: [40, 110] });
+  const commandLabelW = commandExpand.interpolate({ inputRange: [0, 1], outputRange: [0, 64] });
+  const commandLabelML = commandExpand.interpolate({ inputRange: [0, 1], outputRange: [0, 5] });
   const commandLabelOpacity = commandExpand.interpolate({ inputRange: [0, 0.55, 1], outputRange: [0, 0, 1] });
 
   // ── Search ──────────────────────────────────────────────────────────────────
@@ -308,39 +328,33 @@ export default function MusicChatScreen() {
                 style={{
                   width: '100%',
                   height: '100%',
-                  // 20 = 50% of 40, so collapsed (40×40) renders as a perfect
-                  // circle. Expanded (124×40) keeps the same 20px corners which
-                  // visually reads as a continuous capsule.
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  // 20 = 50% of 40, so collapsed (40×40) is a perfect circle.
+                  // Expanded (110×40) keeps the same 20px radius for a smooth
+                  // capsule.
                   borderRadius: 20,
                   backgroundColor: commandsOpen ? theme.colors.accent.primary : (theme.isDark ? 'rgba(40,40,40,0.95)' : 'rgba(245,245,245,0.95)'),
                   borderWidth: 1,
                   borderColor: theme.colors.border.light,
                 }}
               >
-                {/* Icon — pinned by absolute left:12 so it ALWAYS sits at the
-                    same x regardless of the container's animating width.
-                    When width=40 the icon (16px) at left:12 spans 12-28,
-                    centered on x=20 = container centre. When width=124 it
-                    stays at the left, leaving room for the label. Without
-                    absolute positioning, flex/center logic kept moving the
-                    icon to the middle of the pill, where it overlapped
-                    the label. */}
-                <View style={{ position: 'absolute', left: 12, top: (40 - 16) / 2 }}>
-                  <Feather name="command" size={16} color={commandsOpen ? '#FFFFFF' : theme.colors.accent.primary} />
-                </View>
+                {/* Both children participate in the flex row, so flex centring
+                    naturally handles every animation frame — icon-only when
+                    label width is 0, icon+gap+label when expanded. No more
+                    absolute-positioning math, no drift on either end. */}
+                <Feather name="command" size={16} color={commandsOpen ? '#FFFFFF' : theme.colors.accent.primary} />
                 <Animated.Text
                   numberOfLines={1}
+                  allowFontScaling={false}
                   style={{
-                    position: 'absolute',
-                    // 12 (icon left) + 16 (icon width) + 12 (gap) = 40.
-                    left: 40,
-                    top: 0,
-                    height: 40,
-                    lineHeight: 40,
+                    width: commandLabelW,
+                    marginLeft: commandLabelML,
+                    opacity: commandLabelOpacity,
                     fontSize: 12,
                     fontWeight: '600',
                     color: commandsOpen ? '#FFFFFF' : theme.colors.accent.primary,
-                    opacity: commandLabelOpacity,
                   }}
                 >Команды</Animated.Text>
               </Pressable>

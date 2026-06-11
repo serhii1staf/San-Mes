@@ -28,6 +28,13 @@ interface MusicState {
   isLoading: boolean;
   // True when the full-screen player is presented over the app.
   playerOpen: boolean;
+  // Set by the music chat screen via useFocusEffect — the bottom indicator
+  // hides while this is true so the user never sees BOTH the chat's inline
+  // player UI AND the floating widget at once. More reliable than a pathname
+  // check because focus events fire AFTER the screen is actually visible
+  // and BEFORE it disappears, eliminating route-transition races.
+  inMusicChat: boolean;
+  setInMusicChat: (v: boolean) => void;
   openPlayer: () => void;
   closePlayer: () => void;
   addDiscovered: (tracks: Track[]) => void;
@@ -87,7 +94,9 @@ export const useMusicStore = create<MusicState>((set, get) => ({
   durationMs: 0,
   isLoading: false,
   playerOpen: false,
+  inMusicChat: false,
 
+  setInMusicChat: (v) => set({ inMusicChat: v }),
   openPlayer: () => set({ playerOpen: true }),
   closePlayer: () => set({ playerOpen: false }),
 

@@ -208,82 +208,95 @@ export function MusicFullPlayer() {
             // Disable scroll while the user is actively scrubbing the slider so
             // the slider's pan never gets stolen by the scroll gesture.
             scrollEnabled={scrubbingMs == null}
+            // Sticky index 1 = the controls block (title + artist + slider +
+            // transport). When the user scrolls past the artwork it pins to
+            // the top of the scroll viewport, so the queue can scroll beneath
+            // it without hiding playback controls.
+            stickyHeaderIndices={[1]}
             contentContainerStyle={{ paddingBottom: 24 }}
             showsVerticalScrollIndicator={false}
             bounces={false}
           >
-            {/* Artwork + title */}
-            <View style={{ alignItems: 'center', paddingTop: 8, paddingBottom: 18 }}>
+            {/* [0] Artwork — scrolls away with the rest of the content. */}
+            <View style={{ alignItems: 'center', paddingTop: 8, paddingBottom: 14 }}>
               <CachedImage uri={current.artwork} style={{ width: 220, height: 220, borderRadius: 18, backgroundColor: 'rgba(0,0,0,0.1)' }} resizeMode="cover" />
-              <Text variant="body" weight="bold" style={{ fontSize: 18, marginTop: 14 }} numberOfLines={1}>{current.title}</Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
-                <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 13 }}>{current.artist}</Text>
-                {current.isPreview ? (
-                  <View style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}>
-                    <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 10 }}>30 с</Text>
-                  </View>
-                ) : null}
-              </View>
             </View>
 
-            {/* Slider — track and thumb both vertically centred inside a
-                32px-tall hit area for comfortable touch targets. */}
-            <View style={{ paddingHorizontal: SLIDER_HPAD }}>
-              <View
-                {...sliderPan.current.panHandlers}
-                style={{ height: SLIDER_AREA_H, justifyContent: 'center' }}
-              >
-                {/* Track */}
-                <View style={{ height: SLIDER_TRACK_H, borderRadius: SLIDER_TRACK_H / 2, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)', overflow: 'hidden' }}>
-                  <View style={{ height: '100%', width: `${sliderRatio * 100}%`, backgroundColor: theme.colors.accent.primary, borderRadius: SLIDER_TRACK_H / 2 }} />
+            {/* [1] Sticky controls — opaque background is required so the
+                artwork doesn't show through once this block pins to the top.
+                Includes the title, slider and transport buttons. */}
+            <View style={{ backgroundColor: sheetBg }}>
+              <View style={{ alignItems: 'center', paddingBottom: 8 }}>
+                <Text variant="body" weight="bold" style={{ fontSize: 18 }} numberOfLines={1}>{current.title}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                  <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 13 }}>{current.artist}</Text>
+                  {current.isPreview ? (
+                    <View style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}>
+                      <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 10 }}>30 с</Text>
+                    </View>
+                  ) : null}
                 </View>
-                {/* Thumb — vertically centred within the SLIDER_AREA_H container. */}
+              </View>
+
+              {/* Slider — track and thumb both vertically centred inside a
+                  32px-tall hit area for comfortable touch targets. */}
+              <View style={{ paddingHorizontal: SLIDER_HPAD }}>
                 <View
-                  pointerEvents="none"
-                  style={{
-                    position: 'absolute',
-                    left: sliderRatio * sliderWidth - SLIDER_THUMB / 2,
-                    top: (SLIDER_AREA_H - SLIDER_THUMB) / 2,
-                    width: SLIDER_THUMB,
-                    height: SLIDER_THUMB,
-                    borderRadius: SLIDER_THUMB / 2,
-                    backgroundColor: theme.colors.accent.primary,
-                    shadowColor: '#000',
-                    shadowOffset: { width: 0, height: 1 },
-                    shadowOpacity: 0.2,
-                    shadowRadius: 2,
-                    elevation: 2,
-                  }}
-                />
+                  {...sliderPan.current.panHandlers}
+                  style={{ height: SLIDER_AREA_H, justifyContent: 'center' }}
+                >
+                  {/* Track */}
+                  <View style={{ height: SLIDER_TRACK_H, borderRadius: SLIDER_TRACK_H / 2, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)', overflow: 'hidden' }}>
+                    <View style={{ height: '100%', width: `${sliderRatio * 100}%`, backgroundColor: theme.colors.accent.primary, borderRadius: SLIDER_TRACK_H / 2 }} />
+                  </View>
+                  {/* Thumb — vertically centred within the SLIDER_AREA_H container. */}
+                  <View
+                    pointerEvents="none"
+                    style={{
+                      position: 'absolute',
+                      left: sliderRatio * sliderWidth - SLIDER_THUMB / 2,
+                      top: (SLIDER_AREA_H - SLIDER_THUMB) / 2,
+                      width: SLIDER_THUMB,
+                      height: SLIDER_THUMB,
+                      borderRadius: SLIDER_THUMB / 2,
+                      backgroundColor: theme.colors.accent.primary,
+                      shadowColor: '#000',
+                      shadowOffset: { width: 0, height: 1 },
+                      shadowOpacity: 0.2,
+                      shadowRadius: 2,
+                      elevation: 2,
+                    }}
+                  />
+                </View>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 }}>
+                  <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{fmt(effectivePos)}</Text>
+                  <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{fmt(durationMs)}</Text>
+                </View>
               </View>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 }}>
-                <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{fmt(effectivePos)}</Text>
-                <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{fmt(durationMs)}</Text>
+
+              {/* Transport controls */}
+              <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 28, paddingTop: 14, paddingBottom: 18 }}>
+                <Pressable onPress={skipBack} hitSlop={10} style={styles.skipBtn}>
+                  <Feather name="rotate-ccw" size={22} color={theme.colors.text.primary} />
+                  <Text variant="caption" weight="semibold" color={theme.colors.text.primary} style={{ position: 'absolute', fontSize: 9, top: 16 }}>10</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => { triggerHaptic('light'); toggle(); }}
+                  hitSlop={10}
+                  style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: theme.colors.accent.primary, alignItems: 'center', justifyContent: 'center', shadowColor: theme.colors.accent.primary, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.35, shadowRadius: 10, elevation: 8 }}
+                >
+                  <Feather name={isPlaying ? 'pause' : 'play'} size={28} color="#FFFFFF" style={isPlaying ? undefined : { marginLeft: 3 }} />
+                </Pressable>
+                <Pressable onPress={skipForward} hitSlop={10} style={styles.skipBtn}>
+                  <Feather name="rotate-cw" size={22} color={theme.colors.text.primary} />
+                  <Text variant="caption" weight="semibold" color={theme.colors.text.primary} style={{ position: 'absolute', fontSize: 9, top: 16 }}>10</Text>
+                </Pressable>
               </View>
             </View>
 
-            {/* Transport controls */}
-            <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 28, paddingTop: 18, paddingBottom: 22 }}>
-              <Pressable onPress={skipBack} hitSlop={10} style={styles.skipBtn}>
-                <Feather name="rotate-ccw" size={22} color={theme.colors.text.primary} />
-                <Text variant="caption" weight="semibold" color={theme.colors.text.primary} style={{ position: 'absolute', fontSize: 9, top: 16 }}>10</Text>
-              </Pressable>
-              <Pressable
-                onPress={() => { triggerHaptic('light'); toggle(); }}
-                hitSlop={10}
-                style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: theme.colors.accent.primary, alignItems: 'center', justifyContent: 'center', shadowColor: theme.colors.accent.primary, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.35, shadowRadius: 10, elevation: 8 }}
-              >
-                <Feather name={isPlaying ? 'pause' : 'play'} size={28} color="#FFFFFF" style={isPlaying ? undefined : { marginLeft: 3 }} />
-              </Pressable>
-              <Pressable onPress={skipForward} hitSlop={10} style={styles.skipBtn}>
-                <Feather name="rotate-cw" size={22} color={theme.colors.text.primary} />
-                <Text variant="caption" weight="semibold" color={theme.colors.text.primary} style={{ position: 'absolute', fontSize: 9, top: 16 }}>10</Text>
-              </Pressable>
-            </View>
-
-            {/* Recent tracks list */}
+            {/* [2] Queue — scrolls beneath the sticky controls. */}
             {queueAll.length > 0 ? (
-              <View style={{ paddingHorizontal: 24, paddingTop: 4 }}>
+              <View style={{ paddingHorizontal: 24, paddingTop: 8 }}>
                 <Text variant="caption" weight="semibold" color={theme.colors.text.tertiary} style={{ fontSize: 11, textTransform: 'uppercase', marginBottom: 8 }}>Очередь</Text>
                 {queueAll.map((t) => (
                   <Pressable

@@ -1,7 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { View, Pressable, StyleSheet, Animated, PanResponder, Dimensions } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { usePathname } from 'expo-router';
 import { useTheme } from '../../theme';
 import { Text } from './Text';
 import { CachedImage } from './CachedImage';
@@ -45,19 +44,18 @@ const InlineProgress = React.memo(function InlineProgress({ accent, track }: { a
 
 export function MusicBottomIndicator() {
   const theme = useTheme();
-  const pathname = usePathname();
   const current = useMusicStore((s) => s.current);
   const isPlaying = useMusicStore((s) => s.isPlaying);
   const playerOpen = useMusicStore((s) => s.playerOpen);
+  const inMusicChat = useMusicStore((s) => s.inMusicChat);
   const toggle = useMusicStore((s) => s.toggle);
   const openPlayer = useMusicStore((s) => s.openPlayer);
   const stop = useMusicStore((s) => s.stop);
 
-  // The music chat already has its own player UI on-screen, and the full
-  // player covers the indicator anyway when open. startsWith handles any
-  // future query/hash on the route without breaking the check.
-  const onMusicScreen = !!pathname && pathname.indexOf('/chat/music') === 0;
-  const show = !!current && !onMusicScreen && !playerOpen;
+  // Hide while the music chat is focused — the chat already has its own
+  // player UI inline. The flag is driven by `useFocusEffect` in the chat,
+  // which is more reliable than usePathname() (no transition races).
+  const show = !!current && !inMusicChat && !playerOpen;
 
   // Slide-in/out from below — native-driven so it stays smooth on weak devices.
   const slideY = useRef(new Animated.Value(80)).current;
@@ -123,7 +121,18 @@ export function MusicBottomIndicator() {
   return (
     <Animated.View
       pointerEvents={show ? 'box-none' : 'none'}
-      style={[styles.wrap, { transform: [{ translateY: slideY }] }]}
+      style={[
+        styles.wrap,
+        {
+          // Tab bar geometry: marginBottom 24 + container height ~62
+          // ≈ 86 px from the screen bottom. The indicator sits 16 px above
+          // its top edge so the two read as a stacked pair with breathing
+          // room — earlier 8 px wasn't enough on devices where the tab
+          // bar's drop-shadow extended into the indicator's footprint.
+          bottom: 24 + 62 + 16,
+          transform: [{ translateY: slideY }],
+        },
+      ]}
     >
       {/* Inner wrapper carries the swipe-X transform so it rides INSIDE the
           slide-Y wrapper, keeping the two animations independent. */}
@@ -173,10 +182,7 @@ export function MusicBottomIndicator() {
 const styles = StyleSheet.create({
   wrap: {
     position: 'absolute',
-    // Tab bar geometry: marginBottom 24 + paddingVertical 12*2 + ~28px tab
-    // height ≈ 88px tall, ending ~24px from the screen bottom. The indicator
-    // sits 8px above it so they read as a stacked pair.
-    bottom: 24 + 64 + 8,
+    // bottom is set inline so it can pick up safe-area insets if needed.
     // Match tab bar's marginHorizontal exactly so the two widgets share a
     // continuous left/right edge.
     left: 16,
