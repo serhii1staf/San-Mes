@@ -132,8 +132,12 @@ export const CachedImage = memo(function CachedImage({
       // Keep decoded images in memory AND on disk → re-entering a chat shows
       // them instantly with no black flash or re-download.
       cachePolicy="memory-disk"
-      // Reuse the cached frame immediately; only fade the first time.
-      transition={120}
+      // No fade transition: the fade ran on every component mount, so when
+      // a screen unmounts and remounts (tab switching, list virtualisation
+      // recycling) the user perceived it as the image "re-loading" — even
+      // though the bytes were served from cache. Showing the cached frame
+      // instantly removes that flicker entirely.
+      transition={0}
       recyclingKey={finalUri}
       // If the proxy fails (e.g. weserv can't fetch a private/odd host), fall
       // back to the original URL so the image still loads. Without this any

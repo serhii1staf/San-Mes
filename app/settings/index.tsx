@@ -272,17 +272,10 @@ export default function SettingsScreen() {
           <SettingsRow
             icon="globe"
             iconTint="cyan"
-            label="Встроенный браузер"
-            showChevron={false}
+            label="Браузер"
+            value={useInAppBrowser ? 'Встроенный' : 'Внешний'}
             isLast
-            rightElement={
-              <Switch
-                value={useInAppBrowser}
-                onValueChange={setInAppBrowser}
-                trackColor={{ true: '#4CD964', false: theme.colors.border.light }}
-                thumbColor="#FFFFFF"
-              />
-            }
+            onPress={() => router.push('/settings/browser')}
           />
         </View>
 

@@ -205,44 +205,7 @@ export default function AppearanceScreen() {
             </Pressable>
           )}
         </View>
-
-        {/* Browser widget position — controls where the minimized browser/mini-app
-            pill appears (top under the status bar, or bottom under the tab bar). */}
-        <BrowserWidgetPositionRow />
       </View>
-    </View>
-  );
-}
-
-function BrowserWidgetPositionRow() {
-  const theme = useTheme();
-  const browserWidgetPosition = useSettingsStore((s) => s.browserWidgetPosition);
-  const setBrowserWidgetPosition = useSettingsStore((s) => s.setBrowserWidgetPosition);
-  return (
-    <View style={{ marginHorizontal: 16, marginBottom: 24, borderRadius: 14, backgroundColor: theme.colors.background.elevated, overflow: 'hidden' }}>
-      <Pressable
-        onPress={() => {
-          Alert.alert(
-            'Положение мини-виджета',
-            'Где показывать виджет свёрнутого браузера?',
-            [
-              { text: 'Сверху', onPress: () => setBrowserWidgetPosition('top') },
-              { text: 'Снизу',  onPress: () => setBrowserWidgetPosition('bottom') },
-              { text: 'Отмена', style: 'cancel' },
-            ],
-          );
-        }}
-        style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14 }}
-      >
-        <View style={{ width: 32, height: 32, borderRadius: 9, backgroundColor: 'rgba(94,92,230,0.16)', alignItems: 'center', justifyContent: 'center', marginRight: 14 }}>
-          <Feather name="layout" size={17} color="#5E5CE6" />
-        </View>
-        <Text variant="body" style={{ flex: 1 }}>Положение мини-виджета</Text>
-        <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginRight: 8 }}>
-          {browserWidgetPosition === 'bottom' ? 'Снизу' : 'Сверху'}
-        </Text>
-        <Feather name="chevron-right" size={18} color={theme.colors.text.tertiary} />
-      </Pressable>
     </View>
   );
 }

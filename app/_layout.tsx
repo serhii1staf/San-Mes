@@ -192,6 +192,7 @@ export default function RootLayout() {
               <Stack.Screen name="settings/fonts" />
               <Stack.Screen name="settings/mini-apps" />
               <Stack.Screen name="settings/chat-settings" />
+              <Stack.Screen name="settings/browser" />
             </Stack>
           </View>
           <BrowserBottomBand />
