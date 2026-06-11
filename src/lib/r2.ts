@@ -1,143 +1,101 @@
-// Cloudflare R2 upload client (presigned URL flow).
+// Cloudflare R2 upload client (proxied through our Vercel function).
 //
-// IMPORTANT: this module contains NO secrets. All signing happens server-side
-// in the Vercel function /api/r2-upload-url, which holds the R2 Access Key
-// and Secret in env vars. The client only knows the API host (already public
-// because it's our app server).
-//
-// Why presigned URLs:
-//   - The S3 secret never leaves Vercel, so a decompiled APK can't write
-//     arbitrary objects into the bucket (this was a real risk in the
-//     previous implementation that hard-coded the secret in the bundle).
-//   - The actual file bytes go directly from the device to R2, bypassing
-//     the Vercel function (which has a 4.5 MB body limit anyway).
-//   - The presigned URL is single-use, time-bounded, and tied to a key
-//     the server picked.
+// IMPORTANT: this module contains NO secrets. The R2 API token is held only
+// by our Vercel function (/api/r2-upload), so a decompiled APK can't write
+// arbitrary objects into the bucket.
 //
 // Files are served via the bucket's public hostname (pub-*.r2.dev) sitting
-// behind Cloudflare's CDN, so reads cost zero egress forever.
+// behind Cloudflare's CDN, so reads cost zero egress forever — the whole
+// point of moving image hosting off Supabase.
 
-const UPLOAD_URL_ENDPOINT = 'https://san-m-app.com/api/r2-upload-url';
+const UPLOAD_ENDPOINT = 'https://san-m-app.com/api/r2-upload';
 
 type UploadPrefix = 'posts' | 'avatars' | 'banners' | 'chat';
-
-interface PresignResponse {
-  uploadUrl: string;
-  publicUrl: string;
-  key: string;
-  contentType: string;
-  expiresIn: number;
-}
 
 interface UploadResult {
   url: string | null;
   error: string | null;
 }
 
-function extToContentType(ext: string): string {
-  switch (ext.toLowerCase()) {
-    case 'jpg':
-    case 'jpeg':
-      return 'image/jpeg';
-    case 'png':
-      return 'image/png';
-    case 'webp':
-      return 'image/webp';
-    case 'gif':
-      return 'image/gif';
-    case 'heic':
-      return 'image/heic';
-    default:
-      return 'application/octet-stream';
-  }
-}
+const PREFIX_BY_KEY: Record<string, UploadPrefix> = {
+  chat: 'chat',
+  avatars: 'avatars',
+  banners: 'banners',
+};
 
-function uriExt(uri: string): string {
+function detectContentType(uri: string): { contentType: string; ext: string } {
   const q = uri.indexOf('?');
   const cleanUri = q >= 0 ? uri.slice(0, q) : uri;
   const dot = cleanUri.lastIndexOf('.');
-  if (dot < 0) return '';
-  return cleanUri.slice(dot + 1).toLowerCase();
+  const rawExt = dot >= 0 ? cleanUri.slice(dot + 1).toLowerCase() : 'jpg';
+  switch (rawExt) {
+    case 'jpg':
+    case 'jpeg':
+      return { contentType: 'image/jpeg', ext: 'jpg' };
+    case 'png':
+      return { contentType: 'image/png', ext: 'png' };
+    case 'webp':
+      return { contentType: 'image/webp', ext: 'webp' };
+    case 'gif':
+      return { contentType: 'image/gif', ext: 'gif' };
+    case 'heic':
+      return { contentType: 'image/heic', ext: 'heic' };
+    default:
+      return { contentType: 'image/jpeg', ext: 'jpg' };
+  }
 }
 
 /**
- * The R2 path is fully managed server-side now. The flag exists for the
- * supabase fallback path so existing call sites stay backwards-compatible.
+ * Backwards-compatible flag for the supabase fallback path. The actual gating
+ * is done server-side: if R2 env vars are missing, the upload endpoint
+ * returns 503 and the caller falls back to Supabase Storage.
  */
 export function isR2PublicConfigured(): boolean {
   return true;
 }
 
-async function requestPresign(
-  contentType: string,
-  ext: string,
-  prefix: UploadPrefix,
-): Promise<PresignResponse> {
-  const res = await fetch(UPLOAD_URL_ENDPOINT, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ contentType, ext, prefix }),
-  });
-  if (!res.ok) {
-    let detail = '';
-    try {
-      detail = await res.text();
-    } catch {}
-    throw new Error(`presign failed (${res.status}) ${detail}`.trim());
-  }
-  return (await res.json()) as PresignResponse;
-}
-
 /**
- * Upload a local file URI directly to R2 using a server-issued presigned PUT.
- * The `key` parameter is accepted for backwards compatibility with the
- * previous secret-in-client implementation; the server now picks the final
- * key, so the caller can pass anything (we only use it to derive a prefix).
+ * Upload a local file URI to R2 by streaming its bytes through our Vercel
+ * function. The server picks the final object key and returns the public URL.
  */
 export async function uploadToR2(
   localUri: string,
-  key: string,
-  contentType?: string,
+  legacyKey: string,
+  forcedContentType?: string,
 ): Promise<UploadResult> {
   try {
-    const ext = uriExt(localUri) || (key.indexOf('.') >= 0 ? key.split('.').pop() || 'jpg' : 'jpg');
-    const ct = contentType || extToContentType(ext);
+    const detected = detectContentType(localUri);
+    const contentType = forcedContentType || detected.contentType;
+    const ext = detected.ext;
 
-    // Derive the bucket prefix from the legacy `key` argument so existing
-    // call sites that pass `chat/<file>.jpg` keep landing in chat/, etc.
-    const prefixCandidate = key.split('/')[0]?.toLowerCase();
-    const prefix: UploadPrefix =
-      prefixCandidate === 'chat' || prefixCandidate === 'avatars' || prefixCandidate === 'banners'
-        ? (prefixCandidate as UploadPrefix)
-        : 'posts';
+    // Derive bucket prefix from the legacy key arg so existing call sites
+    // (chat/<file>.jpg, etc.) keep landing in the right folder.
+    const firstSegment = legacyKey.split('/')[0]?.toLowerCase() || '';
+    const prefix: UploadPrefix = PREFIX_BY_KEY[firstSegment] || 'posts';
 
-    // 1) Ask our server for a presigned PUT URL.
-    let presign: PresignResponse;
-    try {
-      presign = await requestPresign(ct, ext, prefix);
-    } catch (e: any) {
-      // The server hasn't been configured yet (env vars missing) → caller
-      // will fall back to Supabase upload. Don't crash the upload flow.
-      return { url: null, error: e?.message || 'presign error' };
-    }
-
-    // 2) Read the file as bytes, then PUT directly to R2.
+    // Read the local file as bytes. fetch() on file:// works in RN.
     const fileRes = await fetch(localUri);
     const arrayBuffer = await fileRes.arrayBuffer();
+    if (arrayBuffer.byteLength === 0) {
+      return { url: null, error: 'empty file' };
+    }
 
-    const putRes = await fetch(presign.uploadUrl, {
-      method: 'PUT',
-      headers: { 'Content-Type': presign.contentType },
+    const url = `${UPLOAD_ENDPOINT}?prefix=${prefix}&ext=${ext}&type=${encodeURIComponent(contentType)}`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': contentType },
       body: arrayBuffer as any,
     });
 
-    if (!putRes.ok) {
+    if (!res.ok) {
       let detail = '';
-      try { detail = await putRes.text(); } catch {}
-      return { url: null, error: `r2 put failed (${putRes.status}) ${detail}`.trim() };
+      try { detail = await res.text(); } catch {}
+      return { url: null, error: `upload failed (${res.status}) ${detail}`.slice(0, 400) };
     }
 
-    return { url: presign.publicUrl, error: null };
+    const data = (await res.json()) as { url?: string };
+    if (!data?.url) return { url: null, error: 'malformed response' };
+    return { url: data.url, error: null };
   } catch (e: any) {
     return { url: null, error: e?.message || 'Unknown error' };
   }
