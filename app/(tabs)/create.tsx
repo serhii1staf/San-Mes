@@ -27,8 +27,13 @@ export default function CreateScreen() {
   const theme = useTheme();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const { user } = useAuthStore();
-  const { pendingRepostId, setPendingRepost, editingPost, setEditingPost } = useFeedStore();
+  // Field-level selectors so the create screen doesn't re-render on every
+  // unrelated feed-store mutation (likes, posts list, etc.) coming from the home tab.
+  const user = useAuthStore((s) => s.user);
+  const pendingRepostId = useFeedStore((s) => s.pendingRepostId);
+  const setPendingRepost = useFeedStore((s) => s.setPendingRepost);
+  const editingPost = useFeedStore((s) => s.editingPost);
+  const setEditingPost = useFeedStore((s) => s.setEditingPost);
   const [content, setContent] = useState('');
   const [isPosting, setIsPosting] = useState(false);
   const [audience, setAudience] = useState<Audience>('public');

@@ -22,7 +22,9 @@ function MusicConversationItem() { return null; }
 
 function MiniAppsRow() {
   const theme = useTheme();
-  const { apps, loadApps } = useMiniAppsStore();
+  // Field-level selectors so the row doesn't re-render on every loading flag.
+  const apps = useMiniAppsStore((s) => s.apps);
+  const loadApps = useMiniAppsStore((s) => s.loadApps);
 
   useEffect(() => { loadApps(); }, []);
 

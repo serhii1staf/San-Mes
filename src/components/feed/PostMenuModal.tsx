@@ -29,8 +29,10 @@ interface PostMenuModalProps {
 export function PostMenuModal({ visible, post, onClose }: PostMenuModalProps) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
-  const { user } = useAuthStore();
-  const { removePost } = useFeedStore();
+  // Field-level selectors so this modal (mounted permanently inside FeedScreen)
+  // doesn't re-render on every unrelated auth/feed store mutation.
+  const user = useAuthStore((s) => s.user);
+  const removePost = useFeedStore((s) => s.removePost);
   const [mode, setMode] = useState<'menu' | 'report'>('menu');
 
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;

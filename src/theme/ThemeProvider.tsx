@@ -1,4 +1,4 @@
-import React, { createContext, useContext, ReactNode } from 'react';
+import React, { createContext, useContext, useMemo, ReactNode } from 'react';
 import { lightTheme, darkTheme, ThemeColors, colors, spacing, borderRadius, typography } from './tokens';
 import { fontFamily } from './fonts';
 import { shadows, getShadow } from './shadows';
@@ -110,7 +110,7 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
     };
   }
 
-  const theme: Theme = {
+  const theme: Theme = useMemo(() => ({
     colors: themeColors,
     palette: colors,
     spacing,
@@ -125,7 +125,19 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
       spring: springConfigs,
     },
     isDark,
-  };
+  }), [
+    // Re-build theme only when one of the underlying inputs actually changes.
+    // themeColors and activeFontFamily are recomputed on every render so we
+    // depend on their primitive sources instead — gives us a stable theme
+    // reference between renders, which keeps every useTheme() consumer from
+    // re-rendering on unrelated parent updates.
+    mode,
+    accent,
+    selectedFont,
+    fontSize,
+    isDark,
+    aiThemes,
+  ]);
 
   return (
     <ThemeContext.Provider value={theme}>

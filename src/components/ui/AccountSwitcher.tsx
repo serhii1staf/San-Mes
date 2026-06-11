@@ -22,8 +22,13 @@ interface AccountSwitcherProps {
 
 export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
   const theme = useTheme();
-  const { user, login } = useAuthStore();
-  const { accounts, addAccount, removeAccount } = useAccountsStore();
+  // Field-level selectors so this modal (mounted permanently inside the
+  // profile screen) doesn't re-render on every unrelated auth/accounts mutation.
+  const user = useAuthStore((s) => s.user);
+  const login = useAuthStore((s) => s.login);
+  const accounts = useAccountsStore((s) => s.accounts);
+  const addAccount = useAccountsStore((s) => s.addAccount);
+  const removeAccount = useAccountsStore((s) => s.removeAccount);
   const [showLogin, setShowLogin] = useState(false);
   const [deviceKey, setDeviceKey] = useState('');
   const [pin, setPin] = useState('');

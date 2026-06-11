@@ -82,7 +82,10 @@ function SocialLinkIcon({ type, url }: { type: string; url: string }) {
 export default function ProfileScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
-  const { user, updateProfile } = useAuthStore();
+  // Selectors over destructuring — pulling the whole user object re-rendered
+  // the profile screen on every unrelated profile field change (badge sync, etc.)
+  const user = useAuthStore((s) => s.user);
+  const updateProfile = useAuthStore((s) => s.updateProfile);
   // Individual selectors avoid re-rendering this screen on every unrelated
   // change to the feed store (e.g., feed list updates, refresh flag flips).
   const userPosts = useFeedStore((s) => s.profilePosts);
