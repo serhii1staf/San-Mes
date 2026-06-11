@@ -27,9 +27,10 @@ const TAB_BUTTON_HEIGHT = 44;
 const TAB_ROW_PADDING_H = 8;
 const TAB_ROW_PADDING_V = 8;
 
-// Breathing room INSIDE each button slot, so the pill never touches any edge of the navigation
-const PILL_INSET_X = 6;
-const PILL_INSET_Y = 4;
+// Breathing room INSIDE each button slot — the pill never touches any edge of the navigation,
+// but it's now noticeably bigger than before.
+const PILL_INSET_X = 4;
+const PILL_INSET_Y = 2;
 
 const PILL_HEIGHT = TAB_BUTTON_HEIGHT - 2 * PILL_INSET_Y;
 const PILL_TOP = TAB_ROW_PADDING_V + PILL_INSET_Y;
@@ -40,9 +41,9 @@ const BAR_BOTTOM_MARGIN = 24;
 
 // Liquid feel — pill follows finger 1:1, but stretches and never switches tabs mid-drag
 const PAN_MIN_DISTANCE = 6;
-const STRETCH_X_FACTOR = 0.18; // |dx| → extra width
+const STRETCH_X_FACTOR = 0.18;
 const STRETCH_X_MAX = 24;
-const TRANSLATE_Y_FACTOR = 0.35; // |dy| → up/down wobble (capped)
+const TRANSLATE_Y_FACTOR = 0.35;
 const TRANSLATE_Y_MAX = 6;
 const PRESS_SCALE = 0.94;
 
@@ -57,13 +58,12 @@ const ICON_NAMES: Record<string, keyof typeof Feather.glyphMap> = {
   profile: 'user',
 };
 
-// Worklet helper — pick the standard slot closest to a given finger X
+// Worklet helper — pick the standard slot closest to a given finger slot index
 function snapToStandardSlot(fingerSlot: number): number {
   'worklet';
   if (fingerSlot <= 0) return 0;
   if (fingerSlot >= TAB_COUNT - 1) return TAB_COUNT - 1;
   if (fingerSlot === CREATE_INDEX) {
-    // Exactly on create — pick whichever standard neighbour is closer
     return fingerSlot < CREATE_INDEX ? 1 : 3;
   }
   return fingerSlot;
@@ -232,14 +232,22 @@ export const CustomTabBar = React.memo(function CustomTabBar({
   const pillScale = useSharedValue(1);
   const pillStretchW = useSharedValue(0);
 
-  // Anchor slot at the start of a drag (so pill follows finger relative to its starting position)
+  // SharedValue mirrors of JS state — safe to read inside worklets without TDZ surprises
+  const stateIndexSV = useSharedValue(state.index);
+  const slotWidthSV = useSharedValue(0);
   const dragAnchorSlot = useSharedValue(state.index);
-  // Slot the pill should snap to when the gesture ends
   const releaseSlot = useSharedValue(state.index);
 
-  // Convert standard slot index → pill X (relative to the tab row's border edge)
-  // tabRow has paddingHorizontal: TAB_ROW_PADDING_H; absolute children sit ABOVE the padding
-  // (relative to border edge), so we add it manually.
+  // Keep shared mirror in sync with React state
+  useEffect(() => {
+    stateIndexSV.value = state.index;
+  }, [state.index, stateIndexSV]);
+
+  useEffect(() => {
+    slotWidthSV.value = slotWidth;
+  }, [slotWidth, slotWidthSV]);
+
+  // Convert standard slot index → pill X (relative to the container's border edge).
   const slotToX = useCallback(
     (i: number) => TAB_ROW_PADDING_H + i * slotWidth + PILL_INSET_X,
     [slotWidth]
@@ -281,7 +289,7 @@ export const CustomTabBar = React.memo(function CustomTabBar({
     [slotWidth]
   );
 
-  // Squish on press for the active pill
+  // Squish on press (only on the active pill)
   const onTabPressIn = useCallback(
     (idx: number) => {
       if (idx === state.index) {
@@ -307,35 +315,46 @@ export const CustomTabBar = React.memo(function CustomTabBar({
     [navigation]
   );
 
-  const navigateToRouteName = useCallback(
-    (name: string, key: string) => {
-      const event = navigation.emit({ type: 'tabPress', target: key, canPreventDefault: true });
-      if (!event.defaultPrevented) {
+  // ─── JS-thread navigation triggered from the gesture (declared BEFORE pan
+  //     so the worklet captures a defined function and not a TDZ binding). ─
+  const navigateOnRelease = useCallback(
+    (slotIdx: number) => {
+      try {
+        const route = state.routes[slotIdx];
+        if (!route) return;
+        const event = navigation.emit({
+          type: 'tabPress',
+          target: route.key,
+          canPreventDefault: true,
+        });
+        if (event.defaultPrevented) return;
         triggerHaptic('light');
-        navigation.navigate(name);
+        navigation.navigate(route.name);
+      } catch {
+        // Defensive — never crash the gesture from a JS error
       }
     },
-    [navigation]
+    [state.routes, navigation]
   );
 
-  // Build pan gesture (depends on slotWidth & current routes/state.index)
+  // ─── Build pan gesture — uses ONLY shared values inside worklets ───────
   const pan = useMemo(() => {
-    if (slotWidth === 0) return Gesture.Pan().enabled(false);
-
     return Gesture.Pan()
       .minDistance(PAN_MIN_DISTANCE)
       .onBegin(() => {
         'worklet';
-        // Anchor where the pill currently is so dragging is relative.
-        // We use state.index as the anchor (the pill is sitting at the active tab when the user starts dragging).
-        dragAnchorSlot.value = state.index;
-        releaseSlot.value = state.index;
+        if (slotWidthSV.value <= 0) return;
+        dragAnchorSlot.value = stateIndexSV.value;
+        releaseSlot.value = stateIndexSV.value;
         pillScale.value = withSpring(PRESS_SCALE, PRESS_SPRING);
       })
       .onUpdate((e) => {
         'worklet';
+        const sw = slotWidthSV.value;
+        if (sw <= 0) return;
+
         // 1) Pill follows finger horizontally 1:1, anchored at the slot the drag started from
-        const anchorX = TAB_ROW_PADDING_H + dragAnchorSlot.value * slotWidth + PILL_INSET_X;
+        const anchorX = TAB_ROW_PADDING_H + dragAnchorSlot.value * sw + PILL_INSET_X;
         pillX.value = anchorX + e.translationX;
 
         // 2) Vertical wobble — small, capped, so pill never leaves the bar
@@ -350,55 +369,43 @@ export const CustomTabBar = React.memo(function CustomTabBar({
 
         // 4) Track which slot the finger is currently over — used at release time only
         const fingerXInRow = e.x - TAB_ROW_PADDING_H;
-        const fingerSlotF = fingerXInRow / slotWidth;
+        const fingerSlotF = fingerXInRow / sw;
         const fingerSlotI = Math.max(
           0,
           Math.min(TAB_COUNT - 1, Math.round(fingerSlotF))
         );
         releaseSlot.value = snapToStandardSlot(fingerSlotI);
-        // IMPORTANT: do NOT navigate during drag.
       })
       .onFinalize(() => {
         'worklet';
-        // Release: spring everything back, snap pill to the release slot
+        const sw = slotWidthSV.value;
+
         pillScale.value = withSpring(1, PRESS_SPRING);
         pillStretchW.value = withSpring(0, PILL_SPRING);
         pillY.value = withSpring(0, PILL_SPRING);
 
+        if (sw <= 0) return;
+
         const target = releaseSlot.value;
-        const targetX = TAB_ROW_PADDING_H + target * slotWidth + PILL_INSET_X;
+        const targetX = TAB_ROW_PADDING_H + target * sw + PILL_INSET_X;
         pillX.value = withSpring(targetX, PILL_SPRING);
 
-        // Navigate only if it's a different tab — and only on release
-        if (target !== state.index) {
-          // Defer to JS thread for navigation
-          // (state.routes is closed over — fine because the gesture is rebuilt when it changes)
-          // eslint-disable-next-line @typescript-eslint/no-use-before-define
+        // Navigate only if the finger ended over a different tab — only on release
+        if (target !== stateIndexSV.value) {
           runOnJS(navigateOnRelease)(target);
         }
       });
   }, [
-    slotWidth,
-    state.index,
-    state.routes,
     pillX,
     pillY,
     pillScale,
     pillStretchW,
     dragAnchorSlot,
     releaseSlot,
-    // navigateOnRelease is defined below — listed because it's captured
+    slotWidthSV,
+    stateIndexSV,
+    navigateOnRelease,
   ]);
-
-  // Helper used by the worklet via runOnJS (defined as a stable ref so identity doesn't matter)
-  const navigateOnRelease = useCallback(
-    (slotIdx: number) => {
-      const route = state.routes[slotIdx];
-      if (!route) return;
-      navigateToRouteName(route.name, route.key);
-    },
-    [state.routes, navigateToRouteName]
-  );
 
   const pillVisible = state.index !== CREATE_INDEX;
   const pillBaseWidth = Math.max(0, slotWidth - 2 * PILL_INSET_X);
@@ -439,7 +446,7 @@ export const CustomTabBar = React.memo(function CustomTabBar({
           <TopReflection isDark={isDark} />
 
           {/* Pill is a sibling of the tab row so its top is relative to the container's
-              border edge — this is what gives us full control over vertical placement. */}
+              border edge — full control over vertical placement. */}
           {slotWidth > 0 && (
             <SlidingPill
               pillX={pillX}
@@ -537,7 +544,7 @@ const styles = StyleSheet.create({
   },
   pill: {
     position: 'absolute',
-    top: PILL_TOP, // explicitly inset from the container's top edge
+    top: PILL_TOP,
     left: 0,
     height: PILL_HEIGHT,
     borderRadius: PILL_HEIGHT / 2,
