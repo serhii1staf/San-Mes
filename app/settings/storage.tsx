@@ -1,74 +1,43 @@
-import React, { useEffect, useMemo, useState, useCallback } from 'react';
-import { View, Pressable, ViewStyle, Alert, ScrollView } from 'react-native';
-import Svg, { Circle, G } from 'react-native-svg';
+import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
+import { View, Pressable, ViewStyle, Alert, ScrollView, Animated, Easing } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { BlurView } from 'expo-blur';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { kvAllEntries, kvDeleteRawKeys } from '../../src/services/kvStore';
 
-// Storage screen — donut breakdown of on-device cache by category, modeled
-// after Telegram's "Storage Usage" UI. Each category is selectable; the big
-// CTA at the bottom clears whichever subset the user picks (defaults to all).
+// Storage screen — instead of a Telegram-style donut chart we render an
+// "orbit" of category emojis around a soft accent halo. Each emoji's size
+// scales with how much of the on-device cache that category occupies, and
+// the whole orbit rotates slowly so the screen feels alive without
+// distracting the user from the data.
 //
 // Sources of cache size:
 //   - MMKV (every kvAllEntries() row, bucketed by key prefix below).
 //   - We do NOT include the expo-image disk cache here because expo-image
 //     doesn't expose its on-disk size publicly; that cache is reset whenever
-//     the user clears app data via iOS Settings or reinstalls the app, and
-//     the bytes are managed by the framework.
-//
-// All sizes are UTF-8 byte counts of the stored JSON strings — same number
-// MMKV writes to disk (within a few percent for non-ASCII data).
+//     the user clears app data via iOS Settings or reinstalls the app.
 
 interface Category {
   id: string;
   label: string;
   color: string;
+  emoji: string;
   // Predicate run against the RAW (already-namespaced) MMKV key.
   match: (rawKey: string) => boolean;
 }
 
 // Order matters: first match wins. "Прочее" is the catch-all and lives last.
 const CATEGORY_DEFS: Category[] = [
-  {
-    id: 'feed',
-    label: 'Лента',
-    color: '#F4B547', // warm amber — the bulk of cache is usually feed JSON
-    match: (k) => /feed_posts|@san:feed|posts_cache|user_posts/.test(k),
-  },
-  {
-    id: 'chats',
-    label: 'Чаты',
-    color: '#4C8DF6', // signature blue for messages
-    match: (k) => /chat|message|conversation|chat_settings/.test(k),
-  },
-  {
-    id: 'music',
-    label: 'Музыка',
-    color: '#E5535B', // red-pink for music
-    match: (k) => /music_search|music_chat_history|music_/.test(k),
-  },
-  {
-    id: 'profiles',
-    label: 'Профили',
-    color: '#9B6DDF', // violet for profile/identity data
-    match: (k) => /profile|user_/.test(k),
-  },
-  {
-    id: 'notifications',
-    label: 'Уведомления',
-    color: '#F08A3E', // orange for notifications (slightly warmer than feed)
-    match: (k) => /notifications|notif/.test(k),
-  },
-  {
-    id: 'misc',
-    label: 'Прочее',
-    color: '#7A8190', // neutral grey for everything else (settings, flags…)
-    match: () => true, // catch-all
-  },
+  { id: 'feed',          label: 'Лента',        color: '#F4B547', emoji: '📰', match: (k) => /feed_posts|@san:feed|posts_cache|user_posts/.test(k) },
+  { id: 'chats',         label: 'Чаты',         color: '#4C8DF6', emoji: '💬', match: (k) => /chat|message|conversation|chat_settings/.test(k) },
+  { id: 'music',         label: 'Музыка',       color: '#E5535B', emoji: '🎵', match: (k) => /music_search|music_chat_history|music_/.test(k) },
+  { id: 'profiles',      label: 'Профили',      color: '#9B6DDF', emoji: '👤', match: (k) => /profile|user_/.test(k) },
+  { id: 'notifications', label: 'Уведомления',  color: '#F08A3E', emoji: '🔔', match: (k) => /notifications|notif/.test(k) },
+  { id: 'misc',          label: 'Прочее',       color: '#7A8190', emoji: '✨', match: () => true },
 ];
 
 interface CategoryUsage {
@@ -99,65 +68,100 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} ГБ`;
 }
 
-// ─── Donut chart ────────────────────────────────────────────────────────────
-// Uses a single SVG <Circle> per segment with strokeDasharray to draw the arc
-// — the standard pure-SVG donut technique. No animation needed for a settings
-// screen (perf > flair), so we render once and call it a day.
+// ─── Orbit visual ──────────────────────────────────────────────────────────
+// A circular halo + a ring of category emojis that gently orbits around it.
+// One Animated.Value drives rotation; emoji positions are computed from
+// fixed angles (offset by the rotation) so the layout stays stable. All
+// transforms run on the native driver — no JS thread cost while the user
+// is reading.
+//
+// We deliberately AVOID rendering animated emoji size changes (would force
+// layout work each frame). Instead each emoji gets its size baked in once
+// from the bucket totals. Rotation is the only continuous animation.
 
-interface DonutProps {
-  segments: { value: number; color: string }[];
+interface OrbitProps {
+  buckets: CategoryUsage[];
   total: number;
   totalLabel: string;
   size: number;
-  thickness: number;
-  bg: string;
-  trackColor: string;
+  haloColor: string;
+  haloAccent: string;
   centerTextColor: string;
+  centerSubColor: string;
 }
 
-function DonutChart({ segments, total, totalLabel, size, thickness, bg, trackColor, centerTextColor }: DonutProps) {
-  const radius = (size - thickness) / 2;
+const ORBIT_DIAMETER_RATIO = 0.78; // orbit ring diameter relative to outer container
+const EMOJI_BASE = 22;             // px font-size for the smallest visible emoji
+const EMOJI_RANGE = 22;             // additional px gained at 100% category share
+
+function Orbit({ buckets, total, totalLabel, size, haloColor, haloAccent, centerTextColor, centerSubColor }: OrbitProps) {
+  const rot = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    // Slow continuous rotation (~30 s per full revolution). Native driver
+    // keeps it free even on Android E-cores.
+    Animated.loop(
+      Animated.timing(rot, { toValue: 1, duration: 30000, easing: Easing.linear, useNativeDriver: true }),
+    ).start();
+    return () => { rot.stopAnimation(); };
+  }, [rot]);
+
+  const orbitRadius = (size * ORBIT_DIAMETER_RATIO) / 2;
   const cx = size / 2;
   const cy = size / 2;
-  const C = 2 * Math.PI * radius; // full circumference
 
-  // Build cumulative fractions to compute each segment's strokeDashoffset.
-  // We rotate the SVG group -90° so 0° is at the top of the donut.
-  let cumulative = 0;
-  const arcs = segments
-    .filter((s) => s.value > 0)
-    .map((s, idx) => {
-      const fraction = total > 0 ? s.value / total : 0;
-      const dashLen = fraction * C;
-      const offset = -cumulative * C;
-      cumulative += fraction;
-      return (
-        <Circle
-          key={idx}
-          cx={cx}
-          cy={cy}
-          r={radius}
-          stroke={s.color}
-          strokeWidth={thickness}
-          fill="none"
-          strokeDasharray={`${dashLen} ${C}`}
-          strokeDashoffset={offset}
-          strokeLinecap="butt"
-        />
-      );
-    });
+  // Emojis positioned at fixed angles around the circle. We rotate the
+  // whole containing View — cheaper than animating each child's transform.
+  const visibleBuckets = buckets.filter((b) => b.bytes > 0);
+  const fallback = visibleBuckets.length === 0 ? buckets : visibleBuckets;
+  const N = fallback.length;
+  const placements = fallback.map((b, i) => {
+    const angle = (i / N) * 2 * Math.PI - Math.PI / 2; // start at top
+    const x = cx + orbitRadius * Math.cos(angle);
+    const y = cy + orbitRadius * Math.sin(angle);
+    const share = total > 0 ? b.bytes / total : 1 / N;
+    const fontSize = Math.round(EMOJI_BASE + EMOJI_RANGE * Math.sqrt(share));
+    return { b, x, y, fontSize };
+  });
+
+  const spin = rot.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
 
   return (
     <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
-      <Svg width={size} height={size}>
-        <G rotation={-90} origin={`${cx}, ${cy}`}>
-          {/* Track ring — visible when no data yet, otherwise overdrawn by segments. */}
-          <Circle cx={cx} cy={cy} r={radius} stroke={trackColor} strokeWidth={thickness} fill="none" />
-          {arcs}
-        </G>
-      </Svg>
+      {/* Soft halo behind the orbit — two concentric circles for depth. */}
+      <View style={{ position: 'absolute', width: size * 0.96, height: size * 0.96, borderRadius: size * 0.48, backgroundColor: haloColor }} />
+      <View style={{ position: 'absolute', width: size * 0.72, height: size * 0.72, borderRadius: size * 0.36, backgroundColor: haloAccent }} />
+
+      {/* Rotating layer — emojis are children that ride along with the spin. */}
+      <Animated.View style={{ width: size, height: size, position: 'absolute', transform: [{ rotate: spin }] }}>
+        {placements.map(({ b, x, y, fontSize }) => (
+          <View
+            key={b.def.id}
+            style={{
+              position: 'absolute',
+              left: x - fontSize,
+              top: y - fontSize,
+              width: fontSize * 2,
+              height: fontSize * 2,
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            {/* Counter-rotate the emoji so it stays upright while the orbit spins. */}
+            <Animated.Text
+              allowFontScaling={false}
+              style={{
+                fontSize,
+                transform: [{ rotate: rot.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '-360deg'] }) }],
+              }}
+            >{b.def.emoji}</Animated.Text>
+          </View>
+        ))}
+      </Animated.View>
+
+      {/* Center label — total + a small caption underneath. */}
       <View style={{ position: 'absolute', alignItems: 'center', justifyContent: 'center' }} pointerEvents="none">
-        <Text variant="subheading" weight="bold" color={centerTextColor} style={{ fontSize: 22 }}>{totalLabel}</Text>
+        <Text variant="subheading" weight="bold" color={centerTextColor} style={{ fontSize: 26 }}>{totalLabel}</Text>
+        <Text variant="caption" color={centerSubColor} style={{ fontSize: 11, marginTop: 2 }}>локальный кэш</Text>
       </View>
     </View>
   );
@@ -187,9 +191,6 @@ export default function StorageScreen() {
 
   const buckets = useMemo(() => bucketEntries(entries), [entries]);
   const total = useMemo(() => buckets.reduce((sum, b) => sum + b.bytes, 0), [buckets]);
-
-  // Selected total is what the CTA actually clears. When everything's selected
-  // (default) it equals the grand total, so the button label reads naturally.
   const selectedBuckets = useMemo(() => buckets.filter((b) => selectedIds.has(b.def.id)), [buckets, selectedIds]);
   const selectedTotal = useMemo(() => selectedBuckets.reduce((sum, b) => sum + b.bytes, 0), [selectedBuckets]);
 
@@ -230,44 +231,42 @@ export default function StorageScreen() {
   const containerStyle: ViewStyle = { flex: 1, backgroundColor: theme.colors.background.primary };
   const cardBg = theme.colors.background.elevated;
   const totalLabel = total > 0 ? formatBytes(total).replace(/\s+/g, ' ') : '0 КБ';
-  const segments = useMemo(() => buckets.map((b) => ({ value: b.bytes, color: b.def.color })), [buckets]);
 
   return (
     <View style={containerStyle}>
-      <ScrollView contentContainerStyle={{ paddingTop: insets.top + 8, paddingBottom: insets.bottom + 32 }} showsVerticalScrollIndicator={false}>
-        {/* Header — lone back button on the left, no centred title (the page
-            title sits below the donut, Telegram-style). */}
-        <View style={{ paddingHorizontal: 24, paddingBottom: 8 }}>
-          <Pressable
-            onPress={() => router.back()}
-            hitSlop={8}
-            style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: cardBg, alignItems: 'center', justifyContent: 'center' }}
-          >
+      {/* Sticky header — floats above the scroll content with a soft blur so
+          the back button is reachable even when the user has scrolled to the
+          bottom. Uses the same BlurView treatment as the profile screen's
+          QR/edit buttons for visual consistency. */}
+      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10, paddingTop: insets.top + 8, paddingHorizontal: 24, paddingBottom: 8, flexDirection: 'row', alignItems: 'center', gap: 12 }} pointerEvents="box-none">
+        <Pressable onPress={() => router.back()} hitSlop={8} style={{ borderRadius: 20, overflow: 'hidden' }}>
+          <BlurView intensity={70} tint={theme.isDark ? 'dark' : 'light'} style={{ width: 40, height: 40, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.isDark ? 'rgba(30,30,30,0.55)' : 'rgba(255,255,255,0.55)' }}>
             <Feather name="chevron-left" size={22} color={theme.colors.text.primary} />
-          </Pressable>
-        </View>
+          </BlurView>
+        </Pressable>
+        <Text variant="body" weight="semibold" style={{ fontSize: 16 }}>Данные и память</Text>
+      </View>
 
-        {/* Donut + heading */}
-        <View style={{ alignItems: 'center', paddingTop: 8, paddingBottom: 18 }}>
-          <DonutChart
-            segments={segments}
-            total={total || 1}
+      <ScrollView
+        contentContainerStyle={{ paddingTop: insets.top + 56, paddingBottom: insets.bottom + 32 }}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Orbit visual + caption */}
+        <View style={{ alignItems: 'center', paddingTop: 8, paddingBottom: 24 }}>
+          <Orbit
+            buckets={buckets}
+            total={total}
             totalLabel={totalLabel}
             size={232}
-            thickness={32}
-            bg={theme.colors.background.primary}
-            trackColor={theme.isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)'}
+            haloColor={theme.colors.accent.primary + '14'}
+            haloAccent={theme.colors.accent.primary + '22'}
             centerTextColor={theme.colors.text.primary}
+            centerSubColor={theme.colors.text.tertiary}
           />
-          <Text variant="subheading" weight="bold" style={{ fontSize: 22, marginTop: 14 }}>Использование памяти</Text>
+          <Text variant="subheading" weight="bold" style={{ fontSize: 22, marginTop: 18 }}>Использование памяти</Text>
           <Text variant="caption" color={theme.colors.text.tertiary} align="center" style={{ paddingHorizontal: 32, marginTop: 6, fontSize: 13, lineHeight: 18 }}>
             San хранит локально {formatBytes(total)} данных. Их можно безопасно очистить — приложение восстановит нужное при следующем открытии.
           </Text>
-          {/* Slim progress bar mirrors the Telegram screenshot — visualises
-              cache "weight" with a single accent fill. */}
-          <View style={{ marginTop: 12, width: 140, height: 4, borderRadius: 2, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)', overflow: 'hidden' }}>
-            <View style={{ height: '100%', width: total > 0 ? '40%' : '0%', backgroundColor: theme.colors.accent.primary, borderRadius: 2 }} />
-          </View>
         </View>
 
         {/* Category list */}
@@ -297,6 +296,7 @@ export default function StorageScreen() {
                 >
                   {checked && <Feather name="check" size={13} color="#FFFFFF" />}
                 </View>
+                <Text style={{ fontSize: 16, marginRight: 8 }} allowFontScaling={false}>{b.def.emoji}</Text>
                 <Text variant="body" weight="semibold" style={{ fontSize: 15 }}>{b.def.label}</Text>
                 <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginLeft: 6, fontSize: 13 }}>{pct}%</Text>
                 <View style={{ flex: 1 }} />
