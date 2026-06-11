@@ -166,17 +166,15 @@ export default function MiniAppScreen() {
             <Text style={{ fontSize: 10, color: '#FFFFFF', fontWeight: '500' }}>Свернуть</Text>
           </BlurView>
         </Pressable>
-        <View style={{ flexDirection: 'row', gap: 10, alignItems: 'center' }}>
-          <Pressable onPress={() => { triggerHaptic('light'); setReportOpen(true); }} style={{ borderRadius: 13, overflow: 'hidden' }}>
-            <BlurView intensity={80} tint="dark" style={{ width: 26, height: 26, alignItems: 'center', justifyContent: 'center' }}>
-              <Feather name="flag" size={12} color="#FFFFFF" />
-            </BlurView>
-          </Pressable>
-          <Pressable onPress={handleClose} style={{ borderRadius: 13, overflow: 'hidden' }}>
-            <BlurView intensity={80} tint="dark" style={{ width: 26, height: 26, alignItems: 'center', justifyContent: 'center' }}>
-              <Feather name="x" size={13} color="#FFFFFF" />
-            </BlurView>
-          </Pressable>
+        <View style={{ borderRadius: 13, overflow: 'hidden' }}>
+          <BlurView intensity={80} tint="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 11, paddingVertical: 5 }}>
+            <Pressable onPress={() => { triggerHaptic('light'); setReportOpen(true); }} hitSlop={6}>
+              <Feather name="flag" size={13} color="#FFFFFF" />
+            </Pressable>
+            <Pressable onPress={handleClose} hitSlop={6}>
+              <Feather name="x" size={14} color="#FFFFFF" />
+            </Pressable>
+          </BlurView>
         </View>
       </View>
 
