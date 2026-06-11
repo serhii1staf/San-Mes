@@ -34,6 +34,24 @@ export default function MiniAppScreen() {
   const [currentUrl, setCurrentUrl] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [reportOpen, setReportOpen] = useState(false);
+  const loadTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Safety net: if the page never fires onLoadEnd (e.g. the device is offline
+  // and the request hangs), force the loading overlay off after 8 s so the
+  // close/minimise buttons aren't stuck behind an endless spinner. Without
+  // this the user has to kill the whole app to escape a hung mini-app.
+  const armLoadTimeout = () => {
+    if (loadTimeout.current) clearTimeout(loadTimeout.current);
+    loadTimeout.current = setTimeout(() => setIsLoading(false), 8000);
+  };
+  React.useEffect(() => {
+    armLoadTimeout();
+    return () => { if (loadTimeout.current) clearTimeout(loadTimeout.current); };
+  }, []);
+  const stopLoading = () => {
+    if (loadTimeout.current) { clearTimeout(loadTimeout.current); loadTimeout.current = null; }
+    setIsLoading(false);
+  };
 
   // Decode URL properly — handle double encoding and trim whitespace
   const decodedUrl = (() => {
@@ -74,9 +92,12 @@ export default function MiniAppScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: '#000' }}>
-      {/* Loading overlay on black bg to prevent white flash */}
+      {/* Loading overlay on black bg to prevent white flash. pointerEvents
+          "none" so it never swallows taps meant for the floating top
+          buttons — critical when offline, where the overlay would otherwise
+          trap the user behind an endless spinner. */}
       {isLoading && (
-        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#000', zIndex: 50, alignItems: 'center', justifyContent: 'center' }}>
+        <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#000', zIndex: 40, alignItems: 'center', justifyContent: 'center' }}>
           <ActivityIndicator size="large" color="#FFFFFF" />
         </View>
       )}
@@ -86,11 +107,11 @@ export default function MiniAppScreen() {
         ref={webViewRef}
         source={{ uri: decodedUrl }}
         style={{ flex: 1, backgroundColor: '#000' }}
-        onLoadStart={() => setIsLoading(true)}
-        onLoadEnd={() => setIsLoading(false)}
+        onLoadStart={() => { setIsLoading(true); armLoadTimeout(); }}
+        onLoadEnd={stopLoading}
         onNavigationStateChange={(navState) => setCurrentUrl(navState.url)}
-        onError={() => setIsLoading(false)}
-        onHttpError={() => setIsLoading(false)}
+        onError={stopLoading}
+        onHttpError={stopLoading}
         renderError={(_errorDomain, _errorCode, errorDesc) => (
           <View style={{ flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center', padding: 32 }}>
             <Text style={{ fontSize: 16, color: '#FFFFFF', fontWeight: '600', marginBottom: 8 }}>Не удалось загрузить</Text>
@@ -134,25 +155,26 @@ export default function MiniAppScreen() {
       />
 
       {/* Floating top buttons — frosted BlurView capsules matching the
-          profile screen's QR/edit pill style. Three buttons: Свернуть on
-          the left, Закрыть + report on the right. */}
-      <View style={{ position: 'absolute', top: insets.top + 8, left: 16, right: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Pressable onPress={handleMinimize} style={{ borderRadius: 14, overflow: 'hidden' }}>
-          <BlurView intensity={80} tint="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 6 }}>
+          profile screen's QR/edit pill style. Compact icon-only buttons:
+          Свернуть (chevron) on the left, flag + close grouped on the right.
+          zIndex 60 keeps them ABOVE the loading overlay (zIndex 40) so they
+          stay tappable even while a page is loading or hung offline. */}
+      <View style={{ position: 'absolute', top: insets.top + 8, left: 16, right: 16, zIndex: 60, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Pressable onPress={handleMinimize} style={{ borderRadius: 13, overflow: 'hidden' }}>
+          <BlurView intensity={80} tint="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 9, paddingVertical: 5 }}>
             <Feather name="chevron-down" size={12} color="#FFFFFF" />
             <Text style={{ fontSize: 10, color: '#FFFFFF', fontWeight: '500' }}>Свернуть</Text>
           </BlurView>
         </Pressable>
-        <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-          <Pressable onPress={() => { triggerHaptic('light'); setReportOpen(true); }} style={{ borderRadius: 14, overflow: 'hidden' }}>
-            <BlurView intensity={80} tint="dark" style={{ width: 28, height: 28, alignItems: 'center', justifyContent: 'center' }}>
-              <Feather name="flag" size={13} color="#FFFFFF" />
+        <View style={{ flexDirection: 'row', gap: 10, alignItems: 'center' }}>
+          <Pressable onPress={() => { triggerHaptic('light'); setReportOpen(true); }} style={{ borderRadius: 13, overflow: 'hidden' }}>
+            <BlurView intensity={80} tint="dark" style={{ width: 26, height: 26, alignItems: 'center', justifyContent: 'center' }}>
+              <Feather name="flag" size={12} color="#FFFFFF" />
             </BlurView>
           </Pressable>
-          <Pressable onPress={handleClose} style={{ borderRadius: 14, overflow: 'hidden' }}>
-            <BlurView intensity={80} tint="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 6 }}>
-              <Text style={{ fontSize: 10, color: '#FFFFFF', fontWeight: '500' }}>Закрыть</Text>
-              <Feather name="x" size={12} color="#FFFFFF" />
+          <Pressable onPress={handleClose} style={{ borderRadius: 13, overflow: 'hidden' }}>
+            <BlurView intensity={80} tint="dark" style={{ width: 26, height: 26, alignItems: 'center', justifyContent: 'center' }}>
+              <Feather name="x" size={13} color="#FFFFFF" />
             </BlurView>
           </Pressable>
         </View>
