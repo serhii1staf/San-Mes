@@ -378,7 +378,7 @@ export default function MusicChatScreen() {
               <TextInput
                 value={input}
                 onChangeText={setInput}
-                placeholder="Название песни или ссылка..."
+                placeholder="Название песни..."
                 placeholderTextColor={theme.colors.text.tertiary}
                 multiline
                 textAlignVertical="center"

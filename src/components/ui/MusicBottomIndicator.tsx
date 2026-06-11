@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { View, Pressable, StyleSheet, Animated, PanResponder, Dimensions } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import { usePathname } from 'expo-router';
 import { useTheme } from '../../theme';
 import { Text } from './Text';
 import { CachedImage } from './CachedImage';
@@ -44,6 +45,7 @@ const InlineProgress = React.memo(function InlineProgress({ accent, track }: { a
 
 export function MusicBottomIndicator() {
   const theme = useTheme();
+  const pathname = usePathname();
   const current = useMusicStore((s) => s.current);
   const currentId = current?.id ?? null;
   const isPlaying = useMusicStore((s) => s.isPlaying);
@@ -53,10 +55,15 @@ export function MusicBottomIndicator() {
   const openPlayer = useMusicStore((s) => s.openPlayer);
   const stop = useMusicStore((s) => s.stop);
 
-  // Hide while the music chat is focused — the chat already has its own
-  // player UI inline. The flag is driven by mount/unmount in the chat,
-  // which is more reliable than usePathname() (no transition races).
-  const show = !!current && !inMusicChat && !playerOpen;
+  // Hide while the music chat is on screen. We check BOTH the synchronous
+  // pathname AND the inMusicChat flag (set by the chat's mount/unmount
+  // useEffect). The pathname check catches the race where the user dismisses
+  // the indicator, navigates back to /chat/music, and instantly taps a
+  // recommended track — the new track triggers a re-render BEFORE the chat's
+  // mount-effect has had a chance to set inMusicChat=true. Pathname is
+  // updated synchronously by the router, so it wins that race.
+  const onMusicScreenSync = !!pathname && pathname.indexOf('/chat/music') === 0;
+  const show = !!current && !onMusicScreenSync && !inMusicChat && !playerOpen;
 
   // Slide-in/out from below — native-driven so it stays smooth on weak devices.
   // Initial offset is large enough to fully clear the screen bottom: indicator

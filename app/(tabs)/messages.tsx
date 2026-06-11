@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { View, FlatList, Pressable, ViewStyle, TextInput, StyleSheet, Text as RNText, Alert, Animated, Easing } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -390,35 +390,45 @@ export default function MessagesScreen() {
 
 // Standalone subcomponent — keeps the screen's own re-renders independent of
 // FAB animation state, and isolates the Animated.Value lifecycle.
+//
+// Implementation notes (perf-critical):
+//   - The menu and backdrop are ALWAYS in the tree (no mount/unmount). The
+//     previous version used `mounted` state to add/remove them, which paid a
+//     mount cost on every open and could starve the spring animation of its
+//     first 1–2 frames on weak Androids. Now both stay mounted and we only
+//     toggle opacity + pointerEvents.
+//   - All animated properties go through the native driver (transform +
+//     opacity), so the spring keeps running even when the JS thread is busy
+//     navigating to a new screen.
+//   - Navigation fires immediately on tap; the close animation rides on top
+//     of the navigation transition without competing for the JS thread.
+//   - Menu items are wrapped in React.memo so the list doesn't re-render
+//     when the parent's open state flips.
 function FabWithMenu() {
   const theme = useTheme();
   const [open, setOpen] = useState(false);
-  // Mounted holds the menu in the tree during the close animation so the
-  // exit tween can play before unmount. open = visible state, mounted = in tree.
-  const [mounted, setMounted] = useState(false);
   const anim = useRef(new Animated.Value(0)).current; // 0 = closed, 1 = open
 
   useEffect(() => {
-    if (open) {
-      setMounted(true);
-      // Bouncy spring — tension 110 + friction 10 gives a natural ~6 % overshoot,
-      // close to iOS's signature "rubbery" pop. Native-driven so it stays
-      // smooth on weak Androids.
-      Animated.spring(anim, { toValue: 1, useNativeDriver: true, tension: 110, friction: 10 }).start();
-    } else if (mounted) {
-      // Snap back with a slightly stiffer spring (tension 130, friction 14) —
-      // close still feels alive but doesn't oscillate.
-      Animated.spring(anim, { toValue: 0, useNativeDriver: true, tension: 130, friction: 14 }).start(() => setMounted(false));
-    }
+    // Open: bouncy spring (~6 % overshoot, iOS rubbery rest).
+    // Close: stiffer spring so it doesn't oscillate after dismiss.
+    Animated.spring(anim, {
+      toValue: open ? 1 : 0,
+      useNativeDriver: true,
+      tension: open ? 110 : 130,
+      friction: open ? 10 : 14,
+      restDisplacementThreshold: 0.005,
+      restSpeedThreshold: 0.005,
+    }).start();
   }, [open]);
 
-  const toggle = () => { triggerHaptic('light'); setOpen((v) => !v); };
-  const navigate = (action: () => void) => {
+  const toggle = useCallback(() => { triggerHaptic('light'); setOpen((v) => !v); }, []);
+  const navigate = useCallback((action: () => void) => {
     setOpen(false);
-    // Defer navigation by one frame so the FAB icon has a chance to swap to
-    // the closed state before the next screen mounts — feels much smoother.
-    requestAnimationFrame(action);
-  };
+    // Navigation fires immediately so the next screen starts loading right
+    // away. The close spring runs on the native driver in parallel.
+    action();
+  }, []);
 
   // Single source of truth for both transforms — interpolated for each
   // animated property. This way the close tween is exactly the inverse of the
@@ -442,60 +452,62 @@ function FabWithMenu() {
   // 1 → 0.92 → 1 across the spring travel makes the tap feel tactile.
   const fabScale = anim.interpolate({ inputRange: [0, 0.5, 1], outputRange: [1, 0.92, 1] });
 
+  const menuBg = theme.isDark ? theme.colors.background.elevated : '#FFFFFF';
+  const borderColor = theme.colors.border.light;
+  const accent = theme.colors.accent.primary;
+  const secondary = theme.colors.text.secondary;
+
   return (
     <>
-      {mounted ? (
-        <>
-          {/* Backdrop — tap anywhere to close. */}
-          <Animated.View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.18)', opacity: backdropOpacity, zIndex: 200 }}>
-            <Pressable style={{ flex: 1 }} onPress={() => setOpen(false)} />
-          </Animated.View>
+      {/* Backdrop — always mounted, just opacity-driven. pointerEvents flips
+          off when closed so taps fall through to the chat list underneath. */}
+      <Animated.View
+        pointerEvents={open ? 'auto' : 'none'}
+        style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.18)', opacity: backdropOpacity, zIndex: 200 }}
+      >
+        <Pressable style={{ flex: 1 }} onPress={() => setOpen(false)} />
+      </Animated.View>
 
-          {/* Menu — anchored above the FAB; transformOrigin = bottom-right via
-              translate so scale grows out of the FAB. */}
-          <Animated.View
-            // pointerEvents=none on closed → no taps on collapsed (invisible) menu.
-            pointerEvents={open ? 'auto' : 'none'}
-            style={{
-              position: 'absolute',
-              bottom: 164,
-              right: 24,
-              opacity: menuOpacity,
-              transform: [
-                { translateY: menuTranslateY },
-                // Anchor the scale to the bottom-right (where the FAB sits)
-                // so the menu visibly "grows out" of the button rather than
-                // expanding from its own centre. Translate-scale-translate
-                // shifts the transform origin into the bottom-right corner.
-                { translateX: 110 }, { translateY: 110 },
-                { scaleX: menuScaleX },
-                { scaleY: menuScaleY },
-                { translateX: -110 }, { translateY: -110 },
-              ],
-              backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF',
-              borderRadius: 18,
-              overflow: 'hidden',
-              shadowColor: '#000',
-              shadowOffset: { width: 0, height: 6 },
-              shadowOpacity: 0.18,
-              shadowRadius: 20,
-              elevation: 14,
-              borderWidth: 0.5,
-              borderColor: theme.colors.border.light,
-              zIndex: 201,
-              minWidth: 220,
-            }}
-          >
-            <FabMenuItem icon="grid" label="Мини-приложения" tint={theme.colors.accent.primary} onPress={() => navigate(() => router.push('/settings/mini-apps' as any))} />
-            <FabSeparator color={theme.colors.border.light} />
-            <FabMenuItem icon="cpu" label="San AI" tint={theme.colors.accent.primary} onPress={() => navigate(() => router.push('/chat/ai' as any))} />
-            <FabSeparator color={theme.colors.border.light} />
-            <FabMenuItem icon="music" label="Музыка" tint={theme.colors.accent.primary} onPress={() => navigate(() => router.push('/chat/music' as any))} />
-            <FabSeparator color={theme.colors.border.light} />
-            <FabMenuItem icon="settings" label="Настройка чатов" tint={theme.colors.text.secondary} onPress={() => navigate(() => router.push({ pathname: '/settings/chat-settings', params: { id: GLOBAL_CHAT_SETTINGS_KEY } } as any))} />
-          </Animated.View>
-        </>
-      ) : null}
+      {/* Menu — always mounted; opacity + transform animate it in/out. The
+          translate-scale-translate stack moves the transform origin into the
+          bottom-right corner (where the FAB sits) so the menu visibly grows
+          out of the button. */}
+      <Animated.View
+        pointerEvents={open ? 'auto' : 'none'}
+        style={{
+          position: 'absolute',
+          bottom: 164,
+          right: 24,
+          opacity: menuOpacity,
+          transform: [
+            { translateY: menuTranslateY },
+            { translateX: 110 }, { translateY: 110 },
+            { scaleX: menuScaleX },
+            { scaleY: menuScaleY },
+            { translateX: -110 }, { translateY: -110 },
+          ],
+          backgroundColor: menuBg,
+          borderRadius: 18,
+          overflow: 'hidden',
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 6 },
+          shadowOpacity: 0.18,
+          shadowRadius: 20,
+          elevation: 14,
+          borderWidth: 0.5,
+          borderColor,
+          zIndex: 201,
+          minWidth: 220,
+        }}
+      >
+        <FabMenuItem icon="grid" label="Мини-приложения" tint={accent} onPress={() => navigate(() => router.push('/settings/mini-apps' as any))} />
+        <FabSeparator color={borderColor} />
+        <FabMenuItem icon="cpu" label="San AI" tint={accent} onPress={() => navigate(() => router.push('/chat/ai' as any))} />
+        <FabSeparator color={borderColor} />
+        <FabMenuItem icon="music" label="Музыка" tint={accent} onPress={() => navigate(() => router.push('/chat/music' as any))} />
+        <FabSeparator color={borderColor} />
+        <FabMenuItem icon="settings" label="Настройка чатов" tint={secondary} onPress={() => navigate(() => router.push({ pathname: '/settings/chat-settings', params: { id: GLOBAL_CHAT_SETTINGS_KEY } } as any))} />
+      </Animated.View>
 
       <Pressable
         onPress={toggle}
@@ -506,7 +518,7 @@ function FabWithMenu() {
           width: 56,
           height: 56,
           borderRadius: 28,
-          backgroundColor: theme.colors.accent.primary,
+          backgroundColor: accent,
           alignItems: 'center',
           justifyContent: 'center',
           elevation: 6,
@@ -525,15 +537,15 @@ function FabWithMenu() {
   );
 }
 
-function FabMenuItem({ icon, label, tint, onPress }: { icon: string; label: string; tint: string; onPress: () => void }) {
+const FabMenuItem = React.memo(function FabMenuItem({ icon, label, tint, onPress }: { icon: string; label: string; tint: string; onPress: () => void }) {
   return (
     <Pressable onPress={onPress} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 13, gap: 12 }}>
       <Feather name={icon as any} size={16} color={tint} />
       <Text variant="caption" weight="medium" style={{ fontSize: 13 }}>{label}</Text>
     </Pressable>
   );
-}
+});
 
-function FabSeparator({ color }: { color: string }) {
+const FabSeparator = React.memo(function FabSeparator({ color }: { color: string }) {
   return <View style={{ height: 0.5, backgroundColor: color }} />;
-}
+});
