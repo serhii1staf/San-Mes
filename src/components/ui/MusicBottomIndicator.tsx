@@ -70,11 +70,22 @@ export function MusicBottomIndicator() {
   const dragX = useRef(new Animated.Value(0)).current;
   const dismissing = useRef(false);
 
-  // Reset the swipe state any time a NEW track starts. Without this, dragX
-  // (which lives in a ref) could be stuck at ±SCREEN_WIDTH from a previous
-  // dismiss, making the next-track render appear off-screen for one frame.
+  // Tracks the previous render's currentId so we can detect a transition
+  // from "no track" → "new track" — the case where slideY may have been
+  // left at 0 (visible) by a prior render, and we need to snap it back to
+  // HIDDEN_Y so the slide-up animation actually has somewhere to start.
+  const prevId = useRef<string | null>(null);
+
   useEffect(() => {
-    if (currentId) {
+    const wasNull = prevId.current == null;
+    prevId.current = currentId;
+    // Detection of "fresh appearance after a null period" — the bug case
+    // where the user dismissed the indicator (current → null), then played
+    // a new track. Without this snap, slideY could be stuck at 0 and the
+    // indicator would render at its visible position above the music
+    // chat's input bar before the show effect catches up.
+    if (wasNull && currentId) {
+      slideY.setValue(HIDDEN_Y);
       dragX.setValue(0);
       dismissing.current = false;
     }

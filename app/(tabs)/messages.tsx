@@ -401,9 +401,14 @@ function FabWithMenu() {
   useEffect(() => {
     if (open) {
       setMounted(true);
-      Animated.spring(anim, { toValue: 1, useNativeDriver: true, tension: 70, friction: 12 }).start();
+      // Bouncy spring — tension 110 + friction 10 gives a natural ~6 % overshoot,
+      // close to iOS's signature "rubbery" pop. Native-driven so it stays
+      // smooth on weak Androids.
+      Animated.spring(anim, { toValue: 1, useNativeDriver: true, tension: 110, friction: 10 }).start();
     } else if (mounted) {
-      Animated.timing(anim, { toValue: 0, duration: 180, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start(() => setMounted(false));
+      // Snap back with a slightly stiffer spring (tension 130, friction 14) —
+      // close still feels alive but doesn't oscillate.
+      Animated.spring(anim, { toValue: 0, useNativeDriver: true, tension: 130, friction: 14 }).start(() => setMounted(false));
     }
   }, [open]);
 
@@ -419,7 +424,13 @@ function FabWithMenu() {
   // animated property. This way the close tween is exactly the inverse of the
   // open spring, no double-anim glue.
   const menuOpacity = anim;
-  const menuScale = anim.interpolate({ inputRange: [0, 1], outputRange: [0.55, 1] });
+  // Asymmetric scale = rubbery "stretching out of the FAB" feel. The Y axis
+  // travels further (0.35 → 1) than the X axis (0.7 → 1), so during the
+  // first frames the menu reads as a tall narrow blob unfurling from the
+  // FAB rather than a generic square zooming in. Spring overshoot above 1
+  // (~6 %) gives the iOS rubber-band rest.
+  const menuScaleY = anim.interpolate({ inputRange: [0, 1], outputRange: [0.35, 1] });
+  const menuScaleX = anim.interpolate({ inputRange: [0, 1], outputRange: [0.7, 1] });
   // Translation pulls the menu UP from the FAB position so it appears to
   // "grow out" of the button instead of dropping in from above.
   const menuTranslateY = anim.interpolate({ inputRange: [0, 1], outputRange: [40, 0] });
@@ -427,6 +438,9 @@ function FabWithMenu() {
   const backdropOpacity = anim.interpolate({ inputRange: [0, 1], outputRange: [0, 1] });
   // FAB icon rotates 45° to morph "edit"→"x" without swapping the icon mid-frame.
   const fabIconRotate = anim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '45deg'] });
+  // FAB itself gives a tiny squish on open (visual hand-off to the menu) —
+  // 1 → 0.92 → 1 across the spring travel makes the tap feel tactile.
+  const fabScale = anim.interpolate({ inputRange: [0, 0.5, 1], outputRange: [1, 0.92, 1] });
 
   return (
     <>
@@ -449,10 +463,13 @@ function FabWithMenu() {
               opacity: menuOpacity,
               transform: [
                 { translateY: menuTranslateY },
-                // Anchor the scale to the bottom-right so it appears to grow
-                // out of the FAB's center.
+                // Anchor the scale to the bottom-right (where the FAB sits)
+                // so the menu visibly "grows out" of the button rather than
+                // expanding from its own centre. Translate-scale-translate
+                // shifts the transform origin into the bottom-right corner.
                 { translateX: 110 }, { translateY: 110 },
-                { scale: menuScale },
+                { scaleX: menuScaleX },
+                { scaleY: menuScaleY },
                 { translateX: -110 }, { translateY: -110 },
               ],
               backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF',
@@ -500,7 +517,7 @@ function FabWithMenu() {
           zIndex: 202,
         }}
       >
-        <Animated.View style={{ transform: [{ rotate: fabIconRotate }] }}>
+        <Animated.View style={{ transform: [{ rotate: fabIconRotate }, { scale: fabScale }] }}>
           <Feather name="edit" size={22} color="#FFFFFF" />
         </Animated.View>
       </Pressable>

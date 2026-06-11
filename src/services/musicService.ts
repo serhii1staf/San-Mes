@@ -470,51 +470,29 @@ export async function searchTracks(query: string, limit = 20): Promise<Track[]> 
 
 // ── Direct-URL support ──────────────────────────────────────────────────────
 // When the user types a URL into the music chat we try to treat it as a
-// track instead of a search query. Two cases are supported safely:
-//
-//   1. Direct audio file URLs — anything ending in a recognised audio
-//      extension (.mp3, .m4a, .ogg, .wav, .flac, .aac, .opus). expo-av plays
-//      these natively. The user supplies the link, so the licensing
-//      responsibility sits with them, and the audio bytes never pass through
-//      our servers (Apple §3.3.4.A.i compliance).
-//
-//   2. Podcast/RSS audio enclosures — same as (1), since podcast hosts
-//      typically expose direct .mp3 URLs.
+// track instead of a search query. ONE case is supported safely: direct
+// audio file URLs — anything ending in a recognised audio extension (.mp3,
+// .m4a, .ogg, .wav, .flac, .aac, .opus). expo-av plays these natively. The
+// user supplies the link, so the licensing responsibility sits with them,
+// and the audio bytes never pass through our servers (Apple §3.3.4.A.i
+// compliance).
 //
 // What we deliberately DON'T do: video-platform stream extraction (YouTube,
 // TikTok, Instagram, Discord/Telegram media). Those require server-side
 // extraction tooling (yt-dlp et al.) that violates the platforms' TOS and
 // would put us at risk under §3.3.4.A.i ("must be wholly-owned or licensed").
-// `recogniseVideoHost` exists to route those URLs to a clear user-facing
-// message rather than silently failing.
+// Such URLs simply fall through to the normal text search — which returns
+// no results, so the user sees the standard "Не найдено" bubble. No special
+// alert, no friction.
 
 const AUDIO_EXTENSIONS = ['.mp3', '.m4a', '.ogg', '.wav', '.flac', '.aac', '.opus', '.weba'];
 
-const VIDEO_HOSTS = [
-  'youtube.com', 'youtu.be', 'm.youtube.com', 'music.youtube.com',
-  'tiktok.com', 'vm.tiktok.com',
-  'instagram.com',
-  'discord.com', 'discord.gg', 'cdn.discordapp.com',
-  't.me', 'telegram.me',
-  'vimeo.com',
-  'twitch.tv',
-];
-
 export type UrlIntent =
   | { kind: 'audio'; track: Track }
-  | { kind: 'video-host'; host: string }
   | { kind: 'unsupported' };
 
 function looksLikeUrl(s: string): boolean {
   return /^https?:\/\//i.test(s.trim());
-}
-
-function recogniseVideoHost(host: string): string | null {
-  const h = host.toLowerCase();
-  for (const v of VIDEO_HOSTS) {
-    if (h === v || h.endsWith('.' + v)) return v;
-  }
-  return null;
 }
 
 function prettyFromUrl(u: URL): { title: string; artist: string } {
@@ -536,8 +514,8 @@ function prettyFromUrl(u: URL): { title: string; artist: string } {
 /**
  * Inspect a user-typed string and return what we should do with it.
  *   - `audio` → play as a track immediately.
- *   - `video-host` → tell the user we can't extract from that platform.
- *   - `unsupported` → fall through to normal text search.
+ *   - `unsupported` → fall through to normal text search (which returns
+ *     nothing for unplayable URLs; the user sees the standard empty state).
  */
 export function classifyMusicInput(input: string): UrlIntent {
   const s = input.trim();
@@ -546,7 +524,6 @@ export function classifyMusicInput(input: string): UrlIntent {
   let url: URL;
   try { url = new URL(s); } catch { return { kind: 'unsupported' }; }
 
-  // Strip query/hash for extension matching but preserve full URL for streaming.
   const path = url.pathname.toLowerCase();
   const hasAudioExt = AUDIO_EXTENSIONS.some((ext) => path.endsWith(ext));
   if (hasAudioExt) {
@@ -563,9 +540,6 @@ export function classifyMusicInput(input: string): UrlIntent {
     };
     return { kind: 'audio', track };
   }
-
-  const videoHost = recogniseVideoHost(url.hostname);
-  if (videoHost) return { kind: 'video-host', host: videoHost };
 
   return { kind: 'unsupported' };
 }

@@ -115,19 +115,11 @@ export default function MusicChatScreen() {
   const runSearch = useCallback(async (q: string) => {
     if (!q || isSearching || inFlightRef.current) return;
 
-    // If the user pasted a URL, route it before falling through to text search.
-    // Direct audio links play immediately; known video hosts get an explanation
-    // (we cannot legally extract their streams — see Apple §3.3.4.A.i and the
-    // platform TOS).
+    // If the user pasted a direct audio URL, play it immediately. Any other
+    // URL (YouTube, Discord, etc.) silently falls through to the regular text
+    // search — which returns nothing, so the user sees the standard "Не
+    // найдено" bubble. No alert, no friction.
     const intent = classifyMusicInput(q);
-    if (intent.kind === 'video-host') {
-      Alert.alert(
-        'Не получится загрузить',
-        `Ссылки с ${intent.host} требуют извлечения аудио с серверной стороны, что нарушает условия платформы и правила App Store. Поддерживаются только прямые ссылки на аудиофайлы (.mp3, .m4a, .ogg и т. п.).`,
-      );
-      setInput('');
-      return;
-    }
     if (intent.kind === 'audio') {
       triggerHaptic('light');
       setInput('');

@@ -25,6 +25,8 @@
     .nav a{font-size:14px}
     [data-lang]{display:none}
     [data-lang].show{display:block}
+    .callout{background:#1a1a1a;border-left:3px solid #F09458;padding:14px 16px;border-radius:8px;margin:18px 0}
+    .callout p{color:#ddd;margin:0}
   </style>
 </head>
 <body>
@@ -40,50 +42,110 @@
     <!-- English -->
     <div data-lang="en">
       <h1>Privacy Policy</h1>
-      <div class="updated">Last updated: June 6, 2026</div>
-      <p>San respects your privacy. This policy explains what data we collect and how we use it.</p>
-      <h2>Data we collect</h2>
+      <div class="updated">Last updated: June 11, 2026</div>
+      <p>San is built to need as little personal data as possible. This page explains exactly what we collect, why, and what we never collect.</p>
+
+      <div class="callout">
+        <p><strong>What we never collect:</strong> phone number, email address, real name, banking details, payment cards, postal address, GPS location, motion data, contacts, microphone audio. None of these are required to use San.</p>
+      </div>
+
+      <h2>1. What we collect</h2>
       <ul>
-        <li>Name, username, emoji avatar and profile info you provide at sign-up.</li>
-        <li>Posts, comments, messages and media you create in the app.</li>
-        <li>Technical device data needed for sign-in (device identifier).</li>
+        <li>Username, display name, emoji avatar, and an optional bio that you provide at sign-up.</li>
+        <li>The posts, comments, and chat messages you choose to create.</li>
+        <li>A salted hash of the 4-digit PIN you set for app unlock — never the PIN itself.</li>
+        <li>An opaque per-install token issued by our authentication backend (Supabase). It is not derived from any device characteristic.</li>
       </ul>
-      <h2>How we use data</h2>
+
+      <h2>2. How we use your data</h2>
+      <p>Your data is used solely to power the app: rendering your profile, delivering messages, showing posts, and authenticating you on the device. We do not use your data for advertising, profiling, or tracking across other apps. We do not embed any third-party advertising or analytics SDK that builds a user profile.</p>
+
+      <h2>3. Permissions we request</h2>
       <ul>
-        <li>To power app features: feed, chats, profiles, mini-apps.</li>
-        <li>To sync and cache content so the app is fast and works offline.</li>
-        <li>We do not sell your personal data to third parties.</li>
+        <li><strong>Photo library</strong> — only when you tap to attach an image to a post, comment, chat message, profile picture, or chat background.</li>
+        <li><strong>Camera</strong> — only when you tap to take a photo for a post.</li>
       </ul>
-      <h2>Data storage</h2>
-      <p>Data is stored on secure servers and locally on your device for offline access. Each account is isolated.</p>
-      <h2>Data deletion</h2>
-      <p>You can delete your account and related data in the app settings or by emailing <a href="mailto:support@san-m-app.com">support@san-m-app.com</a>.</p>
-      <h2>Contact</h2>
+      <p>You can deny or revoke either of these in iOS Settings at any time. The app will keep working — you just won't be able to attach new images from that source until you re-enable it.</p>
+
+      <h2>4. Sharing with third parties</h2>
+      <p>We do not sell, rent, or trade your data. Two service providers process data on our behalf, under their respective security commitments:</p>
+      <ul>
+        <li>Supabase — database, authentication, and file storage.</li>
+        <li>Vercel — HTTP API hosting and the app's link-preview proxy.</li>
+      </ul>
+      <p>Music search uses public APIs from Apple iTunes Search and Audius. We send only the search query — never any personal data.</p>
+
+      <h2>5. Storage and retention</h2>
+      <p>Account data is stored on Supabase servers protected by HTTPS and row-level security. When you delete a post, comment, or your entire account, the data is removed from our backend within 30 days. On-device data is stored in encrypted MMKV storage and is wiped on logout or app uninstall.</p>
+
+      <h2>6. Your rights</h2>
+      <p>You can edit your profile or delete any of your content at any time from within the app. Account deletion removes all associated content and personal data from our backend. To request a copy of your data or any other privacy-related action, contact us at the email below.</p>
+
+      <h2>7. Security</h2>
+      <p>App unlock is protected by a 4-digit PIN and a per-device key. The PIN never leaves the device in plaintext — only its salted hash. All API traffic is HTTPS only; we do not allow arbitrary HTTP loads.</p>
+
+      <h2>8. Children's data</h2>
+      <p>San is not directed at children under 13 (or the equivalent minimum age in your jurisdiction). We do not knowingly collect personal data from children under that age. If you believe a child has provided us with data, please contact us so we can remove it.</p>
+
+      <h2>9. Changes to this policy</h2>
+      <p>We may update this policy from time to time. Material changes are announced inside the app before they take effect. The "Last updated" date above always reflects the current version.</p>
+
+      <h2>10. Contact</h2>
       <p>Privacy questions: <a href="mailto:support@san-m-app.com">support@san-m-app.com</a>.</p>
     </div>
 
     <!-- Russian -->
     <div data-lang="ru">
       <h1>Политика конфиденциальности</h1>
-      <div class="updated">Последнее обновление: 6 июня 2026</div>
-      <p>San уважает вашу конфиденциальность. Эта политика описывает, какие данные мы собираем и как их используем.</p>
-      <h2>Какие данные мы собираем</h2>
+      <div class="updated">Последнее обновление: 11 июня 2026</div>
+      <p>San построен так, чтобы запрашивать как можно меньше персональных данных. На этой странице мы подробно описываем, что собираем, зачем, и чего НЕ собираем никогда.</p>
+
+      <div class="callout">
+        <p><strong>Чего мы НЕ собираем:</strong> номер телефона, email, настоящее имя, банковские реквизиты, платёжные карты, почтовый адрес, GPS-координаты, данные о движении, контакты, звук с микрофона. Ничего из этого для работы San не требуется.</p>
+      </div>
+
+      <h2>1. Какие данные мы собираем</h2>
       <ul>
-        <li>Имя, юзернейм, эмодзи-аватар и информацию профиля, которые вы указываете при регистрации.</li>
-        <li>Публикации, комментарии, сообщения и медиа, которые вы создаёте в приложении.</li>
-        <li>Технические данные устройства, необходимые для входа (идентификатор устройства).</li>
+        <li>Юзернейм, отображаемое имя, эмодзи-аватар и биография (по желанию), которые вы указываете при регистрации.</li>
+        <li>Посты, комментарии и сообщения, которые вы создаёте.</li>
+        <li>Соль и хеш 4-значного PIN, которым вы разблокируете приложение — сам PIN мы не храним.</li>
+        <li>Непрозрачный токен сессии от нашей системы авторизации (Supabase). Он не привязан к характеристикам устройства.</li>
       </ul>
-      <h2>Как мы используем данные</h2>
+
+      <h2>2. Как мы используем данные</h2>
+      <p>Данные используются только для работы приложения: отображения профиля, доставки сообщений, показа постов и авторизации на устройстве. Мы не используем данные для рекламы, профилирования или отслеживания в других приложениях. Мы не подключаем рекламные или аналитические SDK, которые строят профиль пользователя.</p>
+
+      <h2>3. Какие разрешения запрашиваем</h2>
       <ul>
-        <li>Для работы функций приложения: лента, чаты, профили, мини-приложения.</li>
-        <li>Для синхронизации и кэширования контента, чтобы приложение работало быстро и офлайн.</li>
-        <li>Мы не продаём ваши персональные данные третьим лицам.</li>
+        <li><strong>Библиотека фото</strong> — только когда вы сами выбираете прикрепить изображение к посту, комментарию, сообщению, аватару или фону чата.</li>
+        <li><strong>Камера</strong> — только когда вы сами нажимаете «сделать фото» для поста.</li>
       </ul>
-      <h2>Хранение данных</h2>
-      <p>Данные хранятся на защищённых серверах и локально на вашем устройстве для офлайн-доступа. Каждый аккаунт изолирован.</p>
-      <h2>Удаление данных</h2>
-      <p>Вы можете удалить свой аккаунт и связанные данные в настройках приложения или написав на <a href="mailto:support@san-m-app.com">support@san-m-app.com</a>.</p>
-      <h2>Контакты</h2>
+      <p>Любое из этих разрешений можно отозвать в настройках iOS в любое время. Приложение продолжит работать — просто не сможет прикреплять новые изображения с того источника, пока вы не вернёте доступ.</p>
+
+      <h2>4. Передача третьим лицам</h2>
+      <p>Мы не продаём, не сдаём в аренду и не обмениваем ваши данные. Два провайдера обрабатывают данные от нашего имени по своим договорам безопасности:</p>
+      <ul>
+        <li>Supabase — база данных, авторизация, хранилище файлов.</li>
+        <li>Vercel — хостинг HTTP API и прокси для предпросмотра ссылок.</li>
+      </ul>
+      <p>Поиск музыки использует публичные API Apple iTunes Search и Audius. Туда уходит только поисковый запрос — без каких-либо персональных данных.</p>
+
+      <h2>5. Хранение и сроки</h2>
+      <p>Данные аккаунта хранятся на серверах Supabase под защитой HTTPS и row-level security. Когда вы удаляете пост, комментарий или аккаунт целиком, данные удаляются с серверов в течение 30 дней. Локальные данные на устройстве лежат в зашифрованном MMKV и стираются при выходе из аккаунта или удалении приложения.</p>
+
+      <h2>6. Ваши права</h2>
+      <p>Вы можете в любой момент редактировать профиль или удалить любой свой контент прямо в приложении. Удаление аккаунта стирает весь связанный контент и персональные данные с сервера. Чтобы получить копию ваших данных или запросить другое действие по конфиденциальности, напишите на email ниже.</p>
+
+      <h2>7. Безопасность</h2>
+      <p>Вход защищён 4-значным PIN-кодом и ключом устройства. PIN никогда не покидает устройство в открытом виде — наружу уходит только его солёный хеш. Весь API-трафик идёт только по HTTPS; произвольные HTTP-загрузки запрещены.</p>
+
+      <h2>8. Данные детей</h2>
+      <p>San не предназначен для детей младше 13 лет (или соответствующего минимального возраста в вашей юрисдикции). Мы сознательно не собираем персональные данные от детей младше этого возраста. Если вы считаете, что ребёнок отправил нам данные, свяжитесь с нами — мы удалим эти данные.</p>
+
+      <h2>9. Изменения в политике</h2>
+      <p>Мы можем обновлять эту политику время от времени. О существенных изменениях вы узнаете внутри приложения до того, как они вступят в силу. Дата «Последнее обновление» выше всегда соответствует текущей версии.</p>
+
+      <h2>10. Контакты</h2>
       <p>По вопросам конфиденциальности: <a href="mailto:support@san-m-app.com">support@san-m-app.com</a>.</p>
     </div>
 
