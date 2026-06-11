@@ -79,16 +79,20 @@ export function PostContextMenu({ visible, post, isOwnPost, onClose, onDelete }:
 
   const handleCopy = async () => {
     if (post) {
-      const parts = [];
+      // SECURITY: never copy raw Supabase storage URLs to the clipboard.
+      // Exposing the storage hostname lets anyone probe our backend tier
+      // directly (Supabase has warned us about exactly this leak). Instead
+      // share text + a clean deep-link to our own domain — api/index.ts
+      // renders that route into a proper post preview server-side.
+      const parts: string[] = [];
       parts.push(`${post.authorName} (@${post.authorUsername})`);
       parts.push(formatTimeAgo(post.createdAt));
       if (post.isRepost && post.originalPost) {
         parts.push(`Репост от ${post.originalPost.authorName}`);
         if (post.originalPost.content) parts.push(post.originalPost.content);
-        if (post.originalPost.imageUrl) parts.push(post.originalPost.imageUrl);
       }
       if (post.content) parts.push(post.content);
-      if (post.imageUrl && !post.isRepost) parts.push(post.imageUrl);
+      parts.push(`https://san-m-app.com/post/${post.id}`);
       await Clipboard.setStringAsync(parts.join('\n'));
       showToast('Скопировано', 'copy');
     }

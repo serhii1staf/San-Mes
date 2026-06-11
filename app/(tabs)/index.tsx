@@ -11,6 +11,7 @@ import { PostCard } from '../../src/components/feed/PostCard';
 import { prefetchImages } from '../../src/components/ui/CachedImage';
 import { PostMenuModal } from '../../src/components/feed/PostMenuModal';
 import { useFeedStore, useAuthStore } from '../../src/store';
+import { useNotificationsBadge } from '../../src/store/notificationsBadgeStore';
 import { Post } from '../../src/types';
 import { getPosts, isRepost, parseImageUrls, isImageSpoiler, toggleLike as apiToggleLike, supabase } from '../../src/lib/supabase';
 import { useUpdateStore } from '../../src/store/updateStore';
@@ -25,6 +26,47 @@ import { queueMutation } from '../../src/services/offlineQueue';
 
 const FEED_CACHE_KEY = '@san:feed_posts';
 const FEED_LIMIT = 20;
+
+// Tiny presence-only component that watches the unread-notifications count
+// and renders a subtle pill on the bell icon. Lives outside FeedScreen so it
+// re-renders independently when the count changes — the parent feed screen
+// doesn't need to re-flow on every bell update.
+function NotificationBellBadge({ accent, bg }: { accent: string; bg: string }) {
+  const unread = useNotificationsBadge((s) => s.unread);
+  const recompute = useNotificationsBadge((s) => s.recompute);
+  // Recompute on tab focus so the count refreshes whenever the user lands
+  // back on the home tab — picks up any new notifications written to the
+  // cache by the notifications screen since the last visit.
+  useFocusEffect(useCallback(() => { recompute(); return () => {}; }, [recompute]));
+  if (unread <= 0) return null;
+  const label = unread > 99 ? '99+' : String(unread);
+  return (
+    <View
+      style={{
+        position: 'absolute',
+        // Anchor to the top-right of the bell. minWidth+padding lets the
+        // pill grow naturally for 2- and 3-digit counts.
+        top: -6,
+        right: -10,
+        minWidth: 16,
+        height: 16,
+        paddingHorizontal: 4,
+        borderRadius: 8,
+        backgroundColor: accent,
+        alignItems: 'center',
+        justifyContent: 'center',
+        // 2-px border in the surrounding background colour creates a tiny
+        // gap between the pill and the bell, so the badge stays readable
+        // when the bell is tinted darker (matches the iOS Notification
+        // Center bell convention).
+        borderWidth: 2,
+        borderColor: bg,
+      }}
+    >
+      <Text variant="caption" weight="bold" color="#FFFFFF" style={{ fontSize: 10, lineHeight: 12 }}>{label}</Text>
+    </View>
+  );
+}
 
 function FeedHeader() {
   const theme = useTheme();
@@ -391,7 +433,10 @@ export default function FeedScreen() {
           <LinearGradient colors={[bgColor, bgColor, bgTransparent]} locations={[0, 0.6, 1]} style={StyleSheet.absoluteFill} />
           <View style={[styles.headerContent, { paddingTop: insets.top }]}>
             <Text variant="subheading" weight="bold">San</Text>
-            <Pressable onPress={() => router.push('/notifications')}><Feather name="bell" size={22} color={theme.colors.text.primary} /></Pressable>
+            <Pressable onPress={() => router.push('/notifications')} style={{ position: 'relative' }}>
+              <Feather name="bell" size={22} color={theme.colors.text.primary} />
+              <NotificationBellBadge accent={theme.colors.accent.primary} bg={theme.colors.background.primary} />
+            </Pressable>
           </View>
         </View>
         <View style={{ paddingHorizontal: theme.spacing.base, paddingTop: headerContentHeight }}>
@@ -423,7 +468,7 @@ export default function FeedScreen() {
           </View>
           <Pressable onPress={() => router.push('/notifications')} style={{ position: 'relative' }}>
             <Feather name="bell" size={22} color={theme.colors.text.primary} />
-            <View style={{ position: 'absolute', top: -2, right: -2, width: 8, height: 8, borderRadius: 4, backgroundColor: theme.colors.accent.primary }} />
+            <NotificationBellBadge accent={theme.colors.accent.primary} bg={theme.colors.background.primary} />
           </Pressable>
         </View>
       </View>

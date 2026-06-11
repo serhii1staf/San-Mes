@@ -735,9 +735,12 @@ export default function ChatScreen() {
       </KeyboardStickyView>
       )}
 
-      {/* Gradient fade header */}
+      {/* Gradient fade header — solid at the very top, smoothly fading to
+          transparent so it visually mirrors the input-bar's bottom gradient.
+          Two stops, no hard plateau, so the back button + name pill + avatar
+          all sit on a continuous fade rather than a flat colour slab. */}
       <View style={[styles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">
-        <LinearGradient colors={[bgColor, bgColor, bgTransparent]} locations={[0, 0.55, 1]} style={StyleSheet.absoluteFill} />
+        <LinearGradient colors={[bgColor, bgTransparent]} style={StyleSheet.absoluteFill} />
         {searchMode ? (
           <View style={[styles.headerContent, { paddingTop: insets.top }]} pointerEvents="auto">
             <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 20, borderWidth: 1, borderColor: theme.colors.border.light, paddingHorizontal: 14, height: 40 }}>

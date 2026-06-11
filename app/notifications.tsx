@@ -10,6 +10,7 @@ import { VerifiedBadge } from '../src/components/ui/VerifiedBadge';
 import { supabase } from '../src/lib/supabase';
 import { useAuthStore } from '../src/store';
 import { kvGetJSONSync, kvSetJSON } from '../src/services/kvStore';
+import { useNotificationsBadge } from '../src/store/notificationsBadgeStore';
 import { formatTimeAgo } from '../src/utils/mockData';
 import { triggerHaptic } from '../src/utils/haptics';
 
@@ -37,6 +38,44 @@ interface Notification {
 
 const CACHE_KEY = '@san:notifications';
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes — fast tab switches stay instant
+
+// Comment storage uses two markers that we need to strip out of preview text:
+//   `::gif::{url}`            — GIF comment (full content is just the URL)
+//   `::re::{base64}::{body}`  — reply comment (real text comes after second `::`)
+const GIF_TOKEN = '::gif::';
+const REPLY_TOKEN = '::re::';
+
+function stripMediaTokens(text: string): string {
+  if (!text) return '';
+  let s = text;
+  if (s.startsWith(REPLY_TOKEN)) {
+    // Skip past the base64 metadata block to the actual reply body.
+    const idx = s.indexOf('::', REPLY_TOKEN.length);
+    if (idx > 0) s = s.slice(idx + 2);
+  }
+  if (s.startsWith(GIF_TOKEN)) return '';
+  return s.trim();
+}
+
+interface MediaTag { icon: string; label: string }
+
+function mediaTagsFor(text: string): MediaTag[] {
+  if (!text) return [];
+  const tags: MediaTag[] = [];
+  if (text.includes(GIF_TOKEN)) tags.push({ icon: 'image', label: 'Гифка' });
+  // After stripping the marker tokens, look for a bare URL in the residual
+  // text — covers comments that pasted a YouTube/article link, an image
+  // URL, or a sticker host.
+  const stripped = stripMediaTokens(text);
+  const urlMatch = stripped.match(/https?:\/\/\S+/i);
+  if (urlMatch) {
+    const url = urlMatch[0].toLowerCase();
+    if (/\.(jpg|jpeg|png|webp|heic|heif)(\?|$)/i.test(url)) tags.push({ icon: 'camera', label: 'Фото' });
+    else if (/\.gif(\?|$)/i.test(url) || url.includes('giphy.com') || url.includes('tenor.com')) tags.push({ icon: 'image', label: 'Гифка' });
+    else tags.push({ icon: 'link', label: 'Ссылка' });
+  }
+  return tags;
+}
 
 export default function NotificationsScreen() {
   const theme = useTheme();
@@ -157,6 +196,9 @@ export default function NotificationsScreen() {
       const trimmed = merged.slice(0, 150);
       setItems(trimmed);
       try { kvSetJSON(CACHE_KEY, { ts: Date.now(), data: trimmed }); } catch {}
+      // The user is looking at the screen, so consider every fetched
+      // notification "seen" — clears the home-tab badge.
+      useNotificationsBadge.getState().markAllSeen();
     } catch {
       // Network error — keep whatever was on screen.
     } finally {
@@ -165,16 +207,24 @@ export default function NotificationsScreen() {
     }
   }, [userId]);
 
-  // Initial load with TTL gate so re-entering the screen doesn't always re-hit.
+  // Initial load: ALWAYS refetch in the background on mount. The TTL gate
+  // only controlled the loading-spinner UI; data freshness shouldn't be
+  // gated by it. Cache is shown instantly; fresh data overwrites it once it
+  // arrives. Fixes the "notifications come with big delay" complaint.
   useEffect(() => {
     if (!userId) return;
-    try {
-      const c = kvGetJSONSync<{ ts: number } | null>(CACHE_KEY, null);
-      const fresh = c && Date.now() - c.ts < CACHE_TTL_MS;
-      if (fresh) { setLoading(false); return; }
-    } catch {}
+    // Items already hydrated synchronously from MMKV in the useState init —
+    // suppress the spinner if we have anything to show while the refresh runs.
+    if (items.length > 0) setLoading(false);
     load();
   }, [userId, load]);
+
+  // Mark anything currently cached as seen the moment the screen mounts.
+  // Without this, the home-tab badge would keep showing the count until the
+  // background refetch finishes.
+  useEffect(() => {
+    useNotificationsBadge.getState().markAllSeen();
+  }, []);
 
   const onRefresh = useCallback(() => {
     triggerHaptic('light');
@@ -279,11 +329,35 @@ const NotificationRow = React.memo(function NotificationRow({ item, theme }: { i
           {item.actorVerified ? <VerifiedBadge size={11} /> : null}
           <Text variant="caption" color={theme.colors.text.secondary} style={{ fontSize: 13 }}>{verb}</Text>
         </View>
-        {item.commentText ? (
-          <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={2} style={{ fontSize: 12, marginTop: 3 }}>«{item.commentText}»</Text>
-        ) : item.postPreview ? (
-          <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 12, marginTop: 3 }}>{item.postPreview}</Text>
-        ) : null}
+        {(() => {
+          // Comment text often contains a GIF/image/link instead of (or in
+          // addition to) plain words. Detect those so the preview shows a
+          // human "🎁 Гифка" / "🔗 Ссылка" / "📷 Фото" hint instead of a
+          // raw URL — matches what the user sees inside the comments thread.
+          const ct = item.commentText || '';
+          const stripped = stripMediaTokens(ct);
+          const tags = mediaTagsFor(ct);
+          if (ct) {
+            const showText = stripped.trim().length > 0 ? stripped : null;
+            return (
+              <View style={{ marginTop: 3, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
+                {tags.map((t) => (
+                  <View key={t.label} style={{ flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
+                    <Feather name={t.icon as any} size={10} color={theme.colors.text.tertiary} />
+                    <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 10 }}>{t.label}</Text>
+                  </View>
+                ))}
+                {showText ? (
+                  <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={2} style={{ fontSize: 12, flexShrink: 1 }}>«{showText}»</Text>
+                ) : null}
+              </View>
+            );
+          }
+          if (item.postPreview) {
+            return <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 12, marginTop: 3 }}>{item.postPreview}</Text>;
+          }
+          return null;
+        })()}
         <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11, marginTop: 3 }}>{formatTimeAgo(item.ts)}</Text>
       </View>
     </Pressable>
