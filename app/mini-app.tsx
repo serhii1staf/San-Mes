@@ -158,19 +158,27 @@ export default function MiniAppScreen() {
         </View>
       </View>
 
-      {/* Report sheet — same SlideUpSheet that comments and posts use, so the
-          report UI feels consistent everywhere in the app. */}
+      {/* Report sheet — uses the same Modal-based pattern as SlideUpSheet but
+          we call it directly so the visual matches the feed's PostMenuModal
+          (same marginH 8, marginB 16, borderRadius 40). On the mini-app screen
+          we skip the StatusBar hidden inside SlideUpSheet because the WebView
+          already hides it; doubling up can confuse Android. */}
       <SlideUpSheet visible={reportOpen} onClose={() => setReportOpen(false)}>
-        <Text variant="body" weight="semibold" align="center" style={{ paddingVertical: 8 }}>Причина жалобы</Text>
-        {REPORT_CATS.map((cat) => (
-          <Pressable
-            key={cat}
-            onPress={() => handleReport(cat)}
-            style={{ paddingVertical: 14, paddingHorizontal: 20, borderTopWidth: 0.5, borderTopColor: theme.colors.border.light }}
-          >
-            <Text variant="body">{cat}</Text>
-          </Pressable>
-        ))}
+        <View style={{ paddingBottom: 8 }}>
+          <Text variant="body" weight="semibold" align="center" style={{ paddingVertical: 10 }}>Причина жалобы</Text>
+          <Text variant="caption" color={theme.colors.text.tertiary} align="center" style={{ paddingHorizontal: 24, paddingBottom: 10, fontSize: 12 }}>
+            Жалоба на мини-приложение «{displayName}»
+          </Text>
+          {REPORT_CATS.map((cat) => (
+            <Pressable
+              key={cat}
+              onPress={() => handleReport(cat)}
+              style={{ paddingVertical: 14, paddingHorizontal: 20, borderTopWidth: 0.5, borderTopColor: theme.colors.border.light }}
+            >
+              <Text variant="body">{cat}</Text>
+            </Pressable>
+          ))}
+        </View>
       </SlideUpSheet>
     </View>
   );

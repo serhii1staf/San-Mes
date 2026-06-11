@@ -3,7 +3,7 @@ import { View, Pressable, ViewStyle, Alert, ScrollView, Animated, Easing } from 
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { BlurView } from 'expo-blur';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
 import { triggerHaptic } from '../../src/utils/haptics';
@@ -159,8 +159,8 @@ function Orbit({ buckets, total, totalLabel, size, haloColor, haloAccent, center
       </Animated.View>
 
       {/* Center label — total + a small caption underneath. */}
-      <View style={{ position: 'absolute', alignItems: 'center', justifyContent: 'center' }} pointerEvents="none">
-        <Text variant="subheading" weight="bold" color={centerTextColor} style={{ fontSize: 26 }}>{totalLabel}</Text>
+      <View style={{ position: 'absolute', alignItems: 'center', justifyContent: 'center', paddingTop: 4 }} pointerEvents="none">
+        <Text variant="subheading" weight="bold" color={centerTextColor} style={{ fontSize: 24, lineHeight: 30 }}>{totalLabel}</Text>
         <Text variant="caption" color={centerSubColor} style={{ fontSize: 11, marginTop: 2 }}>локальный кэш</Text>
       </View>
     </View>
@@ -234,21 +234,22 @@ export default function StorageScreen() {
 
   return (
     <View style={containerStyle}>
-      {/* Sticky header — floats above the scroll content with a soft blur so
-          the back button is reachable even when the user has scrolled to the
-          bottom. Uses the same BlurView treatment as the profile screen's
-          QR/edit buttons for visual consistency. */}
-      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10, paddingTop: insets.top + 8, paddingHorizontal: 24, paddingBottom: 8, flexDirection: 'row', alignItems: 'center', gap: 12 }} pointerEvents="box-none">
-        <Pressable onPress={() => router.back()} hitSlop={8} style={{ borderRadius: 20, overflow: 'hidden' }}>
-          <BlurView intensity={70} tint={theme.isDark ? 'dark' : 'light'} style={{ width: 40, height: 40, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.isDark ? 'rgba(30,30,30,0.55)' : 'rgba(255,255,255,0.55)' }}>
-            <Feather name="chevron-left" size={22} color={theme.colors.text.primary} />
-          </BlurView>
-        </Pressable>
-        <Text variant="body" weight="semibold" style={{ fontSize: 16 }}>Данные и память</Text>
+      {/* Sticky header — standard gradient fade matching the home/notifications
+          screens so the back-button + title never scroll away. Using
+          LinearGradient + pointerEvents="box-none" means the scroll content
+          reads through anywhere except on the interactive buttons. */}
+      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10, height: insets.top + 56 }} pointerEvents="box-none">
+        <LinearGradient colors={[theme.colors.background.primary, theme.colors.background.primary, theme.colors.background.primary + '00']} locations={[0, 0.7, 1]} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} />
+        <View style={{ flexDirection: 'row', alignItems: 'center', paddingTop: insets.top + 8, paddingHorizontal: 24, gap: 12 }} pointerEvents="auto">
+          <Pressable onPress={() => router.back()} hitSlop={8}>
+            <Feather name="chevron-left" size={24} color={theme.colors.text.primary} />
+          </Pressable>
+          <Text variant="body" weight="bold" style={{ fontSize: 17 }}>Данные и память</Text>
+        </View>
       </View>
 
       <ScrollView
-        contentContainerStyle={{ paddingTop: insets.top + 56, paddingBottom: insets.bottom + 32 }}
+        contentContainerStyle={{ paddingTop: insets.top + 64, paddingBottom: insets.bottom + 32 }}
         showsVerticalScrollIndicator={false}
       >
         {/* Orbit visual + caption */}
