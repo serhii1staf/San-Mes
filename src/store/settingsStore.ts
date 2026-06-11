@@ -11,8 +11,14 @@ const appStorage: StateStorage = {
 interface SettingsState {
   hapticEnabled: boolean;
   useInAppBrowser: boolean;
+  // Where the minimized browser/mini-app pill appears. "top" floats it under
+  // the status bar (default), "bottom" docks it above the tab bar with the
+  // same rounded glass styling — the rest of the UI keeps full reach without
+  // the pill cutting into the safe-area indicator at the top of the screen.
+  browserWidgetPosition: 'top' | 'bottom';
   setHaptic: (enabled: boolean) => void;
   setInAppBrowser: (enabled: boolean) => void;
+  setBrowserWidgetPosition: (position: 'top' | 'bottom') => void;
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -20,8 +26,10 @@ export const useSettingsStore = create<SettingsState>()(
     (set) => ({
       hapticEnabled: true,
       useInAppBrowser: true,
+      browserWidgetPosition: 'top',
       setHaptic: (hapticEnabled) => set({ hapticEnabled }),
       setInAppBrowser: (useInAppBrowser) => set({ useInAppBrowser }),
+      setBrowserWidgetPosition: (browserWidgetPosition) => set({ browserWidgetPosition }),
     }),
     {
       name: 'app-settings',
