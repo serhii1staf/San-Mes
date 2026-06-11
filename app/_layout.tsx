@@ -7,7 +7,6 @@ import { ThemeProvider, useTheme } from '../src/theme';
 import { fontAssets } from '../src/theme/fonts';
 import { useAuthStore } from '../src/store';
 import { BrowserMiniBar } from '../src/components/ui/BrowserMiniBar';
-import { MusicMiniBar } from '../src/components/ui/MusicMiniBar';
 import { MusicBottomIndicator } from '../src/components/ui/MusicBottomIndicator';
 import { MusicFullPlayer } from '../src/components/ui/MusicFullPlayer';
 import { Toast } from '../src/components/ui/Toast';
@@ -140,7 +139,6 @@ export default function RootLayout() {
     <ThemeProvider>
       <AuthNavigationGuard>
         <BrowserMiniBar />
-        <MusicMiniBar />
         <MusicBottomIndicator />
         <MusicFullPlayer />
         <Toast />

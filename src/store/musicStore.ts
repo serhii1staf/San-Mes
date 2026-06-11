@@ -4,7 +4,7 @@ import { Track } from '../services/musicService';
 
 // Global music playback. A single expo-av Sound instance is shared app-wide so
 // playback continues while the user navigates between screens, and the floating
-// mini-player (MusicMiniBar) can control it from anywhere.
+// mini-player (MusicBottomIndicator) can control it from anywhere.
 //
 // Performance & correctness: only ONE Sound is ever active. `play()` calls are
 // SERIALIZED through a promise chain and guarded by a monotonic generation
@@ -20,12 +20,8 @@ interface MusicState {
   positionMs: number;
   durationMs: number;
   isLoading: boolean;
-  // UI: 'full' = floating top mini-bar; 'collapsed' = thin indicator above the
-  // tab bar. Swipe-up on the mini-bar collapses it (does NOT stop playback).
-  widgetMode: 'full' | 'collapsed';
   // True when the full-screen player is presented over the app.
   playerOpen: boolean;
-  setWidgetMode: (m: 'full' | 'collapsed') => void;
   openPlayer: () => void;
   closePlayer: () => void;
   play: (track: Track) => Promise<void>;
@@ -72,10 +68,8 @@ export const useMusicStore = create<MusicState>((set, get) => ({
   positionMs: 0,
   durationMs: 0,
   isLoading: false,
-  widgetMode: 'full',
   playerOpen: false,
 
-  setWidgetMode: (m) => set({ widgetMode: m }),
   openPlayer: () => set({ playerOpen: true }),
   closePlayer: () => set({ playerOpen: false }),
 
@@ -180,14 +174,28 @@ export const useMusicStore = create<MusicState>((set, get) => ({
   },
 
   seek: async (ms: number) => {
+    const target = Math.max(0, Math.floor(ms));
+    // Update the visible position immediately so the slider/labels jump
+    // exactly to the requested point — without this, the UI would only catch
+    // up on the next progressUpdate (~500 ms).
+    set({ positionMs: target });
     if (!sound) return;
-    try { await sound.setPositionAsync(Math.max(0, ms)); } catch {}
+    try {
+      // setStatusAsync is the atomic "set state" API — preserves shouldPlay
+      // alongside the new position so seek() never accidentally pauses or
+      // resumes playback.
+      await sound.setStatusAsync({ positionMillis: target, shouldPlay: get().isPlaying });
+    } catch {
+      // Fallback for older expo-av builds where setStatusAsync rejects
+      // without an error code.
+      try { await sound.setPositionAsync(target); } catch {}
+    }
   },
 
   stop: async () => {
     // Invalidate any in-flight play() so a pending load won't resurrect playback.
     playGen++;
     await unloadActiveSound();
-    set({ current: null, isPlaying: false, positionMs: 0, durationMs: 0, widgetMode: 'full', playerOpen: false });
+    set({ current: null, isPlaying: false, positionMs: 0, durationMs: 0, playerOpen: false });
   },
 }));

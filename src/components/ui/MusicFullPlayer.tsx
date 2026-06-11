@@ -1,4 +1,4 @@
-import React, { useRef, useCallback } from 'react';
+import React, { useRef, useCallback, useState } from 'react';
 import { View, Modal, Pressable, StyleSheet, Animated, PanResponder, ScrollView, StatusBar, Dimensions } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -17,24 +17,21 @@ function fmt(ms: number): string {
 }
 
 // Full-screen player. Slides up from where the bottom indicator was, occupying
-// roughly half the screen and growing into a comfortable sheet. "Свернуть" (or
-// drag-down) closes it back to the bottom indicator without stopping playback.
-//
-// Why a custom Modal sheet instead of a screen route:
-//   - we need it on top of every tab/screen (route would lose chat state),
-//   - we want it to feel like a transient panel — the music stays "in the
-//     background" of the app, not a destination,
-//   - Modal animationType="none" + our own Animated translateY = full control
-//     over physics, no native pageSheet artefacts.
+// roughly half the screen and growing into a comfortable sheet. Drag-down on
+// the header (or tap "свернуть") closes it without stopping playback.
 //
 // Performance for weak devices:
 //   - All transforms are useNativeDriver: true.
-//   - Progress slider uses ONLY the Animated.Value during scrubbing; only the
-//     drop-release commit calls into the audio store.
-//   - Track-row list is a plain map (recents are capped at 12) — no FlatList
+//   - Progress slider uses ONLY local state during scrubbing; the drop-release
+//     commits a single seek().
+//   - Track-row list is a plain map (recents capped at 12) — no FlatList
 //     overhead is needed at this size.
 
 const PLAYER_TOP = 60; // sheet starts this far below the top edge
+const SLIDER_HPAD = 24;
+const SLIDER_THUMB = 14;
+const SLIDER_TRACK_H = 4;
+const SLIDER_AREA_H = 32;
 
 export function MusicFullPlayer() {
   const theme = useTheme();
@@ -73,20 +70,23 @@ export function MusicFullPlayer() {
     });
   }, [closePlayer, slide]);
 
-  // Drag-down on the handle area dismisses the player.
+  // Drag-down on the header dismisses the player. We grab the gesture
+  // aggressively (small dy threshold, generous header tap area) so the user's
+  // first downward flick reliably dismisses.
   const sheetPan = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => false,
-      onMoveShouldSetPanResponder: (_, g) => g.dy > 8 && Math.abs(g.dy) > Math.abs(g.dx) * 1.5,
+      onMoveShouldSetPanResponder: (_, g) => g.dy > 4 && Math.abs(g.dy) > Math.abs(g.dx),
       onPanResponderMove: (_, g) => {
         if (closing.current) return;
         if (g.dy > 0) dragY.setValue(g.dy);
       },
       onPanResponderRelease: (_, g) => {
         if (closing.current) return;
-        if (g.dy > 100 || g.vy > 0.6) {
+        if (g.dy > 80 || g.vy > 0.5) {
           // Continue the swipe out using whatever momentum the user gave it.
-          Animated.timing(dragY, { toValue: SCREEN_HEIGHT, duration: 220, useNativeDriver: true }).start(() => {
+          closing.current = true;
+          Animated.timing(slide, { toValue: SCREEN_HEIGHT, duration: 220, useNativeDriver: true }).start(() => {
             dragY.setValue(0);
             closePlayer();
           });
@@ -94,16 +94,20 @@ export function MusicFullPlayer() {
           Animated.spring(dragY, { toValue: 0, useNativeDriver: true, tension: 90, friction: 11 }).start();
         }
       },
+      onPanResponderTerminate: () => {
+        if (!closing.current) Animated.spring(dragY, { toValue: 0, useNativeDriver: true, tension: 90, friction: 11 }).start();
+      },
     }),
   ).current;
 
   // ── Progress slider ────────────────────────────────────────────────────────
-  // We render the slider thumb at a position derived from EITHER the live
-  // playback position OR a "scrubbing" offset while the user drags the thumb.
-  // That way scrubbing is buttery (no audio call per move) and only the
-  // release commits a single seek().
-  const sliderWidth = SCREEN_WIDTH - 48; // 24px h-padding inside sheet
-  const [scrubbingMs, setScrubbingMs] = React.useState<number | null>(null);
+  // Render the slider thumb at a position derived from EITHER the live playback
+  // position OR a "scrubbing" offset while the user drags the thumb. Scrubbing
+  // is buttery (no audio call per move); only the release commits a single
+  // seek(). While scrubbing we disable the parent ScrollView so the gesture
+  // can't be stolen.
+  const sliderWidth = SCREEN_WIDTH - SLIDER_HPAD * 2;
+  const [scrubbingMs, setScrubbingMs] = useState<number | null>(null);
   const effectivePos = scrubbingMs != null ? scrubbingMs : positionMs;
   const sliderRatio = durationMs > 0 ? Math.min(1, Math.max(0, effectivePos / durationMs)) : 0;
 
@@ -111,22 +115,36 @@ export function MusicFullPlayer() {
   if (!sliderPan.current) {
     let startMs = 0;
     sliderPan.current = PanResponder.create({
+      // Capture variants win the gesture against any ancestor (ScrollView)
+      // before children get a chance — critical for slider responsiveness.
       onStartShouldSetPanResponder: () => true,
+      onStartShouldSetPanResponderCapture: () => true,
       onMoveShouldSetPanResponder: () => true,
-      onPanResponderGrant: () => {
-        startMs = positionMs;
+      onMoveShouldSetPanResponderCapture: () => true,
+      onPanResponderTerminationRequest: () => false,
+      onPanResponderGrant: (e) => {
+        startMs = useMusicStore.getState().positionMs;
+        // Tap-to-seek: jump immediately to where the finger landed.
+        const x = e.nativeEvent.locationX;
+        const dur = useMusicStore.getState().durationMs;
+        if (dur > 0 && Number.isFinite(x)) {
+          const ratio = Math.max(0, Math.min(1, x / sliderWidth));
+          startMs = ratio * dur;
+        }
         setScrubbingMs(startMs);
       },
       onPanResponderMove: (_, g) => {
-        if (durationMs <= 0) return;
-        const deltaMs = (g.dx / sliderWidth) * durationMs;
-        const next = Math.max(0, Math.min(durationMs, startMs + deltaMs));
+        const dur = useMusicStore.getState().durationMs;
+        if (dur <= 0) return;
+        const deltaMs = (g.dx / sliderWidth) * dur;
+        const next = Math.max(0, Math.min(dur, startMs + deltaMs));
         setScrubbingMs(next);
       },
       onPanResponderRelease: (_, g) => {
-        if (durationMs <= 0) { setScrubbingMs(null); return; }
-        const deltaMs = (g.dx / sliderWidth) * durationMs;
-        const next = Math.max(0, Math.min(durationMs, startMs + deltaMs));
+        const dur = useMusicStore.getState().durationMs;
+        if (dur <= 0) { setScrubbingMs(null); return; }
+        const deltaMs = (g.dx / sliderWidth) * dur;
+        const next = Math.max(0, Math.min(dur, startMs + deltaMs));
         setScrubbingMs(null);
         seek(next);
       },
@@ -134,10 +152,18 @@ export function MusicFullPlayer() {
     });
   }
 
-  // Skip back/forward 10s — a common-enough convention that beats adding
-  // prev/next track buttons at this point (queue ordering is a separate UX).
-  const skipBack = () => { triggerHaptic('light'); seek(Math.max(0, positionMs - 10000)); };
-  const skipForward = () => { triggerHaptic('light'); seek(Math.min(durationMs - 200, positionMs + 10000)); };
+  // Skip back/forward 10s — common-enough convention. Calls seek() which
+  // also updates positionMs immediately so the slider visually jumps.
+  const skipBack = () => {
+    triggerHaptic('light');
+    const cur = useMusicStore.getState().positionMs;
+    seek(Math.max(0, cur - 10000));
+  };
+  const skipForward = () => {
+    triggerHaptic('light');
+    const { positionMs: cur, durationMs: dur } = useMusicStore.getState();
+    seek(Math.min((dur || 0) - 200, cur + 10000));
+  };
 
   if (!current) return null;
 
@@ -149,27 +175,30 @@ export function MusicFullPlayer() {
     <Modal visible={playerOpen} transparent animationType="none" statusBarTranslucent onRequestClose={animateClose}>
       <StatusBar hidden />
       <View style={StyleSheet.absoluteFill}>
-        {/* Backdrop — fades opaque to dim the underlying app while open. */}
+        {/* Backdrop — tap dismisses. */}
         <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.5)' }]}>
           <Pressable style={{ flex: 1 }} onPress={animateClose} />
         </View>
 
         <Animated.View style={[styles.sheet, { backgroundColor: sheetBg, transform: [{ translateY }], paddingBottom: Math.max(insets.bottom, 16) }]}>
-          {/* Drag handle — only this region claims pan gestures so the inner
-              scroll/slider behave normally. */}
-          <View {...sheetPan.panHandlers} style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 6 }}>
-            <View style={{ width: 40, height: 5, borderRadius: 3, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.12)' }} />
-          </View>
-
-          {/* Top row — collapse button on the right */}
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingBottom: 6 }}>
-            <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11, textTransform: 'uppercase' }}>Сейчас играет</Text>
-            <Pressable onPress={animateClose} hitSlop={8} style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', alignItems: 'center', justifyContent: 'center' }}>
-              <Feather name="chevron-down" size={16} color={theme.colors.text.primary} />
-            </Pressable>
+          {/* Drag area covers the whole header (handle + title row). Wider
+              tap region = much more reliable swipe-down dismissal. */}
+          <View {...sheetPan.panHandlers}>
+            <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 6 }}>
+              <View style={{ width: 40, height: 5, borderRadius: 3, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.12)' }} />
+            </View>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingBottom: 6 }}>
+              <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11, textTransform: 'uppercase' }}>Сейчас играет</Text>
+              <Pressable onPress={animateClose} hitSlop={8} style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', alignItems: 'center', justifyContent: 'center' }}>
+                <Feather name="chevron-down" size={16} color={theme.colors.text.primary} />
+              </Pressable>
+            </View>
           </View>
 
           <ScrollView
+            // Disable scroll while the user is actively scrubbing the slider so
+            // the slider's pan never gets stolen by the scroll gesture.
+            scrollEnabled={scrubbingMs == null}
             contentContainerStyle={{ paddingBottom: 24 }}
             showsVerticalScrollIndicator={false}
             bounces={false}
@@ -188,20 +217,37 @@ export function MusicFullPlayer() {
               </View>
             </View>
 
-            {/* Slider */}
-            <View style={{ paddingHorizontal: 24 }}>
+            {/* Slider — track and thumb both vertically centred inside a
+                32px-tall hit area for comfortable touch targets. */}
+            <View style={{ paddingHorizontal: SLIDER_HPAD }}>
               <View
                 {...sliderPan.current.panHandlers}
-                style={{ height: 28, justifyContent: 'center' }}
+                style={{ height: SLIDER_AREA_H, justifyContent: 'center' }}
               >
                 {/* Track */}
-                <View style={{ height: 4, borderRadius: 2, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)', overflow: 'hidden' }}>
-                  <View style={{ height: '100%', width: `${sliderRatio * 100}%`, backgroundColor: theme.colors.accent.primary, borderRadius: 2 }} />
+                <View style={{ height: SLIDER_TRACK_H, borderRadius: SLIDER_TRACK_H / 2, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)', overflow: 'hidden' }}>
+                  <View style={{ height: '100%', width: `${sliderRatio * 100}%`, backgroundColor: theme.colors.accent.primary, borderRadius: SLIDER_TRACK_H / 2 }} />
                 </View>
-                {/* Thumb */}
-                <View style={{ position: 'absolute', left: sliderRatio * sliderWidth - 7, top: 4, width: 14, height: 14, borderRadius: 7, backgroundColor: theme.colors.accent.primary, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.2, shadowRadius: 2, elevation: 2 }} />
+                {/* Thumb — vertically centred within the SLIDER_AREA_H container. */}
+                <View
+                  pointerEvents="none"
+                  style={{
+                    position: 'absolute',
+                    left: sliderRatio * sliderWidth - SLIDER_THUMB / 2,
+                    top: (SLIDER_AREA_H - SLIDER_THUMB) / 2,
+                    width: SLIDER_THUMB,
+                    height: SLIDER_THUMB,
+                    borderRadius: SLIDER_THUMB / 2,
+                    backgroundColor: theme.colors.accent.primary,
+                    shadowColor: '#000',
+                    shadowOffset: { width: 0, height: 1 },
+                    shadowOpacity: 0.2,
+                    shadowRadius: 2,
+                    elevation: 2,
+                  }}
+                />
               </View>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 }}>
                 <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{fmt(effectivePos)}</Text>
                 <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{fmt(durationMs)}</Text>
               </View>

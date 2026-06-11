@@ -283,17 +283,15 @@ export default function MusicChatScreen() {
                 transitions (~once per typing session), not per keystroke.
                 Opacity could go through native, but pinning both to the same
                 JS-driven value keeps them perfectly in sync. */}
-            <Animated.View style={{ width: commandWidth, height: 40, alignSelf: 'flex-end' }}>
+            <Animated.View style={{ width: commandWidth, height: 40, alignSelf: 'flex-end', overflow: 'hidden' }}>
               <Pressable
                 onPress={() => { triggerHaptic('light'); setCommandsOpen((v) => !v); }}
                 hitSlop={6}
                 style={{
                   width: '100%',
                   height: '100%',
-                  flexDirection: 'row',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  gap: 6,
                   // 20 = 50% of 40, so collapsed (40×40) renders as a perfect
                   // circle with the icon visually centred. The pill state is
                   // 124×40 — its corners are still 20px which keeps the rounded
@@ -304,10 +302,19 @@ export default function MusicChatScreen() {
                   borderColor: theme.colors.border.light,
                 }}
               >
-                <Feather name="command" size={15} color={commandsOpen ? '#FFFFFF' : theme.colors.accent.primary} />
+                {/* Icon stays absolutely centred in the (animated) container so
+                    it never drifts when the label collapses — without absolute
+                    positioning the row layout would push the icon off-centre
+                    while the label still occupied layout space. */}
+                <Feather name="command" size={16} color={commandsOpen ? '#FFFFFF' : theme.colors.accent.primary} />
                 <Animated.Text
                   numberOfLines={1}
                   style={{
+                    position: 'absolute',
+                    // Sits to the right of the centred icon (icon is ~16px;
+                    // 8px gap + 16/2 = 16 from centre). Pinned by left so it
+                    // can't push the icon around as width animates.
+                    left: 40,
                     fontSize: 12,
                     fontWeight: '600',
                     color: commandsOpen ? '#FFFFFF' : theme.colors.accent.primary,
@@ -321,7 +328,7 @@ export default function MusicChatScreen() {
               <TextInput
                 value={input}
                 onChangeText={setInput}
-                placeholder="Название песни или исполнителя..."
+                placeholder="Название песни..."
                 placeholderTextColor={theme.colors.text.tertiary}
                 multiline
                 textAlignVertical="center"
