@@ -58,6 +58,20 @@ export default function MusicChatScreen() {
 
   useEffect(() => { kvSetJSON(HISTORY_KEY, messages.slice(-50)); }, [messages]);
 
+  // Seed the global "discovered" queue with everything already in the chat
+  // history so the full-screen player has the user's library available even
+  // before they make a fresh search this session.
+  useEffect(() => {
+    const all: Track[] = [];
+    for (const m of messages) {
+      const list = m.tracks || (m.track ? [m.track] : []);
+      for (const t of list) all.push(t);
+    }
+    if (all.length > 0) useMusicStore.getState().addDiscovered(all);
+    // Run once on mount; later searches add their results inline via runSearch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     try { require('../../src/store/specialChatsStore').useSpecialChatsStore.getState().markOpened('music'); } catch {}
   }, []);
@@ -91,6 +105,10 @@ export default function MusicChatScreen() {
     try {
       const results = await searchTracks(q);
       setMessages((prev) => prev.map((m) => (m.id === msgId ? { ...m, tracks: results } : m)));
+      // Mirror the search results into the music store so the global player
+      // can show the user's full library, not just tracks they've actually
+      // played. Order is preserved (first-seen first).
+      if (results.length > 0) useMusicStore.getState().addDiscovered(results);
       if (results[0]) useMusicStore.getState().play(results[0]);
     } finally {
       setIsSearching(false);
@@ -290,31 +308,35 @@ export default function MusicChatScreen() {
                 style={{
                   width: '100%',
                   height: '100%',
-                  alignItems: 'center',
-                  justifyContent: 'center',
                   // 20 = 50% of 40, so collapsed (40×40) renders as a perfect
-                  // circle with the icon visually centred. The pill state is
-                  // 124×40 — its corners are still 20px which keeps the rounded
-                  // capsule shape consistent.
+                  // circle. Expanded (124×40) keeps the same 20px corners which
+                  // visually reads as a continuous capsule.
                   borderRadius: 20,
                   backgroundColor: commandsOpen ? theme.colors.accent.primary : (theme.isDark ? 'rgba(40,40,40,0.95)' : 'rgba(245,245,245,0.95)'),
                   borderWidth: 1,
                   borderColor: theme.colors.border.light,
                 }}
               >
-                {/* Icon stays absolutely centred in the (animated) container so
-                    it never drifts when the label collapses — without absolute
-                    positioning the row layout would push the icon off-centre
-                    while the label still occupied layout space. */}
-                <Feather name="command" size={16} color={commandsOpen ? '#FFFFFF' : theme.colors.accent.primary} />
+                {/* Icon — pinned by absolute left:12 so it ALWAYS sits at the
+                    same x regardless of the container's animating width.
+                    When width=40 the icon (16px) at left:12 spans 12-28,
+                    centered on x=20 = container centre. When width=124 it
+                    stays at the left, leaving room for the label. Without
+                    absolute positioning, flex/center logic kept moving the
+                    icon to the middle of the pill, where it overlapped
+                    the label. */}
+                <View style={{ position: 'absolute', left: 12, top: (40 - 16) / 2 }}>
+                  <Feather name="command" size={16} color={commandsOpen ? '#FFFFFF' : theme.colors.accent.primary} />
+                </View>
                 <Animated.Text
                   numberOfLines={1}
                   style={{
                     position: 'absolute',
-                    // Sits to the right of the centred icon (icon is ~16px;
-                    // 8px gap + 16/2 = 16 from centre). Pinned by left so it
-                    // can't push the icon around as width animates.
+                    // 12 (icon left) + 16 (icon width) + 12 (gap) = 40.
                     left: 40,
+                    top: 0,
+                    height: 40,
+                    lineHeight: 40,
                     fontSize: 12,
                     fontWeight: '600',
                     color: commandsOpen ? '#FFFFFF' : theme.colors.accent.primary,

@@ -16,6 +16,12 @@ import { Track } from '../services/musicService';
 interface MusicState {
   current: Track | null;
   recent: Track[];
+  // Every track ever surfaced in the music chat (search results + manually
+  // played). Capped at 200 so the full-screen player can show the user's
+  // entire library, not just the last 12 plays. Persisted via the music chat's
+  // own MMKV history; we just mirror it in-memory for fast access from the
+  // player which is mounted globally outside the chat.
+  discovered: Track[];
   isPlaying: boolean;
   positionMs: number;
   durationMs: number;
@@ -24,6 +30,7 @@ interface MusicState {
   playerOpen: boolean;
   openPlayer: () => void;
   closePlayer: () => void;
+  addDiscovered: (tracks: Track[]) => void;
   play: (track: Track) => Promise<void>;
   toggle: () => Promise<void>;
   seek: (ms: number) => Promise<void>;
@@ -38,6 +45,16 @@ let audioModeSet = false;
 let playGen = 0;
 // Serializes async playback transitions so unload→create can't interleave.
 let playChain: Promise<void> = Promise.resolve();
+
+// Seek de-jitter: after a seek() call, the audio engine takes ~200–500 ms to
+// actually move. During that window the status callback still reports the OLD
+// position, which would snap the slider backwards before the engine catches up
+// and snaps it forward again. We track the last seek and ignore status updates
+// that wildly disagree with the requested target inside the cooldown window.
+let lastSeekTs = 0;
+let lastSeekTarget = 0;
+const SEEK_COOLDOWN_MS = 800;
+const SEEK_TOLERANCE_MS = 600;
 
 async function ensureAudioMode() {
   if (audioModeSet) return;
@@ -64,6 +81,7 @@ async function unloadActiveSound() {
 export const useMusicStore = create<MusicState>((set, get) => ({
   current: null,
   recent: [],
+  discovered: [],
   isPlaying: false,
   positionMs: 0,
   durationMs: 0,
@@ -72,6 +90,24 @@ export const useMusicStore = create<MusicState>((set, get) => ({
 
   openPlayer: () => set({ playerOpen: true }),
   closePlayer: () => set({ playerOpen: false }),
+
+  // Append-and-dedupe; preserves the order tracks were first seen so the
+  // full-screen player's queue feels stable as the user scrolls. Cap of 200
+  // is a tradeoff: enough to cover heavy usage, light enough that the queue
+  // stays snappy on weak devices.
+  addDiscovered: (tracks) => {
+    if (!tracks || tracks.length === 0) return;
+    set((s) => {
+      const seen = new Set(s.discovered.map((t) => t.id));
+      const additions: Track[] = [];
+      for (const t of tracks) {
+        if (t && t.id && !seen.has(t.id)) { seen.add(t.id); additions.push(t); }
+      }
+      if (additions.length === 0) return s;
+      const next = [...s.discovered, ...additions].slice(-200);
+      return { discovered: next };
+    });
+  },
 
   play: async (track: Track) => {
     // Same track tapped again → just toggle play/pause (no reload, no race).
@@ -107,15 +143,25 @@ export const useMusicStore = create<MusicState>((set, get) => ({
             // Stale callback from a superseded track → ignore entirely.
             if (myGen !== playGen) return;
             if (!status.isLoaded) return;
-            // Only reflect POSITION/DURATION from the native callback. We do
-            // NOT mirror `status.isPlaying` because the callback fires with a
-            // delay (~50–200 ms) and would clobber the optimistic UI state set
-            // synchronously by toggle()/play(). The store's `isPlaying` is the
-            // single source of truth and is updated by play/toggle/stop only.
-            set({
-              positionMs: status.positionMillis || 0,
-              durationMs: status.durationMillis || track.durationMs,
-            });
+            const reportedPos = status.positionMillis || 0;
+            const reportedDur = status.durationMillis || track.durationMs;
+            // Seek de-jitter: ignore the position update if the engine hasn't
+            // caught up to a recent seek (would otherwise flicker the slider
+            // back to the old position for ~500 ms before snapping forward).
+            // Duration always passes through.
+            const now = Date.now();
+            const justSeeked = now - lastSeekTs < SEEK_COOLDOWN_MS;
+            const farFromTarget = Math.abs(reportedPos - lastSeekTarget) > SEEK_TOLERANCE_MS;
+            if (justSeeked && farFromTarget) {
+              if (reportedDur !== get().durationMs) set({ durationMs: reportedDur });
+            } else {
+              // Only reflect POSITION/DURATION from the native callback. We do
+              // NOT mirror `status.isPlaying` because the callback fires with a
+              // delay (~50–200 ms) and would clobber the optimistic UI state set
+              // synchronously by toggle()/play(). The store's `isPlaying` is the
+              // single source of truth and is updated by play/toggle/stop only.
+              set({ positionMs: reportedPos, durationMs: reportedDur });
+            }
             if (status.didJustFinish) set({ isPlaying: false, positionMs: 0 });
           }
         );
@@ -175,6 +221,10 @@ export const useMusicStore = create<MusicState>((set, get) => ({
 
   seek: async (ms: number) => {
     const target = Math.max(0, Math.floor(ms));
+    // Mark the seek before mutating state so the in-flight status callback
+    // (if any) can recognise this is a fresh seek and ignore stale positions.
+    lastSeekTs = Date.now();
+    lastSeekTarget = target;
     // Update the visible position immediately so the slider/labels jump
     // exactly to the requested point — without this, the UI would only catch
     // up on the next progressUpdate (~500 ms).

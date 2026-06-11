@@ -41,6 +41,7 @@ export function MusicFullPlayer() {
   const closePlayer = useMusicStore((s) => s.closePlayer);
   const current = useMusicStore((s) => s.current);
   const recent = useMusicStore((s) => s.recent);
+  const discovered = useMusicStore((s) => s.discovered);
   const isPlaying = useMusicStore((s) => s.isPlaying);
   const positionMs = useMusicStore((s) => s.positionMs);
   const durationMs = useMusicStore((s) => s.durationMs);
@@ -167,7 +168,15 @@ export function MusicFullPlayer() {
 
   if (!current) return null;
 
-  const queueRecent: Track[] = recent.filter((t) => t.id !== current.id);
+  // Queue = everything the user has surfaced in the music chat (deduped),
+  // falling back to plays-only history if discovery hasn't been seeded yet
+  // (e.g. fresh install). Current track filtered out — it's already shown at
+  // the top of the player.
+  const seen = new Set<string>([current.id]);
+  const merged: Track[] = [];
+  for (const t of discovered) { if (!seen.has(t.id)) { seen.add(t.id); merged.push(t); } }
+  for (const t of recent) { if (!seen.has(t.id)) { seen.add(t.id); merged.push(t); } }
+  const queueAll: Track[] = merged;
   const sheetBg = theme.isDark ? theme.colors.background.elevated : '#FFFFFF';
   const translateY = Animated.add(slide, dragY);
 
@@ -273,10 +282,10 @@ export function MusicFullPlayer() {
             </View>
 
             {/* Recent tracks list */}
-            {queueRecent.length > 0 ? (
+            {queueAll.length > 0 ? (
               <View style={{ paddingHorizontal: 24, paddingTop: 4 }}>
-                <Text variant="caption" weight="semibold" color={theme.colors.text.tertiary} style={{ fontSize: 11, textTransform: 'uppercase', marginBottom: 8 }}>Недавно играли</Text>
-                {queueRecent.map((t) => (
+                <Text variant="caption" weight="semibold" color={theme.colors.text.tertiary} style={{ fontSize: 11, textTransform: 'uppercase', marginBottom: 8 }}>Очередь</Text>
+                {queueAll.map((t) => (
                   <Pressable
                     key={t.id}
                     onPress={() => { triggerHaptic('light'); play(t); }}
