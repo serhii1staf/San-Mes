@@ -18,8 +18,10 @@ import { triggerHaptic } from '../../utils/haptics';
 
 const TAB_COUNT = 5;
 const CREATE_INDEX = 2;
-const PILL_HEIGHT = 40;
-const PILL_VERTICAL_INSET = 6;
+const TAB_BUTTON_HEIGHT = 44;
+const PILL_HEIGHT = TAB_BUTTON_HEIGHT; // match the tap target exactly
+const TAB_ROW_PADDING_H = 8;
+const TAB_ROW_PADDING_V = 8;
 const BAR_BORDER_RADIUS = 32;
 const BAR_HORIZONTAL_MARGIN = 16;
 const BAR_BOTTOM_MARGIN = 24;
@@ -189,13 +191,14 @@ export const CustomTabBar = React.memo(function CustomTabBar({
   const pillX = useSharedValue(0);
   const hasMounted = useRef(false);
 
-  const slotWidth = barWidth.value > 0 ? barWidth.value / TAB_COUNT : 0;
+  const slotWidth =
+    barWidth.value > 0 ? (barWidth.value - 2 * TAB_ROW_PADDING_H) / TAB_COUNT : 0;
 
   // Measure bar
   const onBarLayout = useCallback((e: LayoutChangeEvent) => {
     const w = e.nativeEvent.layout.width;
     barWidth.value = w;
-    const sw = w / TAB_COUNT;
+    const sw = (w - 2 * TAB_ROW_PADDING_H) / TAB_COUNT;
     // Set initial pill position without animation
     if (!hasMounted.current) {
       pillX.value = getPillX(state.index, sw);
@@ -206,7 +209,7 @@ export const CustomTabBar = React.memo(function CustomTabBar({
   // Animate pill on tab change
   useEffect(() => {
     if (!hasMounted.current || barWidth.value === 0) return;
-    const sw = barWidth.value / TAB_COUNT;
+    const sw = (barWidth.value - 2 * TAB_ROW_PADDING_H) / TAB_COUNT;
     const targetX = getPillX(state.index, sw);
     pillX.value = withSpring(targetX, PILL_SPRING);
   }, [state.index, barWidth.value]);
@@ -253,18 +256,16 @@ export const CustomTabBar = React.memo(function CustomTabBar({
         {/* Layer 3: Top "wet" reflection highlight */}
         <TopReflection isDark={isDark} />
 
-        {/* Layer 4: Sliding active pill (behind icons) */}
-        {slotWidth > 0 && (
-          <SlidingPill
-            translateX={pillX}
-            slotWidth={slotWidth}
-            visible={pillVisible}
-            isDark={isDark}
-          />
-        )}
-
-        {/* Layer 5: Tab buttons */}
+        {/* Layer 4 + 5: Tab row (with pill inside, so the pill respects padding and never bumps the rounded corners) */}
         <View style={styles.tabRow}>
+          {slotWidth > 0 && (
+            <SlidingPill
+              translateX={pillX}
+              slotWidth={slotWidth}
+              visible={pillVisible}
+              isDark={isDark}
+            />
+          )}
           {state.routes.map((route, index) => {
             const isFocused = state.index === index;
             const onPress = () => {
@@ -328,14 +329,16 @@ const styles = StyleSheet.create({
   tabRow: {
     flex: 1,
     flexDirection: 'row',
-    paddingVertical: 12,
+    paddingVertical: TAB_ROW_PADDING_V,
+    paddingHorizontal: TAB_ROW_PADDING_H,
     zIndex: 10,
   },
   tabButton: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    height: 44,
+    height: TAB_BUTTON_HEIGHT,
+    zIndex: 6, // above the sliding pill
   },
   createCircle: {
     width: 44,
@@ -352,7 +355,7 @@ const styles = StyleSheet.create({
   },
   pill: {
     position: 'absolute',
-    top: PILL_VERTICAL_INSET,
+    top: 0,
     height: PILL_HEIGHT,
     borderRadius: PILL_HEIGHT / 2,
     borderWidth: 0.5,
