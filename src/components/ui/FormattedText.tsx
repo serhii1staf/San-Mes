@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { memo, useState } from 'react';
 import { View, Text as RNText, Pressable, TextStyle } from 'react-native';
 import { router } from 'expo-router';
 import { useTheme } from '../../theme';
@@ -22,7 +22,7 @@ interface FormattedTextProps {
  * __underline__ — underlined text
  * #hashtag — clickable hashtag (accent color)
  */
-export function FormattedText({ children, style, color, linkColor }: FormattedTextProps) {
+export const FormattedText = memo(function FormattedText({ children, style, color, linkColor }: FormattedTextProps) {
   const theme = useTheme();
   const [revealedSpoilers, setRevealedSpoilers] = useState<Set<number>>(new Set());
   const textColor = color || theme.colors.text.primary;
@@ -103,7 +103,7 @@ export function FormattedText({ children, style, color, linkColor }: FormattedTe
       })}
     </RNText>
   );
-}
+});
 
 interface TextPart {
   type: 'text' | 'bold' | 'italic' | 'strike' | 'underline' | 'code' | 'spoiler' | 'mention' | 'hashtag' | 'link';

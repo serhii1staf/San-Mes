@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { memo } from 'react';
 import { View, Image, ViewStyle, TextStyle, Text as RNText, Platform } from 'react-native';
 import { useTheme } from '../../theme';
 import { Text } from './Text';
@@ -13,7 +13,7 @@ interface AvatarProps {
   style?: ViewStyle;
 }
 
-export function Avatar({
+export const Avatar = memo(function Avatar({
   source,
   name,
   emoji,
@@ -121,4 +121,4 @@ export function Avatar({
       </Text>
     </View>
   );
-}
+});
