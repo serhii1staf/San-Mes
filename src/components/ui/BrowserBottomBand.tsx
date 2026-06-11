@@ -77,9 +77,19 @@ export function BrowserBottomBand() {
     }
   }, [visible, heightSV, opacitySV]);
 
-  const containerStyle = useAnimatedStyle(() => ({
-    height: heightSV.value,
-  }));
+  const containerStyle = useAnimatedStyle(() => {
+    // Tighten the gap to the floating tab bar — but ONLY while the band is
+    // actually showing. Linearly interpolate the negative top margin with
+    // the band's height so when the band is fully collapsed (height 0)
+    // marginTop is also 0 → no permanent layout shift across the rest of
+    // the app. Without this the Stack above us was always shrunk by 14px,
+    // which is why the input field and tab bar appeared lower in chats.
+    const progress = heightSV.value / BAND_HEIGHT;
+    return {
+      height: heightSV.value,
+      marginTop: -14 * progress,
+    };
+  });
   const innerStyle = useAnimatedStyle(() => ({
     opacity: opacitySV.value,
   }));
@@ -102,21 +112,20 @@ export function BrowserBottomBand() {
     clearMinimized();
   };
 
-  // Negative top margin tightens the gap to the floating tab bar so it
-  // reads as a small breath, not a wide empty strip.
+  // Negative top margin is now driven by the animation (see containerStyle
+  // above) so the band only "trims" the gap while it's actually visible.
   return (
     <Animated.View
       style={[
         {
           overflow: 'hidden',
-          marginTop: -14,
           backgroundColor: theme.colors.background.primary,
           borderTopLeftRadius: 22,
           borderTopRightRadius: 22,
-          borderTopWidth: 0.5,
-          borderLeftWidth: 0.5,
-          borderRightWidth: 0.5,
-          borderColor: theme.colors.border.light,
+          // No hairline borders — on dark themes the light border color
+          // appeared as bright UV-style streaks running down the rounded
+          // corners during the collapse animation. The solid background
+          // alone reads cleanly against the screen.
         },
         containerStyle,
       ]}
