@@ -260,6 +260,14 @@ export default function UserProfileScreen() {
   // the JS thread clear and eliminated the `SLOW ui<30 @ profile/[id]`
   // burst we saw when 18+ cards mounted in 300 ms during the open animation.
   const [postsReady, setPostsReady] = useState(false);
+  // Heavy iOS chrome — `expo-blur` BlurView (×2 here) and the banner
+  // CachedImage — must NOT mount during the navigation transition into
+  // this screen. BlurView spins up a CALayer with a backdrop filter and
+  // the banner kicks off a network fetch + decode; both land on the same
+  // frame as the open animation and were a major source of
+  // `SLOW ui<30 @ profile/[id]`. Render flat-coloured fallbacks and
+  // swap to the real components once interactions settle below.
+  const [chromeReady, setChromeReady] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const [viewingImage, setViewingImage] = useState<{ uri: string; postId: string; allImages?: string[] } | null>(null);
   const { target: contextPost, open: openContextMenu, close: closeContextMenu } = useContextMenuGuard<any>();
@@ -345,6 +353,9 @@ export default function UserProfileScreen() {
       // settled — that single frame of breathing room is what kept SLOW
       // ui<30 from firing on profile open.
       setPostsReady(true);
+      // Same gate also flips on the heavy iOS chrome (BlurView buttons +
+      // banner CachedImage). One flag, one render, no extra effects.
+      setChromeReady(true);
 
       // Trigger background sync for profile and user posts
       syncProfile(id);
@@ -534,16 +545,28 @@ export default function UserProfileScreen() {
       <View style={{ position: 'absolute', top: insets.top + 8, left: 16, right: 16, flexDirection: 'row', justifyContent: 'space-between', zIndex: 100 }}>
         <Animated.View style={{ transform: [{ translateX: buttonsTranslateX }] }}>
           <Pressable onPress={() => router.back()} style={{ borderRadius: 17, overflow: 'hidden' }}>
-            <BlurView intensity={80} tint="dark" style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center' }}>
-              <Feather name="chevron-left" size={18} color="#FFFFFF" />
-            </BlurView>
+            {chromeReady ? (
+              <BlurView intensity={80} tint="dark" style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center' }}>
+                <Feather name="chevron-left" size={18} color="#FFFFFF" />
+              </BlurView>
+            ) : (
+              <View style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.4)' }}>
+                <Feather name="chevron-left" size={18} color="#FFFFFF" />
+              </View>
+            )}
           </Pressable>
         </Animated.View>
         <Animated.View style={{ transform: [{ translateX: menuTranslateX }] }}>
           <Pressable onPress={() => { triggerHaptic('light'); setShowMenu(true); }} style={{ borderRadius: 17, overflow: 'hidden' }}>
-            <BlurView intensity={80} tint="dark" style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center' }}>
-              <Feather name="more-horizontal" size={18} color="#FFFFFF" />
-            </BlurView>
+            {chromeReady ? (
+              <BlurView intensity={80} tint="dark" style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center' }}>
+                <Feather name="more-horizontal" size={18} color="#FFFFFF" />
+              </BlurView>
+            ) : (
+              <View style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.4)' }}>
+                <Feather name="more-horizontal" size={18} color="#FFFFFF" />
+              </View>
+            )}
           </Pressable>
         </Animated.View>
       </View>
@@ -584,7 +607,7 @@ export default function UserProfileScreen() {
           <>
             {/* Banner — full width, undoes the 16px content gutter */}
             <View style={{ height: 200, marginHorizontal: -16, marginTop: -12, backgroundColor: theme.colors.accent.primary + '20' }}>
-              {bannerUrl ? <CachedImage uri={bannerUrl} style={{ width: '100%', height: '100%' }} resizeMode="cover" proxyWidth={800} /> : null}
+              {bannerUrl && chromeReady ? <CachedImage uri={bannerUrl} style={{ width: '100%', height: '100%' }} resizeMode="cover" proxyWidth={800} /> : null}
               <LinearGradient colors={['transparent', theme.colors.background.primary]} style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 60 }} />
             </View>
 
