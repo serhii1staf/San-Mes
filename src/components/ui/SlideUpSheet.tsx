@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Pressable, Modal, Animated, StatusBar, Dimensions } from 'react-native';
+import { View, Pressable, Modal, Animated, StatusBar, Dimensions, KeyboardAvoidingView, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme';
 
@@ -61,7 +61,10 @@ export function SlideUpSheet({ visible, onClose, children }: SlideUpSheetProps) 
   return (
     <Modal visible={visible || mounted} transparent animationType="none" onRequestClose={dismiss} statusBarTranslucent>
       <StatusBar hidden />
-      <View style={{ flex: 1 }}>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
         {/* Backdrop sits BELOW the content. Without an explicit zIndex on
             the content wrapper React Native's tap routing can let the
             backdrop's full-screen Pressable swallow taps on the card itself
@@ -92,7 +95,7 @@ export function SlideUpSheet({ visible, onClose, children }: SlideUpSheetProps) 
             </View>
           </Animated.View>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
