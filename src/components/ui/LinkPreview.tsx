@@ -43,7 +43,7 @@ interface LinkPreviewProps {
 
 const THUMB_RADIUS = 14;
 
-export function LinkPreview({ url, onError, textColor, emoji, static: isStatic, onLongPress, delayLongPress }: LinkPreviewProps) {
+export const LinkPreview = React.memo(function LinkPreview({ url, onError, textColor, emoji, static: isStatic, onLongPress, delayLongPress }: LinkPreviewProps) {
   const theme = useTheme();
   const cached = getCachedPreviewSync(url);
   const [data, setData] = useState<LinkPreviewData | null>(cached === undefined ? null : cached);
@@ -226,4 +226,4 @@ export function LinkPreview({ url, onError, textColor, emoji, static: isStatic, 
       </Pressable>
     </>
   );
-}
+});

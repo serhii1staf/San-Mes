@@ -243,7 +243,9 @@ export default function UserProfileScreen() {
   const insets = useSafeAreaInsets();
   const t = useT();
   const { id, fromChat } = useLocalSearchParams<{ id: string; fromChat?: string }>();
-  const { user: currentUser } = useAuthStore();
+  // Field selector — destructuring the whole store re-rendered this screen on
+  // every unrelated auth-state change (badge sync, token refresh, etc.).
+  const currentUser = useAuthStore((s) => s.user);
   const [isLoading, setIsLoading] = useState(true);
   const [followCounts, setFollowCounts] = useState({ followers: 0, following: 0 });
   const [activeTab, setActiveTab] = useState<TabName>('posts');

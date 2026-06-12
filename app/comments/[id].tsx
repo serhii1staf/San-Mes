@@ -98,6 +98,94 @@ function parseReply(content: string): { replyUser?: string; replyText?: string; 
   return { body: content };
 }
 
+// ─── Memoized comment row ──────────────────────────────────────────────────
+// Hoisted out of CommentsScreen so the FlatList's renderItem can hand each row
+// a STABLE component reference. Previously the row JSX lived inline inside
+// `renderItem`, so every parent re-render (auth field flip, scroll-driven
+// state, keyboard show/hide, locale change) created fresh element trees for
+// every visible comment — defeating cell recycling and producing the long
+// stutter the perf monitor flagged.
+//
+// `onLongPress` and `onReply` are stable callbacks from the parent, so when
+// the parent re-renders the row's props don't change and React.memo bails.
+type CommentRowProps = {
+  item: any;
+  onLongPress: (c: any) => void;
+  onReply: (c: any) => void;
+};
+
+const CommentRow = React.memo(function CommentRow({ item, onLongPress, onReply }: CommentRowProps) {
+  const theme = useTheme();
+  const t = useT();
+  const parsed = parseReply(item.content || '');
+  const gif = parseGif(parsed.body);
+  const link = !gif ? extractFirstUrl(parsed.body) : null;
+
+  const formatTime = (dateStr: string) => {
+    const diff = Date.now() - new Date(dateStr).getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return t('comments.time_now');
+    if (mins < 60) return t('comments.time_min', undefined, { n: mins });
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return t('comments.time_hour', undefined, { n: hours });
+    return t('comments.time_day', undefined, { n: Math.floor(hours / 24) });
+  };
+
+  return (
+    <Pressable onLongPress={() => onLongPress(item)} delayLongPress={300} style={{ flexDirection: 'row', marginBottom: 16 }}>
+      <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: item.profiles?.id || item.author_id } })} onLongPress={() => onLongPress(item)} delayLongPress={300}>
+        <Avatar emoji={item.profiles?.emoji || '😊'} size="sm" />
+      </Pressable>
+      <View style={{ marginLeft: 10, flex: 1 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+          <Text variant="caption" weight="semibold" numberOfLines={1} style={{ flexShrink: 1 }}>{item.profiles?.display_name || 'User'}</Text>
+          {item.profiles?.is_verified && <VerifiedBadge size={10} />}
+          {item.profiles?.badge && <UserBadge badge={item.profiles.badge} size="sm" />}
+          <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ marginLeft: 4, flexShrink: 0 }}>{formatTime(item.created_at)}</Text>
+        </View>
+        {parsed.replyUser ? (
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, paddingLeft: 8, borderLeftWidth: 2, borderLeftColor: theme.colors.accent.primary }}>
+            {parsed.replyGif ? (
+              <>
+                <CachedImage uri={parsed.replyGif} style={{ width: 28, height: 28, borderRadius: 6, marginRight: 6, backgroundColor: theme.colors.background.secondary }} resizeMode="cover" />
+                <View style={{ flex: 1 }}>
+                  <Text variant="caption" weight="semibold" color={theme.colors.accent.primary} numberOfLines={1} style={{ fontSize: 11 }}>@{parsed.replyUser}</Text>
+                  <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 11 }}>GIF</Text>
+                </View>
+              </>
+            ) : (
+              <View style={{ flex: 1 }}>
+                <Text variant="caption" weight="semibold" color={theme.colors.accent.primary} numberOfLines={1} style={{ fontSize: 11 }}>@{parsed.replyUser}</Text>
+                {parsed.replyText ? <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 11 }}>{parsed.replyText}</Text> : null}
+              </View>
+            )}
+          </View>
+        ) : null}
+        {gif ? null : <FormattedText style={{ marginTop: 3, fontSize: 14 }}>{parsed.body}</FormattedText>}
+        {gif ? (
+          <Pressable onLongPress={() => onLongPress(item)} delayLongPress={300} style={{ marginTop: 6 }}>
+            <CachedImage uri={gif} style={{ width: 160, height: 160, borderRadius: 14, backgroundColor: theme.colors.background.secondary }} resizeMode="cover" />
+          </Pressable>
+        ) : link ? (
+          <Pressable onLongPress={() => onLongPress(item)} delayLongPress={300} style={{ marginTop: 6 }}>
+            <LinkPreview url={link} onLongPress={() => onLongPress(item)} delayLongPress={300} />
+          </Pressable>
+        ) : null}
+        <Pressable onPress={() => onReply(item)} onLongPress={() => onLongPress(item)} delayLongPress={300} hitSlop={6} style={{ marginTop: 4, alignSelf: 'flex-start' }}>
+          <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{t('comments.reply')}</Text>
+        </Pressable>
+      </View>
+    </Pressable>
+  );
+}, (prev, next) =>
+  // Only re-render a row when its underlying comment payload actually changed.
+  prev.item === next.item &&
+  prev.item.content === next.item.content &&
+  prev.item.created_at === next.item.created_at &&
+  prev.onLongPress === next.onLongPress &&
+  prev.onReply === next.onReply,
+);
+
 export default function CommentsScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
@@ -137,7 +225,11 @@ export default function CommentsScreen() {
     transform: [{ translateY: listShiftY.value }],
   }));
   const { id: postId } = useLocalSearchParams<{ id: string }>();
-  const { user } = useAuthStore();
+  // Field selector — destructuring the whole auth store re-rendered the entire
+  // CommentsScreen on every unrelated auth change (token refresh, badge sync,
+  // etc.), which in turn invalidated the FlatList's inline renderItem and
+  // forced every visible comment row to re-render.
+  const user = useAuthStore((s) => s.user);
   const [comments, setComments] = useState<any[]>(() => {
     try { return postId ? kvGetJSONSync<any[]>(`comments:${postId}`, []) : []; } catch { return []; }
   });
@@ -303,12 +395,12 @@ export default function CommentsScreen() {
     }
   };
 
-  const startReply = (comment: any) => {
+  const startReply = useCallback((comment: any) => {
     closeMenu();
     setEditing(null);
     setReplyTo(comment);
     setTimeout(() => inputRef.current?.focus(), 50);
-  };
+  }, [closeMenu]);
 
   // Send a GIF as a comment — stored with the ::gif:: marker, rendered as an
   // animated image. No upload to our storage (GIPHY URL sent directly).
@@ -336,15 +428,14 @@ export default function CommentsScreen() {
   }, [openMenu]);
   const closeCommentMenu = closeMenu;
 
-  const formatTime = (dateStr: string) => {
-    const diff = Date.now() - new Date(dateStr).getTime();
-    const mins = Math.floor(diff / 60000);
-    if (mins < 1) return t('comments.time_now');
-    if (mins < 60) return t('comments.time_min', undefined, { n: mins });
-    const hours = Math.floor(mins / 60);
-    if (hours < 24) return t('comments.time_hour', undefined, { n: hours });
-    return t('comments.time_day', undefined, { n: Math.floor(hours / 24) });
-  };
+  // Stable callbacks for the FlatList — see CommentRow for why this matters.
+  const renderComment = useCallback(
+    ({ item }: { item: any }) => (
+      <CommentRow item={item} onLongPress={openCommentMenu} onReply={startReply} />
+    ),
+    [openCommentMenu, startReply],
+  );
+  const keyExtractor = useCallback((item: any) => item.id, []);
 
   return (
     <View style={{ flex: 1, backgroundColor: bgColor }}>
@@ -373,13 +464,15 @@ export default function CommentsScreen() {
           <FlatList
             ref={listRef}
             data={comments}
-            keyExtractor={(item) => item.id}
+            keyExtractor={keyExtractor}
+            renderItem={renderComment}
             contentContainerStyle={{ paddingHorizontal: 20, paddingTop: headerContentHeight, paddingBottom: 80 + insets.bottom }}
             showsVerticalScrollIndicator={false}
             removeClippedSubviews={true}
-            initialNumToRender={10}
-            maxToRenderPerBatch={8}
-            windowSize={9}
+            initialNumToRender={8}
+            maxToRenderPerBatch={6}
+            windowSize={7}
+            updateCellsBatchingPeriod={80}
             ListHeaderComponent={postData ? (() => {
               const repostInfo = isRepost(postData.content || '');
               const repostComment = repostInfo.isRepost ? (repostInfo.comment || '') : '';
@@ -465,64 +558,6 @@ export default function CommentsScreen() {
                 <Text variant="body" color={theme.colors.text.tertiary} style={{ marginTop: 8 }}>{t('comments.empty')}</Text>
               </View>
             }
-            renderItem={({ item }) => {
-              const parsed = parseReply(item.content || '');
-              return (
-              <Pressable onLongPress={() => openCommentMenu(item)} delayLongPress={300} style={{ flexDirection: 'row', marginBottom: 16 }}>
-                <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: item.profiles?.id || item.author_id } })} onLongPress={() => openCommentMenu(item)} delayLongPress={300}>
-                  <Avatar emoji={item.profiles?.emoji || '😊'} size="sm" />
-                </Pressable>
-                <View style={{ marginLeft: 10, flex: 1 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-                    <Text variant="caption" weight="semibold" numberOfLines={1} style={{ flexShrink: 1 }}>{item.profiles?.display_name || 'User'}</Text>
-                    {item.profiles?.is_verified && <VerifiedBadge size={10} />}
-                    {item.profiles?.badge && <UserBadge badge={item.profiles.badge} size="sm" />}
-                    <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ marginLeft: 4, flexShrink: 0 }}>{formatTime(item.created_at)}</Text>
-                  </View>
-                  {/* Quoted comment this one replies to */}
-                  {parsed.replyUser ? (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, paddingLeft: 8, borderLeftWidth: 2, borderLeftColor: theme.colors.accent.primary }}>
-                      {parsed.replyGif ? (
-                        <>
-                          <CachedImage uri={parsed.replyGif} style={{ width: 28, height: 28, borderRadius: 6, marginRight: 6, backgroundColor: theme.colors.background.secondary }} resizeMode="cover" />
-                          <View style={{ flex: 1 }}>
-                            <Text variant="caption" weight="semibold" color={theme.colors.accent.primary} numberOfLines={1} style={{ fontSize: 11 }}>@{parsed.replyUser}</Text>
-                            <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 11 }}>GIF</Text>
-                          </View>
-                        </>
-                      ) : (
-                        <View style={{ flex: 1 }}>
-                          <Text variant="caption" weight="semibold" color={theme.colors.accent.primary} numberOfLines={1} style={{ fontSize: 11 }}>@{parsed.replyUser}</Text>
-                          {parsed.replyText ? <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 11 }}>{parsed.replyText}</Text> : null}
-                        </View>
-                      )}
-                    </View>
-                  ) : null}
-                  {parseGif(parsed.body) ? null : <FormattedText style={{ marginTop: 3, fontSize: 14 }}>{parsed.body}</FormattedText>}
-                  {(() => {
-                    const gif = parseGif(parsed.body);
-                    if (gif) {
-                      return (
-                        <Pressable onLongPress={() => openCommentMenu(item)} delayLongPress={300} style={{ marginTop: 6 }}>
-                          <CachedImage uri={gif} style={{ width: 160, height: 160, borderRadius: 14, backgroundColor: theme.colors.background.secondary }} resizeMode="cover" />
-                        </Pressable>
-                      );
-                    }
-                    const link = extractFirstUrl(parsed.body);
-                    return link ? (
-                      <Pressable onLongPress={() => openCommentMenu(item)} delayLongPress={300} style={{ marginTop: 6 }}>
-                        <LinkPreview url={link} onLongPress={() => openCommentMenu(item)} delayLongPress={300} />
-                      </Pressable>
-                    ) : null;
-                  })()}
-                  {/* Reply action */}
-                  <Pressable onPress={() => startReply(item)} onLongPress={() => openCommentMenu(item)} delayLongPress={300} hitSlop={6} style={{ marginTop: 4, alignSelf: 'flex-start' }}>
-                    <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{t('comments.reply')}</Text>
-                  </Pressable>
-                </View>
-              </Pressable>
-              );
-            }}
           />
           </Reanimated.View>
         )}
