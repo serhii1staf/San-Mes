@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View, FlatList, TextInput, Pressable, Platform, ActivityIndicator, StyleSheet, Text as RNText, Modal, Alert, LayoutAnimation, UIManager } from 'react-native';
+import { View, FlatList, TextInput, Pressable, Platform, ActivityIndicator, StyleSheet, Text as RNText, Modal, Alert, LayoutAnimation, UIManager, InteractionManager } from 'react-native';
 import { KeyboardStickyView, useReanimatedKeyboardAnimation, useKeyboardHandler } from 'react-native-keyboard-controller';
 import Reanimated, { useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 import * as Clipboard from 'expo-clipboard';
@@ -230,13 +230,25 @@ export default function CommentsScreen() {
   // etc.), which in turn invalidated the FlatList's inline renderItem and
   // forced every visible comment row to re-render.
   const user = useAuthStore((s) => s.user);
-  const [comments, setComments] = useState<any[]>(() => {
-    try { return postId ? kvGetJSONSync<any[]>(`comments:${postId}`, []) : []; } catch { return []; }
-  });
+  // Read the cached comments synchronously ONCE on first mount. Both the
+  // initial `comments` list and the initial `isLoading` flag derive from
+  // this single read; previously each `useState` initializer fired its own
+  // `kvGetJSONSync + JSON.parse`, so on a chat with 100+ comments the same
+  // payload was parsed twice on the cold-open frame — a measurable mount
+  // cost that contributed to the 60→40 fps drop when entering this screen.
+  const initialCommentsRef = useRef<any[] | null>(null);
+  if (initialCommentsRef.current === null) {
+    try {
+      initialCommentsRef.current = postId
+        ? kvGetJSONSync<any[]>(`comments:${postId}`, [])
+        : [];
+    } catch {
+      initialCommentsRef.current = [];
+    }
+  }
+  const [comments, setComments] = useState<any[]>(initialCommentsRef.current);
   const [text, setText] = useState('');
-  const [isLoading, setIsLoading] = useState(() => {
-    try { return !(postId && kvGetJSONSync<any[]>(`comments:${postId}`, []).length > 0); } catch { return true; }
-  });
+  const [isLoading, setIsLoading] = useState(initialCommentsRef.current.length === 0);
   const [isSending, setIsSending] = useState(false);
   const [postData, setPostData] = useState<any>(null);
   const [repostOriginal, setRepostOriginal] = useState<any>(null);
@@ -253,20 +265,27 @@ export default function CommentsScreen() {
   const headerContentHeight = insets.top + 48;
   const headerGradientHeight = headerContentHeight + 28;
 
+  // Defer all non-critical mount work past the navigation transition so the
+  // first paint carries only the cached header + cached comments. The
+  // network fetches (`loadComments`, `loadPost`, repost-original lookup)
+  // were the dominant cost on the open-the-comments-screen frame and are
+  // what produced the 60→40 fps drop the perf monitor flagged.
   useEffect(() => {
-    loadComments();
-    // Load post from entity store (cached) — no network request needed
-    if (postId) {
-      const { useEntityStore } = require('../../src/store');
-      const cached = useEntityStore.getState().posts[postId];
-      if (cached) {
-        // Get author profile from store
-        const profile = useEntityStore.getState().profiles[cached.author_id];
-        setPostData({ ...cached, profiles: profile || null });
-      } else {
-        loadPost();
-      }
+    if (!postId) return;
+    // Cached lookups are cheap (synchronous store reads, no network) — keep
+    // them on the critical path so the post header renders immediately and
+    // the user never sees a flash of empty space at the top of the list.
+    const { useEntityStore } = require('../../src/store');
+    const cached = useEntityStore.getState().posts[postId];
+    if (cached) {
+      const profile = useEntityStore.getState().profiles[cached.author_id];
+      setPostData({ ...cached, profiles: profile || null });
     }
+    const handle = InteractionManager.runAfterInteractions(() => {
+      loadComments();
+      if (!cached) loadPost();
+    });
+    return () => handle.cancel();
   }, [postId]);
 
   const loadPost = async () => {
@@ -308,21 +327,25 @@ export default function CommentsScreen() {
     const info = isRepost(postData.content);
     if (!info.isRepost || !info.originalPostId) { setRepostOriginal(null); return; }
     let cancelled = false;
-    (async () => {
-      const { useEntityStore } = require('../../src/store');
-      const cachedOrig = useEntityStore.getState().posts[info.originalPostId!];
-      if (cachedOrig) {
-        const prof = useEntityStore.getState().profiles[cachedOrig.author_id];
-        if (!cancelled) setRepostOriginal({ ...cachedOrig, profiles: prof || null });
-        return;
-      }
-      // Don't hit the network when offline
-      if (!useConnectivityStore.getState().isOnline) return;
+    // Cached path stays sync (no network, no allocations beyond a hash
+    // lookup) so the embedded repost preview shows up on the first paint
+    // when we have the original cached. The network branch is deferred
+    // past the navigation transition — it was contributing to the
+    // 60→40 fps drop on cold-open of a repost's comments screen.
+    const { useEntityStore } = require('../../src/store');
+    const cachedOrig = useEntityStore.getState().posts[info.originalPostId!];
+    if (cachedOrig) {
+      const prof = useEntityStore.getState().profiles[cachedOrig.author_id];
+      setRepostOriginal({ ...cachedOrig, profiles: prof || null });
+      return () => { cancelled = true; };
+    }
+    if (!useConnectivityStore.getState().isOnline) return;
+    const handle = InteractionManager.runAfterInteractions(async () => {
       const { supabase } = await import('../../src/lib/supabase');
       const { data } = await supabase.from('posts').select('*, profiles:author_id (id, display_name, username, emoji, badge, is_verified)').eq('id', info.originalPostId).single();
       if (!cancelled && data) setRepostOriginal(data);
-    })();
-    return () => { cancelled = true; };
+    });
+    return () => { cancelled = true; handle.cancel(); };
   }, [postData?.content]);
 
   const handleSend = async () => {
@@ -469,9 +492,9 @@ export default function CommentsScreen() {
             contentContainerStyle={{ paddingHorizontal: 20, paddingTop: headerContentHeight, paddingBottom: 80 + insets.bottom }}
             showsVerticalScrollIndicator={false}
             removeClippedSubviews={true}
-            initialNumToRender={8}
-            maxToRenderPerBatch={6}
-            windowSize={7}
+            initialNumToRender={6}
+            maxToRenderPerBatch={4}
+            windowSize={6}
             updateCellsBatchingPeriod={80}
             ListHeaderComponent={postData ? (() => {
               const repostInfo = isRepost(postData.content || '');

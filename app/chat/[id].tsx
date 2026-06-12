@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, ImageBackground, Alert, Animated, PanResponder, Modal, StatusBar, Dimensions, Keyboard } from 'react-native';
+import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, ImageBackground, Alert, Animated, PanResponder, Modal, StatusBar, Dimensions, Keyboard, InteractionManager } from 'react-native';
 import { KeyboardStickyView, useReanimatedKeyboardAnimation, useKeyboardHandler } from 'react-native-keyboard-controller';
 import Reanimated, { useAnimatedStyle, interpolate, Extrapolation, useSharedValue } from 'react-native-reanimated';
 import * as Clipboard from 'expo-clipboard';
@@ -32,6 +32,29 @@ import { useT } from '../../src/i18n/store';
 
 const REPLY_THRESHOLD = 60;
 const SCREEN_WIDTH = Dimensions.get('window').width;
+
+// Hoisted static atoms for the message bubble. Each visible bubble was
+// previously allocating ~10 fresh inline objects per render — for the
+// `initialNumToRender: 8` first batch that's ~80 throwaway objects on the
+// open-the-chat frame. The remaining truly-dynamic bits (theme colors,
+// alignSelf, margins) are still applied as small override objects, which
+// React happily diffs without re-walking the whole tree.
+const bubbleStyles = StyleSheet.create({
+  row: { justifyContent: 'center' },
+  swipeIcon: { position: 'absolute', right: 16 },
+  swipeIconCircle: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+  bubbleBase: { paddingHorizontal: 14, paddingVertical: 10 },
+  replyBlock: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingLeft: 8, borderLeftWidth: 2, marginBottom: 6 },
+  replyTextWrap: { flex: 1 },
+  replyAvatar: { width: 30, height: 30, borderRadius: 6 },
+  replyHeading: { fontSize: 11 },
+  replyBody: { fontSize: 11 },
+  imagesRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4 },
+  imageSingle: { width: 200, height: 200, borderRadius: 12 },
+  imageMulti: { width: 120, height: 120, borderRadius: 12 },
+  linkPreviewWrap: { marginTop: 6, width: 280, maxWidth: '100%' },
+  timestamp: { marginTop: 3, alignSelf: 'flex-end', fontSize: 10 },
+});
 
 function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, linkEmoji, highlighted, onReply, onLongPress, onSwipeActive, onImagePress }: { message: ChatMessage; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string; linkEmoji?: string; highlighted?: boolean; onReply: (m: ChatMessage) => void; onLongPress: (m: ChatMessage) => void; onSwipeActive: (active: boolean) => void; onImagePress: (images: string[], index: number) => void }) {
   const theme = useTheme();
@@ -66,9 +89,9 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
   const replyIconOpacity = translateX.interpolate({ inputRange: [-REPLY_THRESHOLD, -24, 0], outputRange: [1, 0, 0], extrapolate: 'clamp' });
 
   return (
-    <View style={{ justifyContent: 'center' }}>
-      <Animated.View style={{ position: 'absolute', right: 16, opacity: replyIconOpacity }}>
-        <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: theme.colors.accent.primary + '20', alignItems: 'center', justifyContent: 'center' }}>
+    <View style={bubbleStyles.row}>
+      <Animated.View style={[bubbleStyles.swipeIcon, { opacity: replyIconOpacity }]}>
+        <View style={[bubbleStyles.swipeIconCircle, { backgroundColor: theme.colors.accent.primary + '20' }]}>
           <Feather name="corner-up-left" size={16} color={theme.colors.accent.primary} />
         </View>
       </Animated.View>
@@ -86,25 +109,25 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
             borderColor: highlighted ? theme.colors.accent.primary : 'transparent',
           }}>
             {message.replyToText || message.replyToImage ? (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingLeft: 8, borderLeftWidth: 2, borderLeftColor: isOwn ? 'rgba(255,255,255,0.7)' : theme.colors.accent.primary, marginBottom: 6 }}>
+              <View style={[bubbleStyles.replyBlock, { borderLeftColor: isOwn ? 'rgba(255,255,255,0.7)' : theme.colors.accent.primary }]}>
                 {message.replyToImage ? (
-                  <CachedImage uri={message.replyToImage} style={{ width: 30, height: 30, borderRadius: 6 }} resizeMode="cover" />
+                  <CachedImage uri={message.replyToImage} style={bubbleStyles.replyAvatar} resizeMode="cover" />
                 ) : null}
-                <View style={{ flex: 1 }}>
-                  <Text variant="caption" weight="semibold" color={isOwn ? 'rgba(255,255,255,0.9)' : theme.colors.accent.primary} numberOfLines={1} style={{ fontSize: 11 }}>
+                <View style={bubbleStyles.replyTextWrap}>
+                  <Text variant="caption" weight="semibold" color={isOwn ? 'rgba(255,255,255,0.9)' : theme.colors.accent.primary} numberOfLines={1} style={bubbleStyles.replyHeading}>
                     {message.replyToIsOwn ? t('chat.you') : t('chat.peer')}
                   </Text>
-                  <Text variant="caption" color={isOwn ? 'rgba(255,255,255,0.7)' : theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 11 }}>
+                  <Text variant="caption" color={isOwn ? 'rgba(255,255,255,0.7)' : theme.colors.text.tertiary} numberOfLines={1} style={bubbleStyles.replyBody}>
                     {message.replyToText || (message.replyToImage ? t('chat.photo') : '')}
                   </Text>
                 </View>
               </View>
             ) : null}
             {message.imageUrls && message.imageUrls.length > 0 ? (
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginBottom: message.text ? 6 : 0 }}>
+              <View style={[bubbleStyles.imagesRow, { marginBottom: message.text ? 6 : 0 }]}>
                 {message.imageUrls.map((uri, idx) => (
                   <Pressable key={idx} onPress={() => onImagePress(message.imageUrls!, idx)} onLongPress={() => { triggerHaptic('medium'); onLongPress(message); }} delayLongPress={300}>
-                    <CachedImage uri={uri} style={{ width: message.imageUrls!.length === 1 ? 200 : 120, height: message.imageUrls!.length === 1 ? 200 : 120, borderRadius: 12 }} resizeMode="cover" />
+                    <CachedImage uri={uri} style={message.imageUrls!.length === 1 ? bubbleStyles.imageSingle : bubbleStyles.imageMulti} resizeMode="cover" />
                   </Pressable>
                 ))}
               </View>
@@ -115,7 +138,7 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
             {(() => {
               const link = (!message.imageUrls || message.imageUrls.length === 0) ? extractFirstUrl(message.text) : null;
               return link ? (
-                <Pressable onLongPress={() => { triggerHaptic('medium'); onLongPress(message); }} delayLongPress={300} style={{ marginTop: 6, width: 280, maxWidth: '100%' }}>
+                <Pressable onLongPress={() => { triggerHaptic('medium'); onLongPress(message); }} delayLongPress={300} style={bubbleStyles.linkPreviewWrap}>
                   <LinkPreview
                     url={link}
                     textColor={isOwn ? '#FFFFFF' : undefined}
@@ -126,7 +149,7 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
                 </Pressable>
               ) : null;
             })()}
-            <Text variant="caption" color={isOwn ? 'rgba(255,255,255,0.6)' : theme.colors.text.tertiary} style={{ marginTop: 3, alignSelf: 'flex-end', fontSize: 10 }}>
+            <Text variant="caption" color={isOwn ? 'rgba(255,255,255,0.6)' : theme.colors.text.tertiary} style={bubbleStyles.timestamp}>
               {formatMessageTime(message.createdAt)}
             </Text>
           </View>
@@ -205,11 +228,17 @@ export default function ChatScreen() {
 
   const { progress, height: keyboardHeight } = useReanimatedKeyboardAnimation();
 
-  const conversation = mockConversations.find((c) => c.id === id);
+  // Memoize the conversation lookup so the linear scan over `mockConversations`
+  // doesn't run on every parent render — typing in the input bar (when local
+  // state was hoisted) and every keyboard frame would otherwise re-walk this.
+  const conversation = useMemo(() => mockConversations.find((c) => c.id === id), [id]);
   const [profileData, setProfileData] = useState<any>(null);
 
   const entityConversations = useEntityStore((s) => s.conversations);
-  const entityConv = entityConversations.find(c => c.id === id);
+  const entityConv = useMemo(
+    () => entityConversations.find((c) => c.id === id),
+    [entityConversations, id],
+  );
   const participantId = paramParticipantId || entityConv?.participantId || (conversation as any)?.participantId || id;
 
   // Synchronously read this chat's cached messages ONCE so the very first render
@@ -316,13 +345,19 @@ export default function ChatScreen() {
   useEffect(() => {
     if (conversation) return;
     if (cachedProfile) { setProfileData(cachedProfile); return; }
-    if (participantId) {
-      // Skip the network call when offline so it can't hang and congest the JS thread
-      if (!useConnectivityStore.getState().isOnline) return;
+    if (!participantId) return;
+    // Skip the network call when offline so it can't hang and congest the JS thread
+    if (!useConnectivityStore.getState().isOnline) return;
+    // Defer the profile fetch past the navigation transition — the network
+    // request setup (URL build, fetch dispatch, response parse) was landing
+    // on the same frame as first paint and contributing to the 60→40 fps
+    // drop when opening a chat with no cached profile.
+    const handle = InteractionManager.runAfterInteractions(() => {
       supabase.from('profiles').select('*').eq('id', participantId).single().then(({ data }) => {
         if (data) setProfileData(data);
       }).catch(() => {});
-    }
+    });
+    return () => handle.cancel();
   }, [participantId, conversation, cachedProfile]);
 
   // Fallback for devices without MMKV: warm the AsyncStorage mirror, then hydrate
@@ -347,15 +382,25 @@ export default function ChatScreen() {
   const myMessages = storeMessages[id || ''];
 
   // Warm the image cache for the most recent messages so they appear instantly
-  // (no black flash) when the chat opens — Telegram-style.
+  // (no black flash) when the chat opens — Telegram-style. Deferred past the
+  // navigation transition: the dynamic `import('CachedImage')` + Image.prefetch
+  // dispatch was landing on the same frame as the FlatList's initial bubble
+  // mount and was a measurable contributor to the open-the-chat fps drop.
   useEffect(() => {
     if (!myMessages || myMessages.length === 0) return;
-    const recent = myMessages.slice(-20);
-    const uris: string[] = [];
-    for (const m of recent) {
-      if ((m as any).imageUrls) for (const u of (m as any).imageUrls) uris.push(u);
-    }
-    if (uris.length) { import('../../src/components/ui/CachedImage').then(({ prefetchImages }) => prefetchImages(uris)).catch(() => {}); }
+    const handle = InteractionManager.runAfterInteractions(() => {
+      const recent = myMessages.slice(-20);
+      const uris: string[] = [];
+      for (const m of recent) {
+        if ((m as any).imageUrls) for (const u of (m as any).imageUrls) uris.push(u);
+      }
+      if (uris.length) {
+        import('../../src/components/ui/CachedImage')
+          .then(({ prefetchImages }) => prefetchImages(uris))
+          .catch(() => {});
+      }
+    });
+    return () => handle.cancel();
   }, [id]);
   useEffect(() => {
     if (!id) return;
@@ -746,9 +791,15 @@ export default function ChatScreen() {
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
         removeClippedSubviews={true}
-        initialNumToRender={12}
-        maxToRenderPerBatch={8}
-        windowSize={9}
+        // Tuned for iPhone 12 / weak Android: ~5–6 bubbles fit on a typical
+        // screen, so 8 covers the visible window plus one bubble below the
+        // fold. Lower numbers than before (12/8/9) so the open-the-chat
+        // frame mounts fewer bubbles' PanResponders + Animated.Values on
+        // the same RAF as the navigation transition — the dominant source
+        // of the 60→40 fps drop the perf monitor flagged.
+        initialNumToRender={8}
+        maxToRenderPerBatch={6}
+        windowSize={7}
         // Larger update batching window — keeps cell mounting from competing
         // with scroll gestures on weak devices. Default is 50 ms; bumping to
         // 80 ms is invisible to the user and lets scroll frames win.

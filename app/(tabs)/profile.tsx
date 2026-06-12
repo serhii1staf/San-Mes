@@ -370,12 +370,15 @@ export default function ProfileScreen() {
         // Virtualization tuned for weak Android / iPhone 12. The earlier
         // 6/4/7 numbers still let an 18-card profile mount the whole first
         // window inside ~300 ms, which slammed the JS thread into a SLOW
-        // ui<30 every time. Smaller windows mean the user can briefly see
-        // empty space at the bottom while scrolling, but no stutter — a
-        // good trade on weak devices.
+        // ui<30 every time. Tightened further to 3/1/4 so at most ONE card
+        // mounts per frame off-screen — even when the perf monitor sees
+        // an 18 ms peak card mount, that single mount can fit inside a
+        // RAF without stealing time from a swipe gesture. The user can
+        // briefly see empty space at the bottom while flicking fast,
+        // but no stutter — a strict win on weak devices.
         initialNumToRender={3}
-        maxToRenderPerBatch={2}
-        windowSize={5}
+        maxToRenderPerBatch={1}
+        windowSize={4}
         updateCellsBatchingPeriod={100}
         removeClippedSubviews={true}
         showsVerticalScrollIndicator={false}
