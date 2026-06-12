@@ -13,7 +13,8 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
+import { ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View, Alert } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useTheme } from '../../theme';
@@ -116,6 +117,51 @@ export function PerfMonitorPanel({ onClose }: Props) {
           </TouchableOpacity>
         </View>
 
+        {/* Errors — split out separately and shown first because crashes
+            are the highest-signal events when the user is debugging. The
+            copy buttons let them paste the stack into a chat / email when
+            they don't have direct Sentry dashboard access. */}
+        {(() => {
+          const errors = snap.events.filter((e) => e.type === 'error');
+          if (errors.length === 0) return null;
+          const reversed = errors.slice().reverse();
+          const allText = reversed
+            .map((ev) => formatErrorForCopy(ev))
+            .join('\n\n');
+          return (
+            <View style={styles.section}>
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  paddingHorizontal: 4,
+                  marginBottom: 8,
+                }}
+              >
+                <Text style={[styles.sectionTitle, { color: '#ef4444', marginBottom: 0 }]}>
+                  {t('perf.errors', 'Errors')} · {errors.length}
+                </Text>
+                <TouchableOpacity
+                  onPress={async () => {
+                    try {
+                      await Clipboard.setStringAsync(allText);
+                      Alert.alert(t('perf.copied_title', 'Copied'), t('perf.copied_all', 'All errors copied to clipboard.'));
+                    } catch {}
+                  }}
+                >
+                  <Text style={{ color: theme.colors.accent.primary, fontSize: 13, fontWeight: '600' }}>
+                    {t('perf.copy_all', 'Copy all')}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+              {reversed.map((ev, i) => (
+                <ErrorRow key={`${ev.ts}-${i}`} event={ev} />
+              ))}
+            </View>
+          );
+        })()}
+
         {/* Event log */}
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: theme.colors.text.tertiary }]}>
@@ -143,7 +189,13 @@ export function PerfMonitorPanel({ onClose }: Props) {
 function EventRow({ event }: { event: PerfEvent }) {
   const theme = useTheme();
   const tint =
-    event.type === 'slow' ? '#ef4444' : event.type === 'nav' ? '#3b82f6' : theme.colors.text.secondary;
+    event.type === 'slow'
+      ? '#ef4444'
+      : event.type === 'error'
+      ? '#ef4444'
+      : event.type === 'nav'
+      ? '#3b82f6'
+      : theme.colors.text.secondary;
   const time = new Date(event.ts).toLocaleTimeString([], { hour12: false });
   return (
     <View style={[styles.eventRow, { backgroundColor: theme.colors.background.secondary }]}>
@@ -165,6 +217,75 @@ function EventRow({ event }: { event: PerfEvent }) {
           {event.durationMs}ms
         </Text>
       )}
+    </View>
+  );
+}
+
+function formatErrorForCopy(ev: PerfEvent): string {
+  const time = new Date(ev.ts).toISOString();
+  const lines = [`[${time}] ${ev.label}`];
+  if (ev.stack) lines.push(ev.stack);
+  return lines.join('\n');
+}
+
+function ErrorRow({ event }: { event: PerfEvent }) {
+  const theme = useTheme();
+  const t = useT();
+  const [expanded, setExpanded] = useState(false);
+  const time = new Date(event.ts).toLocaleTimeString([], { hour12: false });
+  return (
+    <View
+      style={[
+        styles.errorRow,
+        { backgroundColor: theme.colors.background.secondary, borderLeftColor: '#ef4444' },
+      ]}
+    >
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <Text style={[styles.eventTs, { color: theme.colors.text.tertiary, width: 70 }]}>
+          {time}
+        </Text>
+        <Text
+          numberOfLines={expanded ? undefined : 2}
+          style={{ flex: 1, color: theme.colors.text.primary, fontSize: 13 }}
+        >
+          {event.label}
+        </Text>
+      </View>
+      {expanded && event.stack ? (
+        <Text
+          selectable
+          style={{
+            marginTop: 6,
+            color: theme.colors.text.secondary,
+            fontSize: 11,
+            fontFamily: 'Courier',
+          }}
+        >
+          {event.stack}
+        </Text>
+      ) : null}
+      <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 16, marginTop: 6 }}>
+        <TouchableOpacity onPress={() => setExpanded((v) => !v)}>
+          <Text style={{ color: theme.colors.accent.primary, fontSize: 12, fontWeight: '600' }}>
+            {expanded ? t('perf.collapse', 'Collapse') : t('perf.expand', 'Expand')}
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={async () => {
+            try {
+              await Clipboard.setStringAsync(formatErrorForCopy(event));
+              Alert.alert(
+                t('perf.copied_title', 'Copied'),
+                t('perf.copied_one', 'Error copied to clipboard.'),
+              );
+            } catch {}
+          }}
+        >
+          <Text style={{ color: theme.colors.accent.primary, fontSize: 12, fontWeight: '600' }}>
+            {t('perf.copy', 'Copy')}
+          </Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 }
@@ -230,4 +351,11 @@ const styles = StyleSheet.create({
   eventType: { width: 44, fontSize: 11, fontWeight: '700', textTransform: 'uppercase' },
   eventLabel: { flex: 1, fontSize: 13 },
   eventDur: { fontSize: 12, fontVariant: ['tabular-nums'] },
+  errorRow: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    marginBottom: 8,
+    borderLeftWidth: 3,
+  },
 });

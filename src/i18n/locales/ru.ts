@@ -681,6 +681,14 @@ const ru: Record<string, string> = {
   'perf.clear_log': 'Очистить лог',
   'perf.events': 'События',
   'perf.no_events': 'Пока пусто — походите по приложению, чтобы появились метрики.',
+  'perf.errors': 'Ошибки',
+  'perf.copy': 'Копировать',
+  'perf.copy_all': 'Копировать все',
+  'perf.expand': 'Раскрыть',
+  'perf.collapse': 'Свернуть',
+  'perf.copied_title': 'Скопировано',
+  'perf.copied_one': 'Ошибка скопирована в буфер обмена.',
+  'perf.copied_all': 'Все ошибки скопированы в буфер обмена.',
 };
 
 export default ru;

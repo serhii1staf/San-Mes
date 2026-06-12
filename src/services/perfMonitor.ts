@@ -22,7 +22,7 @@
  * every push). The ring fills oldest-to-newest then wraps.
  */
 
-export type PerfEventType = 'nav' | 'slow' | 'mark';
+export type PerfEventType = 'nav' | 'slow' | 'mark' | 'error';
 
 export interface PerfEvent {
   ts: number; // Date.now() at record time
@@ -30,6 +30,8 @@ export interface PerfEvent {
   label: string;
   /** Optional duration in ms (e.g. nav transition time). */
   durationMs?: number;
+  /** Optional stack trace, populated for `error` events. */
+  stack?: string;
 }
 
 export interface PerfSnapshot {
@@ -127,6 +129,16 @@ class PerfMonitor {
     this._notify();
   }
 
+  /**
+   * Capture a crash-class event. Unlike `mark`, errors carry a stack trace
+   * so the panel can offer a "copy" affordance — handy for triaging when
+   * the user is offline or doesn't have access to the Sentry dashboard.
+   */
+  recordError(label: string, stack?: string) {
+    this._record({ ts: Date.now(), type: 'error', label, stack });
+    this._notify();
+  }
+
   /** Return an immutable-ish snapshot. */
   snapshot(): PerfSnapshot {
     return {
@@ -216,4 +228,59 @@ export const perfMonitor = new PerfMonitor();
 export function startNavigationTimer(label: string): () => void {
   const startedAt = Date.now();
   return () => perfMonitor.recordNavigation(label, Date.now() - startedAt);
+}
+
+
+/**
+ * Wire global JS error handlers so we capture every crash, not just the ones
+ * the dev remembered to wrap in try/catch. Safe to call multiple times — the
+ * second call is a no-op.
+ */
+let _errorHooksInstalled = false;
+export function installPerfErrorHooks() {
+  if (_errorHooksInstalled) return;
+  _errorHooksInstalled = true;
+
+  // React Native's global error handler. We chain to the previous one so we
+  // don't override LogBox or Sentry's hooks — we only piggy-back to record
+  // the failure into our local journal.
+  try {
+    const ErrorUtils: any = (globalThis as any).ErrorUtils;
+    if (ErrorUtils?.setGlobalHandler) {
+      const previous = ErrorUtils.getGlobalHandler?.();
+      ErrorUtils.setGlobalHandler((err: unknown, isFatal?: boolean) => {
+        try {
+          const e = err as Error;
+          perfMonitor.recordError(
+            (isFatal ? '[fatal] ' : '') + (e?.message || String(err)),
+            e?.stack,
+          );
+        } catch {}
+        // Re-emit to the original handler so RN's red-box / Sentry / etc.
+        // still see the error.
+        try {
+          previous?.(err, isFatal);
+        } catch {}
+      });
+    }
+  } catch {}
+
+  // Unhandled promise rejections (Hermes exposes this via the global host).
+  try {
+    const tracking: any = (globalThis as any).HermesInternal?.enablePromiseRejectionTracker;
+    if (typeof tracking === 'function') {
+      tracking({
+        allRejections: true,
+        onUnhandled: (_id: number, rejection: unknown) => {
+          try {
+            const e = rejection as Error;
+            perfMonitor.recordError(
+              `[promise] ${e?.message || String(rejection)}`,
+              e?.stack,
+            );
+          } catch {}
+        },
+      });
+    }
+  } catch {}
 }

@@ -21,7 +21,13 @@ import { setThrottleAccount } from '../src/services/syncThrottle';
 import { useT } from '../src/i18n/store';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { PerfMonitorBubble } from '../src/components/dev/PerfMonitorBubble';
-import { perfMonitor } from '../src/services/perfMonitor';
+import { perfMonitor, installPerfErrorHooks } from '../src/services/perfMonitor';
+
+// Install the global JS error / promise hooks once at module load so we
+// capture every crash from the very first render onward (the bubble panel
+// can then surface them with a copy button, which is what the user wants
+// when they don't have direct Sentry access).
+try { installPerfErrorHooks(); } catch {}
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 

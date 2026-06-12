@@ -678,6 +678,14 @@ const en: Record<string, string> = {
   'perf.clear_log': 'Clear log',
   'perf.events': 'Events',
   'perf.no_events': 'Nothing yet — navigate around the app to see metrics.',
+  'perf.errors': 'Errors',
+  'perf.copy': 'Copy',
+  'perf.copy_all': 'Copy all',
+  'perf.expand': 'Expand',
+  'perf.collapse': 'Collapse',
+  'perf.copied_title': 'Copied',
+  'perf.copied_one': 'Error copied to clipboard.',
+  'perf.copied_all': 'All errors copied to clipboard.',
 };
 
 export default en;
