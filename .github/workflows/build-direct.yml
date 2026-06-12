@@ -37,6 +37,10 @@ jobs:
 
       - name: Build iOS locally with EAS
         run: eas build --platform ios --profile production --local --output ./San.ipa --non-interactive
+        env:
+          # Source-maps upload to Sentry happens automatically when this is set.
+          # Without it the build still works but stack traces will be minified.
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
 
       - name: Upload to TestFlight
         if: success()

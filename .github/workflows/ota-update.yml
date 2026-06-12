@@ -40,3 +40,5 @@ jobs:
         env:
           CI: '1'
           MSG: ${{ github.event.inputs.message || github.event.head_commit.message || 'OTA update' }}
+          # Source-maps upload to Sentry on each OTA so stack traces stay readable.
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}

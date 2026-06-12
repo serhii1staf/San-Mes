@@ -38,6 +38,9 @@ jobs:
           EXPO_ASC_API_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           EXPO_ASC_API_KEY_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           EXPO_ASC_API_KEY_PATH: ./AuthKey_PN7B743Y4X.p8
+          # Source-maps upload to Sentry happens automatically when this is set.
+          # Without it the build still works but stack traces will be minified.
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
 
       - name: Submit to TestFlight
         if: success()
