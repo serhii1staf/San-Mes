@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { View, FlatList, TextInput, Pressable, Platform, ActivityIndicator, StyleSheet, Text as RNText, Modal, Alert, LayoutAnimation, UIManager } from 'react-native';
-import { KeyboardStickyView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
-import Reanimated, { useAnimatedStyle } from 'react-native-reanimated';
+import { KeyboardStickyView, useReanimatedKeyboardAnimation, useKeyboardHandler } from 'react-native-keyboard-controller';
+import Reanimated, { useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 import * as Clipboard from 'expo-clipboard';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -108,10 +108,27 @@ export default function CommentsScreen() {
     return { paddingBottom: open ? 8 : (insets.bottom > 0 ? insets.bottom : 14) };
   });
   // Shift the comment list upward by the keyboard height so the very last
-  // comment stays visible above the input bar when the user taps it. Pure
-  // UI-thread transform — no layout pass, no jitter.
+  // comment stays visible above the input bar when the user taps it. We
+  // drive translateY from `useKeyboardHandler.onMove` — the same low-level
+  // event source `KeyboardStickyView` uses — so the list lifts in lock-step
+  // with the input bar instead of snapping when the JS thread is briefly
+  // busy.
+  const listShiftY = useSharedValue(0);
+  useKeyboardHandler(
+    {
+      onMove: (e) => {
+        'worklet';
+        listShiftY.value = -e.height;
+      },
+      onEnd: (e) => {
+        'worklet';
+        listShiftY.value = -e.height;
+      },
+    },
+    [],
+  );
   const listShiftStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: keyboardHeight.value }],
+    transform: [{ translateY: listShiftY.value }],
   }));
   const { id: postId } = useLocalSearchParams<{ id: string }>();
   const { user } = useAuthStore();

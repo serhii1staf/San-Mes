@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, ImageBackground, Alert, Animated, PanResponder, Modal, StatusBar, Dimensions, Keyboard } from 'react-native';
-import { KeyboardStickyView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
-import Reanimated, { useAnimatedStyle, interpolate, Extrapolation } from 'react-native-reanimated';
+import { KeyboardStickyView, useReanimatedKeyboardAnimation, useKeyboardHandler } from 'react-native-keyboard-controller';
+import Reanimated, { useAnimatedStyle, interpolate, Extrapolation, useSharedValue } from 'react-native-reanimated';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
 import { Feather } from '@expo/vector-icons';
@@ -253,13 +253,28 @@ export default function ChatScreen() {
   }));
 
   // Shift the entire message list upward by exactly the keyboard height when
-  // it rises. `keyboardHeight` from useReanimatedKeyboardAnimation is
-  // negative as the keyboard appears (it's the offset you'd add to push
-  // content up), so applying it directly as translateY is correct. This is
-  // a pure UI-thread transform — no layout pass, no FlatList relayout — so
-  // the freshly-pasted spacer-jitter we removed earlier doesn't come back.
+  // it rises. We drive the translation from `useKeyboardHandler.onMove`
+  // — the same lowest-level event source `KeyboardStickyView` uses for the
+  // input bar — so the list lifts in lock-step with the input bar instead
+  // of occasionally desyncing into a snap when the JS thread is briefly
+  // busy on the first chat open. `e.height` is the live keyboard height in
+  // pixels, fed to translateY as a negative offset.
+  const listShiftY = useSharedValue(0);
+  useKeyboardHandler(
+    {
+      onMove: (e) => {
+        'worklet';
+        listShiftY.value = -e.height;
+      },
+      onEnd: (e) => {
+        'worklet';
+        listShiftY.value = -e.height;
+      },
+    },
+    [],
+  );
   const listShiftStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: keyboardHeight.value }],
+    transform: [{ translateY: listShiftY.value }],
   }));
 
   // List bottom spacer matches the input bar's real height so the newest
