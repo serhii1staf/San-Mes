@@ -310,15 +310,15 @@ export default function EditProfileScreen() {
 
   // Match the post 3-dots menu (PostMenuModal) so the edit-profile sheet
   // visually belongs to the same family: bottom-anchored, theme-aware
-  // background, 28-px corners, identical horizontal/bottom padding. Earlier
-  // version used a top-anchored card with a hardcoded near-black background
-  // which felt out of place outside dark mode.
+  // background, 28-px corners. Content lives inside an inner ScrollView so
+  // the sheet can grow up to ~92% of the screen but never lifts past the
+  // status bar — same feel as the post menu, just taller because there are
+  // more fields.
   const sheetBg = theme.isDark ? theme.colors.background.elevated : '#FFFFFF';
   const cardStyle: ViewStyle = {
     marginHorizontal: 8,
-    marginTop: insets.top + 60,
     marginBottom: insets.bottom + 16,
-    flex: 1,
+    maxHeight: SCREEN_HEIGHT - insets.top - 24,
     borderRadius: 28,
     overflow: 'hidden',
     backgroundColor: sheetBg,
@@ -338,9 +338,9 @@ export default function EditProfileScreen() {
         <Pressable style={{ flex: 1 }} onPress={handleClose} />
       </Animated.View>
 
-      {/* Modal Card */}
+      {/* Modal Card — bottom-anchored, slides up from the bottom edge */}
       <KeyboardAvoidingView
-        style={{ flex: 1 }}
+        style={{ flex: 1, justifyContent: 'flex-end' }}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         <Animated.View
@@ -521,6 +521,7 @@ export default function EditProfileScreen() {
             right: 0,
             bottom: 0,
             zIndex: 999,
+            justifyContent: 'flex-end',
           }}
         >
           <Animated.View
@@ -539,9 +540,8 @@ export default function EditProfileScreen() {
           <Animated.View
             style={{
               marginHorizontal: 8,
-              marginTop: insets.top + 60,
               marginBottom: insets.bottom + 16,
-              flex: 1,
+              maxHeight: SCREEN_HEIGHT * 0.7,
               borderRadius: 28,
               overflow: 'hidden',
               backgroundColor: sheetBg,
