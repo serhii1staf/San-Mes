@@ -107,6 +107,12 @@ export default function CommentsScreen() {
     const open = Math.abs(keyboardHeight.value) > 1;
     return { paddingBottom: open ? 8 : (insets.bottom > 0 ? insets.bottom : 14) };
   });
+  // Shift the comment list upward by the keyboard height so the very last
+  // comment stays visible above the input bar when the user taps it. Pure
+  // UI-thread transform — no layout pass, no jitter.
+  const listShiftStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: keyboardHeight.value }],
+  }));
   const { id: postId } = useLocalSearchParams<{ id: string }>();
   const { user } = useAuthStore();
   const [comments, setComments] = useState<any[]>(() => {
@@ -337,6 +343,10 @@ export default function CommentsScreen() {
             <ActivityIndicator size="large" color={theme.colors.accent.primary} />
           </View>
         ) : (
+          // Wrapped so the whole list rides up with the keyboard via a
+          // UI-thread transform — no FlatList relayout when the keyboard
+          // animates, and the last comment stays above the sticky input.
+          <Reanimated.View style={[{ flex: 1 }, listShiftStyle]} pointerEvents="box-none">
           <FlatList
             ref={listRef}
             data={comments}
@@ -491,6 +501,7 @@ export default function CommentsScreen() {
               );
             }}
           />
+          </Reanimated.View>
         )}
 
         {/* Input area — sticks to keyboard (smooth, no lag) */}

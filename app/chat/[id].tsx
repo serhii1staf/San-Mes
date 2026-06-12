@@ -252,6 +252,16 @@ export default function ChatScreen() {
     paddingBottom: interpolate(progress.value, [0, 1], [inputBarBottomPad, 8], Extrapolation.CLAMP),
   }));
 
+  // Shift the entire message list upward by exactly the keyboard height when
+  // it rises. `keyboardHeight` from useReanimatedKeyboardAnimation is
+  // negative as the keyboard appears (it's the offset you'd add to push
+  // content up), so applying it directly as translateY is correct. This is
+  // a pure UI-thread transform — no layout pass, no FlatList relayout — so
+  // the freshly-pasted spacer-jitter we removed earlier doesn't come back.
+  const listShiftStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: keyboardHeight.value }],
+  }));
+
   // List bottom spacer matches the input bar's real height so the newest
   // message keeps a comfortable gap above the input. We deliberately keep
   // this STATIC (no keyboardHeight in the layout) — animating the spacer's
@@ -677,7 +687,12 @@ export default function ChatScreen() {
 
       {/* Inverted list — newest message sits at the bottom with NO scrolling
           needed (exactly like the AI chat). This removes the open-at-top-then-
-          jump-to-bottom behaviour entirely and makes keyboard handling trivial. */}
+          jump-to-bottom behaviour entirely and makes keyboard handling trivial.
+          The whole list is wrapped in a Reanimated.View whose translateY is
+          driven by the keyboard frame on the UI thread, so when the keyboard
+          rises every message rides up with it (last message stays visible
+          above the input bar) without triggering FlatList layout. */}
+      <Reanimated.View style={[StyleSheet.absoluteFill, listShiftStyle]} pointerEvents="box-none">
       <FlatList
         ref={flatListRef}
         data={invertedMessages}
@@ -702,6 +717,7 @@ export default function ChatScreen() {
         updateCellsBatchingPeriod={80}
         onScrollToIndexFailed={onScrollToIndexFailedCb}
       />
+      </Reanimated.View>
 
       {/* Input bar sticks to the keyboard top; hidden while searching */}
       {!searchMode && (
