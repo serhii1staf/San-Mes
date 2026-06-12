@@ -186,6 +186,28 @@ export default function EditProfileScreen() {
     })
   ).current;
 
+  // Emoji picker animation — same spring/timing pair as the main sheet so
+  // the two slides feel like the same surface. Mounted only when visible
+  // to keep the heavy emoji grid out of the initial render.
+  const emojiSlide = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
+  const emojiBackdrop = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (showEmojiPicker) {
+      emojiSlide.setValue(SCREEN_HEIGHT);
+      emojiBackdrop.setValue(0);
+      Animated.parallel([
+        Animated.timing(emojiBackdrop, { toValue: 1, duration: 200, useNativeDriver: true }),
+        Animated.spring(emojiSlide, { toValue: 0, useNativeDriver: true, tension: 50, friction: 9 }),
+      ]).start();
+    }
+  }, [showEmojiPicker]);
+  const dismissEmojiPicker = () => {
+    Animated.parallel([
+      Animated.timing(emojiSlide, { toValue: SCREEN_HEIGHT, duration: 250, useNativeDriver: true }),
+      Animated.timing(emojiBackdrop, { toValue: 0, duration: 250, useNativeDriver: true }),
+    ]).start(() => setShowEmojiPicker(false));
+  };
+
   const pickBanner = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') return;
@@ -286,18 +308,25 @@ export default function EditProfileScreen() {
     backgroundColor: 'transparent',
   };
 
+  // Match the post 3-dots menu (PostMenuModal) so the edit-profile sheet
+  // visually belongs to the same family: bottom-anchored, theme-aware
+  // background, 28-px corners, identical horizontal/bottom padding. Earlier
+  // version used a top-anchored card with a hardcoded near-black background
+  // which felt out of place outside dark mode.
+  const sheetBg = theme.isDark ? theme.colors.background.elevated : '#FFFFFF';
   const cardStyle: ViewStyle = {
-    marginHorizontal: 6,
-    marginTop: insets.top + 80,
-    marginBottom: insets.bottom + 6,
+    marginHorizontal: 8,
+    marginTop: insets.top + 60,
+    marginBottom: insets.bottom + 16,
     flex: 1,
-    borderRadius: 32,
+    borderRadius: 28,
     overflow: 'hidden',
+    backgroundColor: sheetBg,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.3,
-    shadowRadius: 32,
-    elevation: 20,
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.14,
+    shadowRadius: 18,
+    elevation: 12,
   };
 
   const translateY = Animated.add(slideAnim, dragAnim);
@@ -321,15 +350,9 @@ export default function EditProfileScreen() {
           ]}
           {...panResponder.panHandlers}
         >
-          {/* Glass background */}
-          <View
-            style={{
-              flex: 1,
-              backgroundColor: theme.isDark
-                ? 'rgba(20, 20, 20, 0.98)'
-                : 'rgba(255, 255, 255, 0.98)',
-            }}
-          >
+          {/* Inner — uses theme bg directly, no overlay layer needed now that
+              the outer card already paints the elevated colour. */}
+          <View style={{ flex: 1 }}>
               {/* Drag handle */}
               <View style={{ alignItems: 'center', paddingTop: 12, paddingBottom: 4 }}>
                 <View
@@ -486,7 +509,9 @@ export default function EditProfileScreen() {
         </Animated.View>
       </KeyboardAvoidingView>
 
-      {/* Emoji/Mood Picker - Full modal same format as edit modal */}
+      {/* Emoji/Mood Picker — same family as the main sheet (PostMenuModal-
+          style): bottom-anchored card, theme background, smooth spring in
+          and timed slide-out so it doesn't pop on/off any more. */}
       {showEmojiPicker && (
         <View
           style={{
@@ -498,32 +523,34 @@ export default function EditProfileScreen() {
             zIndex: 999,
           }}
         >
-          <Pressable
+          <Animated.View
             style={{
               position: 'absolute',
               top: 0,
               left: 0,
               right: 0,
               bottom: 0,
-              backgroundColor: 'rgba(0,0,0,0.5)',
+              backgroundColor: 'rgba(0,0,0,0.4)',
+              opacity: emojiBackdrop,
             }}
-            onPress={() => setShowEmojiPicker(false)}
-          />
-          {/* Full modal card - same format as edit modal */}
-          <View
+          >
+            <Pressable style={{ flex: 1 }} onPress={dismissEmojiPicker} />
+          </Animated.View>
+          <Animated.View
             style={{
-              marginHorizontal: 6,
-              marginTop: insets.top + 44,
-              marginBottom: insets.bottom + 6,
+              marginHorizontal: 8,
+              marginTop: insets.top + 60,
+              marginBottom: insets.bottom + 16,
               flex: 1,
-              borderRadius: 32,
+              borderRadius: 28,
               overflow: 'hidden',
-              backgroundColor: theme.isDark ? 'rgba(30, 30, 30, 0.97)' : 'rgba(255, 255, 255, 0.98)',
+              backgroundColor: sheetBg,
               shadowColor: '#000',
-              shadowOffset: { width: 0, height: 12 },
-              shadowOpacity: 0.3,
-              shadowRadius: 32,
-              elevation: 20,
+              shadowOffset: { width: 0, height: -4 },
+              shadowOpacity: 0.14,
+              shadowRadius: 18,
+              elevation: 12,
+              transform: [{ translateY: emojiSlide }],
             }}
           >
             {/* Drag handle */}
@@ -549,7 +576,7 @@ export default function EditProfileScreen() {
                 paddingBottom: 12,
               }}
             >
-              <Pressable onPress={() => setShowEmojiPicker(false)}>
+              <Pressable onPress={dismissEmojiPicker}>
                 <Feather name="x" size={22} color={theme.colors.text.primary} />
               </Pressable>
               <Text variant="body" weight="semibold">{t('edit_profile.emoji_title')}</Text>
@@ -589,7 +616,7 @@ export default function EditProfileScreen() {
                     {category.emojis.map((e) => (
                       <Pressable
                         key={e}
-                        onPress={() => { setSelectedEmoji(e); setShowEmojiPicker(false); }}
+                        onPress={() => { setSelectedEmoji(e); dismissEmojiPicker(); }}
                         style={{
                           width: 44,
                           height: 44,
@@ -609,7 +636,7 @@ export default function EditProfileScreen() {
                 </View>
               ))}
             </ScrollView>
-          </View>
+          </Animated.View>
         </View>
       )}
 
