@@ -77,12 +77,18 @@ export function SlideUpSheet({ visible, onClose, children }: SlideUpSheetProps) 
 
         <View style={{ flex: 1, justifyContent: 'flex-end', zIndex: 2 }} pointerEvents="box-none">
           <Animated.View style={{ transform: [{ translateY: slideAnim }] }}>
-            <View style={{ marginHorizontal: 8, marginBottom: Math.max(insets.bottom, 16), backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF', borderRadius: 40, shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.12, shadowRadius: 16, elevation: 10 }}>
+            {/* Match PostMenuModal exactly: 8 px horizontal margin, 16 px
+                bottom margin (NOT safe-area-aware — the sheet visually
+                hangs above the home indicator the same way the post menu
+                does), 28-px corners. Earlier 40-px corners + safe-area
+                bottom made the same component look like a different sheet
+                family (which is what users were comparing to). */}
+            <View style={{ marginHorizontal: 8, marginBottom: 16, backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF', borderRadius: 28, shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.12, shadowRadius: 16, elevation: 10 }}>
               <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 4 }}>
                 <View style={{ width: 40, height: 5, borderRadius: 3, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)' }} />
               </View>
               {children}
-              <View style={{ height: 10 }} />
+              <View style={{ height: 10 + insets.bottom }} />
             </View>
           </Animated.View>
         </View>

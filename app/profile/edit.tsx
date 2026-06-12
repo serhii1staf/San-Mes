@@ -313,12 +313,16 @@ export default function EditProfileScreen() {
   // background, 28-px corners. Content lives inside an inner ScrollView so
   // the sheet can grow up to ~92% of the screen but never lifts past the
   // status bar — same feel as the post menu, just taller because there are
-  // more fields.
+  // more fields. We give the card an explicit height (not just maxHeight)
+  // because justifyContent: 'flex-end' on the parent column doesn't give
+  // its child a flex basis without one, which earlier collapsed the card
+  // to 0 px and showed only the backdrop.
   const sheetBg = theme.isDark ? theme.colors.background.elevated : '#FFFFFF';
+  const sheetHeight = SCREEN_HEIGHT - insets.top - insets.bottom - 60;
   const cardStyle: ViewStyle = {
     marginHorizontal: 8,
     marginBottom: insets.bottom + 16,
-    maxHeight: SCREEN_HEIGHT - insets.top - 24,
+    height: sheetHeight,
     borderRadius: 28,
     overflow: 'hidden',
     backgroundColor: sheetBg,
@@ -541,7 +545,7 @@ export default function EditProfileScreen() {
             style={{
               marginHorizontal: 8,
               marginBottom: insets.bottom + 16,
-              maxHeight: SCREEN_HEIGHT * 0.7,
+              height: Math.min(SCREEN_HEIGHT * 0.7, SCREEN_HEIGHT - insets.top - insets.bottom - 80),
               borderRadius: 28,
               overflow: 'hidden',
               backgroundColor: sheetBg,
