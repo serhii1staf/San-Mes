@@ -10,10 +10,12 @@ import { Text } from '../../src/components/ui';
 import { useMiniAppsStore, MiniApp } from '../../src/store/miniAppsStore';
 import { useAuthStore } from '../../src/store';
 import { showToast } from '../../src/store/toastStore';
+import { useT } from '../../src/i18n/store';
 
 export default function MiniAppsScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const t = useT();
   const { user } = useAuthStore();
   const { apps, isLoading, loadApps, createApp, deleteApp } = useMiniAppsStore();
   const [showCreate, setShowCreate] = useState(false);
@@ -33,7 +35,7 @@ export default function MiniAppsScreen() {
 
   const handleCreate = async () => {
     if (!name.trim() || !url.trim() || !user?.id) {
-      Alert.alert('Ошибка', 'Заполните название и URL');
+      Alert.alert(t('common.error'), t('mini_apps.error.fill_fields'));
       return;
     }
     setCreating(true);
@@ -49,8 +51,8 @@ export default function MiniAppsScreen() {
         url: url.trim().startsWith('http') ? url.trim() : `https://${url.trim()}`,
       });
       setCreating(false);
-      if (error) { Alert.alert('Ошибка', error); return; }
-      showToast('Сохранено', 'check');
+      if (error) { Alert.alert(t('common.error'), error); return; }
+      showToast(t('toast.saved'), 'check');
     } else {
       const { error } = await createApp({
         creator_id: user.id,
@@ -60,8 +62,8 @@ export default function MiniAppsScreen() {
         url: url.trim().startsWith('http') ? url.trim() : `https://${url.trim()}`,
       });
       setCreating(false);
-      if (error) { Alert.alert('Ошибка', error); return; }
-      showToast('Создано', 'check');
+      if (error) { Alert.alert(t('common.error'), error); return; }
+      showToast(t('mini_apps.toast.created'), 'check');
     }
     resetForm();
   };
@@ -80,9 +82,9 @@ export default function MiniAppsScreen() {
   };
 
   const handleDelete = (app: MiniApp) => {
-    Alert.alert('Удалить?', app.name, [
-      { text: 'Отмена', style: 'cancel' },
-      { text: 'Удалить', style: 'destructive', onPress: () => { deleteApp(app.id); showToast('Удалено', 'trash-2'); } },
+    Alert.alert(t('mini_apps.delete_title'), app.name, [
+      { text: t('common.cancel'), style: 'cancel' },
+      { text: t('common.delete'), style: 'destructive', onPress: () => { deleteApp(app.id); showToast(t('mini_apps.toast.deleted'), 'trash-2'); } },
     ]);
   };
 
@@ -102,7 +104,7 @@ export default function MiniAppsScreen() {
               <Feather name="chevron-left" size={18} color="#FFFFFF" />
             </BlurView>
           </Pressable>
-          <Text variant="body" weight="bold">Мини-приложения</Text>
+          <Text variant="body" weight="bold">{t('mini_apps.title')}</Text>
           <Pressable onPress={() => { if (showCreate) resetForm(); else setShowCreate(true); }} style={{ borderRadius: 17, overflow: 'hidden' }}>
             <BlurView intensity={80} tint="dark" style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center' }}>
               <Feather name={showCreate ? 'x' : 'plus'} size={18} color="#FFFFFF" />
@@ -118,12 +120,12 @@ export default function MiniAppsScreen() {
             <Pressable onPress={() => { const emojis = ['🎮', '🛒', '📊', '🎵', '📝', '🔧', '🌐', '💬', '📸', '🎯', '🏠', '💰', '🎬', '📱', '🔍']; setEmoji(emojis[Math.floor(Math.random() * emojis.length)]); }} style={{ width: 48, height: 48, borderRadius: 14, backgroundColor: theme.colors.background.elevated, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: theme.colors.border.light, overflow: 'visible' }}>
               <RNText style={{ fontSize: 24 }} allowFontScaling={false}>{emoji}</RNText>
             </Pressable>
-            <TextInput value={name} onChangeText={setName} placeholder="Название" placeholderTextColor={theme.colors.text.tertiary} style={{ flex: 1, backgroundColor: theme.colors.background.elevated, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: theme.colors.text.primary, borderWidth: 1, borderColor: theme.colors.border.light }} />
+            <TextInput value={name} onChangeText={setName} placeholder={t('mini_apps.name_placeholder')} placeholderTextColor={theme.colors.text.tertiary} style={{ flex: 1, backgroundColor: theme.colors.background.elevated, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: theme.colors.text.primary, borderWidth: 1, borderColor: theme.colors.border.light }} />
           </View>
-          <TextInput value={description} onChangeText={setDescription} placeholder="Описание (необязательно)" placeholderTextColor={theme.colors.text.tertiary} style={{ backgroundColor: theme.colors.background.elevated, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: theme.colors.text.primary, marginBottom: 8, borderWidth: 1, borderColor: theme.colors.border.light }} />
+          <TextInput value={description} onChangeText={setDescription} placeholder={t('mini_apps.description_placeholder')} placeholderTextColor={theme.colors.text.tertiary} style={{ backgroundColor: theme.colors.background.elevated, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: theme.colors.text.primary, marginBottom: 8, borderWidth: 1, borderColor: theme.colors.border.light }} />
           <TextInput value={url} onChangeText={setUrl} placeholder="https://..." placeholderTextColor={theme.colors.text.tertiary} autoCapitalize="none" keyboardType="url" style={{ backgroundColor: theme.colors.background.elevated, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: theme.colors.text.primary, marginBottom: 12, borderWidth: 1, borderColor: theme.colors.border.light }} />
           <Pressable onPress={handleCreate} disabled={creating} style={{ backgroundColor: theme.colors.accent.primary, borderRadius: 12, paddingVertical: 12, alignItems: 'center', opacity: creating ? 0.6 : 1 }}>
-            <Text variant="body" weight="semibold" color="#FFFFFF">{creating ? 'Сохранение...' : (editingApp ? 'Сохранить' : 'Создать')}</Text>
+            <Text variant="body" weight="semibold" color="#FFFFFF">{creating ? t('mini_apps.saving') : (editingApp ? t('common.save') : t('mini_apps.create'))}</Text>
           </Pressable>
         </View>
       )}
@@ -141,8 +143,8 @@ export default function MiniAppsScreen() {
           ListEmptyComponent={
             <View style={{ alignItems: 'center', paddingTop: 60 }}>
               <RNText style={{ fontSize: 40 }} allowFontScaling={false}>🎮</RNText>
-              <Text variant="body" color={theme.colors.text.tertiary} style={{ marginTop: 12 }}>Нет мини-приложений</Text>
-              <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginTop: 4 }}>Нажмите + чтобы создать</Text>
+              <Text variant="body" color={theme.colors.text.tertiary} style={{ marginTop: 12 }}>{t('mini_apps.empty')}</Text>
+              <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginTop: 4 }}>{t('mini_apps.empty_hint')}</Text>
             </View>
           }
           renderItem={({ item }) => (

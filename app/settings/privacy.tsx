@@ -5,6 +5,7 @@ import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
+import { useI18nStore } from '../../src/i18n/store';
 
 // Bilingual privacy policy. The canonical version is English (this is what
 // the App Store reviewer will read) and a Russian translation sits next to
@@ -98,7 +99,8 @@ const SECTIONS: Section[] = [
 export default function PrivacyPolicyScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
-  const [lang, setLang] = useState<Lang>('ru');
+  const appLocale = useI18nStore((s) => s.locale);
+  const [lang, setLang] = useState<Lang>(appLocale === 'en' ? 'en' : 'ru');
   const tapCount = useRef(0);
   const lastTap = useRef(0);
 

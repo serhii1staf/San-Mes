@@ -7,10 +7,12 @@ import * as Clipboard from 'expo-clipboard';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
 import { useAuthStore } from '../../src/store';
+import { useT } from '../../src/i18n/store';
 
 export default function DeviceKeyScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const t = useT();
   const { user } = useAuthStore();
   const [copied, setCopied] = useState(false);
 
@@ -49,7 +51,7 @@ export default function DeviceKeyScreen() {
         >
           <Feather name="chevron-left" size={24} color={theme.colors.text.primary} />
         </Pressable>
-        <Text variant="subheading" weight="bold">Устройства</Text>
+        <Text variant="subheading" weight="bold">{t('device_key.title')}</Text>
       </View>
 
       <View style={{ paddingHorizontal: 24, alignItems: 'center', marginTop: 32 }}>
@@ -66,10 +68,10 @@ export default function DeviceKeyScreen() {
         </View>
 
         <Text variant="body" weight="semibold" align="center" style={{ marginBottom: 8 }}>
-          Ключ для входа на другом устройстве
+          {t('device_key.subtitle')}
         </Text>
         <Text variant="caption" color={theme.colors.text.secondary} align="center" style={{ marginBottom: 32, paddingHorizontal: 16 }}>
-          Используй этот ключ и свой 4-значный код для входа на новом устройстве
+          {t('device_key.description')}
         </Text>
 
         {/* Device key display */}
@@ -85,7 +87,7 @@ export default function DeviceKeyScreen() {
           borderColor: theme.colors.border.light,
         }}>
           <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginBottom: 8 }}>
-            Твой ключ
+            {t('device_key.your_key')}
           </Text>
           <Text
             variant="heading"
@@ -110,7 +112,7 @@ export default function DeviceKeyScreen() {
           }}
         >
           <Text variant="body" weight="semibold" color={theme.colors.text.inverse}>
-            {copied ? 'Скопировано!' : 'Скопировать'}
+            {copied ? t('device_key.copied') : t('common.copy')}
           </Text>
         </Pressable>
 
@@ -135,9 +137,9 @@ export default function DeviceKeyScreen() {
             <Feather name="lock" size={18} color={theme.colors.accent.primary} />
           </View>
           <View style={{ flex: 1 }}>
-            <Text variant="caption" weight="semibold">Не забудь свой код</Text>
+            <Text variant="caption" weight="semibold">{t('device_key.dont_forget')}</Text>
             <Text variant="caption" color={theme.colors.text.tertiary}>
-              Для входа нужен ключ + 4-значный PIN
+              {t('device_key.reminder')}
             </Text>
           </View>
         </View>

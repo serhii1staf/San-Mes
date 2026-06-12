@@ -10,6 +10,7 @@ import { showToast } from '../../src/store/toastStore';
 import { reloadWidgetNow, isWidgetAvailable } from '../../src/services/widgetBridge';
 import { useWidgetSettingsStore, WidgetContent } from '../../src/store/widgetSettingsStore';
 import { triggerHaptic } from '../../src/utils/haptics';
+import { useT } from '../../src/i18n/store';
 
 function Step({ index, text, theme }: { index: number; text: string; theme: any }) {
   return (
@@ -25,27 +26,28 @@ function Step({ index, text, theme }: { index: number; text: string; theme: any 
 export default function WidgetScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const t = useT();
   const { postCount, content, setPostCount, setContent } = useWidgetSettingsStore();
   const [refreshing, setRefreshing] = useState(false);
 
   const handleRefresh = () => {
     triggerHaptic('light');
     if (!isWidgetAvailable()) {
-      showToast('Виджет доступен после установки на главный экран', 'info');
+      showToast(t('widget_settings.toast.unavailable'), 'info');
       return;
     }
     setRefreshing(true);
     reloadWidgetNow();
     setTimeout(() => {
       setRefreshing(false);
-      showToast('Виджет обновлён', 'check');
+      showToast(t('widget_settings.toast.refreshed'), 'check');
     }, 600);
   };
 
   const countOptions = [1, 2, 3, 4];
   const contentOptions: { key: WidgetContent; label: string }[] = [
-    { key: 'feed', label: 'Последние посты' },
-    { key: 'following', label: 'Только подписки' },
+    { key: 'feed', label: t('widget_settings.content.feed') },
+    { key: 'following', label: t('widget_settings.content.following') },
   ];
 
   const cardStyle = {
@@ -86,29 +88,29 @@ export default function WidgetScreen() {
           <Pressable onPress={() => router.back()} hitSlop={8} style={{ position: 'absolute', left: 20, top: insets.top + 8 }}>
             <Feather name="chevron-left" size={24} color={theme.colors.text.primary} />
           </Pressable>
-          <Text variant="subheading" weight="bold">Виджет</Text>
+          <Text variant="subheading" weight="bold">{t('widget_settings.title')}</Text>
         </View>
       </View>
 
       <ScrollView contentContainerStyle={{ padding: 16, paddingTop: headerContentHeight, paddingBottom: insets.bottom + 32 }} showsVerticalScrollIndicator={false}>
         {/* How to add */}
         <View style={cardStyle}>
-          <Text variant="body" weight="bold" style={{ marginBottom: 14 }}>Как добавить виджет на главный экран</Text>
-          <Step index={1} text="Задержите палец на пустом месте главного экрана, пока иконки не задрожат." theme={theme} />
-          <Step index={2} text="Нажмите «+» в левом верхнем углу экрана." theme={theme} />
-          <Step index={3} text="Найдите в списке «San» и выберите его." theme={theme} />
-          <Step index={4} text="Выберите размер виджета и нажмите «Добавить виджет»." theme={theme} />
+          <Text variant="body" weight="bold" style={{ marginBottom: 14 }}>{t('widget_settings.how_title')}</Text>
+          <Step index={1} text={t('widget_settings.step1')} theme={theme} />
+          <Step index={2} text={t('widget_settings.step2')} theme={theme} />
+          <Step index={3} text={t('widget_settings.step3')} theme={theme} />
+          <Step index={4} text={t('widget_settings.step4')} theme={theme} />
           <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, backgroundColor: theme.colors.accent.primary + '12', borderRadius: 12, padding: 12 }}>
             <Feather name="info" size={16} color={theme.colors.accent.primary} style={{ marginRight: 10 }} />
             <Text variant="caption" color={theme.colors.text.secondary} style={{ flex: 1, lineHeight: 18 }}>
-              iOS не позволяет приложениям добавлять виджеты автоматически — это делается вручную через систему.
+              {t('widget_settings.note_ios')}
             </Text>
           </View>
         </View>
 
         {/* Content options */}
         <View style={cardStyle}>
-          <Text variant="body" weight="bold" style={{ marginBottom: 12 }}>Что показывать</Text>
+          <Text variant="body" weight="bold" style={{ marginBottom: 12 }}>{t('widget_settings.what_show')}</Text>
           {contentOptions.map((opt) => {
             const active = content === opt.key;
             return (
@@ -128,7 +130,7 @@ export default function WidgetScreen() {
 
         {/* Post count */}
         <View style={cardStyle}>
-          <Text variant="body" weight="bold" style={{ marginBottom: 12 }}>Сколько постов</Text>
+          <Text variant="body" weight="bold" style={{ marginBottom: 12 }}>{t('widget_settings.how_many')}</Text>
           <View style={{ flexDirection: 'row', gap: 10 }}>
             {countOptions.map((n) => {
               const active = postCount === n;
@@ -144,7 +146,7 @@ export default function WidgetScreen() {
             })}
           </View>
           <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginTop: 10 }}>
-            Маленький виджет всегда показывает 1 пост, средний — 2, большой — до 4.
+            {t('widget_settings.size_hint')}
           </Text>
         </View>
 
@@ -155,12 +157,12 @@ export default function WidgetScreen() {
           style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.accent.primary, borderRadius: 14, paddingVertical: 15, opacity: refreshing ? 0.6 : 1 }}
         >
           <Feather name="refresh-cw" size={16} color="#FFF" style={{ marginRight: 8 }} />
-          <Text variant="body" weight="semibold" color="#FFF">{refreshing ? 'Обновление...' : 'Обновить виджет сейчас'}</Text>
+          <Text variant="body" weight="semibold" color="#FFF">{refreshing ? t('widget_settings.refreshing') : t('widget_settings.refresh_now')}</Text>
         </Pressable>
 
         {Platform.OS !== 'ios' && (
           <Text variant="caption" color={theme.colors.text.tertiary} align="center" style={{ marginTop: 14 }}>
-            Виджеты на главный экран доступны только на iOS.
+            {t('widget_settings.android_note')}
           </Text>
         )}
       </ScrollView>

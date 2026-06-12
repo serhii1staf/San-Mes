@@ -10,9 +10,11 @@ import { Text, Avatar } from '../../src/components/ui';
 import { useChatSettingsStore, GLOBAL_CHAT_SETTINGS_KEY } from '../../src/store/chatSettingsStore';
 import { useEntityStore } from '../../src/store';
 import { showToast } from '../../src/store/toastStore';
+import { useT } from '../../src/i18n/store';
 
 function ChatPreview({ fontSize, bubbleRadius, fontFamily, backgroundImage }: { fontSize: number; bubbleRadius: number; fontFamily: string; backgroundImage?: string }) {
   const theme = useTheme();
+  const t = useT();
   const fontFamilyStyle = fontFamily === 'mono' ? 'monospace' : fontFamily === 'serif' ? 'serif' : undefined;
 
   const content = (
@@ -20,21 +22,21 @@ function ChatPreview({ fontSize, bubbleRadius, fontFamily, backgroundImage }: { 
       {/* Incoming message */}
       <View style={{ alignSelf: 'flex-start', maxWidth: '75%', marginBottom: 8 }}>
         <View style={{ backgroundColor: theme.colors.background.tertiary, paddingHorizontal: 14, paddingVertical: 10, borderRadius: bubbleRadius, borderBottomLeftRadius: 4 }}>
-          <Text variant="body" style={{ fontSize, fontFamily: fontFamilyStyle }}>Привет! Как дела? 😊</Text>
+          <Text variant="body" style={{ fontSize, fontFamily: fontFamilyStyle }}>{t('chat_settings.preview.msg1')}</Text>
           <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 10, marginTop: 3, alignSelf: 'flex-end' }}>12:30</Text>
         </View>
       </View>
       {/* Outgoing message */}
       <View style={{ alignSelf: 'flex-end', maxWidth: '75%', marginBottom: 8 }}>
         <View style={{ backgroundColor: theme.colors.accent.primary, paddingHorizontal: 14, paddingVertical: 10, borderRadius: bubbleRadius, borderBottomRightRadius: 4 }}>
-          <Text variant="body" color="#FFFFFF" style={{ fontSize, fontFamily: fontFamilyStyle }}>Всё отлично, спасибо!</Text>
+          <Text variant="body" color="#FFFFFF" style={{ fontSize, fontFamily: fontFamilyStyle }}>{t('chat_settings.preview.msg2')}</Text>
           <Text variant="caption" color="rgba(255,255,255,0.6)" style={{ fontSize: 10, marginTop: 3, alignSelf: 'flex-end' }}>12:31</Text>
         </View>
       </View>
       {/* Another incoming */}
       <View style={{ alignSelf: 'flex-start', maxWidth: '75%' }}>
         <View style={{ backgroundColor: theme.colors.background.tertiary, paddingHorizontal: 14, paddingVertical: 10, borderRadius: bubbleRadius, borderBottomLeftRadius: 4 }}>
-          <Text variant="body" style={{ fontSize, fontFamily: fontFamilyStyle }}>Давай встретимся завтра?</Text>
+          <Text variant="body" style={{ fontSize, fontFamily: fontFamilyStyle }}>{t('chat_settings.preview.msg3')}</Text>
           <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 10, marginTop: 3, alignSelf: 'flex-end' }}>12:32</Text>
         </View>
       </View>
@@ -55,6 +57,7 @@ function ChatPreview({ fontSize, bubbleRadius, fontFamily, backgroundImage }: { 
 export default function ChatSettingsScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const t = useT();
   const { id } = useLocalSearchParams<{ id: string }>();
   const chatId = id || '';
   const { getSettings, updateSettings } = useChatSettingsStore();
@@ -70,7 +73,7 @@ export default function ChatSettingsScreen() {
   const conversations = useEntityStore((s) => s.conversations);
   const conv = conversations.find(c => c.id === chatId);
   const isGlobal = chatId === GLOBAL_CHAT_SETTINGS_KEY;
-  const participantName = isGlobal ? 'Все чаты' : (conv?.participantName || 'Чат');
+  const participantName = isGlobal ? t('chat_settings.all_chats') : (conv?.participantName || t('chat.fallback_name'));
   const participantEmoji = isGlobal ? '💬' : (conv?.participantEmoji || '😊');
 
   const pickBackground = async () => {
@@ -79,13 +82,13 @@ export default function ChatSettingsScreen() {
       const uri = result.assets[0].uri;
       setBackgroundImage(uri);
       updateSettings(chatId, { backgroundImage: uri });
-      showToast('Фон установлен', 'check');
+      showToast(t('chat_settings.toast.bg_set'), 'check');
     }
   };
 
   const save = () => {
     updateSettings(chatId, { localName: localName.trim() || undefined, fontSize, bubbleRadius, fontFamily, backgroundImage, linkEmoji });
-    showToast('Сохранено', 'check');
+    showToast(t('toast.saved'), 'check');
     router.back();
   };
 
@@ -103,7 +106,7 @@ export default function ChatSettingsScreen() {
               <Text variant="body" weight="bold">{participantName}</Text>
             </View>
             <Pressable onPress={save} hitSlop={8}>
-              <Text variant="body" weight="semibold" color={theme.colors.accent.primary}>Готово</Text>
+              <Text variant="body" weight="semibold" color={theme.colors.accent.primary}>{t('common.done')}</Text>
             </Pressable>
           </View>
         </BlurView>
@@ -128,18 +131,18 @@ export default function ChatSettingsScreen() {
               <View style={[styles.iconCircle, { backgroundColor: theme.colors.accent.primary + '15' }]}>
                 <Feather name="image" size={16} color={theme.colors.accent.primary} />
               </View>
-              <Text variant="body" style={{ flex: 1 }}>Фон чата</Text>
+              <Text variant="body" style={{ flex: 1 }}>{t('chat_settings.background')}</Text>
               {backgroundImage && <Feather name="check-circle" size={16} color={theme.colors.accent.primary} />}
               <Feather name="chevron-right" size={16} color={theme.colors.text.tertiary} style={{ marginLeft: 8 }} />
             </Pressable>
             {backgroundImage && (
               <>
                 <View style={{ height: 0.5, backgroundColor: theme.colors.border.light, marginLeft: 52 }} />
-                <Pressable onPress={() => { setBackgroundImage(undefined); updateSettings(chatId, { backgroundImage: undefined }); showToast('Фон убран', 'check'); }} style={styles.row}>
+                <Pressable onPress={() => { setBackgroundImage(undefined); updateSettings(chatId, { backgroundImage: undefined }); showToast(t('chat_settings.toast.bg_removed'), 'check'); }} style={styles.row}>
                   <View style={[styles.iconCircle, { backgroundColor: '#FF3B3015' }]}>
                     <Feather name="x" size={16} color="#FF3B30" />
                   </View>
-                  <Text variant="body" color="#FF3B30">Убрать фон</Text>
+                  <Text variant="body" color="#FF3B30">{t('chat_settings.remove_background')}</Text>
                 </Pressable>
               </>
             )}
@@ -155,7 +158,7 @@ export default function ChatSettingsScreen() {
               <TextInput
                 value={localName}
                 onChangeText={setLocalName}
-                placeholder="Локальное имя"
+                placeholder={t('chat_settings.local_name')}
                 placeholderTextColor={theme.colors.text.tertiary}
                 style={{ flex: 1, fontSize: 15, color: theme.colors.text.primary, paddingVertical: 4 }}
               />
@@ -170,7 +173,7 @@ export default function ChatSettingsScreen() {
                 <View style={[styles.iconCircle, { backgroundColor: theme.colors.accent.primary + '15' }]}>
                   <Feather name="type" size={16} color={theme.colors.accent.primary} />
                 </View>
-                <Text variant="body" style={{ flex: 1 }}>Размер шрифта</Text>
+                <Text variant="body" style={{ flex: 1 }}>{t('chat_settings.font_size')}</Text>
                 <Text variant="caption" weight="bold" color={theme.colors.accent.primary}>{fontSize}</Text>
               </View>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
@@ -194,7 +197,7 @@ export default function ChatSettingsScreen() {
                 <View style={[styles.iconCircle, { backgroundColor: theme.colors.accent.primary + '15' }]}>
                   <Feather name="message-circle" size={16} color={theme.colors.accent.primary} />
                 </View>
-                <Text variant="body" style={{ flex: 1 }}>Округление</Text>
+                <Text variant="body" style={{ flex: 1 }}>{t('chat_settings.bubble_radius')}</Text>
                 <Text variant="caption" weight="bold" color={theme.colors.accent.primary}>{bubbleRadius}</Text>
               </View>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
@@ -218,7 +221,7 @@ export default function ChatSettingsScreen() {
                 <View style={[styles.iconCircle, { backgroundColor: theme.colors.accent.primary + '15' }]}>
                   <Feather name="smile" size={16} color={theme.colors.accent.primary} />
                 </View>
-                <Text variant="body" style={{ flex: 1 }}>Эмодзи в превью ссылок</Text>
+                <Text variant="body" style={{ flex: 1 }}>{t('chat_settings.link_emoji')}</Text>
                 {linkEmoji ? <Text style={{ fontSize: 20, lineHeight: 26 }} allowFontScaling={false}>{linkEmoji}</Text> : null}
               </View>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingVertical: 2 }}>

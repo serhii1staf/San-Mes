@@ -8,6 +8,7 @@ import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { kvAllEntries, kvDeleteRawKeys } from '../../src/services/kvStore';
+import { t as tStatic, useT } from '../../src/i18n/store';
 
 // Storage screen — instead of a Telegram-style donut chart we render an
 // "orbit" of category emojis around a soft accent halo. Each emoji's size
@@ -32,12 +33,12 @@ interface Category {
 
 // Order matters: first match wins. "Прочее" is the catch-all and lives last.
 const CATEGORY_DEFS: Category[] = [
-  { id: 'feed',          label: 'Лента',        color: '#F4B547', emoji: '📰', match: (k) => /feed_posts|@san:feed|posts_cache|user_posts/.test(k) },
-  { id: 'chats',         label: 'Чаты',         color: '#4C8DF6', emoji: '💬', match: (k) => /chat|message|conversation|chat_settings/.test(k) },
-  { id: 'music',         label: 'Музыка',       color: '#E5535B', emoji: '🎵', match: (k) => /music_search|music_chat_history|music_/.test(k) },
-  { id: 'profiles',      label: 'Профили',      color: '#9B6DDF', emoji: '👤', match: (k) => /profile|user_/.test(k) },
-  { id: 'notifications', label: 'Уведомления',  color: '#F08A3E', emoji: '🔔', match: (k) => /notifications|notif/.test(k) },
-  { id: 'misc',          label: 'Прочее',       color: '#7A8190', emoji: '✨', match: () => true },
+  { id: 'feed',          label: 'storage.cat.feed',          color: '#F4B547', emoji: '📰', match: (k) => /feed_posts|@san:feed|posts_cache|user_posts/.test(k) },
+  { id: 'chats',         label: 'storage.cat.chats',         color: '#4C8DF6', emoji: '💬', match: (k) => /chat|message|conversation|chat_settings/.test(k) },
+  { id: 'music',         label: 'storage.cat.music',         color: '#E5535B', emoji: '🎵', match: (k) => /music_search|music_chat_history|music_/.test(k) },
+  { id: 'profiles',      label: 'storage.cat.profiles',      color: '#9B6DDF', emoji: '👤', match: (k) => /profile|user_/.test(k) },
+  { id: 'notifications', label: 'storage.cat.notifications', color: '#F08A3E', emoji: '🔔', match: (k) => /notifications|notif/.test(k) },
+  { id: 'misc',          label: 'storage.cat.misc',          color: '#7A8190', emoji: '✨', match: () => true },
 ];
 
 interface CategoryUsage {
@@ -61,11 +62,11 @@ function bucketEntries(entries: Array<{ key: string; bytes: number }>): Category
 }
 
 function formatBytes(bytes: number): string {
-  if (bytes <= 0) return '0 КБ';
-  if (bytes < 1024) return `${bytes} Б`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} КБ`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} МБ`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} ГБ`;
+  if (bytes <= 0) return `0 ${tStatic('storage.unit.kb')}`;
+  if (bytes < 1024) return `${bytes} ${tStatic('storage.unit.b')}`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} ${tStatic('storage.unit.kb')}`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} ${tStatic('storage.unit.mb')}`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} ${tStatic('storage.unit.gb')}`;
 }
 
 // ─── Orbit visual ──────────────────────────────────────────────────────────
@@ -88,13 +89,14 @@ interface OrbitProps {
   haloAccent: string;
   centerTextColor: string;
   centerSubColor: string;
+  caption: string;
 }
 
 const ORBIT_DIAMETER_RATIO = 0.78; // orbit ring diameter relative to outer container
 const EMOJI_BASE = 22;             // px font-size for the smallest visible emoji
 const EMOJI_RANGE = 22;             // additional px gained at 100% category share
 
-function Orbit({ buckets, total, totalLabel, size, haloColor, haloAccent, centerTextColor, centerSubColor }: OrbitProps) {
+function Orbit({ buckets, total, totalLabel, size, haloColor, haloAccent, centerTextColor, centerSubColor, caption }: OrbitProps) {
   const rot = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     // Slow continuous rotation (~30 s per full revolution). Native driver
@@ -161,7 +163,7 @@ function Orbit({ buckets, total, totalLabel, size, haloColor, haloAccent, center
       {/* Center label — total + a small caption underneath. */}
       <View style={{ position: 'absolute', alignItems: 'center', justifyContent: 'center', paddingTop: 4 }} pointerEvents="none">
         <Text variant="subheading" weight="bold" color={centerTextColor} style={{ fontSize: 24, lineHeight: 30 }}>{totalLabel}</Text>
-        <Text variant="caption" color={centerSubColor} style={{ fontSize: 11, marginTop: 2 }}>локальный кэш</Text>
+        <Text variant="caption" color={centerSubColor} style={{ fontSize: 11, marginTop: 2 }}>{caption}</Text>
       </View>
     </View>
   );
@@ -170,6 +172,7 @@ function Orbit({ buckets, total, totalLabel, size, haloColor, haloAccent, center
 export default function StorageScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const t = useT();
   const [entries, setEntries] = useState<Array<{ key: string; bytes: number }>>([]);
   const [loading, setLoading] = useState(true);
   const [isClearing, setIsClearing] = useState(false);
@@ -207,12 +210,12 @@ export default function StorageScreen() {
     if (selectedTotal <= 0 || isClearing) return;
     triggerHaptic('medium');
     Alert.alert(
-      'Очистить кэш?',
-      'Локальные данные выбранных категорий будут удалены. Они снова появятся при следующем открытии соответствующих экранов.',
+      t('storage.confirm_title'),
+      t('storage.confirm_msg'),
       [
-        { text: 'Отмена', style: 'cancel' },
+        { text: t('common.cancel'), style: 'cancel' },
         {
-          text: 'Очистить', style: 'destructive', onPress: async () => {
+          text: t('storage.clear'), style: 'destructive', onPress: async () => {
             setIsClearing(true);
             try {
               const keysToDelete: string[] = [];
@@ -230,7 +233,7 @@ export default function StorageScreen() {
 
   const containerStyle: ViewStyle = { flex: 1, backgroundColor: theme.colors.background.primary };
   const cardBg = theme.colors.background.elevated;
-  const totalLabel = total > 0 ? formatBytes(total).replace(/\s+/g, ' ') : '0 КБ';
+  const totalLabel = total > 0 ? formatBytes(total).replace(/\s+/g, ' ') : `0 ${t('storage.unit.kb')}`;
 
   return (
     <View style={containerStyle}>
@@ -244,7 +247,7 @@ export default function StorageScreen() {
           <Pressable onPress={() => router.back()} hitSlop={8}>
             <Feather name="chevron-left" size={24} color={theme.colors.text.primary} />
           </Pressable>
-          <Text variant="body" weight="bold" style={{ fontSize: 17 }}>Данные и память</Text>
+          <Text variant="body" weight="bold" style={{ fontSize: 17 }}>{t('storage.title')}</Text>
         </View>
       </View>
 
@@ -263,10 +266,11 @@ export default function StorageScreen() {
             haloAccent={theme.colors.accent.primary + '22'}
             centerTextColor={theme.colors.text.primary}
             centerSubColor={theme.colors.text.tertiary}
+            caption={t('storage.local_cache')}
           />
-          <Text variant="subheading" weight="bold" style={{ fontSize: 22, marginTop: 18 }}>Использование памяти</Text>
+          <Text variant="subheading" weight="bold" style={{ fontSize: 22, marginTop: 18 }}>{t('storage.usage_title')}</Text>
           <Text variant="caption" color={theme.colors.text.tertiary} align="center" style={{ paddingHorizontal: 32, marginTop: 6, fontSize: 13, lineHeight: 18 }}>
-            San хранит локально {formatBytes(total)} данных. Их можно безопасно очистить — приложение восстановит нужное при следующем открытии.
+            {t('storage.usage_caption', undefined, { bytes: formatBytes(total) })}
           </Text>
         </View>
 
@@ -298,7 +302,7 @@ export default function StorageScreen() {
                   {checked && <Feather name="check" size={13} color="#FFFFFF" />}
                 </View>
                 <Text style={{ fontSize: 16, marginRight: 8 }} allowFontScaling={false}>{b.def.emoji}</Text>
-                <Text variant="body" weight="semibold" style={{ fontSize: 15 }}>{b.def.label}</Text>
+                <Text variant="body" weight="semibold" style={{ fontSize: 15 }}>{t(b.def.label)}</Text>
                 <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginLeft: 6, fontSize: 13 }}>{pct}%</Text>
                 <View style={{ flex: 1 }} />
                 <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 13 }}>{formatBytes(b.bytes)}</Text>
@@ -321,11 +325,11 @@ export default function StorageScreen() {
             }}
           >
             <Text variant="body" weight="bold" color="#FFFFFF" style={{ fontSize: 15 }}>
-              {isClearing ? 'Очищаем…' : `Очистить выбранное · ${formatBytes(selectedTotal)}`}
+              {isClearing ? t('storage.clearing') : t('storage.clear_selected', undefined, { size: formatBytes(selectedTotal) })}
             </Text>
           </Pressable>
           <Text variant="caption" align="center" color={theme.colors.text.tertiary} style={{ marginTop: 12, paddingHorizontal: 16, fontSize: 12, lineHeight: 17 }}>
-            Все ваши посты, сообщения и медиа остаются на серверах San. Локальный кэш — это просто копия для скорости и работы без интернета.
+            {t('storage.footer')}
           </Text>
         </View>
       </ScrollView>

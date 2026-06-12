@@ -11,6 +11,7 @@ import { supabase, parseImageUrls, adminDeletePost } from '../../src/lib/supabas
 import { useFeedStore } from '../../src/store/feedStore';
 import { accountKey } from '../../src/services/cacheService';
 import { formatTimeAgo } from '../../src/utils/mockData';
+import { t as tStatic, useT, useI18nStore } from '../../src/i18n/store';
 
 const ADMIN_PASSWORD = 'V7k!Qm9@Lp2#xR8$Tw6ZcD4%yN';
 const STATUS_ENDPOINT = 'https://san-m-app.com/api/admin/status';
@@ -39,17 +40,18 @@ interface StatusResponse {
 }
 
 const BADGES = [
-  { key: 'developer', label: 'Разработчик', color: '#6366F1', icon: 'code' },
-  { key: 'admin', label: 'Администратор', color: '#EF4444', icon: 'shield' },
-  { key: 'moderator', label: 'Модератор', color: '#F59E0B', icon: 'eye' },
-  { key: 'verified', label: 'Верифицирован', color: '#10B981', icon: 'check-circle' },
-  { key: 'vip', label: 'VIP', color: '#8B5CF6', icon: 'star' },
-  { key: 'creator', label: 'Создатель контента', color: '#EC4899', icon: 'film' },
+  { key: 'developer', label: 'admin.badge.developer', color: '#6366F1', icon: 'code' },
+  { key: 'admin', label: 'admin.badge.admin', color: '#EF4444', icon: 'shield' },
+  { key: 'moderator', label: 'admin.badge.moderator', color: '#F59E0B', icon: 'eye' },
+  { key: 'verified', label: 'admin.badge.verified', color: '#10B981', icon: 'check-circle' },
+  { key: 'vip', label: 'admin.badge.vip', color: '#8B5CF6', icon: 'star' },
+  { key: 'creator', label: 'admin.badge.creator', color: '#EC4899', icon: 'film' },
 ];
 
 export default function AdminScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const t = useT();
   const [authenticated, setAuthenticated] = useState(false);
   const [password, setPassword] = useState('');
   const [users, setUsers] = useState<any[]>([]);
@@ -74,11 +76,11 @@ export default function AdminScreen() {
         signal: controller.signal,
       });
       clearTimeout(timer);
-      if (!resp.ok) throw new Error('Сервер вернул ' + resp.status);
+      if (!resp.ok) throw new Error(tStatic('admin.error.server_returned', undefined, { code: String(resp.status) }));
       const json = (await resp.json()) as StatusResponse;
       setStatusData(json);
     } catch (e: any) {
-      setStatusError(e?.message || 'Не удалось загрузить статус');
+      setStatusError(e?.message || tStatic('admin.error.load_status'));
     } finally {
       setStatusLoading(false);
     }
@@ -94,7 +96,7 @@ export default function AdminScreen() {
       setAuthenticated(true);
       loadUsers();
     } else {
-      Alert.alert('Ошибка', 'Неверный пароль');
+      Alert.alert(t('common.error'), t('admin.error.wrong_password'));
     }
   };
 
@@ -118,13 +120,13 @@ export default function AdminScreen() {
   };
 
   const handleDeletePost = async (postId: string) => {
-    Alert.alert('Удалить пост?', 'Будет удалён с сервера, из кэшей и все связанные репосты', [
-      { text: 'Отмена', style: 'cancel' },
-      { text: 'Удалить', style: 'destructive', onPress: async () => {
+    Alert.alert(t('admin.delete_post_title'), t('admin.delete_post_msg'), [
+      { text: t('common.cancel'), style: 'cancel' },
+      { text: t('common.delete'), style: 'destructive', onPress: async () => {
         // Delete from server (+ images + reposts + likes + comments)
         const { error } = await adminDeletePost(postId);
         if (error) {
-          Alert.alert('Ошибка', error);
+          Alert.alert(t('common.error'), error);
           return;
         }
 
@@ -174,13 +176,13 @@ export default function AdminScreen() {
         </Pressable>
         <View style={{ alignItems: 'center', marginBottom: 32 }}>
           <Feather name="shield" size={40} color={theme.colors.accent.primary} />
-          <Text variant="subheading" weight="bold" style={{ marginTop: 12 }}>Панель управления</Text>
-          <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginTop: 4 }}>Введите пароль администратора</Text>
+          <Text variant="subheading" weight="bold" style={{ marginTop: 12 }}>{t('admin.title')}</Text>
+          <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginTop: 4 }}>{t('admin.password_subtitle')}</Text>
         </View>
         <TextInput
           value={password}
           onChangeText={setPassword}
-          placeholder="Пароль"
+          placeholder={t('admin.password_placeholder')}
           placeholderTextColor={theme.colors.text.tertiary}
           secureTextEntry
           autoFocus
@@ -198,7 +200,7 @@ export default function AdminScreen() {
           onSubmitEditing={handleLogin}
         />
         <Pressable onPress={handleLogin} style={{ backgroundColor: theme.colors.accent.primary, borderRadius: 14, paddingVertical: 14, alignItems: 'center' }}>
-          <Text variant="body" weight="semibold" color="#FFFFFF">Войти</Text>
+          <Text variant="body" weight="semibold" color="#FFFFFF">{t('auth.signin')}</Text>
         </Pressable>
       </View>
     );
@@ -224,17 +226,17 @@ export default function AdminScreen() {
           <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
             <Pressable onPress={() => handleToggleVerify(selectedUser.id, selectedUser.is_verified)} style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10, backgroundColor: selectedUser.is_verified ? '#10B98120' : theme.colors.background.secondary }}>
               <Feather name="check-circle" size={14} color={selectedUser.is_verified ? '#10B981' : theme.colors.text.tertiary} />
-              <Text variant="caption" color={selectedUser.is_verified ? '#10B981' : theme.colors.text.tertiary}>{selectedUser.is_verified ? 'Верифицирован' : 'Верифицировать'}</Text>
+              <Text variant="caption" color={selectedUser.is_verified ? '#10B981' : theme.colors.text.tertiary}>{selectedUser.is_verified ? t('admin.verified') : t('admin.verify')}</Text>
             </Pressable>
           </View>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
             <Pressable onPress={() => handleSetBadge(selectedUser.id, null)} style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10, backgroundColor: !selectedUser.badge ? theme.colors.accent.primary + '20' : theme.colors.background.secondary }}>
-              <Text variant="caption" color={!selectedUser.badge ? theme.colors.accent.primary : theme.colors.text.tertiary}>Без плашки</Text>
+              <Text variant="caption" color={!selectedUser.badge ? theme.colors.accent.primary : theme.colors.text.tertiary}>{t('admin.no_badge')}</Text>
             </Pressable>
             {BADGES.map(b => (
               <Pressable key={b.key} onPress={() => handleSetBadge(selectedUser.id, b.key)} style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10, backgroundColor: selectedUser.badge === b.key ? b.color + '20' : theme.colors.background.secondary }}>
                 <Feather name={b.icon as any} size={12} color={selectedUser.badge === b.key ? b.color : theme.colors.text.tertiary} />
-                <Text variant="caption" color={selectedUser.badge === b.key ? b.color : theme.colors.text.tertiary}>{b.label}</Text>
+                <Text variant="caption" color={selectedUser.badge === b.key ? b.color : theme.colors.text.tertiary}>{t(b.label)}</Text>
               </Pressable>
             ))}
           </ScrollView>
@@ -253,7 +255,7 @@ export default function AdminScreen() {
                   <View style={{ flexDirection: 'row', gap: 10 }}>
                     {imgs[0] && <CachedImage uri={imgs[0]} style={{ width: 50, height: 50, borderRadius: 10 }} resizeMode="cover" />}
                     <View style={{ flex: 1 }}>
-                      <Text variant="caption" numberOfLines={2} color={theme.colors.text.secondary}>{item.content || '(без текста)'}</Text>
+                      <Text variant="caption" numberOfLines={2} color={theme.colors.text.secondary}>{item.content || t('admin.no_text')}</Text>
                       <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 10, marginTop: 4 }}>{formatTimeAgo(item.created_at)}</Text>
                     </View>
                     <Pressable onPress={() => handleDeletePost(item.id)} style={{ padding: 6 }}>
@@ -263,7 +265,7 @@ export default function AdminScreen() {
                 </Pressable>
               );
             }}
-            ListEmptyComponent={<Text variant="caption" color={theme.colors.text.tertiary} align="center" style={{ marginTop: 40 }}>Нет публикаций</Text>}
+            ListEmptyComponent={<Text variant="caption" color={theme.colors.text.tertiary} align="center" style={{ marginTop: 40 }}>{t('admin.no_posts')}</Text>}
           />
         )}
 
@@ -272,7 +274,7 @@ export default function AdminScreen() {
           <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', paddingHorizontal: 16 }}>
             <View style={{ backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF', borderRadius: 24, padding: 20, maxHeight: '80%' }}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16 }}>
-                <Text variant="body" weight="semibold">Пост</Text>
+                <Text variant="body" weight="semibold">{t('admin.post')}</Text>
                 <Pressable onPress={() => setShowPostModal(false)}><Feather name="x" size={22} color={theme.colors.text.primary} /></Pressable>
               </View>
               {selectedPost && (
@@ -284,7 +286,7 @@ export default function AdminScreen() {
                     <CachedImage key={i} uri={uri} style={{ width: '100%', height: 200, borderRadius: 12, marginBottom: 8 }} resizeMode="cover" />
                   ))}
                   <Pressable onPress={() => handleDeletePost(selectedPost.id)} style={{ backgroundColor: '#FF3B3015', borderRadius: 14, paddingVertical: 14, alignItems: 'center', marginTop: 16 }}>
-                    <Text variant="body" weight="semibold" color="#FF3B30">Удалить пост</Text>
+                    <Text variant="body" weight="semibold" color="#FF3B30">{t('admin.delete_post_btn')}</Text>
                   </Pressable>
                 </ScrollView>
               )}
@@ -298,7 +300,7 @@ export default function AdminScreen() {
   // Services / Status view
   if (showStatus) {
     const dot = (s: string) => (s === 'online' ? '#10B981' : s === 'degraded' ? '#F59E0B' : '#EF4444');
-    const dotLabel = (s: string) => (s === 'online' ? 'Онлайн' : s === 'degraded' ? 'Сбои' : 'Недоступно');
+    const dotLabel = (s: string) => (s === 'online' ? t('admin.status.online') : s === 'degraded' ? t('admin.status.degraded') : t('admin.status.offline'));
     return (
       <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', paddingTop: insets.top + 8, paddingBottom: 12, paddingHorizontal: 16, gap: 12 }}>
@@ -306,7 +308,7 @@ export default function AdminScreen() {
             <Feather name="chevron-left" size={24} color={theme.colors.text.primary} />
           </Pressable>
           <Feather name="activity" size={20} color={theme.colors.accent.primary} />
-          <Text variant="body" weight="bold" style={{ flex: 1 }}>Сервисы и нагрузка</Text>
+          <Text variant="body" weight="bold" style={{ flex: 1 }}>{t('admin.services_title')}</Text>
           <Pressable onPress={loadStatus} hitSlop={8} style={{ padding: 4 }}>
             <Feather name="refresh-cw" size={18} color={theme.colors.text.secondary} />
           </Pressable>
@@ -319,13 +321,13 @@ export default function AdminScreen() {
             <Feather name="alert-triangle" size={28} color="#F59E0B" />
             <Text variant="body" color={theme.colors.text.secondary} align="center" style={{ marginTop: 12 }}>{statusError}</Text>
             <Pressable onPress={loadStatus} style={{ marginTop: 16, paddingHorizontal: 20, paddingVertical: 10, borderRadius: 12, backgroundColor: theme.colors.accent.primary }}>
-              <Text variant="caption" color="#FFFFFF" weight="semibold">Повторить</Text>
+              <Text variant="caption" color="#FFFFFF" weight="semibold">{t('common.retry')}</Text>
             </Pressable>
           </View>
         ) : statusData ? (
           <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
             {/* Services */}
-            <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginBottom: 8, marginTop: 4 }}>СЕРВИСЫ</Text>
+            <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginBottom: 8, marginTop: 4 }}>{t('admin.section.services')}</Text>
             {statusData.services.map((s) => (
               <View key={s.key} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 16, padding: 14, marginBottom: 8, borderWidth: 1, borderColor: theme.colors.border.light, gap: 12 }}>
                 <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: dot(s.status) }} />
@@ -335,7 +337,7 @@ export default function AdminScreen() {
                 </View>
                 <View style={{ alignItems: 'flex-end' }}>
                   <Text variant="caption" weight="semibold" color={dot(s.status)}>{dotLabel(s.status)}</Text>
-                  {s.latencyMs > 0 && <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 10, marginTop: 2 }}>{s.latencyMs} мс</Text>}
+                  {s.latencyMs > 0 && <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 10, marginTop: 2 }}>{s.latencyMs} {t('admin.unit.ms')}</Text>}
                 </View>
               </View>
             ))}
@@ -343,29 +345,29 @@ export default function AdminScreen() {
             {/* Usage bars */}
             {statusData.usage && statusData.usage.length > 0 && (
               <>
-                <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginBottom: 8, marginTop: 16 }}>НАГРУЗКА И МЕСТО</Text>
+                <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginBottom: 8, marginTop: 16 }}>{t('admin.section.usage')}</Text>
                 {statusData.usage.map((u) => (
-                  <UsageBar key={u.key} theme={theme} item={u} />
+                  <UsageBar key={u.key} theme={theme} item={u} t={t} />
                 ))}
               </>
             )}
 
             {/* Metrics */}
-            <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginBottom: 8, marginTop: 16 }}>БАЗА ДАННЫХ</Text>
+            <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginBottom: 8, marginTop: 16 }}>{t('admin.section.database')}</Text>
             <View style={{ flexDirection: 'row', gap: 8 }}>
-              <MetricCard theme={theme} label="Профили" value={statusData.metrics.profiles} />
-              <MetricCard theme={theme} label="Посты" value={statusData.metrics.posts} />
-              <MetricCard theme={theme} label="Комменты" value={statusData.metrics.comments} />
+              <MetricCard theme={theme} label={t('admin.metric.profiles')} value={statusData.metrics.profiles} />
+              <MetricCard theme={theme} label={t('admin.metric.posts')} value={statusData.metrics.posts} />
+              <MetricCard theme={theme} label={t('admin.metric.comments')} value={statusData.metrics.comments} />
             </View>
 
             <View style={{ marginTop: 16, backgroundColor: theme.colors.background.elevated, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: theme.colors.border.light }}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
-                <Text variant="caption" color={theme.colors.text.tertiary}>Задержка БД</Text>
-                <Text variant="caption" weight="semibold">{statusData.metrics.dbLatencyMs} мс</Text>
+                <Text variant="caption" color={theme.colors.text.tertiary}>{t('admin.metric.db_latency')}</Text>
+                <Text variant="caption" weight="semibold">{statusData.metrics.dbLatencyMs} {t('admin.unit.ms')}</Text>
               </View>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                <Text variant="caption" color={theme.colors.text.tertiary}>Обновлено</Text>
-                <Text variant="caption" weight="semibold">{new Date(statusData.generatedAt).toLocaleTimeString('ru-RU')}</Text>
+                <Text variant="caption" color={theme.colors.text.tertiary}>{t('admin.metric.updated')}</Text>
+                <Text variant="caption" weight="semibold">{new Date(statusData.generatedAt).toLocaleTimeString(useI18nStore.getState().locale === 'en' ? 'en-US' : 'ru-RU')}</Text>
               </View>
             </View>
           </ScrollView>
@@ -382,10 +384,10 @@ export default function AdminScreen() {
           <Feather name="chevron-left" size={24} color={theme.colors.text.primary} />
         </Pressable>
         <Feather name="shield" size={20} color={theme.colors.accent.primary} />
-        <Text variant="body" weight="bold" style={{ flex: 1 }}>Админ-панель</Text>
+        <Text variant="body" weight="bold" style={{ flex: 1 }}>{t('admin.panel_title')}</Text>
         <Pressable onPress={openStatus} hitSlop={8} style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10, backgroundColor: theme.colors.accent.primary + '18' }}>
           <Feather name="activity" size={14} color={theme.colors.accent.primary} />
-          <Text variant="caption" weight="semibold" color={theme.colors.accent.primary}>Сервисы</Text>
+          <Text variant="caption" weight="semibold" color={theme.colors.accent.primary}>{t('admin.services_btn')}</Text>
         </Pressable>
       </View>
 
@@ -406,7 +408,7 @@ export default function AdminScreen() {
                     {badge && (
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: badge.color + '20', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>
                         <Feather name={badge.icon as any} size={9} color={badge.color} />
-                        <Text style={{ fontSize: 9, color: badge.color, fontWeight: '600' }}>{badge.label}</Text>
+                        <Text style={{ fontSize: 9, color: badge.color, fontWeight: '600' }}>{t(badge.label)}</Text>
                       </View>
                     )}
                   </View>
@@ -432,13 +434,13 @@ function MetricCard({ theme, label, value }: { theme: any; label: string; value:
 }
 
 function formatBytes(n: number): string {
-  if (n < 1024) return `${n} Б`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} КБ`;
-  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} МБ`;
-  return `${(n / 1024 / 1024 / 1024).toFixed(2)} ГБ`;
+  if (n < 1024) return `${n} ${tStatic('storage.unit.b')}`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} ${tStatic('storage.unit.kb')}`;
+  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} ${tStatic('storage.unit.mb')}`;
+  return `${(n / 1024 / 1024 / 1024).toFixed(2)} ${tStatic('storage.unit.gb')}`;
 }
 
-function UsageBar({ theme, item }: { theme: any; item: { label: string; used: number; limit: number; unit: string; extra?: string; measured: boolean } }) {
+function UsageBar({ theme, item, t }: { theme: any; item: { label: string; used: number; limit: number; unit: string; extra?: string; measured: boolean }; t: (key: string, fallback?: string, vars?: Record<string, string | number>) => string }) {
   const ratio = item.limit > 0 ? Math.min(item.used / item.limit, 1) : 0;
   const pct = Math.round(ratio * 100);
   const color = ratio > 0.9 ? '#EF4444' : ratio > 0.7 ? '#F59E0B' : '#10B981';
@@ -453,7 +455,7 @@ function UsageBar({ theme, item }: { theme: any; item: { label: string; used: nu
         <View style={{ width: `${pct}%`, height: '100%', backgroundColor: color, borderRadius: 4 }} />
       </View>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 }}>
-        <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{fmt(item.used)} из {fmt(item.limit)}</Text>
+        <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{t('admin.usage.of', undefined, { used: fmt(item.used), total: fmt(item.limit) })}</Text>
         {item.extra ? <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{item.extra}</Text> : null}
       </View>
     </View>
