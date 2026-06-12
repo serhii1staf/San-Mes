@@ -47,8 +47,12 @@ jobs:
           build-mode: none
         - language: javascript-typescript
           build-mode: none
-        - language: swift
-          build-mode: autobuild
+        # Swift is intentionally NOT scanned: this is an Expo managed-workflow
+        # app, so the Xcode project / Swift sources are generated at build time
+        # by `expo prebuild` / EAS Build and are not committed to the repo.
+        # CodeQL's swift autobuilder fails with "no project found" because of
+        # this. Native iOS code, when added, would be analyzed via the EAS
+        # build pipeline instead.
         # CodeQL supports the following values keywords for 'language': 'actions', 'c-cpp', 'csharp', 'go', 'java-kotlin', 'javascript-typescript', 'python', 'ruby', 'rust', 'swift'
         # Use `c-cpp` to analyze code written in C, C++ or both
         # Use 'java-kotlin' to analyze code written in Java, Kotlin or both
