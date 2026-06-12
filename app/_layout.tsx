@@ -1,8 +1,9 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { View, StyleSheet, Animated, Text as RNText, Image as RNImage } from 'react-native';
-import { Stack, useRouter, useSegments } from 'expo-router';
+import { Stack, useRouter, useSegments, useNavigationContainerRef } from 'expo-router';
 import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
+import * as Sentry from '@sentry/react-native';
 import { ThemeProvider, useTheme } from '../src/theme';
 import { fontAssets } from '../src/theme/fonts';
 import { useAuthStore } from '../src/store';
@@ -21,6 +22,31 @@ import { useT } from '../src/i18n/store';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
+
+// Sentry monitoring — initialize before any component renders so the SDK can
+// catch the very first error if it happens during the initial JS bundle eval.
+// The DSN is a public ingestion URL: it identifies the project but cannot be
+// used to read events or modify settings, so it's safe to commit.
+const navigationIntegration = Sentry.reactNavigationIntegration({
+  enableTimeToInitialDisplay: true,
+});
+
+Sentry.init({
+  dsn: 'https://5cc37dc9e4220257f42fe51995c0dbae@o4511549943447552.ingest.de.sentry.io/4511550037229648',
+  // Conservative sampling rates so Sentry never becomes a perf problem on
+  // weak devices. We can raise these once we have a baseline of traffic.
+  tracesSampleRate: 0.1,
+  profilesSampleRate: 0.1,
+  // Auto session tracking gives us crash-free-session metrics out of the box.
+  enableAutoSessionTracking: true,
+  // Don't ship default PII to keep us aligned with the Apple Developer
+  // Program License Agreement (no covert collection of user data). We attach
+  // user.id manually after auth via Sentry.setUser() if/when needed.
+  sendDefaultPii: false,
+  integrations: [navigationIntegration],
+  // Filter local-dev noise. RELEASE_CHANNEL is set by EAS / expo-updates.
+  enabled: !__DEV__,
+});
 
 function AuthNavigationGuard({ children }: { children: React.ReactNode }) {
   // Subscribe to ONLY the two flags we actually care about. Pulling the whole
@@ -116,9 +142,18 @@ function CustomSplash() {
   );
 }
 
-export default function RootLayout() {
+function RootLayout() {
   const [fontsLoaded, fontError] = useFonts(fontAssets);
   const [fontTimeout, setFontTimeout] = useState(false);
+  const navigationRef = useNavigationContainerRef();
+
+  // Hand the navigation container to Sentry so it can track screen
+  // transitions as transactions (no PII; it only logs route names).
+  useEffect(() => {
+    if (navigationRef?.current) {
+      navigationIntegration.registerNavigationContainer(navigationRef);
+    }
+  }, [navigationRef]);
 
   useEffect(() => {
     const timer = setTimeout(() => setFontTimeout(true), 3000);
@@ -222,3 +257,8 @@ const styles = StyleSheet.create({
   rootColumn: { flex: 1 },
   stackWrapper: { flex: 1 },
 });
+
+// Wrap with Sentry.wrap so the root component is included in the
+// performance + error reporting envelope. This is the recommended way to
+// register the entry component per Sentry React Native docs.
+export default Sentry.wrap(RootLayout);

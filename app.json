@@ -20,13 +20,17 @@
       "bundleIdentifier": "com.sanmes.app",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
-        "UIBackgroundModes": ["audio"],
+        "UIBackgroundModes": [
+          "audio"
+        ],
         "NSPhotoLibraryUsageDescription": "San uses your photo library so you can attach images to posts, comments, and chat messages, and so you can set a profile picture, banner, or chat background.",
         "NSPhotoLibraryAddUsageDescription": "San saves screenshots of posts to your photo library when you tap Save.",
         "NSCameraUsageDescription": "San uses the camera so you can take a photo to attach to a post."
       },
       "entitlements": {
-        "com.apple.security.application-groups": ["group.com.sanmes.app"]
+        "com.apple.security.application-groups": [
+          "group.com.sanmes.app"
+        ]
       }
     },
     "android": {
@@ -49,13 +53,39 @@
       [
         "expo-alternate-app-icons",
         [
-          { "name": "Classic", "ios": "./assets/app-icons/classic.png" },
-          { "name": "Dark", "ios": "./assets/app-icons/dark.png" },
-          { "name": "Blue", "ios": "./assets/app-icons/blue.png" },
-          { "name": "Orange", "ios": "./assets/app-icons/orange.png" },
-          { "name": "Mono", "ios": "./assets/app-icons/mono.png" },
-          { "name": "Gradient", "ios": "./assets/app-icons/gradient.png" }
+          {
+            "name": "Classic",
+            "ios": "./assets/app-icons/classic.png"
+          },
+          {
+            "name": "Dark",
+            "ios": "./assets/app-icons/dark.png"
+          },
+          {
+            "name": "Blue",
+            "ios": "./assets/app-icons/blue.png"
+          },
+          {
+            "name": "Orange",
+            "ios": "./assets/app-icons/orange.png"
+          },
+          {
+            "name": "Mono",
+            "ios": "./assets/app-icons/mono.png"
+          },
+          {
+            "name": "Gradient",
+            "ios": "./assets/app-icons/gradient.png"
+          }
         ]
+      ],
+      [
+        "@sentry/react-native/expo",
+        {
+          "url": "https://de.sentry.io/",
+          "organization": "san-00",
+          "project": "san-mes"
+        }
       ]
     ],
     "experiments": {
