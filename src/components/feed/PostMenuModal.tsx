@@ -16,9 +16,17 @@ import { useFeedStore } from '../../store/feedStore';
 import { deletePost } from '../../lib/supabase';
 import { showToast } from '../../store/toastStore';
 import { sharePost } from '../../utils/sharePost';
+import { useT } from '../../i18n/store';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
-const REPORT_CATS = ['Спам', 'Насилие', 'Ложная информация', 'Мошенничество', 'Нарушение авторских прав', 'Другое'];
+const REPORT_CATS: { key: string; labelKey: string }[] = [
+  { key: 'spam', labelKey: 'report.cat.spam' },
+  { key: 'violence', labelKey: 'report.cat.violence' },
+  { key: 'misinformation', labelKey: 'report.cat.misinformation' },
+  { key: 'fraud', labelKey: 'report.cat.fraud' },
+  { key: 'copyright', labelKey: 'report.cat.copyright' },
+  { key: 'other', labelKey: 'report.cat.other' },
+];
 
 interface PostMenuModalProps {
   visible: boolean;
@@ -29,6 +37,7 @@ interface PostMenuModalProps {
 export function PostMenuModal({ visible, post, onClose }: PostMenuModalProps) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const t = useT();
   // Field-level selectors so this modal (mounted permanently inside FeedScreen)
   // doesn't re-render on every unrelated auth/feed store mutation.
   const user = useAuthStore((s) => s.user);
@@ -94,16 +103,16 @@ export function PostMenuModal({ visible, post, onClose }: PostMenuModalProps) {
   const isOwnPost = user?.id === post.authorId;
   const previewName = post.isRepost && post.originalPost ? post.originalPost.authorName : post.authorName;
   const previewEmoji = post.isRepost && post.originalPost ? post.originalPost.authorEmoji : post.authorEmoji;
-  const previewContent = post.isRepost && post.originalPost ? post.originalPost.content : (post.content || 'Публикация');
+  const previewContent = post.isRepost && post.originalPost ? post.originalPost.content : (post.content || t('post_menu.default_content'));
   const previewImage = post.isRepost && post.originalPost ? post.originalPost.imageUrl : post.imageUrl;
 
-  const handleCopyLink = async () => { triggerHaptic('light'); await Clipboard.setStringAsync(`https://san-m-app.com/post/${post.id}`); showToast('Ссылка скопирована', 'link'); dismiss(); };
+  const handleCopyLink = async () => { triggerHaptic('light'); await Clipboard.setStringAsync(`https://san-m-app.com/post/${post.id}`); showToast(t('toast.link_copied'), 'link'); dismiss(); };
   const handleShare = async () => { triggerHaptic('light'); await sharePost(post); dismiss(); };
   const handleDelete = () => {
     triggerHaptic('medium');
-    Alert.alert('Удалить пост?', 'Это действие нельзя отменить', [
-      { text: 'Отмена', style: 'cancel' },
-      { text: 'Удалить', style: 'destructive', onPress: async () => { if (user?.id) { await deletePost(post.id, user.id); removePost(post.id); showToast('Пост удалён', 'trash-2'); } dismiss(); } },
+    Alert.alert(t('profile.delete_post_title'), t('profile.delete_post_msg'), [
+      { text: t('common.cancel'), style: 'cancel' },
+      { text: t('common.delete'), style: 'destructive', onPress: async () => { if (user?.id) { await deletePost(post.id, user.id); removePost(post.id); showToast(t('toast.post_deleted'), 'trash-2'); } dismiss(); } },
     ]);
   };
 
@@ -146,18 +155,18 @@ export function PostMenuModal({ visible, post, onClose }: PostMenuModalProps) {
                 </View>
                 {previewImage && <CachedImage uri={previewImage} style={{ width: 40, height: 40, borderRadius: 10, marginLeft: 8 }} resizeMode="cover" />}
               </View>
-              <MenuItem icon="link" label="Скопировать ссылку" onPress={handleCopyLink} theme={theme} />
-              <MenuItem icon="share-2" label="Поделиться" onPress={handleShare} theme={theme} />
-              <MenuItem icon="bookmark" label="Сохранить" onPress={() => { triggerHaptic('light'); showToast('Сохранено', 'bookmark'); dismiss(); }} theme={theme} />
-              {isOwnPost && <MenuItem icon="trash-2" label="Удалить пост" onPress={handleDelete} theme={theme} destructive />}
-              {!isOwnPost && <MenuItem icon="flag" label="Пожаловаться" onPress={() => { triggerHaptic('light'); switchToReport(); }} theme={theme} destructive />}
+              <MenuItem icon="link" label={t('post_menu.copy_link')} onPress={handleCopyLink} theme={theme} />
+              <MenuItem icon="share-2" label={t('post_menu.share')} onPress={handleShare} theme={theme} />
+              <MenuItem icon="bookmark" label={t('post_menu.save')} onPress={() => { triggerHaptic('light'); showToast(t('toast.saved'), 'bookmark'); dismiss(); }} theme={theme} />
+              {isOwnPost && <MenuItem icon="trash-2" label={t('post_menu.delete')} onPress={handleDelete} theme={theme} destructive />}
+              {!isOwnPost && <MenuItem icon="flag" label={t('post_menu.report')} onPress={() => { triggerHaptic('light'); switchToReport(); }} theme={theme} destructive />}
             </>
           ) : (
             <>
-              <Text variant="body" weight="semibold" align="center" style={{ paddingVertical: 10 }}>Причина жалобы</Text>
-              {REPORT_CATS.map((cat, i) => (
-                <Pressable key={i} onPress={() => { triggerHaptic('medium'); showToast('Жалоба отправлена', 'flag'); dismiss(); }} style={{ paddingVertical: 14, paddingHorizontal: 20, borderTopWidth: 0.5, borderTopColor: theme.colors.border.light }}>
-                  <Text variant="body">{cat}</Text>
+              <Text variant="body" weight="semibold" align="center" style={{ paddingVertical: 10 }}>{t('report.title')}</Text>
+              {REPORT_CATS.map((cat) => (
+                <Pressable key={cat.key} onPress={() => { triggerHaptic('medium'); showToast(t('toast.report_sent'), 'flag'); dismiss(); }} style={{ paddingVertical: 14, paddingHorizontal: 20, borderTopWidth: 0.5, borderTopColor: theme.colors.border.light }}>
+                  <Text variant="body">{t(cat.labelKey)}</Text>
                 </Pressable>
               ))}
             </>

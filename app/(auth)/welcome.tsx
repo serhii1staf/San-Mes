@@ -5,10 +5,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
+import { useT } from '../../src/i18n/store';
 
 export default function WelcomeScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const t = useT();
 
   const cardBg = theme.isDark ? theme.colors.background.elevated : '#FFFFFF';
   const cardBorder = theme.colors.border.light;
@@ -75,21 +77,21 @@ export default function WelcomeScreen() {
         </View>
 
         <Text weight="semibold" style={{ fontSize: 30, lineHeight: 40, marginBottom: 12 }}>
-          Добро пожаловать!
+          {t('auth.welcome_title')}
         </Text>
         <Text variant="body" color={theme.colors.text.secondary} style={{ fontSize: 16, lineHeight: 22, marginBottom: 40 }}>
-          Общайтесь, делитесь моментами и будьте всегда на связи.
+          {t('auth.welcome_subtitle')}
         </Text>
 
         {/* Buttons */}
-        <Button icon="log-in" label="Войти" primary onPress={() => router.push('/(auth)/login')} />
-        <Button icon="user-plus" label="Зарегистрироваться" onPress={() => router.push('/(auth)/register')} />
+        <Button icon="log-in" label={t('auth.signin')} primary onPress={() => router.push('/(auth)/login')} />
+        <Button icon="user-plus" label={t('auth.signup')} onPress={() => router.push('/(auth)/register')} />
       </View>
 
       {/* Footer policy */}
       <View style={{ paddingHorizontal: 8, paddingBottom: 12 }}>
         <Text variant="caption" align="center" color={theme.colors.text.tertiary} style={{ fontSize: 12, lineHeight: 17 }}>
-          При входе в приложение вы принимаете{' '}
+          {t('auth.policy_prefix')}{' '}
           <Text
             variant="caption"
             weight="semibold"
@@ -97,9 +99,9 @@ export default function WelcomeScreen() {
             style={{ fontSize: 12 }}
             onPress={() => Linking.openURL('https://legal.san-m-app.com/terms.html').catch(() => {})}
           >
-            Политику использования
+            {t('auth.policy_terms')}
           </Text>{' '}
-          и{' '}
+          {t('auth.policy_and')}{' '}
           <Text
             variant="caption"
             weight="semibold"
@@ -107,7 +109,7 @@ export default function WelcomeScreen() {
             style={{ fontSize: 12 }}
             onPress={() => Linking.openURL('https://legal.san-m-app.com/privacy.html').catch(() => {})}
           >
-            Политику конфиденциальности
+            {t('auth.policy_privacy')}
           </Text>
           .
         </Text>

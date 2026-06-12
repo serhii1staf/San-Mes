@@ -7,10 +7,12 @@ import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
 import { useAuthStore } from '../../src/store';
 import { loginUser } from '../../src/lib/supabase';
+import { useT } from '../../src/i18n/store';
 
 export default function LoginScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const t = useT();
   const [deviceKey, setDeviceKey] = useState('');
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
@@ -29,7 +31,7 @@ export default function LoginScreen() {
     });
 
     if (loginError || !profile) {
-      setError(loginError || 'Неверный ключ или код');
+      setError(loginError || t('login.error.invalid'));
       setPin('');
       setIsLoading(false);
       return;
@@ -90,17 +92,17 @@ export default function LoginScreen() {
           <Feather name="lock" size={28} color={theme.colors.accent.primary} />
         </View>
         <Text weight="semibold" style={{ fontSize: 30, lineHeight: 40, marginBottom: 8 }}>
-          С возвращением!
+          {t('login.title')}
         </Text>
         <Text variant="body" color={theme.colors.text.secondary} style={{ fontSize: 16, lineHeight: 22 }}>
-          Введите ключ устройства и код для входа.
+          {t('login.subtitle')}
         </Text>
       </View>
 
       {/* Device Key Input */}
       <View style={{ marginBottom: 20 }}>
         <Text variant="caption" weight="semibold" color={theme.colors.text.secondary} style={{ marginBottom: 8 }}>
-          Ключ устройства
+          {t('login.device_key_label')}
         </Text>
         <TextInput
           value={deviceKey}
@@ -127,7 +129,7 @@ export default function LoginScreen() {
       {/* PIN Input */}
       <View style={{ marginBottom: 24 }}>
         <Text variant="caption" weight="semibold" color={theme.colors.text.secondary} style={{ marginBottom: 8 }}>
-          4-значный код
+          {t('login.pin_label')}
         </Text>
         <Pressable onPress={() => pinRef.current?.focus()} style={{ flexDirection: 'row', gap: 12, justifyContent: 'center' }}>
           {[0, 1, 2, 3].map((i) => (
@@ -183,7 +185,7 @@ export default function LoginScreen() {
           <ActivityIndicator color="#FFFFFF" />
         ) : (
           <Text variant="body" weight="semibold" color={canLogin ? '#FFFFFF' : theme.colors.text.tertiary}>
-            Войти
+            {t('auth.signin')}
           </Text>
         )}
       </Pressable>
@@ -194,9 +196,9 @@ export default function LoginScreen() {
         style={{ alignItems: 'center', paddingVertical: 8 }}
       >
         <Text variant="body" color={theme.colors.text.secondary}>
-          Нет аккаунта?{' '}
+          {t('auth.no_account')}{' '}
           <Text variant="body" weight="semibold" color={theme.colors.accent.primary}>
-            Создать
+            {t('login.create_account')}
           </Text>
         </Text>
       </Pressable>

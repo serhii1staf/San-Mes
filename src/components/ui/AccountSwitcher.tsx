@@ -12,6 +12,7 @@ import { showToast } from '../../store/toastStore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Updates from 'expo-updates';
 import { resetAllThrottles } from '../../services/syncThrottle';
+import { useT } from '../../i18n/store';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -22,6 +23,7 @@ interface AccountSwitcherProps {
 
 export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
   const theme = useTheme();
+  const t = useT();
   // Field-level selectors so this modal (mounted permanently inside the
   // profile screen) doesn't re-render on every unrelated auth/accounts mutation.
   const user = useAuthStore((s) => s.user);
@@ -80,7 +82,7 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
     // Verify account still exists in DB
     const { data: profile } = await supabase.from('profiles').select('*').eq('id', account.id).single();
     if (!profile) {
-      Alert.alert('Ошибка', 'Аккаунт не найден');
+      Alert.alert(t('common.error'), t('account_switcher.not_found'));
       removeAccount(account.id);
       return;
     }
@@ -124,21 +126,21 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
 
   const handleAddAccount = async () => {
     if (!deviceKey || pin.length !== 4) {
-      Alert.alert('Ошибка', 'Введите ключ устройства и 4-значный PIN');
+      Alert.alert(t('common.error'), t('account_switcher.error.fill_fields'));
       return;
     }
     setIsLoading(true);
     // Find profile by device key
     const { data: profile } = await supabase.from('profiles').select('*').eq('device_key', deviceKey).single();
     if (!profile) {
-      Alert.alert('Ошибка', 'Аккаунт не найден');
+      Alert.alert(t('common.error'), t('account_switcher.not_found'));
       setIsLoading(false);
       return;
     }
     // Verify PIN
     const { hashPin } = await import('../../lib/supabase');
     if (profile.pin_hash && profile.pin_hash !== hashPin(pin)) {
-      Alert.alert('Ошибка', 'Неверный PIN');
+      Alert.alert(t('common.error'), t('account_switcher.error.wrong_pin'));
       setIsLoading(false);
       return;
     }
@@ -200,7 +202,7 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
               <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 6 }}>
                 <View style={{ width: 40, height: 5, borderRadius: 3, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)' }} />
               </View>
-              <Text variant="body" weight="bold" align="center" style={{ marginBottom: 16 }}>Аккаунты</Text>
+              <Text variant="body" weight="bold" align="center" style={{ marginBottom: 16 }}>{t('account_switcher.title')}</Text>
 
               {/* Current account */}
               {user && (
@@ -214,7 +216,7 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
                     <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>@{user.username}</Text>
                   </View>
                   <View style={{ backgroundColor: theme.colors.accent.primary + '20', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 }}>
-                    <Text variant="caption" color={theme.colors.accent.primary} style={{ fontSize: 10 }}>Активный</Text>
+                    <Text variant="caption" color={theme.colors.accent.primary} style={{ fontSize: 10 }}>{t('account_switcher.active')}</Text>
                   </View>
                 </View>
               )}
@@ -236,25 +238,25 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
 
               {/* Add account */}
               {!showLogin ? (
-                <Pressable onPress={() => { if (accounts.length >= 3 && !accounts.find(a => a.id === user?.id)) { Alert.alert('Лимит', 'Максимум 3 аккаунта'); return; } setShowLogin(true); }} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, borderTopWidth: 0.5, borderTopColor: theme.colors.border.light }}>
+                <Pressable onPress={() => { if (accounts.length >= 3 && !accounts.find(a => a.id === user?.id)) { Alert.alert(t('account_switcher.limit_title'), t('account_switcher.limit_msg')); return; } setShowLogin(true); }} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, borderTopWidth: 0.5, borderTopColor: theme.colors.border.light }}>
                   <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: theme.colors.accent.primary + '15', alignItems: 'center', justifyContent: 'center' }}>
                     <Feather name="plus" size={18} color={theme.colors.accent.primary} />
                   </View>
-                  <Text variant="body" weight="medium" color={theme.colors.accent.primary} style={{ marginLeft: 12 }}>Добавить аккаунт</Text>
+                  <Text variant="body" weight="medium" color={theme.colors.accent.primary} style={{ marginLeft: 12 }}>{t('account_switcher.add')}</Text>
                 </Pressable>
               ) : (
                 <View style={{ paddingHorizontal: 20, paddingVertical: 16, borderTopWidth: 0.5, borderTopColor: theme.colors.border.light }}>
                   <TextInput
                     value={deviceKey}
                     onChangeText={setDeviceKey}
-                    placeholder="Ключ устройства"
+                    placeholder={t('account_switcher.device_key_placeholder')}
                     placeholderTextColor={theme.colors.text.tertiary}
                     style={{ backgroundColor: theme.colors.background.secondary, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, fontSize: 14, color: theme.colors.text.primary, marginBottom: 8 }}
                   />
                   <TextInput
                     value={pin}
-                    onChangeText={(t) => setPin(t.slice(0, 4))}
-                    placeholder="PIN (4 цифры)"
+                    onChangeText={(v) => setPin(v.slice(0, 4))}
+                    placeholder={t('account_switcher.pin_placeholder')}
                     placeholderTextColor={theme.colors.text.tertiary}
                     keyboardType="number-pad"
                     secureTextEntry
@@ -262,7 +264,7 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
                     style={{ backgroundColor: theme.colors.background.secondary, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, fontSize: 14, color: theme.colors.text.primary, marginBottom: 12 }}
                   />
                   <Pressable onPress={handleAddAccount} disabled={isLoading} style={{ backgroundColor: theme.colors.accent.primary, borderRadius: 12, paddingVertical: 12, alignItems: 'center', opacity: isLoading ? 0.6 : 1 }}>
-                    <Text variant="body" weight="semibold" color="#FFFFFF">{isLoading ? 'Вход...' : 'Войти'}</Text>
+                    <Text variant="body" weight="semibold" color="#FFFFFF">{isLoading ? t('account_switcher.signing_in') : t('auth.signin')}</Text>
                   </Pressable>
                 </View>
               )}

@@ -9,6 +9,7 @@ import { Text, Input, Avatar } from '../../src/components/ui';
 import { useAuthStore, UserLink } from '../../src/store/authStore';
 import { updateProfile as updateSupabaseProfile, supabase, uploadBanner, saveProfileMeta, loadProfileMeta } from '../../src/lib/supabase';
 import { currentUser } from '../../src/utils/mockData';
+import { useT } from '../../src/i18n/store';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 const DISMISS_THRESHOLD = 200;
@@ -24,7 +25,8 @@ const LINK_TYPES = [
   { key: 'twitch', label: 'Twitch', icon: 'tv', patterns: ['twitch.tv'] },
   { key: 'spotify', label: 'Spotify', icon: 'music', patterns: ['spotify.com', 'open.spotify.com'] },
   { key: 'linkedin', label: 'LinkedIn', icon: 'linkedin', patterns: ['linkedin.com'] },
-  { key: 'website', label: 'Сайт', icon: 'globe', patterns: [] },
+  // `website` label is translated at use site via `edit_profile.link_website`.
+  { key: 'website', label: '', icon: 'globe', patterns: [] },
 ];
 
 function detectLinkTypeFromUrl(url: string): string {
@@ -35,9 +37,9 @@ function detectLinkTypeFromUrl(url: string): string {
   return 'website';
 }
 
-const MOOD_CATEGORIES: { title: string; emojis: string[] }[] = [
+const MOOD_CATEGORIES: { titleKey: string; emojis: string[] }[] = [
   {
-    title: 'Настроение',
+    titleKey: 'emoji.cat.mood',
     emojis: [
       '😊', '😄', '😁', '🥰', '😍', '🤩', '😎', '🥳',
       '😇', '🤗', '😌', '😏', '🤔', '😴', '🥱', '😢',
@@ -46,7 +48,7 @@ const MOOD_CATEGORIES: { title: string; emojis: string[] }[] = [
     ],
   },
   {
-    title: 'Животные',
+    titleKey: 'emoji.cat.animals',
     emojis: [
       '🦊', '🐱', '🐶', '🐺', '🦁', '🐯', '🐼', '🐨',
       '🐸', '🐙', '🦋', '🐝', '🐞', '🦄', '🐰', '🐻',
@@ -55,7 +57,7 @@ const MOOD_CATEGORIES: { title: string; emojis: string[] }[] = [
     ],
   },
   {
-    title: 'Природа',
+    titleKey: 'emoji.cat.nature',
     emojis: [
       '🌸', '🌺', '🌻', '🌹', '🌷', '💐', '🍀', '🌿',
       '🍃', '🍂', '🍁', '🌾', '🌵', '🎋', '🪷', '🌊',
@@ -64,7 +66,7 @@ const MOOD_CATEGORIES: { title: string; emojis: string[] }[] = [
     ],
   },
   {
-    title: 'Еда',
+    titleKey: 'emoji.cat.food',
     emojis: [
       '🍕', '🍔', '🍟', '🌮', '🍣', '🍜', '🍩', '🍪',
       '🎂', '🍰', '🧁', '🍫', '🍬', '🍭', '🍿', '🥤',
@@ -73,7 +75,7 @@ const MOOD_CATEGORIES: { title: string; emojis: string[] }[] = [
     ],
   },
   {
-    title: 'Активности',
+    titleKey: 'emoji.cat.activities',
     emojis: [
       '🎮', '🎯', '🎲', '🎸', '🎵', '🎤', '🎬', '🎨',
       '🎭', '🎪', '🎢', '🏀', '⚽', '🏈', '🎾', '🏓',
@@ -82,7 +84,7 @@ const MOOD_CATEGORIES: { title: string; emojis: string[] }[] = [
     ],
   },
   {
-    title: 'Символы',
+    titleKey: 'emoji.cat.symbols',
     emojis: [
       '✨', '💫', '⚡', '💥', '🫧', '🧿', '🪬', '🔮',
       '💝', '💖', '💗', '💓', '💕', '❤️‍🔥', '🖤', '💜',
@@ -91,7 +93,7 @@ const MOOD_CATEGORIES: { title: string; emojis: string[] }[] = [
     ],
   },
   {
-    title: 'Объекты',
+    titleKey: 'emoji.cat.objects',
     emojis: [
       '🚀', '✈️', '🛸', '🏎️', '🚗', '🛵', '⛵', '🚂',
       '🏠', '🏰', '⛩️', '🗼', '🎡', '🌉', '💡', '🔑',
@@ -107,6 +109,7 @@ const ALL_EMOJIS = MOOD_CATEGORIES.flatMap(c => c.emojis);
 export default function EditProfileScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const t = useT();
   const { user, updateProfile } = useAuthStore();
   const displayUser = user || currentUser;
 
@@ -358,10 +361,10 @@ export default function EditProfileScreen() {
                   <Pressable onPress={handleClose}>
                     <Feather name="x" size={22} color={theme.colors.text.primary} />
                   </Pressable>
-                  <Text variant="body" weight="semibold">Редактировать</Text>
+                  <Text variant="body" weight="semibold">{t('edit_profile.title')}</Text>
                   <Pressable onPress={handleSave} disabled={isSaving}>
                     <Text variant="body" weight="semibold" color={theme.colors.accent.primary}>
-                      {isSaving ? '...' : 'Сохранить'}
+                      {isSaving ? '...' : t('common.save')}
                     </Text>
                   </Pressable>
                 </View>
@@ -374,7 +377,7 @@ export default function EditProfileScreen() {
                     ) : (
                       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
                         <Feather name="image" size={24} color={theme.colors.text.tertiary} />
-                        <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginTop: 4 }}>Добавить баннер</Text>
+                        <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginTop: 4 }}>{t('edit_profile.add_banner')}</Text>
                       </View>
                     )}
                   </View>
@@ -385,7 +388,7 @@ export default function EditProfileScreen() {
                   <Avatar emoji={selectedEmoji} size="xl" />
                   <Pressable style={{ marginTop: 12 }} onPress={() => setShowEmojiPicker(true)}>
                     <Text variant="body" weight="medium" color={theme.colors.accent.primary}>
-                      Изменить эмодзи
+                      {t('edit_profile.change_emoji')}
                     </Text>
                   </Pressable>
                 </View>
@@ -393,15 +396,15 @@ export default function EditProfileScreen() {
                 {/* Fields */}
                 <View style={{ paddingHorizontal: 20 }}>
                   <Input
-                    label="Имя"
+                    label={t('edit_profile.name_label')}
                     value={name}
                     onChangeText={setName}
-                    placeholder="Ваше имя"
+                    placeholder={t('edit_profile.name_placeholder')}
                     style={{ marginBottom: 16 }}
                   />
 
                   <Input
-                    label="Имя пользователя"
+                    label={t('edit_profile.username_label')}
                     value={username}
                     onChangeText={setUsername}
                     placeholder="username"
@@ -409,10 +412,10 @@ export default function EditProfileScreen() {
                   />
 
                   <Input
-                    label="О себе"
+                    label={t('edit_profile.bio_label')}
                     value={bio}
                     onChangeText={(text) => setBio(text.slice(0, 150))}
-                    placeholder="Расскажите о себе"
+                    placeholder={t('edit_profile.bio_placeholder')}
                     multiline
                     style={{ marginBottom: 4 }}
                   />
@@ -421,13 +424,13 @@ export default function EditProfileScreen() {
                     color={theme.colors.text.tertiary}
                     style={{ marginBottom: 20 }}
                   >
-                    {150 - bio.length} символов осталось
+                    {t('edit_profile.chars_left', undefined, { count: 150 - bio.length })}
                   </Text>
 
                   {/* Links Section */}
                   <View style={{ marginBottom: 24 }}>
                     <Text variant="body" weight="semibold" style={{ marginBottom: 12 }}>
-                      Ссылки
+                      {t('edit_profile.links')}
                     </Text>
                     {links.map((link, index) => (
                       <View
@@ -472,7 +475,7 @@ export default function EditProfileScreen() {
                       >
                         <Feather name="plus-circle" size={18} color={theme.colors.accent.primary} />
                         <Text variant="caption" weight="medium" color={theme.colors.accent.primary}>
-                          Добавить ссылку
+                          {t('edit_profile.add_link')}
                         </Text>
                       </Pressable>
                     )}
@@ -549,7 +552,7 @@ export default function EditProfileScreen() {
               <Pressable onPress={() => setShowEmojiPicker(false)}>
                 <Feather name="x" size={22} color={theme.colors.text.primary} />
               </Pressable>
-              <Text variant="body" weight="semibold">Эмодзи</Text>
+              <Text variant="body" weight="semibold">{t('edit_profile.emoji_title')}</Text>
               <View style={{ width: 22 }} />
             </View>
 
@@ -578,9 +581,9 @@ export default function EditProfileScreen() {
               contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 32 }}
             >
               {MOOD_CATEGORIES.map((category) => (
-                <View key={category.title} style={{ marginBottom: 20 }}>
+                <View key={category.titleKey} style={{ marginBottom: 20 }}>
                   <Text variant="caption" weight="semibold" color={theme.colors.text.secondary} style={{ marginBottom: 10, paddingHorizontal: 4 }}>
-                    {category.title}
+                    {t(category.titleKey)}
                   </Text>
                   <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 8 }}>
                     {category.emojis.map((e) => (
@@ -663,12 +666,12 @@ export default function EditProfileScreen() {
                 />
               </View>
               <Text variant="body" weight="semibold" align="center" style={{ marginBottom: 16 }}>
-                {editingLinkIndex !== null ? 'Редактировать ссылку' : 'Добавить ссылку'}
+                {editingLinkIndex !== null ? t('edit_profile.link_edit_title') : t('edit_profile.link_add_title')}
               </Text>
 
               {/* Link type selector */}
               <Text variant="caption" weight="medium" color={theme.colors.text.secondary} style={{ marginBottom: 8 }}>
-                Тип
+                {t('edit_profile.link_type')}
               </Text>
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
                 {LINK_TYPES.map((lt) => (
@@ -691,7 +694,7 @@ export default function EditProfileScreen() {
                   >
                     <Feather name={lt.icon as any} size={14} color={linkType === lt.key ? theme.colors.accent.primary : theme.colors.text.tertiary} />
                     <Text variant="caption" weight={linkType === lt.key ? 'semibold' : 'regular'} color={linkType === lt.key ? theme.colors.accent.primary : theme.colors.text.secondary}>
-                      {lt.label}
+                      {lt.key === 'website' ? t('edit_profile.link_website') : lt.label}
                     </Text>
                   </Pressable>
                 ))}
@@ -723,7 +726,7 @@ export default function EditProfileScreen() {
                 }}
               >
                 <Text variant="body" weight="semibold" color={theme.colors.text.inverse}>
-                  {editingLinkIndex !== null ? 'Сохранить' : 'Добавить'}
+                  {editingLinkIndex !== null ? t('edit_profile.link_save') : t('edit_profile.link_add')}
                 </Text>
               </Pressable>
             </View>

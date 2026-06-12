@@ -13,6 +13,7 @@ import { kvGetJSONSync, kvSetJSON } from '../src/services/kvStore';
 import { useNotificationsBadge } from '../src/store/notificationsBadgeStore';
 import { formatTimeAgo } from '../src/utils/mockData';
 import { triggerHaptic } from '../src/utils/haptics';
+import { useT } from '../src/i18n/store';
 
 // Notification type — derived from base tables (likes / comments / follows).
 // We don't have a dedicated server `notifications` table; instead we reduce
@@ -57,14 +58,14 @@ function stripMediaTokens(text: string): string {
   return s.trim();
 }
 
-interface MediaTag { icon: string; label: string }
+interface MediaTag { icon: string; labelKey: string }
 
 function mediaTagsFor(text: string): MediaTag[] {
   if (!text) return [];
   const tags: MediaTag[] = [];
   // Reply context first — most informative tag for "X replied" notifications.
-  if (text.startsWith(REPLY_TOKEN)) tags.push({ icon: 'corner-up-left', label: 'Ответ' });
-  if (text.includes(GIF_TOKEN)) tags.push({ icon: 'image', label: 'Гифка' });
+  if (text.startsWith(REPLY_TOKEN)) tags.push({ icon: 'corner-up-left', labelKey: 'notifications.tag_reply' });
+  if (text.includes(GIF_TOKEN)) tags.push({ icon: 'image', labelKey: 'notifications.tag_gif' });
   // After stripping the marker tokens, look for a bare URL in the residual
   // text — covers comments that pasted a YouTube/article link, an image
   // URL, or a sticker host.
@@ -72,9 +73,9 @@ function mediaTagsFor(text: string): MediaTag[] {
   const urlMatch = stripped.match(/https?:\/\/\S+/i);
   if (urlMatch) {
     const url = urlMatch[0].toLowerCase();
-    if (/\.(jpg|jpeg|png|webp|heic|heif)(\?|$)/i.test(url)) tags.push({ icon: 'camera', label: 'Фото' });
-    else if (/\.gif(\?|$)/i.test(url) || url.includes('giphy.com') || url.includes('tenor.com')) tags.push({ icon: 'image', label: 'Гифка' });
-    else tags.push({ icon: 'link', label: 'Ссылка' });
+    if (/\.(jpg|jpeg|png|webp|heic|heif)(\?|$)/i.test(url)) tags.push({ icon: 'camera', labelKey: 'notifications.tag_photo' });
+    else if (/\.gif(\?|$)/i.test(url) || url.includes('giphy.com') || url.includes('tenor.com')) tags.push({ icon: 'image', labelKey: 'notifications.tag_gif' });
+    else tags.push({ icon: 'link', labelKey: 'notifications.tag_link' });
   }
   return tags;
 }
@@ -82,6 +83,7 @@ function mediaTagsFor(text: string): MediaTag[] {
 export default function NotificationsScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const t = useT();
   const userId = useAuthStore((s) => s.user?.id);
 
   // Hydrate from MMKV synchronously so the first paint isn't blank — the
@@ -257,7 +259,7 @@ export default function NotificationsScreen() {
           <Pressable onPress={() => router.back()} style={{ position: 'absolute', left: theme.spacing.lg, top: insets.top + 8 }}>
             <Feather name="chevron-left" size={24} color={theme.colors.text.primary} />
           </Pressable>
-          <Text variant="subheading" weight="bold">Уведомления</Text>
+          <Text variant="subheading" weight="bold">{t('notifications.title')}</Text>
         </View>
       </View>
 
@@ -269,7 +271,7 @@ export default function NotificationsScreen() {
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingBottom: 100 }}>
           <Feather name="bell" size={48} color={theme.colors.text.tertiary} />
           <Text variant="body" color={theme.colors.text.tertiary} style={{ marginTop: theme.spacing.base, textAlign: 'center' }}>
-            Нет уведомлений
+            {t('notifications.empty')}
           </Text>
         </View>
       ) : (
@@ -291,6 +293,7 @@ export default function NotificationsScreen() {
 }
 
 const NotificationRow = React.memo(function NotificationRow({ item, theme }: { item: Notification; theme: any }) {
+  const t = useT();
   const onPress = () => {
     triggerHaptic('light');
     if (item.kind === 'follow') {
@@ -301,9 +304,9 @@ const NotificationRow = React.memo(function NotificationRow({ item, theme }: { i
   };
 
   const verb =
-    item.kind === 'like' ? 'оценил(а) ваш пост'
-    : item.kind === 'comment' ? 'прокомментировал(а) ваш пост'
-    : 'подписался(ась) на вас';
+    item.kind === 'like' ? t('notifications.verb.like')
+    : item.kind === 'comment' ? t('notifications.verb.comment')
+    : t('notifications.verb.follow');
   const icon =
     item.kind === 'like' ? 'heart'
     : item.kind === 'comment' ? 'message-circle'
@@ -343,10 +346,10 @@ const NotificationRow = React.memo(function NotificationRow({ item, theme }: { i
             const showText = stripped.trim().length > 0 ? stripped : null;
             return (
               <View style={{ marginTop: 3, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
-                {tags.map((t) => (
-                  <View key={t.label} style={{ flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
-                    <Feather name={t.icon as any} size={10} color={theme.colors.text.tertiary} />
-                    <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 10 }}>{t.label}</Text>
+                {tags.map((tag) => (
+                  <View key={tag.labelKey} style={{ flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
+                    <Feather name={tag.icon as any} size={10} color={theme.colors.text.tertiary} />
+                    <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 10 }}>{t(tag.labelKey)}</Text>
                   </View>
                 ))}
                 {showText ? (

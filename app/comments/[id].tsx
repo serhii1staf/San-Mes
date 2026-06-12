@@ -26,8 +26,16 @@ import { getComments, createComment, updateComment, deleteComment, isRepost, par
 import { triggerHaptic } from '../../src/utils/haptics';
 import { playSendSound } from '../../src/utils/sounds';
 import { showToast } from '../../src/store/toastStore';
+import { useT } from '../../src/i18n/store';
 
-const REPORT_CATS = ['Спам', 'Насилие', 'Ложная информация', 'Мошенничество', 'Оскорбления', 'Другое'];
+const REPORT_CATS: { key: string; labelKey: string }[] = [
+  { key: 'spam', labelKey: 'report.cat.spam' },
+  { key: 'violence', labelKey: 'report.cat.violence' },
+  { key: 'misinformation', labelKey: 'report.cat.misinformation' },
+  { key: 'fraud', labelKey: 'report.cat.fraud' },
+  { key: 'harassment', labelKey: 'report.cat.harassment' },
+  { key: 'other', labelKey: 'report.cat.other' },
+];
 
 // Enable LayoutAnimation on Android (no-op on iOS where it's already on by default).
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -93,6 +101,7 @@ function parseReply(content: string): { replyUser?: string; replyText?: string; 
 export default function CommentsScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const t = useT();
   const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
   const inputPadStyle = useAnimatedStyle(() => {
     const open = Math.abs(keyboardHeight.value) > 1;
@@ -242,17 +251,17 @@ export default function CommentsScreen() {
       startReply(c);
     } else if (action === 'copy') {
       Clipboard.setStringAsync(parsed.body);
-      showToast('Скопировано', 'check');
+      showToast(t('toast.copied'), 'check');
     } else if (action === 'edit') {
       setReplyTo(null);
       setEditing(c);
       setText(parsed.body);
       setTimeout(() => inputRef.current?.focus(), 50);
     } else if (action === 'delete') {
-      Alert.alert('Удалить комментарий?', '', [
-        { text: 'Отмена', style: 'cancel' },
+      Alert.alert(t('comments.delete_title'), '', [
+        { text: t('common.cancel'), style: 'cancel' },
         {
-          text: 'Удалить', style: 'destructive', onPress: async () => {
+          text: t('common.delete'), style: 'destructive', onPress: async () => {
             if (!user?.id || !postId) return;
             triggerHaptic('medium');
             setComments((prev) => prev.filter((x) => x.id !== c.id));
@@ -301,11 +310,11 @@ export default function CommentsScreen() {
   const formatTime = (dateStr: string) => {
     const diff = Date.now() - new Date(dateStr).getTime();
     const mins = Math.floor(diff / 60000);
-    if (mins < 1) return 'сейчас';
-    if (mins < 60) return `${mins}м`;
+    if (mins < 1) return t('comments.time_now');
+    if (mins < 60) return t('comments.time_min', undefined, { n: mins });
     const hours = Math.floor(mins / 60);
-    if (hours < 24) return `${hours}ч`;
-    return `${Math.floor(hours / 24)}д`;
+    if (hours < 24) return t('comments.time_hour', undefined, { n: hours });
+    return t('comments.time_day', undefined, { n: Math.floor(hours / 24) });
   };
 
   return (
@@ -317,7 +326,7 @@ export default function CommentsScreen() {
           <Pressable onPress={() => router.back()}>
             <Feather name="chevron-left" size={24} color={theme.colors.text.primary} />
           </Pressable>
-          <Text variant="body" weight="bold">Комментарии</Text>
+          <Text variant="body" weight="bold">{t('comments.title')}</Text>
           <View style={{ width: 24 }} />
         </View>
       </View>
@@ -349,7 +358,7 @@ export default function CommentsScreen() {
                 {repostInfo.isRepost && (
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 8 }}>
                     <Feather name="repeat" size={12} color={theme.colors.text.tertiary} />
-                    <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ flexShrink: 1 }}>{postData.profiles?.display_name || 'User'} сделал(а) репост</Text>
+                    <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ flexShrink: 1 }}>{postData.profiles?.display_name || 'User'} {t('comments.repost_label')}</Text>
                   </View>
                 )}
                 <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
@@ -420,7 +429,7 @@ export default function CommentsScreen() {
             ListEmptyComponent={
               <View style={{ alignItems: 'center', paddingTop: 40 }}>
                 <RNText style={{ fontSize: 32 }} allowFontScaling={false}>💬</RNText>
-                <Text variant="body" color={theme.colors.text.tertiary} style={{ marginTop: 8 }}>Пока нет комментариев</Text>
+                <Text variant="body" color={theme.colors.text.tertiary} style={{ marginTop: 8 }}>{t('comments.empty')}</Text>
               </View>
             }
             renderItem={({ item }) => {
@@ -475,7 +484,7 @@ export default function CommentsScreen() {
                   })()}
                   {/* Reply action */}
                   <Pressable onPress={() => startReply(item)} onLongPress={() => openCommentMenu(item)} delayLongPress={300} hitSlop={6} style={{ marginTop: 4, alignSelf: 'flex-start' }}>
-                    <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>Ответить</Text>
+                    <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{t('comments.reply')}</Text>
                   </Pressable>
                 </View>
               </Pressable>
@@ -490,7 +499,7 @@ export default function CommentsScreen() {
             <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 6, backgroundColor: bgColor }}>
               <View style={{ width: 3, height: 30, borderRadius: 2, backgroundColor: theme.colors.accent.primary, marginRight: 8 }} />
               <View style={{ flex: 1 }}>
-                <Text variant="caption" weight="semibold" color={theme.colors.accent.primary} numberOfLines={1} style={{ fontSize: 12 }}>Редактирование</Text>
+                <Text variant="caption" weight="semibold" color={theme.colors.accent.primary} numberOfLines={1} style={{ fontSize: 12 }}>{t('comments.editing')}</Text>
                 <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 11 }}>{parseReply(editing.content || '').body}</Text>
               </View>
               <Pressable onPress={() => { setEditing(null); setText(''); }} hitSlop={8} style={{ padding: 4 }}>
@@ -506,7 +515,7 @@ export default function CommentsScreen() {
                 return rgif ? <CachedImage uri={rgif} style={{ width: 30, height: 30, borderRadius: 6, marginRight: 8, backgroundColor: theme.colors.background.secondary }} resizeMode="cover" /> : null;
               })()}
               <View style={{ flex: 1 }}>
-                <Text variant="caption" weight="semibold" color={theme.colors.accent.primary} numberOfLines={1} style={{ fontSize: 12 }}>Ответ @{replyTo.profiles?.username || 'user'}</Text>
+                <Text variant="caption" weight="semibold" color={theme.colors.accent.primary} numberOfLines={1} style={{ fontSize: 12 }}>{t('comments.reply_to', undefined, { username: replyTo.profiles?.username || 'user' })}</Text>
                 <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 11 }}>{parseGif(parseReply(replyTo.content || '').body) ? 'GIF' : parseReply(replyTo.content || '').body}</Text>
               </View>
               <Pressable onPress={() => setReplyTo(null)} hitSlop={8} style={{ padding: 4 }}>
@@ -520,7 +529,7 @@ export default function CommentsScreen() {
                 ref={inputRef}
                 value={text}
                 onChangeText={setText}
-                placeholder="Комментарий..."
+                placeholder={t('comments.placeholder')}
                 placeholderTextColor={theme.colors.text.tertiary}
                 style={{ flex: 1, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular, maxHeight: 100, paddingTop: 0, paddingBottom: 0, minHeight: 22, lineHeight: 20, alignSelf: 'center' }}
                 multiline
@@ -560,10 +569,10 @@ export default function CommentsScreen() {
 
         {/* Report categories — smooth slide-up sheet (matches the dots menu) */}
         <SlideUpSheet visible={!!reportComment} onClose={() => setReportComment(null)}>
-          <Text variant="body" weight="semibold" align="center" style={{ paddingVertical: 8 }}>Причина жалобы</Text>
+          <Text variant="body" weight="semibold" align="center" style={{ paddingVertical: 8 }}>{t('report.title')}</Text>
           {REPORT_CATS.map((cat) => (
-            <Pressable key={cat} onPress={() => { triggerHaptic('medium'); setReportComment(null); showToast('Жалоба отправлена', 'flag'); }} style={{ paddingVertical: 14, paddingHorizontal: 20, borderTopWidth: 0.5, borderTopColor: theme.colors.border.light }}>
-              <Text variant="body">{cat}</Text>
+            <Pressable key={cat.key} onPress={() => { triggerHaptic('medium'); setReportComment(null); showToast(t('toast.report_sent'), 'flag'); }} style={{ paddingVertical: 14, paddingHorizontal: 20, borderTopWidth: 0.5, borderTopColor: theme.colors.border.light }}>
+              <Text variant="body">{t(cat.labelKey)}</Text>
             </Pressable>
           ))}
         </SlideUpSheet>
