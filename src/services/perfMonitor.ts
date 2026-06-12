@@ -80,9 +80,25 @@ class PerfMonitor {
     if (this._started) return;
     this._started = true;
     this._lastSampleTs = Date.now();
+    let lastFrameTs = Date.now();
     const tick = () => {
-      this._frameCount += 1;
       const now = Date.now();
+      // Single-frame stall detection. Anything ≥120 ms between two RAF
+      // callbacks means the JS thread was blocked by one big task — that's
+      // far more diagnostic than a sustained <30 fps window because it
+      // points at a SINGLE bad operation. Tag it with the current route so
+      // the user immediately sees which screen the blocking task came
+      // from. Skip the very first tick (no previous timestamp).
+      if (lastFrameTs && now - lastFrameTs > 120) {
+        this._record({
+          ts: now,
+          type: 'slow',
+          label: `long task @ ${this._currentRoute}`,
+          durationMs: now - lastFrameTs,
+        });
+      }
+      lastFrameTs = now;
+      this._frameCount += 1;
       const elapsed = now - this._lastSampleTs;
       // Publish about twice per second so the bubble label can update
       // without flooding the JS bridge with re-renders.
@@ -92,10 +108,8 @@ class PerfMonitor {
         this._pushHistory(this._jsHistory, now, fps);
         this._frameCount = 0;
         this._lastSampleTs = now;
-        // Mark a frame as slow if either stream dropped below 30 fps —
-        // visible jank threshold. Skip the very first sample to avoid
-        // false positives during startup. Tag with the current route so
-        // the user can immediately see WHICH screen stuttered.
+        // Sustained jank below 30 fps still gets its own marker so the user
+        // can distinguish a single hitch from a long stutter.
         if (this._jsHistory.length > 1 && fps < 30) {
           this._record({ ts: now, type: 'slow', label: `js<30 @ ${this._currentRoute}` });
         }
