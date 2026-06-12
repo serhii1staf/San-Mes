@@ -1,4 +1,4 @@
-import React, { memo } from 'react';
+import React, { memo, useEffect } from 'react';
 import { View, Pressable } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -15,6 +15,8 @@ import { extractFirstUrl } from '../../services/linkPreview';
 import { triggerHaptic } from '../../utils/haptics';
 import { formatTimeAgo } from '../../utils/mockData';
 import { useT } from '../../i18n/store';
+import { perfMonitor } from '../../services/perfMonitor';
+import { useSettingsStore } from '../../store/settingsStore';
 
 interface ProfilePostCardProps {
   post: any;
@@ -34,6 +36,18 @@ interface ProfilePostCardProps {
 function ProfilePostCardBase({ post, authorName, authorEmoji, authorVerified, authorBadge, shareText, postEmoji, onLongPress, onImagePress }: ProfilePostCardProps) {
   const theme = useTheme();
   const t = useT();
+
+  // Mount-time diagnostic — captures render→commit latency on the JS thread.
+  // Surfaces as `mount ProfilePostCard <ms>` in the perf monitor so SLOW
+  // frames on the (tabs)/profile screen have actionable context. Skipped
+  // entirely when the user turned the perf bubble off.
+  const renderStart = Date.now();
+  useEffect(() => {
+    if (!useSettingsStore.getState().perfMonitorEnabled) return;
+    perfMonitor.mark('mount ProfilePostCard', Date.now() - renderStart);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const origPost = post.originalPost;
   const imgs: string[] = post.imageUrls && post.imageUrls.length > 0 ? post.imageUrls : post.imageUrl ? [post.imageUrl] : (origPost?.imageUrls && origPost.imageUrls.length > 0 ? origPost.imageUrls : origPost?.imageUrl ? [origPost.imageUrl] : []);
   const hasImage = imgs.length > 0;

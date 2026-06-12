@@ -1,4 +1,4 @@
-import React, { memo } from 'react';
+import React, { memo, useEffect } from 'react';
 import { View, Pressable } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -15,6 +15,8 @@ import { extractFirstUrl } from '../../services/linkPreview';
 import { triggerHaptic } from '../../utils/haptics';
 import { formatTimeAgo } from '../../utils/mockData';
 import { useT } from '../../i18n/store';
+import { perfMonitor } from '../../services/perfMonitor';
+import { useSettingsStore } from '../../store/settingsStore';
 
 interface UserProfilePostCardProps {
   post: any;
@@ -46,6 +48,18 @@ function UserProfilePostCardBase({
 }: UserProfilePostCardProps) {
   const theme = useTheme();
   const t = useT();
+
+  // Mount-time diagnostic — captures render→commit latency on the JS thread.
+  // Surfaces as `mount UserProfilePostCard <ms>` in the perf monitor's event
+  // log so SLOW frames on profile screens have actionable context. The
+  // setting check runs once at commit, not on every render — keeps this
+  // ~free in production for users who turned the bubble off.
+  const renderStart = Date.now();
+  useEffect(() => {
+    if (!useSettingsStore.getState().perfMonitorEnabled) return;
+    perfMonitor.mark('mount UserProfilePostCard', Date.now() - renderStart);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const postImages: string[] = post.imageUrls && post.imageUrls.length > 0
     ? post.imageUrls

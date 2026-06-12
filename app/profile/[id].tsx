@@ -256,10 +256,8 @@ export default function UserProfileScreen() {
   const [showMenu, setShowMenu] = useState(false);
   const [viewingImage, setViewingImage] = useState<{ uri: string; postId: string; allImages?: string[] } | null>(null);
   const { target: contextPost, open: openContextMenu, close: closeContextMenu } = useContextMenuGuard<any>();
-  // Windowing: render posts in small chunks. Smaller default + smaller increments
-  // keep the first frame of the "Posts" tab cheap and avoid mounting many cards
-  // (each with its own gesture handlers + images) at once.
-  const [visibleCount, setVisibleCount] = useState(6);
+  // Virtualization is handled by Animated.FlatList below — no manual windowing
+  // needed. Initial mount is gated by `postsReady` so the tab tap stays snappy.
   const scrollY = useRef(new Animated.Value(0)).current;
   // Memoize interpolations so each is allocated once, not per-render. Each
   // re-render of this screen otherwise creates 5 new AnimatedInterpolation
@@ -538,115 +536,119 @@ export default function UserProfileScreen() {
         </Animated.View>
       </View>
 
-      <Animated.ScrollView
+      <Animated.FlatList
+        data={activeTab === 'posts' && postsReady ? displayPosts : []}
+        keyExtractor={(item: any) => item.id}
+        renderItem={({ item }: { item: any }) => (
+          <UserProfilePostCard
+            post={item}
+            authorName={displayProfile.display_name}
+            authorUsername={displayProfile.username}
+            authorEmoji={displayProfile.emoji || '😊'}
+            authorVerified={displayProfile.is_verified}
+            authorBadge={displayProfile.badge}
+            authorId={displayProfile.id}
+            onLongPress={handlePostLongPress}
+            onImagePress={handlePostImagePress}
+          />
+        )}
+        // Virtualization tuned for weak Android / iPhone 12. Keeps the
+        // mounted card count low so gesture handlers, FormattedText, and any
+        // LinkPreview unfurls don't all sit on the UI thread at once — the
+        // root cause of `SLOW ui<30 @ profile/[id]`.
+        initialNumToRender={6}
+        maxToRenderPerBatch={4}
+        windowSize={7}
+        removeClippedSubviews={true}
         showsVerticalScrollIndicator={false}
         bounces={false}
         onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true })}
         scrollEventThrottle={16}
-        onMomentumScrollEnd={(e) => { const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent; if (contentOffset.y + layoutMeasurement.height >= contentSize.height - 600) { setVisibleCount((c) => (c < displayPosts.length ? c + 4 : c)); } }}
-        contentContainerStyle={{ paddingBottom: 100 }}
-      >
-        {/* Banner */}
-        <View style={{ height: 200, backgroundColor: theme.colors.accent.primary + '20' }}>
-          {bannerUrl ? <CachedImage uri={bannerUrl} style={{ width: '100%', height: '100%' }} resizeMode="cover" proxyWidth={800} /> : null}
-          <LinearGradient colors={['transparent', theme.colors.background.primary]} style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 60 }} />
-        </View>
-
-        {/* Profile info */}
-        <View style={{ paddingHorizontal: 16, marginTop: -90 }}>
-          <View style={{ width: 72, height: 72, borderRadius: 36, overflow: 'hidden', borderWidth: 3, borderColor: theme.colors.background.primary, backgroundColor: theme.isDark ? 'rgba(30,30,30,0.85)' : 'rgba(255,255,255,0.85)', alignItems: 'center', justifyContent: 'center' }}>
-            <Avatar emoji={displayProfile.emoji || '😊'} size="lg" />
-          </View>
-
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}>
-            <View style={{ flex: 1, marginRight: 8 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                <Text variant="body" weight="bold" numberOfLines={1} style={{ flexShrink: 1 }}>{displayProfile.display_name}</Text>
-                {displayProfile.is_verified && <VerifiedBadge size={13} />}
-                {displayProfile.badge && <UserBadge badge={displayProfile.badge} size="sm" />}
-              </View>
-              <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>@{displayProfile.username}</Text>
+        // Posts get a 16px gutter; the banner + tabs in the header extend
+        // edge-to-edge via negative horizontal margins below.
+        contentContainerStyle={{ paddingBottom: 100, paddingHorizontal: 16, paddingTop: 12 }}
+        ListHeaderComponent={(
+          <>
+            {/* Banner — full width, undoes the 16px content gutter */}
+            <View style={{ height: 200, marginHorizontal: -16, marginTop: -12, backgroundColor: theme.colors.accent.primary + '20' }}>
+              {bannerUrl ? <CachedImage uri={bannerUrl} style={{ width: '100%', height: '100%' }} resizeMode="cover" proxyWidth={800} /> : null}
+              <LinearGradient colors={['transparent', theme.colors.background.primary]} style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 60 }} />
             </View>
-            {!isOwnProfile && (
-              <View style={{ flexDirection: 'row', gap: 8 }}>
-                {fromChat !== '1' && (
-                  <Pressable onPress={() => router.push({ pathname: '/chat/[id]', params: { id: displayProfile.id } })} style={{ width: 36, height: 36, borderRadius: 18, borderWidth: 1, borderColor: theme.colors.border.medium, alignItems: 'center', justifyContent: 'center' }}>
-                    <Feather name="send" size={16} color={theme.colors.text.primary} />
-                  </Pressable>
+
+            {/* Profile info */}
+            <View style={{ marginTop: -90 }}>
+              <View style={{ width: 72, height: 72, borderRadius: 36, overflow: 'hidden', borderWidth: 3, borderColor: theme.colors.background.primary, backgroundColor: theme.isDark ? 'rgba(30,30,30,0.85)' : 'rgba(255,255,255,0.85)', alignItems: 'center', justifyContent: 'center' }}>
+                <Avatar emoji={displayProfile.emoji || '😊'} size="lg" />
+              </View>
+
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}>
+                <View style={{ flex: 1, marginRight: 8 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                    <Text variant="body" weight="bold" numberOfLines={1} style={{ flexShrink: 1 }}>{displayProfile.display_name}</Text>
+                    {displayProfile.is_verified && <VerifiedBadge size={13} />}
+                    {displayProfile.badge && <UserBadge badge={displayProfile.badge} size="sm" />}
+                  </View>
+                  <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>@{displayProfile.username}</Text>
+                </View>
+                {!isOwnProfile && (
+                  <View style={{ flexDirection: 'row', gap: 8 }}>
+                    {fromChat !== '1' && (
+                      <Pressable onPress={() => router.push({ pathname: '/chat/[id]', params: { id: displayProfile.id } })} style={{ width: 36, height: 36, borderRadius: 18, borderWidth: 1, borderColor: theme.colors.border.medium, alignItems: 'center', justifyContent: 'center' }}>
+                        <Feather name="send" size={16} color={theme.colors.text.primary} />
+                      </Pressable>
+                    )}
+                    <Pressable onPress={handleFollow} style={{ paddingHorizontal: 20, paddingVertical: 8, backgroundColor: isFollowingState ? 'transparent' : theme.colors.accent.primary, borderWidth: isFollowingState ? 1 : 0, borderColor: theme.colors.border.medium, borderRadius: 8 }}>
+                      <Text variant="caption" weight="semibold" color={isFollowingState ? theme.colors.text.primary : '#FFFFFF'}>{isFollowingState ? t('profile.unfollow') : t('profile.follow')}</Text>
+                    </Pressable>
+                  </View>
                 )}
-                <Pressable onPress={handleFollow} style={{ paddingHorizontal: 20, paddingVertical: 8, backgroundColor: isFollowingState ? 'transparent' : theme.colors.accent.primary, borderWidth: isFollowingState ? 1 : 0, borderColor: theme.colors.border.medium, borderRadius: 8 }}>
-                  <Text variant="caption" weight="semibold" color={isFollowingState ? theme.colors.text.primary : '#FFFFFF'}>{isFollowingState ? t('profile.unfollow') : t('profile.follow')}</Text>
-                </Pressable>
               </View>
-            )}
-          </View>
 
-          <View style={{ flexDirection: 'row', marginTop: 10, gap: 16 }}>
-            <Text variant="caption"><Text variant="caption" weight="bold">{displayPosts.length}</Text> <Text variant="caption" color={theme.colors.text.tertiary}>posts</Text></Text>
-            <Text variant="caption"><Text variant="caption" weight="bold">{followCounts.following}</Text> <Text variant="caption" color={theme.colors.text.tertiary}>following</Text></Text>
-            <Text variant="caption"><Text variant="caption" weight="bold">{followCounts.followers}</Text> <Text variant="caption" color={theme.colors.text.tertiary}>followers</Text></Text>
-          </View>
+              <View style={{ flexDirection: 'row', marginTop: 10, gap: 16 }}>
+                <Text variant="caption"><Text variant="caption" weight="bold">{displayPosts.length}</Text> <Text variant="caption" color={theme.colors.text.tertiary}>posts</Text></Text>
+                <Text variant="caption"><Text variant="caption" weight="bold">{followCounts.following}</Text> <Text variant="caption" color={theme.colors.text.tertiary}>following</Text></Text>
+                <Text variant="caption"><Text variant="caption" weight="bold">{followCounts.followers}</Text> <Text variant="caption" color={theme.colors.text.tertiary}>followers</Text></Text>
+              </View>
 
-          {displayProfile.bio ? <LinkedText style={{ marginTop: 8 }}>{displayProfile.bio}</LinkedText> : null}
-          {userLinks.length > 0 && <View style={{ flexDirection: 'row', marginTop: 8, gap: 8 }}>{userLinks.map((link: any, idx: number) => <SocialLinkIcon key={idx} type={link.type} url={link.url} />)}</View>}
-        </View>
-
-        {/* Tabs */}
-        <View style={{ marginTop: 16, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border.light }}>
-          <View style={{ flexDirection: 'row' }}>
-            {tabs.map((tab) => (
-              <Pressable key={tab.key} onPress={() => {
-                triggerHaptic('selection');
-                if (tab.key === 'posts') {
-                  // Defer mounting heavy post cards by one frame so the tab
-                  // highlight switches instantly and the list mount happens
-                  // off the tap's critical path.
-                  setPostsReady(false);
-                  requestAnimationFrame(() => setActiveTab('posts'));
-                  setTimeout(() => setPostsReady(true), 16);
-                } else {
-                  setActiveTab(tab.key);
-                }
-              }} style={{ flex: 1, alignItems: 'center', paddingVertical: 11 }}>
-                <Text variant="caption" weight={activeTab === tab.key ? 'bold' : 'regular'} color={activeTab === tab.key ? theme.colors.text.primary : theme.colors.text.tertiary}>{tab.label}</Text>
-              </Pressable>
-            ))}
-          </View>
-          <View style={{ position: 'absolute', bottom: 0, height: 2, backgroundColor: theme.colors.accent.primary, width: SCREEN_WIDTH / 4, left: tabs.findIndex(t => t.key === activeTab) * (SCREEN_WIDTH / 4) }} />
-        </View>
-
-        {/* Content — every tab is rendered ONCE and kept mounted; switching
-            between them only flips `display`. Without this, navigating away
-            from "Посты" and back unmounts every UserProfilePostCard, then
-            re-mounts them all — that mount cost is the ~200 ms stutter the
-            user reported when toggling tabs. Cards still bail out via
-            React.memo on subsequent re-renders, so always-mounted is cheap. */}
-        <View style={{ display: activeTab === 'posts' ? 'flex' : 'none' }}>
-          {displayPosts.length === 0 ? (
-            <View style={{ alignItems: 'center', paddingVertical: 40 }}><Text variant="caption" color={theme.colors.text.tertiary}>{t('profile.no_posts')}</Text></View>
-          ) : (
-            <View style={{ paddingHorizontal: 16, paddingTop: 12, minHeight: 200 }}>
-              {postsReady ? displayPosts.slice(0, visibleCount).map((post: any) => (
-                <UserProfilePostCard
-                  key={post.id}
-                  post={post}
-                  authorName={displayProfile.display_name}
-                  authorUsername={displayProfile.username}
-                  authorEmoji={displayProfile.emoji || '😊'}
-                  authorVerified={displayProfile.is_verified}
-                  authorBadge={displayProfile.badge}
-                  authorId={displayProfile.id}
-                  onLongPress={handlePostLongPress}
-                  onImagePress={handlePostImagePress}
-                />
-              )) : null}
+              {displayProfile.bio ? <LinkedText style={{ marginTop: 8 }}>{displayProfile.bio}</LinkedText> : null}
+              {userLinks.length > 0 && <View style={{ flexDirection: 'row', marginTop: 8, gap: 8 }}>{userLinks.map((link: any, idx: number) => <SocialLinkIcon key={idx} type={link.type} url={link.url} />)}</View>}
             </View>
-          )}
-        </View>
-        <View style={{ display: activeTab !== 'posts' ? 'flex' : 'none', alignItems: 'center', paddingVertical: 40 }}>
-          <Text variant="caption" color={theme.colors.text.tertiary}>{t('profile.empty_section')}</Text>
-        </View>
-      </Animated.ScrollView>
+
+            {/* Tabs — full width via negative margin */}
+            <View style={{ marginTop: 16, marginHorizontal: -16, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border.light }}>
+              <View style={{ flexDirection: 'row' }}>
+                {tabs.map((tab) => (
+                  <Pressable key={tab.key} onPress={() => {
+                    triggerHaptic('selection');
+                    if (tab.key === 'posts') {
+                      // Defer mounting heavy post cards by one frame so the tab
+                      // highlight switches instantly and the list mount happens
+                      // off the tap's critical path.
+                      setPostsReady(false);
+                      requestAnimationFrame(() => setActiveTab('posts'));
+                      setTimeout(() => setPostsReady(true), 16);
+                    } else {
+                      setActiveTab(tab.key);
+                    }
+                  }} style={{ flex: 1, alignItems: 'center', paddingVertical: 11 }}>
+                    <Text variant="caption" weight={activeTab === tab.key ? 'bold' : 'regular'} color={activeTab === tab.key ? theme.colors.text.primary : theme.colors.text.tertiary}>{tab.label}</Text>
+                  </Pressable>
+                ))}
+              </View>
+              <View style={{ position: 'absolute', bottom: 0, height: 2, backgroundColor: theme.colors.accent.primary, width: SCREEN_WIDTH / 4, left: tabs.findIndex(t => t.key === activeTab) * (SCREEN_WIDTH / 4) }} />
+            </View>
+            {/* Match the previous 12px gap between tabs and the first post. */}
+            <View style={{ height: 12 }} />
+          </>
+        )}
+        ListEmptyComponent={(
+          <View style={{ alignItems: 'center', paddingVertical: 40 }}>
+            <Text variant="caption" color={theme.colors.text.tertiary}>
+              {activeTab === 'posts' ? t('profile.no_posts') : t('profile.empty_section')}
+            </Text>
+          </View>
+        )}
+      />
 
       {/* Bottom gradient - always visible */}
       <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 80, zIndex: 90 }} pointerEvents="none">

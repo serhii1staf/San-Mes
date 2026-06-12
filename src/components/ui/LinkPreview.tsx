@@ -8,6 +8,8 @@ import { CachedImage } from './CachedImage';
 import { EmojiPattern } from './EmojiPattern';
 import { MediaViewerModal, MediaViewerSource, InlineVideoPlayer } from './MediaViewerModal';
 import { getLinkPreview, getCachedPreviewSync, LinkPreviewData } from '../../services/linkPreview';
+import { perfMonitor } from '../../services/perfMonitor';
+import { useSettingsStore } from '../../store/settingsStore';
 
 // Rich link preview.
 //
@@ -61,15 +63,27 @@ export const LinkPreview = React.memo(function LinkPreview({ url, onError, textC
         mounted.current = false;
       };
     }
+    // Time the very first network resolve for this URL so the perf monitor
+    // can attribute SLOW UI frames to slow unfurl backends. Cheap (one host
+    // parse + one Date.now diff) and entirely skipped when the bubble is off.
+    const fetchStart = Date.now();
+    const recordFetch = () => {
+      if (!useSettingsStore.getState().perfMonitorEnabled) return;
+      let host = '';
+      try { host = new URL(url).hostname.replace(/^www\./, ''); } catch {}
+      perfMonitor.mark('linkPreview fetch ' + host, Date.now() - fetchStart);
+    };
     getLinkPreview(url)
       .then((d) => {
         if (!mounted.current) return;
+        recordFetch();
         setData(d);
         setResolved(true);
         if (!d) onError?.();
       })
       .catch(() => {
         if (!mounted.current) return;
+        recordFetch();
         setResolved(true);
         onError?.();
       });

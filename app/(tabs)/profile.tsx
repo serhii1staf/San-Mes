@@ -95,9 +95,8 @@ export default function ProfileScreen() {
   const profileScrollOffset = useFeedStore((s) => s.profileScrollOffset);
   const setProfileScrollOffset = useFeedStore((s) => s.setProfileScrollOffset);
   const postEmoji = useProfileAppearanceStore((s) => s.postEmoji);
-  // Windowing: render posts in small chunks so switching to the "Posts" tab never
-  // has to mount many cards (each with gesture handlers) at once. Grows on scroll.
-  const [visibleCount, setVisibleCount] = useState(4);
+  // Virtualization is now handled by Animated.FlatList — no manual windowing
+  // needed. Tab tap stays snappy via the `postsReady` gating below.
   // Posts cards are heavier (gesture handlers + images). Gate their mount one
   // frame after the tab activates so the tab highlight switches instantly and the
   // heavy mount happens off the tap's critical path (no perceived freeze).
@@ -305,44 +304,72 @@ export default function ProfileScreen() {
         <Animated.View style={{ transform: [{ translateX: buttonsTranslateX }] }}><Pressable onPress={() => { triggerHaptic('light'); setShowQR(true); }} style={{ borderRadius: 17, overflow: 'hidden' }}><BlurView intensity={80} tint="dark" style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center' }}><FontAwesome5 name="qrcode" size={15} color="#FFFFFF" /></BlurView></Pressable></Animated.View>
         <Animated.View style={{ transform: [{ translateX: settingsTranslateX }] }}><Pressable onPress={() => { triggerHaptic('light'); router.push('/settings'); }} style={{ borderRadius: 17, overflow: 'hidden' }}><BlurView intensity={80} tint="dark" style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center' }}><Feather name="settings" size={16} color="#FFFFFF" /></BlurView></Pressable></Animated.View>
       </View>
-      <Animated.ScrollView ref={scrollViewRef} showsVerticalScrollIndicator={false} bounces={false} onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true })} scrollEventThrottle={16} onMomentumScrollEnd={(e) => { const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent; if (contentOffset.y + layoutMeasurement.height >= contentSize.height - 600) { setVisibleCount((c) => (c < userPosts.length ? c + 8 : c)); } }} contentContainerStyle={{ paddingBottom: 100 }}>
-        <View style={{ height: 200, backgroundColor: theme.colors.accent.primary + '20' }}>{bannerUrl ? <CachedImage uri={bannerUrl} style={{ width: '100%', height: '100%' }} resizeMode="cover" /> : null}<LinearGradient colors={['transparent', theme.colors.background.primary]} style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 60 }} /></View>
-        <View style={{ paddingHorizontal: 16, marginTop: -90 }}>
-          <Pressable onPress={() => setShowAccountSwitcher(true)}><View style={{ width: 72, height: 72, borderRadius: 36, overflow: 'hidden', borderWidth: 3, borderColor: theme.colors.background.primary, backgroundColor: theme.isDark ? 'rgba(30,30,30,0.85)' : 'rgba(255,255,255,0.85)', alignItems: 'center', justifyContent: 'center' }}><Avatar emoji={user.emoji} size="lg" /></View></Pressable>
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}>
-            <View style={{ flex: 1, marginRight: 8 }}><View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}><Text variant="body" weight="bold" numberOfLines={1} style={{ flexShrink: 1 }}>{user.displayName}</Text>{user.is_verified && <VerifiedBadge size={13} />}{user.badge && <UserBadge badge={user.badge} size="sm" />}</View><Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>@{user.username}</Text></View>
-            <Pressable onPress={() => { triggerHaptic('light'); router.push('/profile/edit'); }} style={{ borderRadius: 20, overflow: 'hidden', flexShrink: 0 }}><BlurView intensity={80} tint="dark" style={{ paddingHorizontal: 16, paddingVertical: 7 }}><Text variant="caption" weight="semibold" color="#FFFFFF">{t('profile.edit')}</Text></BlurView></Pressable>
+      <Animated.FlatList
+        ref={scrollViewRef}
+        data={activeTab === 'posts' && postsReady ? userPosts : []}
+        keyExtractor={(item: any) => item.id}
+        renderItem={({ item }: { item: any }) => (
+          <ProfilePostCard
+            post={item}
+            authorName={user.displayName || ''}
+            authorEmoji={user.emoji || '😊'}
+            authorVerified={user.is_verified}
+            authorBadge={user.badge}
+            shareText={`${user.displayName}: ${item.content || ''}\nhttps://san-m-app.com/post/${item.id}`}
+            postEmoji={postEmoji}
+            onLongPress={handlePostLongPress}
+            onImagePress={handlePostImagePress}
+          />
+        )}
+        // Virtualization tuned for weak Android / iPhone 12. Keeps the
+        // mounted card count low so swipe gestures, link previews, and
+        // formatted-text reflow don't all sit on the UI thread at once —
+        // the root cause of `SLOW ui<30 @ (tabs)/profile`.
+        initialNumToRender={6}
+        maxToRenderPerBatch={4}
+        windowSize={7}
+        removeClippedSubviews={true}
+        showsVerticalScrollIndicator={false}
+        bounces={false}
+        onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true })}
+        scrollEventThrottle={16}
+        contentContainerStyle={{ paddingBottom: 100, paddingHorizontal: 16, paddingTop: 12 }}
+        ListHeaderComponent={(
+          <>
+            <View style={{ height: 200, marginHorizontal: -16, marginTop: -12, backgroundColor: theme.colors.accent.primary + '20' }}>
+              {bannerUrl ? <CachedImage uri={bannerUrl} style={{ width: '100%', height: '100%' }} resizeMode="cover" /> : null}
+              <LinearGradient colors={['transparent', theme.colors.background.primary]} style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 60 }} />
+            </View>
+            <View style={{ marginTop: -90 }}>
+              <Pressable onPress={() => setShowAccountSwitcher(true)}><View style={{ width: 72, height: 72, borderRadius: 36, overflow: 'hidden', borderWidth: 3, borderColor: theme.colors.background.primary, backgroundColor: theme.isDark ? 'rgba(30,30,30,0.85)' : 'rgba(255,255,255,0.85)', alignItems: 'center', justifyContent: 'center' }}><Avatar emoji={user.emoji} size="lg" /></View></Pressable>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}>
+                <View style={{ flex: 1, marginRight: 8 }}><View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}><Text variant="body" weight="bold" numberOfLines={1} style={{ flexShrink: 1 }}>{user.displayName}</Text>{user.is_verified && <VerifiedBadge size={13} />}{user.badge && <UserBadge badge={user.badge} size="sm" />}</View><Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>@{user.username}</Text></View>
+                <Pressable onPress={() => { triggerHaptic('light'); router.push('/profile/edit'); }} style={{ borderRadius: 20, overflow: 'hidden', flexShrink: 0 }}><BlurView intensity={80} tint="dark" style={{ paddingHorizontal: 16, paddingVertical: 7 }}><Text variant="caption" weight="semibold" color="#FFFFFF">{t('profile.edit')}</Text></BlurView></Pressable>
+              </View>
+              <View style={{ flexDirection: 'row', marginTop: 10, gap: 16 }}>
+                <Text variant="caption"><Text variant="caption" weight="bold">{userPosts.length}</Text> <Text variant="caption" color={theme.colors.text.tertiary}>{t('profile.posts_count')}</Text></Text>
+                <Text variant="caption"><Text variant="caption" weight="bold">{followCounts.following}</Text> <Text variant="caption" color={theme.colors.text.tertiary}>{t('profile.following')}</Text></Text>
+                <Text variant="caption"><Text variant="caption" weight="bold">{followCounts.followers}</Text> <Text variant="caption" color={theme.colors.text.tertiary}>{t('profile.followers')}</Text></Text>
+              </View>
+              {user.bio ? <LinkedText style={{ marginTop: 8 }}>{user.bio}</LinkedText> : null}
+              {userLinks.length > 0 && <View style={{ flexDirection: 'row', marginTop: 8, gap: 8 }}>{userLinks.map((link, idx) => <SocialLinkIcon key={idx} type={link.type} url={link.url} />)}</View>}
+            </View>
+            <View style={{ marginTop: 16, marginHorizontal: -16, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border.light }}>
+              <View style={{ flexDirection: 'row' }}>{tabs.map((tab) => (<Pressable key={tab.key} onPress={() => { triggerHaptic('selection'); if (tab.key === 'posts') { setPostsReady(false); requestAnimationFrame(() => setActiveTab('posts')); setTimeout(() => setPostsReady(true), 16); } else { setActiveTab(tab.key); } }} style={{ flex: 1, alignItems: 'center', paddingVertical: 11 }}><Text variant="caption" weight={activeTab === tab.key ? 'bold' : 'regular'} color={activeTab === tab.key ? theme.colors.text.primary : theme.colors.text.tertiary}>{tab.label}</Text></Pressable>))}</View>
+              <View style={{ position: 'absolute', bottom: 0, height: 2, backgroundColor: theme.colors.accent.primary, width: SCREEN_WIDTH / 4, left: tabs.findIndex(t => t.key === activeTab) * (SCREEN_WIDTH / 4) }} />
+            </View>
+            {/* Match the previous 12px gap between tabs and the first post. */}
+            <View style={{ height: 12 }} />
+          </>
+        )}
+        ListEmptyComponent={(
+          <View style={{ alignItems: 'center', paddingVertical: 40 }}>
+            <Text variant="caption" color={theme.colors.text.tertiary}>
+              {activeTab === 'posts' ? t('profile.no_posts') : t('profile.empty_section')}
+            </Text>
           </View>
-          <View style={{ flexDirection: 'row', marginTop: 10, gap: 16 }}>
-            <Text variant="caption"><Text variant="caption" weight="bold">{userPosts.length}</Text> <Text variant="caption" color={theme.colors.text.tertiary}>{t('profile.posts_count')}</Text></Text>
-            <Text variant="caption"><Text variant="caption" weight="bold">{followCounts.following}</Text> <Text variant="caption" color={theme.colors.text.tertiary}>{t('profile.following')}</Text></Text>
-            <Text variant="caption"><Text variant="caption" weight="bold">{followCounts.followers}</Text> <Text variant="caption" color={theme.colors.text.tertiary}>{t('profile.followers')}</Text></Text>
-          </View>
-          {user.bio ? <LinkedText style={{ marginTop: 8 }}>{user.bio}</LinkedText> : null}
-          {userLinks.length > 0 && <View style={{ flexDirection: 'row', marginTop: 8, gap: 8 }}>{userLinks.map((link, idx) => <SocialLinkIcon key={idx} type={link.type} url={link.url} />)}</View>}
-        </View>
-        <View style={{ marginTop: 16, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border.light }}>
-          <View style={{ flexDirection: 'row' }}>{tabs.map((tab) => (<Pressable key={tab.key} onPress={() => { triggerHaptic('selection'); if (tab.key === 'posts') { setPostsReady(false); requestAnimationFrame(() => setActiveTab('posts')); setTimeout(() => setPostsReady(true), 16); } else { setActiveTab(tab.key); } }} style={{ flex: 1, alignItems: 'center', paddingVertical: 11 }}><Text variant="caption" weight={activeTab === tab.key ? 'bold' : 'regular'} color={activeTab === tab.key ? theme.colors.text.primary : theme.colors.text.tertiary}>{tab.label}</Text></Pressable>))}</View>
-          <View style={{ position: 'absolute', bottom: 0, height: 2, backgroundColor: theme.colors.accent.primary, width: SCREEN_WIDTH / 4, left: tabs.findIndex(t => t.key === activeTab) * (SCREEN_WIDTH / 4) }} />
-        </View>
-        {activeTab === 'posts' && (userPosts.length === 0 ? <View style={{ alignItems: 'center', paddingVertical: 40 }}><Text variant="caption" color={theme.colors.text.tertiary}>{t('profile.no_posts')}</Text></View> : (
-          <View style={{ paddingHorizontal: 16, paddingTop: 12, minHeight: 200 }}>{postsReady ? userPosts.slice(0, visibleCount).map(post => (
-            <ProfilePostCard
-              key={post.id}
-              post={post}
-              authorName={user.displayName || ''}
-              authorEmoji={user.emoji || '😊'}
-              authorVerified={user.is_verified}
-              authorBadge={user.badge}
-              shareText={`${user.displayName}: ${post.content || ''}\nhttps://san-m-app.com/post/${post.id}`}
-              postEmoji={postEmoji}
-              onLongPress={handlePostLongPress}
-              onImagePress={handlePostImagePress}
-            />
-          )) : null}</View>
-        ))}
-        {activeTab !== 'posts' && <View style={{ alignItems: 'center', paddingVertical: 40 }}><Text variant="caption" color={theme.colors.text.tertiary}>{t('profile.empty_section')}</Text></View>}
-      </Animated.ScrollView>
+        )}
+      />
       <Modal visible={showQR} transparent animationType="fade" onRequestClose={() => setShowQR(false)} statusBarTranslucent>
         <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', alignItems: 'center', justifyContent: 'center' }} onPress={() => setShowQR(false)}>
           <Text variant="body" weight="bold" color="#FFFFFF" style={{ marginBottom: 20 }}>{t('profile.qr_title')}</Text>
