@@ -138,7 +138,11 @@ export const CachedImage = memo(function CachedImage({
       // though the bytes were served from cache. Showing the cached frame
       // instantly removes that flicker entirely.
       transition={0}
-      recyclingKey={finalUri}
+      // Recycling key is tied to the ORIGINAL URI, never the proxied form.
+      // Otherwise a proxy fallback (proxy → original) would re-key the
+      // image and force expo-image to drop its cached bitmap, manifesting
+      // as a brief reload when switching tabs / scrolling lists.
+      recyclingKey={uri}
       // If the proxy fails (e.g. weserv can't fetch a private/odd host), fall
       // back to the original URL so the image still loads. Without this any
       // URL the proxy can't see (private buckets, signed URLs, less-common

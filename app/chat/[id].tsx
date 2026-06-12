@@ -252,13 +252,16 @@ export default function ChatScreen() {
     paddingBottom: interpolate(progress.value, [0, 1], [inputBarBottomPad, 8], Extrapolation.CLAMP),
   }));
 
-  // List bottom spacer matches the input bar's real height so the newest message keeps
-  // a comfortable gap above the input (closed) and stays reachable above the keyboard (open).
+  // List bottom spacer matches the input bar's real height so the newest
+  // message keeps a comfortable gap above the input. We deliberately keep
+  // this STATIC (no keyboardHeight in the layout) — animating the spacer's
+  // height on every keyboard frame caused the FlatList to relayout mid-
+  // scroll, which manifested as the content jumping up/down when the user
+  // tapped the input field while the list was still in motion. The input
+  // bar itself rides KeyboardStickyView, so it always stays above the
+  // keyboard regardless of this constant.
   const INPUT_BAR_HEIGHT = 60;
-  const listFooterStyle = useAnimatedStyle(() => {
-    const padBottom = interpolate(progress.value, [0, 1], [inputBarBottomPad, 8], Extrapolation.CLAMP);
-    return { height: Math.abs(keyboardHeight.value) + INPUT_BAR_HEIGHT + padBottom + 12 };
-  });
+  const LIST_FOOTER_HEIGHT = INPUT_BAR_HEIGHT + inputBarBottomPad + 12;
 
   const cachedProfile = useEntityStore((s) => (participantId ? s.profiles[participantId] : undefined));
 
@@ -683,7 +686,7 @@ export default function ChatScreen() {
         renderItem={renderItem}
         inverted
         contentContainerStyle={{ paddingBottom: 8 }}
-        ListHeaderComponent={<Reanimated.View style={listFooterStyle} />}
+        ListHeaderComponent={<View style={{ height: LIST_FOOTER_HEIGHT }} />}
         ListFooterComponent={<View style={{ height: headerContentHeight + 8 }} />}
         showsVerticalScrollIndicator={false}
         scrollEnabled={scrollEnabled}
