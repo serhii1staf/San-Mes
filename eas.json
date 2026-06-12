@@ -25,7 +25,11 @@
         "credentialsSource": "remote",
         "image": "latest"
       },
-      "node": "20.18.0"
+      "node": "20.18.0",
+      "env": {
+        "SENTRY_ALLOW_FAILURE": "true",
+        "EAS_BUILD_NO_EXPO_GO_WARNING": "true"
+      }
     }
   },
   "submit": {
