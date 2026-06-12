@@ -310,19 +310,21 @@ export default function EditProfileScreen() {
 
   // Match the post 3-dots menu (PostMenuModal) so the edit-profile sheet
   // visually belongs to the same family: bottom-anchored, theme-aware
-  // background, 28-px corners. Content lives inside an inner ScrollView so
-  // the sheet can grow up to ~92% of the screen but never lifts past the
-  // status bar — same feel as the post menu, just taller because there are
-  // more fields. We give the card an explicit height (not just maxHeight)
-  // because justifyContent: 'flex-end' on the parent column doesn't give
-  // its child a flex basis without one, which earlier collapsed the card
-  // to 0 px and showed only the backdrop.
+  // background, 28-px corners, **content-sized** (not full screen). The
+  // heavy fields live inside an inner ScrollView with its own maxHeight,
+  // so the whole card grows up to a comfortable ~55% of the screen and
+  // never reaches the status bar — same feel as PostMenuModal which is
+  // also content-sized.
   const sheetBg = theme.isDark ? theme.colors.background.elevated : '#FFFFFF';
-  const sheetHeight = SCREEN_HEIGHT - insets.top - insets.bottom - 60;
+  // Cap the inner ScrollView so the card stays in the bottom-half feel
+  // family. iPhone 12 (~844 px) gets ~460 px of scroll area, plenty for
+  // banner + emoji + name + username + bio + first link without forcing
+  // the user into a fullscreen card. Smaller / larger phones scale
+  // proportionally.
+  const sheetScrollMaxHeight = SCREEN_HEIGHT * 0.55;
   const cardStyle: ViewStyle = {
     marginHorizontal: 8,
     marginBottom: insets.bottom + 16,
-    height: sheetHeight,
     borderRadius: 28,
     overflow: 'hidden',
     backgroundColor: sheetBg,
@@ -342,11 +344,15 @@ export default function EditProfileScreen() {
         <Pressable style={{ flex: 1 }} onPress={handleClose} />
       </Animated.View>
 
-      {/* Modal Card — bottom-anchored, slides up from the bottom edge */}
-      <KeyboardAvoidingView
-        style={{ flex: 1, justifyContent: 'flex-end' }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
+      {/* Modal Card — bottom-anchored, slides up from the bottom edge.
+          We deliberately do NOT wrap in KeyboardAvoidingView: when the
+          user taps Name/Username/Bio fields, behavior="padding" used to
+          push the entire modal off the top of the screen. With the card
+          now content-sized (not full-tall), iOS' built-in keyboard
+          handling for ScrollView keeps the focused input visible without
+          us moving the whole sheet, which matches what the user
+          described as "earlier the modal closed halfway when typing". */}
+      <View style={{ flex: 1, justifyContent: 'flex-end' }}>
         <Animated.View
           style={[
             cardStyle,
@@ -370,6 +376,7 @@ export default function EditProfileScreen() {
               </View>
 
               <ScrollView
+                style={{ maxHeight: sheetScrollMaxHeight }}
                 contentContainerStyle={{ paddingBottom: 32 }}
                 showsVerticalScrollIndicator={false}
                 scrollEnabled={true}
@@ -511,7 +518,7 @@ export default function EditProfileScreen() {
               </ScrollView>
           </View>
         </Animated.View>
-      </KeyboardAvoidingView>
+      </View>
 
       {/* Emoji/Mood Picker — same family as the main sheet (PostMenuModal-
           style): bottom-anchored card, theme background, smooth spring in
@@ -545,7 +552,6 @@ export default function EditProfileScreen() {
             style={{
               marginHorizontal: 8,
               marginBottom: insets.bottom + 16,
-              height: Math.min(SCREEN_HEIGHT * 0.7, SCREEN_HEIGHT - insets.top - insets.bottom - 80),
               borderRadius: 28,
               overflow: 'hidden',
               backgroundColor: sheetBg,
@@ -609,6 +615,7 @@ export default function EditProfileScreen() {
             {/* Scrollable emoji categories */}
             <ScrollView
               showsVerticalScrollIndicator={false}
+              style={{ maxHeight: SCREEN_HEIGHT * 0.5 }}
               contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 32 }}
             >
               {MOOD_CATEGORIES.map((category) => (
