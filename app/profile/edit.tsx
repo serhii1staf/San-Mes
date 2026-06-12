@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { View, ScrollView, Pressable, StyleSheet, Platform, Modal, KeyboardAvoidingView, Text as RNText, Image, Dimensions } from 'react-native';
+import { View, ScrollView, Pressable, StyleSheet, Platform, Modal, KeyboardAvoidingView, Text as RNText, Dimensions } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
+import { BlurView } from 'expo-blur';
 import * as ImagePicker from 'expo-image-picker';
 import { useTheme } from '../../src/theme';
 import { Text, Input, Avatar } from '../../src/components/ui';
+import { CachedImage } from '../../src/components/ui/CachedImage';
 import { SlideUpSheet } from '../../src/components/ui/SlideUpSheet';
 import { useAuthStore, UserLink } from '../../src/store/authStore';
 import { updateProfile as updateSupabaseProfile, uploadBanner, loadProfileMeta } from '../../src/lib/supabase';
@@ -236,26 +238,31 @@ export default function EditProfileScreen() {
 
   return (
     <View style={[styles.root, { backgroundColor: bgPrimary }]}>
-      {/* Header — gradient fade so the banner can extend under it cleanly */}
-      <View style={[styles.headerWrapper, { height: insets.top + 56 }]} pointerEvents="box-none">
-        <LinearGradient
-          colors={[bgPrimary, bgPrimary, bgPrimary + '00']}
-          locations={[0, 0.6, 1]}
-          style={StyleSheet.absoluteFill}
-        />
-        <View style={[styles.headerRow, { paddingTop: insets.top + 8 }]} pointerEvents="auto">
-          <Pressable onPress={handleClose} hitSlop={10}>
-            <Feather name="x" size={24} color={theme.colors.text.primary} />
-          </Pressable>
-          <Text variant="body" weight="bold">
-            {t('edit_profile.title')}
-          </Text>
-          <Pressable onPress={handleSave} disabled={isSaving} hitSlop={10}>
-            <Text variant="body" weight="semibold" color={accent}>
-              {isSaving ? '...' : t('common.save')}
-            </Text>
-          </Pressable>
+      {/* Floating header — three blur pills (back / title / save) sitting
+          directly over the banner. The user pointed at the same blurred
+          edit-button style from the profile tab top and asked for the
+          same vibe here. No gradient curtain underneath; the banner shows
+          through. */}
+      <View style={[styles.headerRow, { paddingTop: insets.top + 8 }]} pointerEvents="box-none">
+        <Pressable onPress={handleClose} hitSlop={10} style={styles.headerPill}>
+          <BlurView intensity={80} tint="dark" style={styles.headerPillInner}>
+            <Feather name="x" size={18} color="#FFFFFF" />
+          </BlurView>
+        </Pressable>
+        <View style={styles.headerTitlePill}>
+          <BlurView intensity={80} tint="dark" style={styles.headerTitleInner}>
+            <RNText style={styles.headerTitleText} allowFontScaling={false}>
+              {t('edit_profile.title')}
+            </RNText>
+          </BlurView>
         </View>
+        <Pressable onPress={handleSave} disabled={isSaving} hitSlop={10} style={styles.headerPill}>
+          <BlurView intensity={80} tint="dark" style={[styles.headerPillInner, { paddingHorizontal: 14 }]}>
+            <RNText style={styles.headerSaveText} allowFontScaling={false}>
+              {isSaving ? '...' : t('common.save')}
+            </RNText>
+          </BlurView>
+        </Pressable>
       </View>
 
       <ScrollView
@@ -263,14 +270,18 @@ export default function EditProfileScreen() {
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={{ paddingBottom: insets.bottom + 48 }}
       >
-        {/* Banner — full-bleed at the top with a tap-to-pick affordance */}
+        {/* Banner — full-bleed at the top with a tap-to-pick affordance.
+            Uses CachedImage so the same banner URL doesn't re-fetch every
+            time the screen mounts (regular <Image> bypassed expo-image's
+            cache, which is why the banner used to flash on each reopen). */}
         <Pressable onPress={pickBanner}>
           <View style={[styles.banner, { backgroundColor: accent + '20', paddingTop: insets.top + 56 }]}>
             {bannerUri ? (
-              <Image
-                source={{ uri: bannerUri }}
+              <CachedImage
+                uri={bannerUri}
                 style={StyleSheet.absoluteFillObject}
                 resizeMode="cover"
+                proxyWidth={800}
               />
             ) : null}
             <LinearGradient
@@ -545,19 +556,51 @@ export default function EditProfileScreen() {
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  headerWrapper: {
+  headerRow: {
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
-    zIndex: 100,
-  },
-  headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
     paddingBottom: 8,
+    zIndex: 100,
+  },
+  headerPill: {
+    borderRadius: 18,
+    overflow: 'hidden',
+  },
+  headerPillInner: {
+    height: 36,
+    minWidth: 36,
+    paddingHorizontal: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  headerTitlePill: {
+    borderRadius: 18,
+    overflow: 'hidden',
+  },
+  headerTitleInner: {
+    height: 36,
+    paddingHorizontal: 18,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerTitleText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  headerSaveText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
   },
   banner: {
     height: 220,

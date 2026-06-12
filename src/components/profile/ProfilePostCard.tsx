@@ -124,8 +124,11 @@ function ProfilePostCardBase({ post, authorName, authorEmoji, authorVerified, au
   // outer Pressable instead of inlining several object literals.
   const themedContainer = useMemo(
     () => ({
-      backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.75)',
-      borderColor: theme.isDark ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.4)',
+      // Transparent so cards blend with the screen background — matches the
+      // home feed where PostCard has no per-card surface either. Border is
+      // a soft hairline to keep visual separation between cards.
+      backgroundColor: 'transparent',
+      borderColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
     }),
     [theme.isDark],
   );
