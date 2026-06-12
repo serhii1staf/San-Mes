@@ -266,7 +266,10 @@ export default function ProfileScreen() {
     try { const counts = await getFollowCounts(user.id); setFollowCounts(counts); } catch {}
   }, [user?.id]);
 
-  // Restore scroll position when tab regains focus
+  // Restore scroll position when tab regains focus AND refresh the post
+  // list off-throttle so freshly-published posts appear immediately on the
+  // profile tab. Earlier the `shouldSync('my_posts')` gate prevented the
+  // re-fetch and the new post stayed invisible until the next cold start.
   useFocusEffect(
     useCallback(() => {
       if (profileScrollOffset > 0 && scrollViewRef.current && !hasRestoredScroll.current) {
@@ -275,10 +278,25 @@ export default function ProfileScreen() {
           (scrollViewRef.current as any)?.scrollTo({ y: profileScrollOffset, animated: false });
         }, 50);
         hasRestoredScroll.current = true;
-        return () => clearTimeout(timer);
+        // Background sync — bypass throttle so a brand-new post shows up
+        // the moment the user lands on this tab.
+        const refreshHandle = InteractionManager.runAfterInteractions(() => {
+          resetThrottle('my_posts');
+          loadMyPosts();
+        });
+        return () => {
+          clearTimeout(timer);
+          refreshHandle.cancel();
+        };
       }
       hasRestoredScroll.current = false;
-    }, [profileScrollOffset])
+      // Same off-throttle refresh for the no-scroll-restore path.
+      const refreshHandle = InteractionManager.runAfterInteractions(() => {
+        resetThrottle('my_posts');
+        loadMyPosts();
+      });
+      return () => refreshHandle.cancel();
+    }, [profileScrollOffset, loadMyPosts])
   );
 
   // Stable callbacks for the memoized post card so reference equality holds.
