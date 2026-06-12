@@ -1,18 +1,19 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { View, ScrollView, Pressable, ViewStyle, Platform, KeyboardAvoidingView, Animated, Dimensions, PanResponder, Text as RNText, Image } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, ScrollView, Pressable, StyleSheet, Platform, Modal, KeyboardAvoidingView, Text as RNText, Image, Dimensions } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { LinearGradient } from 'expo-linear-gradient';
 import * as ImagePicker from 'expo-image-picker';
 import { useTheme } from '../../src/theme';
 import { Text, Input, Avatar } from '../../src/components/ui';
+import { SlideUpSheet } from '../../src/components/ui/SlideUpSheet';
 import { useAuthStore, UserLink } from '../../src/store/authStore';
-import { updateProfile as updateSupabaseProfile, supabase, uploadBanner, saveProfileMeta, loadProfileMeta } from '../../src/lib/supabase';
+import { updateProfile as updateSupabaseProfile, uploadBanner, loadProfileMeta } from '../../src/lib/supabase';
 import { currentUser } from '../../src/utils/mockData';
 import { useT } from '../../src/i18n/store';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
-const DISMISS_THRESHOLD = 200;
 
 const LINK_TYPES = [
   { key: 'github', label: 'GitHub', icon: 'github', patterns: ['github.com'] },
@@ -25,14 +26,13 @@ const LINK_TYPES = [
   { key: 'twitch', label: 'Twitch', icon: 'tv', patterns: ['twitch.tv'] },
   { key: 'spotify', label: 'Spotify', icon: 'music', patterns: ['spotify.com', 'open.spotify.com'] },
   { key: 'linkedin', label: 'LinkedIn', icon: 'linkedin', patterns: ['linkedin.com'] },
-  // `website` label is translated at use site via `edit_profile.link_website`.
   { key: 'website', label: '', icon: 'globe', patterns: [] },
 ];
 
 function detectLinkTypeFromUrl(url: string): string {
   const lower = url.toLowerCase();
   for (const lt of LINK_TYPES) {
-    if (lt.patterns.some(p => lower.includes(p))) return lt.key;
+    if (lt.patterns.some((p) => lower.includes(p))) return lt.key;
   }
   return 'website';
 }
@@ -103,14 +103,12 @@ const MOOD_CATEGORIES: { titleKey: string; emojis: string[] }[] = [
   },
 ];
 
-// Flat list for quick access
-const ALL_EMOJIS = MOOD_CATEGORIES.flatMap(c => c.emojis);
-
 export default function EditProfileScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
-  const { user, updateProfile } = useAuthStore();
+  const user = useAuthStore((s) => s.user);
+  const updateProfile = useAuthStore((s) => s.updateProfile);
   const displayUser = user || currentUser;
 
   const [name, setName] = useState(displayUser.displayName);
@@ -126,98 +124,25 @@ export default function EditProfileScreen() {
   const [isSaving, setIsSaving] = useState(false);
   const [bannerUri, setBannerUri] = useState<string | null>((user as any)?.bannerUrl || null);
 
-  // Load banner from profile meta on mount (in case local state was lost)
+  // Load banner from server-side meta in case the local copy got dropped.
   useEffect(() => {
     if (user?.id && !bannerUri) {
-      loadProfileMeta(user.id).then(({ meta }) => {
-        if (meta?.banner_url) setBannerUri(meta.banner_url);
-      });
+      loadProfileMeta(user.id)
+        .then(({ meta }) => {
+          if (meta?.banner_url) setBannerUri(meta.banner_url);
+        })
+        .catch(() => {});
     }
   }, [user?.id]);
 
-  // Animation
-  const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
-  const backdropAnim = useRef(new Animated.Value(0)).current;
-  const dragAnim = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    // Animate both backdrop and sheet together
-    Animated.parallel([
-      Animated.timing(backdropAnim, { toValue: 1, duration: 250, useNativeDriver: true }),
-      Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 65, friction: 11 }),
-    ]).start();
-  }, []);
-
-  const handleClose = () => {
-    Animated.parallel([
-      Animated.timing(slideAnim, { toValue: SCREEN_HEIGHT, duration: 280, useNativeDriver: true }),
-      Animated.timing(backdropAnim, { toValue: 0, duration: 280, useNativeDriver: true }),
-    ]).start(() => {
-      router.back();
-    });
-  };
-
-  // Swipe down to dismiss
-  const panResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => false,
-      onMoveShouldSetPanResponder: (evt, gestureState) => {
-        // Only allow swipe-to-dismiss from top 60px of the modal
-        const touchY = evt.nativeEvent.locationY;
-        return touchY < 60 && gestureState.dy > 20 && Math.abs(gestureState.dx) * 2 < Math.abs(gestureState.dy);
-      },
-      onPanResponderMove: (_, gestureState) => {
-        if (gestureState.dy > 0) {
-          dragAnim.setValue(gestureState.dy);
-        }
-      },
-      onPanResponderRelease: (_, gestureState) => {
-        if (gestureState.dy > DISMISS_THRESHOLD) {
-          handleClose();
-        } else {
-          Animated.spring(dragAnim, {
-            toValue: 0,
-            useNativeDriver: true,
-            tension: 100,
-            friction: 10,
-          }).start();
-        }
-      },
-    })
-  ).current;
-
-  // Emoji picker animation — same spring/timing pair as the main sheet so
-  // the two slides feel like the same surface. Mounted only when visible
-  // to keep the heavy emoji grid out of the initial render.
-  const emojiSlide = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
-  const emojiBackdrop = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    if (showEmojiPicker) {
-      emojiSlide.setValue(SCREEN_HEIGHT);
-      emojiBackdrop.setValue(0);
-      Animated.parallel([
-        Animated.timing(emojiBackdrop, { toValue: 1, duration: 200, useNativeDriver: true }),
-        Animated.spring(emojiSlide, { toValue: 0, useNativeDriver: true, tension: 50, friction: 9 }),
-      ]).start();
-    }
-  }, [showEmojiPicker]);
-  const dismissEmojiPicker = () => {
-    Animated.parallel([
-      Animated.timing(emojiSlide, { toValue: SCREEN_HEIGHT, duration: 250, useNativeDriver: true }),
-      Animated.timing(emojiBackdrop, { toValue: 0, duration: 250, useNativeDriver: true }),
-    ]).start(() => setShowEmojiPicker(false));
-  };
+  const handleClose = () => router.back();
 
   const pickBanner = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') return;
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
-      // Do NOT enable allowsEditing — iOS' built-in crop converts animated
-      // GIFs to a single static frame and re-encodes as JPEG. Same goes for
-      // the `quality` setting which forces JPEG re-encoding. The banner is
-      // already shown at a fixed 3:1 region with `resizeMode: 'cover'`, so
-      // we don't need a crop step. This keeps GIFs animated end-to-end.
+      // No allowsEditing/quality — keeps animated GIFs animated end-to-end.
       allowsEditing: false,
       quality: 1.0,
     });
@@ -229,11 +154,16 @@ export default function EditProfileScreen() {
   const handleSave = async () => {
     setIsSaving(true);
     try {
-      // Update local state immediately
-      updateProfile({ displayName: name, username, bio, emoji: selectedEmoji, links, bannerUrl: bannerUri || undefined });
+      updateProfile({
+        displayName: name,
+        username,
+        bio,
+        emoji: selectedEmoji,
+        links,
+        bannerUrl: bannerUri || undefined,
+      });
 
       if (user?.id) {
-        // Try to upload banner to Storage first
         let finalBannerUrl = bannerUri;
         if (bannerUri && bannerUri.startsWith('file://')) {
           try {
@@ -242,7 +172,6 @@ export default function EditProfileScreen() {
           } catch {}
         }
 
-        // Save everything to DB in one call
         await updateSupabaseProfile(user.id, {
           display_name: name,
           bio,
@@ -251,22 +180,19 @@ export default function EditProfileScreen() {
           links: links.length > 0 ? links : [],
         });
 
-        // Update local with remote URL
         if (finalBannerUrl && finalBannerUrl !== bannerUri) {
           updateProfile({ bannerUrl: finalBannerUrl });
         }
       }
-    } catch (e) {
-      // Local save always works
+    } catch {
+      // Local update already applied; ignore network failure.
     }
     setIsSaving(false);
-    handleClose();
+    router.back();
   };
 
   const handleAddLink = () => {
-    if (links.length >= 3) {
-      return;
-    }
+    if (links.length >= 3) return;
     setEditingLinkIndex(null);
     setLinkUrl('');
     setLinkType('website');
@@ -285,7 +211,6 @@ export default function EditProfileScreen() {
       setShowLinkPicker(false);
       return;
     }
-    // Auto-detect type from URL for accuracy
     const detectedType = detectLinkTypeFromUrl(linkUrl.trim());
     const finalType = detectedType !== 'website' ? detectedType : linkType;
     const newLink: UserLink = { type: finalType, url: linkUrl.trim() };
@@ -303,467 +228,487 @@ export default function EditProfileScreen() {
     setLinks(links.filter((_, i) => i !== index));
   };
 
-  const outerStyle: ViewStyle = {
-    flex: 1,
-    backgroundColor: 'transparent',
-  };
-
-  // Match the post 3-dots menu (PostMenuModal) so the edit-profile sheet
-  // visually belongs to the same family: bottom-anchored, theme-aware
-  // background, 28-px corners, **content-sized** (not full screen). The
-  // card is absolutely positioned at the bottom — earlier flex-column
-  // layouts kept collapsing the card to 0 px in various subtle ways
-  // (justifyContent + content-sized child, or stale flex:1 wrappers).
-  // Absolute positioning is unambiguous: width = right - left, height =
-  // content (including ScrollView's maxHeight cap). No flex chain to
-  // break.
-  const sheetBg = theme.isDark ? theme.colors.background.elevated : '#FFFFFF';
-  const sheetScrollMaxHeight = SCREEN_HEIGHT * 0.55;
-  const cardStyle: ViewStyle = {
-    position: 'absolute',
-    left: 8,
-    right: 8,
-    bottom: insets.bottom + 16,
-    borderRadius: 28,
-    overflow: 'hidden',
-    backgroundColor: sheetBg,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.14,
-    shadowRadius: 18,
-    elevation: 12,
-  };
-
-  const translateY = Animated.add(slideAnim, dragAnim);
+  const bgPrimary = theme.colors.background.primary;
+  const bgElevated = theme.colors.background.elevated;
+  const bgSecondary = theme.colors.background.secondary;
+  const borderColor = theme.colors.border.light;
+  const accent = theme.colors.accent.primary;
 
   return (
-    <View style={outerStyle}>
-      {/* Backdrop - tap to close */}
-      <Animated.View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)', opacity: backdropAnim }}>
-        <Pressable style={{ flex: 1 }} onPress={handleClose} />
-      </Animated.View>
-
-      {/* Modal Card — absolutely positioned at the bottom of the screen,
-          so the layout is stable regardless of what flex chain wraps us. */}
-      <Animated.View
-        style={[
-          cardStyle,
-          { transform: [{ translateY }] },
-        ]}
-        {...panResponder.panHandlers}
-      >
-          {/* Drag handle — sits at the top of the card. The wrapping
-              Animated.View is content-sized now (no flex:1, no fixed
-              height), so an inner `flex: 1` wrapper would collapse to
-              zero — that's why the user briefly saw only the backdrop.
-              Children render directly on the Animated.View. */}
-          <View style={{ alignItems: 'center', paddingTop: 12, paddingBottom: 4 }}>
-            <View
-              style={{
-                width: 36,
-                height: 5,
-                borderRadius: 3,
-                backgroundColor: theme.colors.border.medium,
-              }}
-            />
-          </View>
-
-          <ScrollView
-            style={{ maxHeight: sheetScrollMaxHeight }}
-            contentContainerStyle={{ paddingBottom: 32 }}
-            showsVerticalScrollIndicator={false}
-            scrollEnabled={true}
-          >
-                {/* Header */}
-                <View
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    paddingHorizontal: 20,
-                    paddingTop: 8,
-                    paddingBottom: 12,
-                  }}
-                >
-                  <Pressable onPress={handleClose}>
-                    <Feather name="x" size={22} color={theme.colors.text.primary} />
-                  </Pressable>
-                  <Text variant="body" weight="semibold">{t('edit_profile.title')}</Text>
-                  <Pressable onPress={handleSave} disabled={isSaving}>
-                    <Text variant="body" weight="semibold" color={theme.colors.accent.primary}>
-                      {isSaving ? '...' : t('common.save')}
-                    </Text>
-                  </Pressable>
-                </View>
-
-                {/* Banner */}
-                <Pressable onPress={pickBanner} style={{ marginHorizontal: 20, marginBottom: 16 }}>
-                  <View style={{ height: 100, borderRadius: 16, overflow: 'hidden', backgroundColor: theme.colors.background.secondary }}>
-                    {bannerUri ? (
-                      <Image source={{ uri: bannerUri }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
-                    ) : (
-                      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                        <Feather name="image" size={24} color={theme.colors.text.tertiary} />
-                        <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginTop: 4 }}>{t('edit_profile.add_banner')}</Text>
-                      </View>
-                    )}
-                  </View>
-                </Pressable>
-
-                {/* Emoji Avatar */}
-                <View style={{ alignItems: 'center', marginVertical: 20 }}>
-                  <Avatar emoji={selectedEmoji} size="xl" />
-                  <Pressable style={{ marginTop: 12 }} onPress={() => setShowEmojiPicker(true)}>
-                    <Text variant="body" weight="medium" color={theme.colors.accent.primary}>
-                      {t('edit_profile.change_emoji')}
-                    </Text>
-                  </Pressable>
-                </View>
-
-                {/* Fields */}
-                <View style={{ paddingHorizontal: 20 }}>
-                  <Input
-                    label={t('edit_profile.name_label')}
-                    value={name}
-                    onChangeText={setName}
-                    placeholder={t('edit_profile.name_placeholder')}
-                    style={{ marginBottom: 16 }}
-                  />
-
-                  <Input
-                    label={t('edit_profile.username_label')}
-                    value={username}
-                    onChangeText={setUsername}
-                    placeholder="username"
-                    style={{ marginBottom: 16 }}
-                  />
-
-                  <Input
-                    label={t('edit_profile.bio_label')}
-                    value={bio}
-                    onChangeText={(text) => setBio(text.slice(0, 150))}
-                    placeholder={t('edit_profile.bio_placeholder')}
-                    multiline
-                    style={{ marginBottom: 4 }}
-                  />
-                  <Text
-                    variant="caption"
-                    color={theme.colors.text.tertiary}
-                    style={{ marginBottom: 20 }}
-                  >
-                    {t('edit_profile.chars_left', undefined, { count: 150 - bio.length })}
-                  </Text>
-
-                  {/* Links Section */}
-                  <View style={{ marginBottom: 24 }}>
-                    <Text variant="body" weight="semibold" style={{ marginBottom: 12 }}>
-                      {t('edit_profile.links')}
-                    </Text>
-                    {links.map((link, index) => (
-                      <View
-                        key={index}
-                        style={{
-                          flexDirection: 'row',
-                          alignItems: 'center',
-                          backgroundColor: theme.colors.background.secondary,
-                          borderRadius: 12,
-                          paddingHorizontal: 12,
-                          paddingVertical: 10,
-                          marginBottom: 8,
-                        }}
-                      >
-                        <Feather
-                          name={(LINK_TYPES.find(t => t.key === link.type)?.icon || 'link') as any}
-                          size={18}
-                          color={theme.colors.accent.primary}
-                        />
-                        <Pressable
-                          onPress={() => handleEditLink(index)}
-                          style={{ flex: 1, marginLeft: 10 }}
-                        >
-                          <Text variant="caption" weight="medium" numberOfLines={1}>
-                            {link.url}
-                          </Text>
-                        </Pressable>
-                        <Pressable onPress={() => handleRemoveLink(index)}>
-                          <Feather name="x-circle" size={18} color={theme.colors.text.tertiary} />
-                        </Pressable>
-                      </View>
-                    ))}
-                    {links.length < 3 && (
-                      <Pressable
-                        onPress={handleAddLink}
-                        style={{
-                          flexDirection: 'row',
-                          alignItems: 'center',
-                          gap: 8,
-                          paddingVertical: 10,
-                        }}
-                      >
-                        <Feather name="plus-circle" size={18} color={theme.colors.accent.primary} />
-                        <Text variant="caption" weight="medium" color={theme.colors.accent.primary}>
-                          {t('edit_profile.add_link')}
-                        </Text>
-                      </Pressable>
-                    )}
-                  </View>
-                </View>
-              </ScrollView>
-        </Animated.View>
-
-      {/* Emoji/Mood Picker — same family as the main sheet (PostMenuModal-
-          style): bottom-anchored card, theme background, smooth spring in
-          and timed slide-out so it doesn't pop on/off any more. Absolutely
-          positioned just like the main sheet so the layout is stable. */}
-      {showEmojiPicker && (
-        <View
-          style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            zIndex: 999,
-          }}
-        >
-          <Animated.View
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              right: 0,
-              bottom: 0,
-              backgroundColor: 'rgba(0,0,0,0.4)',
-              opacity: emojiBackdrop,
-            }}
-          >
-            <Pressable style={{ flex: 1 }} onPress={dismissEmojiPicker} />
-          </Animated.View>
-          <Animated.View
-            style={{
-              position: 'absolute',
-              left: 8,
-              right: 8,
-              bottom: insets.bottom + 16,
-              borderRadius: 28,
-              overflow: 'hidden',
-              backgroundColor: sheetBg,
-              shadowColor: '#000',
-              shadowOffset: { width: 0, height: -4 },
-              shadowOpacity: 0.14,
-              shadowRadius: 18,
-              elevation: 12,
-              transform: [{ translateY: emojiSlide }],
-            }}
-          >
-            {/* Drag handle */}
-            <View style={{ alignItems: 'center', paddingTop: 12, paddingBottom: 4 }}>
-              <View
-                style={{
-                  width: 36,
-                  height: 5,
-                  borderRadius: 3,
-                  backgroundColor: theme.colors.border.medium,
-                }}
-              />
-            </View>
-
-            {/* Header */}
-            <View
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                paddingHorizontal: 20,
-                paddingTop: 8,
-                paddingBottom: 12,
-              }}
-            >
-              <Pressable onPress={dismissEmojiPicker}>
-                <Feather name="x" size={22} color={theme.colors.text.primary} />
-              </Pressable>
-              <Text variant="body" weight="semibold">{t('edit_profile.emoji_title')}</Text>
-              <View style={{ width: 22 }} />
-            </View>
-
-            {/* Current selection preview */}
-            <View style={{ alignItems: 'center', marginBottom: 16 }}>
-              <View
-                style={{
-                  width: 64,
-                  height: 64,
-                  borderRadius: 32,
-                  backgroundColor: theme.colors.accent.primary + '20',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  borderWidth: 2,
-                  borderColor: theme.colors.accent.primary,
-                  overflow: 'visible',
-                }}
-              >
-                <RNText style={{ fontSize: 36 }} allowFontScaling={false}>{selectedEmoji}</RNText>
-              </View>
-            </View>
-
-            {/* Scrollable emoji categories */}
-            <ScrollView
-              showsVerticalScrollIndicator={false}
-              style={{ maxHeight: SCREEN_HEIGHT * 0.5 }}
-              contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 32 }}
-            >
-              {MOOD_CATEGORIES.map((category) => (
-                <View key={category.titleKey} style={{ marginBottom: 20 }}>
-                  <Text variant="caption" weight="semibold" color={theme.colors.text.secondary} style={{ marginBottom: 10, paddingHorizontal: 4 }}>
-                    {t(category.titleKey)}
-                  </Text>
-                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 8 }}>
-                    {category.emojis.map((e) => (
-                      <Pressable
-                        key={e}
-                        onPress={() => { setSelectedEmoji(e); dismissEmojiPicker(); }}
-                        style={{
-                          width: 44,
-                          height: 44,
-                          borderRadius: 12,
-                          backgroundColor: selectedEmoji === e ? theme.colors.accent.primary + '30' : theme.colors.background.secondary,
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          borderWidth: selectedEmoji === e ? 2 : 0,
-                          borderColor: theme.colors.accent.primary,
-                          overflow: 'visible',
-                        }}
-                      >
-                        <RNText style={{ fontSize: 24 }} allowFontScaling={false}>{e}</RNText>
-                      </Pressable>
-                    ))}
-                  </View>
-                </View>
-              ))}
-            </ScrollView>
-          </Animated.View>
+    <View style={[styles.root, { backgroundColor: bgPrimary }]}>
+      {/* Header — gradient fade so the banner can extend under it cleanly */}
+      <View style={[styles.headerWrapper, { height: insets.top + 56 }]} pointerEvents="box-none">
+        <LinearGradient
+          colors={[bgPrimary, bgPrimary, bgPrimary + '00']}
+          locations={[0, 0.6, 1]}
+          style={StyleSheet.absoluteFill}
+        />
+        <View style={[styles.headerRow, { paddingTop: insets.top + 8 }]} pointerEvents="auto">
+          <Pressable onPress={handleClose} hitSlop={10}>
+            <Feather name="x" size={24} color={theme.colors.text.primary} />
+          </Pressable>
+          <Text variant="body" weight="bold">
+            {t('edit_profile.title')}
+          </Text>
+          <Pressable onPress={handleSave} disabled={isSaving} hitSlop={10}>
+            <Text variant="body" weight="semibold" color={accent}>
+              {isSaving ? '...' : t('common.save')}
+            </Text>
+          </Pressable>
         </View>
-      )}
+      </View>
 
-      {/* Link Picker modal overlay */}
-      {showLinkPicker && (
-        <View
-          style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            zIndex: 999,
-          }}
-        >
-          <Pressable
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              right: 0,
-              bottom: 0,
-              backgroundColor: 'rgba(0,0,0,0.5)',
-            }}
-            onPress={() => setShowLinkPicker(false)}
-          />
-          <KeyboardAvoidingView
-            style={{ flex: 1, justifyContent: 'center' }}
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          >
-            <View
-              style={{
-                marginHorizontal: 16,
-                backgroundColor: theme.isDark ? '#1e1e1e' : '#ffffff',
-                borderRadius: 24,
-                paddingTop: 16,
-                paddingBottom: 24,
-                paddingHorizontal: 20,
-                shadowColor: '#000',
-                shadowOffset: { width: 0, height: 12 },
-                shadowOpacity: 0.3,
-                shadowRadius: 32,
-                elevation: 20,
-              }}
-            >
-              <View style={{ alignItems: 'center', marginBottom: 16 }}>
-                <View
-                  style={{
-                    width: 36,
-                    height: 5,
-                    borderRadius: 3,
-                    backgroundColor: theme.colors.border.medium,
-                  }}
-                />
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={{ paddingBottom: insets.bottom + 48 }}
+      >
+        {/* Banner — full-bleed at the top with a tap-to-pick affordance */}
+        <Pressable onPress={pickBanner}>
+          <View style={[styles.banner, { backgroundColor: accent + '20', paddingTop: insets.top + 56 }]}>
+            {bannerUri ? (
+              <Image
+                source={{ uri: bannerUri }}
+                style={StyleSheet.absoluteFillObject}
+                resizeMode="cover"
+              />
+            ) : null}
+            <LinearGradient
+              colors={['transparent', bgPrimary]}
+              style={[StyleSheet.absoluteFillObject, { top: undefined, height: 80 }]}
+            />
+            {!bannerUri && (
+              <View style={styles.bannerPlaceholder}>
+                <Feather name="image" size={22} color={theme.colors.text.tertiary} />
+                <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginTop: 4 }}>
+                  {t('edit_profile.add_banner')}
+                </Text>
               </View>
-              <Text variant="body" weight="semibold" align="center" style={{ marginBottom: 16 }}>
-                {editingLinkIndex !== null ? t('edit_profile.link_edit_title') : t('edit_profile.link_add_title')}
-              </Text>
+            )}
+            <View style={styles.bannerEditPill}>
+              <Feather name="edit-2" size={12} color="#FFFFFF" />
+              <RNText style={styles.bannerEditText} allowFontScaling={false}>
+                {t('edit_profile.add_banner')}
+              </RNText>
+            </View>
+          </View>
+        </Pressable>
 
-              {/* Link type selector */}
-              <Text variant="caption" weight="medium" color={theme.colors.text.secondary} style={{ marginBottom: 8 }}>
-                {t('edit_profile.link_type')}
+        {/* Avatar — overlaps the banner edge by half its height */}
+        <View style={styles.avatarWrap}>
+          <Pressable onPress={() => setShowEmojiPicker(true)}>
+            <View
+              style={[
+                styles.avatarRing,
+                { borderColor: bgPrimary, backgroundColor: bgElevated },
+              ]}
+            >
+              <Avatar emoji={selectedEmoji} size="xl" />
+            </View>
+            <View style={[styles.avatarBadge, { backgroundColor: accent }]}>
+              <Feather name="edit-2" size={11} color="#FFFFFF" />
+            </View>
+          </Pressable>
+          <Pressable
+            onPress={() => setShowEmojiPicker(true)}
+            style={{ marginTop: 10, alignSelf: 'center' }}
+          >
+            <Text variant="caption" weight="semibold" color={accent}>
+              {t('edit_profile.change_emoji')}
+            </Text>
+          </Pressable>
+        </View>
+
+        {/* Fields — each in a tinted card so the form reads like one cohesive group */}
+        <View style={[styles.cardSection, { backgroundColor: bgElevated, borderColor }]}>
+          <Input
+            label={t('edit_profile.name_label')}
+            value={name}
+            onChangeText={setName}
+            placeholder={t('edit_profile.name_placeholder')}
+            style={{ marginBottom: 12 }}
+          />
+          <Input
+            label={t('edit_profile.username_label')}
+            value={username}
+            onChangeText={setUsername}
+            placeholder="username"
+            style={{ marginBottom: 12 }}
+          />
+          <Input
+            label={t('edit_profile.bio_label')}
+            value={bio}
+            onChangeText={(text) => setBio(text.slice(0, 150))}
+            placeholder={t('edit_profile.bio_placeholder')}
+            multiline
+            style={{ marginBottom: 4 }}
+          />
+          <Text variant="caption" color={theme.colors.text.tertiary} align="right">
+            {t('edit_profile.chars_left', undefined, { count: 150 - bio.length })}
+          </Text>
+        </View>
+
+        {/* Links section — card-style, matches Fields visually */}
+        <View style={[styles.linksSection, { backgroundColor: bgElevated, borderColor }]}>
+          <View style={styles.linksHeader}>
+            <Text variant="body" weight="semibold">
+              {t('edit_profile.links')}
+            </Text>
+            <Text variant="caption" color={theme.colors.text.tertiary}>
+              {links.length}/3
+            </Text>
+          </View>
+          {links.map((link, index) => (
+            <View
+              key={index}
+              style={[styles.linkRow, { backgroundColor: bgSecondary }]}
+            >
+              <Feather
+                name={(LINK_TYPES.find((lt) => lt.key === link.type)?.icon || 'link') as any}
+                size={17}
+                color={accent}
+              />
+              <Pressable onPress={() => handleEditLink(index)} style={styles.linkRowText}>
+                <Text variant="caption" weight="medium" numberOfLines={1}>
+                  {link.url}
+                </Text>
+              </Pressable>
+              <Pressable onPress={() => handleRemoveLink(index)} hitSlop={6}>
+                <Feather name="x-circle" size={18} color={theme.colors.text.tertiary} />
+              </Pressable>
+            </View>
+          ))}
+          {links.length < 3 && (
+            <Pressable onPress={handleAddLink} style={styles.addLinkRow}>
+              <Feather name="plus-circle" size={18} color={accent} />
+              <Text variant="caption" weight="medium" color={accent}>
+                {t('edit_profile.add_link')}
               </Text>
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
-                {LINK_TYPES.map((lt) => (
+            </Pressable>
+          )}
+        </View>
+      </ScrollView>
+
+      {/* Emoji picker — same SlideUpSheet as the post 3-dots menu so the
+          height, corners, and animation match exactly. */}
+      <SlideUpSheet visible={showEmojiPicker} onClose={() => setShowEmojiPicker(false)}>
+        <Text variant="body" weight="semibold" align="center" style={{ paddingVertical: 8 }}>
+          {t('edit_profile.emoji_title')}
+        </Text>
+        <View style={[styles.emojiPreviewWrap, { borderColor: accent, backgroundColor: accent + '15' }]}>
+          <RNText style={styles.emojiPreviewText} allowFontScaling={false}>
+            {selectedEmoji}
+          </RNText>
+        </View>
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          style={{ maxHeight: SCREEN_HEIGHT * 0.45 }}
+          contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 8 }}
+        >
+          {MOOD_CATEGORIES.map((category) => (
+            <View key={category.titleKey} style={{ marginBottom: 16 }}>
+              <Text
+                variant="caption"
+                weight="semibold"
+                color={theme.colors.text.secondary}
+                style={{ marginBottom: 8, paddingHorizontal: 4 }}
+              >
+                {t(category.titleKey)}
+              </Text>
+              <View style={styles.emojiGrid}>
+                {category.emojis.map((e) => {
+                  const active = selectedEmoji === e;
+                  return (
+                    <Pressable
+                      key={e}
+                      onPress={() => {
+                        setSelectedEmoji(e);
+                        setShowEmojiPicker(false);
+                      }}
+                      style={[
+                        styles.emojiCell,
+                        {
+                          backgroundColor: active ? accent + '30' : bgSecondary,
+                          borderColor: active ? accent : 'transparent',
+                          borderWidth: active ? 2 : 0,
+                        },
+                      ]}
+                    >
+                      <RNText style={styles.emojiCellText} allowFontScaling={false}>
+                        {e}
+                      </RNText>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+          ))}
+        </ScrollView>
+      </SlideUpSheet>
+
+      {/* Link picker — small card-style modal with the URL input + type picker.
+          Stays a regular Modal because it needs the keyboard to push its
+          content up; SlideUpSheet's static-bottom anchoring would let the
+          keyboard cover the input. */}
+      <Modal
+        visible={showLinkPicker}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowLinkPicker(false)}
+        statusBarTranslucent
+      >
+        <Pressable
+          style={styles.linkPickerBackdrop}
+          onPress={() => setShowLinkPicker(false)}
+        />
+        <KeyboardAvoidingView
+          style={styles.linkPickerWrap}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          pointerEvents="box-none"
+        >
+          <View style={[styles.linkPickerCard, { backgroundColor: bgElevated }]}>
+            <View style={styles.linkPickerHandle}>
+              <View style={[styles.linkPickerHandleBar, { backgroundColor: borderColor }]} />
+            </View>
+            <Text variant="body" weight="semibold" align="center" style={{ marginBottom: 16 }}>
+              {editingLinkIndex !== null
+                ? t('edit_profile.link_edit_title')
+                : t('edit_profile.link_add_title')}
+            </Text>
+            <Text
+              variant="caption"
+              weight="medium"
+              color={theme.colors.text.secondary}
+              style={{ marginBottom: 8 }}
+            >
+              {t('edit_profile.link_type')}
+            </Text>
+            <View style={styles.linkTypeRow}>
+              {LINK_TYPES.map((lt) => {
+                const active = linkType === lt.key;
+                return (
                   <Pressable
                     key={lt.key}
                     onPress={() => setLinkType(lt.key)}
-                    style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      gap: 6,
-                      paddingHorizontal: 12,
-                      paddingVertical: 8,
-                      borderRadius: 10,
-                      backgroundColor: linkType === lt.key
-                        ? theme.colors.accent.primary + '20'
-                        : theme.colors.background.secondary,
-                      borderWidth: linkType === lt.key ? 1.5 : 0,
-                      borderColor: theme.colors.accent.primary,
-                    }}
+                    style={[
+                      styles.linkTypePill,
+                      {
+                        backgroundColor: active ? accent + '20' : bgSecondary,
+                        borderColor: active ? accent : 'transparent',
+                        borderWidth: active ? 1.5 : 0,
+                      },
+                    ]}
                   >
-                    <Feather name={lt.icon as any} size={14} color={linkType === lt.key ? theme.colors.accent.primary : theme.colors.text.tertiary} />
-                    <Text variant="caption" weight={linkType === lt.key ? 'semibold' : 'regular'} color={linkType === lt.key ? theme.colors.accent.primary : theme.colors.text.secondary}>
+                    <Feather
+                      name={lt.icon as any}
+                      size={14}
+                      color={active ? accent : theme.colors.text.tertiary}
+                    />
+                    <Text
+                      variant="caption"
+                      weight={active ? 'semibold' : 'regular'}
+                      color={active ? accent : theme.colors.text.secondary}
+                    >
                       {lt.key === 'website' ? t('edit_profile.link_website') : lt.label}
                     </Text>
                   </Pressable>
-                ))}
-              </View>
-
-              {/* URL input */}
-              <Input
-                label="URL"
-                value={linkUrl}
-                onChangeText={(text) => {
-                  setLinkUrl(text);
-                  // Auto-detect link type from URL
-                  const detected = detectLinkTypeFromUrl(text);
-                  if (detected !== 'website' || text.length > 10) {
-                    setLinkType(detected);
-                  }
-                }}
-                placeholder="https://..."
-                style={{ marginBottom: 20 }}
-              />
-
-              <Pressable
-                onPress={handleSaveLink}
-                style={{
-                  backgroundColor: theme.colors.accent.primary,
-                  borderRadius: 14,
-                  paddingVertical: 14,
-                  alignItems: 'center',
-                }}
-              >
-                <Text variant="body" weight="semibold" color={theme.colors.text.inverse}>
-                  {editingLinkIndex !== null ? t('edit_profile.link_save') : t('edit_profile.link_add')}
-                </Text>
-              </Pressable>
+                );
+              })}
             </View>
-          </KeyboardAvoidingView>
-        </View>
-      )}
+            <Input
+              label="URL"
+              value={linkUrl}
+              onChangeText={(text) => {
+                setLinkUrl(text);
+                const detected = detectLinkTypeFromUrl(text);
+                if (detected !== 'website' || text.length > 10) setLinkType(detected);
+              }}
+              placeholder="https://..."
+              style={{ marginBottom: 20 }}
+            />
+            <Pressable
+              onPress={handleSaveLink}
+              style={[styles.linkPickerSave, { backgroundColor: accent }]}
+            >
+              <Text variant="body" weight="semibold" color={theme.colors.text.inverse}>
+                {editingLinkIndex !== null
+                  ? t('edit_profile.link_save')
+                  : t('edit_profile.link_add')}
+              </Text>
+            </Pressable>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  root: { flex: 1 },
+  headerWrapper: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 100,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingBottom: 8,
+  },
+  banner: {
+    height: 220,
+    width: '100%',
+    overflow: 'hidden',
+  },
+  bannerPlaceholder: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bannerEditPill: {
+    position: 'absolute',
+    bottom: 12,
+    right: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 14,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  bannerEditText: { color: '#FFFFFF', fontSize: 11, fontWeight: '600' },
+  avatarWrap: {
+    alignItems: 'center',
+    marginTop: -48,
+    marginBottom: 16,
+  },
+  avatarRing: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    overflow: 'hidden',
+    borderWidth: 3,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarBadge: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cardSection: {
+    marginHorizontal: 16,
+    padding: 16,
+    borderRadius: 18,
+    borderWidth: 0.5,
+    marginBottom: 16,
+  },
+  linksSection: {
+    marginHorizontal: 16,
+    padding: 16,
+    borderRadius: 18,
+    borderWidth: 0.5,
+  },
+  linksHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  linkRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 12,
+    marginBottom: 8,
+    gap: 10,
+  },
+  linkRowText: { flex: 1 },
+  addLinkRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 10,
+  },
+  emojiPreviewWrap: {
+    alignSelf: 'center',
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    marginBottom: 12,
+  },
+  emojiPreviewText: { fontSize: 36 },
+  emojiGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  emojiCell: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emojiCellText: { fontSize: 24 },
+  linkPickerBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  linkPickerWrap: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  linkPickerCard: {
+    marginHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 24,
+    paddingHorizontal: 20,
+    borderRadius: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.3,
+    shadowRadius: 32,
+    elevation: 20,
+  },
+  linkPickerHandle: { alignItems: 'center', marginBottom: 12 },
+  linkPickerHandleBar: { width: 36, height: 5, borderRadius: 3 },
+  linkTypeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 16,
+  },
+  linkTypePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+  },
+  linkPickerSave: {
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+});

@@ -269,7 +269,7 @@ function RootLayout() {
               <Stack.Screen name="chat/[id]" />
               <Stack.Screen name="chat/ai" />
               <Stack.Screen name="chat/music" />
-              <Stack.Screen name="profile/edit" options={{ presentation: 'transparentModal', animation: 'fade', headerShown: false, contentStyle: { backgroundColor: 'transparent' } }} />
+              <Stack.Screen name="profile/edit" options={{ presentation: 'modal', animation: 'slide_from_bottom', headerShown: false }} />
               <Stack.Screen name="profile/[id]" />
               <Stack.Screen name="comments/[id]" />
               <Stack.Screen name="browser" options={{ presentation: 'modal', headerShown: false, animation: 'slide_from_bottom' }} />
