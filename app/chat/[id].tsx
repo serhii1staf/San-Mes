@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, ImageBackground, Alert, Animated, PanResponder, Modal, StatusBar, Dimensions, Keyboard, InteractionManager } from 'react-native';
+import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, Alert, Animated, PanResponder, Modal, StatusBar, Dimensions, Keyboard, InteractionManager } from 'react-native';
 import { KeyboardStickyView, useReanimatedKeyboardAnimation, useKeyboardHandler } from 'react-native-keyboard-controller';
 import Reanimated, { useAnimatedStyle, interpolate, Extrapolation, useSharedValue } from 'react-native-reanimated';
 import * as Clipboard from 'expo-clipboard';
@@ -22,6 +22,7 @@ import { GiphyPicker } from '../../src/components/ui/GiphyPicker';
 import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
 import { useChatStore, useEntityStore, useConnectivityStore } from '../../src/store';
 import { useChatSettingsStore, GLOBAL_CHAT_SETTINGS_KEY, DEFAULT_CHAT_SETTINGS } from '../../src/store/chatSettingsStore';
+import { ChatBackgroundLayer } from '../../src/components/ui/ChatBackgroundLayer';
 import { supabase, uploadChatImage } from '../../src/lib/supabase';
 import { kvGetJSONSync, kvSetJSON, kvWarm } from '../../src/services/kvStore';
 import { mockMessages, mockConversations, formatMessageTime } from '../../src/utils/mockData';
@@ -765,7 +766,7 @@ export default function ChatScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: bgColor }}>
       {chatSettings.backgroundImage && (
-        <ImageBackground source={{ uri: chatSettings.backgroundImage }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+        <ChatBackgroundLayer uri={chatSettings.backgroundImage} style={StyleSheet.absoluteFill} />
       )}
 
       {/* Inverted list — newest message sits at the bottom with NO scrolling

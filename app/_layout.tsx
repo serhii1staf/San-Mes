@@ -301,6 +301,38 @@ function RootLayout() {
               />
               <Stack.Screen name="settings/mini-apps" />
               <Stack.Screen name="settings/chat-settings" />
+              <Stack.Screen
+                name="settings/chat-background"
+                options={{
+                  presentation: 'modal',
+                  animation: 'slide_from_bottom',
+                  headerShown: false,
+                }}
+              />
+              <Stack.Screen
+                name="settings/chat-text-size"
+                options={{
+                  presentation: 'modal',
+                  animation: 'slide_from_bottom',
+                  headerShown: false,
+                }}
+              />
+              <Stack.Screen
+                name="settings/chat-bubble-radius"
+                options={{
+                  presentation: 'modal',
+                  animation: 'slide_from_bottom',
+                  headerShown: false,
+                }}
+              />
+              <Stack.Screen
+                name="settings/chat-font"
+                options={{
+                  presentation: 'modal',
+                  animation: 'slide_from_bottom',
+                  headerShown: false,
+                }}
+              />
               <Stack.Screen name="settings/browser" />
               <Stack.Screen name="settings/language" />
             </Stack>

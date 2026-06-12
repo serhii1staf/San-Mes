@@ -27,6 +27,12 @@ interface ChatSettingsStore {
   deleted: string[]; // deleted chat IDs
   getSettings: (chatId: string) => ChatSettings;
   updateSettings: (chatId: string, updates: Partial<ChatSettings>) => void;
+  /**
+   * Drop the entry under `chatId` so subsequent reads fall back to defaults
+   * (or, for non-global ids, defaults+global). Used by the chat-settings
+   * "Reset to defaults" affordance.
+   */
+  resetSettings: (chatId: string) => void;
   archiveChat: (chatId: string) => void;
   unarchiveChat: (chatId: string) => void;
   isArchived: (chatId: string) => boolean;
@@ -58,6 +64,15 @@ export const useChatSettingsStore = create<ChatSettingsStore>()(
         return { ...DEFAULT_SETTINGS, ...global, ...specific };
       },
       updateSettings: (chatId, updates) => set((s) => ({ settings: { ...s.settings, [chatId]: { ...DEFAULT_SETTINGS, ...s.settings[chatId], ...updates } } })),
+      resetSettings: (chatId) => set((s) => {
+        // Drop the chatId entry entirely so getSettings() falls back through
+        // the merge chain (defaults < global < specific). For the global key
+        // itself this resets the app-wide defaults to the hardcoded ones.
+        if (!(chatId in s.settings)) return {} as Partial<ChatSettingsStore>;
+        const next = { ...s.settings };
+        delete next[chatId];
+        return { settings: next };
+      }),
       // Archive: a chat is in exactly one of: normal / archived / blocked / deleted
       archiveChat: (chatId) => set((s) => ({ archived: [...s.archived.filter(id => id !== chatId), chatId], blocked: s.blocked.filter(id => id !== chatId), deleted: s.deleted.filter(id => id !== chatId) })),
       unarchiveChat: (chatId) => set((s) => ({ archived: s.archived.filter(id => id !== chatId) })),

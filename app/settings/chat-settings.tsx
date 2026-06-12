@@ -1,249 +1,453 @@
+/**
+ * Chat settings — card layout that mirrors app/settings/fonts.tsx.
+ *
+ * Same screen serves two flows, distinguished by the `id` route param:
+ *   - Global / "all chats"  — id === GLOBAL_CHAT_SETTINGS_KEY
+ *   - Per-chat              — id === <conversation id>
+ *
+ * Layout:
+ *   1. Gradient header (back chevron + centered title)
+ *   2. One grouped card listing the chat-flavoured settings as rows. Each
+ *      row: 14px padding, 0.5px hairline divider, no bold labels, value +
+ *      chevron on the right. Tapping a row opens a dedicated fullscreen
+ *      modal (chat-background, chat-text-size, chat-bubble-radius,
+ *      chat-font) — Telegram-style live preview + Apply / Cancel.
+ *   3. The "Имя чата" row (per-chat only) and "Эмодзи ссылок" row stay
+ *      inline as bottom-sheet editors — they're cheaper than a fullscreen
+ *      modal and don't benefit from a chat-bubble preview.
+ *   4. Bottom: "Сбросить настройки" — destructive accent that resets the
+ *      chat-specific entry back to the inherited defaults.
+ */
+
 import React, { useState } from 'react';
-import { View, Pressable, ScrollView, TextInput, StyleSheet, ImageBackground } from 'react-native';
+import {
+  View,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text as RNText,
+  TextInput,
+  Alert,
+} from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { BlurView } from 'expo-blur';
-import * as ImagePicker from 'expo-image-picker';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../src/theme';
-import { Text, Avatar } from '../../src/components/ui';
-import { useChatSettingsStore, GLOBAL_CHAT_SETTINGS_KEY } from '../../src/store/chatSettingsStore';
+import { Text } from '../../src/components/ui';
+import { SlideUpSheet } from '../../src/components/ui/SlideUpSheet';
+import {
+  useChatSettingsStore,
+  GLOBAL_CHAT_SETTINGS_KEY,
+} from '../../src/store/chatSettingsStore';
 import { useEntityStore } from '../../src/store';
 import { showToast } from '../../src/store/toastStore';
+import { triggerHaptic } from '../../src/utils/haptics';
 import { useT } from '../../src/i18n/store';
 
-function ChatPreview({ fontSize, bubbleRadius, fontFamily, backgroundImage }: { fontSize: number; bubbleRadius: number; fontFamily: string; backgroundImage?: string }) {
-  const theme = useTheme();
-  const t = useT();
-  const fontFamilyStyle = fontFamily === 'mono' ? 'monospace' : fontFamily === 'serif' ? 'serif' : undefined;
-
-  const content = (
-    <View style={{ paddingHorizontal: 16, paddingVertical: 20, minHeight: 200 }}>
-      {/* Incoming message */}
-      <View style={{ alignSelf: 'flex-start', maxWidth: '75%', marginBottom: 8 }}>
-        <View style={{ backgroundColor: theme.colors.background.tertiary, paddingHorizontal: 14, paddingVertical: 10, borderRadius: bubbleRadius, borderBottomLeftRadius: 4 }}>
-          <Text variant="body" style={{ fontSize, fontFamily: fontFamilyStyle }}>{t('chat_settings.preview.msg1')}</Text>
-          <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 10, marginTop: 3, alignSelf: 'flex-end' }}>12:30</Text>
-        </View>
-      </View>
-      {/* Outgoing message */}
-      <View style={{ alignSelf: 'flex-end', maxWidth: '75%', marginBottom: 8 }}>
-        <View style={{ backgroundColor: theme.colors.accent.primary, paddingHorizontal: 14, paddingVertical: 10, borderRadius: bubbleRadius, borderBottomRightRadius: 4 }}>
-          <Text variant="body" color="#FFFFFF" style={{ fontSize, fontFamily: fontFamilyStyle }}>{t('chat_settings.preview.msg2')}</Text>
-          <Text variant="caption" color="rgba(255,255,255,0.6)" style={{ fontSize: 10, marginTop: 3, alignSelf: 'flex-end' }}>12:31</Text>
-        </View>
-      </View>
-      {/* Another incoming */}
-      <View style={{ alignSelf: 'flex-start', maxWidth: '75%' }}>
-        <View style={{ backgroundColor: theme.colors.background.tertiary, paddingHorizontal: 14, paddingVertical: 10, borderRadius: bubbleRadius, borderBottomLeftRadius: 4 }}>
-          <Text variant="body" style={{ fontSize, fontFamily: fontFamilyStyle }}>{t('chat_settings.preview.msg3')}</Text>
-          <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 10, marginTop: 3, alignSelf: 'flex-end' }}>12:32</Text>
-        </View>
-      </View>
-    </View>
-  );
-
-  if (backgroundImage) {
-    return (
-      <ImageBackground source={{ uri: backgroundImage }} style={{ minHeight: 200 }} resizeMode="cover">
-        {content}
-      </ImageBackground>
-    );
-  }
-
-  return <View style={{ backgroundColor: theme.colors.background.primary }}>{content}</View>;
-}
+// Emoji choices for the "link preview emoji" row — same set as the legacy
+// chat-settings screen so users get exactly the visual options they had
+// before the redesign.
+const LINK_EMOJI_CHOICES = [
+  '❤️', '😍', '🔥', '⭐', '🌸', '😎', '🎵', '⚽',
+  '🎮', '🍕', '🚀', '💎', '🌙', '☀️', '🐱', '🎁',
+];
 
 export default function ChatSettingsScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const chatId = id || '';
-  const { getSettings, updateSettings } = useChatSettingsStore();
-  const settings = getSettings(chatId);
-  const [localName, setLocalName] = useState(settings.localName || '');
-  const [fontSize, setFontSize] = useState(settings.fontSize);
-  const [bubbleRadius, setBubbleRadius] = useState(settings.bubbleRadius);
-  const [fontFamily, setFontFamily] = useState(settings.fontFamily);
-  const [backgroundImage, setBackgroundImage] = useState(settings.backgroundImage);
-  const [linkEmoji, setLinkEmoji] = useState(settings.linkEmoji);
-
-  // Try to get participant info from entity store conversations
-  const conversations = useEntityStore((s) => s.conversations);
-  const conv = conversations.find(c => c.id === chatId);
+  const chatId = id || GLOBAL_CHAT_SETTINGS_KEY;
   const isGlobal = chatId === GLOBAL_CHAT_SETTINGS_KEY;
-  const participantName = isGlobal ? t('chat_settings.all_chats') : (conv?.participantName || t('chat.fallback_name'));
-  const participantEmoji = isGlobal ? '💬' : (conv?.participantEmoji || '😊');
 
-  const pickBackground = async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.8 });
-    if (!result.canceled && result.assets[0]) {
-      const uri = result.assets[0].uri;
-      setBackgroundImage(uri);
-      updateSettings(chatId, { backgroundImage: uri });
-      showToast(t('chat_settings.toast.bg_set'), 'check');
-    }
+  // Subscribe to the store so the rows update live when a child modal
+  // commits a change and pops back. Reading the whole `settings` map
+  // intentionally — getSettings() is a method, not reactive on its own.
+  const settings = useChatSettingsStore((s) => s.settings);
+  const updateSettings = useChatSettingsStore((s) => s.updateSettings);
+  const resetSettings = useChatSettingsStore((s) => s.resetSettings);
+  const applied = useChatSettingsStore.getState().getSettings(chatId);
+  // We force a re-read on every render via the `settings` subscription
+  // above so the row metas always reflect the latest applied values.
+  void settings;
+
+  const conversations = useEntityStore((s) => s.conversations);
+  const conv = conversations.find((c) => c.id === chatId);
+  const headerTitle = isGlobal
+    ? t('chat_settings.all_chats')
+    : conv?.participantName || t('chat_settings.title');
+
+  // ── Inline editors (bottom sheets) ─────────────────────────────────────
+  const [nameSheet, setNameSheet] = useState(false);
+  const [emojiSheet, setEmojiSheet] = useState(false);
+  const [draftName, setDraftName] = useState(applied.localName || '');
+
+  const openNameSheet = () => {
+    triggerHaptic('selection');
+    setDraftName(applied.localName || '');
+    setNameSheet(true);
+  };
+  const saveName = () => {
+    triggerHaptic('medium');
+    const next = draftName.trim();
+    updateSettings(chatId, { localName: next || undefined });
+    setNameSheet(false);
   };
 
-  const save = () => {
-    updateSettings(chatId, { localName: localName.trim() || undefined, fontSize, bubbleRadius, fontFamily, backgroundImage, linkEmoji });
-    showToast(t('toast.saved'), 'check');
-    router.back();
+  const openEmojiSheet = () => {
+    triggerHaptic('selection');
+    setEmojiSheet(true);
   };
+  const pickEmoji = (value: string | undefined) => {
+    triggerHaptic('selection');
+    updateSettings(chatId, { linkEmoji: value });
+  };
+
+  // ── Reset ──────────────────────────────────────────────────────────────
+  const onReset = () => {
+    Alert.alert(
+      t('chat_settings.reset_confirm_title'),
+      t('chat_settings.reset_confirm_msg'),
+      [
+        { text: t('common.cancel'), style: 'cancel' },
+        {
+          text: t('chat_settings.reset'),
+          style: 'destructive',
+          onPress: () => {
+            triggerHaptic('medium');
+            resetSettings(chatId);
+            showToast(t('chat_settings.toast.reset'), 'check');
+          },
+        },
+      ],
+    );
+  };
+
+  // ── Theme tokens ───────────────────────────────────────────────────────
+  const bgPrimary = theme.colors.background.primary;
+  const bgElevated = theme.colors.background.elevated;
+  const borderLight = theme.colors.border.light;
+  const textPrimary = theme.colors.text.primary;
+  const textSecondary = theme.colors.text.secondary;
+  const textTertiary = theme.colors.text.tertiary;
+  const accent = theme.colors.accent.primary;
+  const danger = '#FF3B30';
+
+  const headerContentHeight = insets.top + 48;
+  const headerGradientHeight = headerContentHeight + 28;
+  const bgTransparent = bgPrimary + '00';
+
+  // ── Right-side metas for each row ──────────────────────────────────────
+  const sizeMeta = `${applied.fontSize} pt`;
+  const radiusMeta = `${applied.bubbleRadius}`;
+  const fontMeta =
+    applied.fontFamily === 'serif'
+      ? t('chat_settings.font.serif')
+      : applied.fontFamily === 'mono'
+        ? t('chat_settings.font.mono')
+        : t('chat_settings.font.system');
+  const fontMetaPreviewFamily =
+    applied.fontFamily === 'mono' ? 'monospace' : applied.fontFamily === 'serif' ? 'serif' : undefined;
+  const bgMeta = applied.backgroundImage
+    ? t('common.done') // shows a checkmark via icon below; meta string is a no-op
+    : t('chat_settings.bg_none');
+  const linkEmojiMeta = applied.linkEmoji ?? t('chat_settings.link_emoji_off');
 
   return (
-    <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
-      {/* Blurred header */}
-      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100 }}>
-        <BlurView intensity={80} tint={theme.isDark ? 'dark' : 'light'} style={{ paddingTop: insets.top + 8, paddingBottom: 12, paddingHorizontal: 20 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-            <Pressable onPress={() => router.back()} hitSlop={8}>
-              <Feather name="chevron-left" size={24} color={theme.colors.text.primary} />
-            </Pressable>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <Avatar emoji={participantEmoji} size="xs" />
-              <Text variant="body" weight="bold">{participantName}</Text>
-            </View>
-            <Pressable onPress={save} hitSlop={8}>
-              <Text variant="body" weight="semibold" color={theme.colors.accent.primary}>{t('common.done')}</Text>
-            </Pressable>
-          </View>
-        </BlurView>
+    <View style={{ flex: 1, backgroundColor: bgPrimary }}>
+      {/* ── Gradient header (matches fonts.tsx) ─────────────────────────── */}
+      <View style={[styles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">
+        <LinearGradient
+          colors={[bgPrimary, bgPrimary, bgTransparent]}
+          locations={[0, 0.55, 1]}
+          style={StyleSheet.absoluteFill}
+        />
+        <View style={[styles.headerRow, { paddingTop: insets.top + 8 }]} pointerEvents="auto">
+          <Pressable
+            onPress={() => router.back()}
+            hitSlop={10}
+            style={[styles.headerBack, { left: theme.spacing.lg, top: insets.top + 8 }]}
+          >
+            <Feather name="chevron-left" size={24} color={textPrimary} />
+          </Pressable>
+          <Text variant="subheading" weight="bold" numberOfLines={1}>
+            {headerTitle}
+          </Text>
+        </View>
       </View>
 
-      <ScrollView contentContainerStyle={{ paddingTop: insets.top + 64, paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
-        {/* Live Chat Preview */}
-        <View style={{ marginHorizontal: 16, marginBottom: 24, borderRadius: 20, overflow: 'hidden', borderWidth: 1, borderColor: theme.colors.border.light }}>
-          <View style={{ backgroundColor: theme.colors.background.elevated, paddingHorizontal: 14, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', borderBottomWidth: 0.5, borderBottomColor: theme.colors.border.light }}>
-            <Feather name="chevron-left" size={16} color={theme.colors.text.tertiary} />
-            <Avatar emoji={participantEmoji} size="xs" style={{ marginLeft: 8 }} />
-            <Text variant="caption" weight="semibold" style={{ marginLeft: 6 }}>{localName || participantName}</Text>
-          </View>
-          <ChatPreview fontSize={fontSize} bubbleRadius={bubbleRadius} fontFamily={fontFamily} backgroundImage={backgroundImage} />
-        </View>
-
-        {/* Settings sections */}
-        <View style={{ paddingHorizontal: 16, gap: 12 }}>
-          {/* Background */}
-          <View style={[styles.section, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
-            <Pressable onPress={pickBackground} style={styles.row}>
-              <View style={[styles.iconCircle, { backgroundColor: theme.colors.accent.primary + '15' }]}>
-                <Feather name="image" size={16} color={theme.colors.accent.primary} />
+      <ScrollView
+        contentContainerStyle={{
+          paddingHorizontal: theme.spacing.lg,
+          paddingTop: headerContentHeight,
+          paddingBottom: insets.bottom + 60,
+        }}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* ── Card 1: per-chat name (only for non-global flow) ────────── */}
+        {!isGlobal && (
+          <View style={[styles.card, { backgroundColor: bgElevated, borderColor: borderLight, marginTop: 8 }]}>
+            <Pressable onPress={openNameSheet} style={styles.row}>
+              <RNText allowFontScaling={false} style={[styles.rowLabel, { color: textPrimary }]}>
+                {t('chat_settings.local_name')}
+              </RNText>
+              <View style={styles.rowRight}>
+                <RNText
+                  allowFontScaling={false}
+                  style={[styles.rowMeta, { color: applied.localName ? textSecondary : textTertiary }]}
+                  numberOfLines={1}
+                >
+                  {applied.localName || t('chat_settings.local_name_placeholder')}
+                </RNText>
+                <Feather name="chevron-right" size={16} color={textTertiary} style={{ marginLeft: 4 }} />
               </View>
-              <Text variant="body" style={{ flex: 1 }}>{t('chat_settings.background')}</Text>
-              {backgroundImage && <Feather name="check-circle" size={16} color={theme.colors.accent.primary} />}
-              <Feather name="chevron-right" size={16} color={theme.colors.text.tertiary} style={{ marginLeft: 8 }} />
             </Pressable>
-            {backgroundImage && (
-              <>
-                <View style={{ height: 0.5, backgroundColor: theme.colors.border.light, marginLeft: 52 }} />
-                <Pressable onPress={() => { setBackgroundImage(undefined); updateSettings(chatId, { backgroundImage: undefined }); showToast(t('chat_settings.toast.bg_removed'), 'check'); }} style={styles.row}>
-                  <View style={[styles.iconCircle, { backgroundColor: '#FF3B3015' }]}>
-                    <Feather name="x" size={16} color="#FF3B30" />
-                  </View>
-                  <Text variant="body" color="#FF3B30">{t('chat_settings.remove_background')}</Text>
-                </Pressable>
-              </>
-            )}
           </View>
+        )}
 
-          {/* Local name (per-chat only, not for global settings) */}
-          {!isGlobal && (
-          <View style={[styles.section, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
-            <View style={[styles.row, { paddingVertical: 8 }]}>
-              <View style={[styles.iconCircle, { backgroundColor: theme.colors.accent.primary + '15' }]}>
-                <Feather name="edit-3" size={16} color={theme.colors.accent.primary} />
-              </View>
-              <TextInput
-                value={localName}
-                onChangeText={setLocalName}
-                placeholder={t('chat_settings.local_name')}
-                placeholderTextColor={theme.colors.text.tertiary}
-                style={{ flex: 1, fontSize: 15, color: theme.colors.text.primary, paddingVertical: 4 }}
-              />
+        {/* ── Card 2: visual settings — each row links to a fullscreen modal */}
+        <View style={[styles.card, { backgroundColor: bgElevated, borderColor: borderLight, marginTop: 12 }]}>
+          {/* Background */}
+          <Pressable
+            onPress={() => {
+              triggerHaptic('selection');
+              router.push({ pathname: '/settings/chat-background', params: { id: chatId } } as any);
+            }}
+            style={[styles.row, { borderBottomWidth: 0.5, borderBottomColor: borderLight }]}
+          >
+            <RNText allowFontScaling={false} style={[styles.rowLabel, { color: textPrimary }]}>
+              {t('chat_settings.background')}
+            </RNText>
+            <View style={styles.rowRight}>
+              {applied.backgroundImage ? (
+                <Feather name="check-circle" size={16} color={accent} />
+              ) : (
+                <RNText allowFontScaling={false} style={[styles.rowMeta, { color: textTertiary }]} numberOfLines={1}>
+                  {bgMeta}
+                </RNText>
+              )}
+              <Feather name="chevron-right" size={16} color={textTertiary} style={{ marginLeft: 4 }} />
             </View>
-          </View>
-          )}
+          </Pressable>
 
-          {/* Font size */}
-          <View style={[styles.section, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
-            <View style={{ padding: 14 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
-                <View style={[styles.iconCircle, { backgroundColor: theme.colors.accent.primary + '15' }]}>
-                  <Feather name="type" size={16} color={theme.colors.accent.primary} />
-                </View>
-                <Text variant="body" style={{ flex: 1 }}>{t('chat_settings.font_size')}</Text>
-                <Text variant="caption" weight="bold" color={theme.colors.accent.primary}>{fontSize}</Text>
-              </View>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                <Pressable onPress={() => setFontSize(Math.max(12, fontSize - 1))} style={[styles.stepper, { backgroundColor: theme.colors.background.primary }]}>
-                  <Text variant="body" color={theme.colors.text.secondary} style={{ fontSize: 12 }}>A</Text>
-                </Pressable>
-                <View style={{ flex: 1, height: 4, backgroundColor: theme.colors.border.light, borderRadius: 2 }}>
-                  <View style={{ width: `${((fontSize - 12) / 10) * 100}%`, height: 4, backgroundColor: theme.colors.accent.primary, borderRadius: 2 }} />
-                </View>
-                <Pressable onPress={() => setFontSize(Math.min(22, fontSize + 1))} style={[styles.stepper, { backgroundColor: theme.colors.background.primary }]}>
-                  <Text variant="body" color={theme.colors.text.secondary} style={{ fontSize: 18 }}>A</Text>
-                </Pressable>
-              </View>
+          {/* Text size */}
+          <Pressable
+            onPress={() => {
+              triggerHaptic('selection');
+              router.push({ pathname: '/settings/chat-text-size', params: { id: chatId } } as any);
+            }}
+            style={[styles.row, { borderBottomWidth: 0.5, borderBottomColor: borderLight }]}
+          >
+            <RNText allowFontScaling={false} style={[styles.rowLabel, { color: textPrimary }]}>
+              {t('chat_settings.font_size')}
+            </RNText>
+            <View style={styles.rowRight}>
+              <RNText
+                allowFontScaling={false}
+                style={[styles.rowMeta, { color: textTertiary }]}
+                numberOfLines={1}
+              >
+                {sizeMeta}
+              </RNText>
+              <Feather name="chevron-right" size={16} color={textTertiary} style={{ marginLeft: 4 }} />
             </View>
-          </View>
+          </Pressable>
 
           {/* Bubble radius */}
-          <View style={[styles.section, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
-            <View style={{ padding: 14 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
-                <View style={[styles.iconCircle, { backgroundColor: theme.colors.accent.primary + '15' }]}>
-                  <Feather name="message-circle" size={16} color={theme.colors.accent.primary} />
-                </View>
-                <Text variant="body" style={{ flex: 1 }}>{t('chat_settings.bubble_radius')}</Text>
-                <Text variant="caption" weight="bold" color={theme.colors.accent.primary}>{bubbleRadius}</Text>
-              </View>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                <Pressable onPress={() => setBubbleRadius(Math.max(4, bubbleRadius - 2))} style={[styles.stepper, { backgroundColor: theme.colors.background.primary }]}>
-                  <Feather name="minus" size={14} color={theme.colors.text.secondary} />
-                </Pressable>
-                <View style={{ flex: 1, height: 4, backgroundColor: theme.colors.border.light, borderRadius: 2 }}>
-                  <View style={{ width: `${((bubbleRadius - 4) / 20) * 100}%`, height: 4, backgroundColor: theme.colors.accent.primary, borderRadius: 2 }} />
-                </View>
-                <Pressable onPress={() => setBubbleRadius(Math.min(24, bubbleRadius + 2))} style={[styles.stepper, { backgroundColor: theme.colors.background.primary }]}>
-                  <Feather name="plus" size={14} color={theme.colors.text.secondary} />
-                </Pressable>
-              </View>
+          <Pressable
+            onPress={() => {
+              triggerHaptic('selection');
+              router.push({ pathname: '/settings/chat-bubble-radius', params: { id: chatId } } as any);
+            }}
+            style={[styles.row, { borderBottomWidth: 0.5, borderBottomColor: borderLight }]}
+          >
+            <RNText allowFontScaling={false} style={[styles.rowLabel, { color: textPrimary }]}>
+              {t('chat_settings.bubble_radius')}
+            </RNText>
+            <View style={styles.rowRight}>
+              <RNText
+                allowFontScaling={false}
+                style={[styles.rowMeta, { color: textTertiary }]}
+                numberOfLines={1}
+              >
+                {radiusMeta}
+              </RNText>
+              <Feather name="chevron-right" size={16} color={textTertiary} style={{ marginLeft: 4 }} />
             </View>
-          </View>
+          </Pressable>
 
-          {/* Link preview emoji pattern */}
-          <View style={[styles.section, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
-            <View style={{ padding: 14 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
-                <View style={[styles.iconCircle, { backgroundColor: theme.colors.accent.primary + '15' }]}>
-                  <Feather name="smile" size={16} color={theme.colors.accent.primary} />
-                </View>
-                <Text variant="body" style={{ flex: 1 }}>{t('chat_settings.link_emoji')}</Text>
-                {linkEmoji ? <Text style={{ fontSize: 20, lineHeight: 26 }} allowFontScaling={false}>{linkEmoji}</Text> : null}
-              </View>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingVertical: 2 }}>
-                <Pressable onPress={() => setLinkEmoji(undefined)} style={{ width: 46, height: 46, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: !linkEmoji ? theme.colors.accent.primary + '20' : theme.colors.background.primary, borderWidth: 1, borderColor: !linkEmoji ? theme.colors.accent.primary : 'transparent' }}>
-                  <Feather name="slash" size={16} color={theme.colors.text.tertiary} />
-                </Pressable>
-                {['❤️','😍','🔥','⭐','🌸','😎','🎵','⚽','🎮','🍕','🚀','💎','🌙','☀️','🐱','🎁'].map((e) => (
-                  <Pressable key={e} onPress={() => setLinkEmoji(e)} style={{ width: 46, height: 46, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: linkEmoji === e ? theme.colors.accent.primary + '20' : theme.colors.background.primary, borderWidth: 1, borderColor: linkEmoji === e ? theme.colors.accent.primary : 'transparent' }}>
-                    <Text style={{ fontSize: 24, lineHeight: 30 }} allowFontScaling={false}>{e}</Text>
-                  </Pressable>
-                ))}
-              </ScrollView>
+          {/* Font family */}
+          <Pressable
+            onPress={() => {
+              triggerHaptic('selection');
+              router.push({ pathname: '/settings/chat-font', params: { id: chatId } } as any);
+            }}
+            style={[styles.row, { borderBottomWidth: 0.5, borderBottomColor: borderLight }]}
+          >
+            <RNText allowFontScaling={false} style={[styles.rowLabel, { color: textPrimary }]}>
+              {t('chat_settings.font_family')}
+            </RNText>
+            <View style={styles.rowRight}>
+              <RNText
+                allowFontScaling={false}
+                style={[
+                  styles.rowMeta,
+                  { color: textSecondary, fontFamily: fontMetaPreviewFamily },
+                ]}
+                numberOfLines={1}
+              >
+                {fontMeta}
+              </RNText>
+              <Feather name="chevron-right" size={16} color={textTertiary} style={{ marginLeft: 4 }} />
             </View>
-          </View>
+          </Pressable>
+
+          {/* Link emoji */}
+          <Pressable onPress={openEmojiSheet} style={styles.row}>
+            <RNText allowFontScaling={false} style={[styles.rowLabel, { color: textPrimary }]}>
+              {t('chat_settings.link_emoji')}
+            </RNText>
+            <View style={styles.rowRight}>
+              {applied.linkEmoji ? (
+                <RNText style={styles.emojiChip} allowFontScaling={false}>
+                  {applied.linkEmoji}
+                </RNText>
+              ) : (
+                <RNText
+                  allowFontScaling={false}
+                  style={[styles.rowMeta, { color: textTertiary }]}
+                >
+                  {linkEmojiMeta}
+                </RNText>
+              )}
+              <Feather name="chevron-right" size={16} color={textTertiary} style={{ marginLeft: 4 }} />
+            </View>
+          </Pressable>
+        </View>
+
+        {/* ── Card 3: reset (destructive) ─────────────────────────────── */}
+        <View style={[styles.card, { backgroundColor: bgElevated, borderColor: borderLight, marginTop: 24 }]}>
+          <Pressable onPress={onReset} style={styles.row}>
+            <RNText allowFontScaling={false} style={[styles.rowLabel, { color: danger }]}>
+              {t('chat_settings.reset')}
+            </RNText>
+          </Pressable>
         </View>
       </ScrollView>
+
+      {/* ── Local name editor (bottom sheet) ────────────────────────────── */}
+      <SlideUpSheet visible={nameSheet} onClose={() => setNameSheet(false)}>
+        <Text variant="body" weight="semibold" align="center" style={{ paddingVertical: 8 }}>
+          {t('chat_settings.local_name')}
+        </Text>
+        <View style={{ paddingHorizontal: 14, paddingBottom: 14 }}>
+          <TextInput
+            value={draftName}
+            onChangeText={setDraftName}
+            placeholder={t('chat_settings.local_name_placeholder')}
+            placeholderTextColor={textTertiary}
+            autoFocus
+            maxLength={64}
+            style={{
+              fontSize: 15,
+              color: textPrimary,
+              backgroundColor: theme.colors.background.primary,
+              borderRadius: 12,
+              borderWidth: 0.5,
+              borderColor: borderLight,
+              paddingHorizontal: 14,
+              paddingVertical: 12,
+              marginBottom: 10,
+            }}
+          />
+          <View style={{ flexDirection: 'row', gap: 10 }}>
+            <Pressable
+              onPress={() => setNameSheet(false)}
+              style={[styles.sheetBtn, { backgroundColor: theme.colors.background.primary, borderColor: borderLight }]}
+            >
+              <RNText allowFontScaling={false} style={[styles.sheetBtnText, { color: textPrimary }]}>
+                {t('common.cancel')}
+              </RNText>
+            </Pressable>
+            <Pressable
+              onPress={saveName}
+              style={[styles.sheetBtn, { backgroundColor: accent, borderColor: accent }]}
+            >
+              <RNText allowFontScaling={false} style={[styles.sheetBtnText, { color: '#FFFFFF' }]}>
+                {t('common.apply')}
+              </RNText>
+            </Pressable>
+          </View>
+        </View>
+      </SlideUpSheet>
+
+      {/* ── Link emoji picker (bottom sheet) ────────────────────────────── */}
+      <SlideUpSheet visible={emojiSheet} onClose={() => setEmojiSheet(false)}>
+        <Text variant="body" weight="semibold" align="center" style={{ paddingVertical: 8 }}>
+          {t('chat_settings.link_emoji')}
+        </Text>
+        <ScrollView
+          style={{ maxHeight: 320 }}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{ paddingHorizontal: 14, paddingBottom: 8 }}
+        >
+          <View style={styles.emojiGrid}>
+            {/* "Off" tile — clears the link emoji */}
+            <Pressable
+              onPress={() => pickEmoji(undefined)}
+              style={[
+                styles.emojiCell,
+                {
+                  borderColor: !applied.linkEmoji ? accent : borderLight,
+                  backgroundColor: !applied.linkEmoji ? accent + '20' : 'transparent',
+                },
+              ]}
+            >
+              <Feather name="slash" size={16} color={textTertiary} />
+            </Pressable>
+            {LINK_EMOJI_CHOICES.map((e) => (
+              <Pressable
+                key={e}
+                onPress={() => pickEmoji(e)}
+                style={[
+                  styles.emojiCell,
+                  {
+                    borderColor: applied.linkEmoji === e ? accent : borderLight,
+                    backgroundColor: applied.linkEmoji === e ? accent + '20' : 'transparent',
+                  },
+                ]}
+              >
+                <RNText style={styles.emojiCellText} allowFontScaling={false}>
+                  {e}
+                </RNText>
+              </Pressable>
+            ))}
+          </View>
+        </ScrollView>
+      </SlideUpSheet>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  section: {
+  headerWrapper: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 100,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingBottom: 8,
+    paddingHorizontal: 60, // leave room for the back chevron
+    position: 'relative',
+  },
+  headerBack: { position: 'absolute' },
+  card: {
     borderRadius: 14,
     borderWidth: 0.5,
     overflow: 'hidden',
@@ -251,22 +455,41 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: 14,
+    paddingVertical: 14,
+  },
+  rowLabel: { fontSize: 15 },
+  rowRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    maxWidth: '60%',
+  },
+  rowMeta: { fontSize: 13, fontVariant: ['tabular-nums'] },
+  emojiChip: { fontSize: 20 },
+  // Bottom sheet helpers
+  sheetBtn: {
+    flex: 1,
     paddingVertical: 12,
-  },
-  iconCircle: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 12,
+    borderWidth: 0.5,
   },
-  stepper: {
-    width: 32,
-    height: 32,
-    borderRadius: 10,
+  sheetBtnText: { fontSize: 15, fontWeight: '600' },
+  emojiGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  emojiCell: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: 1,
   },
+  emojiCellText: { fontSize: 22 },
 });
