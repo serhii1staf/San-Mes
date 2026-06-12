@@ -145,8 +145,15 @@ export async function syncProfiles(): Promise<void> {
         updated_at: profile.updated_at || null,
       };
 
+      // upsertProfile already writes the per-profile entry via cacheProfile()
+      // and schedules the coalesced batch flush — calling cacheProfile again
+      // here just doubled the synchronous JSON.stringify + MMKV write per
+      // iteration, with no payoff. Yield once between iterations instead so
+      // a 50-profile sync still hands RAF callbacks room to fire between
+      // upserts (preserving the breathing room the previous awaited write
+      // gave us, without redoing the same persistence work).
       store.upsertProfile(localProfile);
-      await cacheProfile(profile.id, localProfile);
+      await Promise.resolve();
     }
   } catch (e) {
     console.warn('[SyncService] syncProfiles failed:', e);

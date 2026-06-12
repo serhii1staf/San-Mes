@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { InteractionManager } from 'react-native';
 
 import {
   cacheFeed,
@@ -22,13 +23,40 @@ export type { LocalPost, LocalProfile, LocalConversation, LocalMessage };
 let profilesFlushTimer: ReturnType<typeof setTimeout> | null = null;
 let postsFlushTimer: ReturnType<typeof setTimeout> | null = null;
 
+// Hard cap on the number of entries serialised into the batched
+// `KEYS.allProfiles` / `KEYS.feed` cache blobs. Without these, a long-running
+// session that views many profiles (each `upsertProfile` adds a new entry,
+// never trimmed within a session) grows the in-memory map unboundedly. The
+// debounced flush below serialises that whole map with a single synchronous
+// `JSON.stringify` followed by a synchronous MMKV write — a 200-profile blob
+// is ~150 KB and the stringify alone takes 100–170 ms on weak iPhones, which
+// landed as the residual `SLOW long task @ (tabs) 169ms` markers users saw a
+// few seconds after rapid tab-switching (the flush fires 600 ms after the
+// final `upsertProfile` from `syncProfiles()`, which is itself triggered from
+// the messages-tab mount). Profiles older than the cap stay in the
+// per-profile `KEYS.profile(id)` cache (written eagerly by `upsertProfile`),
+// so individual lookups via `getCachedProfile(id)` still resolve them — only
+// the bulk-hydrate path is bounded.
+const MAX_BATCH_PROFILES = 200;
+const MAX_BATCH_POSTS = 200;
+
 function scheduleProfilesFlush(getMap: () => LocalProfile[]) {
   if (profilesFlushTimer) clearTimeout(profilesFlushTimer);
   profilesFlushTimer = setTimeout(() => {
     profilesFlushTimer = null;
-    import('./cacheService').then(({ cacheAllProfiles }) => {
-      cacheAllProfiles(getMap()).catch(() => {});
-    }).catch(() => {});
+    // Defer the actual stringify+write past any active navigation/animation
+    // so the heavy JSON serialisation never lands on a transition frame.
+    // Together with the slice cap below, this kills the residual
+    // `SLOW long task @ (tabs)` markers that fired ~2 s after a tab switch.
+    InteractionManager.runAfterInteractions(() => {
+      import('./cacheService').then(({ cacheAllProfiles }) => {
+        const all = getMap();
+        const capped = all.length > MAX_BATCH_PROFILES
+          ? all.slice(-MAX_BATCH_PROFILES)
+          : all;
+        cacheAllProfiles(capped).catch(() => {});
+      }).catch(() => {});
+    });
   }, 600);
 }
 
@@ -36,9 +64,20 @@ function schedulePostsFlush(getPosts: () => LocalPost[]) {
   if (postsFlushTimer) clearTimeout(postsFlushTimer);
   postsFlushTimer = setTimeout(() => {
     postsFlushTimer = null;
-    import('./cacheService').then(({ cacheFeed }) => {
-      cacheFeed(getPosts()).catch(() => {});
-    }).catch(() => {});
+    // Same reasoning as scheduleProfilesFlush: defer past the active
+    // interaction frame so JSON.stringify of the posts map can't compete
+    // with a navigation transition. `cacheFeed` already trims to
+    // MAX_FEED_POSTS (200) internally, but we cap here too so the array
+    // we hand to it is bounded BEFORE the sort + stringify cost.
+    InteractionManager.runAfterInteractions(() => {
+      import('./cacheService').then(({ cacheFeed }) => {
+        const all = getPosts();
+        const capped = all.length > MAX_BATCH_POSTS
+          ? all.slice(0, MAX_BATCH_POSTS)
+          : all;
+        cacheFeed(capped).catch(() => {});
+      }).catch(() => {});
+    });
   }, 600);
 }
 
