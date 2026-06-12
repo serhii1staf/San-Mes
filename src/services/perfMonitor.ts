@@ -89,7 +89,7 @@ class PerfMonitor {
       // points at a SINGLE bad operation. Tag it with the current route so
       // the user immediately sees which screen the blocking task came
       // from. Skip the very first tick (no previous timestamp).
-      if (lastFrameTs && now - lastFrameTs > 120) {
+      if (lastFrameTs && now - lastFrameTs > 120 && now - lastFrameTs < 5000) {
         this._record({
           ts: now,
           type: 'slow',
