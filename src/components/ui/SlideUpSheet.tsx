@@ -52,11 +52,20 @@ export function SlideUpSheet({ visible, onClose, children }: SlideUpSheetProps) 
     <Modal visible={visible || mounted} transparent animationType="none" onRequestClose={dismiss} statusBarTranslucent>
       <StatusBar hidden />
       <View style={{ flex: 1 }}>
-        <Animated.View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)', opacity: backdropAnim }}>
+        {/* Backdrop sits BELOW the content. Without an explicit zIndex on
+            the content wrapper React Native's tap routing can let the
+            backdrop's full-screen Pressable swallow taps on the card itself
+            on some configurations (Modal + absolute backdrop + Animated
+            child), which is exactly the "buttons don't react" symptom
+            users reported on the mini-app report sheet. */}
+        <Animated.View
+          pointerEvents={visible ? 'auto' : 'none'}
+          style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)', opacity: backdropAnim, zIndex: 1 }}
+        >
           <Pressable style={{ flex: 1 }} onPress={dismiss} />
         </Animated.View>
 
-        <View style={{ flex: 1, justifyContent: 'flex-end' }} pointerEvents="box-none">
+        <View style={{ flex: 1, justifyContent: 'flex-end', zIndex: 2 }} pointerEvents="box-none">
           <Animated.View style={{ transform: [{ translateY: slideAnim }] }}>
             <View style={{ marginHorizontal: 8, marginBottom: Math.max(insets.bottom, 16), backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF', borderRadius: 40, shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.12, shadowRadius: 16, elevation: 10 }}>
               <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 4 }}>

@@ -410,6 +410,9 @@ const ru: Record<string, string> = {
   'giphy.search_placeholder': 'Поиск GIF...',
   'giphy.empty': 'Ничего не найдено',
 
+  // ─── Mini-app screen ───────────────────────────────────────────────────
+  'mini_app.report_about': 'Жалоба на мини-приложение «{name}»',
+
   // ─── Settings → Storage ────────────────────────────────────────────────
   'storage.title': 'Данные и память',
   'storage.local_cache': 'локальный кэш',

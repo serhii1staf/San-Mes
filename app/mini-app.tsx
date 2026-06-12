@@ -8,6 +8,7 @@ import { BlurView } from 'expo-blur';
 import { Text } from '../src/components/ui';
 import { SlideUpSheet } from '../src/components/ui/SlideUpSheet';
 import { useBrowserStore } from '../src/store/browserStore';
+import { useT } from '../src/i18n/store';
 import { triggerHaptic } from '../src/utils/haptics';
 import { showToast } from '../src/store/toastStore';
 import { useTheme } from '../src/theme';
@@ -24,11 +25,21 @@ import { useTheme } from '../src/theme';
 //     Guideline 1.2 requires user-generated/third-party content to be
 //     reportable, and a mini-app's URL is effectively user-supplied.
 
-const REPORT_CATS = ['Спам', 'Насилие', 'Ложная информация', 'Мошенничество', 'Нарушение авторских прав', 'Другое'];
+// Report categories live as STABLE keys; their visible labels come from
+// the existing `report.cat.*` dictionary entries via t() at render time.
+const REPORT_CATS: { key: string; labelKey: string }[] = [
+  { key: 'spam', labelKey: 'report.cat.spam' },
+  { key: 'violence', labelKey: 'report.cat.violence' },
+  { key: 'misinformation', labelKey: 'report.cat.misinformation' },
+  { key: 'fraud', labelKey: 'report.cat.fraud' },
+  { key: 'copyright', labelKey: 'report.cat.copyright' },
+  { key: 'other', labelKey: 'report.cat.other' },
+];
 
 export default function MiniAppScreen() {
   const insets = useSafeAreaInsets();
   const theme = useTheme();
+  const t = useT();
   const { url, name, emoji } = useLocalSearchParams<{ url: string; name: string; emoji: string }>();
   const webViewRef = useRef<WebView>(null);
   const [currentUrl, setCurrentUrl] = useState('');
@@ -84,10 +95,10 @@ export default function MiniAppScreen() {
     router.back();
   };
 
-  const handleReport = (cat: string) => {
+  const handleReport = (_categoryKey: string) => {
     triggerHaptic('medium');
     setReportOpen(false);
-    showToast('Жалоба отправлена', 'flag');
+    showToast(t('toast.report_sent'), 'flag');
   };
 
   return (
@@ -185,17 +196,17 @@ export default function MiniAppScreen() {
           already hides it; doubling up can confuse Android. */}
       <SlideUpSheet visible={reportOpen} onClose={() => setReportOpen(false)}>
         <View style={{ paddingBottom: 8 }}>
-          <Text variant="body" weight="semibold" align="center" style={{ paddingVertical: 10 }}>Причина жалобы</Text>
+          <Text variant="body" weight="semibold" align="center" style={{ paddingVertical: 10 }}>{t('report.title')}</Text>
           <Text variant="caption" color={theme.colors.text.tertiary} align="center" style={{ paddingHorizontal: 24, paddingBottom: 10, fontSize: 12 }}>
-            Жалоба на мини-приложение «{displayName}»
+            {t('mini_app.report_about', undefined, { name: displayName })}
           </Text>
           {REPORT_CATS.map((cat) => (
             <Pressable
-              key={cat}
-              onPress={() => handleReport(cat)}
+              key={cat.key}
+              onPress={() => handleReport(cat.key)}
               style={{ paddingVertical: 14, paddingHorizontal: 20, borderTopWidth: 0.5, borderTopColor: theme.colors.border.light }}
             >
-              <Text variant="body">{cat}</Text>
+              <Text variant="body">{t(cat.labelKey)}</Text>
             </Pressable>
           ))}
         </View>

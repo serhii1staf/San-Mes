@@ -407,6 +407,9 @@ const en: Record<string, string> = {
   'giphy.search_placeholder': 'Search GIFs...',
   'giphy.empty': 'No results',
 
+  // ─── Mini-app screen ───────────────────────────────────────────────────
+  'mini_app.report_about': 'Report mini-app "{name}"',
+
   // ─── Settings → Storage ────────────────────────────────────────────────
   'storage.title': 'Data & Storage',
   'storage.local_cache': 'local cache',
