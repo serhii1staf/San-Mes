@@ -20,6 +20,8 @@ import { setCacheAccount } from '../src/services/cacheService';
 import { setThrottleAccount } from '../src/services/syncThrottle';
 import { useT } from '../src/i18n/store';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
+import { PerfMonitorBubble } from '../src/components/dev/PerfMonitorBubble';
+import { perfMonitor } from '../src/services/perfMonitor';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -146,6 +148,8 @@ function RootLayout() {
   const [fontsLoaded, fontError] = useFonts(fontAssets);
   const [fontTimeout, setFontTimeout] = useState(false);
   const navigationRef = useNavigationContainerRef();
+  const segments = useSegments();
+  const lastSegmentRef = useRef<string>('');
 
   // Hand the navigation container to Sentry so it can track screen
   // transitions as transactions (no PII; it only logs route names).
@@ -154,6 +158,15 @@ function RootLayout() {
       navigationIntegration.registerNavigationContainer(navigationRef);
     }
   }, [navigationRef]);
+
+  // Feed navigation transitions into the in-app perf monitor so the user
+  // sees which screen change is slow when they're chasing jank.
+  useEffect(() => {
+    const route = segments.join('/') || '(root)';
+    if (route === lastSegmentRef.current) return;
+    lastSegmentRef.current = route;
+    perfMonitor.recordNavigation(route);
+  }, [segments]);
 
   useEffect(() => {
     const timer = setTimeout(() => setFontTimeout(true), 3000);
@@ -246,6 +259,10 @@ function RootLayout() {
           </View>
           <BrowserBottomBand />
         </View>
+        {/* Floating performance monitor — sits above everything else so it
+            stays visible on every screen. Defaults to ON; users can hide it
+            from the panel that opens when they tap the bubble. */}
+        <PerfMonitorBubble />
       </AuthNavigationGuard>
     </ThemeProvider>
     </KeyboardProvider>

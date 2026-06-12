@@ -666,6 +666,18 @@ const en: Record<string, string> = {
 
   // ─── Rate limit / content moderation ───────────────────────────────────
   'rate_limit.suspicious_content': 'Suspicious link or content detected',
+
+  // ─── Perf monitor ──────────────────────────────────────────────────────
+  'perf.title': 'Performance monitor',
+  'perf.live': 'Live',
+  'perf.js_thread': 'JS thread',
+  'perf.ui_thread': 'UI thread',
+  'perf.min_5s': 'min 5s',
+  'perf.settings': 'Settings',
+  'perf.bubble_enabled': 'Show bubble',
+  'perf.clear_log': 'Clear log',
+  'perf.events': 'Events',
+  'perf.no_events': 'Nothing yet — navigate around the app to see metrics.',
 };
 
 export default en;

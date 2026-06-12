@@ -669,6 +669,18 @@ const ru: Record<string, string> = {
 
   // ─── Rate limit / content moderation ───────────────────────────────────
   'rate_limit.suspicious_content': 'Обнаружена подозрительная ссылка или контент',
+
+  // ─── Perf monitor ──────────────────────────────────────────────────────
+  'perf.title': 'Монитор производительности',
+  'perf.live': 'В реальном времени',
+  'perf.js_thread': 'JS-поток',
+  'perf.ui_thread': 'UI-поток',
+  'perf.min_5s': 'мин. 5 с',
+  'perf.settings': 'Настройки',
+  'perf.bubble_enabled': 'Показывать кнопку',
+  'perf.clear_log': 'Очистить лог',
+  'perf.events': 'События',
+  'perf.no_events': 'Пока пусто — походите по приложению, чтобы появились метрики.',
 };
 
 export default ru;
