@@ -256,14 +256,15 @@ export default function ProfileScreen() {
         return post;
       });
       setProfilePosts(mapped);
-      kvSetJSON(MY_POSTS_CACHE_KEY, mapped);
-      // The earlier AsyncStorage mirror was redundant — kvSetJSON already
-      // persists via MMKV (which is namespaced per account through
-      // setCacheAccount), and the second JSON.stringify of a 100-post
-      // list was the dominant cost behind the
-      // `SLOW long task @ (tabs)/profile 410ms` users were seeing on
-      // pull-to-refresh / focus-effect re-syncs. Dropping it doesn't
-      // affect persistence — the next read uses the same MMKV write.
+      // Persist the snapshot AFTER the next interaction window so the
+      // JSON.stringify of ~100 posts (15–40 KB) doesn't pile up on the same
+      // RAF as `setProfilePosts` reconciliation. That stringify on the
+      // synchronous path was the residual ~130 ms long task users saw a
+      // few seconds after re-entering the profile tab. The cache stays
+      // correct because nothing else reads it before the next paint.
+      InteractionManager.runAfterInteractions(() => {
+        kvSetJSON(MY_POSTS_CACHE_KEY, mapped);
+      });
     } catch {}
   }, [user?.id]);
 

@@ -4,7 +4,7 @@ import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useTheme } from '../../theme';
 import { Text } from './Text';
-import { CachedImage } from './CachedImage';
+import { CachedImage, prefetchImages } from './CachedImage';
 import { EmojiPattern } from './EmojiPattern';
 import { MediaViewerModal, MediaViewerSource, InlineVideoPlayer } from './MediaViewerModal';
 import { getLinkPreview, getCachedPreviewSync, LinkPreviewData } from '../../services/linkPreview';
@@ -57,6 +57,14 @@ export const LinkPreview = React.memo(function LinkPreview({ url, onError, textC
 
   useEffect(() => {
     mounted.current = true;
+    // Warm the image cache for the preview thumbnail as soon as metadata is
+    // available, regardless of whether it came from cache or a fresh fetch.
+    // Without this, scrolling past + back to a preview would re-decode the
+    // thumbnail from disk every time, which the user perceived as
+    // "preview reloads every time" — even though the metadata never re-fetched.
+    if (cached?.image) {
+      prefetchImages([cached.image]);
+    }
     if (cached !== undefined) {
       if (!cached) onError?.();
       return () => {
@@ -79,6 +87,9 @@ export const LinkPreview = React.memo(function LinkPreview({ url, onError, textC
         recordFetch();
         setData(d);
         setResolved(true);
+        // Prefetch the image immediately on resolve too — covers the
+        // first-ever-view path where `cached` was undefined above.
+        if (d?.image) prefetchImages([d.image]);
         if (!d) onError?.();
       })
       .catch(() => {
