@@ -98,9 +98,20 @@ export default function ProfileScreen() {
   // Virtualization is now handled by Animated.FlatList — no manual windowing
   // needed. Tab tap stays snappy via the `postsReady` gating below.
   // Posts cards are heavier (gesture handlers + images). Gate their mount one
-  // frame after the tab activates so the tab highlight switches instantly and the
-  // heavy mount happens off the tap's critical path (no perceived freeze).
-  const [postsReady, setPostsReady] = useState(true);
+  // frame after the tab activates so the tab highlight switches instantly and
+  // the heavy mount happens off the tap's critical path (no perceived freeze).
+  // Start FALSE so the first paint of the profile screen carries only the
+  // header, and the post cards mount once the navigation transition into
+  // this screen has completed (via InteractionManager). That single frame
+  // of breathing room is enough to keep the JS thread clear during the
+  // open animation, which was the source of `SLOW ui<30 @ (tabs)/profile`.
+  const [postsReady, setPostsReady] = useState(false);
+  useEffect(() => {
+    const handle = InteractionManager.runAfterInteractions(() => {
+      setPostsReady(true);
+    });
+    return () => handle.cancel();
+  }, []);
   const [activeTab, setActiveTab] = useState<TabName>('posts');
   const [followCounts, setFollowCounts] = useState({ followers: 0, following: 0 });
   const [showQR, setShowQR] = useState(false);
@@ -321,13 +332,16 @@ export default function ProfileScreen() {
             onImagePress={handlePostImagePress}
           />
         )}
-        // Virtualization tuned for weak Android / iPhone 12. Keeps the
-        // mounted card count low so swipe gestures, link previews, and
-        // formatted-text reflow don't all sit on the UI thread at once —
-        // the root cause of `SLOW ui<30 @ (tabs)/profile`.
-        initialNumToRender={6}
-        maxToRenderPerBatch={4}
-        windowSize={7}
+        // Virtualization tuned for weak Android / iPhone 12. The earlier
+        // 6/4/7 numbers still let an 18-card profile mount the whole first
+        // window inside ~300 ms, which slammed the JS thread into a SLOW
+        // ui<30 every time. Smaller windows mean the user can briefly see
+        // empty space at the bottom while scrolling, but no stutter — a
+        // good trade on weak devices.
+        initialNumToRender={3}
+        maxToRenderPerBatch={2}
+        windowSize={5}
+        updateCellsBatchingPeriod={100}
         removeClippedSubviews={true}
         showsVerticalScrollIndicator={false}
         bounces={false}

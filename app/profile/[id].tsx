@@ -252,7 +252,14 @@ export default function UserProfileScreen() {
   // Posts cards are heavy (gesture handlers + images). Gate their mount one frame
   // after the tab activates so the tab highlight switches instantly and the heavy
   // mount happens off the tap's critical path — same approach as (tabs)/profile.tsx.
-  const [postsReady, setPostsReady] = useState(true);
+  // Posts cards are heavy (gesture handlers + images). Gate their mount one
+  // frame after the tab activates so the tab highlight switches instantly and
+  // the heavy mount happens off the tap's critical path. Start FALSE so the
+  // first paint carries only the header — cards mount after the navigation
+  // transition completes via InteractionManager. That breathing room kept
+  // the JS thread clear and eliminated the `SLOW ui<30 @ profile/[id]`
+  // burst we saw when 18+ cards mounted in 300 ms during the open animation.
+  const [postsReady, setPostsReady] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const [viewingImage, setViewingImage] = useState<{ uri: string; postId: string; allImages?: string[] } | null>(null);
   const { target: contextPost, open: openContextMenu, close: closeContextMenu } = useContextMenuGuard<any>();
@@ -334,6 +341,11 @@ export default function UserProfileScreen() {
     // counts) until after the navigation transition into this screen has
     // settled — keeps the open animation smooth on weak devices.
     const handle = InteractionManager.runAfterInteractions(() => {
+      // Heavy post cards mount only after the navigation transition has
+      // settled — that single frame of breathing room is what kept SLOW
+      // ui<30 from firing on profile open.
+      setPostsReady(true);
+
       // Trigger background sync for profile and user posts
       syncProfile(id);
       syncUserPosts(id);
@@ -556,9 +568,10 @@ export default function UserProfileScreen() {
         // mounted card count low so gesture handlers, FormattedText, and any
         // LinkPreview unfurls don't all sit on the UI thread at once — the
         // root cause of `SLOW ui<30 @ profile/[id]`.
-        initialNumToRender={6}
-        maxToRenderPerBatch={4}
-        windowSize={7}
+        initialNumToRender={3}
+        maxToRenderPerBatch={2}
+        windowSize={5}
+        updateCellsBatchingPeriod={100}
         removeClippedSubviews={true}
         showsVerticalScrollIndicator={false}
         bounces={false}
