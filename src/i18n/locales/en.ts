@@ -686,6 +686,7 @@ const en: Record<string, string> = {
   'perf.copied_title': 'Copied',
   'perf.copied_one': 'Error copied to clipboard.',
   'perf.copied_all': 'All errors copied to clipboard.',
+  'perf.copied_log': 'Full log copied to clipboard.',
 };
 
 export default en;

@@ -164,9 +164,45 @@ export function PerfMonitorPanel({ onClose }: Props) {
 
         {/* Event log */}
         <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { color: theme.colors.text.tertiary }]}>
-            {t('perf.events', 'Events')} · {snap.events.length}
-          </Text>
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              paddingHorizontal: 4,
+              marginBottom: 8,
+            }}
+          >
+            <Text style={[styles.sectionTitle, { color: theme.colors.text.tertiary, marginBottom: 0 }]}>
+              {t('perf.events', 'Events')} · {snap.events.length}
+            </Text>
+            {snap.events.length > 0 && (
+              <TouchableOpacity
+                onPress={async () => {
+                  try {
+                    const reversed = snap.events.slice().reverse();
+                    const text = reversed
+                      .map((ev) => {
+                        const ts = new Date(ev.ts).toISOString();
+                        const dur = ev.durationMs != null ? ` ${ev.durationMs}ms` : '';
+                        const stack = ev.stack ? `\n${ev.stack}` : '';
+                        return `[${ts}] ${ev.type.toUpperCase()} ${ev.label}${dur}${stack}`;
+                      })
+                      .join('\n');
+                    await Clipboard.setStringAsync(text);
+                    Alert.alert(
+                      t('perf.copied_title', 'Copied'),
+                      t('perf.copied_log', 'Full log copied to clipboard.'),
+                    );
+                  } catch {}
+                }}
+              >
+                <Text style={{ color: theme.colors.accent.primary, fontSize: 13, fontWeight: '600' }}>
+                  {t('perf.copy_all', 'Copy all')}
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
           {snap.events.length === 0 ? (
             <View style={[styles.empty, { backgroundColor: theme.colors.background.secondary }]}>
               <Text style={{ color: theme.colors.text.tertiary }}>

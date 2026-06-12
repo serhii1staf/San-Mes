@@ -689,6 +689,7 @@ const ru: Record<string, string> = {
   'perf.copied_title': 'Скопировано',
   'perf.copied_one': 'Ошибка скопирована в буфер обмена.',
   'perf.copied_all': 'Все ошибки скопированы в буфер обмена.',
+  'perf.copied_log': 'Полный лог скопирован в буфер обмена.',
 };
 
 export default ru;

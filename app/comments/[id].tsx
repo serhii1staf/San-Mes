@@ -112,11 +112,17 @@ export default function CommentsScreen() {
   // drive translateY from `useKeyboardHandler.onMove` — the same low-level
   // event source `KeyboardStickyView` uses — so the list lifts in lock-step
   // with the input bar instead of snapping when the JS thread is briefly
-  // busy.
+  // busy. `onInteractive` covers the iOS interactive-dismiss drag so the
+  // list rides the finger with the keyboard and we don't get a phantom
+  // strip where the last comment used to sit.
   const listShiftY = useSharedValue(0);
   useKeyboardHandler(
     {
       onMove: (e) => {
+        'worklet';
+        listShiftY.value = -e.height;
+      },
+      onInteractive: (e) => {
         'worklet';
         listShiftY.value = -e.height;
       },

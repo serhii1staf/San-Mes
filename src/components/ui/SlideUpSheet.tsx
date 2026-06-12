@@ -32,7 +32,17 @@ export function SlideUpSheet({ visible, onClose, children }: SlideUpSheetProps) 
         Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 50, friction: 9 }),
         Animated.timing(backdropAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
       ]).start();
+    } else if (mounted && !isClosing.current) {
+      // External close (parent set visible=false without going through the
+      // backdrop press / onRequestClose): run the same dismiss animation
+      // so the sheet doesn't get stuck visible while React thinks it's
+      // closed. This was the "category tap plays haptic but the sheet
+      // doesn't dismiss" bug in the mini-app report flow.
+      dismiss();
     }
+    // We deliberately depend only on `visible`; `mounted` and `isClosing`
+    // are refs / state that don't need to retrigger this.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
   const dismiss = () => {

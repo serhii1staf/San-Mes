@@ -171,6 +171,19 @@ export default function ChatScreen() {
   // Long-press menu opener — see useContextMenuGuard for the rate-limit/raf
   // semantics that prevent rapid long-press storms from freezing the JS thread.
   const { target: actionMessage, open: openMenu, close: closeMenu } = useContextMenuGuard<ChatMessage>({ lockMs: 500, closeLockMs: 350 });
+
+  // Long-pressing a message should dismiss the keyboard so the slide-up
+  // action menu doesn't end up half-covered by it. iOS's
+  // `keyboardDismissMode="interactive"` only handles the drag gesture, not
+  // a programmatic open of an overlay, so we wrap the open with an
+  // explicit dismiss here.
+  const onMessageLongPress = useCallback(
+    (m: ChatMessage) => {
+      Keyboard.dismiss();
+      openMenu(m);
+    },
+    [openMenu],
+  );
   const [scrollEnabled, setScrollEnabled] = useState(true);
   const [pendingImages, setPendingImages] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -259,10 +272,20 @@ export default function ChatScreen() {
   // of occasionally desyncing into a snap when the JS thread is briefly
   // busy on the first chat open. `e.height` is the live keyboard height in
   // pixels, fed to translateY as a negative offset.
+  //
+  // `onInteractive` mirrors the same height during an iOS interactive
+  // dismiss gesture (when the user drags the keyboard down with a finger):
+  // without it the list stayed pinned at the keyboard-up position while
+  // the input bar followed the finger, leaving a phantom strip where the
+  // last message used to sit. Now both follow the finger together.
   const listShiftY = useSharedValue(0);
   useKeyboardHandler(
     {
       onMove: (e) => {
+        'worklet';
+        listShiftY.value = -e.height;
+      },
+      onInteractive: (e) => {
         'worklet';
         listShiftY.value = -e.height;
       },
@@ -673,12 +696,12 @@ export default function ChatScreen() {
         linkEmoji={chatSettings.linkEmoji}
         highlighted={item.id === activeMatchId}
         onReply={startReply}
-        onLongPress={openMenu}
+        onLongPress={onMessageLongPress}
         onSwipeActive={handleSwipeActive}
         onImagePress={openImageViewer}
       />
     );
-  }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, chatSettings.linkEmoji, startReply, handleSwipeActive, openImageViewer, parseMessage, activeMatchId, openMenu]);
+  }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, chatSettings.linkEmoji, startReply, handleSwipeActive, openImageViewer, parseMessage, activeMatchId, onMessageLongPress]);
 
   // Stable callback refs for FlatList — without these, every parent render
   // hands FlatList fresh function identities and breaks its row recycling
