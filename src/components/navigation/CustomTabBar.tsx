@@ -192,17 +192,32 @@ const TabBarButton = React.memo(function TabBarButton({
   );
 });
 
-// ─── Sliding Lens (BlurView pill) ────────────────────────────────────────────
+// ─── Sliding Lens (translucent pill) ─────────────────────────────────────────
 //
-// On iOS the lens is itself a `BlurView` with a heavier system material than
-// the bar. The contrast in blur strength is what creates the "magnifying"
-// optical illusion: the lens area refracts content behind it more than the
-// rest of the bar, exactly like a piece of curved glass over flat glass.
+// The lens used to be a second `BlurView` (`systemThickMaterial*`) drawn on
+// top of the bar's `systemChromeMaterial*` BlurView. Two stacked BlurViews on
+// iOS = two `UIVisualEffectView`s that the GPU must re-rasterize whenever
+// anything moves behind them. Crucially, this tab bar lives on the root
+// `Stack` (see app/_layout.tsx) so it stays mounted underneath every
+// `chat/[id]` slide-in — during the ~300 ms transition the lens BlurView was
+// re-blending against the moving chat screen on every frame, draining
+// frame-budget and showing up as the "lag the moment I open any chat" the
+// user reported. Same cost during profile scroll: every render pass for the
+// list contents had to also re-composite both BlurViews underneath.
 //
-// Top reflection + bottom dim layer give the lens its rounded-glass volume.
+// We now render the lens as a translucent fill, brighter than the bar's
+// tint. The bar's own BlurView still provides the actual blur of the
+// content behind, so the lens area still reads as glass — just one
+// composition pass per frame instead of two. Top reflection / bottom dim /
+// hairline border are unchanged, which is what gives the pill its rounded
+// optical volume; combined with the icon-magnify worklet that lives on the
+// UI thread, the "magnifying lens" cue is preserved without the GPU cost.
 //
-// On Android a flat translucent pill is rendered instead — Android's
-// experimental BlurView is too expensive to run on a live-animated view.
+// Visual delta: the lens is very slightly less "frosted" than before — the
+// magnification cue now comes mainly from the icon-scale worklet plus the
+// brighter pill tint over the bar's blurred backdrop. The user explicitly
+// signed off on the lens look as "fine, not bad", so we trade a sliver of
+// frostiness for a buttery transition.
 
 function SlidingLens({
   pillX,
@@ -231,32 +246,30 @@ function SlidingLens({
     opacity: visible ? 1 : 0,
   }));
 
+  // Tint values picked so the lens stays clearly visible against the bar's
+  // own blurred tint without going opaque. iOS dark mode is darker than
+  // Android dark mode (the systemChromeMaterial bar already absorbs a lot
+  // of light), so we lift the alpha a touch on iOS dark.
+  const lensFill =
+    Platform.OS === 'ios'
+      ? isDark
+        ? 'rgba(255,255,255,0.20)'
+        : 'rgba(255,255,255,0.55)'
+      : isDark
+        ? 'rgba(255,255,255,0.16)'
+        : 'rgba(255,255,255,0.85)';
+
   return (
     <Animated.View style={[styles.pill, animStyle]} pointerEvents="none">
-      {Platform.OS === 'ios' ? (
-        // Heavier material than the bar's `systemChromeMaterial*` — iOS
-        // composites this on top of the bar's blur, so the lens area ends
-        // up with a thicker, more refractive look than the rest of the bar.
-        <BlurView
-          intensity={80}
-          tint={isDark ? 'systemThickMaterialDark' : 'systemThickMaterialLight'}
-          style={[StyleSheet.absoluteFill, { borderRadius: PILL_HEIGHT / 2 }]}
-        />
-      ) : (
-        // Android fallback — a brighter translucent fill so the lens still
-        // reads as a distinct surface above the bar's tint.
-        <View
-          style={[
-            StyleSheet.absoluteFill,
-            {
-              borderRadius: PILL_HEIGHT / 2,
-              backgroundColor: isDark
-                ? 'rgba(255,255,255,0.16)'
-                : 'rgba(255,255,255,0.85)',
-            },
-          ]}
-        />
-      )}
+      <View
+        style={[
+          StyleSheet.absoluteFill,
+          {
+            borderRadius: PILL_HEIGHT / 2,
+            backgroundColor: lensFill,
+          },
+        ]}
+      />
 
       {/* Top reflection — the bright crescent that sells the curved-glass
           look. A linear gradient is enough; an arc would require SVG and
@@ -571,8 +584,10 @@ export const CustomTabBar = React.memo(function CustomTabBar({
           <TopReflection isDark={isDark} />
 
           {/* Lens sits between the backdrop and the tab row so the icons
-              render on top, but the lens itself is a BlurView so it still
-              refracts everything BEHIND the bar. */}
+              render on top. The lens itself no longer carries its own
+              BlurView — the bar's GlassBackdrop already blurs the content
+              behind, and the lens is a brighter translucent fill that
+              reads as glass over that blurred backdrop. */}
           {slotWidth > 0 && (
             <SlidingLens
               pillX={pillX}
@@ -642,10 +657,16 @@ const styles = StyleSheet.create({
     borderRadius: BAR_BORDER_RADIUS,
     borderWidth: 0.5,
     overflow: 'hidden',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.25,
-    shadowRadius: 24,
-    elevation: 12,
+    // Tightened from a 24-pt / 0.25 / elevation 12 drop shadow. The previous
+    // values gave the bar a strong floating look but cost real per-frame
+    // composition work — particularly on weak Android, where `elevation`
+    // recomputes every frame regardless of whether the bar is moving.
+    // Pulled in so the bar still reads as floating but the GPU has less to
+    // do during chat-screen transitions and profile scroll.
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.20,
+    shadowRadius: 18,
+    elevation: 8,
   },
   tabRow: {
     flex: 1,
