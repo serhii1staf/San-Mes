@@ -13,7 +13,6 @@ import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withSpring,
-  withTiming,
   runOnJS,
   SharedValue,
   interpolate,
@@ -62,7 +61,6 @@ const ICON_MAGNIFY_MAX = 0.18;
 
 const PILL_SPRING = { damping: 18, stiffness: 280, mass: 0.8 };
 const PRESS_SPRING = { damping: 20, stiffness: 350, mass: 0.6 };
-const RIPPLE_TIMING = { duration: 420 };
 
 const ICON_NAMES: Record<string, keyof typeof Feather.glyphMap> = {
   index: 'home',
@@ -308,63 +306,6 @@ function SlidingLens({
   );
 }
 
-// ─── Press Ripple ────────────────────────────────────────────────────────────
-//
-// When a tab is pressed (or released after a drag) a soft ring expands out
-// from the lens and fades. It rides on top of the lens, follows the lens's
-// position, and is driven by a single shared progress value 0 → 1 → 0.
-//
-// Per-frame work happens entirely on the UI thread; no JS callbacks, no
-// per-frame setState.
-
-function PressRipple({
-  pillX,
-  pillY,
-  rippleProgress,
-  baseWidth,
-  isDark,
-}: {
-  pillX: SharedValue<number>;
-  pillY: SharedValue<number>;
-  rippleProgress: SharedValue<number>;
-  baseWidth: number;
-  isDark: boolean;
-}) {
-  const animStyle = useAnimatedStyle(() => {
-    const p = rippleProgress.value;
-    const scale = 1 + p * 0.35;
-    const opacity = p * (1 - p) * 4 * 0.5; // bell curve, peak ~0.5 at p=0.5
-    return {
-      transform: [
-        { translateX: pillX.value },
-        { translateY: pillY.value },
-        { scale },
-      ],
-      opacity,
-      width: baseWidth,
-    };
-  });
-
-  return (
-    <Animated.View
-      pointerEvents="none"
-      style={[
-        styles.pill,
-        animStyle,
-        {
-          backgroundColor: 'transparent',
-          borderWidth: 1.5,
-          borderColor: isDark ? 'rgba(255,255,255,0.55)' : 'rgba(255,255,255,0.85)',
-          shadowColor: isDark ? '#FFFFFF' : '#FFFFFF',
-          shadowOffset: { width: 0, height: 0 },
-          shadowOpacity: 0.4,
-          shadowRadius: 12,
-        },
-      ]}
-    />
-  );
-}
-
 // ─── Glass Backdrop & Reflection ─────────────────────────────────────────────
 
 function GlassBackdrop({ isDark }: { isDark: boolean }) {
@@ -426,8 +367,6 @@ export const CustomTabBar = React.memo(function CustomTabBar({
   const pillY = useSharedValue(0);
   const pillScale = useSharedValue(1);
   const pillStretchW = useSharedValue(0);
-  // Press ripple progress 0 → 1, driven by withTiming on press release.
-  const rippleProgress = useSharedValue(0);
 
   // SharedValue mirrors of JS state — safe to read inside worklets without TDZ surprises
   const stateIndexSV = useSharedValue(state.index);
@@ -486,7 +425,7 @@ export const CustomTabBar = React.memo(function CustomTabBar({
     [slotWidth]
   );
 
-  // Squish on press + fire the expanding ripple ring once the press lands.
+  // Squish on press — no expanding ring, just a clean compress.
   const onTabPressIn = useCallback(
     (idx: number) => {
       if (idx === state.index) {
@@ -497,13 +436,7 @@ export const CustomTabBar = React.memo(function CustomTabBar({
   );
   const onTabPressOut = useCallback(() => {
     pillScale.value = withSpring(1, PRESS_SPRING);
-    // Ring expands once per press, regardless of whether the press changed
-    // the active tab — gives every tap the same satisfying liquid feel.
-    rippleProgress.value = 0;
-    rippleProgress.value = withTiming(1, RIPPLE_TIMING, (finished) => {
-      if (finished) rippleProgress.value = 0;
-    });
-  }, [pillScale, rippleProgress]);
+  }, [pillScale]);
 
   const handleTabPress = useCallback(
     (route: { key: string; name: string }, isFocused: boolean) => {
@@ -587,13 +520,6 @@ export const CustomTabBar = React.memo(function CustomTabBar({
         pillStretchW.value = withSpring(0, PILL_SPRING);
         pillY.value = withSpring(0, PILL_SPRING);
 
-        // Fire the ripple on every gesture release too, so dragging feels
-        // tactile in the same way taps do.
-        rippleProgress.value = 0;
-        rippleProgress.value = withTiming(1, RIPPLE_TIMING, (finished) => {
-          if (finished) rippleProgress.value = 0;
-        });
-
         if (sw <= 0) return;
 
         const target = releaseSlot.value;
@@ -610,7 +536,6 @@ export const CustomTabBar = React.memo(function CustomTabBar({
     pillY,
     pillScale,
     pillStretchW,
-    rippleProgress,
     dragAnchorSlot,
     releaseSlot,
     slotWidthSV,
@@ -645,28 +570,19 @@ export const CustomTabBar = React.memo(function CustomTabBar({
           <GlassBackdrop isDark={isDark} />
           <TopReflection isDark={isDark} />
 
-          {/* Lens + ripple sit between the backdrop and the tab row so the
-              icons render on top, but the lens itself is a BlurView so it
-              still refracts everything BEHIND the bar. */}
+          {/* Lens sits between the backdrop and the tab row so the icons
+              render on top, but the lens itself is a BlurView so it still
+              refracts everything BEHIND the bar. */}
           {slotWidth > 0 && (
-            <>
-              <PressRipple
-                pillX={pillX}
-                pillY={pillY}
-                rippleProgress={rippleProgress}
-                baseWidth={pillBaseWidth}
-                isDark={isDark}
-              />
-              <SlidingLens
-                pillX={pillX}
-                pillY={pillY}
-                pillScale={pillScale}
-                pillStretchW={pillStretchW}
-                baseWidth={pillBaseWidth}
-                visible={pillVisible}
-                isDark={isDark}
-              />
-            </>
+            <SlidingLens
+              pillX={pillX}
+              pillY={pillY}
+              pillScale={pillScale}
+              pillStretchW={pillStretchW}
+              baseWidth={pillBaseWidth}
+              visible={pillVisible}
+              isDark={isDark}
+            />
           )}
 
           <GestureDetector gesture={pan}>

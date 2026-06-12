@@ -19,7 +19,7 @@ import { triggerHaptic } from '../../src/utils/haptics';
 import { useConnectivityStore } from '../../src/services/connectivityMonitor';
 import { resetThrottle, shouldSync } from '../../src/services/syncThrottle';
 import { accountKey } from '../../src/services/cacheService';
-import { kvGetJSONSync, kvSetJSON } from '../../src/services/kvStore';
+import { kvGetJSONSync, kvGetStringSync, kvSetJSON } from '../../src/services/kvStore';
 import { updateFeedWidget } from '../../src/services/widgetBridge';
 import { useWidgetSettingsStore } from '../../src/store/widgetSettingsStore';
 import { queueMutation } from '../../src/services/offlineQueue';
@@ -192,14 +192,37 @@ export default function FeedScreen() {
   });
   const [menuPost, setMenuPost] = useState<Post | null>(null);
 
+  // Tracks the raw MMKV cache string of the last payload we loaded into
+  // state. Lets the focus reload cheaply detect "nothing changed since last
+  // time" and skip the parse + setPosts cascade. Without this, each return
+  // to the home tab (e.g. when the user is rapidly switching between tabs)
+  // would parse the entire cached feed, allocate fresh post-object
+  // references, and force every visible PostCard to re-render — landing as
+  // a single ~170 ms long task on the JS thread. Now we only do the work
+  // when the cache has actually been updated (e.g. by a new post created
+  // from the create screen, or by a fresh network sync).
+  const lastFocusCacheRawRef = useRef<string | null>(null);
+
   // Full feed hydration — runs once after the navigation transition has
   // settled. Replaces the seeded 8-post peek with the entire cached list.
-  // Deferred so the heavy parse never blocks first paint.
+  // Deferred so the heavy parse never blocks first paint. Reads the raw
+  // MMKV string and stashes it in `lastFocusCacheRawRef` so the focus
+  // reload below can short-circuit the parse + setPosts when the cache
+  // hasn't changed since this initial hydrate.
   useEffect(() => {
     const handle = InteractionManager.runAfterInteractions(() => {
       try {
-        const parsed = kvGetJSONSync<Post[]>(FEED_CACHE_KEY, []);
-        if (parsed.length > posts.length) setPosts(parsed);
+        const raw = kvGetStringSync(FEED_CACHE_KEY);
+        if (!raw) return;
+        const parsed = JSON.parse(raw) as Post[];
+        if (Array.isArray(parsed) && parsed.length > posts.length) {
+          lastFocusCacheRawRef.current = raw;
+          setPosts(parsed);
+        } else if (Array.isArray(parsed)) {
+          // Same payload as the synchronous peek — record the signature
+          // so the very first focus reload after mount still skips.
+          lastFocusCacheRawRef.current = raw;
+        }
       } catch {}
     });
     return () => handle.cancel();
@@ -247,12 +270,28 @@ export default function FeedScreen() {
   // Reload from cache when tab gains focus (picks up new posts from create screen).
   // Synchronous MMKV read deferred via InteractionManager so the tab-switch frame
   // is never blocked — keeps navigation buttery on weak devices.
+  //
+  // Cheap signature check: read the raw MMKV string and skip the parse +
+  // setPosts when the cached feed hasn't changed since the last focus
+  // reload. Prevents the costly cascade of PostCard re-renders + widget-
+  // bridge calls + image prefetch that piles onto a single RAF when users
+  // rapidly switch tabs and return to home — the dominant cost behind
+  // `SLOW long task @ (tabs)`. The cache only changes when create-post
+  // writes a new entry or `loadFeed` / `handleRefresh` lands a network
+  // response, so the vast majority of focus events are now no-ops.
   useFocusEffect(
     useCallback(() => {
       const handle = InteractionManager.runAfterInteractions(() => {
         try {
-          const parsed = kvGetJSONSync<Post[]>(FEED_CACHE_KEY, []);
+          const raw = kvGetStringSync(FEED_CACHE_KEY);
+          if (!raw) return;
+          if (raw === lastFocusCacheRawRef.current) {
+            setIsLoading(false);
+            return;
+          }
+          const parsed = JSON.parse(raw) as Post[];
           if (Array.isArray(parsed) && parsed.length > 0) {
+            lastFocusCacheRawRef.current = raw;
             setPosts(parsed);
             setIsLoading(false);
           }
@@ -349,6 +388,10 @@ export default function FeedScreen() {
       // JSON.stringify of the same payload (see profile.tsx note); dropping
       // it cuts the dominant cost behind `SLOW long task @ (tabs)` on focus.
       kvSetJSON(FEED_CACHE_KEY, mapped);
+      // Refresh the cache signature so a focus reload immediately after this
+      // network sync recognises the cache as up-to-date and skips a redundant
+      // parse + setPosts that would otherwise re-render every visible card.
+      lastFocusCacheRawRef.current = kvGetStringSync(FEED_CACHE_KEY);
     } catch {
       // Network error: preserve existing store data, hide loading/refreshing
       setIsLoading(false);
@@ -403,6 +446,10 @@ export default function FeedScreen() {
       setPosts(mapped);
       // MMKV cache only — see note above on dropped AsyncStorage mirror.
       kvSetJSON(FEED_CACHE_KEY, mapped);
+      // Refresh the cache signature so a focus reload immediately after this
+      // pull-to-refresh recognises the cache as up-to-date and skips a
+      // redundant parse + setPosts (see useFocusEffect note above).
+      lastFocusCacheRawRef.current = kvGetStringSync(FEED_CACHE_KEY);
     } catch {
       // Network error: preserve existing data from store
     }
