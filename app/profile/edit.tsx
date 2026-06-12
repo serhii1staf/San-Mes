@@ -311,20 +311,19 @@ export default function EditProfileScreen() {
   // Match the post 3-dots menu (PostMenuModal) so the edit-profile sheet
   // visually belongs to the same family: bottom-anchored, theme-aware
   // background, 28-px corners, **content-sized** (not full screen). The
-  // heavy fields live inside an inner ScrollView with its own maxHeight,
-  // so the whole card grows up to a comfortable ~55% of the screen and
-  // never reaches the status bar — same feel as PostMenuModal which is
-  // also content-sized.
+  // card is absolutely positioned at the bottom — earlier flex-column
+  // layouts kept collapsing the card to 0 px in various subtle ways
+  // (justifyContent + content-sized child, or stale flex:1 wrappers).
+  // Absolute positioning is unambiguous: width = right - left, height =
+  // content (including ScrollView's maxHeight cap). No flex chain to
+  // break.
   const sheetBg = theme.isDark ? theme.colors.background.elevated : '#FFFFFF';
-  // Cap the inner ScrollView so the card stays in the bottom-half feel
-  // family. iPhone 12 (~844 px) gets ~460 px of scroll area, plenty for
-  // banner + emoji + name + username + bio + first link without forcing
-  // the user into a fullscreen card. Smaller / larger phones scale
-  // proportionally.
   const sheetScrollMaxHeight = SCREEN_HEIGHT * 0.55;
   const cardStyle: ViewStyle = {
-    marginHorizontal: 8,
-    marginBottom: insets.bottom + 16,
+    position: 'absolute',
+    left: 8,
+    right: 8,
+    bottom: insets.bottom + 16,
     borderRadius: 28,
     overflow: 'hidden',
     backgroundColor: sheetBg,
@@ -344,22 +343,15 @@ export default function EditProfileScreen() {
         <Pressable style={{ flex: 1 }} onPress={handleClose} />
       </Animated.View>
 
-      {/* Modal Card — bottom-anchored, slides up from the bottom edge.
-          We deliberately do NOT wrap in KeyboardAvoidingView: when the
-          user taps Name/Username/Bio fields, behavior="padding" used to
-          push the entire modal off the top of the screen. With the card
-          now content-sized (not full-tall), iOS' built-in keyboard
-          handling for ScrollView keeps the focused input visible without
-          us moving the whole sheet, which matches what the user
-          described as "earlier the modal closed halfway when typing". */}
-      <View style={{ flex: 1, justifyContent: 'flex-end' }}>
-        <Animated.View
-          style={[
-            cardStyle,
-            { transform: [{ translateY }] },
-          ]}
-          {...panResponder.panHandlers}
-        >
+      {/* Modal Card — absolutely positioned at the bottom of the screen,
+          so the layout is stable regardless of what flex chain wraps us. */}
+      <Animated.View
+        style={[
+          cardStyle,
+          { transform: [{ translateY }] },
+        ]}
+        {...panResponder.panHandlers}
+      >
           {/* Drag handle — sits at the top of the card. The wrapping
               Animated.View is content-sized now (no flex:1, no fixed
               height), so an inner `flex: 1` wrapper would collapse to
@@ -518,11 +510,11 @@ export default function EditProfileScreen() {
                 </View>
               </ScrollView>
         </Animated.View>
-      </View>
 
       {/* Emoji/Mood Picker — same family as the main sheet (PostMenuModal-
           style): bottom-anchored card, theme background, smooth spring in
-          and timed slide-out so it doesn't pop on/off any more. */}
+          and timed slide-out so it doesn't pop on/off any more. Absolutely
+          positioned just like the main sheet so the layout is stable. */}
       {showEmojiPicker && (
         <View
           style={{
@@ -532,7 +524,6 @@ export default function EditProfileScreen() {
             right: 0,
             bottom: 0,
             zIndex: 999,
-            justifyContent: 'flex-end',
           }}
         >
           <Animated.View
@@ -550,8 +541,10 @@ export default function EditProfileScreen() {
           </Animated.View>
           <Animated.View
             style={{
-              marginHorizontal: 8,
-              marginBottom: insets.bottom + 16,
+              position: 'absolute',
+              left: 8,
+              right: 8,
+              bottom: insets.bottom + 16,
               borderRadius: 28,
               overflow: 'hidden',
               backgroundColor: sheetBg,
