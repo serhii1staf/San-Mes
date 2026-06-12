@@ -403,9 +403,17 @@ export default function MessagesScreen() {
           contentContainerStyle={{ paddingBottom: 100 }}
           showsVerticalScrollIndicator={false}
           removeClippedSubviews={true}
-          initialNumToRender={12}
-          maxToRenderPerBatch={10}
-          windowSize={9}
+          // Tightened on weak devices: ContextMenu (the native wrapper
+          // around each row) creates a UIContextMenuInteraction per view
+          // on iOS, which is the dominant cost when this list mounts. 12
+          // rows × ~12 ms = the 178 ms long task users were seeing on
+          // the first open of (tabs)/messages. 6/4/6 keeps scroll fast
+          // while moving the bulk of native-bridge wiring out of the
+          // navigation transition frame.
+          initialNumToRender={6}
+          maxToRenderPerBatch={4}
+          windowSize={6}
+          updateCellsBatchingPeriod={100}
         />
       )}
 

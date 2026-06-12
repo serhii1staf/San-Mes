@@ -178,12 +178,34 @@ export default function FeedScreen() {
   const userId = useAuthStore((s) => s.user?.id);
   const isRefreshing = useFeedStore((s) => s.isRefreshing);
   const setRefreshing = useFeedStore((s) => s.setRefreshing);
-  // Hydrate the feed SYNCHRONOUSLY from MMKV on the very first render so the list
-  // paints with content immediately — no empty→fill flicker, instant offline.
+  // Hydrate the feed from MMKV. We do TWO reads:
+  //
+  // 1. A tiny synchronous peek (just the first 8 posts) on first render so
+  //    the list isn't blank for a frame. Reading 8 entries from the cache is
+  //    a few KB of JSON.parse — cheap.
+  // 2. The full hydrate happens after `runAfterInteractions` below, so a
+  //    100-post cache parse never lands on the navigation-transition frame.
+  //    That synchronous full parse was the dominant cost in the
+  //    `SLOW long task @ (tabs)` markers users were seeing.
   const [posts, setPosts] = useState<Post[]>(() => {
-    try { return kvGetJSONSync<Post[]>(FEED_CACHE_KEY, []); } catch { return []; }
+    try { return kvGetJSONSync<Post[]>(FEED_CACHE_KEY, []).slice(0, 8); } catch { return []; }
   });
   const [menuPost, setMenuPost] = useState<Post | null>(null);
+
+  // Full feed hydration — runs once after the navigation transition has
+  // settled. Replaces the seeded 8-post peek with the entire cached list.
+  // Deferred so the heavy parse never blocks first paint.
+  useEffect(() => {
+    const handle = InteractionManager.runAfterInteractions(() => {
+      try {
+        const parsed = kvGetJSONSync<Post[]>(FEED_CACHE_KEY, []);
+        if (parsed.length > posts.length) setPosts(parsed);
+      } catch {}
+    });
+    return () => handle.cancel();
+    // Only run once on mount; the focus-effect below handles re-reads.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Keep the iOS home-screen widget in sync with the latest feed (no-op on Android
   // or when the native widget module isn't in the build yet).
@@ -208,9 +230,10 @@ export default function FeedScreen() {
     return () => handle.cancel();
   }, [posts]);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
-  const [isLoading, setIsLoading] = useState(() => {
-    try { return kvGetJSONSync<Post[]>(FEED_CACHE_KEY, []).length === 0; } catch { return true; }
-  });
+  // Loading is computed off the seeded peek above. If the peek already
+  // returned posts we don't show the spinner; otherwise the network fetch
+  // (or the full hydrate effect above) clears it.
+  const [isLoading, setIsLoading] = useState(() => posts.length === 0);
   const hasFetched = useRef(false);
 
   // Subscribe to update store fields individually so the feed screen doesn't
