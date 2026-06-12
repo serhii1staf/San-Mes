@@ -221,7 +221,12 @@ export default function ChatScreen() {
   // whole store and re-renders this (already heavy) chat on any unrelated
   // store change. Selecting each field independently keeps re-renders tied
   // to the data this screen actually reads.
-  const storeMessages = useChatStore((s) => s.messages);
+  // Narrow the messages selector to ONLY this chat's array — the previous
+  // `s.messages` selector exposed the whole `chatId -> messages[]` map, so
+  // every unrelated chat's background sync re-rendered this entire screen
+  // (including its 5–8 mounted bubbles). Subscribing to the slice for `id`
+  // means a background sync to another chat becomes a no-op for this screen.
+  const myStoreMessages = useChatStore((s) => (id ? s.messages[id] : undefined));
   const setMessages = useChatStore((s) => s.setMessages);
   const addMessage = useChatStore((s) => s.addMessage);
   const flatListRef = useRef<FlatList>(null);
@@ -247,7 +252,11 @@ export default function ChatScreen() {
   // read, not on every render.
   const seedMessages = useMemo<ChatMessage[]>(() => {
     if (!id) return [];
-    if ((storeMessages[id] || []).length > 0) return storeMessages[id] as ChatMessage[];
+    // One-shot read at chat-open time. We deliberately use getState() instead
+    // of subscribing — the seed only matters for the first render frame, and
+    // the live `myStoreMessages` selector below feeds subsequent updates.
+    const fromStore = useChatStore.getState().messages[id];
+    if (fromStore && fromStore.length > 0) return fromStore as ChatMessage[];
     try {
       const cached = kvGetJSONSync<ChatMessage[]>(`chat_messages:${id}`, []);
       if (cached.length > 0) return cached;
@@ -258,7 +267,7 @@ export default function ChatScreen() {
 
   // Use the store value when present, else the synchronous seed — so the list is
   // never empty on the first frame if a cache exists.
-  const storeChat = (storeMessages[id || ''] || []) as ChatMessage[];
+  const storeChat = (myStoreMessages || []) as ChatMessage[];
   const chatMessages = storeChat.length > 0 ? storeChat : seedMessages;
 
   // Push the seed into the store once (after paint) so edits/sends work normally.
@@ -378,9 +387,9 @@ export default function ChatScreen() {
   }, [id]);
 
   // Persist messages to KV cache whenever THIS chat's messages change.
-  // Depend on the specific chat array (not the whole map) to avoid extra work
-  // when other chats update.
-  const myMessages = storeMessages[id || ''];
+  // `myStoreMessages` (above) already narrows the subscription to this chat,
+  // so the array reference is stable across other chats' background syncs.
+  const myMessages = myStoreMessages;
 
   // Warm the image cache for the most recent messages so they appear instantly
   // (no black flash) when the chat opens — Telegram-style. Deferred past the
@@ -592,13 +601,17 @@ export default function ChatScreen() {
         {
           text: t('common.delete'), style: 'destructive', onPress: () => {
             if (!id) return;
-            setMessages(id, (storeMessages[id] || []).filter((m) => m.id !== message.id) as any);
+            // Read the latest snapshot from getState() rather than from the
+            // closed-over selector — avoids the callback being recreated on
+            // every store update (and rebuilding all bubbles' onLongPress).
+            const current = useChatStore.getState().messages[id] || [];
+            setMessages(id, current.filter((m) => m.id !== message.id) as any);
             triggerHaptic('medium');
           },
         },
       ]);
     }
-  }, [id, storeMessages, setMessages, startReply, t]);
+  }, [id, setMessages, startReply, t]);
 
   const handleSend = async (rawText: string) => {
     const hasImages = pendingImages.length > 0;
@@ -612,7 +625,7 @@ export default function ChatScreen() {
       const localOnes = pendingImages.filter((u) => !u.startsWith('http'));
       setEditing(null);
       setPendingImages([]);
-      setMessages(id, (storeMessages[id] || []).map((m) => (m.id === editing.id ? { ...m, text, imageUrls: finalImages } : m)) as any);
+      setMessages(id, (useChatStore.getState().messages[id] || []).map((m) => (m.id === editing.id ? { ...m, text, imageUrls: finalImages } : m)) as any);
       if (localOnes.length > 0) {
         const results = await Promise.all(pendingImages.map((u) => u.startsWith('http') ? Promise.resolve({ url: u, error: null }) : uploadChatImage(u)));
         const urls = results.map((r) => r.url).filter(Boolean) as string[];
@@ -792,15 +805,17 @@ export default function ChatScreen() {
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
         removeClippedSubviews={true}
-        // Tuned for iPhone 12 / weak Android: ~5–6 bubbles fit on a typical
-        // screen, so 8 covers the visible window plus one bubble below the
-        // fold. Lower numbers than before (12/8/9) so the open-the-chat
-        // frame mounts fewer bubbles' PanResponders + Animated.Values on
-        // the same RAF as the navigation transition — the dominant source
-        // of the 60→40 fps drop the perf monitor flagged.
-        initialNumToRender={8}
-        maxToRenderPerBatch={6}
-        windowSize={7}
+        // Tuned for iPhone 12 / weak Android: ~5 bubbles fit the visible
+        // window above the input bar. Lower than the previous 8/6/7 — each
+        // bubble synchronously creates a `PanResponder` (5 closures) and an
+        // `Animated.Value`, plus a `LinkPreview` allocation, all on the same
+        // RAF as the navigation transition. Cutting 3 bubbles saves
+        // ~20–30 ms on the chat-open frame, which was the dominant cost
+        // behind `SLOW long task @ (tabs)/messages 164ms` users were seeing
+        // when tapping a conversation row.
+        initialNumToRender={5}
+        maxToRenderPerBatch={4}
+        windowSize={5}
         // Larger update batching window — keeps cell mounting from competing
         // with scroll gestures on weak devices. Default is 50 ms; bumping to
         // 80 ms is invisible to the user and lets scroll frames win.

@@ -257,7 +257,13 @@ export default function ProfileScreen() {
       });
       setProfilePosts(mapped);
       kvSetJSON(MY_POSTS_CACHE_KEY, mapped);
-      AsyncStorage.setItem(accountKey(MY_POSTS_CACHE_KEY), JSON.stringify(mapped)).catch(() => {});
+      // The earlier AsyncStorage mirror was redundant — kvSetJSON already
+      // persists via MMKV (which is namespaced per account through
+      // setCacheAccount), and the second JSON.stringify of a 100-post
+      // list was the dominant cost behind the
+      // `SLOW long task @ (tabs)/profile 410ms` users were seeing on
+      // pull-to-refresh / focus-effect re-syncs. Dropping it doesn't
+      // affect persistence — the next read uses the same MMKV write.
     } catch {}
   }, [user?.id]);
 

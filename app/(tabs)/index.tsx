@@ -345,9 +345,10 @@ export default function FeedScreen() {
       setPosts(mapped);
       setIsLoading(false);
 
-      // Save to cache (MMKV sync mirror + AsyncStorage), non-blocking.
+      // MMKV cache only — the AsyncStorage mirror was a redundant second
+      // JSON.stringify of the same payload (see profile.tsx note); dropping
+      // it cuts the dominant cost behind `SLOW long task @ (tabs)` on focus.
       kvSetJSON(FEED_CACHE_KEY, mapped);
-      AsyncStorage.setItem(accountKey(FEED_CACHE_KEY), JSON.stringify(mapped)).catch(() => {});
     } catch {
       // Network error: preserve existing store data, hide loading/refreshing
       setIsLoading(false);
@@ -400,9 +401,8 @@ export default function FeedScreen() {
 
       // Update store with fresh data
       setPosts(mapped);
-      // Save to cache (MMKV sync mirror + AsyncStorage), non-blocking.
+      // MMKV cache only — see note above on dropped AsyncStorage mirror.
       kvSetJSON(FEED_CACHE_KEY, mapped);
-      AsyncStorage.setItem(accountKey(FEED_CACHE_KEY), JSON.stringify(mapped)).catch(() => {});
     } catch {
       // Network error: preserve existing data from store
     }
