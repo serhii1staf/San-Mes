@@ -56,6 +56,11 @@ class PerfMonitor {
   private _jsHistory: { ts: number; fps: number }[] = [];
   private _uiHistory: { ts: number; fps: number }[] = [];
 
+  // Current route name. Stored so SLOW frame markers can be tagged with the
+  // screen the user is on at the time of the stutter, which makes the log
+  // immediately actionable ("ui<30 on profile/[id]" vs "ui<30 somewhere").
+  private _currentRoute = '(root)';
+
   // Ring buffer of recent events.
   private _events: (PerfEvent | undefined)[] = new Array(RING_CAPACITY);
   private _eventHead = 0; // next write index
@@ -89,9 +94,10 @@ class PerfMonitor {
         this._lastSampleTs = now;
         // Mark a frame as slow if either stream dropped below 30 fps —
         // visible jank threshold. Skip the very first sample to avoid
-        // false positives during startup.
+        // false positives during startup. Tag with the current route so
+        // the user can immediately see WHICH screen stuttered.
         if (this._jsHistory.length > 1 && fps < 30) {
-          this._record({ ts: now, type: 'slow', label: 'js<30', durationMs: undefined });
+          this._record({ ts: now, type: 'slow', label: `js<30 @ ${this._currentRoute}` });
         }
         this._notify();
       }
@@ -113,12 +119,13 @@ class PerfMonitor {
     this._uiFps = fps;
     this._pushHistory(this._uiHistory, Date.now(), fps);
     if (this._uiHistory.length > 1 && fps < 30) {
-      this._record({ ts: Date.now(), type: 'slow', label: 'ui<30' });
+      this._record({ ts: Date.now(), type: 'slow', label: `ui<30 @ ${this._currentRoute}` });
     }
   }
 
   /** Mark a navigation transition (route change). */
   recordNavigation(routeLabel: string, durationMs?: number) {
+    this._currentRoute = routeLabel;
     this._record({ ts: Date.now(), type: 'nav', label: routeLabel, durationMs });
     this._notify();
   }

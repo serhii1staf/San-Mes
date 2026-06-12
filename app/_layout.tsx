@@ -176,14 +176,27 @@ function RootLayout() {
   }, [navigationRef]);
 
   // Feed navigation transitions into the in-app perf monitor so the user
-  // sees which screen change is slow when they're chasing jank. Wrapped
-  // defensively — a regression here must not bring down the whole app.
+  // sees which screen change is slow when they're chasing jank. We record
+  // the duration as the time from the segment change until two paint
+  // frames later — by then most of the new screen's first render work has
+  // landed, so the number is a reasonable proxy for "how long did the
+  // transition feel". Wrapped defensively — a regression here must not
+  // bring down the whole app.
   useEffect(() => {
     try {
       const route = segments.join('/') || '(root)';
       if (route === lastSegmentRef.current) return;
       lastSegmentRef.current = route;
-      perfMonitor.recordNavigation(route);
+      const startedAt = Date.now();
+      // Two RAFs ≈ first paint after layout. We avoid heavier hooks like
+      // setTimeout(0) because they add their own scheduling jitter.
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          try {
+            perfMonitor.recordNavigation(route, Date.now() - startedAt);
+          } catch {}
+        });
+      });
     } catch {}
   }, [segments]);
 
