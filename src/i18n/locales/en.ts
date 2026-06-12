@@ -546,6 +546,8 @@ const en: Record<string, string> = {
   // ─── Settings → Index sections ─────────────────────────────────────────
   'settings.section.general': 'General',
   'settings.section.security': 'Security',
+  'settings.section.developer': 'Developer',
+  'settings.perf_monitor': 'Performance monitor',
   'settings.profile': 'Profile',
   'settings.notifications': 'Notifications',
   'settings.data_storage': 'Data & Storage',

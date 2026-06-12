@@ -104,8 +104,10 @@ export default function SettingsScreen() {
   // the screen on every unrelated state change.
   const hapticEnabled = useSettingsStore((s) => s.hapticEnabled);
   const useInAppBrowser = useSettingsStore((s) => s.useInAppBrowser);
+  const perfMonitorEnabled = useSettingsStore((s) => s.perfMonitorEnabled);
   const setHaptic = useSettingsStore((s) => s.setHaptic);
   const setInAppBrowser = useSettingsStore((s) => s.setInAppBrowser);
+  const setPerfMonitorEnabled = useSettingsStore((s) => s.setPerfMonitorEnabled);
   const [iconModalVisible, setIconModalVisible] = useState(false);
   const appVersion = Constants.expoConfig?.version || '1.0.0';
 
@@ -278,6 +280,31 @@ export default function SettingsScreen() {
             value={useInAppBrowser ? t('settings.browser.in_app') : t('settings.browser.external')}
             isLast
             onPress={() => router.push('/settings/browser')}
+          />
+        </View>
+
+        {/* Developer / diagnostics */}
+        <View style={sectionTitleStyle}>
+          <Text variant="body" weight="semibold" color={theme.colors.text.secondary}>
+            {t('settings.section.developer', 'Разработчик')}
+          </Text>
+        </View>
+        <View style={sectionCardStyle}>
+          <SettingsRow
+            icon="activity"
+            iconTint="green"
+            label={t('settings.perf_monitor', 'Монитор производительности')}
+            showChevron={false}
+            rightElement={
+              <Switch
+                value={perfMonitorEnabled}
+                onValueChange={setPerfMonitorEnabled}
+                trackColor={{ true: '#4CD964', false: theme.colors.border.light }}
+                thumbColor="#FFFFFF"
+              />
+            }
+            isFirst
+            isLast
           />
         </View>
 

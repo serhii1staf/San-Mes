@@ -549,6 +549,8 @@ const ru: Record<string, string> = {
   // ─── Settings → Index sections ─────────────────────────────────────────
   'settings.section.general': 'Общие',
   'settings.section.security': 'Безопасность',
+  'settings.section.developer': 'Разработчик',
+  'settings.perf_monitor': 'Монитор производительности',
   'settings.profile': 'Профиль',
   'settings.notifications': 'Уведомления',
   'settings.data_storage': 'Данные и память',
