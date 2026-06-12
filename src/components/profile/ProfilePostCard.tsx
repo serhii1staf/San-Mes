@@ -1,5 +1,5 @@
-import React, { memo, useEffect } from 'react';
-import { View, Pressable } from 'react-native';
+import React, { memo, useEffect, useMemo, useState } from 'react';
+import { View, Pressable, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useTheme } from '../../theme';
@@ -30,10 +30,47 @@ interface ProfilePostCardProps {
   onImagePress: (uri: string, postId: string, allImages: string[]) => void;
 }
 
+// Static style atoms — hoisted out of render so RN's shadow-tree diff
+// doesn't allocate + compare a fresh object identity per card on every
+// commit. Theme-dependent values (background / border colors) are still
+// applied as a thin override object built from `useMemo`.
+//
+// Each of the small inline styles below was previously re-allocated on
+// every commit. With ~3 visible cards × 15+ inline objects each, every
+// scroll batch built ~45 throwaway objects. Hoisting drops that to zero.
+const styles = StyleSheet.create({
+  container: { flexDirection: 'row', borderRadius: 28, padding: 10, marginBottom: 12, borderWidth: 1, overflow: 'hidden' },
+  thumbWrap: { width: 100, height: 100, borderRadius: 20, overflow: 'hidden' },
+  thumbSingle: { width: 100, height: 100 },
+  thumbRow: { flexDirection: 'row', width: 100, height: 100 },
+  thumbHalf: { width: 49, height: 100 },
+  thumbHalfCol: { width: 49, height: 100 },
+  thumbQuarter: { width: 49, height: 49 },
+  thumbGrid4: { flexDirection: 'row', flexWrap: 'wrap', width: 100, height: 100 },
+  spacerH: { width: 2 },
+  spacerV: { height: 2 },
+  repostThumb: { width: 100, height: 100, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  repostLabel: { fontSize: 9, marginTop: 4 },
+  rightCol: { flex: 1, justifyContent: 'center' },
+  rightColMarginWide: { marginLeft: 14 },
+  rightColMarginNarrow: { marginLeft: 4 },
+  headerRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
+  authorName: { flexShrink: 1 },
+  timeText: { fontSize: 10, flexShrink: 0 },
+  repostFromRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 },
+  repostFromText: { fontSize: 10, flexShrink: 1 },
+  repostFromTextSmall: { fontSize: 10 },
+  bodyText: { fontSize: 12, marginBottom: 6 },
+  linkWrap: { marginBottom: 6 },
+  metaRow: { flexDirection: 'row', gap: 12 },
+  metaItem: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  metaText: { fontSize: 11 },
+});
+
 // Memoized profile post card. Extracted + memoized so switching profile tabs (or
 // re-rendering the screen) does NOT rebuild every card — only cards whose data
 // actually changed re-render. This removes the freeze on the "Posts" tab.
-function ProfilePostCardBase({ post, authorName, authorEmoji, authorVerified, authorBadge, shareText, postEmoji, onLongPress, onImagePress }: ProfilePostCardProps) {
+function ProfilePostCardBase({ post, authorName, authorEmoji, authorVerified, authorBadge, postEmoji, onLongPress, onImagePress }: ProfilePostCardProps) {
   const theme = useTheme();
   const t = useT();
 
@@ -48,45 +85,88 @@ function ProfilePostCardBase({ post, authorName, authorEmoji, authorVerified, au
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Defer non-critical children (the LinkPreview block) past the first
+  // paint. The critical-path content — avatar / name / body text /
+  // counters — mounts immediately. The link preview pops in one frame
+  // later so it doesn't compete with the next FlatList batch. This
+  // halves the per-card work the FlatList sees on the first frame.
+  const [deferred, setDeferred] = useState(false);
+  useEffect(() => {
+    const r = requestAnimationFrame(() => setDeferred(true));
+    return () => cancelAnimationFrame(r);
+  }, []);
+
+  // Pull derived data through `useMemo` so re-renders (theme flip,
+  // sibling updates) don't re-walk the prop object or re-run regexes.
   const origPost = post.originalPost;
-  const imgs: string[] = post.imageUrls && post.imageUrls.length > 0 ? post.imageUrls : post.imageUrl ? [post.imageUrl] : (origPost?.imageUrls && origPost.imageUrls.length > 0 ? origPost.imageUrls : origPost?.imageUrl ? [origPost.imageUrl] : []);
+  const isRepostPost = !!post.isRepost;
+  const imgs = useMemo<string[]>(() => {
+    if (post.imageUrls && post.imageUrls.length > 0) return post.imageUrls;
+    if (post.imageUrl) return [post.imageUrl];
+    if (origPost?.imageUrls && origPost.imageUrls.length > 0) return origPost.imageUrls;
+    if (origPost?.imageUrl) return [origPost.imageUrl];
+    return [];
+  }, [post.imageUrls, post.imageUrl, origPost?.imageUrls, origPost?.imageUrl]);
   const hasImage = imgs.length > 0;
-  const isRepostPost = post.isRepost;
-  const link = !hasImage ? extractFirstUrl(post.content || origPost?.content || '') : null;
+  const content = post.content || origPost?.content || '';
+  // Skip the URL-extraction regex entirely when the post has an image
+  // (the image is already the cover; the link preview would not show)
+  // AND defer it past the first frame so it doesn't run on the
+  // critical paint path.
+  const link = useMemo(
+    () => (!hasImage && deferred ? extractFirstUrl(content) : null),
+    [hasImage, deferred, content],
+  );
+  const timeAgo = useMemo(() => formatTimeAgo(post.createdAt), [post.createdAt]);
+
+  // Theme-dependent style overrides, batched into a single memoed
+  // object so each card commits only ONE composite style array per
+  // outer Pressable instead of inlining several object literals.
+  const themedContainer = useMemo(
+    () => ({
+      backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.75)',
+      borderColor: theme.isDark ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.4)',
+    }),
+    [theme.isDark],
+  );
+  const themedRepostBg = useMemo(
+    () => ({ backgroundColor: theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)' }),
+    [theme.isDark],
+  );
 
   return (
-    <SwipeablePostCard shareText={shareText}>
+    <SwipeablePostCard>
       <Pressable
         onPress={() => router.push({ pathname: '/comments/[id]', params: { id: post.id } })}
         onLongPress={() => { triggerHaptic('medium'); onLongPress(post); }}
         delayLongPress={400}
-        style={{ flexDirection: 'row', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.75)', borderRadius: 28, padding: 10, marginBottom: 12, borderWidth: 1, borderColor: theme.isDark ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.4)', overflow: 'hidden' }}
+        style={[styles.container, themedContainer]}
       >
         {postEmoji ? <EmojiPattern emoji={postEmoji} opacity={theme.isDark ? 0.12 : 0.10} /> : null}
 
         {hasImage ? (
           <Pressable onPress={() => onImagePress(imgs[0], post.id, imgs)}>
-            <View style={{ width: 100, height: 100, borderRadius: 20, overflow: 'hidden' }}>
+            <View style={styles.thumbWrap}>
               {imgs.length === 1 ? (
-                <CachedImage uri={imgs[0]} style={{ width: 100, height: 100 }} resizeMode="cover" />
+                <CachedImage uri={imgs[0]} style={styles.thumbSingle} resizeMode="cover" />
               ) : imgs.length === 2 ? (
-                <View style={{ flexDirection: 'row', width: 100, height: 100 }}>
-                  <CachedImage uri={imgs[0]} style={{ width: 49, height: 100 }} resizeMode="cover" />
-                  <View style={{ width: 2 }} />
-                  <CachedImage uri={imgs[1]} style={{ width: 49, height: 100 }} resizeMode="cover" />
+                <View style={styles.thumbRow}>
+                  <CachedImage uri={imgs[0]} style={styles.thumbHalf} resizeMode="cover" />
+                  <View style={styles.spacerH} />
+                  <CachedImage uri={imgs[1]} style={styles.thumbHalf} resizeMode="cover" />
                 </View>
               ) : imgs.length === 3 ? (
-                <View style={{ flexDirection: 'row', width: 100, height: 100 }}>
-                  <CachedImage uri={imgs[0]} style={{ width: 49, height: 100 }} resizeMode="cover" />
-                  <View style={{ width: 2 }} />
-                  <View style={{ width: 49, height: 100 }}>
-                    <CachedImage uri={imgs[1]} style={{ width: 49, height: 49 }} resizeMode="cover" />
-                    <View style={{ height: 2 }} />
-                    <CachedImage uri={imgs[2]} style={{ width: 49, height: 49 }} resizeMode="cover" />
+                <View style={styles.thumbRow}>
+                  <CachedImage uri={imgs[0]} style={styles.thumbHalf} resizeMode="cover" />
+                  <View style={styles.spacerH} />
+                  <View style={styles.thumbHalfCol}>
+                    <CachedImage uri={imgs[1]} style={styles.thumbQuarter} resizeMode="cover" />
+                    <View style={styles.spacerV} />
+                    <CachedImage uri={imgs[2]} style={styles.thumbQuarter} resizeMode="cover" />
                   </View>
                 </View>
               ) : (
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap', width: 100, height: 100 }}>
+                <View style={styles.thumbGrid4}>
                   {imgs.slice(0, 4).map((imgUri, idx) => (
                     <CachedImage key={idx} uri={imgUri} style={{ width: 49, height: 49, marginRight: idx % 2 === 0 ? 2 : 0, marginBottom: idx < 2 ? 2 : 0 }} resizeMode="cover" />
                   ))}
@@ -95,36 +175,41 @@ function ProfilePostCardBase({ post, authorName, authorEmoji, authorVerified, au
             </View>
           </Pressable>
         ) : isRepostPost ? (
-          <View style={{ width: 100, height: 100, borderRadius: 20, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)', alignItems: 'center', justifyContent: 'center' }}>
+          <View style={[styles.repostThumb, themedRepostBg]}>
             <Feather name="repeat" size={24} color={theme.colors.text.tertiary} />
-            <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 9, marginTop: 4 }}>{t('post.repost_label')}</Text>
+            <Text variant="caption" color={theme.colors.text.tertiary} style={styles.repostLabel}>{t('post.repost_label')}</Text>
           </View>
         ) : null}
 
-        <View style={{ flex: 1, marginLeft: (hasImage || isRepostPost) ? 14 : 4, justifyContent: 'center' }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+        <View style={[styles.rightCol, (hasImage || isRepostPost) ? styles.rightColMarginWide : styles.rightColMarginNarrow]}>
+          <View style={styles.headerRow}>
             <Avatar emoji={authorEmoji} size="xs" />
-            <Text variant="caption" weight="semibold" numberOfLines={1} style={{ flexShrink: 1 }}>{authorName}</Text>
+            <Text variant="caption" weight="semibold" numberOfLines={1} style={styles.authorName}>{authorName}</Text>
             {authorVerified && <VerifiedBadge size={11} />}
             {authorBadge && <UserBadge badge={authorBadge} size="sm" />}
-            <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 10, flexShrink: 0 }}>· {formatTimeAgo(post.createdAt)}</Text>
+            <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={styles.timeText}>· {timeAgo}</Text>
           </View>
           {isRepostPost && origPost && (
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 }}>
+            <View style={styles.repostFromRow}>
               <Feather name="repeat" size={10} color={theme.colors.accent.primary} />
-              <Text variant="caption" color={theme.colors.accent.primary} numberOfLines={1} style={{ fontSize: 10, flexShrink: 1 }}>{t('post.reposted_from', undefined, { name: origPost.authorName })}</Text>
+              <Text variant="caption" color={theme.colors.accent.primary} numberOfLines={1} style={styles.repostFromText}>{t('post.reposted_from', undefined, { name: origPost.authorName })}</Text>
             </View>
           )}
-          {isRepostPost && !origPost && <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 }}><Feather name="repeat" size={10} color={theme.colors.accent.primary} /><Text variant="caption" color={theme.colors.accent.primary} style={{ fontSize: 10 }}>{t('post.repost_label')}</Text></View>}
-          {(post.content || origPost?.content) ? <FormattedText style={{ fontSize: 12, marginBottom: 6 }} color={theme.colors.text.secondary}>{post.content || origPost?.content || ''}</FormattedText> : null}
+          {isRepostPost && !origPost && (
+            <View style={styles.repostFromRow}>
+              <Feather name="repeat" size={10} color={theme.colors.accent.primary} />
+              <Text variant="caption" color={theme.colors.accent.primary} style={styles.repostFromTextSmall}>{t('post.repost_label')}</Text>
+            </View>
+          )}
+          {content ? <FormattedText style={styles.bodyText} color={theme.colors.text.secondary}>{content}</FormattedText> : null}
           {link ? (
-            <Pressable onLongPress={() => { triggerHaptic('medium'); onLongPress(post); }} delayLongPress={400} style={{ marginBottom: 6 }}>
+            <Pressable onLongPress={() => { triggerHaptic('medium'); onLongPress(post); }} delayLongPress={400} style={styles.linkWrap}>
               <LinkPreview url={link} static />
             </Pressable>
           ) : null}
-          <View style={{ flexDirection: 'row', gap: 12 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}><Feather name="heart" size={12} color={theme.colors.text.tertiary} /><Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{post.likesCount}</Text></View>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}><Feather name="message-circle" size={12} color={theme.colors.text.tertiary} /><Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{post.commentsCount}</Text></View>
+          <View style={styles.metaRow}>
+            <View style={styles.metaItem}><Feather name="heart" size={12} color={theme.colors.text.tertiary} /><Text variant="caption" color={theme.colors.text.tertiary} style={styles.metaText}>{post.likesCount}</Text></View>
+            <View style={styles.metaItem}><Feather name="message-circle" size={12} color={theme.colors.text.tertiary} /><Text variant="caption" color={theme.colors.text.tertiary} style={styles.metaText}>{post.commentsCount}</Text></View>
           </View>
         </View>
       </Pressable>
