@@ -253,7 +253,7 @@ export default function EditProfileScreen() {
           style={StyleSheet.absoluteFill}
         />
       </View>
-      <View style={[styles.headerRow, { paddingTop: insets.top + 8 }]} pointerEvents="box-none">
+      <View style={[styles.headerRow, { top: insets.top + 8 }]} pointerEvents="box-none">
         <Pressable onPress={handleClose} hitSlop={10} style={styles.headerPill}>
           <BlurView intensity={80} tint="dark" style={styles.headerPillInner}>
             <Feather name="x" size={18} color="#FFFFFF" />
@@ -581,15 +581,18 @@ const styles = StyleSheet.create({
     zIndex: 99,
   },
   headerRow: {
+    // top is supplied via inline style (insets.top + 8) so we don't carry
+    // any paddingTop on the row itself — paddingTop would push the X / Save
+    // pills below the title pill (which is absolutely positioned and would
+    // ignore the padding), leaving the three not vertically aligned.
     position: 'absolute',
-    top: 0,
     left: 0,
     right: 0,
+    height: 36,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingBottom: 8,
     zIndex: 100,
   },
   headerPill: {
