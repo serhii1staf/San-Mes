@@ -13,6 +13,7 @@ import { showToast } from '../../store/toastStore';
 import { formatTimeAgo } from '../../utils/mockData';
 import { Post } from '../../types';
 import { sharePost } from '../../utils/sharePost';
+import { useT } from '../../i18n/store';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -26,6 +27,7 @@ interface PostContextMenuProps {
 
 export function PostContextMenu({ visible, post, isOwnPost, onClose, onDelete }: PostContextMenuProps) {
   const theme = useTheme();
+  const t = useT();
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
   const backdropAnim = useRef(new Animated.Value(0)).current;
   const dismissing = useRef(false);
@@ -88,13 +90,13 @@ export function PostContextMenu({ visible, post, isOwnPost, onClose, onDelete }:
       parts.push(`${post.authorName} (@${post.authorUsername})`);
       parts.push(formatTimeAgo(post.createdAt));
       if (post.isRepost && post.originalPost) {
-        parts.push(`Репост от ${post.originalPost.authorName}`);
+        parts.push(t('profile.repost_from', undefined, { name: post.originalPost.authorName }));
         if (post.originalPost.content) parts.push(post.originalPost.content);
       }
       if (post.content) parts.push(post.content);
       parts.push(`https://san-m-app.com/post/${post.id}`);
       await Clipboard.setStringAsync(parts.join('\n'));
-      showToast('Скопировано', 'copy');
+      showToast(t('toast.copied'), 'copy');
     }
     dismiss();
   };
@@ -109,9 +111,9 @@ export function PostContextMenu({ visible, post, isOwnPost, onClose, onDelete }:
 
   const handleDelete = () => {
     if (post && onDelete) {
-      Alert.alert('Удалить?', 'Это действие нельзя отменить', [
-        { text: 'Отмена', style: 'cancel' },
-        { text: 'Удалить', style: 'destructive', onPress: () => { onDelete(post.id); dismiss(); } },
+      Alert.alert(t('post_context.delete_title'), t('post_context.delete_msg'), [
+        { text: t('common.cancel'), style: 'cancel' },
+        { text: t('common.delete'), style: 'destructive', onPress: () => { onDelete(post.id); dismiss(); } },
       ]);
     }
   };
@@ -138,7 +140,7 @@ export function PostContextMenu({ visible, post, isOwnPost, onClose, onDelete }:
               {post.isRepost && (
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 6 }}>
                   <Feather name="repeat" size={12} color={theme.colors.text.tertiary} />
-                  <Text variant="caption" color={theme.colors.text.tertiary}>Репост</Text>
+                  <Text variant="caption" color={theme.colors.text.tertiary}>{t('post_context.repost')}</Text>
                 </View>
               )}
               {/* Author */}
@@ -180,9 +182,9 @@ export function PostContextMenu({ visible, post, isOwnPost, onClose, onDelete }:
               <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 6 }}>
                 <View style={{ width: 40, height: 5, borderRadius: 3, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)' }} />
               </View>
-              <MenuItem icon="copy" label="Скопировать" onPress={handleCopy} theme={theme} />
-              <MenuItem icon="share-2" label="Поделиться" onPress={handleShare} theme={theme} />
-              {isOwnPost && <MenuItem icon="trash-2" label="Удалить" onPress={handleDelete} theme={theme} destructive />}
+              <MenuItem icon="copy" label={t('post_context.copy')} onPress={handleCopy} theme={theme} />
+              <MenuItem icon="share-2" label={t('post_context.share')} onPress={handleShare} theme={theme} />
+              {isOwnPost && <MenuItem icon="trash-2" label={t('post_context.delete')} onPress={handleDelete} theme={theme} destructive />}
               <View style={{ height: 8 }} />
             </View>
           </Animated.View>

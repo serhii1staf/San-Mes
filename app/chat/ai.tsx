@@ -15,6 +15,7 @@ import { useThemeStore, ACCENT_COLORS } from '../../src/store/themeStore';
 import { useAuthStore } from '../../src/store';
 import { sendMessage, parseActions, applyAction, AIMessage, ParsedAction, getRemainingRequests, saveChatHistory, loadChatHistory } from '../../src/services/aiService';
 import { triggerHaptic } from '../../src/utils/haptics';
+import { useT } from '../../src/i18n/store';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 
@@ -25,34 +26,35 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
 
 function MiniThemeCard({ themeKey }: { themeKey: string }) {
   const user = useAuthStore((s) => s.user);
+  const t = useT();
   const allThemes = [...ACCENT_COLORS, ...useThemeStore((s) => s.aiThemes)];
-  const t = allThemes.find(c => c.key === themeKey);
-  if (!t) return null;
+  const themeOpt = allThemes.find(c => c.key === themeKey);
+  if (!themeOpt) return null;
   return (
-    <View style={{ width: SCREEN_WIDTH * 0.55, borderRadius: 16, overflow: 'hidden', backgroundColor: t.darkBg, borderWidth: 2, borderColor: t.color, marginTop: 8 }}>
+    <View style={{ width: SCREEN_WIDTH * 0.55, borderRadius: 16, overflow: 'hidden', backgroundColor: themeOpt.darkBg, borderWidth: 2, borderColor: themeOpt.color, marginTop: 8 }}>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 10, paddingTop: 10, paddingBottom: 4 }}>
         <Text style={{ fontSize: 11, fontWeight: '700', color: '#FFFFFF' }}>San</Text>
-        <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: t.color }} />
+        <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: themeOpt.color }} />
       </View>
-      <View style={{ marginHorizontal: 8, marginVertical: 4, backgroundColor: t.darkElevated, borderRadius: 12, padding: 8, borderWidth: 0.5, borderColor: t.darkBorder }}>
+      <View style={{ marginHorizontal: 8, marginVertical: 4, backgroundColor: themeOpt.darkElevated, borderRadius: 12, padding: 8, borderWidth: 0.5, borderColor: themeOpt.darkBorder }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-          <View style={{ width: 18, height: 18, borderRadius: 9, backgroundColor: t.color + '20', alignItems: 'center', justifyContent: 'center' }}>
+          <View style={{ width: 18, height: 18, borderRadius: 9, backgroundColor: themeOpt.color + '20', alignItems: 'center', justifyContent: 'center' }}>
             <RNText style={{ fontSize: 9 }} allowFontScaling={false}>{user?.emoji || '😊'}</RNText>
           </View>
-          <Text style={{ fontSize: 8, fontWeight: '600', color: '#FFFFFF', marginLeft: 6, flexShrink: 1 }} numberOfLines={1}>{user?.displayName || 'User'}</Text>
+          <Text style={{ fontSize: 8, fontWeight: '600', color: '#FFFFFF', marginLeft: 6, flexShrink: 1 }} numberOfLines={1}>{user?.displayName || t('ai_chat.user_fallback')}</Text>
         </View>
         <View style={{ height: 6, width: '80%', borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.08)', marginBottom: 3 }} />
         <View style={{ height: 6, width: '50%', borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.05)' }} />
       </View>
-      <View style={{ flexDirection: 'row', justifyContent: 'space-around', paddingVertical: 6, borderTopWidth: 0.5, borderTopColor: t.darkBorder }}>
-        <Feather name="home" size={10} color={t.color} />
+      <View style={{ flexDirection: 'row', justifyContent: 'space-around', paddingVertical: 6, borderTopWidth: 0.5, borderTopColor: themeOpt.darkBorder }}>
+        <Feather name="home" size={10} color={themeOpt.color} />
         <Feather name="search" size={10} color="rgba(255,255,255,0.4)" />
         <Feather name="plus-square" size={10} color="rgba(255,255,255,0.4)" />
         <Feather name="message-circle" size={10} color="rgba(255,255,255,0.4)" />
         <Feather name="user" size={10} color="rgba(255,255,255,0.4)" />
       </View>
-      <View style={{ alignItems: 'center', paddingVertical: 4, backgroundColor: t.color + '15' }}>
-        <Text style={{ fontSize: 9, fontWeight: '600', color: t.color }}>{t.label}</Text>
+      <View style={{ alignItems: 'center', paddingVertical: 4, backgroundColor: themeOpt.color + '15' }}>
+        <Text style={{ fontSize: 9, fontWeight: '600', color: themeOpt.color }}>{themeOpt.label}</Text>
       </View>
     </View>
   );
@@ -60,7 +62,8 @@ function MiniThemeCard({ themeKey }: { themeKey: string }) {
 
 function ActionBubble({ action }: { action: ParsedAction }) {
   const theme = useTheme();
-  const labels: Record<string, string> = { theme: '🎨 Тема', custom_theme: '🎨 AI Тема', mode: '🌓 Режим', name: '✏️ Имя', emoji: '😊 Эмодзи', username: '@ Юзернейм', bio: '📝 Био', font: '🔤 Шрифт' };
+  const t = useT();
+  const labels: Record<string, string> = { theme: t('ai_chat.label.theme'), custom_theme: t('ai_chat.label.custom_theme'), mode: t('ai_chat.label.mode'), name: t('ai_chat.label.name'), emoji: t('ai_chat.label.emoji'), username: t('ai_chat.label.username'), bio: t('ai_chat.label.bio'), font: t('ai_chat.label.font') };
   const displayValue = action.type === 'custom_theme' ? action.value.split(':')[0] : action.value;
   const themeKey = action.type === 'theme' ? action.value : (action.type === 'custom_theme' ? 'ai-' + action.value.split(':')[0].toLowerCase().replace(/[^a-z0-9]/g, '-') : null);
   return (
@@ -101,6 +104,7 @@ const MemoMessageBubble = React.memo(MessageBubble, (prev, next) => prev.message
 export default function AIChatScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const t = useT();
   const [messages, setMessages] = useState<AIMessage[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -155,17 +159,17 @@ export default function AIChatScreen() {
         if (success) triggerHaptic('medium');
       }
 
-      const aiMsg: AIMessage = { id: (Date.now() + 1).toString(), role: 'assistant', content: cleanText || (appliedActions.length > 0 ? 'Готово!' : ''), actions: appliedActions.length > 0 ? appliedActions : undefined, timestamp: Date.now() };
+      const aiMsg: AIMessage = { id: (Date.now() + 1).toString(), role: 'assistant', content: cleanText || (appliedActions.length > 0 ? t('ai_chat.done') : ''), actions: appliedActions.length > 0 ? appliedActions : undefined, timestamp: Date.now() };
       const finalMessages = [...newMessages, aiMsg];
       setMessages(finalMessages);
       saveChatHistory(finalMessages);
       getRemainingRequests().then(setRemaining);
     } catch {
-      const errMsg: AIMessage = { id: (Date.now() + 1).toString(), role: 'assistant', content: 'Ошибка подключения.', timestamp: Date.now() };
+      const errMsg: AIMessage = { id: (Date.now() + 1).toString(), role: 'assistant', content: t('ai_chat.error_connection'), timestamp: Date.now() };
       setMessages(prev => [...prev, errMsg]);
     }
     setIsLoading(false);
-  }, [input, isLoading, messages]);
+  }, [input, isLoading, messages, t]);
 
   // Inverted data for FlatList — memoized to avoid re-reverse on every keystroke
   const invertedData = React.useMemo(() => [...messages].reverse(), [messages]);
@@ -185,7 +189,7 @@ export default function AIChatScreen() {
             </Pressable>
             <View style={{ alignItems: 'center' }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                <Text variant="body" weight="bold">San AI</Text>
+                <Text variant="body" weight="bold">{t('ai_chat.title')}</Text>
                 <VerifiedBadge size={13} />
               </View>
               <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 10 }}>{remaining}/50</Text>
@@ -218,7 +222,7 @@ export default function AIChatScreen() {
                 <View style={{ borderRadius: 14, overflow: 'hidden', alignSelf: 'flex-start' }}>
                   <BlurView intensity={80} tint="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 7 }}>
                     <ActivityIndicator size="small" color="#FFFFFF" />
-                    <Text style={{ fontSize: 11, color: '#FFFFFF', fontWeight: '500' }}>Думаю...</Text>
+                    <Text style={{ fontSize: 11, color: '#FFFFFF', fontWeight: '500' }}>{t('ai_chat.thinking')}</Text>
                   </BlurView>
                 </View>
               </View>
@@ -231,11 +235,11 @@ export default function AIChatScreen() {
           <View style={{ alignItems: 'center', paddingVertical: 60, transform: [{ scaleY: -1 }] }}>
             <RNText style={{ fontSize: 48 }} allowFontScaling={false}>🤖</RNText>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 12 }}>
-              <Text variant="body" weight="bold">San AI</Text>
+              <Text variant="body" weight="bold">{t('ai_chat.title')}</Text>
               <VerifiedBadge size={14} />
             </View>
             <Text variant="caption" color={theme.colors.text.tertiary} align="center" style={{ marginTop: 8, paddingHorizontal: 40, lineHeight: 18 }}>
-              Могу сменить тему, имя, эмодзи, био. Просто попроси!
+              {t('ai_chat.empty_hint')}
             </Text>
           </View>
         }
@@ -248,7 +252,7 @@ export default function AIChatScreen() {
             <TextInput
               value={input}
               onChangeText={setInput}
-              placeholder="Напиши что-нибудь..."
+              placeholder={t('ai_chat.input_placeholder')}
               placeholderTextColor={theme.colors.text.tertiary}
               multiline
               textAlignVertical="center"

@@ -1,8 +1,9 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import { View, Pressable, Modal, ScrollView, Animated, Dimensions, Alert } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../../theme';
 import { Text } from './Text';
+import { useT } from '../../i18n/store';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -14,20 +15,27 @@ interface FormatHelpModalProps {
   hasPhotos: boolean;
 }
 
-const FORMAT_OPTIONS = [
-  { key: 'mention', label: '@упоминание', syntax: '@username', description: 'Упомяните пользователя', icon: 'at-sign' },
-  { key: 'bold', label: 'Жирный', syntax: '**текст**', description: 'Выделяет текст жирным', icon: 'bold' },
-  { key: 'italic', label: 'Курсив', syntax: '*текст*', description: 'Наклонный текст', icon: 'italic' },
-  { key: 'spoiler', label: 'Спойлер текст', syntax: '||текст||', description: 'Скрытый текст до нажатия', icon: 'eye-off' },
-  { key: 'code', label: 'Код', syntax: '`код`', description: 'Моноширинный текст', icon: 'code' },
-  { key: 'strike', label: 'Зачёркнутый', syntax: '~~текст~~', description: 'Перечёркнутый текст', icon: 'minus' },
-  { key: 'underline', label: 'Подчёркнутый', syntax: '__текст__', description: 'Подчёркнутый текст', icon: 'underline' },
-  { key: 'hashtag', label: 'Хэштег', syntax: '#тег', description: 'Выделяет хэштег цветом', icon: 'hash' },
-  { key: 'spoiler_photo', label: 'Скрытое фото', syntax: '', description: 'Фото скрыто до нажатия', icon: 'image' },
-];
-
 export function FormatHelpModal({ visible, onClose, onInsert, onToggleSpoilerPhoto, hasPhotos }: FormatHelpModalProps) {
   const theme = useTheme();
+  const t = useT();
+  // Build the option list inside the component so labels follow the active locale.
+  const FORMAT_OPTIONS = useMemo(() => {
+    const txt = t('format_help.syntax.text');
+    const usr = t('format_help.syntax.username');
+    const code = t('format_help.syntax.code');
+    const tag = t('format_help.syntax.tag');
+    return [
+      { key: 'mention', label: t('format_help.mention.label'), syntax: `@${usr}`, description: t('format_help.mention.desc'), icon: 'at-sign' },
+      { key: 'bold', label: t('format_help.bold.label'), syntax: `**${txt}**`, description: t('format_help.bold.desc'), icon: 'bold' },
+      { key: 'italic', label: t('format_help.italic.label'), syntax: `*${txt}*`, description: t('format_help.italic.desc'), icon: 'italic' },
+      { key: 'spoiler', label: t('format_help.spoiler.label'), syntax: `||${txt}||`, description: t('format_help.spoiler.desc'), icon: 'eye-off' },
+      { key: 'code', label: t('format_help.code.label'), syntax: `\`${code}\``, description: t('format_help.code.desc'), icon: 'code' },
+      { key: 'strike', label: t('format_help.strike.label'), syntax: `~~${txt}~~`, description: t('format_help.strike.desc'), icon: 'minus' },
+      { key: 'underline', label: t('format_help.underline.label'), syntax: `__${txt}__`, description: t('format_help.underline.desc'), icon: 'underline' },
+      { key: 'hashtag', label: t('format_help.hashtag.label'), syntax: `#${tag}`, description: t('format_help.hashtag.desc'), icon: 'hash' },
+      { key: 'spoiler_photo', label: t('format_help.spoiler_photo.label'), syntax: '', description: t('format_help.spoiler_photo.desc'), icon: 'image' },
+    ];
+  }, [t]);
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
   const backdropAnim = useRef(new Animated.Value(0)).current;
 
@@ -54,7 +62,7 @@ export function FormatHelpModal({ visible, onClose, onInsert, onToggleSpoilerPho
   const handleOption = (opt: typeof FORMAT_OPTIONS[0]) => {
     if (opt.key === 'spoiler_photo') {
       if (!hasPhotos) {
-        Alert.alert('Сначала добавьте фото', 'Выберите фотографию, затем нажмите «Скрытое фото» чтобы скрыть её.');
+        Alert.alert(t('format_help.no_photo_title'), t('format_help.no_photo_msg'));
         dismiss();
         return;
       }
@@ -79,7 +87,7 @@ export function FormatHelpModal({ visible, onClose, onInsert, onToggleSpoilerPho
               <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 6 }}>
                 <View style={{ width: 40, height: 5, borderRadius: 3, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)' }} />
               </View>
-              <Text variant="body" weight="bold" align="center" style={{ marginBottom: 12 }}>Форматирование</Text>
+              <Text variant="body" weight="bold" align="center" style={{ marginBottom: 12 }}>{t('format_help.title')}</Text>
 
               <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 20 }}>
                 {FORMAT_OPTIONS.map((opt, i) => (

@@ -9,6 +9,7 @@ import { CachedImage } from './CachedImage';
 import { LinkPreview } from './LinkPreview';
 import { extractFirstUrl } from '../../services/linkPreview';
 import { ChatMessage } from '../../types';
+import { useT } from '../../i18n/store';
 
 const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = Dimensions.get('window');
 // Same proportion as CommentContextMenu — works well in practice and keeps the
@@ -54,6 +55,7 @@ interface MessageContextMenuProps {
 export function MessageContextMenu({ visible, message, isOwn, linkEmoji, onClose, onAction }: MessageContextMenuProps) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const t = useT();
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
   const backdropAnim = useRef(new Animated.Value(0)).current;
   const isClosing = useRef(false);
@@ -88,13 +90,13 @@ export function MessageContextMenu({ visible, message, isOwn, linkEmoji, onClose
   const items = useMemo(() => {
     if (!message) return [] as { action: MessageAction; icon: string; label: string; destructive?: boolean }[];
     const list: { action: MessageAction; icon: string; label: string; destructive?: boolean }[] = [
-      { action: 'reply', icon: 'corner-up-left', label: 'Ответить' },
+      { action: 'reply', icon: 'corner-up-left', label: t('chat.menu.reply') },
     ];
-    if (message.text) list.push({ action: 'copy', icon: 'copy', label: 'Копировать' });
-    if (isOwn && message.text) list.push({ action: 'edit', icon: 'edit-2', label: 'Редактировать' });
-    if (isOwn) list.push({ action: 'delete', icon: 'trash-2', label: 'Удалить', destructive: true });
+    if (message.text) list.push({ action: 'copy', icon: 'copy', label: t('chat.menu.copy') });
+    if (isOwn && message.text) list.push({ action: 'edit', icon: 'edit-2', label: t('chat.menu.edit') });
+    if (isOwn) list.push({ action: 'delete', icon: 'trash-2', label: t('chat.menu.delete'), destructive: true });
     return list;
-  }, [message, isOwn]);
+  }, [message, isOwn, t]);
 
   if (!visible || !message) return null;
 

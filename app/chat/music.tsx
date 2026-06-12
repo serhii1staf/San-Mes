@@ -17,6 +17,7 @@ import { searchTracks, classifyMusicInput, Track } from '../../src/services/musi
 import { useMusicStore } from '../../src/store/musicStore';
 import { kvGetJSONSync, kvSetJSON } from '../../src/services/kvStore';
 import { triggerHaptic } from '../../src/utils/haptics';
+import { useT } from '../../src/i18n/store';
 
 interface MusicMessage { id: string; query: string; track?: Track | null; tracks?: Track[]; ts: number }
 
@@ -24,11 +25,6 @@ const HISTORY_KEY = 'music_chat_history';
 
 type CommandId = 'last' | 'clear' | 'playlist';
 interface CommandDef { id: CommandId; icon: string; label: string; description: string }
-const COMMANDS: CommandDef[] = [
-  { id: 'last', icon: 'rotate-cw', label: 'Последняя музыка', description: 'Снова найти то, что искали в прошлый раз' },
-  { id: 'clear', icon: 'eraser', label: 'Очистить текст', description: 'Скрыть свои сообщения, найденная музыка останется' },
-  { id: 'playlist', icon: 'list', label: 'Создать плейлист', description: 'Собрать все найденные треки в один список' },
-];
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -37,6 +33,12 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
 export default function MusicChatScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const t = useT();
+  const COMMANDS: CommandDef[] = useMemo(() => [
+    { id: 'last', icon: 'rotate-cw', label: t('music_chat.command.last_label'), description: t('music_chat.command.last_desc') },
+    { id: 'clear', icon: 'eraser', label: t('music_chat.command.clear_label'), description: t('music_chat.command.clear_desc') },
+    { id: 'playlist', icon: 'list', label: t('music_chat.command.playlist_label'), description: t('music_chat.command.playlist_desc') },
+  ], [t]);
   const [messages, setMessages] = useState<MusicMessage[]>(() => {
     try { return kvGetJSONSync<MusicMessage[]>(HISTORY_KEY, []); } catch { return []; }
   });
@@ -175,7 +177,7 @@ export default function MusicChatScreen() {
     if (id === 'last') {
       const last = [...messages].reverse().find((m) => m.tracks !== undefined && m.tracks.length > 0);
       if (last) void runSearch(last.query);
-      else Alert.alert('Нет последнего поиска', 'Сначала найдите что-нибудь.');
+      else Alert.alert(t('music_chat.alert.no_last_title'), t('music_chat.alert.no_last_msg'));
     } else if (id === 'clear') {
       // "Очистить текст" — wipe every USER QUERY bubble but keep the track
       // cards (so the music history stays visible) AND keep playback going
@@ -183,10 +185,10 @@ export default function MusicChatScreen() {
       // Empty `query` is the signal to renderItem that the user bubble should
       // not be drawn. Messages with no tracks (failed/in-flight searches)
       // become empty and are filtered out.
-      Alert.alert('Очистить текст?', 'Найденная музыка и воспроизведение останутся.', [
-        { text: 'Отмена', style: 'cancel' },
+      Alert.alert(t('music_chat.alert.clear_title'), t('music_chat.alert.clear_msg'), [
+        { text: t('common.cancel'), style: 'cancel' },
         {
-          text: 'Очистить', style: 'destructive', onPress: () => {
+          text: t('music_chat.alert.clear_confirm'), style: 'destructive', onPress: () => {
             setMessages((prev) =>
               prev
                 .filter((m) => (m.tracks && m.tracks.length > 0) || !!m.track)
@@ -197,12 +199,12 @@ export default function MusicChatScreen() {
       ]);
     } else if (id === 'playlist') {
       if (allUniqueTracks.length === 0) {
-        Alert.alert('Плейлист пуст', 'Сначала найдите хотя бы один трек.');
+        Alert.alert(t('music_chat.alert.empty_playlist_title'), t('music_chat.alert.empty_playlist_msg'));
       } else {
         setPlaylistOpen(true);
       }
     }
-  }, [messages, runSearch, allUniqueTracks.length]);
+  }, [messages, runSearch, allUniqueTracks.length, t]);
 
   const invertedData = useMemo(() => [...messages].reverse(), [messages]);
 
@@ -233,23 +235,23 @@ export default function MusicChatScreen() {
                 style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 9, borderRadius: 12, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}
               >
                 <Feather name="info" size={13} color={theme.colors.text.secondary} />
-                <Text variant="caption" weight="semibold" color={theme.colors.text.secondary} style={{ fontSize: 12 }}>Об авторе</Text>
+                <Text variant="caption" weight="semibold" color={theme.colors.text.secondary} style={{ fontSize: 12 }}>{t('music_chat.about_author')}</Text>
               </Pressable>
             ) : null}
           </View>
         ) : done ? (
           <View style={{ alignSelf: 'flex-start', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', borderRadius: 16, paddingHorizontal: 14, paddingVertical: 10 }}>
-            <Text variant="caption" color={theme.colors.text.tertiary}>Не найдено</Text>
+            <Text variant="caption" color={theme.colors.text.tertiary}>{t('music_chat.not_found')}</Text>
           </View>
         ) : (
           <View style={{ alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 8 }}>
             <ActivityIndicator size="small" color={theme.colors.accent.primary} />
-            <Text variant="caption" color={theme.colors.text.tertiary}>Ищу…</Text>
+            <Text variant="caption" color={theme.colors.text.tertiary}>{t('music_chat.searching')}</Text>
           </View>
         )}
       </View>
     );
-  }, [theme]);
+  }, [theme, t]);
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
@@ -263,10 +265,10 @@ export default function MusicChatScreen() {
             </Pressable>
             <View style={{ alignItems: 'center' }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                <Text variant="body" weight="bold">Музыка</Text>
+                <Text variant="body" weight="bold">{t('music_chat.title')}</Text>
                 <VerifiedBadge size={13} />
               </View>
-              <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 10 }}>Поиск и прослушивание</Text>
+              <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 10 }}>{t('music_chat.subtitle')}</Text>
             </View>
             <View style={{ width: 34 }} />
           </View>
@@ -292,9 +294,9 @@ export default function MusicChatScreen() {
         ListEmptyComponent={
           <View style={{ alignItems: 'center', paddingVertical: 60, transform: [{ scaleY: -1 }] }}>
             <RNText style={{ fontSize: 48 }} allowFontScaling={false}>🎵</RNText>
-            <Text variant="body" weight="bold" style={{ marginTop: 12 }}>Музыка</Text>
+            <Text variant="body" weight="bold" style={{ marginTop: 12 }}>{t('music_chat.title')}</Text>
             <Text variant="caption" color={theme.colors.text.tertiary} align="center" style={{ marginTop: 8, paddingHorizontal: 40, lineHeight: 18 }}>
-              Напиши название песни — найду и включу. Играет даже когда свернёшь чат.
+              {t('music_chat.empty_hint')}
             </Text>
           </View>
         }
@@ -370,7 +372,7 @@ export default function MusicChatScreen() {
                     fontWeight: '600',
                     color: commandsOpen ? '#FFFFFF' : theme.colors.accent.primary,
                   }}
-                >Команды</Animated.Text>
+                >{t('music_chat.commands_label')}</Animated.Text>
               </Pressable>
             </Animated.View>
 
@@ -378,7 +380,7 @@ export default function MusicChatScreen() {
               <TextInput
                 value={input}
                 onChangeText={setInput}
-                placeholder="Название песни..."
+                placeholder={t('music_chat.input_placeholder')}
                 placeholderTextColor={theme.colors.text.tertiary}
                 multiline
                 textAlignVertical="center"

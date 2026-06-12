@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { View, Pressable, Modal, Image, ActivityIndicator, Alert, Animated, Dimensions, Platform } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../../theme';
@@ -8,6 +8,7 @@ import {
   getAppIconName,
   supportsAlternateIcons,
 } from 'expo-alternate-app-icons';
+import { useT } from '../../i18n/store';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -17,16 +18,6 @@ interface IconOption {
   source: any;
 }
 
-const ICONS: IconOption[] = [
-  { name: null, label: 'По умолчанию', source: require('../../../assets/icon.png') },
-  { name: 'Classic', label: 'Классическая', source: require('../../../assets/app-icons/classic.png') },
-  { name: 'Dark', label: 'Тёмная', source: require('../../../assets/app-icons/dark.png') },
-  { name: 'Blue', label: 'Синяя', source: require('../../../assets/app-icons/blue.png') },
-  { name: 'Orange', label: 'Оранжевая', source: require('../../../assets/app-icons/orange.png') },
-  { name: 'Mono', label: 'Моно', source: require('../../../assets/app-icons/mono.png') },
-  { name: 'Gradient', label: 'Градиент', source: require('../../../assets/app-icons/gradient.png') },
-];
-
 interface AppIconModalProps {
   visible: boolean;
   onClose: () => void;
@@ -34,6 +25,17 @@ interface AppIconModalProps {
 
 export function AppIconModal({ visible, onClose }: AppIconModalProps) {
   const theme = useTheme();
+  const t = useT();
+  // Build the icon list inside the component so labels follow the active locale.
+  const ICONS: IconOption[] = useMemo(() => [
+    { name: null, label: t('app_icon.default'), source: require('../../../assets/icon.png') },
+    { name: 'Classic', label: t('app_icon.classic'), source: require('../../../assets/app-icons/classic.png') },
+    { name: 'Dark', label: t('app_icon.dark'), source: require('../../../assets/app-icons/dark.png') },
+    { name: 'Blue', label: t('app_icon.blue'), source: require('../../../assets/app-icons/blue.png') },
+    { name: 'Orange', label: t('app_icon.orange'), source: require('../../../assets/app-icons/orange.png') },
+    { name: 'Mono', label: t('app_icon.mono'), source: require('../../../assets/app-icons/mono.png') },
+    { name: 'Gradient', label: t('app_icon.gradient'), source: require('../../../assets/app-icons/gradient.png') },
+  ], [t]);
   const [current, setCurrent] = useState<string | null>(null);
   const [applying, setApplying] = useState<string | null>(null);
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
@@ -59,8 +61,8 @@ export function AppIconModal({ visible, onClose }: AppIconModalProps) {
   };
 
   const handleSelect = async (icon: IconOption) => {
-    if (Platform.OS !== 'ios') { Alert.alert('Недоступно', 'Смена иконки доступна только на iOS.'); return; }
-    if (!supportsAlternateIcons) { Alert.alert('Недоступно', 'Это устройство не поддерживает смену иконки.'); return; }
+    if (Platform.OS !== 'ios') { Alert.alert(t('app_icon.unavailable_title'), t('app_icon.unavailable_ios_only')); return; }
+    if (!supportsAlternateIcons) { Alert.alert(t('app_icon.unavailable_title'), t('app_icon.unavailable_device')); return; }
     const isSame = (icon.name ?? null) === (current ?? null);
     if (isSame || applying) return;
     setApplying(icon.name ?? 'default');
@@ -68,7 +70,7 @@ export function AppIconModal({ visible, onClose }: AppIconModalProps) {
       await setAlternateAppIcon(icon.name);
       setCurrent(icon.name ?? null);
     } catch {
-      Alert.alert('Ошибка', 'Не удалось сменить иконку.');
+      Alert.alert(t('app_icon.error_title'), t('app_icon.error_change'));
     } finally {
       setApplying(null);
     }
@@ -86,9 +88,9 @@ export function AppIconModal({ visible, onClose }: AppIconModalProps) {
               <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 6 }}>
                 <View style={{ width: 40, height: 5, borderRadius: 3, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)' }} />
               </View>
-              <Text variant="body" weight="bold" align="center" style={{ marginBottom: 4 }}>Иконка приложения</Text>
+              <Text variant="body" weight="bold" align="center" style={{ marginBottom: 4 }}>{t('app_icon.title')}</Text>
               <Text variant="caption" align="center" color={theme.colors.text.tertiary} style={{ marginBottom: 12, paddingHorizontal: 24 }}>
-                Иконка на главном экране телефона
+                {t('app_icon.subtitle')}
               </Text>
 
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', paddingHorizontal: 16, paddingBottom: 20 }}>

@@ -11,6 +11,7 @@ import { UserBadge } from '../../src/components/ui/UserBadge';
 import { getProfiles } from '../../src/lib/supabase';
 import { useMiniAppsStore } from '../../src/store/miniAppsStore';
 import { accountKey } from '../../src/services/cacheService';
+import { useT } from '../../src/i18n/store';
 
 const SEARCH_HISTORY_KEY = '@san:search_history';
 
@@ -27,6 +28,7 @@ interface ProfileResult {
 export default function SearchScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const t = useT();
   const [isFocused, setIsFocused] = useState(false);
   const [query, setQuery] = useState('');
   const [profiles, setProfiles] = useState<ProfileResult[]>([]);
@@ -98,7 +100,7 @@ export default function SearchScreen() {
   return (
     <View style={containerStyle}>
       <View style={{ paddingHorizontal: theme.spacing.base, paddingBottom: theme.spacing.sm }}>
-        <Text variant="subheading" weight="bold">Поиск</Text>
+        <Text variant="subheading" weight="bold">{t('search.title')}</Text>
       </View>
 
       {/* Search Input */}
@@ -124,7 +126,7 @@ export default function SearchScreen() {
         <TextInput
           value={query}
           onChangeText={setQuery}
-          placeholder="Поиск людей..."
+          placeholder={t('search.placeholder')}
           placeholderTextColor={theme.colors.text.tertiary}
           onFocus={() => setIsFocused(true)}
           onBlur={() => setIsFocused(false)}
@@ -148,9 +150,9 @@ export default function SearchScreen() {
       {showHistory && (
         <View style={{ paddingHorizontal: theme.spacing.base, paddingTop: 16 }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-            <Text variant="caption" weight="semibold" color={theme.colors.text.secondary}>Недавние</Text>
+            <Text variant="caption" weight="semibold" color={theme.colors.text.secondary}>{t('search.recent')}</Text>
             <Pressable onPress={clearHistory}>
-              <Text variant="caption" color={theme.colors.accent.primary}>Очистить</Text>
+              <Text variant="caption" color={theme.colors.accent.primary}>{t('search.clear')}</Text>
             </Pressable>
           </View>
           {history.map(item => (
@@ -186,7 +188,7 @@ export default function SearchScreen() {
             if (matchedApps.length === 0) return null;
             return (
               <View style={{ marginBottom: 16 }}>
-                <Text variant="caption" weight="semibold" color={theme.colors.text.secondary} style={{ marginBottom: 8 }}>Мини-приложения</Text>
+                <Text variant="caption" weight="semibold" color={theme.colors.text.secondary} style={{ marginBottom: 8 }}>{t('search.mini_apps')}</Text>
                 {matchedApps.slice(0, 3).map(app => (
                   <Pressable key={app.id} onPress={() => router.push({ pathname: '/mini-app', params: { url: encodeURIComponent(app.url), name: app.name, emoji: app.emoji } })} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8 }}>
                     <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: theme.colors.accent.primary + '12', alignItems: 'center', justifyContent: 'center', overflow: 'visible' }}>
@@ -223,7 +225,7 @@ export default function SearchScreen() {
           )}
           ListEmptyComponent={
             <View style={{ alignItems: 'center', paddingTop: 40 }}>
-              <Text variant="body" color={theme.colors.text.tertiary}>Никого не найдено</Text>
+              <Text variant="body" color={theme.colors.text.tertiary}>{t('search.empty')}</Text>
             </View>
           }
         />

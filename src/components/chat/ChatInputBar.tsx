@@ -3,6 +3,7 @@ import { View, TextInput, Pressable, Platform, StyleSheet, Text, LayoutAnimation
 import Reanimated from 'react-native-reanimated';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../../theme';
+import { useT } from '../../i18n/store';
 
 // Enable LayoutAnimation on Android (no-op on iOS where it's always on).
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -39,6 +40,7 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
   ref,
 ) {
   const theme = useTheme();
+  const t = useT();
   const [text, setText] = useState('');
 
   useImperativeHandle(ref, () => ({
@@ -81,7 +83,7 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
         <TextInput
           value={text}
           onChangeText={setText}
-          placeholder="Сообщение..."
+          placeholder={t('chat.input_placeholder')}
           placeholderTextColor={theme.colors.text.tertiary}
           style={{ flex: 1, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular, maxHeight: 100, paddingTop: 0, paddingBottom: 0, minHeight: 22, lineHeight: 20 }}
           multiline

@@ -15,6 +15,7 @@ import { kvGetJSONSync, kvSetJSON, kvWarm } from '../../src/services/kvStore';
 import { useMiniAppsStore } from '../../src/store/miniAppsStore';
 import { useChatSettingsStore, GLOBAL_CHAT_SETTINGS_KEY } from '../../src/store/chatSettingsStore';
 import { triggerHaptic } from '../../src/utils/haptics';
+import { useT } from '../../src/i18n/store';
 import { Conversation } from '../../src/types';
 
 function AIConversationItem() { return null; }
@@ -22,6 +23,7 @@ function MusicConversationItem() { return null; }
 
 function MiniAppsRow() {
   const theme = useTheme();
+  const t = useT();
   // Field-level selectors so the row doesn't re-render on every loading flag.
   const apps = useMiniAppsStore((s) => s.apps);
   const loadApps = useMiniAppsStore((s) => s.loadApps);
@@ -42,7 +44,7 @@ function MiniAppsRow() {
             {app.description ? <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>{app.description}</Text> : null}
           </View>
           <Pressable onPress={() => router.push({ pathname: '/mini-app', params: { url: encodeURIComponent(app.url), name: app.name, emoji: app.emoji } })} style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, backgroundColor: theme.colors.accent.primary + '15' }}>
-            <Text variant="caption" weight="semibold" color={theme.colors.accent.primary} style={{ fontSize: 11 }}>Открыть</Text>
+            <Text variant="caption" weight="semibold" color={theme.colors.accent.primary} style={{ fontSize: 11 }}>{t('messages.miniapp.open')}</Text>
           </Pressable>
         </Pressable>
       ))}
@@ -54,59 +56,68 @@ type ChatTab = 'chats' | 'apps' | 'archive' | 'blocked' | 'deleted';
 
 function ConversationItemBase({ item, tab }: { item: Conversation; index: number; tab: ChatTab }) {
   const theme = useTheme();
+  const t = useT();
   const store = useChatSettingsStore;
   const localName = useChatSettingsStore((s) => s.settings[item.id]?.localName);
   const displayName = localName || item.participantName;
 
-  let actions: { title: string; systemIcon?: string; destructive?: boolean }[];
+  // Each action has a stable `id` we dispatch on, plus a localized `title`
+  // shown by the native context menu. Matching by id (or index) keeps logic
+  // independent of the user's interface language.
+  type ActionDef = { id: 'unarchive' | 'archive' | 'chat_settings' | 'block' | 'unblock' | 'restore' | 'delete' | 'delete_forever'; title: string; systemIcon?: string; destructive?: boolean };
+  let actionDefs: ActionDef[];
   if (tab === 'archive') {
-    actions = [
-      { title: 'Из архива', systemIcon: 'tray.and.arrow.up' },
-      { title: 'Настройки чата', systemIcon: 'gearshape' },
-      { title: 'Удалить', destructive: true, systemIcon: 'trash' },
+    actionDefs = [
+      { id: 'unarchive', title: t('messages.action.unarchive'), systemIcon: 'tray.and.arrow.up' },
+      { id: 'chat_settings', title: t('messages.action.chat_settings'), systemIcon: 'gearshape' },
+      { id: 'delete', title: t('messages.action.delete'), destructive: true, systemIcon: 'trash' },
     ];
   } else if (tab === 'blocked') {
-    actions = [
-      { title: 'Разблокировать', systemIcon: 'checkmark.circle' },
-      { title: 'Удалить', destructive: true, systemIcon: 'trash' },
+    actionDefs = [
+      { id: 'unblock', title: t('messages.action.unblock'), systemIcon: 'checkmark.circle' },
+      { id: 'delete', title: t('messages.action.delete'), destructive: true, systemIcon: 'trash' },
     ];
   } else if (tab === 'deleted') {
-    actions = [
-      { title: 'Восстановить', systemIcon: 'arrow.uturn.backward' },
-      { title: 'Удалить навсегда', destructive: true, systemIcon: 'trash' },
+    actionDefs = [
+      { id: 'restore', title: t('messages.action.restore'), systemIcon: 'arrow.uturn.backward' },
+      { id: 'delete_forever', title: t('messages.action.delete_forever'), destructive: true, systemIcon: 'trash' },
     ];
   } else {
-    actions = [
-      { title: 'В архив', systemIcon: 'archivebox' },
-      { title: 'Настройки чата', systemIcon: 'gearshape' },
-      { title: 'Заблокировать', systemIcon: 'nosign' },
-      { title: 'Удалить', destructive: true, systemIcon: 'trash' },
+    actionDefs = [
+      { id: 'archive', title: t('messages.action.archive'), systemIcon: 'archivebox' },
+      { id: 'chat_settings', title: t('messages.action.chat_settings'), systemIcon: 'gearshape' },
+      { id: 'block', title: t('messages.action.block'), systemIcon: 'nosign' },
+      { id: 'delete', title: t('messages.action.delete'), destructive: true, systemIcon: 'trash' },
     ];
   }
+  const actions = actionDefs.map(({ id: _id, ...rest }) => rest);
 
   const handleAction = (e: any) => {
+    const idx = typeof e.nativeEvent.index === 'number' ? e.nativeEvent.index : -1;
     const title = (e.nativeEvent.name as string) || '';
+    const def = actionDefs[idx] || actionDefs.find(d => d.title === title);
+    if (!def) return;
     triggerHaptic('medium');
     const s = store.getState();
-    switch (title) {
-      case 'Из архива': s.unarchiveChat(item.id); break;
-      case 'В архив': s.archiveChat(item.id); break;
-      case 'Настройки чата': router.push({ pathname: '/settings/chat-settings', params: { id: item.id } } as any); break;
-      case 'Заблокировать':
-        Alert.alert('Заблокировать?', item.participantName, [
-          { text: 'Отмена', style: 'cancel' },
-          { text: 'Заблокировать', style: 'destructive', onPress: () => s.blockChat(item.id) },
+    switch (def.id) {
+      case 'unarchive': s.unarchiveChat(item.id); break;
+      case 'archive': s.archiveChat(item.id); break;
+      case 'chat_settings': router.push({ pathname: '/settings/chat-settings', params: { id: item.id } } as any); break;
+      case 'block':
+        Alert.alert(t('messages.confirm.block_title'), item.participantName, [
+          { text: t('common.cancel'), style: 'cancel' },
+          { text: t('messages.action.block'), style: 'destructive', onPress: () => s.blockChat(item.id) },
         ]);
         break;
-      case 'Разблокировать': s.unblockChat(item.id); break;
-      case 'Восстановить': s.restoreChat(item.id); break;
-      case 'Удалить':
-        Alert.alert('Удалить чат?', item.participantName, [
-          { text: 'Отмена', style: 'cancel' },
-          { text: 'Удалить', style: 'destructive', onPress: () => s.deleteChat(item.id) },
+      case 'unblock': s.unblockChat(item.id); break;
+      case 'restore': s.restoreChat(item.id); break;
+      case 'delete':
+        Alert.alert(t('messages.confirm.delete_title'), item.participantName, [
+          { text: t('common.cancel'), style: 'cancel' },
+          { text: t('common.delete'), style: 'destructive', onPress: () => s.deleteChat(item.id) },
         ]);
         break;
-      case 'Удалить навсегда': s.restoreChat(item.id); break; // remove from deleted list entirely (gone from all tabs)
+      case 'delete_forever': s.restoreChat(item.id); break; // remove from deleted list entirely (gone from all tabs)
     }
   };
 
@@ -184,6 +195,7 @@ const ConversationItem = React.memo(ConversationItemBase, (prev, next) =>
 export default function MessagesScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const t = useT();
   // Individual selector — subscribing to the whole store via destructuring
   // would re-render this screen on every unrelated chat-store change (e.g.,
   // typing into a chat input updates messages elsewhere in the store).
@@ -287,7 +299,7 @@ export default function MessagesScreen() {
           style={StyleSheet.absoluteFill}
         />
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: theme.spacing.lg, paddingTop: insets.top + 8, paddingBottom: 8 }} pointerEvents="auto">
-          <Text variant="subheading" weight="bold">Messages</Text>
+          <Text variant="subheading" weight="bold">{t('messages.title')}</Text>
           <View style={{ width: 20 }} />
         </View>
       </View>
@@ -309,7 +321,7 @@ export default function MessagesScreen() {
           <TextInput
             value={searchQuery}
             onChangeText={setSearchQuery}
-            placeholder="Search conversations..."
+            placeholder={t('messages.search_placeholder')}
             placeholderTextColor={theme.colors.text.tertiary}
             style={{
               flex: 1,
@@ -328,11 +340,11 @@ export default function MessagesScreen() {
         <FlatList
           horizontal
           data={[
-            { key: 'chats', label: 'Чаты' },
-            { key: 'apps', label: 'Приложения' },
-            { key: 'archive', label: 'Архив' },
-            { key: 'blocked', label: 'Заблокированные' },
-            { key: 'deleted', label: 'Удалённые' },
+            { key: 'chats', label: t('messages.tab.chats') },
+            { key: 'apps', label: t('messages.tab.apps') },
+            { key: 'archive', label: t('messages.tab.archive') },
+            { key: 'blocked', label: t('messages.tab.blocked') },
+            { key: 'deleted', label: t('messages.tab.deleted') },
           ]}
           keyExtractor={(t) => t.key}
           showsHorizontalScrollIndicator={false}
@@ -359,7 +371,7 @@ export default function MessagesScreen() {
             color={theme.colors.text.tertiary}
             style={{ marginTop: theme.spacing.base, textAlign: 'center' }}
           >
-            {activeTab === 'apps' ? 'Нет приложений' : activeTab === 'blocked' ? 'Нет заблокированных' : activeTab === 'deleted' ? 'Нет удалённых' : activeTab === 'archive' ? 'Архив пуст' : 'Пока нет сообщений'}
+            {activeTab === 'apps' ? t('messages.empty.apps') : activeTab === 'blocked' ? t('messages.empty.blocked') : activeTab === 'deleted' ? t('messages.empty.deleted') : activeTab === 'archive' ? t('messages.empty.archive') : t('messages.empty.chats')}
           </Text>
         </View>
         )
@@ -408,6 +420,7 @@ export default function MessagesScreen() {
 //     when the parent's open state flips.
 function FabWithMenu() {
   const theme = useTheme();
+  const t = useT();
   const [open, setOpen] = useState(false);
   const anim = useRef(new Animated.Value(0)).current; // 0 = closed, 1 = open
 
@@ -507,13 +520,13 @@ function FabWithMenu() {
           minWidth: 220,
         }}
       >
-        <FabMenuItem icon="grid" label="Мини-приложения" tint={accent} onPress={() => navigate(() => router.push('/settings/mini-apps' as any))} />
+        <FabMenuItem icon="grid" label={t('messages.fab.mini_apps')} tint={accent} onPress={() => navigate(() => router.push('/settings/mini-apps' as any))} />
         <FabSeparator color={borderColor} />
-        <FabMenuItem icon="cpu" label="San AI" tint={accent} onPress={() => navigate(() => router.push('/chat/ai' as any))} />
+        <FabMenuItem icon="cpu" label={t('messages.fab.ai')} tint={accent} onPress={() => navigate(() => router.push('/chat/ai' as any))} />
         <FabSeparator color={borderColor} />
-        <FabMenuItem icon="music" label="Музыка" tint={accent} onPress={() => navigate(() => router.push('/chat/music' as any))} />
+        <FabMenuItem icon="music" label={t('messages.fab.music')} tint={accent} onPress={() => navigate(() => router.push('/chat/music' as any))} />
         <FabSeparator color={borderColor} />
-        <FabMenuItem icon="settings" label="Настройка чатов" tint={secondary} onPress={() => navigate(() => router.push({ pathname: '/settings/chat-settings', params: { id: GLOBAL_CHAT_SETTINGS_KEY } } as any))} />
+        <FabMenuItem icon="settings" label={t('messages.fab.chat_settings')} tint={secondary} onPress={() => navigate(() => router.push({ pathname: '/settings/chat-settings', params: { id: GLOBAL_CHAT_SETTINGS_KEY } } as any))} />
       </Animated.View>
 
       <Pressable

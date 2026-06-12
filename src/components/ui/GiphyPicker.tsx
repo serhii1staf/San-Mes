@@ -6,6 +6,7 @@ import { useTheme } from '../../theme';
 import { Text } from './Text';
 import { CachedImage } from './CachedImage';
 import { getTrendingGifs, searchGifs, getCachedTrending, setCachedTrending, GiphyItem } from '../../services/giphy';
+import { useT } from '../../i18n/store';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const SHEET_MARGIN = 10;
@@ -29,6 +30,7 @@ interface GiphyPickerProps {
 export function GiphyPicker({ visible, onClose, onSelect }: GiphyPickerProps) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const t = useT();
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
   const backdropAnim = useRef(new Animated.Value(0)).current;
   const isClosing = useRef(false);
@@ -150,7 +152,7 @@ export function GiphyPicker({ visible, onClose, onSelect }: GiphyPickerProps) {
             <TextInput
               value={query}
               onChangeText={setQuery}
-              placeholder="Поиск GIF..."
+              placeholder={t('giphy.search_placeholder')}
               placeholderTextColor={theme.colors.text.tertiary}
               style={{ flex: 1, marginLeft: 8, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular }}
               autoCorrect={false}
@@ -194,7 +196,7 @@ export function GiphyPicker({ visible, onClose, onSelect }: GiphyPickerProps) {
               ListFooterComponent={loadingMore ? <View style={{ paddingVertical: 16 }}><ActivityIndicator color={theme.colors.accent.primary} /></View> : null}
               ListEmptyComponent={!loading ? (
                 <View style={{ alignItems: 'center', paddingTop: 40 }}>
-                  <Text variant="body" color={theme.colors.text.tertiary}>Ничего не найдено</Text>
+                  <Text variant="body" color={theme.colors.text.tertiary}>{t('giphy.empty')}</Text>
                 </View>
               ) : null}
             />

@@ -28,12 +28,14 @@ import { mockMessages, mockConversations, formatMessageTime } from '../../src/ut
 import { showToast } from '../../src/store/toastStore';
 import { ChatMessage } from '../../src/types';
 import { triggerHaptic } from '../../src/utils/haptics';
+import { useT } from '../../src/i18n/store';
 
 const REPLY_THRESHOLD = 60;
 const SCREEN_WIDTH = Dimensions.get('window').width;
 
 function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, linkEmoji, highlighted, onReply, onLongPress, onSwipeActive, onImagePress }: { message: ChatMessage; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string; linkEmoji?: string; highlighted?: boolean; onReply: (m: ChatMessage) => void; onLongPress: (m: ChatMessage) => void; onSwipeActive: (active: boolean) => void; onImagePress: (images: string[], index: number) => void }) {
   const theme = useTheme();
+  const t = useT();
   const fontFamilyStyle = fontFamily === 'mono' ? 'monospace' : fontFamily === 'serif' ? 'serif' : undefined;
   const translateX = useRef(new Animated.Value(0)).current;
   const fired = useRef(false);
@@ -90,10 +92,10 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
                 ) : null}
                 <View style={{ flex: 1 }}>
                   <Text variant="caption" weight="semibold" color={isOwn ? 'rgba(255,255,255,0.9)' : theme.colors.accent.primary} numberOfLines={1} style={{ fontSize: 11 }}>
-                    {message.replyToIsOwn ? 'Вы' : 'Собеседник'}
+                    {message.replyToIsOwn ? t('chat.you') : t('chat.peer')}
                   </Text>
                   <Text variant="caption" color={isOwn ? 'rgba(255,255,255,0.7)' : theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 11 }}>
-                    {message.replyToText || (message.replyToImage ? 'Фото' : '')}
+                    {message.replyToText || (message.replyToImage ? t('chat.photo') : '')}
                   </Text>
                 </View>
               </View>
@@ -162,6 +164,7 @@ const MemoMessageBubble = React.memo(MessageBubble, (prev, next) => {
 export default function ChatScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const t = useT();
   const { id, participantId: paramParticipantId } = useLocalSearchParams<{ id: string; participantId?: string }>();
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
   const [editing, setEditing] = useState<ChatMessage | null>(null);
@@ -311,7 +314,7 @@ export default function ChatScreen() {
   }, [id, myMessages]);
 
   const chatLocalName = settingsMap[id || '']?.localName;
-  const displayName = chatLocalName || conversation?.participantName || profileData?.display_name || entityConv?.participantName || 'Чат';
+  const displayName = chatLocalName || conversation?.participantName || profileData?.display_name || entityConv?.participantName || t('chat.fallback_name');
   const displayEmoji = (conversation as any)?.participantEmoji || profileData?.emoji || entityConv?.participantEmoji || '😊';
   const displayVerified = profileData?.is_verified || cachedProfile?.is_verified || (entityConv as any)?.participantVerified || false;
   const displayBadge = profileData?.badge || cachedProfile?.badge || (entityConv as any)?.participantBadge || null;
@@ -434,7 +437,7 @@ export default function ChatScreen() {
       createdAt: new Date().toISOString(),
       isRead: true,
       replyToId: currentReply?.id,
-      replyToText: currentReply?.text || (currentReply?.imageUrls && currentReply.imageUrls.length > 0 ? 'Фото' : undefined),
+      replyToText: currentReply?.text || (currentReply?.imageUrls && currentReply.imageUrls.length > 0 ? t('chat.photo') : undefined),
       replyToIsOwn: currentReply ? currentReply.senderId === 'current' : undefined,
       replyToImage: currentReply?.imageUrls?.[0],
       imageUrls: [url],
@@ -472,12 +475,12 @@ export default function ChatScreen() {
         }
       } catch {}
     })();
-  }, [id, replyTo, addMessage, scrollToEnd, participantId]);
+  }, [id, replyTo, addMessage, scrollToEnd, participantId, t]);
 
   const handleMenuAction = useCallback((action: MessageAction, message: ChatMessage) => {
     if (action === 'copy') {
       Clipboard.setStringAsync(message.text);
-      showToast('Скопировано', 'check');
+      showToast(t('toast.copied'), 'check');
     } else if (action === 'reply') {
       startReply(message);
     } else if (action === 'edit') {
@@ -487,10 +490,10 @@ export default function ChatScreen() {
       // Load existing photos so they can be removed/replaced while editing
       setPendingImages(message.imageUrls || []);
     } else if (action === 'delete') {
-      Alert.alert('Удалить сообщение?', '', [
-        { text: 'Отмена', style: 'cancel' },
+      Alert.alert(t('chat.delete_message_title'), '', [
+        { text: t('common.cancel'), style: 'cancel' },
         {
-          text: 'Удалить', style: 'destructive', onPress: () => {
+          text: t('common.delete'), style: 'destructive', onPress: () => {
             if (!id) return;
             setMessages(id, (storeMessages[id] || []).filter((m) => m.id !== message.id) as any);
             triggerHaptic('medium');
@@ -498,7 +501,7 @@ export default function ChatScreen() {
         },
       ]);
     }
-  }, [id, storeMessages, setMessages, startReply]);
+  }, [id, storeMessages, setMessages, startReply, t]);
 
   const handleSend = async (rawText: string) => {
     const hasImages = pendingImages.length > 0;
@@ -535,7 +538,7 @@ export default function ChatScreen() {
       createdAt: new Date().toISOString(),
       isRead: true,
       replyToId: currentReply?.id,
-      replyToText: currentReply?.text || (currentReply?.imageUrls && currentReply.imageUrls.length > 0 ? (currentReply.imageUrls.length > 1 ? `${currentReply.imageUrls.length} фото` : 'Фото') : undefined),
+      replyToText: currentReply?.text || (currentReply?.imageUrls && currentReply.imageUrls.length > 0 ? (currentReply.imageUrls.length > 1 ? t('chat.photos_count', undefined, { n: currentReply.imageUrls.length }) : t('chat.photo')) : undefined),
       replyToIsOwn: currentReply ? currentReply.senderId === 'current' : undefined,
       replyToImage: currentReply?.imageUrls?.[0],
       imageUrls: localImages.length > 0 ? localImages : undefined,
@@ -597,7 +600,7 @@ export default function ChatScreen() {
       const store = useEntityStore.getState();
       const existingConvs = store.conversations;
       if (!existingConvs.find(c => c.participantId === participantId)) {
-        store.setConversations([{ id: convId || id || '', participantId: participantId || '', participantName: displayName || 'Чат', participantUsername: '', participantEmoji: displayEmoji }, ...existingConvs]);
+        store.setConversations([{ id: convId || id || '', participantId: participantId || '', participantName: displayName || t('chat.fallback_name'), participantUsername: '', participantEmoji: displayEmoji }, ...existingConvs]);
       }
     } catch {}
   };
@@ -712,8 +715,8 @@ export default function ChatScreen() {
               <CachedImage uri={banner.imageUrls[0]} style={{ width: 32, height: 32, borderRadius: 6 }} resizeMode="cover" />
             ) : null}
             <View style={{ flex: 1 }}>
-              <Text variant="caption" weight="semibold" color={theme.colors.accent.primary} style={{ fontSize: 12 }}>{editing ? 'Редактирование' : 'Ответ на сообщение'}</Text>
-              <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 12 }}>{banner.text || (banner.imageUrls && banner.imageUrls.length > 0 ? `📷 ${banner.imageUrls.length > 1 ? banner.imageUrls.length + ' фото' : 'Фото'}` : '')}</Text>
+              <Text variant="caption" weight="semibold" color={theme.colors.accent.primary} style={{ fontSize: 12 }}>{editing ? t('chat.editing') : t('chat.replying')}</Text>
+              <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 12 }}>{banner.text || (banner.imageUrls && banner.imageUrls.length > 0 ? `📷 ${banner.imageUrls.length > 1 ? t('chat.photos_count', undefined, { n: banner.imageUrls.length }) : t('chat.photo')}` : '')}</Text>
             </View>
             <Pressable onPress={() => { setReplyTo(null); setEditing(null); inputRef.current?.clear(); }} hitSlop={8}>
               <Feather name="x" size={18} color={theme.colors.text.tertiary} />
@@ -761,7 +764,7 @@ export default function ChatScreen() {
                 autoFocus
                 value={searchQuery}
                 onChangeText={setSearchQuery}
-                placeholder="Поиск по сообщениям..."
+                placeholder={t('chat.search_placeholder')}
                 placeholderTextColor={theme.colors.text.tertiary}
                 style={{ flex: 1, marginLeft: 8, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular }}
               />

@@ -17,6 +17,7 @@ import { queueMutation, generateTempId } from '../../src/services/offlineQueue';
 import { useEntityStore } from '../../src/services/entityStore';
 import { accountKey } from '../../src/services/cacheService';
 import { FormatHelpModal } from '../../src/components/ui/FormatHelpModal';
+import { useT } from '../../src/i18n/store';
 
 const MAX_CHARS = 500;
 const MAX_IMAGES = 6;
@@ -28,6 +29,7 @@ export default function CreateScreen() {
   const theme = useTheme();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
+  const t = useT();
   // Field-level selectors so the create screen doesn't re-render on every
   // unrelated feed-store mutation (likes, posts list, etc.) coming from the home tab.
   const user = useAuthStore((s) => s.user);
@@ -109,13 +111,13 @@ export default function CreateScreen() {
 
   const pickImages = async () => {
     if (imageUris.length >= MAX_IMAGES) {
-      Alert.alert('Лимит', `Максимум ${MAX_IMAGES} изображений`);
+      Alert.alert(t('create.alert.limit_title'), t('create.alert.limit_images', undefined, { n: MAX_IMAGES }));
       return;
     }
 
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') {
-      Alert.alert('Доступ', 'Нужен доступ к галерее для выбора изображения');
+      Alert.alert(t('create.alert.access_title'), t('create.alert.access_gallery'));
       return;
     }
 
@@ -130,7 +132,7 @@ export default function CreateScreen() {
     if (!result.canceled && result.assets.length > 0) {
       const validAssets = result.assets.filter(asset => {
         if (asset.fileSize && asset.fileSize > MAX_IMAGE_SIZE_BYTES) {
-          Alert.alert('Файл слишком большой', `Максимальный размер изображения — 20 МБ. Выберите другое изображение.`);
+          Alert.alert(t('create.alert.file_too_large_title'), t('create.alert.file_too_large_pick'));
           return false;
         }
         return true;
@@ -144,13 +146,13 @@ export default function CreateScreen() {
 
   const takePhoto = async () => {
     if (imageUris.length >= MAX_IMAGES) {
-      Alert.alert('Лимит', `Максимум ${MAX_IMAGES} изображений`);
+      Alert.alert(t('create.alert.limit_title'), t('create.alert.limit_images', undefined, { n: MAX_IMAGES }));
       return;
     }
 
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
     if (status !== 'granted') {
-      Alert.alert('Доступ', 'Нужен доступ к камере');
+      Alert.alert(t('create.alert.access_title'), t('create.alert.access_camera'));
       return;
     }
 
@@ -162,7 +164,7 @@ export default function CreateScreen() {
     if (!result.canceled && result.assets[0]) {
       const asset = result.assets[0];
       if (asset.fileSize && asset.fileSize > MAX_IMAGE_SIZE_BYTES) {
-        Alert.alert('Файл слишком большой', `Максимальный размер изображения — 20 МБ. Попробуйте сделать другое фото.`);
+        Alert.alert(t('create.alert.file_too_large_title'), t('create.alert.file_too_large_camera'));
         return;
       }
       setImageUris(prev => [...prev, asset.uri].slice(0, MAX_IMAGES));
@@ -174,13 +176,13 @@ export default function CreateScreen() {
       const { url, error } = await uploadPostImage(uri);
       if (error) {
         console.log('Upload error:', error);
-        Alert.alert('Ошибка загрузки', `Не удалось загрузить изображение: ${error}`);
+        Alert.alert(t('create.alert.upload_error_title'), t('create.alert.upload_error_msg', undefined, { reason: error }));
         return null;
       }
       return url;
     } catch (e: any) {
       console.log('Upload failed:', e);
-      Alert.alert('Ошибка загрузки', `Не удалось загрузить изображение: ${e?.message || 'Неизвестная ошибка'}`);
+      Alert.alert(t('create.alert.upload_error_title'), t('create.alert.upload_error_msg', undefined, { reason: e?.message || t('create.alert.unknown_error') }));
       return null;
     }
   };
@@ -188,7 +190,7 @@ export default function CreateScreen() {
   const handlePost = async () => {
     if (!content.trim() && imageUris.length === 0 && !repostData) return;
     if (!user) {
-      Alert.alert('Ошибка', 'Необходимо войти в аккаунт');
+      Alert.alert(t('create.alert.error_title'), t('create.alert.must_login'));
       return;
     }
 
@@ -198,7 +200,7 @@ export default function CreateScreen() {
     const rl = checkRateLimit(action);
     if (!rl.allowed) {
       const secs = Math.ceil(rl.retryAfterMs / 1000);
-      Alert.alert('Подождите', `Слишком частые действия. Попробуйте через ${secs} сек.`);
+      Alert.alert(t('create.alert.wait_title'), t('create.alert.wait_msg', undefined, { n: secs }));
       return;
     }
 
@@ -206,7 +208,7 @@ export default function CreateScreen() {
     if (content.trim()) {
       const spam = detectSuspiciousContent(content);
       if (spam.isSuspicious) {
-        Alert.alert('Контент заблокирован', spam.reason || 'Подозрительный контент');
+        Alert.alert(t('create.alert.blocked_title'), spam.reason || t('create.alert.blocked_default'));
         return;
       }
     }
@@ -237,7 +239,7 @@ export default function CreateScreen() {
 
         const { post, error } = await createRepost(user.id, repostData.id, content.trim() || undefined, repostImageUrl);
         if (error) {
-          Alert.alert('Ошибка', error);
+          Alert.alert(t('create.alert.error_title'), error);
         } else {
           setContent('');
           setImageUris([]);
@@ -283,7 +285,7 @@ export default function CreateScreen() {
             .single();
 
           if (error) {
-            Alert.alert('Ошибка', error.message);
+            Alert.alert(t('create.alert.error_title'), error.message);
             // Do NOT clear the form on error
             return;
           }
@@ -328,7 +330,7 @@ export default function CreateScreen() {
           router.back();
         } catch (e: any) {
           setImageUploading(false);
-          Alert.alert('Ошибка', e?.message || 'Не удалось обновить пост');
+          Alert.alert(t('create.alert.error_title'), e?.message || t('create.alert.update_failed'));
           // Do NOT clear the form on error
         }
         return;
@@ -475,7 +477,7 @@ export default function CreateScreen() {
   const bgTransparent = bgColor + '00';
   const headerContentHeight = insets.top + 48;
   const headerGradientHeight = headerContentHeight + 28;
-  const headerTitle = repostData ? 'Репост' : editingPostId ? 'Редактировать' : 'Новый пост';
+  const headerTitle = repostData ? t('create.title.repost') : editingPostId ? t('create.title.edit') : t('create.title.new');
 
   return (
     <View style={containerStyle}>
@@ -495,7 +497,7 @@ export default function CreateScreen() {
               <>
                 <Feather name="send" size={16} color={theme.colors.accent.primary} />
                 <Text variant="caption" weight="semibold" color={theme.colors.accent.primary}>
-                  Пост
+                  {t('create.send')}
                 </Text>
               </>
             )}
@@ -535,7 +537,7 @@ export default function CreateScreen() {
             <TextInput
               value={content}
               onChangeText={(text) => setContent(text.slice(0, MAX_CHARS))}
-              placeholder="Что у вас нового?"
+              placeholder={t('create.placeholder')}
               placeholderTextColor={theme.colors.text.tertiary}
               multiline
               style={{
@@ -592,12 +594,12 @@ export default function CreateScreen() {
             {imageUris.length > 0 && (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6 }}>
                 <Text variant="caption" color={theme.colors.text.tertiary}>
-                  {imageUris.length}/{MAX_IMAGES} фото
+                  {t('create.photos_count', undefined, { n: imageUris.length, max: MAX_IMAGES })}
                 </Text>
                 {isSpoilerPhoto && (
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: theme.colors.accent.primary + '15', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>
                     <Feather name="eye-off" size={10} color={theme.colors.accent.primary} />
-                    <Text variant="caption" color={theme.colors.accent.primary} style={{ fontSize: 10 }}>скрыто</Text>
+                    <Text variant="caption" color={theme.colors.accent.primary} style={{ fontSize: 10 }}>{t('create.spoiler_hidden')}</Text>
                   </View>
                 )}
               </View>
@@ -627,7 +629,7 @@ export default function CreateScreen() {
         {/* Audience selector */}
         <View style={{ marginTop: theme.spacing.lg }}>
           <Text variant="caption" weight="medium" color={theme.colors.text.secondary} style={{ marginBottom: theme.spacing.sm }}>
-            Аудитория
+            {t('create.audience.label')}
           </Text>
           <View style={{ flexDirection: 'row', gap: 12 }}>
             <Pressable
@@ -659,7 +661,7 @@ export default function CreateScreen() {
                 weight={audience === 'public' ? 'semibold' : 'regular'}
                 color={audience === 'public' ? theme.colors.accent.primary : theme.colors.text.secondary}
               >
-                Для всех
+                {t('create.audience.public')}
               </Text>
             </Pressable>
 
@@ -692,7 +694,7 @@ export default function CreateScreen() {
                 weight={audience === 'friends' ? 'semibold' : 'regular'}
                 color={audience === 'friends' ? theme.colors.accent.primary : theme.colors.text.secondary}
               >
-                Для друзей
+                {t('create.audience.friends')}
               </Text>
             </Pressable>
           </View>
