@@ -33,22 +33,32 @@ const navigationIntegration = Sentry.reactNavigationIntegration({
   enableTimeToInitialDisplay: true,
 });
 
-Sentry.init({
-  dsn: 'https://5cc37dc9e4220257f42fe51995c0dbae@o4511549943447552.ingest.de.sentry.io/4511550037229648',
-  // Conservative sampling rates so Sentry never becomes a perf problem on
-  // weak devices. We can raise these once we have a baseline of traffic.
-  tracesSampleRate: 0.1,
-  profilesSampleRate: 0.1,
-  // Auto session tracking gives us crash-free-session metrics out of the box.
-  enableAutoSessionTracking: true,
-  // Don't ship default PII to keep us aligned with the Apple Developer
-  // Program License Agreement (no covert collection of user data). We attach
-  // user.id manually after auth via Sentry.setUser() if/when needed.
-  sendDefaultPii: false,
-  integrations: [navigationIntegration],
-  // Filter local-dev noise. RELEASE_CHANNEL is set by EAS / expo-updates.
-  enabled: !__DEV__,
-});
+// Wrap init in try/catch so that if anything goes wrong (e.g. the native
+// module failed to load on a particular OTA payload, or a regression in the
+// Sentry SDK trips an early error) we don't take the whole app down with us.
+// Crash reporting is a nice-to-have, working app is critical.
+try {
+  Sentry.init({
+    dsn: 'https://5cc37dc9e4220257f42fe51995c0dbae@o4511549943447552.ingest.de.sentry.io/4511550037229648',
+    // Conservative sampling rates so Sentry never becomes a perf problem on
+    // weak devices. We can raise these once we have a baseline of traffic.
+    tracesSampleRate: 0.1,
+    // profilesSampleRate intentionally omitted — the native profiler needs
+    // additional setup that's easy to get wrong, and a misconfigured
+    // profiler can crash the app at startup.
+    enableAutoSessionTracking: true,
+    // Don't ship default PII to keep us aligned with the Apple Developer
+    // Program License Agreement (no covert collection of user data). We attach
+    // user.id manually after auth via Sentry.setUser() if/when needed.
+    sendDefaultPii: false,
+    integrations: [navigationIntegration],
+    // Filter local-dev noise. RELEASE_CHANNEL is set by EAS / expo-updates.
+    enabled: !__DEV__,
+  });
+} catch (err) {
+  // eslint-disable-next-line no-console
+  console.warn('[Sentry.init] failed:', err);
+}
 
 function AuthNavigationGuard({ children }: { children: React.ReactNode }) {
   // Subscribe to ONLY the two flags we actually care about. Pulling the whole
@@ -160,12 +170,15 @@ function RootLayout() {
   }, [navigationRef]);
 
   // Feed navigation transitions into the in-app perf monitor so the user
-  // sees which screen change is slow when they're chasing jank.
+  // sees which screen change is slow when they're chasing jank. Wrapped
+  // defensively — a regression here must not bring down the whole app.
   useEffect(() => {
-    const route = segments.join('/') || '(root)';
-    if (route === lastSegmentRef.current) return;
-    lastSegmentRef.current = route;
-    perfMonitor.recordNavigation(route);
+    try {
+      const route = segments.join('/') || '(root)';
+      if (route === lastSegmentRef.current) return;
+      lastSegmentRef.current = route;
+      perfMonitor.recordNavigation(route);
+    } catch {}
   }, [segments]);
 
   useEffect(() => {

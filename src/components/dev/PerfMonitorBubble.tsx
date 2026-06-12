@@ -14,8 +14,8 @@
  *   worklet only crosses to JS once per 500 ms, batching frame counts.
  */
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View, useWindowDimensions, Modal } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { StyleSheet, Text, View, useWindowDimensions, Modal } from 'react-native';
 import Animated, {
   useAnimatedStyle,
   useFrameCallback,
@@ -34,7 +34,39 @@ const BUBBLE_SIZE = 56;
 const EDGE_PADDING = 8;
 const TAP_SLOP = 6; // movement (px) below this = tap, not drag
 
+/**
+ * Tiny error boundary so a regression in the perf monitor never takes the
+ * whole app down. If `PerfMonitorBubble` throws on mount or during a render
+ * we silently swallow the error and render nothing — the rest of the screen
+ * keeps working.
+ */
+class PerfMonitorErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { failed: boolean }
+> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  componentDidCatch(err: unknown) {
+    // eslint-disable-next-line no-console
+    console.warn('[PerfMonitorBubble] crashed and was disabled:', err);
+  }
+  render() {
+    if (this.state.failed) return null;
+    return this.props.children;
+  }
+}
+
 export function PerfMonitorBubble() {
+  return (
+    <PerfMonitorErrorBoundary>
+      <PerfMonitorBubbleInner />
+    </PerfMonitorErrorBoundary>
+  );
+}
+
+function PerfMonitorBubbleInner() {
   const enabled = useSettingsStore((s) => s.perfMonitorEnabled);
   const storedX = useSettingsStore((s) => s.perfMonitorPosX);
   const storedY = useSettingsStore((s) => s.perfMonitorPosY);
@@ -65,9 +97,25 @@ export function PerfMonitorBubble() {
   const [panelOpen, setPanelOpen] = useState(false);
   const [snap, setSnap] = useState<PerfSnapshot>(() => perfMonitor.snapshot());
 
+  // Hoisted, stable JS callback for the worklet to call via runOnJS. Doing
+  // `perfMonitor.pushUiFps.bind(perfMonitor)` inside a worklet was crashing
+  // the app at startup on the iOS native build because `Function.prototype.
+  // bind` is not always safe to invoke from a worklet's runtime — it
+  // allocates a fresh function every frame and the worklet→JS bridge can
+  // deadlock under load. A plain top-level callback avoids both problems.
+  const reportUiFps = useCallback((fps: number) => {
+    try {
+      perfMonitor.pushUiFps(fps);
+    } catch {
+      // Never let monitor failures take the app down.
+    }
+  }, []);
+
   // Keep sampler running while the bubble is mounted.
   useEffect(() => {
-    perfMonitor.start();
+    try {
+      perfMonitor.start();
+    } catch {}
     return () => {
       // Don't stop on unmount — the user might toggle the bubble off but
       // still want to see history when they re-enable it. Stopping is only
@@ -88,6 +136,8 @@ export function PerfMonitorBubble() {
   }, []);
 
   // UI-thread FPS: count frames inside a worklet, batch-publish every 500 ms.
+  // We deliberately keep this worklet small and free of method-bind / object
+  // dereferences — only SharedValue reads/writes and a single runOnJS hop.
   const uiFrameCount = useSharedValue(0);
   const uiLastSampleAt = useSharedValue(0);
   useFrameCallback((frame) => {
@@ -102,7 +152,7 @@ export function PerfMonitorBubble() {
       const fps = Math.round((uiFrameCount.value * 1000) / elapsed);
       uiFrameCount.value = 0;
       uiLastSampleAt.value = frame.timestamp;
-      runOnJS(perfMonitor.pushUiFps.bind(perfMonitor))(fps);
+      runOnJS(reportUiFps)(fps);
     }
   }, enabled);
 
