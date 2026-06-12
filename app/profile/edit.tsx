@@ -239,22 +239,39 @@ export default function EditProfileScreen() {
   return (
     <View style={[styles.root, { backgroundColor: bgPrimary }]}>
       {/* Floating header — three blur pills (back / title / save) sitting
-          directly over the banner. The user pointed at the same blurred
-          edit-button style from the profile tab top and asked for the
-          same vibe here. No gradient curtain underneath; the banner shows
-          through. */}
+          directly over the banner. Title pill is absolutely centered so
+          the dynamic Save text width can't push it off-axis; the text
+          inside the pill is single-line + ellipsizeMode='tail' so very
+          long localizations still fit. A subtle gradient fades the
+          screen background into the banner so the pills sit on a
+          softer edge — the user asked for the blur back at the top
+          after seeing it without. */}
+      <View style={[styles.headerGradient, { height: insets.top + 56 }]} pointerEvents="none">
+        <LinearGradient
+          colors={[bgPrimary + 'CC', bgPrimary + '66', bgPrimary + '00']}
+          locations={[0, 0.55, 1]}
+          style={StyleSheet.absoluteFill}
+        />
+      </View>
       <View style={[styles.headerRow, { paddingTop: insets.top + 8 }]} pointerEvents="box-none">
         <Pressable onPress={handleClose} hitSlop={10} style={styles.headerPill}>
           <BlurView intensity={80} tint="dark" style={styles.headerPillInner}>
             <Feather name="x" size={18} color="#FFFFFF" />
           </BlurView>
         </Pressable>
-        <View style={styles.headerTitlePill}>
-          <BlurView intensity={80} tint="dark" style={styles.headerTitleInner}>
-            <RNText style={styles.headerTitleText} allowFontScaling={false}>
-              {t('edit_profile.title')}
-            </RNText>
-          </BlurView>
+        <View style={styles.headerTitleAbs} pointerEvents="box-none">
+          <View style={styles.headerTitlePill}>
+            <BlurView intensity={80} tint="dark" style={styles.headerTitleInner}>
+              <RNText
+                style={styles.headerTitleText}
+                allowFontScaling={false}
+                numberOfLines={1}
+                ellipsizeMode="tail"
+              >
+                {t('edit_profile.title')}
+              </RNText>
+            </BlurView>
+          </View>
         </View>
         <Pressable onPress={handleSave} disabled={isSaving} hitSlop={10} style={styles.headerPill}>
           <BlurView intensity={80} tint="dark" style={[styles.headerPillInner, { paddingHorizontal: 14 }]}>
@@ -556,6 +573,13 @@ export default function EditProfileScreen() {
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
+  headerGradient: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 99,
+  },
   headerRow: {
     position: 'absolute',
     top: 0,
@@ -581,9 +605,24 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 6,
   },
+  headerTitleAbs: {
+    // Absolute centering — width:100% with center alignment so the title
+    // pill sits exactly on screen-x-center regardless of how wide the
+    // Save / X buttons grow with localization. paddingHorizontal:60 keeps
+    // the pill from overlapping the side buttons even on narrow phones.
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 60,
+  },
   headerTitlePill: {
     borderRadius: 18,
     overflow: 'hidden',
+    maxWidth: '100%',
   },
   headerTitleInner: {
     height: 36,

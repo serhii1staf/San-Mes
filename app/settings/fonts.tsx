@@ -18,8 +18,8 @@ import { triggerHaptic } from '../../src/utils/haptics';
 import { useT } from '../../src/i18n/store';
 
 // Inline-preview font for each family option. Mirrors the regular weight
-// of the map ThemeProvider builds, so each pill is rendered in the
-// family the user is about to switch to.
+// ThemeProvider builds, so each row's label renders in the family the
+// user is about to switch to.
 const FAMILY_PREVIEW_FONT: Record<FontFamily, string> = {
   inter: 'Inter_400Regular',
   system: 'System',
@@ -42,9 +42,10 @@ export default function FontsScreen() {
   const bgSecondary = theme.colors.background.secondary;
   const borderLight = theme.colors.border.light;
   const accent = theme.colors.accent.primary;
+  const textPrimary = theme.colors.text.primary;
+  const textSecondary = theme.colors.text.secondary;
+  const textTertiary = theme.colors.text.tertiary;
 
-  // Header sized to mirror settings/index.tsx so the back+title pair lands
-  // in the exact same position across every settings sub-screen.
   const headerContentHeight = insets.top + 48;
   const headerGradientHeight = headerContentHeight + 28;
   const bgTransparent = bgPrimary + '00';
@@ -72,29 +73,11 @@ export default function FontsScreen() {
     setEmojiModal(false);
   };
 
-  // Reusable card shell — tinted bordered box, matches edit-profile cards.
-  const cardStyle = {
-    backgroundColor: bgElevated,
-    borderRadius: 18,
-    borderWidth: 0.5 as const,
-    borderColor: borderLight,
-    padding: 16,
-    marginBottom: 20,
-  };
-
   return (
     <View style={{ flex: 1, backgroundColor: bgPrimary }}>
-      {/* Gradient header — same fade pattern as settings/index.tsx so the
-          screen feels like a peer of the other settings sub-screens. */}
+      {/* Gradient header — same fade pattern as settings/index.tsx */}
       <View
-        style={{
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          right: 0,
-          zIndex: 100,
-          height: headerGradientHeight,
-        }}
+        style={[styles.headerWrapper, { height: headerGradientHeight }]}
         pointerEvents="box-none"
       >
         <LinearGradient
@@ -103,25 +86,19 @@ export default function FontsScreen() {
           style={StyleSheet.absoluteFill}
         />
         <View
-          style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'center',
-            paddingHorizontal: theme.spacing.lg,
-            paddingTop: insets.top + 8,
-            paddingBottom: 8,
-            position: 'relative',
-          }}
+          style={[styles.headerRow, { paddingTop: insets.top + 8 }]}
           pointerEvents="auto"
         >
           <Pressable
             onPress={() => router.back()}
             hitSlop={10}
-            style={{ position: 'absolute', left: theme.spacing.lg, top: insets.top + 8 }}
+            style={[styles.headerBack, { left: theme.spacing.lg, top: insets.top + 8 }]}
           >
-            <Feather name="chevron-left" size={24} color={theme.colors.text.primary} />
+            <Feather name="chevron-left" size={24} color={textPrimary} />
           </Pressable>
-          <Text variant="subheading" weight="bold">{t('settings.fonts')}</Text>
+          <Text variant="subheading" weight="bold">
+            {t('settings.fonts')}
+          </Text>
         </View>
       </View>
 
@@ -133,257 +110,148 @@ export default function FontsScreen() {
         }}
         showsVerticalScrollIndicator={false}
       >
-        {/* ── Font size card ───────────────────────────────────────────────
-            Live preview sits at the top of this card — the user sees the
-            heading/body/caption sample re-render as they tap a size or
-            switch families, since Text already reads fontScale/fontFamily
-            from the theme. */}
-        <Text
-          variant="caption"
-          weight="semibold"
-          color={theme.colors.text.secondary}
-          style={{ marginBottom: 8, paddingHorizontal: 4 }}
-        >
-          {t('fonts.size_label')}
+        {/* ── Размер шрифта ──────────────────────────────────────────── */}
+        <Text style={[styles.sectionLabel, { color: textSecondary }]}>
+          {t('fonts.size_label').toUpperCase()}
         </Text>
-        <View style={cardStyle}>
-          {/* Live preview surface */}
-          <View
-            style={{
-              backgroundColor: bgSecondary,
-              borderRadius: 14,
-              padding: 16,
-              marginBottom: 14,
-            }}
-          >
-            <Text variant="subheading" weight="bold" style={{ marginBottom: 6 }}>
-              {t('fonts.preview.heading')}
-            </Text>
-            <Text
-              variant="body"
-              color={theme.colors.text.secondary}
-              style={{ marginBottom: 8 }}
-            >
-              {t('fonts.preview.body')}
-            </Text>
-            <Text variant="caption" color={theme.colors.text.tertiary}>
-              {t('fonts.preview.subheading')}
-            </Text>
-          </View>
-
-          {/* Size pills */}
-          <View style={{ gap: 8 }}>
-            {FONT_SIZES.map((f) => {
-              const active = fontSize === f.key;
-              return (
-                <Pressable
-                  key={f.key}
-                  onPress={() => chooseSize(f.key)}
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    paddingVertical: 14,
-                    paddingHorizontal: 14,
-                    borderRadius: 12,
-                    backgroundColor: active ? accent + '20' : bgSecondary,
-                    borderWidth: active ? 1.5 : 0,
-                    borderColor: active ? accent : 'transparent',
-                  }}
+        <View style={[styles.card, { backgroundColor: bgElevated, borderColor: borderLight }]}>
+          {FONT_SIZES.map((f, i) => {
+            const active = fontSize === f.key;
+            const last = i === FONT_SIZES.length - 1;
+            return (
+              <Pressable
+                key={f.key}
+                onPress={() => chooseSize(f.key)}
+                style={[
+                  styles.row,
+                  !last && { borderBottomWidth: 0.5, borderBottomColor: borderLight },
+                ]}
+              >
+                <RNText
+                  allowFontScaling={false}
+                  style={[
+                    styles.rowLabel,
+                    { color: active ? accent : textPrimary, fontWeight: active ? '600' : '400' },
+                  ]}
                 >
-                  <Text
-                    variant="body"
-                    weight={active ? 'semibold' : 'medium'}
-                    color={active ? accent : theme.colors.text.primary}
-                  >
-                    {t(`font.size.${f.key}`, f.label)}
-                  </Text>
-                  <Text
-                    variant="caption"
-                    color={active ? accent : theme.colors.text.tertiary}
-                    weight={active ? 'semibold' : 'regular'}
-                  >
-                    {Math.round(f.scale * 100)}%
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-        </View>
-
-        {/* ── Font family card ─────────────────────────────────────────────
-            Each option's label is rendered IN the family it represents so
-            the user previews the silhouette of every typeface inline
-            without having to commit first. */}
-        <Text
-          variant="caption"
-          weight="semibold"
-          color={theme.colors.text.secondary}
-          style={{ marginBottom: 8, paddingHorizontal: 4 }}
-        >
-          {t('fonts.family_label')}
-        </Text>
-        <View style={cardStyle}>
-          <View style={{ gap: 8 }}>
-            {FONT_FAMILIES.map((f) => {
-              const active = fontFamily === f.key;
-              const previewFont = FAMILY_PREVIEW_FONT[f.key];
-              const label = f.key === 'system' ? t('font.family.system', f.label) : f.label;
-              return (
-                <Pressable
-                  key={f.key}
-                  onPress={() => chooseFamily(f.key)}
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    paddingVertical: 14,
-                    paddingHorizontal: 14,
-                    borderRadius: 12,
-                    backgroundColor: active ? accent + '20' : bgSecondary,
-                    borderWidth: active ? 1.5 : 0,
-                    borderColor: active ? accent : 'transparent',
-                    gap: 12,
-                  }}
-                >
-                  {/* "Aa" tile rendered in the option's own font */}
-                  <View
-                    style={{
-                      width: 40,
-                      height: 40,
-                      borderRadius: 10,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      backgroundColor: active ? accent + '25' : bgPrimary,
-                    }}
-                  >
-                    <RNText
-                      allowFontScaling={false}
-                      style={{
-                        fontFamily: previewFont,
-                        fontSize: 18,
-                        color: active ? accent : theme.colors.text.primary,
-                        fontWeight: '600',
-                      }}
-                    >
-                      {f.preview}
-                    </RNText>
-                  </View>
+                  {t(`font.size.${f.key}`, f.label)}
+                </RNText>
+                <View style={styles.rowRight}>
                   <RNText
                     allowFontScaling={false}
-                    style={{
-                      flex: 1,
-                      fontFamily: previewFont,
-                      fontSize: 16,
-                      color: active ? accent : theme.colors.text.primary,
-                      fontWeight: active ? '600' : '500',
-                    }}
+                    style={[styles.rowMeta, { color: active ? accent : textTertiary }]}
                   >
-                    {label}
+                    {Math.round(f.scale * 100)}%
                   </RNText>
-                  {active && <Feather name="check" size={18} color={accent} />}
-                </Pressable>
-              );
-            })}
-          </View>
+                  {active && <Feather name="check" size={16} color={accent} style={{ marginLeft: 8 }} />}
+                </View>
+              </Pressable>
+            );
+          })}
         </View>
 
-        {/* ── Decorative emoji card ────────────────────────────────────────
-            Single row that opens the SlideUpSheet — sheet itself is
-            untouched, just the trigger row is wrapped in the modern
-            card+pill treatment. */}
-        <Text
-          variant="caption"
-          weight="semibold"
-          color={theme.colors.text.secondary}
-          style={{ marginBottom: 8, paddingHorizontal: 4 }}
-        >
-          {t('fonts.emoji_label')}
+        {/* ── Шрифт ──────────────────────────────────────────────────── */}
+        <Text style={[styles.sectionLabel, { color: textSecondary }]}>
+          {t('fonts.family_label').toUpperCase()}
         </Text>
-        <View style={cardStyle}>
-          <Pressable
-            onPress={openEmojiSheet}
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              paddingVertical: 14,
-              paddingHorizontal: 14,
-              borderRadius: 12,
-              backgroundColor: bgSecondary,
-            }}
-          >
-            <Text variant="body" weight="medium">
-              {t('fonts.decorative_emoji')}
-            </Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-              {postEmoji ? (
-                <View
-                  style={{
-                    width: 36,
-                    height: 36,
-                    borderRadius: 10,
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    backgroundColor: bgPrimary,
-                  }}
+        <View style={[styles.card, { backgroundColor: bgElevated, borderColor: borderLight }]}>
+          {FONT_FAMILIES.map((f, i) => {
+            const active = fontFamily === f.key;
+            const last = i === FONT_FAMILIES.length - 1;
+            const previewFont = FAMILY_PREVIEW_FONT[f.key];
+            const label = f.key === 'system' ? t('font.family.system', f.label) : f.label;
+            return (
+              <Pressable
+                key={f.key}
+                onPress={() => chooseFamily(f.key)}
+                style={[
+                  styles.row,
+                  !last && { borderBottomWidth: 0.5, borderBottomColor: borderLight },
+                ]}
+              >
+                <RNText
+                  allowFontScaling={false}
+                  style={[
+                    styles.rowLabel,
+                    {
+                      color: active ? accent : textPrimary,
+                      fontFamily: previewFont,
+                      fontWeight: active ? '600' : '400',
+                    },
+                  ]}
                 >
-                  <RNText style={{ fontSize: 20 }} allowFontScaling={false}>
-                    {postEmoji}
-                  </RNText>
-                </View>
+                  {label}
+                </RNText>
+                {active && <Feather name="check" size={16} color={accent} />}
+              </Pressable>
+            );
+          })}
+        </View>
+
+        {/* ── Декоративный эмодзи ────────────────────────────────────── */}
+        <Text style={[styles.sectionLabel, { color: textSecondary }]}>
+          {t('fonts.emoji_label').toUpperCase()}
+        </Text>
+        <View style={[styles.card, { backgroundColor: bgElevated, borderColor: borderLight }]}>
+          <Pressable onPress={openEmojiSheet} style={styles.row}>
+            <RNText allowFontScaling={false} style={[styles.rowLabel, { color: textPrimary }]}>
+              {t('fonts.decorative_emoji')}
+            </RNText>
+            <View style={styles.rowRight}>
+              {postEmoji ? (
+                <RNText style={styles.emojiChip} allowFontScaling={false}>
+                  {postEmoji}
+                </RNText>
               ) : (
-                <Text variant="caption" color={theme.colors.text.tertiary}>
+                <RNText
+                  allowFontScaling={false}
+                  style={[styles.rowMeta, { color: textTertiary }]}
+                >
                   {t('fonts.off')}
-                </Text>
+                </RNText>
               )}
-              <Feather name="chevron-right" size={18} color={theme.colors.text.tertiary} />
+              <Feather name="chevron-right" size={16} color={textTertiary} style={{ marginLeft: 4 }} />
             </View>
           </Pressable>
         </View>
       </ScrollView>
 
-      {/* Emoji picker — same SlideUpSheet as before, behavior untouched. */}
+      {/* Emoji picker — SlideUpSheet (same style as the post 3-dots menu) */}
       <SlideUpSheet visible={emojiModal} onClose={() => setEmojiModal(false)}>
-        <Text variant="body" weight="bold" align="center" style={{ marginBottom: 12 }}>
+        <Text variant="body" weight="semibold" align="center" style={{ paddingVertical: 8 }}>
           {t('fonts.emoji_modal_title')}
         </Text>
         <ScrollView
           style={{ maxHeight: 320 }}
           showsVerticalScrollIndicator={false}
-          contentContainerStyle={{ paddingHorizontal: 14, paddingBottom: 4 }}
+          contentContainerStyle={{ paddingHorizontal: 14, paddingBottom: 8 }}
         >
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 10 }}>
+          <View style={styles.emojiGrid}>
             <Pressable
               onPress={() => pickEmoji('')}
-              style={{
-                width: 50,
-                height: 50,
-                borderRadius: 16,
-                alignItems: 'center',
-                justifyContent: 'center',
-                borderWidth: 1.5,
-                borderColor: postEmoji === '' ? accent : borderLight,
-                backgroundColor: postEmoji === '' ? accent + '20' : 'transparent',
-              }}
+              style={[
+                styles.emojiCell,
+                {
+                  borderColor: postEmoji === '' ? accent : borderLight,
+                  backgroundColor: postEmoji === '' ? accent + '20' : 'transparent',
+                },
+              ]}
             >
-              <Feather name="slash" size={18} color={theme.colors.text.tertiary} />
+              <Feather name="slash" size={16} color={textTertiary} />
             </Pressable>
             {PROFILE_EMOJI_CHOICES.map((e) => (
               <Pressable
                 key={e}
                 onPress={() => pickEmoji(e)}
-                style={{
-                  width: 50,
-                  height: 50,
-                  borderRadius: 16,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  borderWidth: 1.5,
-                  borderColor: postEmoji === e ? accent : borderLight,
-                  backgroundColor: postEmoji === e ? accent + '20' : 'transparent',
-                }}
+                style={[
+                  styles.emojiCell,
+                  {
+                    borderColor: postEmoji === e ? accent : borderLight,
+                    backgroundColor: postEmoji === e ? accent + '20' : 'transparent',
+                  },
+                ]}
               >
-                <RNText style={{ fontSize: 26 }} allowFontScaling={false}>
+                <RNText style={styles.emojiCellText} allowFontScaling={false}>
                   {e}
                 </RNText>
               </Pressable>
@@ -394,3 +262,60 @@ export default function FontsScreen() {
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  headerWrapper: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 100,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingBottom: 8,
+    position: 'relative',
+  },
+  headerBack: { position: 'absolute' },
+  sectionLabel: {
+    fontSize: 11,
+    fontWeight: '500',
+    letterSpacing: 0.6,
+    marginTop: 16,
+    marginBottom: 8,
+    paddingHorizontal: 4,
+  },
+  card: {
+    borderRadius: 14,
+    borderWidth: 0.5,
+    overflow: 'hidden',
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  rowLabel: { fontSize: 15 },
+  rowRight: { flexDirection: 'row', alignItems: 'center' },
+  rowMeta: { fontSize: 13, fontVariant: ['tabular-nums'] },
+  emojiChip: { fontSize: 20 },
+  emojiGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  emojiCell: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+  },
+  emojiCellText: { fontSize: 22 },
+});
