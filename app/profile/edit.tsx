@@ -360,27 +360,28 @@ export default function EditProfileScreen() {
           ]}
           {...panResponder.panHandlers}
         >
-          {/* Inner — uses theme bg directly, no overlay layer needed now that
-              the outer card already paints the elevated colour. */}
-          <View style={{ flex: 1 }}>
-              {/* Drag handle */}
-              <View style={{ alignItems: 'center', paddingTop: 12, paddingBottom: 4 }}>
-                <View
-                  style={{
-                    width: 36,
-                    height: 5,
-                    borderRadius: 3,
-                    backgroundColor: theme.colors.border.medium,
-                  }}
-                />
-              </View>
+          {/* Drag handle — sits at the top of the card. The wrapping
+              Animated.View is content-sized now (no flex:1, no fixed
+              height), so an inner `flex: 1` wrapper would collapse to
+              zero — that's why the user briefly saw only the backdrop.
+              Children render directly on the Animated.View. */}
+          <View style={{ alignItems: 'center', paddingTop: 12, paddingBottom: 4 }}>
+            <View
+              style={{
+                width: 36,
+                height: 5,
+                borderRadius: 3,
+                backgroundColor: theme.colors.border.medium,
+              }}
+            />
+          </View>
 
-              <ScrollView
-                style={{ maxHeight: sheetScrollMaxHeight }}
-                contentContainerStyle={{ paddingBottom: 32 }}
-                showsVerticalScrollIndicator={false}
-                scrollEnabled={true}
-              >
+          <ScrollView
+            style={{ maxHeight: sheetScrollMaxHeight }}
+            contentContainerStyle={{ paddingBottom: 32 }}
+            showsVerticalScrollIndicator={false}
+            scrollEnabled={true}
+          >
                 {/* Header */}
                 <View
                   style={{
@@ -516,7 +517,6 @@ export default function EditProfileScreen() {
                   </View>
                 </View>
               </ScrollView>
-          </View>
         </Animated.View>
       </View>
 
