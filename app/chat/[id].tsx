@@ -64,28 +64,45 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
   const translateX = useRef(new Animated.Value(0)).current;
   const fired = useRef(false);
 
-  // Swipe-to-reply: claim the gesture only for clearly horizontal left swipes,
-  // and lock the list's vertical scroll while swiping (Telegram-style)
-  const panResponder = useRef(PanResponder.create({
-    onMoveShouldSetPanResponder: (_, g) => g.dx < -14 && Math.abs(g.dx) > Math.abs(g.dy) * 2,
-    onPanResponderGrant: () => { onSwipeActive(true); },
-    onPanResponderMove: (_, g) => {
-      const dx = Math.max(Math.min(g.dx, 0), -80);
-      translateX.setValue(dx);
-      if (!fired.current && dx <= -REPLY_THRESHOLD) { fired.current = true; triggerHaptic('light'); }
-    },
-    onPanResponderRelease: (_, g) => {
-      if (g.dx <= -REPLY_THRESHOLD) onReply(message);
-      fired.current = false;
-      onSwipeActive(false);
-      Animated.spring(translateX, { toValue: 0, useNativeDriver: true, tension: 140, friction: 12 }).start();
-    },
-    onPanResponderTerminate: () => {
-      fired.current = false;
-      onSwipeActive(false);
-      Animated.spring(translateX, { toValue: 0, useNativeDriver: true, tension: 140, friction: 12 }).start();
-    },
-  })).current;
+  // Lazy-init the PanResponder past the navigation/scroll interaction.
+  //
+  // On first chat open, the FlatList synchronously mounts ~5 MessageBubbles.
+  // Eagerly calling `PanResponder.create({...})` per bubble allocated 5
+  // closures × 5 bubbles = 25 closures on the same RAF as the navigation
+  // transition — the dominant remaining cause of the 60 → 30 FPS drop the
+  // user reported when opening a chat. Wiring the swipe gesture in past
+  // `runAfterInteractions` means the bubbles render dirt cheap during the
+  // transition; swipe-to-reply becomes available a frame after the user
+  // lifts their finger from the conversation row, which is well before the
+  // chat is interactive anyway.
+  const [panHandlers, setPanHandlers] = useState<any>(null);
+  useEffect(() => {
+    const handle = InteractionManager.runAfterInteractions(() => {
+      const pr = PanResponder.create({
+        onMoveShouldSetPanResponder: (_, g) => g.dx < -14 && Math.abs(g.dx) > Math.abs(g.dy) * 2,
+        onPanResponderGrant: () => { onSwipeActive(true); },
+        onPanResponderMove: (_, g) => {
+          const dx = Math.max(Math.min(g.dx, 0), -80);
+          translateX.setValue(dx);
+          if (!fired.current && dx <= -REPLY_THRESHOLD) { fired.current = true; triggerHaptic('light'); }
+        },
+        onPanResponderRelease: (_, g) => {
+          if (g.dx <= -REPLY_THRESHOLD) onReply(message);
+          fired.current = false;
+          onSwipeActive(false);
+          Animated.spring(translateX, { toValue: 0, useNativeDriver: true, tension: 140, friction: 12 }).start();
+        },
+        onPanResponderTerminate: () => {
+          fired.current = false;
+          onSwipeActive(false);
+          Animated.spring(translateX, { toValue: 0, useNativeDriver: true, tension: 140, friction: 12 }).start();
+        },
+      });
+      setPanHandlers(pr.panHandlers);
+    });
+    return () => handle.cancel();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const replyIconOpacity = translateX.interpolate({ inputRange: [-REPLY_THRESHOLD, -24, 0], outputRange: [1, 0, 0], extrapolate: 'clamp' });
 
@@ -97,7 +114,7 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
         </View>
       </Animated.View>
 
-      <Animated.View style={{ transform: [{ translateX }], alignSelf: isOwn ? 'flex-end' : 'flex-start', maxWidth: '78%', marginLeft: isOwn ? 0 : 16, marginRight: isOwn ? 16 : 0, marginBottom: 4 }} {...panResponder.panHandlers}>
+      <Animated.View style={{ transform: [{ translateX }], alignSelf: isOwn ? 'flex-end' : 'flex-start', maxWidth: '78%', marginLeft: isOwn ? 0 : 16, marginRight: isOwn ? 16 : 0, marginBottom: 4 }} {...(panHandlers || {})}>
         <Pressable onLongPress={() => { triggerHaptic('medium'); onLongPress(message); }} delayLongPress={300}>
           <View style={{
             paddingHorizontal: 14,

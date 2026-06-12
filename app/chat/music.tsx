@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
-import { View, Pressable, TextInput, FlatList, ActivityIndicator, Text as RNText, Platform, LayoutAnimation, UIManager, Alert, Animated } from 'react-native';
+import { View, Pressable, TextInput, FlatList, ActivityIndicator, Text as RNText, Platform, LayoutAnimation, UIManager, Alert, Animated, InteractionManager } from 'react-native';
 import { KeyboardStickyView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
 import Reanimated, { useAnimatedStyle } from 'react-native-reanimated';
 import { Feather } from '@expo/vector-icons';
@@ -50,6 +50,18 @@ export default function MusicChatScreen() {
   const [playlistOpen, setPlaylistOpen] = useState(false);
   const listRef = useRef<FlatList>(null);
 
+  // Defer the iOS BlurView in the back button past the navigation transition.
+  // UIVisualEffectView is one of the more expensive native views to construct
+  // on first mount; on weak devices that mount lands on the same RAF as the
+  // navigation animation and shaves the slide-in framerate from 60 → ~40.
+  // Show a flat fallback for the first frame and swap to the BlurView one
+  // interaction tick later.
+  const [chromeReady, setChromeReady] = useState(false);
+  useEffect(() => {
+    const handle = InteractionManager.runAfterInteractions(() => setChromeReady(true));
+    return () => handle.cancel();
+  }, []);
+
   const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
   const INPUT_BAR = 60;
   const headerSpacerStyle = useAnimatedStyle(() => ({ height: Math.abs(keyboardHeight.value) + INPUT_BAR + insets.bottom }));
@@ -58,24 +70,45 @@ export default function MusicChatScreen() {
     return { paddingBottom: open ? 8 : (insets.bottom > 0 ? insets.bottom : 16) };
   });
 
-  useEffect(() => { kvSetJSON(HISTORY_KEY, messages.slice(-50)); }, [messages]);
+  // Persist the trimmed message history to MMKV. The JSON.stringify of up to
+  // 50 messages (each potentially carrying multiple tracks worth of metadata)
+  // can spike to 30–60 ms on weak devices; defer past the current interaction
+  // so it never lands on the navigation frame.
+  useEffect(() => {
+    const handle = InteractionManager.runAfterInteractions(() => {
+      kvSetJSON(HISTORY_KEY, messages.slice(-50));
+    });
+    return () => handle.cancel();
+  }, [messages]);
 
   // Seed the global "discovered" queue with everything already in the chat
   // history so the full-screen player has the user's library available even
   // before they make a fresh search this session.
+  // Deferred via InteractionManager so the loop over potentially 50 messages
+  // (each with up to 10 tracks) doesn't pile up on the navigation transition
+  // frame.
   useEffect(() => {
-    const all: Track[] = [];
-    for (const m of messages) {
-      const list = m.tracks || (m.track ? [m.track] : []);
-      for (const t of list) all.push(t);
-    }
-    if (all.length > 0) useMusicStore.getState().addDiscovered(all);
+    const handle = InteractionManager.runAfterInteractions(() => {
+      const all: Track[] = [];
+      for (const m of messages) {
+        const list = m.tracks || (m.track ? [m.track] : []);
+        for (const t of list) all.push(t);
+      }
+      if (all.length > 0) useMusicStore.getState().addDiscovered(all);
+    });
+    return () => handle.cancel();
     // Run once on mount; later searches add their results inline via runSearch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    try { require('../../src/store/specialChatsStore').useSpecialChatsStore.getState().markOpened('music'); } catch {}
+    // Defer the special-chats `markOpened` write past the navigation
+    // transition — it touches MMKV, which would otherwise pile up onto the
+    // navigation frame.
+    const handle = InteractionManager.runAfterInteractions(() => {
+      try { require('../../src/store/specialChatsStore').useSpecialChatsStore.getState().markOpened('music'); } catch {}
+    });
+    return () => handle.cancel();
   }, []);
 
   // Tell the global music indicator to hide while we're on this screen — the
@@ -259,9 +292,15 @@ export default function MusicChatScreen() {
         <LinearGradient colors={[theme.colors.background.primary, theme.colors.background.primary, theme.colors.background.primary + '00']} locations={[0, 0.7, 1]} style={{ paddingTop: insets.top + 8, paddingBottom: 20, paddingHorizontal: 16 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
             <Pressable onPress={() => router.back()} style={{ borderRadius: 17, overflow: 'hidden' }}>
-              <BlurView intensity={80} tint="dark" style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center' }}>
-                <Feather name="chevron-left" size={18} color="#FFFFFF" />
-              </BlurView>
+              {chromeReady ? (
+                <BlurView intensity={80} tint="dark" style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center' }}>
+                  <Feather name="chevron-left" size={18} color="#FFFFFF" />
+                </BlurView>
+              ) : (
+                <View style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.4)' }}>
+                  <Feather name="chevron-left" size={18} color="#FFFFFF" />
+                </View>
+              )}
             </Pressable>
             <View style={{ alignItems: 'center' }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
@@ -286,9 +325,14 @@ export default function MusicChatScreen() {
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
         removeClippedSubviews
-        initialNumToRender={12}
-        maxToRenderPerBatch={8}
-        windowSize={9}
+        // Tightened from 12/8/9 — 12 TrackResultCards on first paint were
+        // hammering the JS thread on the same RAF as the navigation transition,
+        // which the perf monitor flagged as `SLOW long task @ (tabs)/messages
+        // 292ms` when opening this screen. 6/4/5 leaves the visible-window
+        // mounted on first frame and lets later batches stream in.
+        initialNumToRender={6}
+        maxToRenderPerBatch={4}
+        windowSize={5}
         ListHeaderComponent={<Reanimated.View style={headerSpacerStyle} />}
         ListFooterComponent={<View style={{ height: insets.top + 72 }} />}
         ListEmptyComponent={

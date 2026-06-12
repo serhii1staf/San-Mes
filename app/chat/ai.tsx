@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { View, Pressable, TextInput, FlatList, ActivityIndicator, Dimensions, Text as RNText, Platform, LayoutAnimation, UIManager } from 'react-native';
+import { View, Pressable, TextInput, FlatList, ActivityIndicator, Dimensions, Text as RNText, Platform, LayoutAnimation, UIManager, InteractionManager } from 'react-native';
 import { KeyboardStickyView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
 import Reanimated, { useAnimatedStyle } from 'react-native-reanimated';
 import { Feather } from '@expo/vector-icons';
@@ -125,10 +125,28 @@ export default function AIChatScreen() {
   const [remaining, setRemaining] = useState(50);
   const flatListRef = useRef<FlatList>(null);
 
+  // Defer the iOS BlurView in the back button (and the "thinking" indicator)
+  // past the navigation transition. UIVisualEffectView is one of the more
+  // expensive native views to construct on first mount; on weak devices that
+  // mount lands on the same RAF as the navigation animation and shaved the
+  // slide-in framerate from 60 → ~40. Show a flat fallback for the first
+  // frame and swap to the BlurView one interaction tick later.
+  const [chromeReady, setChromeReady] = useState(false);
   useEffect(() => {
-    loadChatHistory().then(saved => { if (saved.length > 0) setMessages(saved); });
-    getRemainingRequests().then(setRemaining);
-    try { require('../../src/store/specialChatsStore').useSpecialChatsStore.getState().markOpened('ai'); } catch {}
+    const handle = InteractionManager.runAfterInteractions(() => setChromeReady(true));
+    return () => handle.cancel();
+  }, []);
+
+  useEffect(() => {
+    // Defer all the cold-start side-effects (chat history hydrate, remaining
+    // requests fetch, special-chats `markOpened`) past the navigation
+    // transition so they never compete with the slide-in animation.
+    const handle = InteractionManager.runAfterInteractions(() => {
+      loadChatHistory().then(saved => { if (saved.length > 0) setMessages(saved); });
+      getRemainingRequests().then(setRemaining);
+      try { require('../../src/store/specialChatsStore').useSpecialChatsStore.getState().markOpened('ai'); } catch {}
+    });
+    return () => handle.cancel();
   }, []);
 
   const handleSend = useCallback(async () => {
@@ -183,9 +201,15 @@ export default function AIChatScreen() {
         <LinearGradient colors={[theme.colors.background.primary, theme.colors.background.primary, theme.colors.background.primary + '00']} locations={[0, 0.7, 1]} style={{ paddingTop: insets.top + 8, paddingBottom: 20, paddingHorizontal: 16 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
             <Pressable onPress={() => router.back()} style={{ borderRadius: 17, overflow: 'hidden' }}>
-              <BlurView intensity={80} tint="dark" style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center' }}>
-                <Feather name="chevron-left" size={18} color="#FFFFFF" />
-              </BlurView>
+              {chromeReady ? (
+                <BlurView intensity={80} tint="dark" style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center' }}>
+                  <Feather name="chevron-left" size={18} color="#FFFFFF" />
+                </BlurView>
+              ) : (
+                <View style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.4)' }}>
+                  <Feather name="chevron-left" size={18} color="#FFFFFF" />
+                </View>
+              )}
             </Pressable>
             <View style={{ alignItems: 'center' }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
@@ -212,9 +236,11 @@ export default function AIChatScreen() {
         keyboardDismissMode="interactive"
         automaticallyAdjustsScrollIndicatorInsets={false}
         removeClippedSubviews={false}
-        initialNumToRender={12}
-        maxToRenderPerBatch={8}
-        windowSize={9}
+        // Tightened from 12/8/9 — same fix as chat/music. 12 MessageBubbles
+        // on first paint piled up on the navigation transition frame.
+        initialNumToRender={6}
+        maxToRenderPerBatch={4}
+        windowSize={5}
         ListHeaderComponent={
           <>
             {isLoading ? (
