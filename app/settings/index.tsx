@@ -1,13 +1,11 @@
-import React, { useState } from 'react';
-import { View, ScrollView, Pressable, Switch, ViewStyle, Alert, StyleSheet, Linking } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, ScrollView, Pressable, Switch, ViewStyle, Alert, StyleSheet, Linking, InteractionManager } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import Constants from 'expo-constants';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
-import { AppIconModal } from '../../src/components/ui/AppIconModal';
 import { useAuthStore } from '../../src/store';
 import { useSettingsStore } from '../../src/store/settingsStore';
 import { useT } from '../../src/i18n/store';
@@ -109,7 +107,36 @@ export default function SettingsScreen() {
   const setInAppBrowser = useSettingsStore((s) => s.setInAppBrowser);
   const setPerfMonitorEnabled = useSettingsStore((s) => s.setPerfMonitorEnabled);
   const [iconModalVisible, setIconModalVisible] = useState(false);
-  const appVersion = Constants.expoConfig?.version || '1.0.0';
+  // App version + AppIconModal are deferred past the navigation transition.
+  // - `expo-alternate-app-icons` (imported inside AppIconModal) is a native
+  //   module touched ONLY on this screen, so a static import resolves on the
+  //   first push to /settings — landing on the same JS frame as the open
+  //   animation and producing `SLOW long task @ settings` (~150 ms).
+  // - `expo-constants` is also settings-only here and reading
+  //   `Constants.expoConfig?.version` first-time can warm a sizeable JSON.
+  // Lazy-require both after `runAfterInteractions` and gate the modal's
+  // mount on the resolved component. The "App icon" row stays tappable —
+  // the modal becomes visible once the component is loaded (effectively
+  // one frame later on weak devices, instant on warm devices).
+  const [appVersion, setAppVersion] = useState('1.0.0');
+  const [AppIconModalLazy, setAppIconModalLazy] = useState<null | React.ComponentType<{ visible: boolean; onClose: () => void }>>(null);
+  useEffect(() => {
+    const handle = InteractionManager.runAfterInteractions(() => {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const ExpoConstants = require('expo-constants').default;
+        setAppVersion(ExpoConstants?.expoConfig?.version || '1.0.0');
+      } catch {}
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const mod = require('../../src/components/ui/AppIconModal');
+        // Pass the component via the function-form setter so React doesn't
+        // try to call it as a state updater.
+        setAppIconModalLazy(() => mod.AppIconModal);
+      } catch {}
+    });
+    return () => handle.cancel();
+  }, []);
 
   // Hidden admin access: tap the "Безопасность" section title 6 times quickly.
   const adminTapCount = React.useRef(0);
@@ -421,7 +448,13 @@ export default function SettingsScreen() {
         </Text>
       </ScrollView>
 
-      <AppIconModal visible={iconModalVisible} onClose={() => setIconModalVisible(false)} />
+      {/* AppIconModal is rendered lazily — it pulls in expo-alternate-app-icons
+          (a native module) at import time. Mounting it before the navigation
+          transition completes was the source of the long task on this screen.
+          The component flips in one frame after `runAfterInteractions`. */}
+      {AppIconModalLazy ? (
+        <AppIconModalLazy visible={iconModalVisible} onClose={() => setIconModalVisible(false)} />
+      ) : null}
     </View>
   );
 }

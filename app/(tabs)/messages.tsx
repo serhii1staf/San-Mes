@@ -212,34 +212,51 @@ export default function MessagesScreen() {
   // exclusively behind the FAB. The list shows only real conversations.
   const specialChats = null;
 
-  // Instant cache-first hydrate of the conversation list from MMKV (sync) so the
-  // chat list paints immediately on cold start, even offline, before any sync.
+  // Cache-first hydrate of the conversation list from MMKV. The synchronous
+  // JSON.parse of a large conversations blob on mount was the source of
+  // `SLOW long task @ (tabs)/messages` (~150 ms) — one big task held the JS
+  // thread across the navigation transition. Defer past the transition with
+  // InteractionManager so first paint carries only the already-in-store
+  // snapshot (or the empty state) and the parse runs one frame later, exactly
+  // like app/(tabs)/profile.tsx and app/chat/[id].tsx.
   useEffect(() => {
     const CONV_KV_KEY = 'conversations_list';
-    const hydrate = () => {
-      if (useEntityStore.getState().conversations.length > 0) return;
-      const cached = kvGetJSONSync<any[]>(CONV_KV_KEY, []);
-      if (cached.length > 0) {
-        useEntityStore.getState().setConversations(cached);
-      }
-    };
-    kvWarm([CONV_KV_KEY]).then(hydrate).catch(hydrate);
+    const handle = InteractionManager.runAfterInteractions(() => {
+      const hydrate = () => {
+        if (useEntityStore.getState().conversations.length > 0) return;
+        const cached = kvGetJSONSync<any[]>(CONV_KV_KEY, []);
+        if (cached.length > 0) {
+          useEntityStore.getState().setConversations(cached);
+        }
+      };
+      kvWarm([CONV_KV_KEY]).then(hydrate).catch(hydrate);
+    });
+    return () => handle.cancel();
   }, []);
 
-  // Persist the conversation list to MMKV whenever it changes (survives restart + offline).
+  // Persist the conversation list to MMKV whenever it changes (survives
+  // restart + offline). The JSON.stringify is cheap for typical sizes, but we
+  // still queue it after interactions so it never piles up on the same RAF as
+  // a navigation transition or a sync-driven update burst.
   useEffect(() => {
-    if (entityConversations.length > 0) {
+    if (entityConversations.length === 0) return;
+    const handle = InteractionManager.runAfterInteractions(() => {
       kvSetJSON('conversations_list', entityConversations);
-    }
+    });
+    return () => handle.cancel();
   }, [entityConversations]);
 
-  // Trigger syncConversations in background on mount
+  // Trigger syncConversations in background on mount. Deferred past the
+  // navigation transition so the AsyncStorage throttle read + network request
+  // never compete with the open animation on weak devices.
   useEffect(() => {
-    if (user?.id) {
+    if (!user?.id) return;
+    const handle = InteractionManager.runAfterInteractions(() => {
       syncConversations(user.id);
-      // Sync profiles too so verified badges / widgets resolve for chat participants
+      // Sync profiles too so verified badges / widgets resolve for chat participants.
       syncProfiles();
-    }
+    });
+    return () => handle.cancel();
   }, [user?.id]);
 
   // Use entityStore conversations as cache layer; fall back to chatStore if empty
