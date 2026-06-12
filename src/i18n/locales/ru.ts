@@ -7,6 +7,7 @@ const ru: Record<string, string> = {
   // ─── Common ────────────────────────────────────────────────────────────
   'common.save': 'Сохранить',
   'common.cancel': 'Отмена',
+  'common.apply': 'Применить',
   'common.delete': 'Удалить',
   'common.edit': 'Редактировать',
   'common.share': 'Поделиться',
@@ -441,12 +442,17 @@ const ru: Record<string, string> = {
   'fonts.preview.heading': 'Заголовок',
   'fonts.preview.subheading': 'Подзаголовок',
   'fonts.preview.message': 'Сообщение',
+  'fonts.preview.today': 'Сегодня',
   'fonts.size_label': 'Размер текста',
   'fonts.family_label': 'Шрифт',
   'fonts.emoji_label': 'Эмодзи в карточках профиля',
   'fonts.decorative_emoji': 'Декоративный эмодзи',
   'fonts.off': 'Выкл',
   'fonts.emoji_modal_title': 'Эмодзи в карточках',
+  'fonts.size_title': 'Размер текста',
+  'fonts.font_title': 'Шрифт',
+  'fonts.system_size': 'Системный размер текста',
+  'fonts.size_label_short': 'Размер',
 
   // ─── Settings → Admin ──────────────────────────────────────────────────
   'admin.title': 'Панель управления',

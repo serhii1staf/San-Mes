@@ -283,6 +283,22 @@ function RootLayout() {
               <Stack.Screen name="settings/privacy" />
               <Stack.Screen name="settings/admin" />
               <Stack.Screen name="settings/fonts" />
+              <Stack.Screen
+                name="settings/fonts-size"
+                options={{
+                  presentation: 'modal',
+                  animation: 'slide_from_bottom',
+                  headerShown: false,
+                }}
+              />
+              <Stack.Screen
+                name="settings/fonts-family"
+                options={{
+                  presentation: 'modal',
+                  animation: 'slide_from_bottom',
+                  headerShown: false,
+                }}
+              />
               <Stack.Screen name="settings/mini-apps" />
               <Stack.Screen name="settings/chat-settings" />
               <Stack.Screen name="settings/browser" />

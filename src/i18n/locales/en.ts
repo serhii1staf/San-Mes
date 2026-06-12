@@ -4,6 +4,7 @@ const en: Record<string, string> = {
   // ─── Common ────────────────────────────────────────────────────────────
   'common.save': 'Save',
   'common.cancel': 'Cancel',
+  'common.apply': 'Apply',
   'common.delete': 'Delete',
   'common.edit': 'Edit',
   'common.share': 'Share',
@@ -438,12 +439,17 @@ const en: Record<string, string> = {
   'fonts.preview.heading': 'Heading',
   'fonts.preview.subheading': 'Subheading',
   'fonts.preview.message': 'Message',
+  'fonts.preview.today': 'Today',
   'fonts.size_label': 'Text size',
   'fonts.family_label': 'Font',
   'fonts.emoji_label': 'Emoji on profile cards',
   'fonts.decorative_emoji': 'Decorative emoji',
   'fonts.off': 'Off',
   'fonts.emoji_modal_title': 'Card emoji',
+  'fonts.size_title': 'Text size',
+  'fonts.font_title': 'Font',
+  'fonts.system_size': 'System text size',
+  'fonts.size_label_short': 'Size',
 
   // ─── Settings → Admin ──────────────────────────────────────────────────
   'admin.title': 'Control panel',
