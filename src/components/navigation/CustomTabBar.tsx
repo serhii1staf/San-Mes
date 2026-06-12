@@ -13,8 +13,11 @@ import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withSpring,
+  withTiming,
   runOnJS,
   SharedValue,
+  interpolate,
+  Extrapolation,
 } from 'react-native-reanimated';
 import { useTheme } from '../../theme';
 import { triggerHaptic } from '../../utils/haptics';
@@ -23,14 +26,16 @@ import { triggerHaptic } from '../../utils/haptics';
 
 const TAB_COUNT = 5;
 const CREATE_INDEX = 2;
-const TAB_BUTTON_HEIGHT = 44;
-const TAB_ROW_PADDING_H = 8;
-const TAB_ROW_PADDING_V = 8;
+const TAB_BUTTON_HEIGHT = 48;
+const TAB_ROW_PADDING_H = 6;
+const TAB_ROW_PADDING_V = 6;
 
-// Breathing room INSIDE each button slot — the pill never touches any edge of the navigation,
-// but it's now noticeably bigger than before.
-const PILL_INSET_X = 4;
-const PILL_INSET_Y = 2;
+// Almost-zero inset so the lens fills most of its slot — bigger press surface,
+// more visual presence, and more area to refract/magnify whatever icon sits
+// underneath. Values tuned with the new 48 px row height so the lens still
+// has a hairline of breathing room at the slot edges.
+const PILL_INSET_X = 2;
+const PILL_INSET_Y = 1;
 
 const PILL_HEIGHT = TAB_BUTTON_HEIGHT - 2 * PILL_INSET_Y;
 const PILL_TOP = TAB_ROW_PADDING_V + PILL_INSET_Y;
@@ -45,10 +50,19 @@ const STRETCH_X_FACTOR = 0.18;
 const STRETCH_X_MAX = 24;
 const TRANSLATE_Y_FACTOR = 0.35;
 const TRANSLATE_Y_MAX = 6;
-const PRESS_SCALE = 0.94;
+// Press squish — slightly more pronounced than before so the lens visibly
+// "presses into" the bar on touch (90 % vs the old 94 %). Combined with the
+// outer ripple ring this is the larger press effect the user asked for.
+const PRESS_SCALE = 0.9;
+// Magnification range — when a tab icon sits under the lens its scale ramps
+// up from 1.0 (lens far away) to 1.18 (lens centered on it). 18 % is enough
+// to clearly read as "magnified through glass" without tipping into cartoon
+// territory.
+const ICON_MAGNIFY_MAX = 0.18;
 
 const PILL_SPRING = { damping: 18, stiffness: 280, mass: 0.8 };
 const PRESS_SPRING = { damping: 20, stiffness: 350, mass: 0.6 };
+const RIPPLE_TIMING = { duration: 420 };
 
 const ICON_NAMES: Record<string, keyof typeof Feather.glyphMap> = {
   index: 'home',
@@ -69,20 +83,20 @@ function snapToStandardSlot(fingerSlot: number): number {
   return fingerSlot;
 }
 
-// ─── Tab Button ──────────────────────────────────────────────────────────────
+// ─── Tab Button (with UI-thread icon magnification) ──────────────────────────
+//
+// Each Standard_Tab icon scales up when the lens is over it, simulating the
+// "magnifying lens" you'd see if a curved piece of glass passed over flat
+// content. Distance-driven, so it ramps smoothly during a drag rather than
+// snapping at slot boundaries.
+//
+// Implementation lives entirely on the UI thread — `useAnimatedStyle` reads
+// `pillX` (which the pan gesture writes synchronously) and recomputes a tiny
+// scale value, and the icon view is wrapped in a `Reanimated.View`. There is
+// NO per-frame JS-thread work and no parent re-render.
 
-const TabBarButton = React.memo(function TabBarButton({
-  isFocused,
-  onPress,
-  onLongPress,
-  onPressIn,
-  onPressOut,
-  routeName,
-  label,
-  activeColor,
-  inactiveColor,
-  accentSecondary,
-}: {
+interface TabBarButtonProps {
+  index: number;
   isFocused: boolean;
   onPress: () => void;
   onLongPress: () => void;
@@ -93,9 +107,55 @@ const TabBarButton = React.memo(function TabBarButton({
   activeColor: string;
   inactiveColor: string;
   accentSecondary: string;
-}) {
+  pillX: SharedValue<number>;
+  pillStretchW: SharedValue<number>;
+  pillBaseWidth: number;
+  slotWidth: number;
+}
+
+const TabBarButton = React.memo(function TabBarButton({
+  index,
+  isFocused,
+  onPress,
+  onLongPress,
+  onPressIn,
+  onPressOut,
+  routeName,
+  label,
+  activeColor,
+  inactiveColor,
+  accentSecondary,
+  pillX,
+  pillStretchW,
+  pillBaseWidth,
+  slotWidth,
+}: TabBarButtonProps) {
   const iconName = ICON_NAMES[routeName] || 'circle';
   const isCreate = routeName === 'create';
+
+  // Center x of THIS button's icon in the same coordinate space as `pillX`
+  // (which is "x of the pill's left edge inside the bar container").
+  const buttonCenterX = TAB_ROW_PADDING_H + (index + 0.5) * slotWidth;
+
+  const iconAnimStyle = useAnimatedStyle(() => {
+    'worklet';
+    if (isCreate) return { transform: [{ scale: 1 }] };
+    // Effective lens center — accounts for stretch (the lens grows wider
+    // during a drag, so its center shifts).
+    const lensWidth = pillBaseWidth + pillStretchW.value;
+    const lensCenterX = pillX.value + lensWidth / 2;
+    const distance = Math.abs(buttonCenterX - lensCenterX);
+    // Magnification falls off with distance. Beyond ~0.55 of a slot width
+    // there's no magnification — keeps the effect localized to the lens.
+    const falloff = slotWidth > 0 ? slotWidth * 0.55 : 1;
+    const magnify = interpolate(
+      distance,
+      [0, falloff],
+      [ICON_MAGNIFY_MAX, 0],
+      Extrapolation.CLAMP,
+    );
+    return { transform: [{ scale: 1 + magnify }] };
+  }, [buttonCenterX, pillBaseWidth, slotWidth, isCreate]);
 
   if (isCreate) {
     return (
@@ -127,14 +187,26 @@ const TabBarButton = React.memo(function TabBarButton({
       accessibilityLabel={label}
       accessibilityState={{ selected: isFocused }}
     >
-      <Feather name={iconName} size={22} color={color} />
+      <Animated.View style={iconAnimStyle}>
+        <Feather name={iconName} size={22} color={color} />
+      </Animated.View>
     </Pressable>
   );
 });
 
-// ─── Sliding Pill ────────────────────────────────────────────────────────────
+// ─── Sliding Lens (BlurView pill) ────────────────────────────────────────────
+//
+// On iOS the lens is itself a `BlurView` with a heavier system material than
+// the bar. The contrast in blur strength is what creates the "magnifying"
+// optical illusion: the lens area refracts content behind it more than the
+// rest of the bar, exactly like a piece of curved glass over flat glass.
+//
+// Top reflection + bottom dim layer give the lens its rounded-glass volume.
+//
+// On Android a flat translucent pill is rendered instead — Android's
+// experimental BlurView is too expensive to run on a live-animated view.
 
-function SlidingPill({
+function SlidingLens({
   pillX,
   pillY,
   pillScale,
@@ -162,16 +234,133 @@ function SlidingPill({
   }));
 
   return (
+    <Animated.View style={[styles.pill, animStyle]} pointerEvents="none">
+      {Platform.OS === 'ios' ? (
+        // Heavier material than the bar's `systemChromeMaterial*` — iOS
+        // composites this on top of the bar's blur, so the lens area ends
+        // up with a thicker, more refractive look than the rest of the bar.
+        <BlurView
+          intensity={80}
+          tint={isDark ? 'systemThickMaterialDark' : 'systemThickMaterialLight'}
+          style={[StyleSheet.absoluteFill, { borderRadius: PILL_HEIGHT / 2 }]}
+        />
+      ) : (
+        // Android fallback — a brighter translucent fill so the lens still
+        // reads as a distinct surface above the bar's tint.
+        <View
+          style={[
+            StyleSheet.absoluteFill,
+            {
+              borderRadius: PILL_HEIGHT / 2,
+              backgroundColor: isDark
+                ? 'rgba(255,255,255,0.16)'
+                : 'rgba(255,255,255,0.85)',
+            },
+          ]}
+        />
+      )}
+
+      {/* Top reflection — the bright crescent that sells the curved-glass
+          look. A linear gradient is enough; an arc would require SVG and
+          we deliberately avoid that for perf. */}
+      <LinearGradient
+        colors={
+          isDark
+            ? ['rgba(255,255,255,0.25)', 'rgba(255,255,255,0)']
+            : ['rgba(255,255,255,0.7)', 'rgba(255,255,255,0)']
+        }
+        style={[
+          StyleSheet.absoluteFill,
+          { borderRadius: PILL_HEIGHT / 2, height: '55%' },
+        ]}
+        pointerEvents="none"
+      />
+
+      {/* Bottom dim — the thin shadow under the lens edge. Together with
+          the top highlight this is what reads as "rounded" rather than "flat". */}
+      <View
+        style={{
+          position: 'absolute',
+          left: 0,
+          right: 0,
+          bottom: 0,
+          height: '40%',
+          borderBottomLeftRadius: PILL_HEIGHT / 2,
+          borderBottomRightRadius: PILL_HEIGHT / 2,
+          backgroundColor: isDark ? 'rgba(0,0,0,0.12)' : 'rgba(0,0,0,0.04)',
+        }}
+        pointerEvents="none"
+      />
+
+      {/* Hairline border — Apple's glass surfaces always have a faint
+          contour. Drawn on top of all layers so it isn't washed out by
+          the blur or the gradients. */}
+      <View
+        style={{
+          ...StyleSheet.absoluteFillObject,
+          borderRadius: PILL_HEIGHT / 2,
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: isDark ? 'rgba(255,255,255,0.22)' : 'rgba(255,255,255,0.9)',
+        }}
+        pointerEvents="none"
+      />
+    </Animated.View>
+  );
+}
+
+// ─── Press Ripple ────────────────────────────────────────────────────────────
+//
+// When a tab is pressed (or released after a drag) a soft ring expands out
+// from the lens and fades. It rides on top of the lens, follows the lens's
+// position, and is driven by a single shared progress value 0 → 1 → 0.
+//
+// Per-frame work happens entirely on the UI thread; no JS callbacks, no
+// per-frame setState.
+
+function PressRipple({
+  pillX,
+  pillY,
+  rippleProgress,
+  baseWidth,
+  isDark,
+}: {
+  pillX: SharedValue<number>;
+  pillY: SharedValue<number>;
+  rippleProgress: SharedValue<number>;
+  baseWidth: number;
+  isDark: boolean;
+}) {
+  const animStyle = useAnimatedStyle(() => {
+    const p = rippleProgress.value;
+    const scale = 1 + p * 0.35;
+    const opacity = p * (1 - p) * 4 * 0.5; // bell curve, peak ~0.5 at p=0.5
+    return {
+      transform: [
+        { translateX: pillX.value },
+        { translateY: pillY.value },
+        { scale },
+      ],
+      opacity,
+      width: baseWidth,
+    };
+  });
+
+  return (
     <Animated.View
+      pointerEvents="none"
       style={[
         styles.pill,
         animStyle,
         {
-          backgroundColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.7)',
-          borderColor: isDark ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.9)',
+          backgroundColor: 'transparent',
+          borderWidth: 1.5,
+          borderColor: isDark ? 'rgba(255,255,255,0.55)' : 'rgba(255,255,255,0.85)',
+          shadowColor: isDark ? '#FFFFFF' : '#FFFFFF',
+          shadowOffset: { width: 0, height: 0 },
+          shadowOpacity: 0.4,
+          shadowRadius: 12,
         },
       ]}
-      pointerEvents="none"
     />
   );
 }
@@ -182,8 +371,14 @@ function GlassBackdrop({ isDark }: { isDark: boolean }) {
   if (Platform.OS === 'ios') {
     return (
       <BlurView
-        intensity={isDark ? 40 : 60}
-        tint={isDark ? 'dark' : 'light'}
+        // System material tints render the real iOS Liquid-Glass look —
+        // they're processed by UIVisualEffectView and include the proper
+        // saturation boost + slight vibrancy that flat dark/light tints lack.
+        // `systemChromeMaterial` is the stock Apple chrome (tab bars,
+        // navigation bars) — the closest thing to "real" floating glass
+        // available without iOS 26 private APIs.
+        intensity={isDark ? 70 : 80}
+        tint={isDark ? 'systemChromeMaterialDark' : 'systemChromeMaterialLight'}
         style={StyleSheet.absoluteFill}
       />
     );
@@ -205,8 +400,8 @@ function TopReflection({ isDark }: { isDark: boolean }) {
     <LinearGradient
       colors={
         isDark
-          ? ['rgba(255,255,255,0.12)', 'rgba(255,255,255,0.0)']
-          : ['rgba(255,255,255,0.6)', 'rgba(255,255,255,0.0)']
+          ? ['rgba(255,255,255,0.14)', 'rgba(255,255,255,0.0)']
+          : ['rgba(255,255,255,0.55)', 'rgba(255,255,255,0.0)']
       }
       style={styles.reflection}
       pointerEvents="none"
@@ -231,6 +426,8 @@ export const CustomTabBar = React.memo(function CustomTabBar({
   const pillY = useSharedValue(0);
   const pillScale = useSharedValue(1);
   const pillStretchW = useSharedValue(0);
+  // Press ripple progress 0 → 1, driven by withTiming on press release.
+  const rippleProgress = useSharedValue(0);
 
   // SharedValue mirrors of JS state — safe to read inside worklets without TDZ surprises
   const stateIndexSV = useSharedValue(state.index);
@@ -289,7 +486,7 @@ export const CustomTabBar = React.memo(function CustomTabBar({
     [slotWidth]
   );
 
-  // Squish on press (only on the active pill)
+  // Squish on press + fire the expanding ripple ring once the press lands.
   const onTabPressIn = useCallback(
     (idx: number) => {
       if (idx === state.index) {
@@ -300,7 +497,13 @@ export const CustomTabBar = React.memo(function CustomTabBar({
   );
   const onTabPressOut = useCallback(() => {
     pillScale.value = withSpring(1, PRESS_SPRING);
-  }, [pillScale]);
+    // Ring expands once per press, regardless of whether the press changed
+    // the active tab — gives every tap the same satisfying liquid feel.
+    rippleProgress.value = 0;
+    rippleProgress.value = withTiming(1, RIPPLE_TIMING, (finished) => {
+      if (finished) rippleProgress.value = 0;
+    });
+  }, [pillScale, rippleProgress]);
 
   const handleTabPress = useCallback(
     (route: { key: string; name: string }, isFocused: boolean) => {
@@ -384,6 +587,13 @@ export const CustomTabBar = React.memo(function CustomTabBar({
         pillStretchW.value = withSpring(0, PILL_SPRING);
         pillY.value = withSpring(0, PILL_SPRING);
 
+        // Fire the ripple on every gesture release too, so dragging feels
+        // tactile in the same way taps do.
+        rippleProgress.value = 0;
+        rippleProgress.value = withTiming(1, RIPPLE_TIMING, (finished) => {
+          if (finished) rippleProgress.value = 0;
+        });
+
         if (sw <= 0) return;
 
         const target = releaseSlot.value;
@@ -400,6 +610,7 @@ export const CustomTabBar = React.memo(function CustomTabBar({
     pillY,
     pillScale,
     pillStretchW,
+    rippleProgress,
     dragAnchorSlot,
     releaseSlot,
     slotWidthSV,
@@ -432,31 +643,30 @@ export const CustomTabBar = React.memo(function CustomTabBar({
         >
           {/* Glass layers */}
           <GlassBackdrop isDark={isDark} />
-          <View
-            style={[
-              StyleSheet.absoluteFill,
-              {
-                backgroundColor: isDark
-                  ? 'rgba(30, 30, 35, 0.3)'
-                  : 'rgba(255, 255, 255, 0.15)',
-              },
-            ]}
-            pointerEvents="none"
-          />
           <TopReflection isDark={isDark} />
 
-          {/* Pill is a sibling of the tab row so its top is relative to the container's
-              border edge — full control over vertical placement. */}
+          {/* Lens + ripple sit between the backdrop and the tab row so the
+              icons render on top, but the lens itself is a BlurView so it
+              still refracts everything BEHIND the bar. */}
           {slotWidth > 0 && (
-            <SlidingPill
-              pillX={pillX}
-              pillY={pillY}
-              pillScale={pillScale}
-              pillStretchW={pillStretchW}
-              baseWidth={pillBaseWidth}
-              visible={pillVisible}
-              isDark={isDark}
-            />
+            <>
+              <PressRipple
+                pillX={pillX}
+                pillY={pillY}
+                rippleProgress={rippleProgress}
+                baseWidth={pillBaseWidth}
+                isDark={isDark}
+              />
+              <SlidingLens
+                pillX={pillX}
+                pillY={pillY}
+                pillScale={pillScale}
+                pillStretchW={pillStretchW}
+                baseWidth={pillBaseWidth}
+                visible={pillVisible}
+                isDark={isDark}
+              />
+            </>
           )}
 
           <GestureDetector gesture={pan}>
@@ -466,6 +676,7 @@ export const CustomTabBar = React.memo(function CustomTabBar({
                 return (
                   <TabBarButton
                     key={route.key}
+                    index={index}
                     isFocused={isFocused}
                     onPress={() => handleTabPress(route, isFocused)}
                     onLongPress={() =>
@@ -482,6 +693,10 @@ export const CustomTabBar = React.memo(function CustomTabBar({
                     activeColor={theme.colors.accent.primary}
                     inactiveColor={theme.colors.text.tertiary}
                     accentSecondary={theme.colors.accent.secondary}
+                    pillX={pillX}
+                    pillStretchW={pillStretchW}
+                    pillBaseWidth={pillBaseWidth}
+                    slotWidth={slotWidth}
                   />
                 );
               })}
@@ -548,7 +763,7 @@ const styles = StyleSheet.create({
     left: 0,
     height: PILL_HEIGHT,
     borderRadius: PILL_HEIGHT / 2,
-    borderWidth: 0.5,
+    overflow: 'hidden',
     zIndex: 5,
   },
   reflection: {
