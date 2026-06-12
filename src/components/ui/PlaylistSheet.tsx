@@ -8,6 +8,7 @@ import { CachedImage } from './CachedImage';
 import { Track } from '../../services/musicService';
 import { useMusicStore } from '../../store/musicStore';
 import { triggerHaptic } from '../../utils/haptics';
+import { useT, useI18nStore } from '../../i18n/store';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -24,6 +25,8 @@ interface PlaylistSheetProps {
 export function PlaylistSheet({ visible, tracks, onClose }: PlaylistSheetProps) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const t = useT();
+  const locale = useI18nStore((s) => s.locale);
   const play = useMusicStore((s) => s.play);
   const current = useMusicStore((s) => s.current);
   const isPlaying = useMusicStore((s) => s.isPlaying);
@@ -78,7 +81,7 @@ export function PlaylistSheet({ visible, tracks, onClose }: PlaylistSheetProps) 
   const sharePlaylist = async () => {
     triggerHaptic('light');
     const lines = tracks.map((t, i) => `${i + 1}. ${t.title} — ${t.artist}`);
-    const message = `🎵 Плейлист\n\n${lines.join('\n')}`;
+    const message = `${t('playlist.share_header')}\n\n${lines.join('\n')}`;
     try { await Share.share({ message }); } catch {}
   };
 
@@ -97,7 +100,7 @@ export function PlaylistSheet({ visible, tracks, onClose }: PlaylistSheetProps) 
             <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ flexShrink: 1, fontSize: 11 }}>{item.artist}</Text>
             {item.isPreview ? (
               <View style={{ paddingHorizontal: 5, paddingVertical: 1, borderRadius: 5, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}>
-                <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 8 }}>30 с</Text>
+                <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 8 }}>{t('music_player.preview_seconds')}</Text>
               </View>
             ) : null}
           </View>
@@ -132,8 +135,8 @@ export function PlaylistSheet({ visible, tracks, onClose }: PlaylistSheetProps) 
               {/* Title row — also a drag area for extra forgiveness on swipe-to-dismiss. */}
               <View {...panResponder.panHandlers} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingBottom: 10 }}>
                 <View>
-                  <Text variant="body" weight="bold" style={{ fontSize: 16 }}>Плейлист</Text>
-                  <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11, marginTop: 1 }}>{tracks.length} {pluralize(tracks.length)}</Text>
+                  <Text variant="body" weight="bold" style={{ fontSize: 16 }}>{t('playlist.title')}</Text>
+                  <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11, marginTop: 1 }}>{tracks.length} {pluralize(tracks.length, locale, t)}</Text>
                 </View>
                 <View style={{ flexDirection: 'row', gap: 8 }}>
                   <Pressable onPress={sharePlaylist} hitSlop={8} style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)', alignItems: 'center', justifyContent: 'center' }}>
@@ -148,9 +151,9 @@ export function PlaylistSheet({ visible, tracks, onClose }: PlaylistSheetProps) 
               {tracks.length === 0 ? (
                 <View style={{ alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32, paddingVertical: 28 }}>
                   <Feather name="music" size={36} color={theme.colors.text.tertiary} />
-                  <Text variant="body" weight="semibold" style={{ marginTop: 10 }}>Плейлист пуст</Text>
+                  <Text variant="body" weight="semibold" style={{ marginTop: 10 }}>{t('playlist.empty_title')}</Text>
                   <Text variant="caption" color={theme.colors.text.tertiary} align="center" style={{ marginTop: 4, fontSize: 12 }}>
-                    Найдите хотя бы один трек — он попадёт в плейлист автоматически
+                    {t('playlist.empty_hint')}
                   </Text>
                 </View>
               ) : (
@@ -178,10 +181,11 @@ export function PlaylistSheet({ visible, tracks, onClose }: PlaylistSheetProps) 
   );
 }
 
-function pluralize(n: number): string {
+function pluralize(n: number, locale: 'ru' | 'en', t: (key: string, fallback?: string, vars?: Record<string, string | number>) => string): string {
+  if (locale === 'en') return n === 1 ? t('playlist.tracks_one') : t('playlist.tracks_many');
   // Russian plural for "трек"
   const m10 = n % 10, m100 = n % 100;
-  if (m10 === 1 && m100 !== 11) return 'трек';
-  if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return 'трека';
-  return 'треков';
+  if (m10 === 1 && m100 !== 11) return t('playlist.tracks_one');
+  if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return t('playlist.tracks_few');
+  return t('playlist.tracks_many');
 }

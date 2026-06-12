@@ -11,6 +11,7 @@ import { CachedImage } from './CachedImage';
 import { VerifiedBadge } from './VerifiedBadge';
 import { UserBadge } from './UserBadge';
 import { extractFirstUrl } from '../../services/linkPreview';
+import { useT } from '../../i18n/store';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 const PREVIEW_MAX_HEIGHT = SCREEN_HEIGHT * 0.45;
@@ -38,6 +39,7 @@ interface CommentContextMenuProps {
 export function CommentContextMenu({ visible, comment, isOwn, displayBody, replyUser, replyText, gifUrl, onClose, onAction }: CommentContextMenuProps) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const t = useT();
   const slideAnim = useRef(new Animated.Value(40)).current;
   const fade = useRef(new Animated.Value(0)).current;
   const dismissing = useRef(false);
@@ -98,11 +100,11 @@ export function CommentContextMenu({ visible, comment, isOwn, displayBody, reply
   const isLong = body.length > LONG_TEXT_THRESHOLD;
 
   const items: { action: CommentAction; icon: string; label: string; destructive?: boolean; show: boolean }[] = [
-    { action: 'reply', icon: 'corner-up-left', label: 'Ответить', show: true },
-    { action: 'copy', icon: 'copy', label: 'Копировать', show: !!body && !gifUrl },
-    { action: 'edit', icon: 'edit-2', label: 'Редактировать', show: isOwn && !gifUrl },
-    { action: 'delete', icon: 'trash-2', label: 'Удалить', destructive: true, show: isOwn },
-    { action: 'report', icon: 'flag', label: 'Пожаловаться', destructive: true, show: !isOwn },
+    { action: 'reply', icon: 'corner-up-left', label: t('comments.reply'), show: true },
+    { action: 'copy', icon: 'copy', label: t('common.copy'), show: !!body && !gifUrl },
+    { action: 'edit', icon: 'edit-2', label: t('common.edit'), show: isOwn && !gifUrl },
+    { action: 'delete', icon: 'trash-2', label: t('common.delete'), destructive: true, show: isOwn },
+    { action: 'report', icon: 'flag', label: t('common.report'), destructive: true, show: !isOwn },
   ];
 
   const previewInner = (

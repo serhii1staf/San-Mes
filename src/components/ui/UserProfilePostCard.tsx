@@ -14,6 +14,7 @@ import { SwipeablePostCard } from './SwipeablePostCard';
 import { extractFirstUrl } from '../../services/linkPreview';
 import { triggerHaptic } from '../../utils/haptics';
 import { formatTimeAgo } from '../../utils/mockData';
+import { useT } from '../../i18n/store';
 
 interface UserProfilePostCardProps {
   post: any;
@@ -44,6 +45,7 @@ function UserProfilePostCardBase({
   onImagePress,
 }: UserProfilePostCardProps) {
   const theme = useTheme();
+  const t = useT();
 
   const postImages: string[] = post.imageUrls && post.imageUrls.length > 0
     ? post.imageUrls
@@ -116,7 +118,7 @@ function UserProfilePostCardBase({
         ) : isRepostPost ? (
           <View style={{ width: 100, height: 100, borderRadius: 20, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)', alignItems: 'center', justifyContent: 'center' }}>
             <Feather name="repeat" size={24} color={theme.colors.text.tertiary} />
-            <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 9, marginTop: 4 }}>Репост</Text>
+            <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 9, marginTop: 4 }}>{t('post.repost_label')}</Text>
           </View>
         ) : null}
 
@@ -132,7 +134,7 @@ function UserProfilePostCardBase({
           {isRepostPost && origPost && (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 }}>
               <Feather name="repeat" size={10} color={theme.colors.accent.primary} />
-              <Text variant="caption" color={theme.colors.accent.primary} numberOfLines={1} style={{ fontSize: 10, flexShrink: 1 }}>от {origPost.authorName}</Text>
+              <Text variant="caption" color={theme.colors.accent.primary} numberOfLines={1} style={{ fontSize: 10, flexShrink: 1 }}>{t('post.reposted_from', undefined, { name: origPost.authorName })}</Text>
             </View>
           )}
           {(post.content || origPost?.content) ? (

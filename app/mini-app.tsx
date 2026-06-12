@@ -125,10 +125,10 @@ export default function MiniAppScreen() {
         onHttpError={stopLoading}
         renderError={(_errorDomain, _errorCode, errorDesc) => (
           <View style={{ flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center', padding: 32 }}>
-            <Text style={{ fontSize: 16, color: '#FFFFFF', fontWeight: '600', marginBottom: 8 }}>Не удалось загрузить</Text>
+            <Text style={{ fontSize: 16, color: '#FFFFFF', fontWeight: '600', marginBottom: 8 }}>{t('mini_app.load_failed')}</Text>
             <Text style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', textAlign: 'center' }}>{errorDesc}</Text>
             <Pressable onPress={() => webViewRef.current?.reload()} style={{ marginTop: 16, paddingHorizontal: 16, paddingVertical: 8, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.1)' }}>
-              <Text style={{ fontSize: 12, color: '#FFFFFF' }}>Повторить</Text>
+              <Text style={{ fontSize: 12, color: '#FFFFFF' }}>{t('common.retry')}</Text>
             </Pressable>
           </View>
         )}
@@ -174,7 +174,7 @@ export default function MiniAppScreen() {
         <Pressable onPress={handleMinimize} style={{ borderRadius: 14, overflow: 'hidden' }}>
           <BlurView intensity={80} tint="dark" style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10 }}>
             <Feather name="chevron-down" size={12} color="#FFFFFF" />
-            <Text style={{ fontSize: 10, color: '#FFFFFF', fontWeight: '500' }}>Свернуть</Text>
+            <Text style={{ fontSize: 10, color: '#FFFFFF', fontWeight: '500' }}>{t('mini_app.collapse')}</Text>
           </BlurView>
         </Pressable>
         <View style={{ borderRadius: 14, overflow: 'hidden' }}>

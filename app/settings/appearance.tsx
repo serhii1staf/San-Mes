@@ -9,12 +9,13 @@ import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { useThemeStore, ACCENT_COLORS, AccentColor } from '../../src/store/themeStore';
 import { useAuthStore } from '../../src/store/authStore';
 import { useSettingsStore } from '../../src/store/settingsStore';
+import { useT } from '../../src/i18n/store';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const CARD_WIDTH = SCREEN_WIDTH * 0.72;
 const CARD_GAP = 12;
 
-function ThemePreviewCardBase({ accentConfig, isDark, isSelected, user }: { accentConfig: typeof ACCENT_COLORS[0]; isDark: boolean; isSelected: boolean; user: any }) {
+function ThemePreviewCardBase({ accentConfig, isDark, isSelected, user, t, previewMessage, previewUser }: { accentConfig: typeof ACCENT_COLORS[0]; isDark: boolean; isSelected: boolean; user: any; t: (key: string, fallback?: string, vars?: Record<string, string | number>) => string; previewMessage: string; previewUser: string }) {
   const bgPrimary = isDark ? accentConfig.darkBg : accentConfig.light;
   const bgElevated = isDark ? accentConfig.darkElevated : '#FFFFFF';
   const textPrimary = isDark ? '#FFFFFF' : '#1A1A1A';
@@ -58,7 +59,7 @@ function ThemePreviewCardBase({ accentConfig, isDark, isSelected, user }: { acce
             <Text style={{ fontSize: 7, color: textSecondary }}>2m ago</Text>
           </View>
         </View>
-        <Text style={{ fontSize: 9, color: textSecondary, marginBottom: 6 }} numberOfLines={2}>Привет! Как дела сегодня? 🌟</Text>
+        <Text style={{ fontSize: 9, color: textSecondary, marginBottom: 6 }} numberOfLines={2}>{previewMessage}</Text>
         <View style={{ height: 55, borderRadius: 10, backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)' }} />
         <View style={{ flexDirection: 'row', marginTop: 6, gap: 12 }}>
           <Feather name="heart" size={10} color={accent} />
@@ -74,7 +75,7 @@ function ThemePreviewCardBase({ accentConfig, isDark, isSelected, user }: { acce
             <Text style={{ fontSize: 12 }}>🌸</Text>
           </View>
           <View style={{ marginLeft: 8 }}>
-            <Text style={{ fontSize: 10, fontWeight: '600', color: textPrimary }}>Мария</Text>
+            <Text style={{ fontSize: 10, fontWeight: '600', color: textPrimary }}>{previewUser}</Text>
             <Text style={{ fontSize: 7, color: textSecondary }}>15m ago</Text>
           </View>
         </View>
@@ -93,7 +94,7 @@ function ThemePreviewCardBase({ accentConfig, isDark, isSelected, user }: { acce
 
       {/* Theme label */}
       <View style={{ alignItems: 'center', paddingVertical: 8, backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)' }}>
-        <Text style={{ fontSize: 11, fontWeight: '600', color: accent }}>{accentConfig.label}</Text>
+        <Text style={{ fontSize: 11, fontWeight: '600', color: accent }}>{accentConfig.key.startsWith('ai-') ? accentConfig.label : t(`theme.color.${accentConfig.key}`, accentConfig.label)}</Text>
       </View>
     </View>
   );
@@ -105,12 +106,17 @@ const ThemePreviewCard = React.memo(ThemePreviewCardBase, (prev, next) =>
   prev.isSelected === next.isSelected &&
   prev.isDark === next.isDark &&
   prev.accentConfig.key === next.accentConfig.key &&
-  prev.user === next.user
+  prev.user === next.user &&
+  prev.previewMessage === next.previewMessage &&
+  prev.previewUser === next.previewUser
 );
 
 export default function AppearanceScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const t = useT();
+  const previewMessage = t('appearance.preview_message');
+  const previewUser = t('appearance.preview_user');
   const { mode, accent, setAccent, aiThemes } = useThemeStore();
   const removeAiTheme = (key: string) => useThemeStore.setState((s) => ({ aiThemes: s.aiThemes.filter(t => t.key !== key) }));
   const { user } = useAuthStore();
@@ -149,9 +155,9 @@ export default function AppearanceScreen() {
         <Pressable onPress={() => router.back()}>
           <Feather name="chevron-left" size={24} color={theme.colors.text.primary} />
         </Pressable>
-        <Text variant="body" weight="bold">Внешний вид</Text>
+        <Text variant="body" weight="bold">{t('appearance.title')}</Text>
         <Pressable onPress={handleSave}>
-          <Text variant="body" weight="semibold" color={theme.colors.accent.primary}>Сохранить</Text>
+          <Text variant="body" weight="semibold" color={theme.colors.accent.primary}>{t('common.save')}</Text>
         </Pressable>
       </View>
 
@@ -175,6 +181,9 @@ export default function AppearanceScreen() {
               isDark={isDark}
               isSelected={index === activeIndex}
               user={user}
+              t={t}
+              previewMessage={previewMessage}
+              previewUser={previewUser}
             />
           ))}
         </ScrollView>
@@ -197,7 +206,11 @@ export default function AppearanceScreen() {
         {/* Theme name + delete for AI themes */}
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 16, marginBottom: 24, gap: 8 }}>
           <Text variant="body" weight="bold" align="center">
-            {allThemes[activeIndex]?.label || ''}
+            {(() => {
+              const cur = allThemes[activeIndex];
+              if (!cur) return '';
+              return cur.key.startsWith('ai-') ? cur.label : t(`theme.color.${cur.key}`, cur.label);
+            })()}
           </Text>
           {allThemes[activeIndex]?.key.startsWith('ai-') && (
             <Pressable onPress={() => { const key = allThemes[activeIndex]?.key; if (key) { removeAiTheme(key); if (accent === key) setAccent('sage'); } }} style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: 'rgba(255,59,48,0.15)', alignItems: 'center', justifyContent: 'center' }}>

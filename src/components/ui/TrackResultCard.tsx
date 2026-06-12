@@ -7,6 +7,7 @@ import { CachedImage } from './CachedImage';
 import { Track } from '../../services/musicService';
 import { useMusicStore } from '../../store/musicStore';
 import { triggerHaptic } from '../../utils/haptics';
+import { useT } from '../../i18n/store';
 
 function fmtTime(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -25,6 +26,7 @@ function fmtTime(ms: number): string {
 // so cards still update without depending on prop equality.
 function TrackResultCardBase({ track }: { track: Track }) {
   const theme = useTheme();
+  const t = useT();
   const current = useMusicStore((s) => s.current);
   const isPlaying = useMusicStore((s) => s.isPlaying);
   const positionMs = useMusicStore((s) => s.positionMs);
@@ -43,7 +45,7 @@ function TrackResultCardBase({ track }: { track: Track }) {
             <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ flexShrink: 1, fontSize: 11 }}>{track.artist}</Text>
             {track.isPreview ? (
               <View style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}>
-                <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 9 }}>30 с</Text>
+                <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 9 }}>{t('music_player.preview_seconds')}</Text>
               </View>
             ) : null}
           </View>

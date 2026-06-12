@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { Platform } from 'react-native';
 import { uploadToR2, isR2PublicConfigured } from './r2';
+import { t } from '../i18n/store';
 
 const SUPABASE_URL = 'https://ycwadqglcykcpucembjn.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inljd2FkcWdsY3lrY3B1Y2VtYmpuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4Mjc2OTYsImV4cCI6MjA5NTQwMzY5Nn0.ZUr1YfN6pBp_AaUC1pZLKGApwgEXEiVw_w6w-yQjE_U';
@@ -256,7 +257,7 @@ export async function registerUser(params: {
 
   if (error) {
     if (error.message.includes('duplicate') || error.message.includes('unique')) {
-      return { profile: null, error: 'Это имя пользователя уже занято' };
+      return { profile: null, error: t('auth.error.username_taken') };
     }
     return { profile: null, error: error.message };
   }
@@ -277,7 +278,7 @@ export async function loginUser(params: {
     .single();
 
   if (error || !data) {
-    return { profile: null, error: 'Неверный ключ или код' };
+    return { profile: null, error: t('auth.error.invalid_key_or_pin') };
   }
 
   return { profile: data, error: null };
@@ -293,7 +294,7 @@ export async function loginWithPin(pin: string): Promise<{ profile: DBProfile | 
     .single();
 
   if (error || !data) {
-    return { profile: null, error: 'Неверный код' };
+    return { profile: null, error: t('auth.error.invalid_pin') };
   }
 
   return { profile: data, error: null };
@@ -780,11 +781,11 @@ export async function deleteAccount(userId: string): Promise<{ error: string | n
     //    false success.
     const { data: stillThere } = await db.from('profiles').select('id').eq('id', userId).maybeSingle();
     if (stillThere) {
-      return { error: 'Не удалось полностью удалить аккаунт. Попробуйте ещё раз.' };
+      return { error: t('auth.error.delete_partial') };
     }
 
     return { error: null };
   } catch (e: any) {
-    return { error: e?.message || 'Не удалось удалить аккаунт' };
+    return { error: e?.message || t('auth.error.delete_generic') };
   }
 }

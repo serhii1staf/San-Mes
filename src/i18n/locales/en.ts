@@ -538,6 +538,134 @@ const en: Record<string, string> = {
   'chat_settings.font_size': 'Font size',
   'chat_settings.bubble_radius': 'Bubble radius',
   'chat_settings.link_emoji': 'Link preview emoji',
+
+  // ─── Mini-app screen (extra) ───────────────────────────────────────────
+  'mini_app.collapse': 'Collapse',
+  'mini_app.load_failed': 'Failed to load',
+
+  // ─── Settings → Index sections ─────────────────────────────────────────
+  'settings.section.general': 'General',
+  'settings.section.security': 'Security',
+  'settings.profile': 'Profile',
+  'settings.notifications': 'Notifications',
+  'settings.data_storage': 'Data & Storage',
+  'settings.app_icon': 'App icon',
+  'settings.widget': 'Widget',
+  'settings.devices': 'Devices',
+  'settings.privacy_policy': 'Privacy Policy',
+  'settings.terms': 'Terms of Use',
+  'settings.delete_account': 'Delete account',
+  'settings.version': 'Version {version}',
+  'settings.logout_title': 'Sign out',
+  'settings.logout_msg': 'Are you sure you want to sign out?',
+  'settings.logout_action': 'Sign out',
+  'settings.delete_account_title': 'Delete account?',
+  'settings.delete_account_msg': 'This action cannot be undone. All your data — posts, comments, messages, follows — will be permanently deleted.',
+  'settings.delete_forever': 'Delete forever',
+  'settings.delete_failed': 'Could not delete account',
+
+  // ─── Appearance screen ─────────────────────────────────────────────────
+  'appearance.title': 'Appearance',
+  'appearance.preview_message': 'Hi! How are you today? 🌟',
+  'appearance.preview_user': 'Maria',
+
+  // ─── Theme palette labels ──────────────────────────────────────────────
+  'theme.color.coral': 'Coral',
+  'theme.color.sage': 'Sage',
+  'theme.color.lavender': 'Lavender',
+  'theme.color.sky': 'Sky',
+  'theme.color.peach': 'Peach',
+  'theme.color.mint': 'Mint',
+  'theme.color.ocean': 'Ocean',
+  'theme.color.sunset': 'Sunset',
+  'theme.color.berry': 'Berry',
+  'theme.color.gold': 'Gold',
+  'theme.color.slate': 'Slate',
+  'theme.color.rose': 'Rose',
+  'theme.color.forest': 'Forest',
+  'theme.color.violet': 'Violet',
+  'theme.color.copper': 'Copper',
+  'theme.color.arctic': 'Arctic',
+  'theme.color.cherry': 'Cherry',
+  'theme.color.indigo': 'Indigo',
+  'theme.color.emerald': 'Emerald',
+  'theme.color.amber': 'Amber',
+  'theme.color.plum': 'Plum',
+  'theme.color.teal': 'Teal',
+  'theme.color.crimson': 'Crimson',
+  'theme.color.sand': 'Sand',
+  'theme.color.sapphire': 'Sapphire',
+  'theme.color.olive': 'Olive',
+
+  // ─── Font sizes / family labels ────────────────────────────────────────
+  'font.size.small': 'Small',
+  'font.size.medium': 'Medium',
+  'font.size.large': 'Large',
+  'font.family.system': 'System',
+
+  // ─── Profile menu (long-press on profile) ──────────────────────────────
+  'profile_menu.copy_link': 'Copy link',
+  'profile_menu.share_profile': 'Share profile',
+  'profile_menu.report': 'Report',
+  'profile_menu.share_message': '{name} on San',
+
+  // ─── Profile screen extras ─────────────────────────────────────────────
+  'profile.user_not_found': 'User not found',
+  'profile.follow': 'Follow',
+  'profile.unfollow': 'Unfollow',
+
+  // ─── Post repost label ─────────────────────────────────────────────────
+  'post.repost_label': 'Repost',
+  'post.reposted_by': '{name} reposted',
+  'post.reposted_from': 'from {name}',
+
+  // ─── Author info modal ─────────────────────────────────────────────────
+  'author_info.title': 'About the artist',
+  'author_info.tracks_label': 'tracks',
+  'author_info.followers_label': 'followers',
+  'author_info.bio_label': 'Bio',
+  'author_info.source_label': 'Source: {host}',
+  'author_info.open_profile': 'Open profile',
+
+  // ─── Music full player ─────────────────────────────────────────────────
+  'music_player.now_playing': 'Now playing',
+  'music_player.preview_seconds': '30s',
+  'music_player.queue_label': 'Queue',
+
+  // ─── Playlist sheet ────────────────────────────────────────────────────
+  'playlist.title': 'Playlist',
+  'playlist.share_header': '🎵 Playlist',
+  'playlist.empty_title': 'Playlist is empty',
+  'playlist.empty_hint': 'Find at least one track — it will be added automatically.',
+  'playlist.tracks_one': 'track',
+  'playlist.tracks_few': 'tracks',
+  'playlist.tracks_many': 'tracks',
+
+  // ─── Spoiler image ─────────────────────────────────────────────────────
+  'spoiler.tap_to_view': 'Tap to view',
+
+  // ─── Swipe-to-screenshot ───────────────────────────────────────────────
+  'swipeable.saved_to_gallery': 'Saved to gallery',
+  'swipeable.save_failed': 'Could not save',
+
+  // ─── Emoji picker ──────────────────────────────────────────────────────
+  'emoji_picker.title': 'Pick an emoji',
+
+  // ─── OTA update banner ─────────────────────────────────────────────────
+  'update.checking': 'Checking for updates...',
+  'update.downloading': 'Downloading update...',
+  'update.ready': 'Update ready. Restart the app.',
+  'update.error': 'Update error',
+
+  // ─── Auth / supabase error strings ─────────────────────────────────────
+  'auth.error.username_taken': 'This username is already taken',
+  'auth.error.invalid_key_or_pin': 'Invalid key or PIN',
+  'auth.error.invalid_pin': 'Invalid PIN',
+  'auth.error.delete_partial': 'Could not fully delete the account. Please try again.',
+  'auth.error.delete_generic': 'Could not delete account',
+
+  // ─── Rate limit / content moderation ───────────────────────────────────
+  'rate_limit.suspicious_content': 'Suspicious link or content detected',
 };
 
 export default en;

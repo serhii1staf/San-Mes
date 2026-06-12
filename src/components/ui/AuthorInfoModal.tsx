@@ -8,6 +8,7 @@ import { CachedImage } from './CachedImage';
 import { Track } from '../../services/musicService';
 import { triggerHaptic } from '../../utils/haptics';
 import { kvGetJSONSync, kvSetJSON } from '../../services/kvStore';
+import { useT } from '../../i18n/store';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -60,6 +61,7 @@ function writeCached(trackId: string, data: AuthorInfo): void {
 export function AuthorInfoModal({ visible, track, onClose }: AuthorInfoModalProps) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const t = useT();
   // Seed from cache so the sheet content is visible IMMEDIATELY on second open.
   const [info, setInfo] = useState<AuthorInfo | null>(() => track ? readCached(track.id) : null);
   const [loading, setLoading] = useState(false);
@@ -154,7 +156,7 @@ export function AuthorInfoModal({ visible, track, onClose }: AuthorInfoModalProp
 
               {/* Title row */}
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingBottom: 4 }}>
-                <Text variant="body" weight="semibold" style={{ fontSize: 15 }}>Об авторе</Text>
+                <Text variant="body" weight="semibold" style={{ fontSize: 15 }}>{t('author_info.title')}</Text>
                 <Pressable onPress={dismiss} hitSlop={8} style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', alignItems: 'center', justifyContent: 'center' }}>
                   <Feather name="x" size={14} color={theme.colors.text.primary} />
                 </Pressable>
@@ -187,13 +189,13 @@ export function AuthorInfoModal({ visible, track, onClose }: AuthorInfoModalProp
                     {info?.trackCount != null && (
                       <View style={{ alignItems: 'center' }}>
                         <Text variant="body" weight="bold">{formatCount(info.trackCount)}</Text>
-                        <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>треков</Text>
+                        <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{t('author_info.tracks_label')}</Text>
                       </View>
                     )}
                     {info?.followers != null && (
                       <View style={{ alignItems: 'center' }}>
                         <Text variant="body" weight="bold">{formatCount(info.followers)}</Text>
-                        <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>подписчиков</Text>
+                        <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{t('author_info.followers_label')}</Text>
                       </View>
                     )}
                   </View>
@@ -201,7 +203,7 @@ export function AuthorInfoModal({ visible, track, onClose }: AuthorInfoModalProp
 
                 {info?.bio ? (
                   <View style={{ marginBottom: 12, padding: 12, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)', borderRadius: 14 }}>
-                    <Text variant="caption" weight="semibold" color={theme.colors.text.tertiary} style={{ marginBottom: 4, textTransform: 'uppercase', fontSize: 10 }}>Биография</Text>
+                    <Text variant="caption" weight="semibold" color={theme.colors.text.tertiary} style={{ marginBottom: 4, textTransform: 'uppercase', fontSize: 10 }}>{t('author_info.bio_label')}</Text>
                     <Text variant="body" style={{ fontSize: 13, lineHeight: 19 }}>{info.bio}</Text>
                   </View>
                 ) : null}
@@ -209,7 +211,7 @@ export function AuthorInfoModal({ visible, track, onClose }: AuthorInfoModalProp
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 4, marginBottom: 10 }}>
                   <Feather name="music" size={11} color={theme.colors.text.tertiary} />
                   <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 10 }}>
-                    Источник: {track.sourceHost.includes('soundcloud') ? 'SoundCloud' : track.sourceHost.includes('itunes') ? 'iTunes' : track.sourceHost.includes('audius') ? 'Audius' : track.sourceHost}
+                    {t('author_info.source_label', undefined, { host: track.sourceHost.includes('soundcloud') ? 'SoundCloud' : track.sourceHost.includes('itunes') ? 'iTunes' : track.sourceHost.includes('audius') ? 'Audius' : track.sourceHost })}
                   </Text>
                 </View>
 
@@ -219,7 +221,7 @@ export function AuthorInfoModal({ visible, track, onClose }: AuthorInfoModalProp
                     style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 12, borderRadius: 12, backgroundColor: theme.colors.accent.primary }}
                   >
                     <Feather name="external-link" size={14} color="#FFFFFF" />
-                    <Text variant="body" weight="semibold" color="#FFFFFF" style={{ fontSize: 14 }}>Открыть профиль</Text>
+                    <Text variant="body" weight="semibold" color="#FFFFFF" style={{ fontSize: 14 }}>{t('author_info.open_profile')}</Text>
                   </Pressable>
                 ) : null}
 

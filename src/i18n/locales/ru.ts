@@ -541,6 +541,134 @@ const ru: Record<string, string> = {
   'chat_settings.font_size': 'Размер шрифта',
   'chat_settings.bubble_radius': 'Округление',
   'chat_settings.link_emoji': 'Эмодзи в превью ссылок',
+
+  // ─── Mini-app screen (extra) ───────────────────────────────────────────
+  'mini_app.collapse': 'Свернуть',
+  'mini_app.load_failed': 'Не удалось загрузить',
+
+  // ─── Settings → Index sections ─────────────────────────────────────────
+  'settings.section.general': 'Общие',
+  'settings.section.security': 'Безопасность',
+  'settings.profile': 'Профиль',
+  'settings.notifications': 'Уведомления',
+  'settings.data_storage': 'Данные и память',
+  'settings.app_icon': 'Иконка приложения',
+  'settings.widget': 'Виджет',
+  'settings.devices': 'Устройства',
+  'settings.privacy_policy': 'Политика конфиденциальности',
+  'settings.terms': 'Условия использования',
+  'settings.delete_account': 'Удалить аккаунт',
+  'settings.version': 'Версия {version}',
+  'settings.logout_title': 'Выход',
+  'settings.logout_msg': 'Вы уверены, что хотите выйти?',
+  'settings.logout_action': 'Выйти',
+  'settings.delete_account_title': 'Удалить аккаунт?',
+  'settings.delete_account_msg': 'Это действие необратимо. Все ваши данные — посты, комментарии, сообщения, подписки — будут удалены навсегда.',
+  'settings.delete_forever': 'Удалить навсегда',
+  'settings.delete_failed': 'Не удалось удалить аккаунт',
+
+  // ─── Appearance screen ─────────────────────────────────────────────────
+  'appearance.title': 'Внешний вид',
+  'appearance.preview_message': 'Привет! Как дела сегодня? 🌟',
+  'appearance.preview_user': 'Мария',
+
+  // ─── Theme palette labels ──────────────────────────────────────────────
+  'theme.color.coral': 'Коралл',
+  'theme.color.sage': 'Шалфей',
+  'theme.color.lavender': 'Лаванда',
+  'theme.color.sky': 'Небо',
+  'theme.color.peach': 'Персик',
+  'theme.color.mint': 'Мята',
+  'theme.color.ocean': 'Океан',
+  'theme.color.sunset': 'Закат',
+  'theme.color.berry': 'Ягода',
+  'theme.color.gold': 'Золото',
+  'theme.color.slate': 'Сланец',
+  'theme.color.rose': 'Роза',
+  'theme.color.forest': 'Лес',
+  'theme.color.violet': 'Фиалка',
+  'theme.color.copper': 'Медь',
+  'theme.color.arctic': 'Арктика',
+  'theme.color.cherry': 'Вишня',
+  'theme.color.indigo': 'Индиго',
+  'theme.color.emerald': 'Изумруд',
+  'theme.color.amber': 'Янтарь',
+  'theme.color.plum': 'Слива',
+  'theme.color.teal': 'Бирюза',
+  'theme.color.crimson': 'Кармин',
+  'theme.color.sand': 'Песок',
+  'theme.color.sapphire': 'Сапфир',
+  'theme.color.olive': 'Олива',
+
+  // ─── Font sizes / family labels ────────────────────────────────────────
+  'font.size.small': 'Мелкий',
+  'font.size.medium': 'Обычный',
+  'font.size.large': 'Крупный',
+  'font.family.system': 'Системный',
+
+  // ─── Profile menu (long-press on profile) ──────────────────────────────
+  'profile_menu.copy_link': 'Скопировать ссылку',
+  'profile_menu.share_profile': 'Поделиться профилем',
+  'profile_menu.report': 'Пожаловаться',
+  'profile_menu.share_message': '{name} в San',
+
+  // ─── Profile screen extras ─────────────────────────────────────────────
+  'profile.user_not_found': 'Пользователь не найден',
+  'profile.follow': 'Подписаться',
+  'profile.unfollow': 'Отписаться',
+
+  // ─── Post repost label ─────────────────────────────────────────────────
+  'post.repost_label': 'Репост',
+  'post.reposted_by': '{name} репостнул(а)',
+  'post.reposted_from': 'от {name}',
+
+  // ─── Author info modal ─────────────────────────────────────────────────
+  'author_info.title': 'Об авторе',
+  'author_info.tracks_label': 'треков',
+  'author_info.followers_label': 'подписчиков',
+  'author_info.bio_label': 'Биография',
+  'author_info.source_label': 'Источник: {host}',
+  'author_info.open_profile': 'Открыть профиль',
+
+  // ─── Music full player ─────────────────────────────────────────────────
+  'music_player.now_playing': 'Сейчас играет',
+  'music_player.preview_seconds': '30 с',
+  'music_player.queue_label': 'Очередь',
+
+  // ─── Playlist sheet ────────────────────────────────────────────────────
+  'playlist.title': 'Плейлист',
+  'playlist.share_header': '🎵 Плейлист',
+  'playlist.empty_title': 'Плейлист пуст',
+  'playlist.empty_hint': 'Найдите хотя бы один трек — он попадёт в плейлист автоматически',
+  'playlist.tracks_one': 'трек',
+  'playlist.tracks_few': 'трека',
+  'playlist.tracks_many': 'треков',
+
+  // ─── Spoiler image ─────────────────────────────────────────────────────
+  'spoiler.tap_to_view': 'Нажмите для просмотра',
+
+  // ─── Swipe-to-screenshot ───────────────────────────────────────────────
+  'swipeable.saved_to_gallery': 'Сохранено в галерею',
+  'swipeable.save_failed': 'Не удалось сохранить',
+
+  // ─── Emoji picker ──────────────────────────────────────────────────────
+  'emoji_picker.title': 'Выберите эмодзи',
+
+  // ─── OTA update banner ─────────────────────────────────────────────────
+  'update.checking': 'Проверка обновлений...',
+  'update.downloading': 'Загрузка обновления...',
+  'update.ready': 'Обновление готово. Перезапустите приложение.',
+  'update.error': 'Ошибка обновления',
+
+  // ─── Auth / supabase error strings ─────────────────────────────────────
+  'auth.error.username_taken': 'Это имя пользователя уже занято',
+  'auth.error.invalid_key_or_pin': 'Неверный ключ или код',
+  'auth.error.invalid_pin': 'Неверный код',
+  'auth.error.delete_partial': 'Не удалось полностью удалить аккаунт. Попробуйте ещё раз.',
+  'auth.error.delete_generic': 'Не удалось удалить аккаунт',
+
+  // ─── Rate limit / content moderation ───────────────────────────────────
+  'rate_limit.suspicious_content': 'Обнаружена подозрительная ссылка или контент',
 };
 
 export default ru;

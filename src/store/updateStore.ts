@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import * as Updates from 'expo-updates';
 import { Platform } from 'react-native';
+import { t } from '../i18n/store';
 
 export type UpdateStatus = 'idle' | 'checking' | 'downloading' | 'ready' | 'error';
 
@@ -24,12 +25,12 @@ export const useUpdateStore = create<UpdateStoreState>()((set, get) => ({
     if (__DEV__ || Platform.OS === 'web') return;
 
     try {
-      set({ status: 'checking', progress: 10, message: 'Проверка обновлений...' });
+      set({ status: 'checking', progress: 10, message: t('update.checking') });
 
       const update = await Updates.checkForUpdateAsync();
 
       if (update.isAvailable) {
-        set({ status: 'downloading', progress: 20, message: 'Загрузка обновления...', updateAvailable: true });
+        set({ status: 'downloading', progress: 20, message: t('update.downloading'), updateAvailable: true });
 
         // Start download with progress simulation
         // expo-updates doesn't provide real progress, so we simulate it
@@ -43,12 +44,12 @@ export const useUpdateStore = create<UpdateStoreState>()((set, get) => ({
         await Updates.fetchUpdateAsync();
 
         clearInterval(progressInterval);
-        set({ status: 'ready', progress: 100, message: 'Обновление готово. Перезапустите приложение.' });
+        set({ status: 'ready', progress: 100, message: t('update.ready') });
       } else {
         set({ status: 'idle', progress: 0, message: '', updateAvailable: false });
       }
     } catch (e: any) {
-      set({ status: 'error', progress: 0, message: e?.message || 'Ошибка обновления' });
+      set({ status: 'error', progress: 0, message: e?.message || t('update.error') });
       // Reset after 5 seconds
       setTimeout(() => {
         set({ status: 'idle', progress: 0, message: '' });

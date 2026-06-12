@@ -14,6 +14,7 @@ import { SwipeablePostCard } from '../ui/SwipeablePostCard';
 import { extractFirstUrl } from '../../services/linkPreview';
 import { triggerHaptic } from '../../utils/haptics';
 import { formatTimeAgo } from '../../utils/mockData';
+import { useT } from '../../i18n/store';
 
 interface ProfilePostCardProps {
   post: any;
@@ -32,6 +33,7 @@ interface ProfilePostCardProps {
 // actually changed re-render. This removes the freeze on the "Posts" tab.
 function ProfilePostCardBase({ post, authorName, authorEmoji, authorVerified, authorBadge, shareText, postEmoji, onLongPress, onImagePress }: ProfilePostCardProps) {
   const theme = useTheme();
+  const t = useT();
   const origPost = post.originalPost;
   const imgs: string[] = post.imageUrls && post.imageUrls.length > 0 ? post.imageUrls : post.imageUrl ? [post.imageUrl] : (origPost?.imageUrls && origPost.imageUrls.length > 0 ? origPost.imageUrls : origPost?.imageUrl ? [origPost.imageUrl] : []);
   const hasImage = imgs.length > 0;
@@ -81,7 +83,7 @@ function ProfilePostCardBase({ post, authorName, authorEmoji, authorVerified, au
         ) : isRepostPost ? (
           <View style={{ width: 100, height: 100, borderRadius: 20, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)', alignItems: 'center', justifyContent: 'center' }}>
             <Feather name="repeat" size={24} color={theme.colors.text.tertiary} />
-            <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 9, marginTop: 4 }}>Репост</Text>
+            <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 9, marginTop: 4 }}>{t('post.repost_label')}</Text>
           </View>
         ) : null}
 
@@ -96,10 +98,10 @@ function ProfilePostCardBase({ post, authorName, authorEmoji, authorVerified, au
           {isRepostPost && origPost && (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 }}>
               <Feather name="repeat" size={10} color={theme.colors.accent.primary} />
-              <Text variant="caption" color={theme.colors.accent.primary} numberOfLines={1} style={{ fontSize: 10, flexShrink: 1 }}>от {origPost.authorName}</Text>
+              <Text variant="caption" color={theme.colors.accent.primary} numberOfLines={1} style={{ fontSize: 10, flexShrink: 1 }}>{t('post.reposted_from', undefined, { name: origPost.authorName })}</Text>
             </View>
           )}
-          {isRepostPost && !origPost && <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 }}><Feather name="repeat" size={10} color={theme.colors.accent.primary} /><Text variant="caption" color={theme.colors.accent.primary} style={{ fontSize: 10 }}>Репост</Text></View>}
+          {isRepostPost && !origPost && <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 }}><Feather name="repeat" size={10} color={theme.colors.accent.primary} /><Text variant="caption" color={theme.colors.accent.primary} style={{ fontSize: 10 }}>{t('post.repost_label')}</Text></View>}
           {(post.content || origPost?.content) ? <FormattedText style={{ fontSize: 12, marginBottom: 6 }} color={theme.colors.text.secondary}>{post.content || origPost?.content || ''}</FormattedText> : null}
           {link ? (
             <Pressable onLongPress={() => { triggerHaptic('medium'); onLongPress(post); }} delayLongPress={400} style={{ marginBottom: 6 }}>

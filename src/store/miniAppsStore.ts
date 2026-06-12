@@ -3,6 +3,7 @@ import { persist, createJSONStorage, StateStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
 import { accountKey } from '../services/cacheService';
+import { t } from '../i18n/store';
 
 // Per-account persist storage: the base name ('mini-apps-cache') is wrapped in
 // accountKey() so each account keeps its own mini-apps list namespace.
@@ -61,7 +62,7 @@ export const useMiniAppsStore = create<MiniAppsStore>()(
           if (data) set((s) => ({ apps: [data, ...s.apps] }));
           return { error: null };
         } catch (e: any) {
-          return { error: e?.message || 'Ошибка' };
+          return { error: e?.message || t('common.error') };
         }
       },
 

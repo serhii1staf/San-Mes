@@ -8,6 +8,7 @@ import { CachedImage } from './CachedImage';
 import { useMusicStore } from '../../store/musicStore';
 import { Track } from '../../services/musicService';
 import { triggerHaptic } from '../../utils/haptics';
+import { useT } from '../../i18n/store';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -46,6 +47,7 @@ export function MusicFullPlayer() {
 function MusicFullPlayerContent() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const t = useT();
 
   const playerOpen = useMusicStore((s) => s.playerOpen);
   const closePlayer = useMusicStore((s) => s.closePlayer);
@@ -207,7 +209,7 @@ function MusicFullPlayerContent() {
               <View style={{ width: 40, height: 5, borderRadius: 3, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.12)' }} />
             </View>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingBottom: 6 }}>
-              <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11, textTransform: 'uppercase' }}>Сейчас играет</Text>
+              <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11, textTransform: 'uppercase' }}>{t('music_player.now_playing')}</Text>
               <Pressable onPress={animateClose} hitSlop={8} style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', alignItems: 'center', justifyContent: 'center' }}>
                 <Feather name="chevron-down" size={16} color={theme.colors.text.primary} />
               </Pressable>
@@ -242,7 +244,7 @@ function MusicFullPlayerContent() {
                   <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 13 }}>{current.artist}</Text>
                   {current.isPreview ? (
                     <View style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}>
-                      <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 10 }}>30 с</Text>
+                      <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 10 }}>{t('music_player.preview_seconds')}</Text>
                     </View>
                   ) : null}
                 </View>
@@ -307,7 +309,7 @@ function MusicFullPlayerContent() {
             {/* [2] Queue — scrolls beneath the sticky controls. */}
             {queueAll.length > 0 ? (
               <View style={{ paddingHorizontal: 24, paddingTop: 8 }}>
-                <Text variant="caption" weight="semibold" color={theme.colors.text.tertiary} style={{ fontSize: 11, textTransform: 'uppercase', marginBottom: 8 }}>Очередь</Text>
+                <Text variant="caption" weight="semibold" color={theme.colors.text.tertiary} style={{ fontSize: 11, textTransform: 'uppercase', marginBottom: 8 }}>{t('music_player.queue_label')}</Text>
                 {queueAll.map((t) => (
                   <Pressable
                     key={t.id}

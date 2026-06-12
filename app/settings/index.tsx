@@ -124,10 +124,10 @@ export default function SettingsScreen() {
   };
 
   const handleLogout = () => {
-    Alert.alert('Выход', 'Вы уверены, что хотите выйти?', [
-      { text: 'Отмена', style: 'cancel' },
+    Alert.alert(t('settings.logout_title'), t('settings.logout_msg'), [
+      { text: t('common.cancel'), style: 'cancel' },
       {
-        text: 'Выйти',
+        text: t('settings.logout_action'),
         style: 'destructive',
         onPress: () => {
           // Flush this account's in-memory data and re-scope cache to anon so the
@@ -141,12 +141,12 @@ export default function SettingsScreen() {
 
   const handleDeleteAccount = () => {
     Alert.alert(
-      'Удалить аккаунт?',
-      'Это действие необратимо. Все ваши данные — посты, комментарии, сообщения, подписки — будут удалены навсегда.',
+      t('settings.delete_account_title'),
+      t('settings.delete_account_msg'),
       [
-        { text: 'Отмена', style: 'cancel' },
+        { text: t('common.cancel'), style: 'cancel' },
         {
-          text: 'Удалить навсегда',
+          text: t('settings.delete_forever'),
           style: 'destructive',
           onPress: async () => {
             const uid = useAuthStore.getState().user?.id;
@@ -155,7 +155,7 @@ export default function SettingsScreen() {
               const { deleteAccount } = await import('../../src/lib/supabase');
               const { error } = await deleteAccount(uid);
               if (error) {
-                Alert.alert('Ошибка', error);
+                Alert.alert(t('common.error'), error);
                 return;
               }
               // Wipe ALL on-device data so nothing about the user remains locally
@@ -165,7 +165,7 @@ export default function SettingsScreen() {
                 await kvClearAll();
               } catch {}
             } catch (e: any) {
-              Alert.alert('Ошибка', e?.message || 'Не удалось удалить аккаунт');
+              Alert.alert(t('common.error'), e?.message || t('settings.delete_failed'));
               return;
             }
             // Guard handles the redirect synchronously once auth clears.
@@ -231,30 +231,30 @@ export default function SettingsScreen() {
 
       {/* Scrollable Content */}
       <ScrollView contentContainerStyle={{ paddingBottom: 100, paddingHorizontal: theme.spacing.lg, paddingTop: headerContentHeight }} showsVerticalScrollIndicator={false}>
-        {/* Общие */}
+        {/* General */}
         <View style={sectionTitleStyle}>
           <Text variant="body" weight="semibold" color={theme.colors.text.secondary}>
-            Общие
+            {t('settings.section.general')}
           </Text>
         </View>
         <View style={sectionCardStyle}>
           <SettingsRow
             icon="user"
             iconTint="blue"
-            label="Профиль"
+            label={t('settings.profile')}
             onPress={() => router.push('/profile/edit')}
             isFirst
           />
           <SettingsRow
             icon="bell"
             iconTint="red"
-            label="Уведомления"
+            label={t('settings.notifications')}
             onPress={() => router.push('/notifications')}
           />
           <SettingsRow
             icon="hard-drive"
             iconTint="green"
-            label="Данные и память"
+            label={t('settings.data_storage')}
             onPress={() => router.push('/settings/storage')}
           />
           <SettingsRow
@@ -281,10 +281,10 @@ export default function SettingsScreen() {
           />
         </View>
 
-        {/* Оформление */}
+        {/* Appearance */}
         <View style={sectionTitleStyle}>
           <Text variant="body" weight="semibold" color={theme.colors.text.secondary}>
-            {t('settings.section.appearance', 'Оформление')}
+            {t('settings.section.appearance')}
           </Text>
         </View>
         <View style={sectionCardStyle}>
@@ -310,29 +310,29 @@ export default function SettingsScreen() {
           <SettingsRow
             icon="grid"
             iconTint="pink"
-            label="Иконка приложения"
+            label={t('settings.app_icon')}
             onPress={() => setIconModalVisible(true)}
           />
           <SettingsRow
             icon="layout"
             iconTint="teal"
-            label="Виджет"
+            label={t('settings.widget')}
             onPress={() => router.push('/settings/widget' as any)}
             isLast
           />
         </View>
 
-        {/* Безопасность */}
+        {/* Security */}
         <Pressable onPress={handleAdminTap} style={sectionTitleStyle}>
           <Text variant="body" weight="semibold" color={theme.colors.text.secondary}>
-            Безопасность
+            {t('settings.section.security')}
           </Text>
         </Pressable>
         <View style={sectionCardStyle}>
           <SettingsRow
             icon="smartphone"
             iconTint="blue"
-            label="Устройства"
+            label={t('settings.devices')}
             value="2"
             onPress={() => router.push('/settings/device-key')}
             isFirst
@@ -340,13 +340,13 @@ export default function SettingsScreen() {
           <SettingsRow
             icon="shield"
             iconTint="gray"
-            label="Политика конфиденциальности"
+            label={t('settings.privacy_policy')}
             onPress={() => Linking.openURL('https://legal.san-m-app.com/privacy.html').catch(() => {})}
           />
           <SettingsRow
             icon="file-text"
             iconTint="gray"
-            label="Условия использования"
+            label={t('settings.terms')}
             onPress={() => Linking.openURL('https://legal.san-m-app.com/terms.html').catch(() => {})}
             isLast
           />
@@ -383,14 +383,14 @@ export default function SettingsScreen() {
             }}
           >
             <Text variant="body" weight="semibold" color={theme.colors.text.tertiary}>
-              Удалить аккаунт
+              {t('settings.delete_account')}
             </Text>
           </Pressable>
         </View>
 
         {/* App version */}
         <Text variant="caption" align="center" color={theme.colors.text.tertiary} style={{ marginTop: 14, fontSize: 11 }}>
-          Версия {appVersion}
+          {t('settings.version', undefined, { version: appVersion })}
         </Text>
       </ScrollView>
 

@@ -67,7 +67,7 @@ export default function FontsScreen() {
               }}
             >
               <Text variant="body" weight={fontSize === f.key ? 'semibold' : 'regular'} color={fontSize === f.key ? theme.colors.accent.primary : theme.colors.text.primary}>
-                {f.label}
+                {t(`font.size.${f.key}`, f.label)}
               </Text>
               <Text variant="caption" color={theme.colors.text.tertiary}>{Math.round(f.scale * 100)}%</Text>
             </Pressable>
@@ -94,7 +94,7 @@ export default function FontsScreen() {
               }}
             >
               <Text variant="body" weight={fontFamily === f.key ? 'semibold' : 'regular'} color={fontFamily === f.key ? theme.colors.accent.primary : theme.colors.text.primary}>
-                {f.label}
+                {f.key === 'system' ? t('font.family.system', f.label) : f.label}
               </Text>
               {fontFamily === f.key && <Feather name="check" size={18} color={theme.colors.accent.primary} />}
             </Pressable>

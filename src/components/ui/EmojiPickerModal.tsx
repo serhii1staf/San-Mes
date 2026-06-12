@@ -2,6 +2,7 @@ import React, { useRef, useEffect } from 'react';
 import { View, Pressable, Modal, Animated, Dimensions, ScrollView, Text as RNText } from 'react-native';
 import { useTheme } from '../../theme';
 import { Text } from './Text';
+import { useT } from '../../i18n/store';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -22,6 +23,7 @@ interface EmojiPickerModalProps {
 
 export function EmojiPickerModal({ visible, onClose, onSelect }: EmojiPickerModalProps) {
   const theme = useTheme();
+  const t = useT();
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
   const backdropAnim = useRef(new Animated.Value(0)).current;
 
@@ -60,7 +62,7 @@ export function EmojiPickerModal({ visible, onClose, onSelect }: EmojiPickerModa
               <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 6 }}>
                 <View style={{ width: 40, height: 5, borderRadius: 3, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)' }} />
               </View>
-              <Text variant="body" weight="bold" align="center" style={{ marginBottom: 12 }}>Выберите эмодзи</Text>
+              <Text variant="body" weight="bold" align="center" style={{ marginBottom: 12 }}>{t('emoji_picker.title')}</Text>
               <ScrollView contentContainerStyle={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', paddingHorizontal: 16, paddingBottom: 24 }} showsVerticalScrollIndicator={false}>
                 {EMOJIS.map((e) => (
                   <Pressable

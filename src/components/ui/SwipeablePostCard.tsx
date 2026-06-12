@@ -7,6 +7,7 @@ import * as Sharing from 'expo-sharing';
 import { useTheme } from '../../theme';
 import { triggerHaptic } from '../../utils/haptics';
 import { showToast } from '../../store/toastStore';
+import { useT } from '../../i18n/store';
 
 const BUTTON_WIDTH = 65;
 
@@ -16,6 +17,7 @@ interface SwipeablePostCardProps {
 
 export function SwipeablePostCard({ children }: SwipeablePostCardProps) {
   const theme = useTheme();
+  const t = useT();
   const translateX = useRef(new Animated.Value(0)).current;
   const isOpen = useRef(false);
   const timer = useRef<any>(null);
@@ -85,13 +87,13 @@ export function SwipeablePostCard({ children }: SwipeablePostCardProps) {
       const { status } = await MediaLibrary.requestPermissionsAsync();
       if (status === 'granted') {
         await MediaLibrary.saveToLibraryAsync(uri);
-        showToast('Сохранено в галерею', 'camera');
+        showToast(t('swipeable.saved_to_gallery'), 'camera');
       } else {
         // Fallback: share
         await Sharing.shareAsync(uri);
       }
     } catch (e) {
-      showToast('Не удалось сохранить', 'x');
+      showToast(t('swipeable.save_failed'), 'x');
     }
   };
 

@@ -26,12 +26,21 @@ import { PostContextMenu } from '../../src/components/ui/PostContextMenu';
 import { UserProfilePostCard } from '../../src/components/ui/UserProfilePostCard';
 import { PanResponder } from 'react-native';
 import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
+import { useT } from '../../src/i18n/store';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const SCREEN_HEIGHT = Dimensions.get('window').height;
 type TabName = 'posts' | 'replies' | 'media' | 'likes';
 
-const REPORT_CATEGORIES = ['Спам', 'Насилие', 'Ложная информация', 'Мошенничество', 'Другое'];
+// Report category KEYS — labels come from the dictionary at render time
+// so the sheet works in both Russian and English without duplicate strings.
+const REPORT_CATEGORIES: { key: string; labelKey: string }[] = [
+  { key: 'spam', labelKey: 'report.cat.spam' },
+  { key: 'violence', labelKey: 'report.cat.violence' },
+  { key: 'misinformation', labelKey: 'report.cat.misinformation' },
+  { key: 'fraud', labelKey: 'report.cat.fraud' },
+  { key: 'other', labelKey: 'report.cat.other' },
+];
 
 function detectLinkType(url: string): string {
   const lower = url.toLowerCase();
@@ -75,6 +84,7 @@ function SocialLinkIcon({ type, url }: { type: string; url: string }) {
 function ProfileMenuModalImpl({ visible, profile, onClose }: { visible: boolean; profile: any; onClose: () => void }) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const t = useT();
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
   const dragY = useRef(new Animated.Value(0)).current;
   const [showQR, setShowQR] = useState(false);
@@ -123,19 +133,19 @@ function ProfileMenuModalImpl({ visible, profile, onClose }: { visible: boolean;
   const handleCopyLink = async () => {
     triggerHaptic('light');
     await Clipboard.setStringAsync(`https://san-m-app.com/profile/${profile?.id}`);
-    showToast('Ссылка скопирована', 'link');
+    showToast(t('toast.link_copied'), 'link');
     handleClose();
   };
 
   const handleShare = async () => {
     triggerHaptic('light');
-    try { await Share.share({ message: `${profile?.display_name || 'User'} в San\nhttps://san-m-app.com/profile/${profile?.id}` }); } catch {}
+    try { await Share.share({ message: `${t('profile_menu.share_message', undefined, { name: profile?.display_name || 'User' })}\nhttps://san-m-app.com/profile/${profile?.id}` }); } catch {}
     handleClose();
   };
 
   const handleReport = (cat: string) => {
     triggerHaptic('medium');
-    showToast('Жалоба отправлена', 'flag');
+    showToast(t('toast.report_sent'), 'flag');
     handleClose();
   };
 
@@ -151,7 +161,7 @@ function ProfileMenuModalImpl({ visible, profile, onClose }: { visible: boolean;
           <View style={{ backgroundColor: '#FFF', borderRadius: 20, padding: 20 }}>
             <Image source={{ uri: qrUrl }} style={{ width: 200, height: 200 }} resizeMode="contain" />
           </View>
-          <Text variant="caption" color="#FFFFFF" style={{ marginTop: 16 }}>Нажмите чтобы закрыть</Text>
+          <Text variant="caption" color="#FFFFFF" style={{ marginTop: 16 }}>{t('profile.qr_close_hint')}</Text>
         </Pressable>
       </Modal>
     );
@@ -188,16 +198,16 @@ function ProfileMenuModalImpl({ visible, profile, onClose }: { visible: boolean;
                       </Pressable>
                     </View>
                   </View>
-                  <MenuItem icon="link" label="Скопировать ссылку" onPress={handleCopyLink} theme={theme} />
-                  <MenuItem icon="share-2" label="Поделиться профилем" onPress={handleShare} theme={theme} />
-                  <MenuItem icon="flag" label="Пожаловаться" onPress={() => { triggerHaptic('light'); switchToReport(); }} theme={theme} destructive />
+                  <MenuItem icon="link" label={t('profile_menu.copy_link')} onPress={handleCopyLink} theme={theme} />
+                  <MenuItem icon="share-2" label={t('profile_menu.share_profile')} onPress={handleShare} theme={theme} />
+                  <MenuItem icon="flag" label={t('profile_menu.report')} onPress={() => { triggerHaptic('light'); switchToReport(); }} theme={theme} destructive />
                 </>
               ) : (
                 <>
-                  <Text variant="body" weight="semibold" align="center" style={{ paddingVertical: 12 }}>Причина жалобы</Text>
-                  {REPORT_CATEGORIES.map((cat, i) => (
-                    <Pressable key={i} onPress={() => handleReport(cat)} style={{ paddingVertical: 14, paddingHorizontal: 20, borderTopWidth: 0.5, borderTopColor: theme.colors.border.light }}>
-                      <Text variant="body">{cat}</Text>
+                  <Text variant="body" weight="semibold" align="center" style={{ paddingVertical: 12 }}>{t('report.title')}</Text>
+                  {REPORT_CATEGORIES.map((cat) => (
+                    <Pressable key={cat.key} onPress={() => handleReport(cat.key)} style={{ paddingVertical: 14, paddingHorizontal: 20, borderTopWidth: 0.5, borderTopColor: theme.colors.border.light }}>
+                      <Text variant="body">{t(cat.labelKey)}</Text>
                     </Pressable>
                   ))}
                 </>
@@ -231,6 +241,7 @@ const ProfileMenuModal = React.memo(ProfileMenuModalImpl);
 export default function UserProfileScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const t = useT();
   const { id, fromChat } = useLocalSearchParams<{ id: string; fromChat?: string }>();
   const { user: currentUser } = useAuthStore();
   const [isLoading, setIsLoading] = useState(true);
@@ -485,8 +496,8 @@ export default function UserProfileScreen() {
   if (!displayProfile) {
     return (
       <View style={{ flex: 1, backgroundColor: theme.colors.background.primary, alignItems: 'center', justifyContent: 'center' }}>
-        <Text variant="body" color={theme.colors.text.tertiary}>Пользователь не найден</Text>
-        <Pressable onPress={() => router.back()} style={{ marginTop: 16 }}><Text variant="body" color={theme.colors.accent.primary}>Назад</Text></Pressable>
+        <Text variant="body" color={theme.colors.text.tertiary}>{t('profile.user_not_found')}</Text>
+        <Pressable onPress={() => router.back()} style={{ marginTop: 16 }}><Text variant="body" color={theme.colors.accent.primary}>{t('common.back')}</Text></Pressable>
       </View>
     );
   }
@@ -496,8 +507,8 @@ export default function UserProfileScreen() {
   const profileLinksRaw = displayProfile.links;
   const userLinks: { type: string; url: string }[] = profileLinksRaw ? (typeof profileLinksRaw === 'string' ? JSON.parse(profileLinksRaw) : profileLinksRaw) : [];
   const tabs: { key: TabName; label: string }[] = [
-    { key: 'posts', label: 'Посты' }, { key: 'replies', label: 'Ответы' },
-    { key: 'media', label: 'Медиа' }, { key: 'likes', label: 'Лайки' },
+    { key: 'posts', label: t('profile.posts') }, { key: 'replies', label: t('profile.replies') },
+    { key: 'media', label: t('profile.media') }, { key: 'likes', label: t('profile.likes') },
   ];
 
   return (
@@ -562,7 +573,7 @@ export default function UserProfileScreen() {
                   </Pressable>
                 )}
                 <Pressable onPress={handleFollow} style={{ paddingHorizontal: 20, paddingVertical: 8, backgroundColor: isFollowingState ? 'transparent' : theme.colors.accent.primary, borderWidth: isFollowingState ? 1 : 0, borderColor: theme.colors.border.medium, borderRadius: 8 }}>
-                  <Text variant="caption" weight="semibold" color={isFollowingState ? theme.colors.text.primary : '#FFFFFF'}>{isFollowingState ? 'Отписаться' : 'Подписаться'}</Text>
+                  <Text variant="caption" weight="semibold" color={isFollowingState ? theme.colors.text.primary : '#FFFFFF'}>{isFollowingState ? t('profile.unfollow') : t('profile.follow')}</Text>
                 </Pressable>
               </View>
             )}
@@ -610,7 +621,7 @@ export default function UserProfileScreen() {
             React.memo on subsequent re-renders, so always-mounted is cheap. */}
         <View style={{ display: activeTab === 'posts' ? 'flex' : 'none' }}>
           {displayPosts.length === 0 ? (
-            <View style={{ alignItems: 'center', paddingVertical: 40 }}><Text variant="caption" color={theme.colors.text.tertiary}>Ещё нет публикаций</Text></View>
+            <View style={{ alignItems: 'center', paddingVertical: 40 }}><Text variant="caption" color={theme.colors.text.tertiary}>{t('profile.no_posts')}</Text></View>
           ) : (
             <View style={{ paddingHorizontal: 16, paddingTop: 12, minHeight: 200 }}>
               {postsReady ? displayPosts.slice(0, visibleCount).map((post: any) => (
@@ -631,7 +642,7 @@ export default function UserProfileScreen() {
           )}
         </View>
         <View style={{ display: activeTab !== 'posts' ? 'flex' : 'none', alignItems: 'center', paddingVertical: 40 }}>
-          <Text variant="caption" color={theme.colors.text.tertiary}>Пока пусто</Text>
+          <Text variant="caption" color={theme.colors.text.tertiary}>{t('profile.empty_section')}</Text>
         </View>
       </Animated.ScrollView>
 
@@ -654,7 +665,7 @@ export default function UserProfileScreen() {
             <Text variant="caption" weight="semibold" numberOfLines={1} style={{ maxWidth: 100 }}>{displayProfile.display_name}</Text>
             {displayProfile.is_verified && <VerifiedBadge size={10} />}
             <Pressable onPress={handleFollow} style={{ paddingHorizontal: 12, paddingVertical: 5, backgroundColor: isFollowingState ? 'transparent' : theme.colors.accent.primary, borderWidth: isFollowingState ? 1 : 0, borderColor: theme.colors.border.medium, borderRadius: 12 }}>
-              <Text variant="caption" weight="semibold" color={isFollowingState ? theme.colors.text.primary : '#FFFFFF'} style={{ fontSize: 11 }}>{isFollowingState ? 'Отписаться' : 'Подписаться'}</Text>
+              <Text variant="caption" weight="semibold" color={isFollowingState ? theme.colors.text.primary : '#FFFFFF'} style={{ fontSize: 11 }}>{isFollowingState ? t('profile.unfollow') : t('profile.follow')}</Text>
             </Pressable>
           </View>
         </Animated.View>
@@ -735,7 +746,7 @@ export default function UserProfileScreen() {
                 <Feather name="share" size={16} color="#FFFFFF" />
               </Pressable>
               {isOwnProfile && (
-                <Pressable onPress={() => { if (viewingImage) { Alert.alert('Удалить пост?', 'Это действие нельзя отменить', [{ text: 'Отмена', style: 'cancel' }, { text: 'Удалить', style: 'destructive', onPress: async () => { if (currentUser?.id) { await deletePost(viewingImage.postId, currentUser.id); } setViewingImage(null); } }]); } }} style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,60,50,0.2)', alignItems: 'center', justifyContent: 'center' }}>
+                <Pressable onPress={() => { if (viewingImage) { Alert.alert(t('profile.delete_post_title'), t('profile.delete_post_msg'), [{ text: t('common.cancel'), style: 'cancel' }, { text: t('common.delete'), style: 'destructive', onPress: async () => { if (currentUser?.id) { await deletePost(viewingImage.postId, currentUser.id); } setViewingImage(null); } }]); } }} style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,60,50,0.2)', alignItems: 'center', justifyContent: 'center' }}>
                   <Feather name="trash-2" size={16} color="#FF3B30" />
                 </Pressable>
               )}

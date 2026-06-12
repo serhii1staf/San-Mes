@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { t } from '../i18n/store';
 
 const RATE_LIMIT_KEY = '@san:rate_limits';
 
@@ -118,7 +119,7 @@ const SUSPICIOUS_PATTERNS = [
 export function detectSuspiciousContent(text: string): { isSuspicious: boolean; reason?: string } {
   for (const pattern of SUSPICIOUS_PATTERNS) {
     if (pattern.test(text)) {
-      return { isSuspicious: true, reason: 'Обнаружена подозрительная ссылка или контент' };
+      return { isSuspicious: true, reason: t('rate_limit.suspicious_content') };
     }
   }
   return { isSuspicious: false };

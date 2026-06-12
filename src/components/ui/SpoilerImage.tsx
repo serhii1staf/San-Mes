@@ -4,6 +4,7 @@ import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../../theme';
 import { Text } from './Text';
 import { CachedImage } from './CachedImage';
+import { useT } from '../../i18n/store';
 
 interface SpoilerImageProps {
   uri: string;
@@ -19,6 +20,7 @@ interface SpoilerImageProps {
  */
 export function SpoilerImage({ uri, width, height, borderRadius = 12, isSpoiler = false }: SpoilerImageProps) {
   const theme = useTheme();
+  const t = useT();
   const [revealed, setRevealed] = useState(!isSpoiler);
 
   if (!isSpoiler || revealed) {
@@ -32,7 +34,7 @@ export function SpoilerImage({ uri, width, height, borderRadius = 12, isSpoiler 
       {/* Overlay */}
       <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: theme.isDark ? 'rgba(20,20,20,0.92)' : 'rgba(200,200,200,0.92)', alignItems: 'center', justifyContent: 'center', borderRadius }}>
         <Feather name="eye-off" size={24} color={theme.colors.text.tertiary} />
-        <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginTop: 6 }}>Нажмите для просмотра</Text>
+        <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginTop: 6 }}>{t('spoiler.tap_to_view')}</Text>
       </View>
     </Pressable>
   );

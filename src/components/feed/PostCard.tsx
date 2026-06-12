@@ -15,6 +15,7 @@ import { extractFirstUrl } from '../../services/linkPreview';
 import { Post } from '../../types';
 import { formatTimeAgo } from '../../utils/mockData';
 import { triggerHaptic } from '../../utils/haptics';
+import { useT } from '../../i18n/store';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const IMAGE_HEIGHT = 280;
@@ -32,6 +33,7 @@ interface PostCardProps {
 
 export const PostCard = memo(function PostCard({ post, currentUserId, onLike, onComment, onShare, onBookmark, onMenu, onFollow }: PostCardProps) {
   const theme = useTheme();
+  const t = useT();
   const lastTap = useRef<number>(0);
 
   const handleLike = () => { triggerHaptic('light'); onLike(post.id); };
@@ -51,7 +53,7 @@ export const PostCard = memo(function PostCard({ post, currentUserId, onLike, on
       {post.isRepost && (
         <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: 10, gap: 6 }}>
           <Feather name="repeat" size={12} color={theme.colors.text.tertiary} style={{ flexShrink: 0 }} />
-          <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11, flexShrink: 1 }} numberOfLines={1}>{post.authorName} репостнул(а)</Text>
+          <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11, flexShrink: 1 }} numberOfLines={1}>{t('post.reposted_by', undefined, { name: post.authorName })}</Text>
         </View>
       )}
 
