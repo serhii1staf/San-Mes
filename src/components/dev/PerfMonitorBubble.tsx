@@ -32,7 +32,6 @@ import { PerfMonitorPanel } from './PerfMonitorPanel';
 
 const BUBBLE_SIZE = 56;
 const EDGE_PADDING = 8;
-const TAP_SLOP = 6; // movement (px) below this = tap, not drag
 
 /**
  * Tiny error boundary so a regression in the perf monitor never takes the
@@ -156,54 +155,59 @@ function PerfMonitorBubbleInner() {
     }
   }, enabled);
 
-  // Drag gesture. Tap (no drag) opens the panel. Movement above TAP_SLOP
-  // suppresses tap so a flick doesn't accidentally open the panel.
+  // Drag gesture moves the bubble; tap gesture opens the panel. They live in
+  // a Race composition so a quick press resolves cleanly to "tap" without
+  // waiting for Pan to fail. Earlier we tried to detect a tap as "Pan that
+  // ended with no movement", but RNGH's Pan does not always fire `onEnd`
+  // for a press without activation, which is why the bubble appeared
+  // unresponsive when tapped.
   const movedAbsX = useSharedValue(0);
   const movedAbsY = useSharedValue(0);
   const openPanel = () => setPanelOpen(true);
 
-  const pan = useMemo(
-    () =>
-      Gesture.Pan()
-        .minDistance(0)
-        .onStart(() => {
-          startX.value = x.value;
-          startY.value = y.value;
-          movedAbsX.value = 0;
-          movedAbsY.value = 0;
-        })
-        .onUpdate((e) => {
-          movedAbsX.value = Math.abs(e.translationX);
-          movedAbsY.value = Math.abs(e.translationY);
-          // Live constrain to the screen bounds so the bubble can't escape.
-          const maxX = screenW - BUBBLE_SIZE - EDGE_PADDING;
-          const maxY = screenH - BUBBLE_SIZE - EDGE_PADDING - insets.bottom;
-          const minX = EDGE_PADDING;
-          const minY = EDGE_PADDING + insets.top;
-          x.value = Math.min(maxX, Math.max(minX, startX.value + e.translationX));
-          y.value = Math.min(maxY, Math.max(minY, startY.value + e.translationY));
-        })
-        .onEnd(() => {
-          // Snap horizontally to whichever screen edge is closer — Telegram-
-          // style behaviour, prevents the bubble from sitting in the middle
-          // of content.
-          const targetX =
-            x.value + BUBBLE_SIZE / 2 < screenW / 2
-              ? EDGE_PADDING
-              : screenW - BUBBLE_SIZE - EDGE_PADDING;
-          x.value = withSpring(targetX, { damping: 18, stiffness: 220 });
-          // If movement was below the tap slop, treat as a tap.
-          if (movedAbsX.value < TAP_SLOP && movedAbsY.value < TAP_SLOP) {
-            runOnJS(openPanel)();
-          } else {
-            runOnJS(setPos)(targetX, y.value);
-          }
-        }),
-    // pan handler holds layout-dependent constants; rebuild only when the
-    // screen size changes (e.g. rotation).
+  const composedGesture = useMemo(() => {
+    const tap = Gesture.Tap()
+      .maxDuration(300)
+      .onEnd(() => {
+        runOnJS(openPanel)();
+      });
+
+    const pan = Gesture.Pan()
+      // Activate only on a real drag so the gesture doesn't steal taps.
+      .minDistance(6)
+      .onStart(() => {
+        startX.value = x.value;
+        startY.value = y.value;
+        movedAbsX.value = 0;
+        movedAbsY.value = 0;
+      })
+      .onUpdate((e) => {
+        movedAbsX.value = Math.abs(e.translationX);
+        movedAbsY.value = Math.abs(e.translationY);
+        // Live constrain to the screen bounds so the bubble can't escape.
+        const maxX = screenW - BUBBLE_SIZE - EDGE_PADDING;
+        const maxY = screenH - BUBBLE_SIZE - EDGE_PADDING - insets.bottom;
+        const minX = EDGE_PADDING;
+        const minY = EDGE_PADDING + insets.top;
+        x.value = Math.min(maxX, Math.max(minX, startX.value + e.translationX));
+        y.value = Math.min(maxY, Math.max(minY, startY.value + e.translationY));
+      })
+      .onEnd(() => {
+        // Snap horizontally to whichever screen edge is closer — Telegram-
+        // style behaviour, prevents the bubble from sitting in the middle
+        // of content.
+        const targetX =
+          x.value + BUBBLE_SIZE / 2 < screenW / 2
+            ? EDGE_PADDING
+            : screenW - BUBBLE_SIZE - EDGE_PADDING;
+        x.value = withSpring(targetX, { damping: 18, stiffness: 220 });
+        runOnJS(setPos)(targetX, y.value);
+      });
+
+    return Gesture.Race(tap, pan);
+    // Layout-dependent constants only; rebuild on rotation.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [screenW, screenH, insets.bottom, insets.top],
-  );
+  }, [screenW, screenH, insets.bottom, insets.top]);
 
   const animStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: x.value }, { translateY: y.value }],
@@ -220,7 +224,7 @@ function PerfMonitorBubbleInner() {
   return (
     <>
       <Animated.View pointerEvents="box-none" style={[styles.container, animStyle]}>
-        <GestureDetector gesture={pan}>
+        <GestureDetector gesture={composedGesture}>
           <View style={[styles.bubble, { borderColor: tint, shadowColor: tint }]}>
             <Text style={[styles.fps, { color: tint }]} numberOfLines={1}>
               {snap.jsFps || 0}
