@@ -24,6 +24,7 @@ import { updateFeedWidget } from '../../src/services/widgetBridge';
 import { useWidgetSettingsStore } from '../../src/store/widgetSettingsStore';
 import { queueMutation } from '../../src/services/offlineQueue';
 import { useT } from '../../src/i18n/store';
+import { perfMonitor } from '../../src/services/perfMonitor';
 
 const FEED_CACHE_KEY = '@san:feed_posts';
 const FEED_LIMIT = 20;
@@ -101,6 +102,45 @@ function SkeletonCard() {
   );
 }
 
+// Cheap content-equality check between two Post arrays.
+//
+// Used to short-circuit `setPosts` when the server (or the cached payload
+// the focus-effect just parsed) returned data that is content-identical to
+// what's already in state. Without this, every `loadFeed` / `handleRefresh`
+// network response — even when nothing changed — replaces the array with
+// fresh object references, busting `PostCard`'s `React.memo` and forcing
+// every visible card to reconcile. On a 100-post feed with 6 visible cards
+// that reconciliation is the dominant cost behind the residual
+// `SLOW long task @ (tabs)` markers (~150–170 ms on weak devices).
+//
+// Excludes `isLiked` / `isBookmarked` because the server-side `mapRawPost`
+// always defaults those to `false`, while local optimistic `handleToggleLike`
+// flips them on top of state. Comparing those would treat every refresh as
+// "changed" even when nothing on the server actually moved.
+function postsShallowEqual(a: Post[], b: Post[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i];
+    const y = b[i];
+    if (x === y) continue;
+    if (
+      x.id !== y.id ||
+      x.content !== y.content ||
+      x.imageUrl !== y.imageUrl ||
+      x.likesCount !== y.likesCount ||
+      x.commentsCount !== y.commentsCount ||
+      x.sharesCount !== y.sharesCount ||
+      x.isSpoilerImage !== y.isSpoilerImage ||
+      (x.originalPost?.id) !== (y.originalPost?.id) ||
+      (x.originalPost?.content) !== (y.originalPost?.content)
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 // Map raw Supabase post to Post type
 function mapRawPost(p: any, postsById: Record<string, any>): Post | null {
   const repostInfo = isRepost(p.content || '');
@@ -173,6 +213,14 @@ export default function FeedScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
+  // Mount-time marker — feed open is the first impression on cold start, so
+  // any time spent here is highly user-visible. Free when the perf monitor
+  // is off (singleton early-returns on the disabled flag).
+  const mountStart = useRef(Date.now()).current;
+  useEffect(() => {
+    perfMonitor.markScreenMount('(tabs)/index', Date.now() - mountStart);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // Subscribe field-by-field — pulling the whole user object from useAuthStore
   // re-renders the entire feed screen on any unrelated profile change.
   const userId = useAuthStore((s) => s.user?.id);
@@ -215,13 +263,20 @@ export default function FeedScreen() {
         const raw = kvGetStringSync(FEED_CACHE_KEY);
         if (!raw) return;
         const parsed = JSON.parse(raw) as Post[];
-        if (Array.isArray(parsed) && parsed.length > posts.length) {
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          // Always record the cache signature so the focus reload's
+          // raw-equality check works even when this hydrate is a no-op.
           lastFocusCacheRawRef.current = raw;
-          setPosts(parsed);
-        } else if (Array.isArray(parsed)) {
-          // Same payload as the synchronous peek — record the signature
-          // so the very first focus reload after mount still skips.
-          lastFocusCacheRawRef.current = raw;
+          // Only force a re-render when the parsed list actually adds
+          // posts beyond the synchronous 8-post peek AND the content
+          // differs. The shallow-equality check protects against the
+          // case where the seeded peek already covered everything in
+          // cache — without it, this useEffect would replace the array
+          // with fresh refs and bust every visible PostCard's memo.
+          setPosts((prev) => {
+            if (parsed.length <= prev.length) return prev;
+            return postsShallowEqual(prev, parsed) ? prev : parsed;
+          });
         }
       } catch {}
     });
@@ -234,8 +289,29 @@ export default function FeedScreen() {
   // or when the native widget module isn't in the build yet).
   // Deferred via InteractionManager so it never blocks the frame when switching
   // tabs or when new posts arrive — keeps navigation buttery on weak devices.
+  //
+  // We also skip the work entirely when the slice that drives the widget +
+  // image prefetch hasn't actually changed. `posts` is replaced by a fresh
+  // array on every like toggle (`handleToggleLike` does `prev.map`), but a
+  // like flip never affects what the widget renders nor which images need
+  // prefetching — without this guard the bridge call + `Image.prefetch`
+  // setup would fire on every tap, contributing to the residual long task
+  // users were seeing after rapid tab switches.
+  const widgetSigRef = useRef<string>('');
   useEffect(() => {
     if (posts.length === 0) return;
+    // Build a signature of the fields that actually feed the widget +
+    // prefetch: top 12 ids + first image (for prefetch deduping) + first
+    // 32 chars of content (widget shows the head of the post). Cheap to
+    // compute; comparing it to the previous run is a single string compare.
+    let sig = '';
+    const top = Math.min(posts.length, 12);
+    for (let i = 0; i < top; i++) {
+      const p = posts[i];
+      sig += p.id + '|' + (p.imageUrl || '') + '|' + (p.content ? p.content.slice(0, 32) : '') + '\n';
+    }
+    if (sig === widgetSigRef.current) return;
+    widgetSigRef.current = sig;
     const handle = InteractionManager.runAfterInteractions(() => {
       // Warm the image cache for the first screenful so scrolling is instant.
       prefetchImages(posts.slice(0, 12).flatMap((p) => [p.imageUrl, ...(p.imageUrls || []), p.originalPost?.imageUrl]));
@@ -292,7 +368,13 @@ export default function FeedScreen() {
           const parsed = JSON.parse(raw) as Post[];
           if (Array.isArray(parsed) && parsed.length > 0) {
             lastFocusCacheRawRef.current = raw;
-            setPosts(parsed);
+            // Even when the raw cache string changed (e.g. another screen
+            // re-serialised the same data), only force a re-render if the
+            // content actually differs from what's already on screen.
+            // Without this, returning a `setPosts(parsed)` with fresh
+            // object refs busts every visible PostCard's React.memo and
+            // contributes to the residual long task users were seeing.
+            setPosts((prev) => (postsShallowEqual(prev, parsed) ? prev : parsed));
             setIsLoading(false);
           }
         } catch {}
@@ -380,18 +462,32 @@ export default function FeedScreen() {
         if (post) mapped.push(post);
       }
 
-      // Write to Zustand store (primary data source)
-      setPosts(mapped);
+      // Short-circuit when the server returned the same payload we already
+      // have on screen. `setPosts(mapped)` would otherwise replace the
+      // array with fresh references and force every visible PostCard's
+      // `React.memo` to bust → ~150–170 ms of reconciliation on weak
+      // devices, landing 2–3 s after a tab switch as the residual
+      // `SLOW long task @ (tabs)` users were seeing. When content matches,
+      // skip the cache rewrite too — the on-disk JSON is already current.
+      let didUpdate = false;
+      setPosts((prev) => {
+        if (postsShallowEqual(prev, mapped)) return prev;
+        didUpdate = true;
+        return mapped;
+      });
       setIsLoading(false);
 
-      // MMKV cache only — the AsyncStorage mirror was a redundant second
-      // JSON.stringify of the same payload (see profile.tsx note); dropping
-      // it cuts the dominant cost behind `SLOW long task @ (tabs)` on focus.
-      kvSetJSON(FEED_CACHE_KEY, mapped);
-      // Refresh the cache signature so a focus reload immediately after this
-      // network sync recognises the cache as up-to-date and skips a redundant
-      // parse + setPosts that would otherwise re-render every visible card.
-      lastFocusCacheRawRef.current = kvGetStringSync(FEED_CACHE_KEY);
+      if (didUpdate) {
+        // Defer the JSON.stringify off the response frame so it never
+        // lands on the same RAF as the setPosts re-render. The cache
+        // signature ref is refreshed inside the same deferred block so
+        // the focus-effect's raw-equality check stays correct regardless
+        // of when it observes either side.
+        InteractionManager.runAfterInteractions(() => {
+          kvSetJSON(FEED_CACHE_KEY, mapped);
+          lastFocusCacheRawRef.current = kvGetStringSync(FEED_CACHE_KEY);
+        });
+      }
     } catch {
       // Network error: preserve existing store data, hide loading/refreshing
       setIsLoading(false);
@@ -442,14 +538,23 @@ export default function FeedScreen() {
         if (post) mapped.push(post);
       }
 
-      // Update store with fresh data
-      setPosts(mapped);
-      // MMKV cache only — see note above on dropped AsyncStorage mirror.
-      kvSetJSON(FEED_CACHE_KEY, mapped);
-      // Refresh the cache signature so a focus reload immediately after this
-      // pull-to-refresh recognises the cache as up-to-date and skips a
-      // redundant parse + setPosts (see useFocusEffect note above).
-      lastFocusCacheRawRef.current = kvGetStringSync(FEED_CACHE_KEY);
+      // Same short-circuit as `loadFeed`: skip the setPosts cascade and the
+      // cache rewrite when the server returned content-equal data, since the
+      // dominant cost is the React reconciliation of every visible PostCard
+      // (their props are React.memo'd by ref). A no-op refresh now leaves
+      // posts untouched and only the spinner spins down.
+      let didUpdate = false;
+      setPosts((prev) => {
+        if (postsShallowEqual(prev, mapped)) return prev;
+        didUpdate = true;
+        return mapped;
+      });
+      if (didUpdate) {
+        InteractionManager.runAfterInteractions(() => {
+          kvSetJSON(FEED_CACHE_KEY, mapped);
+          lastFocusCacheRawRef.current = kvGetStringSync(FEED_CACHE_KEY);
+        });
+      }
     } catch {
       // Network error: preserve existing data from store
     }

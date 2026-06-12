@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { View, TextInput, Pressable, ViewStyle, ScrollView, Alert, Image, ActivityIndicator, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -18,6 +18,7 @@ import { useEntityStore } from '../../src/services/entityStore';
 import { accountKey } from '../../src/services/cacheService';
 import { FormatHelpModal } from '../../src/components/ui/FormatHelpModal';
 import { useT } from '../../src/i18n/store';
+import { perfMonitor } from '../../src/services/perfMonitor';
 
 const MAX_CHARS = 500;
 const MAX_IMAGES = 6;
@@ -30,6 +31,15 @@ export default function CreateScreen() {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const t = useT();
+  // Mount-time marker — surfaces in the perf-monitor panel. Create has
+  // photo-picker chrome that occasionally lags on cold tab switch; this
+  // attribution helps tell whether that lag is in the screen's first
+  // render or downstream picker work.
+  const mountStart = useRef(Date.now()).current;
+  useEffect(() => {
+    perfMonitor.markScreenMount('(tabs)/create', Date.now() - mountStart);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // Field-level selectors so the create screen doesn't re-render on every
   // unrelated feed-store mutation (likes, posts list, etc.) coming from the home tab.
   const user = useAuthStore((s) => s.user);

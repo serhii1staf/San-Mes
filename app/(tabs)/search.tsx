@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { View, Pressable, ViewStyle, TextInput, FlatList, ActivityIndicator, Text as RNText } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -12,6 +12,7 @@ import { getProfiles } from '../../src/lib/supabase';
 import { useMiniAppsStore } from '../../src/store/miniAppsStore';
 import { accountKey } from '../../src/services/cacheService';
 import { useT } from '../../src/i18n/store';
+import { perfMonitor } from '../../src/services/perfMonitor';
 
 const SEARCH_HISTORY_KEY = '@san:search_history';
 
@@ -29,6 +30,13 @@ export default function SearchScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
+  // Mount-time marker — search tab is small but still has a synchronous
+  // history hydrate. Free when the perf monitor is off.
+  const mountStart = useRef(Date.now()).current;
+  useEffect(() => {
+    perfMonitor.markScreenMount('(tabs)/search', Date.now() - mountStart);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [isFocused, setIsFocused] = useState(false);
   const [query, setQuery] = useState('');
   const [profiles, setProfiles] = useState<ProfileResult[]>([]);

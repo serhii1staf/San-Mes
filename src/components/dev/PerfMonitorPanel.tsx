@@ -1,29 +1,61 @@
 /**
  * Full perf monitor panel — opens when the user taps the floating bubble.
  *
- * Shows:
- * - Live JS / UI FPS values + worst-of-last-5-seconds
- * - A scrollable log of recent navigation transitions, slow-frame markers,
- *   and any custom marks recorded via `perfMonitor.mark(...)`
- * - Toggle to enable/disable the bubble itself
- * - Clear-events button
+ * Layout, top to bottom:
+ *  1. Header (title + Snapshot button + Close)
+ *  2. Live gauges row (JS FPS, UI FPS, pending image decodes, last long task)
+ *  3. Filter chip row (NAV / MOUNT / INPUT / IMG / LONG / UI / MARK)
+ *  4. Search box (debounced 200 ms, filters by event label)
+ *  5. Settings toggles + clear button
+ *  6. Errors section (always shown, separate from filtered events)
+ *  7. Route-grouped event list — collapsible per route, current route is
+ *     auto-expanded so the user lands on the most relevant data
  *
  * Designed to stay readable in both light + dark themes by using the app's
  * theme colours rather than hardcoded greys.
  */
 
-import React, { useEffect, useState } from 'react';
-import { ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View, Alert } from 'react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import { ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View, Alert } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useTheme } from '../../theme';
-import { perfMonitor, type PerfEvent, type PerfSnapshot } from '../../services/perfMonitor';
+import { perfMonitor, type PerfEvent, type PerfEventKind, type PerfSnapshot } from '../../services/perfMonitor';
 import { useSettingsStore } from '../../store/settingsStore';
 import { useT } from '../../i18n/store';
 
 interface Props {
   onClose: () => void;
+}
+
+// Order in which the chip row renders. Mirrors the most-to-least useful
+// kinds when triaging perceived lag.
+const FILTER_KINDS: PerfEventKind[] = ['NAV', 'MOUNT', 'INPUT', 'IMG', 'LONG', 'UI', 'MARK'];
+
+// Visual tint per kind. Kept small so the panel reads quickly at a glance.
+function tintForKind(kind: PerfEventKind, theme: any): string {
+  switch (kind) {
+    case 'NAV':
+      return '#3b82f6';
+    case 'MOUNT':
+      return '#a855f7';
+    case 'INPUT':
+      return '#06b6d4';
+    case 'IMG':
+      return '#10b981';
+    case 'LONG':
+      return '#ef4444';
+    case 'UI':
+      return '#f59e0b';
+    case 'INTER':
+      return '#8b5cf6';
+    case 'ERROR':
+      return '#ef4444';
+    case 'MARK':
+    default:
+      return theme.colors.text.secondary;
+  }
 }
 
 export function PerfMonitorPanel({ onClose }: Props) {
@@ -33,6 +65,31 @@ export function PerfMonitorPanel({ onClose }: Props) {
   const [snap, setSnap] = useState<PerfSnapshot>(() => perfMonitor.snapshot());
   const enabled = useSettingsStore((s) => s.perfMonitorEnabled);
   const setEnabled = useSettingsStore((s) => s.setPerfMonitorEnabled);
+  const filters = useSettingsStore((s) => s.perfMonitorFilters);
+  const setFilter = useSettingsStore((s) => s.setPerfMonitorFilter);
+
+  // Debounced search query. The raw input updates state on every keystroke
+  // so the input feels native; the actual list filter reads `appliedQuery`
+  // which lags the input by ~200 ms.
+  const [searchQuery, setSearchQuery] = useState('');
+  const [appliedQuery, setAppliedQuery] = useState('');
+  useEffect(() => {
+    const h = setTimeout(() => setAppliedQuery(searchQuery.trim().toLowerCase()), 200);
+    return () => clearTimeout(h);
+  }, [searchQuery]);
+
+  // Per-route collapse state. Keys are route strings; missing key = collapsed
+  // for non-current routes. The current route is always expanded by default
+  // (handled below).
+  const [expandedRoutes, setExpandedRoutes] = useState<Record<string, boolean>>({});
+  const toggleRoute = (route: string) =>
+    setExpandedRoutes((prev) => ({ ...prev, [route]: !prev[route] }));
+
+  // Set of long-task event timestamps the user has tapped to expand. Keyed
+  // by ts since events are otherwise unidentified.
+  const [expandedLong, setExpandedLong] = useState<Record<number, boolean>>({});
+  const toggleLong = (ts: number) =>
+    setExpandedLong((prev) => ({ ...prev, [ts]: !prev[ts] }));
 
   useEffect(() => {
     let last = 0;
@@ -48,6 +105,63 @@ export function PerfMonitorPanel({ onClose }: Props) {
   const fpsColor = (fps: number) =>
     fps >= 50 ? '#22c55e' : fps >= 30 ? '#f59e0b' : '#ef4444';
 
+  // Filtered, route-grouped events. Errors are split out and rendered above.
+  const { errorEvents, groupedEvents } = useMemo(() => {
+    const errs: PerfEvent[] = [];
+    const groups: Record<string, PerfEvent[]> = {};
+    const order: string[] = [];
+    for (const ev of snap.events) {
+      if (ev.kind === 'ERROR') {
+        errs.push(ev);
+        continue;
+      }
+      // Filter chips. Missing key = on (default-on behaviour).
+      if (filters[ev.kind] === false) continue;
+      if (
+        appliedQuery &&
+        !ev.label.toLowerCase().includes(appliedQuery) &&
+        !(ev.route || '').toLowerCase().includes(appliedQuery)
+      ) {
+        continue;
+      }
+      const route = ev.route || '(unknown)';
+      if (!groups[route]) {
+        groups[route] = [];
+        order.push(route);
+      }
+      groups[route].push(ev);
+    }
+    return { errorEvents: errs, groupedEvents: { groups, order } };
+  }, [snap.events, filters, appliedQuery]);
+
+  // Sort routes by most-recent event so the active route surfaces at top.
+  const orderedRoutes = useMemo(() => {
+    const { order, groups } = groupedEvents;
+    return order.slice().sort((a, b) => {
+      const aLast = groups[a][groups[a].length - 1]?.ts || 0;
+      const bLast = groups[b][groups[b].length - 1]?.ts || 0;
+      return bLast - aLast;
+    });
+  }, [groupedEvents]);
+
+  const onSnapshot = async () => {
+    try {
+      const payload = {
+        capturedAt: snap.capturedAt,
+        currentRoute: snap.currentRoute,
+        fps: { js: snap.jsFps, ui: snap.uiFps, jsP1Min: snap.jsP1Min, uiP1Min: snap.uiP1Min },
+        pendingDecodes: snap.pendingDecodes,
+        lastLongTaskMs: snap.lastLongTaskMs,
+        recentEvents: snap.events,
+      };
+      await Clipboard.setStringAsync(JSON.stringify(payload, null, 2));
+      Alert.alert(
+        t('perf.copied_title', 'Copied'),
+        t('perf.snapshot_copied', 'Snapshot JSON copied to clipboard.'),
+      );
+    } catch {}
+  };
+
   return (
     <View
       style={[styles.root, { backgroundColor: theme.colors.background.primary, paddingTop: insets.top + 4 }]}
@@ -57,42 +171,141 @@ export function PerfMonitorPanel({ onClose }: Props) {
         <Text style={[styles.title, { color: theme.colors.text.primary }]}>
           {t('perf.title', 'Performance monitor')}
         </Text>
-        <TouchableOpacity onPress={onClose} hitSlop={10}>
-          <Text style={[styles.close, { color: theme.colors.text.secondary }]}>
-            {t('common.close', 'Close')}
-          </Text>
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
+          <TouchableOpacity onPress={onSnapshot} hitSlop={10}>
+            <Text style={{ color: theme.colors.accent.primary, fontWeight: '600' }}>
+              {t('perf.snapshot', 'Snapshot')}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={onClose} hitSlop={10}>
+            <Text style={[styles.close, { color: theme.colors.text.secondary }]}>
+              {t('common.close', 'Close')}
+            </Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       <ScrollView
         contentContainerStyle={{ paddingBottom: insets.bottom + 32 }}
         style={{ flex: 1 }}
       >
-        {/* Live FPS */}
+        {/* Live gauges */}
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: theme.colors.text.tertiary }]}>
             {t('perf.live', 'Live')}
           </Text>
-          <View style={styles.fpsRow}>
-            <View style={[styles.fpsCell, { backgroundColor: theme.colors.background.secondary }]}>
-              <Text style={[styles.fpsLabel, { color: theme.colors.text.tertiary }]}>
-                {t('perf.js_thread', 'JS thread')}
+          <View style={styles.gaugeRow}>
+            <View style={[styles.gaugeCell, { backgroundColor: theme.colors.background.secondary }]}>
+              <Text style={[styles.gaugeLabel, { color: theme.colors.text.tertiary }]}>
+                {t('perf.js_thread', 'JS')}
               </Text>
-              <Text style={[styles.fpsValue, { color: fpsColor(snap.jsFps) }]}>{snap.jsFps}</Text>
-              <Text style={[styles.fpsSub, { color: theme.colors.text.tertiary }]}>
+              <Text style={[styles.gaugeValue, { color: fpsColor(snap.jsFps) }]}>{snap.jsFps}</Text>
+              <Text style={[styles.gaugeSub, { color: theme.colors.text.tertiary }]}>
                 {t('perf.min_5s', 'min 5s')}: {snap.jsP1Min}
               </Text>
             </View>
-            <View style={[styles.fpsCell, { backgroundColor: theme.colors.background.secondary }]}>
-              <Text style={[styles.fpsLabel, { color: theme.colors.text.tertiary }]}>
-                {t('perf.ui_thread', 'UI thread')}
+            <View style={[styles.gaugeCell, { backgroundColor: theme.colors.background.secondary }]}>
+              <Text style={[styles.gaugeLabel, { color: theme.colors.text.tertiary }]}>
+                {t('perf.ui_thread', 'UI')}
               </Text>
-              <Text style={[styles.fpsValue, { color: fpsColor(snap.uiFps) }]}>{snap.uiFps}</Text>
-              <Text style={[styles.fpsSub, { color: theme.colors.text.tertiary }]}>
+              <Text style={[styles.gaugeValue, { color: fpsColor(snap.uiFps) }]}>{snap.uiFps}</Text>
+              <Text style={[styles.gaugeSub, { color: theme.colors.text.tertiary }]}>
                 {t('perf.min_5s', 'min 5s')}: {snap.uiP1Min}
               </Text>
             </View>
+            <View style={[styles.gaugeCell, { backgroundColor: theme.colors.background.secondary }]}>
+              <Text style={[styles.gaugeLabel, { color: theme.colors.text.tertiary }]}>
+                {t('perf.pending_decodes', 'IMG')}
+              </Text>
+              <Text
+                style={[
+                  styles.gaugeValue,
+                  { color: snap.pendingDecodes > 6 ? '#ef4444' : theme.colors.text.primary },
+                ]}
+              >
+                {snap.pendingDecodes}
+              </Text>
+              <Text style={[styles.gaugeSub, { color: theme.colors.text.tertiary }]}>
+                {t('perf.in_flight', 'in flight')}
+              </Text>
+            </View>
+            <View style={[styles.gaugeCell, { backgroundColor: theme.colors.background.secondary }]}>
+              <Text style={[styles.gaugeLabel, { color: theme.colors.text.tertiary }]}>
+                {t('perf.last_long', 'LONG')}
+              </Text>
+              <Text
+                style={[
+                  styles.gaugeValue,
+                  {
+                    color:
+                      snap.lastLongTaskMs > 300
+                        ? '#ef4444'
+                        : snap.lastLongTaskMs > 0
+                        ? '#f59e0b'
+                        : theme.colors.text.primary,
+                  },
+                ]}
+              >
+                {snap.lastLongTaskMs || 0}
+              </Text>
+              <Text style={[styles.gaugeSub, { color: theme.colors.text.tertiary }]}>
+                {t('perf.ms_label', 'ms')}
+              </Text>
+            </View>
           </View>
+          {snap.currentRoute ? (
+            <Text style={{ color: theme.colors.text.tertiary, fontSize: 11, marginTop: 6, paddingHorizontal: 4 }}>
+              {t('perf.current_route', 'Route')}: {snap.currentRoute}
+            </Text>
+          ) : null}
+        </View>
+
+        {/* Filter chips */}
+        <View style={[styles.section, { marginTop: 14 }]}>
+          <Text style={[styles.sectionTitle, { color: theme.colors.text.tertiary }]}>
+            {t('perf.filters', 'Filters')}
+          </Text>
+          <View style={styles.chipRow}>
+            {FILTER_KINDS.map((kind) => {
+              const on = filters[kind] !== false;
+              const tint = tintForKind(kind, theme);
+              return (
+                <TouchableOpacity
+                  key={kind}
+                  onPress={() => setFilter(kind, !on)}
+                  style={[
+                    styles.chip,
+                    {
+                      backgroundColor: on ? tint + '22' : theme.colors.background.secondary,
+                      borderColor: on ? tint : theme.colors.border.light,
+                    },
+                  ]}
+                >
+                  <Text style={{ color: on ? tint : theme.colors.text.tertiary, fontSize: 12, fontWeight: '700' }}>
+                    {kind}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
+
+        {/* Search */}
+        <View style={[styles.section, { marginTop: 14 }]}>
+          <TextInput
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            placeholder={t('perf.search_placeholder', 'Search events…')}
+            placeholderTextColor={theme.colors.text.tertiary}
+            style={[
+              styles.search,
+              {
+                backgroundColor: theme.colors.background.secondary,
+                color: theme.colors.text.primary,
+                borderColor: theme.colors.border.light,
+              },
+            ]}
+          />
         </View>
 
         {/* Settings */}
@@ -121,48 +334,49 @@ export function PerfMonitorPanel({ onClose }: Props) {
             are the highest-signal events when the user is debugging. The
             copy buttons let them paste the stack into a chat / email when
             they don't have direct Sentry dashboard access. */}
-        {(() => {
-          const errors = snap.events.filter((e) => e.type === 'error');
-          if (errors.length === 0) return null;
-          const reversed = errors.slice().reverse();
-          const allText = reversed
-            .map((ev) => formatErrorForCopy(ev))
-            .join('\n\n');
-          return (
-            <View style={styles.section}>
-              <View
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  paddingHorizontal: 4,
-                  marginBottom: 8,
-                }}
-              >
-                <Text style={[styles.sectionTitle, { color: '#ef4444', marginBottom: 0 }]}>
-                  {t('perf.errors', 'Errors')} · {errors.length}
-                </Text>
-                <TouchableOpacity
-                  onPress={async () => {
-                    try {
-                      await Clipboard.setStringAsync(allText);
-                      Alert.alert(t('perf.copied_title', 'Copied'), t('perf.copied_all', 'All errors copied to clipboard.'));
-                    } catch {}
+        {errorEvents.length > 0 ? (
+          (() => {
+            const reversed = errorEvents.slice().reverse();
+            const allText = reversed.map((ev) => formatErrorForCopy(ev)).join('\n\n');
+            return (
+              <View style={styles.section}>
+                <View
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    paddingHorizontal: 4,
+                    marginBottom: 8,
                   }}
                 >
-                  <Text style={{ color: theme.colors.accent.primary, fontSize: 13, fontWeight: '600' }}>
-                    {t('perf.copy_all', 'Copy all')}
+                  <Text style={[styles.sectionTitle, { color: '#ef4444', marginBottom: 0 }]}>
+                    {t('perf.errors', 'Errors')} · {errorEvents.length}
                   </Text>
-                </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={async () => {
+                      try {
+                        await Clipboard.setStringAsync(allText);
+                        Alert.alert(
+                          t('perf.copied_title', 'Copied'),
+                          t('perf.copied_all', 'All errors copied to clipboard.'),
+                        );
+                      } catch {}
+                    }}
+                  >
+                    <Text style={{ color: theme.colors.accent.primary, fontSize: 13, fontWeight: '600' }}>
+                      {t('perf.copy_all', 'Copy all')}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+                {reversed.map((ev, i) => (
+                  <ErrorRow key={`${ev.ts}-${i}`} event={ev} />
+                ))}
               </View>
-              {reversed.map((ev, i) => (
-                <ErrorRow key={`${ev.ts}-${i}`} event={ev} />
-              ))}
-            </View>
-          );
-        })()}
+            );
+          })()
+        ) : null}
 
-        {/* Event log */}
+        {/* Event list — grouped by route. Current route auto-expanded. */}
         <View style={styles.section}>
           <View
             style={{
@@ -185,8 +399,9 @@ export function PerfMonitorPanel({ onClose }: Props) {
                       .map((ev) => {
                         const ts = new Date(ev.ts).toISOString();
                         const dur = ev.durationMs != null ? ` ${ev.durationMs}ms` : '';
+                        const route = ev.route ? ` [${ev.route}]` : '';
                         const stack = ev.stack ? `\n${ev.stack}` : '';
-                        return `[${ts}] ${ev.type.toUpperCase()} ${ev.label}${dur}${stack}`;
+                        return `[${ts}] ${ev.kind}${route} ${ev.label}${dur}${stack}`;
                       })
                       .join('\n');
                     await Clipboard.setStringAsync(text);
@@ -203,18 +418,60 @@ export function PerfMonitorPanel({ onClose }: Props) {
               </TouchableOpacity>
             )}
           </View>
-          {snap.events.length === 0 ? (
+          {orderedRoutes.length === 0 ? (
             <View style={[styles.empty, { backgroundColor: theme.colors.background.secondary }]}>
               <Text style={{ color: theme.colors.text.tertiary }}>
-                {t('perf.no_events', 'No events yet — navigate around the app to see metrics.')}
+                {t('perf.no_events', 'No events match the current filter.')}
               </Text>
             </View>
           ) : (
-            // Newest first so the user sees the freshest activity at the top.
-            snap.events
-              .slice()
-              .reverse()
-              .map((ev, i) => <EventRow key={`${ev.ts}-${i}`} event={ev} />)
+            orderedRoutes.map((route) => {
+              const list = groupedEvents.groups[route];
+              // Current route is auto-expanded unless the user explicitly
+              // collapsed it; other routes default to collapsed.
+              const isCurrent = route === snap.currentRoute;
+              const explicit = expandedRoutes[route];
+              const expanded =
+                explicit === undefined ? isCurrent : explicit;
+              return (
+                <View
+                  key={route}
+                  style={[styles.routeGroup, { backgroundColor: theme.colors.background.secondary }]}
+                >
+                  <TouchableOpacity
+                    onPress={() => toggleRoute(route)}
+                    style={styles.routeHeader}
+                  >
+                    <Text
+                      numberOfLines={1}
+                      style={{ flex: 1, color: theme.colors.text.primary, fontWeight: '700', fontSize: 13 }}
+                    >
+                      {route}
+                      {isCurrent ? '  ●' : ''}
+                    </Text>
+                    <Text style={{ color: theme.colors.text.tertiary, fontSize: 12, marginRight: 6 }}>
+                      {list.length}
+                    </Text>
+                    <Text style={{ color: theme.colors.text.tertiary, fontSize: 14 }}>
+                      {expanded ? '▾' : '▸'}
+                    </Text>
+                  </TouchableOpacity>
+                  {expanded
+                    ? list
+                        .slice()
+                        .reverse()
+                        .map((ev, i) => (
+                          <EventRow
+                            key={`${ev.ts}-${i}`}
+                            event={ev}
+                            isExpanded={!!expandedLong[ev.ts]}
+                            onToggleExpand={() => toggleLong(ev.ts)}
+                          />
+                        ))
+                    : null}
+                </View>
+              );
+            })
           )}
         </View>
       </ScrollView>
@@ -222,37 +479,83 @@ export function PerfMonitorPanel({ onClose }: Props) {
   );
 }
 
-function EventRow({ event }: { event: PerfEvent }) {
+function EventRow({
+  event,
+  isExpanded,
+  onToggleExpand,
+}: {
+  event: PerfEvent;
+  isExpanded: boolean;
+  onToggleExpand: () => void;
+}) {
   const theme = useTheme();
-  const tint =
-    event.type === 'slow'
-      ? '#ef4444'
-      : event.type === 'error'
-      ? '#ef4444'
-      : event.type === 'nav'
-      ? '#3b82f6'
-      : theme.colors.text.secondary;
+  const t = useT();
+  const tint = tintForKind(event.kind, theme);
   const time = new Date(event.ts).toLocaleTimeString([], { hour12: false });
+  // Long-task rows are tappable to reveal their captured context.
+  const hasContext = event.kind === 'LONG' && !!event.context;
   return (
-    <View style={[styles.eventRow, { backgroundColor: theme.colors.background.secondary }]}>
-      <Text style={[styles.eventTs, { color: theme.colors.text.tertiary }]}>{time}</Text>
-      <Text style={[styles.eventType, { color: tint }]}>{event.type}</Text>
-      <Text
-        numberOfLines={1}
-        style={[styles.eventLabel, { color: theme.colors.text.primary }]}
+    <View>
+      <TouchableOpacity
+        disabled={!hasContext}
+        onPress={onToggleExpand}
+        activeOpacity={hasContext ? 0.7 : 1}
+        style={[styles.eventRow, { backgroundColor: theme.colors.background.elevated || theme.colors.background.secondary }]}
       >
-        {event.label}
-      </Text>
-      {event.durationMs != null && (
+        <Text style={[styles.eventTs, { color: theme.colors.text.tertiary }]}>{time}</Text>
+        <Text style={[styles.eventKind, { color: tint }]}>{event.kind}</Text>
         <Text
-          style={[
-            styles.eventDur,
-            { color: event.durationMs > 300 ? '#ef4444' : theme.colors.text.tertiary },
-          ]}
+          numberOfLines={1}
+          style={[styles.eventLabel, { color: theme.colors.text.primary }]}
         >
-          {event.durationMs}ms
+          {event.label}
         </Text>
-      )}
+        {event.durationMs != null && (
+          <Text
+            style={[
+              styles.eventDur,
+              { color: event.durationMs > 300 ? '#ef4444' : theme.colors.text.tertiary },
+            ]}
+          >
+            {event.durationMs}ms
+          </Text>
+        )}
+        {hasContext ? (
+          <Text style={{ color: theme.colors.text.tertiary, marginLeft: 6 }}>
+            {isExpanded ? '▾' : '▸'}
+          </Text>
+        ) : null}
+      </TouchableOpacity>
+      {hasContext && isExpanded && event.context ? (
+        <View style={[styles.contextBlock, { borderColor: theme.colors.border.light }]}>
+          <Text style={{ color: theme.colors.text.secondary, fontSize: 11 }}>
+            {t('perf.ctx_route', 'route')}: {event.context.route}
+          </Text>
+          <Text style={{ color: theme.colors.text.secondary, fontSize: 11 }}>
+            {t('perf.ctx_pending', 'pending decodes')}: {event.context.pendingDecodes}
+          </Text>
+          <Text style={{ color: theme.colors.text.secondary, fontSize: 11 }}>
+            {t('perf.ctx_since_nav', 'since nav')}: {event.context.msSinceNav}ms
+          </Text>
+          {event.context.recentMarks.length > 0 ? (
+            <Text
+              style={{ color: theme.colors.text.tertiary, fontSize: 11, marginTop: 4 }}
+            >
+              {t('perf.ctx_recent', 'recent')}:
+            </Text>
+          ) : null}
+          {event.context.recentMarks.map((m, i) => (
+            <Text
+              key={i}
+              numberOfLines={1}
+              style={{ color: theme.colors.text.secondary, fontSize: 11, fontFamily: 'Courier' }}
+            >
+              · {m.kind} {m.label}
+              {m.durationMs != null ? ` ${m.durationMs}ms` : ''} ({m.agoMs}ms ago)
+            </Text>
+          ))}
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -345,21 +648,36 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     paddingHorizontal: 4,
   },
-  fpsRow: { flexDirection: 'row', gap: 12 },
-  fpsCell: {
+  gaugeRow: { flexDirection: 'row', gap: 8 },
+  gaugeCell: {
     flex: 1,
-    borderRadius: 14,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    minWidth: 64,
   },
-  fpsLabel: { fontSize: 12 },
-  fpsValue: {
-    fontSize: 36,
+  gaugeLabel: { fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5 },
+  gaugeValue: {
+    fontSize: 24,
     fontWeight: '800',
-    marginTop: 4,
+    marginTop: 2,
     fontVariant: ['tabular-nums'],
   },
-  fpsSub: { fontSize: 11, marginTop: 2, fontVariant: ['tabular-nums'] },
+  gaugeSub: { fontSize: 10, marginTop: 1, fontVariant: ['tabular-nums'] },
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  chip: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 14,
+    borderWidth: 1,
+  },
+  search: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    fontSize: 14,
+  },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -374,19 +692,38 @@ const styles = StyleSheet.create({
     padding: 16,
     borderRadius: 12,
   },
+  routeGroup: {
+    borderRadius: 12,
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    marginBottom: 8,
+  },
+  routeHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 4,
+  },
   eventRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 10,
-    marginBottom: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 8,
+    marginTop: 4,
     gap: 8,
   },
-  eventTs: { width: 70, fontSize: 11, fontVariant: ['tabular-nums'] },
-  eventType: { width: 44, fontSize: 11, fontWeight: '700', textTransform: 'uppercase' },
-  eventLabel: { flex: 1, fontSize: 13 },
-  eventDur: { fontSize: 12, fontVariant: ['tabular-nums'] },
+  eventTs: { width: 64, fontSize: 10, fontVariant: ['tabular-nums'] },
+  eventKind: { width: 44, fontSize: 10, fontWeight: '700', textTransform: 'uppercase' },
+  eventLabel: { flex: 1, fontSize: 12 },
+  eventDur: { fontSize: 11, fontVariant: ['tabular-nums'] },
+  contextBlock: {
+    marginTop: 4,
+    marginLeft: 8,
+    marginBottom: 4,
+    paddingLeft: 10,
+    borderLeftWidth: 2,
+  },
   errorRow: {
     paddingHorizontal: 12,
     paddingVertical: 10,

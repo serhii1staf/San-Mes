@@ -27,6 +27,7 @@ import { UserProfilePostCard } from '../../src/components/ui/UserProfilePostCard
 import { PanResponder } from 'react-native';
 import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
 import { useT } from '../../src/i18n/store';
+import { perfMonitor } from '../../src/services/perfMonitor';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const SCREEN_HEIGHT = Dimensions.get('window').height;
@@ -242,6 +243,14 @@ export default function UserProfileScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
+  // Mount-time marker — opens-someone-else's-profile lag is a primary user
+  // complaint; this attribution lets the panel show whether the freeze
+  // came from the screen's first render or from downstream image fan-out.
+  const mountStart = useRef(Date.now()).current;
+  useEffect(() => {
+    perfMonitor.markScreenMount('profile/[id]', Date.now() - mountStart);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const { id, fromChat } = useLocalSearchParams<{ id: string; fromChat?: string }>();
   // Field selector — destructuring the whole store re-rendered this screen on
   // every unrelated auth-state change (badge sync, token refresh, etc.).

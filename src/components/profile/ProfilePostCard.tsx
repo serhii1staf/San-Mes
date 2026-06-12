@@ -16,7 +16,6 @@ import { triggerHaptic } from '../../utils/haptics';
 import { formatTimeAgo } from '../../utils/mockData';
 import { useT } from '../../i18n/store';
 import { perfMonitor } from '../../services/perfMonitor';
-import { useSettingsStore } from '../../store/settingsStore';
 
 interface ProfilePostCardProps {
   post: any;
@@ -75,13 +74,13 @@ function ProfilePostCardBase({ post, authorName, authorEmoji, authorVerified, au
   const t = useT();
 
   // Mount-time diagnostic — captures render→commit latency on the JS thread.
-  // Surfaces as `mount ProfilePostCard <ms>` in the perf monitor so SLOW
-  // frames on the (tabs)/profile screen have actionable context. Skipped
-  // entirely when the user turned the perf bubble off.
+  // Surfaces as `MOUNT ProfilePostCard <ms>` in the perf-monitor panel so
+  // SLOW frames on the (tabs)/profile screen have actionable context. The
+  // markScreenMount helper early-returns when the user has the perf bubble
+  // disabled, so the cost is one boolean check + one call.
   const renderStart = Date.now();
   useEffect(() => {
-    if (!useSettingsStore.getState().perfMonitorEnabled) return;
-    perfMonitor.mark('mount ProfilePostCard', Date.now() - renderStart);
+    perfMonitor.markScreenMount('ProfilePostCard', Date.now() - renderStart);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

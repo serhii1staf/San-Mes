@@ -27,6 +27,7 @@ import { triggerHaptic } from '../../src/utils/haptics';
 import { playSendSound } from '../../src/utils/sounds';
 import { showToast } from '../../src/store/toastStore';
 import { useT } from '../../src/i18n/store';
+import { perfMonitor } from '../../src/services/perfMonitor';
 
 const REPORT_CATS: { key: string; labelKey: string }[] = [
   { key: 'spam', labelKey: 'report.cat.spam' },
@@ -190,6 +191,14 @@ export default function CommentsScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
+  // Mount-time marker — surfaces in the perf-monitor panel as
+  // `MOUNT comments/[id] <ms>` so freezes when opening comments have
+  // an actionable starting point.
+  const mountStart = useRef(Date.now()).current;
+  useEffect(() => {
+    perfMonitor.markScreenMount('comments/[id]', Date.now() - mountStart);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
   const inputPadStyle = useAnimatedStyle(() => {
     const open = Math.abs(keyboardHeight.value) > 1;
@@ -627,6 +636,10 @@ export default function CommentsScreen() {
                 multiline
                 textAlignVertical="center"
                 onContentSizeChange={() => { LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); }}
+                // Captures keyboard-to-first-frame latency for the
+                // comments composer. Free when the perf monitor is off
+                // (singleton early-returns on the disabled flag).
+                onFocus={() => perfMonitor.markInputFocus('comments')}
               />
               {/* GIF button inside the input, right side */}
               <Pressable onPress={() => setGifPickerVisible(true)} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 2, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8, backgroundColor: theme.colors.accent.primary + '18' }}>

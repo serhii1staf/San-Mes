@@ -16,6 +16,7 @@ import { useAuthStore } from '../../src/store';
 import { sendMessage, parseActions, applyAction, AIMessage, ParsedAction, getRemainingRequests, saveChatHistory, loadChatHistory } from '../../src/services/aiService';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { useT } from '../../src/i18n/store';
+import { perfMonitor } from '../../src/services/perfMonitor';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 
@@ -105,6 +106,14 @@ export default function AIChatScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
+  // Mount-time marker — surfaces in the perf-monitor panel so the user can
+  // tell at a glance whether opening the AI chat froze on the JS thread
+  // (large initial render) or on the navigation transition itself.
+  const mountStart = useRef(Date.now()).current;
+  useEffect(() => {
+    perfMonitor.markScreenMount('chat/ai', Date.now() - mountStart);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [messages, setMessages] = useState<AIMessage[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);

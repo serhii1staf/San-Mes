@@ -4,6 +4,7 @@ import Reanimated from 'react-native-reanimated';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../../theme';
 import { useT } from '../../i18n/store';
+import { perfMonitor } from '../../services/perfMonitor';
 
 // Enable LayoutAnimation on Android (no-op on iOS where it's always on).
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -89,6 +90,10 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
           multiline
           textAlignVertical="center"
           onContentSizeChange={handleContentSizeChange}
+          // Captures keyboard-to-first-frame latency for the chat input —
+          // the perf-monitor singleton early-returns when disabled, so this
+          // is essentially free in production for users with the bubble off.
+          onFocus={() => perfMonitor.markInputFocus('chat')}
         />
         {/* GIF button inside the input, right side. alignSelf:flex-end so it
             stays at the bottom row of the input wrap when text wraps. */}

@@ -17,6 +17,7 @@ import { useChatSettingsStore, GLOBAL_CHAT_SETTINGS_KEY } from '../../src/store/
 import { triggerHaptic } from '../../src/utils/haptics';
 import { useT } from '../../src/i18n/store';
 import { Conversation } from '../../src/types';
+import { perfMonitor } from '../../src/services/perfMonitor';
 
 function AIConversationItem() { return null; }
 function MusicConversationItem() { return null; }
@@ -196,6 +197,14 @@ export default function MessagesScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
+  // Mount-time marker — surfaces in the perf-monitor panel as
+  // `MOUNT (tabs)/messages <ms>` so a slow tab switch into Messages can be
+  // attributed to the screen's own first render vs. tab-bar transition.
+  const mountStart = useRef(Date.now()).current;
+  useEffect(() => {
+    perfMonitor.markScreenMount('(tabs)/messages', Date.now() - mountStart);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // Individual selector — subscribing to the whole store via destructuring
   // would re-render this screen on every unrelated chat-store change (e.g.,
   // typing into a chat input updates messages elsewhere in the store).

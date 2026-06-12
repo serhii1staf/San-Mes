@@ -22,11 +22,16 @@ interface SettingsState {
   perfMonitorEnabled: boolean;
   perfMonitorPosX: number; // last drop position in px (top-left origin)
   perfMonitorPosY: number;
+  // Filter chip selection persisted across panel re-opens. Keys mirror the
+  // PerfEventKind values the panel filters on (NAV, MOUNT, INPUT, IMG, LONG,
+  // UI, MARK). Missing key = filter on (default-on behaviour).
+  perfMonitorFilters: Record<string, boolean>;
   setHaptic: (enabled: boolean) => void;
   setInAppBrowser: (enabled: boolean) => void;
   setBrowserWidgetPosition: (position: 'top' | 'bottom') => void;
   setPerfMonitorEnabled: (enabled: boolean) => void;
   setPerfMonitorPosition: (x: number, y: number) => void;
+  setPerfMonitorFilter: (kind: string, on: boolean) => void;
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -42,12 +47,24 @@ export const useSettingsStore = create<SettingsState>()(
       perfMonitorEnabled: true,
       perfMonitorPosX: -1,
       perfMonitorPosY: -1,
+      // Default: every chip on, so first-time openers see all events.
+      perfMonitorFilters: {
+        NAV: true,
+        MOUNT: true,
+        INPUT: true,
+        IMG: true,
+        LONG: true,
+        UI: true,
+        MARK: true,
+      },
       setHaptic: (hapticEnabled) => set({ hapticEnabled }),
       setInAppBrowser: (useInAppBrowser) => set({ useInAppBrowser }),
       setBrowserWidgetPosition: (browserWidgetPosition) => set({ browserWidgetPosition }),
       setPerfMonitorEnabled: (perfMonitorEnabled) => set({ perfMonitorEnabled }),
       setPerfMonitorPosition: (perfMonitorPosX, perfMonitorPosY) =>
         set({ perfMonitorPosX, perfMonitorPosY }),
+      setPerfMonitorFilter: (kind, on) =>
+        set((s) => ({ perfMonitorFilters: { ...s.perfMonitorFilters, [kind]: on } })),
     }),
     {
       name: 'app-settings',

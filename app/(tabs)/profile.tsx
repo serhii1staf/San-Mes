@@ -34,6 +34,7 @@ import { formatTimeAgo } from '../../src/utils/mockData';
 import { accountKey } from '../../src/services/cacheService';
 import { shouldSync, resetThrottle } from '../../src/services/syncThrottle';
 import { useT } from '../../src/i18n/store';
+import { perfMonitor } from '../../src/services/perfMonitor';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const MY_POSTS_CACHE_KEY = '@san:my_posts';
@@ -84,6 +85,15 @@ export default function ProfileScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
+  // Mount-time marker — opens-the-profile-tab freezes are extremely common
+  // (large image fan-out, long FlatList batches), so this is one of the
+  // primary surfaces the user wants to attribute. Free when the perf
+  // monitor is off (singleton early-returns on the disabled flag).
+  const mountStart = useRef(Date.now()).current;
+  useEffect(() => {
+    perfMonitor.markScreenMount('(tabs)/profile', Date.now() - mountStart);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // Selectors over destructuring — pulling the whole user object re-rendered
   // the profile screen on every unrelated profile field change (badge sync, etc.)
   const user = useAuthStore((s) => s.user);

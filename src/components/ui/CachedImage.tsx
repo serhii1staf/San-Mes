@@ -1,6 +1,8 @@
-import React, { memo, useState, useEffect } from 'react';
+import React, { memo, useState, useEffect, useRef } from 'react';
 import { ImageStyle, StyleProp, StyleSheet } from 'react-native';
 import { Image } from 'expo-image';
+import { perfMonitor } from '../../services/perfMonitor';
+import { useSettingsStore } from '../../store/settingsStore';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Image proxy via images.weserv.nl
@@ -115,6 +117,36 @@ export const CachedImage = memo(function CachedImage({
   const [proxyFailed, setProxyFailed] = useState(false);
   useEffect(() => { setProxyFailed(false); }, [uri]);
 
+  // Perf-monitor instrumentation. Counts in-flight decodes via the
+  // pendingDecodes gauge and records the URI→onLoad latency per host so the
+  // panel can surface "8 image bitmaps decoded while you scrolled the
+  // profile". `decodeStart` is the timestamp at which the URI prop changed;
+  // `pendingHere` tracks whether THIS instance currently owns a pending
+  // increment so we don't double-decrement on uri churn or unmount races.
+  //
+  // The hot path here (URI change, onLoad, onError) is gated on the
+  // monitor-enabled flag at the call site so the disabled case skips the
+  // method-call and increment entirely. ~50 image loads/sec during a fast
+  // scroll need to add 0 ms when the monitor is off, which this gate
+  // guarantees.
+  const decodeStart = useRef(0);
+  const pendingHere = useRef(false);
+  useEffect(() => {
+    if (!uri) return;
+    if (!useSettingsStore.getState().perfMonitorEnabled) return;
+    decodeStart.current = Date.now();
+    perfMonitor.incrementPendingDecodes();
+    pendingHere.current = true;
+    return () => {
+      // The URI changed (or this CachedImage is unmounting) before onLoad/
+      // onError fired. Release the gauge so the count doesn't drift.
+      if (pendingHere.current) {
+        perfMonitor.decrementPendingDecodes();
+        pendingHere.current = false;
+      }
+    };
+  }, [uri]);
+
   if (!uri) return null;
 
   let finalUri = uri;
@@ -123,6 +155,19 @@ export const CachedImage = memo(function CachedImage({
     const styleW = typeof flat?.width === 'number' ? flat.width : undefined;
     finalUri = proxiedImageUrl(uri, proxyWidth ?? styleW);
   }
+
+  // Honour any external onLoad while still firing our instrumentation hook.
+  // Pulling it out of `props` keeps the spread below from clobbering the
+  // wrapper we install.
+  const externalOnLoad = (props as any).onLoad as
+    | ((event: any) => void)
+    | undefined;
+  const externalOnError = (props as any).onError as
+    | ((event: any) => void)
+    | undefined;
+  const restProps: any = { ...props };
+  delete restProps.onLoad;
+  delete restProps.onError;
 
   return (
     <Image
@@ -143,16 +188,37 @@ export const CachedImage = memo(function CachedImage({
       // image and force expo-image to drop its cached bitmap, manifesting
       // as a brief reload when switching tabs / scrolling lists.
       recyclingKey={uri}
+      onLoad={(e) => {
+        // Perf-monitor: per-host load latency + release the gauge. Gated
+        // here at the call site so the disabled case skips the function
+        // call entirely.
+        if (
+          pendingHere.current &&
+          useSettingsStore.getState().perfMonitorEnabled
+        ) {
+          perfMonitor.markImageDecode(uri, Date.now() - decodeStart.current);
+          perfMonitor.decrementPendingDecodes();
+          pendingHere.current = false;
+        }
+        externalOnLoad?.(e);
+      }}
       // If the proxy fails (e.g. weserv can't fetch a private/odd host), fall
       // back to the original URL so the image still loads. Without this any
       // URL the proxy can't see (private buckets, signed URLs, less-common
       // CDNs in unfurl thumbnails) silently shows nothing.
-      onError={() => {
+      onError={(e) => {
         if (!noProxy && !proxyFailed && finalUri !== uri) {
           setProxyFailed(true);
         }
+        // Release the in-flight decode counter on error too — otherwise a
+        // single broken URL would pin the gauge at +1 forever.
+        if (pendingHere.current) {
+          perfMonitor.decrementPendingDecodes();
+          pendingHere.current = false;
+        }
+        externalOnError?.(e);
       }}
-      {...props}
+      {...restProps}
     />
   );
 });

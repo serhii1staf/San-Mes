@@ -30,6 +30,7 @@ import { showToast } from '../../src/store/toastStore';
 import { ChatMessage } from '../../src/types';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { useT } from '../../src/i18n/store';
+import { perfMonitor } from '../../src/services/perfMonitor';
 
 const REPLY_THRESHOLD = 60;
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -207,6 +208,15 @@ export default function ChatScreen() {
   const insets = useSafeAreaInsets();
   const t = useT();
   const { id, participantId: paramParticipantId } = useLocalSearchParams<{ id: string; participantId?: string }>();
+  // Mount-time marker — captures how long the chat screen took to commit
+  // its first render so the perf-monitor panel can attribute open-the-chat
+  // freezes. Reads `Date.now()` once at first render via useRef so the
+  // measurement starts at the start of the render, not at commit time.
+  const mountStart = useRef(Date.now()).current;
+  useEffect(() => {
+    perfMonitor.markScreenMount('chat/[id]', Date.now() - mountStart);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
   const [editing, setEditing] = useState<ChatMessage | null>(null);
   // Long-press menu opener — see useContextMenuGuard for the rate-limit/raf
