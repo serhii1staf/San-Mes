@@ -17,6 +17,7 @@ import { extractFirstUrl } from '../../src/services/linkPreview';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { UserBadge } from '../../src/components/ui/UserBadge';
 import { MessageContextMenu, MessageAction } from '../../src/components/ui/MessageContextMenu';
+import { TranslationSheet } from '../../src/components/ui/TranslationSheet';
 import { ChatInputBar, ChatInputBarHandle } from '../../src/components/chat/ChatInputBar';
 import { GiphyPicker } from '../../src/components/ui/GiphyPicker';
 import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
@@ -645,12 +646,21 @@ export default function ChatScreen() {
     })();
   }, [id, replyTo, addMessage, scrollToEnd, participantId, t]);
 
+  // Translation sheet state — receives source text on demand and animates
+  // up. Reset to '' when closed so the next open re-fetches (the service
+  // hits its 7-day MMKV cache so this is essentially free).
+  const [translateText, setTranslateText] = useState<string>('');
+
   const handleMenuAction = useCallback((action: MessageAction, message: ChatMessage) => {
     if (action === 'copy') {
       Clipboard.setStringAsync(message.text);
       showToast(t('toast.copied'), 'check');
     } else if (action === 'reply') {
       startReply(message);
+    } else if (action === 'translate') {
+      // Open the translation sheet with the source message text. The sheet
+      // does the LibreTranslate fetch + result UI itself.
+      if (message.text && message.text.trim()) setTranslateText(message.text);
     } else if (action === 'edit') {
       setReplyTo(null);
       setEditing(message);
@@ -1063,6 +1073,15 @@ export default function ChatScreen() {
 
       {/* GIF picker (GIPHY) */}
       <GiphyPicker visible={gifPickerVisible} onClose={() => setGifPickerVisible(false)} onSelect={sendGif} />
+
+      {/* Translation sheet — opens when the user picks "Translate" from
+          the long-press menu. Source text is the message body; target is
+          the app's UI locale. */}
+      <TranslationSheet
+        visible={!!translateText}
+        text={translateText}
+        onClose={() => setTranslateText('')}
+      />
 
       {/* Fullscreen image viewer */}
       <Modal visible={!!viewerImages} transparent animationType="fade" onRequestClose={() => setViewerImages(null)} statusBarTranslucent>

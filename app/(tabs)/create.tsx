@@ -20,7 +20,6 @@ import { FormatHelpModal } from '../../src/components/ui/FormatHelpModal';
 import { useT } from '../../src/i18n/store';
 import { perfMonitor } from '../../src/services/perfMonitor';
 import { validatePost } from '../../src/services/moderation';
-import { showToast } from '../../src/store/toastStore';
 
 const MAX_CHARS = 500;
 const MAX_IMAGES = 6;

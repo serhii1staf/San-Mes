@@ -18,7 +18,7 @@ const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = Dimensions.get('window');
 const PREVIEW_MAX_HEIGHT = SCREEN_HEIGHT * 0.45;
 const LONG_TEXT_THRESHOLD = 220;
 
-export type MessageAction = 'reply' | 'copy' | 'edit' | 'delete';
+export type MessageAction = 'reply' | 'copy' | 'edit' | 'delete' | 'translate';
 
 interface MessageContextMenuProps {
   visible: boolean;
@@ -94,6 +94,11 @@ export function MessageContextMenu({ visible, message, isOwn, linkEmoji, onClose
       { action: 'reply', icon: 'corner-up-left', label: t('chat.menu.reply') },
     ];
     if (message.text) list.push({ action: 'copy', icon: 'copy', label: t('chat.menu.copy') });
+    // Translate is available for any text message — own or foreign. Tap →
+    // closes this overlay, opens the translation sheet (handled in chat).
+    if (message.text && message.text.trim().length > 0) {
+      list.push({ action: 'translate', icon: 'globe', label: t('chat.menu.translate') });
+    }
     // Edit available for any own message — including photo-only and GIF-only
     // attachments. The chat screen's handleMenuAction seeds pendingImages
     // from the existing imageUrls so the user can remove/replace them in

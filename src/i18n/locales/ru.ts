@@ -342,6 +342,13 @@ const ru: Record<string, string> = {
   'chat.menu.copy': 'Копировать',
   'chat.menu.edit': 'Редактировать',
   'chat.menu.delete': 'Удалить',
+  'chat.menu.translate': 'Перевести',
+
+  // ─── Translation sheet ────────────────────────────────────────────────
+  'translation.title': 'Перевод',
+  'translation.original': 'Оригинал',
+  'translation.detected': 'Обнаружен язык: {lang} → {target}',
+  'translation.error': 'Не удалось перевести. Проверьте соединение и попробуйте снова.',
 
   // ─── AI chat ───────────────────────────────────────────────────────────
   'ai_chat.title': 'San AI',

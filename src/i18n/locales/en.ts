@@ -165,6 +165,13 @@ const en: Record<string, string> = {
   'nasa_apod.video_open': 'Open video in browser',
   'nasa_apod.source': 'Source: NASA Astronomy Picture of the Day',
 
+  // ─── Translation sheet ─────────────────────────────────────────────────
+  'translation.title': 'Translation',
+  'translation.original': 'Original',
+  'translation.detected': 'Detected: {lang} → {target}',
+  'translation.error': "Couldn't translate. Check your connection and try again.",
+  'chat.menu.translate': 'Translate',
+
   // ─── Notifications ─────────────────────────────────────────────────────
   'notifications.title': 'Notifications',
   'notifications.empty': 'No notifications',
