@@ -368,6 +368,12 @@ export default function SettingsScreen() {
             onPress={() => setIconModalVisible(true)}
           />
           <SettingsRow
+            icon="image"
+            iconTint="orange"
+            label="Pixel icons"
+            onPress={() => router.push('/settings/pixel-icons' as any)}
+          />
+          <SettingsRow
             icon="layout"
             iconTint="teal"
             label={t('settings.widget')}

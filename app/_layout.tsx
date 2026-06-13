@@ -335,6 +335,14 @@ function RootLayout() {
               />
               <Stack.Screen name="settings/browser" />
               <Stack.Screen name="settings/language" />
+              <Stack.Screen
+                name="settings/pixel-icons"
+                options={{
+                  presentation: 'modal',
+                  animation: 'slide_from_bottom',
+                  headerShown: false,
+                }}
+              />
             </Stack>
           </View>
           <BrowserBottomBand />

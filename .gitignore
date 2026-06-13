@@ -49,3 +49,11 @@ DEPLOY.md
 
 expo-env.d.ts
 # @end expo-cli
+
+# Source asset archives — kept out of the tree per Apple-compliance steering.
+# The optimized 256x256 PNGs derived from these archives DO ship in
+# `assets/pixel-icons/` (see scripts/optimize-pixel-icons.ps1 if we
+# rebuild the pipeline), but the multi-megabyte raw zips never enter
+# version control.
+telegram_ios_settings_icon_pack*.zip
+pixel_characters_pack*.zip
