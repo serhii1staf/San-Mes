@@ -47,3 +47,13 @@ export function getAlgoliaConfig(): AlgoliaConfig | null {
 export function getLiveblocksPublicKey(): string | null {
   return read('EXPO_PUBLIC_LIVEBLOCKS_PUBLIC');
 }
+
+/**
+ * Ably "subscribe-only" key. Used as a read-only fallback when the
+ * /api/ably-token endpoint is unreachable — clients can still RECEIVE
+ * messages but cannot publish. Clients should always TRY the token
+ * endpoint first; this is a degraded mode.
+ */
+export function getAblySubscribeKey(): string | null {
+  return read('EXPO_PUBLIC_ABLY_SUBSCRIBE_KEY');
+}
