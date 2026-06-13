@@ -654,8 +654,14 @@ export default function ChatScreen() {
     } else if (action === 'edit') {
       setReplyTo(null);
       setEditing(message);
-      inputRef.current?.setText(message.text);
-      // Load existing photos so they can be removed/replaced while editing
+      // Use `?? ''` so attachment-only messages (GIF / photo, where
+      // `text` is empty or undefined) don't propagate undefined into the
+      // TextInput — they should open the editor with a blank text field
+      // and the existing media pre-loaded for replace/remove.
+      inputRef.current?.setText(message.text ?? '');
+      // Load existing photos / GIF URLs so they can be removed or replaced
+      // via the existing pendingImages flow (× to remove, image picker to
+      // add a new photo, GIF button to swap to a new GIF).
       setPendingImages(message.imageUrls || []);
     } else if (action === 'delete') {
       Alert.alert(t('chat.delete_message_title'), '', [

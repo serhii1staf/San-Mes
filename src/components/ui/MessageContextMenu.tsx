@@ -93,7 +93,13 @@ export function MessageContextMenu({ visible, message, isOwn, linkEmoji, onClose
       { action: 'reply', icon: 'corner-up-left', label: t('chat.menu.reply') },
     ];
     if (message.text) list.push({ action: 'copy', icon: 'copy', label: t('chat.menu.copy') });
-    if (isOwn && message.text) list.push({ action: 'edit', icon: 'edit-2', label: t('chat.menu.edit') });
+    // Edit available for any own message — including photo-only and GIF-only
+    // attachments. The chat screen's handleMenuAction seeds pendingImages
+    // from the existing imageUrls so the user can remove/replace them in
+    // place. Gating this on `message.text` (as it briefly was) made
+    // attachment-only messages un-editable, which broke a long-standing
+    // flow.
+    if (isOwn) list.push({ action: 'edit', icon: 'edit-2', label: t('chat.menu.edit') });
     if (isOwn) list.push({ action: 'delete', icon: 'trash-2', label: t('chat.menu.delete'), destructive: true });
     return list;
   }, [message, isOwn, t]);
