@@ -283,10 +283,15 @@ export default function ProfileScreen() {
     try { const counts = await getFollowCounts(user.id); setFollowCounts(counts); } catch {}
   }, [user?.id]);
 
-  // Restore scroll position when tab regains focus AND refresh the post
-  // list off-throttle so freshly-published posts appear immediately on the
-  // profile tab. Earlier the `shouldSync('my_posts')` gate prevented the
-  // re-fetch and the new post stayed invisible until the next cold start.
+  // Restore scroll position when tab regains focus. We deliberately do NOT
+  // bypass the throttle here anymore — refetching ~100 posts + walking them
+  // through the repost-resolution map runs ~150-200 ms of synchronous JS,
+  // and that landed as the long task users saw whenever they swung back to
+  // the profile tab from settings or any other screen. Pull-to-refresh
+  // (handleRefresh) already calls `resetThrottle('my_posts')` so the user
+  // has a deterministic way to force-fresh. Newly-published posts show up
+  // through the create-post flow's direct store push, not through this
+  // focus-driven sync.
   useFocusEffect(
     useCallback(() => {
       if (profileScrollOffset > 0 && scrollViewRef.current && !hasRestoredScroll.current) {
@@ -295,10 +300,9 @@ export default function ProfileScreen() {
           (scrollViewRef.current as any)?.scrollTo({ y: profileScrollOffset, animated: false });
         }, 50);
         hasRestoredScroll.current = true;
-        // Background sync — bypass throttle so a brand-new post shows up
-        // the moment the user lands on this tab.
+        // Throttled background sync — only fires if `shouldSync('my_posts')`
+        // returns true (i.e. last sync was more than 5 min ago).
         const refreshHandle = InteractionManager.runAfterInteractions(() => {
-          resetThrottle('my_posts');
           loadMyPosts();
         });
         return () => {
@@ -307,9 +311,8 @@ export default function ProfileScreen() {
         };
       }
       hasRestoredScroll.current = false;
-      // Same off-throttle refresh for the no-scroll-restore path.
+      // Same throttled refresh for the no-scroll-restore path.
       const refreshHandle = InteractionManager.runAfterInteractions(() => {
-        resetThrottle('my_posts');
         loadMyPosts();
       });
       return () => refreshHandle.cancel();
