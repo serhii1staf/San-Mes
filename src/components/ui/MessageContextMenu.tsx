@@ -8,6 +8,7 @@ import { FormattedText } from './FormattedText';
 import { CachedImage } from './CachedImage';
 import { LinkPreview } from './LinkPreview';
 import { extractFirstUrl } from '../../services/linkPreview';
+import { openUrl } from '../../utils/openUrl';
 import { ChatMessage } from '../../types';
 import { useT } from '../../i18n/store';
 
@@ -111,6 +112,15 @@ export function MessageContextMenu({ visible, message, isOwn, linkEmoji, onClose
   const link = !hasImages ? extractFirstUrl(message.text) : null;
   const isLong = (message.text?.length || 0) > LONG_TEXT_THRESHOLD;
 
+  // Tapping a link in the held-message preview must dismiss this overlay
+  // first. Even though we render as an absolute View (not a Modal), the
+  // backdrop + `pointerEvents` setup remains in the chat tree if we
+  // navigate to /browser without flipping `visible` off — so on return the
+  // user sees a stale 50 %-black backdrop blocking the chat.
+  const handleLinkPress = (url: string) => {
+    dismiss(() => openUrl(url));
+  };
+
   // Image grid sized to fit comfortably inside the preview card. We pick a
   // cell size based on photo count so all photos are visible in a clean grid.
   const renderImages = () => {
@@ -147,7 +157,7 @@ export function MessageContextMenu({ visible, message, isOwn, linkEmoji, onClose
       ) : null}
       {renderImages()}
       {message.text ? (
-        <FormattedText color={theme.colors.text.primary} linkColor={theme.colors.accent.primary} style={{ fontSize: 15 }}>{message.text}</FormattedText>
+        <FormattedText color={theme.colors.text.primary} linkColor={theme.colors.accent.primary} style={{ fontSize: 15 }} onLinkPress={handleLinkPress}>{message.text}</FormattedText>
       ) : null}
       {link ? (
         // No fixed height — let the link preview render at its natural size,

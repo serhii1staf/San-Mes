@@ -9,6 +9,16 @@ interface FormattedTextProps {
   style?: TextStyle;
   color?: string;
   linkColor?: string;
+  /**
+   * Optional override for what happens when the user taps a parsed link.
+   * Modal-hosted contexts (PostContextMenu, MessageContextMenu, …) MUST
+   * pass this so they can dismiss themselves before the navigation runs —
+   * otherwise the modal stays mounted with `<StatusBar hidden />` while the
+   * browser pushes on top, and on return the host screen appears frozen
+   * with the system status bar gone. The default behaviour (`openUrl`) is
+   * fine for non-modal callers.
+   */
+  onLinkPress?: (url: string) => void;
 }
 
 /**
@@ -22,11 +32,14 @@ interface FormattedTextProps {
  * __underline__ — underlined text
  * #hashtag — clickable hashtag (accent color)
  */
-export const FormattedText = memo(function FormattedText({ children, style, color, linkColor }: FormattedTextProps) {
+export const FormattedText = memo(function FormattedText({ children, style, color, linkColor, onLinkPress }: FormattedTextProps) {
   const theme = useTheme();
   const [revealedSpoilers, setRevealedSpoilers] = useState<Set<number>>(new Set());
   const textColor = color || theme.colors.text.primary;
   const resolvedLinkColor = linkColor || theme.colors.accent.primary;
+  // Resolve the link tap handler once per render — cheap, and avoids
+  // creating a new lambda inside every <RNText> below.
+  const handleLinkTap = onLinkPress || openUrl;
 
   const revealSpoiler = (index: number) => {
     setRevealedSpoilers(prev => new Set(prev).add(index));
@@ -92,7 +105,7 @@ export const FormattedText = memo(function FormattedText({ children, style, colo
 
           case 'link':
             return (
-              <RNText key={i} onPress={() => openUrl(part.content)} style={{ color: resolvedLinkColor, textDecorationLine: 'underline' }}>
+              <RNText key={i} onPress={() => handleLinkTap(part.content)} style={{ color: resolvedLinkColor, textDecorationLine: 'underline' }}>
                 {shortenUrl(part.content)}
               </RNText>
             );

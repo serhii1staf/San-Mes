@@ -13,6 +13,7 @@ import { showToast } from '../../store/toastStore';
 import { formatTimeAgo } from '../../utils/mockData';
 import { Post } from '../../types';
 import { sharePost } from '../../utils/sharePost';
+import { openUrl } from '../../utils/openUrl';
 import { useT } from '../../i18n/store';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -118,6 +119,18 @@ export function PostContextMenu({ visible, post, isOwnPost, onClose, onDelete }:
     }
   };
 
+  // Tapping a link inside the preview must close THIS modal first. Otherwise
+  // the modal (with its `<StatusBar hidden />` and full-screen backdrop) stays
+  // mounted on the host screen while the in-app browser pushes on top. On
+  // return the user sees the host screen with no system status bar and
+  // every tap absorbed by the stale backdrop — a hard "screen frozen"
+  // perception bug. We dismiss with the regular animation, then defer the
+  // navigation by ~300 ms so the close completes cleanly.
+  const handleLinkPress = (url: string) => {
+    dismiss();
+    setTimeout(() => openUrl(url), 300);
+  };
+
   if (!visible || !post) return null;
 
   const imgs = post.imageUrls || (post.imageUrl ? [post.imageUrl] : []);
@@ -156,7 +169,7 @@ export function PostContextMenu({ visible, post, isOwnPost, onClose, onDelete }:
                 </View>
               </View>
               {/* Content with formatting */}
-              {post.content ? <FormattedText style={{ marginBottom: 8, fontSize: 14 }}>{post.content}</FormattedText> : null}
+              {post.content ? <FormattedText style={{ marginBottom: 8, fontSize: 14 }} onLinkPress={handleLinkPress}>{post.content}</FormattedText> : null}
               {/* Original post for reposts */}
               {post.isRepost && post.originalPost && (
                 <View style={{ borderWidth: 1, borderColor: theme.colors.border.light, borderRadius: 14, padding: 10, marginBottom: 8, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)' }}>
@@ -165,7 +178,7 @@ export function PostContextMenu({ visible, post, isOwnPost, onClose, onDelete }:
                     <Text variant="caption" weight="semibold" numberOfLines={1} style={{ marginLeft: 4, flexShrink: 1 }}>{post.originalPost.authorName}</Text>
                     {post.originalPost.authorVerified && <VerifiedBadge size={9} />}
                   </View>
-                  {post.originalPost.content ? <FormattedText style={{ fontSize: 12 }} color={theme.colors.text.secondary}>{post.originalPost.content}</FormattedText> : null}
+                  {post.originalPost.content ? <FormattedText style={{ fontSize: 12 }} color={theme.colors.text.secondary} onLinkPress={handleLinkPress}>{post.originalPost.content}</FormattedText> : null}
                   {(post.originalPost.imageUrls?.[0] || post.originalPost.imageUrl) && (
                     <CachedImage uri={post.originalPost.imageUrls?.[0] || post.originalPost.imageUrl || ''} style={{ width: '100%', height: 80, borderRadius: 10, marginTop: 6 }} resizeMode="cover" />
                   )}

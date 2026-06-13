@@ -11,6 +11,7 @@ import { CachedImage } from './CachedImage';
 import { VerifiedBadge } from './VerifiedBadge';
 import { UserBadge } from './UserBadge';
 import { extractFirstUrl } from '../../services/linkPreview';
+import { openUrl } from '../../utils/openUrl';
 import { useT } from '../../i18n/store';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -99,6 +100,14 @@ export function CommentContextMenu({ visible, comment, isOwn, displayBody, reply
   const link = !gifUrl ? extractFirstUrl(body) : null;
   const isLong = body.length > LONG_TEXT_THRESHOLD;
 
+  // Tapping a link from inside the modal must close THIS modal first, else
+  // the modal (with `<StatusBar hidden />` and full-screen backdrop) stays
+  // mounted while the in-app browser pushes on top — on return, the host
+  // screen reads as "frozen" with the system status bar gone.
+  const handleLinkPress = (url: string) => {
+    dismiss(() => openUrl(url));
+  };
+
   const items: { action: CommentAction; icon: string; label: string; destructive?: boolean; show: boolean }[] = [
     { action: 'reply', icon: 'corner-up-left', label: t('comments.reply'), show: true },
     { action: 'copy', icon: 'copy', label: t('common.copy'), show: !!body && !gifUrl },
@@ -125,7 +134,7 @@ export function CommentContextMenu({ visible, comment, isOwn, displayBody, reply
       {gifUrl ? (
         <CachedImage uri={gifUrl} style={{ width: 160, height: 160, borderRadius: 14, backgroundColor: theme.colors.background.secondary }} resizeMode="cover" />
       ) : body ? (
-        <FormattedText color={theme.colors.text.primary} linkColor={theme.colors.accent.primary} style={{ fontSize: 15 }}>{body}</FormattedText>
+        <FormattedText color={theme.colors.text.primary} linkColor={theme.colors.accent.primary} style={{ fontSize: 15 }} onLinkPress={handleLinkPress}>{body}</FormattedText>
       ) : null}
       {link ? (
         <View style={{ marginTop: 6 }}>
