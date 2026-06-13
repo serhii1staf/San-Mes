@@ -55,17 +55,26 @@ function detectWorstCategory(
   tight: string,
   compactLoose: string,
   compactTight: string,
+  caseFolded: string,
+  caseFoldedCompact: string,
 ): ModerationCategory | null {
-  // Each category's substring/regex list is scanned against four normalized
-  // forms — multi-word entries (e.g. "kill all jews") match the spaced text,
-  // single-token forms ("nigger") match in compact (no-space) text where
-  // the user typed them as a single run. Both loose+tight collapsed forms
-  // are checked so doubled letters in entries (e.g. "kill") still hit.
+  // Each category's substring/regex list is scanned against six normalized
+  // forms:
+  //   - Latin-folded forms (loose/tight/compactLoose/compactTight) catch
+  //     bypass attempts where Cyrillic confusables / leet / repeated chars
+  //     are used to disguise an English entry.
+  //   - caseFolded / caseFoldedCompact preserve original Cyrillic so
+  //     natively-typed Russian / Ukrainian entries match too. Without this
+  //     pass, a Russian word like "пидорас" never matches the blocklist
+  //     because letters like "п", "и", "д" have no Latin lookalike to fold
+  //     into — they stay as Cyrillic in the four "Latin" forms above.
   const all = (list: (string | RegExp)[]) =>
     matchesCategory(loose, list) ||
     matchesCategory(tight, list) ||
     matchesCategoryCompact(compactLoose, list) ||
-    matchesCategoryCompact(compactTight, list);
+    matchesCategoryCompact(compactTight, list) ||
+    matchesCategory(caseFolded, list) ||
+    matchesCategoryCompact(caseFoldedCompact, list);
   if (all(blocklist.csam)) return 'csam';
   if (all(blocklist.extremeViolence)) return 'extremeViolence';
   if (all(blocklist.slurs)) return 'slurs';
@@ -84,8 +93,8 @@ function buildReject(category: ModerationCategory): ValidationResult {
  */
 export function validateName(text: string): ValidationResult {
   if (!text || !text.trim()) return { ok: true };
-  const { loose, tight, compactLoose, compactTight } = normalize(text);
-  const cat = detectWorstCategory(loose, tight, compactLoose, compactTight);
+  const { loose, tight, compactLoose, compactTight, caseFolded, caseFoldedCompact } = normalize(text);
+  const cat = detectWorstCategory(loose, tight, compactLoose, compactTight, caseFolded, caseFoldedCompact);
   if (!cat) return { ok: true };
   return buildReject(cat);
 }
@@ -93,8 +102,8 @@ export function validateName(text: string): ValidationResult {
 /** Strict validator for profile bios. */
 export function validateBio(text: string): ValidationResult {
   if (!text || !text.trim()) return { ok: true };
-  const { loose, tight, compactLoose, compactTight } = normalize(text);
-  const cat = detectWorstCategory(loose, tight, compactLoose, compactTight);
+  const { loose, tight, compactLoose, compactTight, caseFolded, caseFoldedCompact } = normalize(text);
+  const cat = detectWorstCategory(loose, tight, compactLoose, compactTight, caseFolded, caseFoldedCompact);
   if (!cat) return { ok: true };
   return buildReject(cat);
 }
@@ -109,8 +118,8 @@ export function validatePost(text: string): ValidationResult & {
   warn?: boolean;
 } {
   if (!text || !text.trim()) return { ok: true };
-  const { loose, tight, compactLoose, compactTight } = normalize(text);
-  const cat = detectWorstCategory(loose, tight, compactLoose, compactTight);
+  const { loose, tight, compactLoose, compactTight, caseFolded, caseFoldedCompact } = normalize(text);
+  const cat = detectWorstCategory(loose, tight, compactLoose, compactTight, caseFolded, caseFoldedCompact);
   if (!cat) return { ok: true };
   if (cat === 'csam' || cat === 'extremeViolence') return buildReject(cat);
   // Soft path — return ok=true but include the category so the UI can warn.

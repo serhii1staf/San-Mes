@@ -47,16 +47,19 @@ const csam: (string | RegExp)[] = [
   'underage porn', 'underage nude', 'underage nudes',
   'minor porn', 'minor nude', 'minor nudes',
   'cub porn', 'kiddy porn',
-  'детское порно', // Cyrillic gets folded to Latin in normalize, so we add the
-  // already-folded version below. The original Cyrillic is kept here for
-  // search/grep in code review only — it is never matched directly.
-  // Ukrainian variant follows the same approach.
   /\bp[e3]d[o0]ph[i1]l/i,
   /\bped[o0]ph[i1]le/i,
-  // Folded forms (post-confusable, post-leet). These are what actually match.
+  // Latin-folded Russian / Ukrainian
   'detskoe porno', 'detskaya porno', 'detskaja porno',
   'malolet porn', 'malolet nude',
   'dityache porno', 'dytyache porno',
+  // Native Cyrillic — matched against caseFolded form. Stems only so they
+  // catch declined forms ("детск-ое", "детск-ая", "детск-ой"…). Use word
+  // boundary patterns where false positives could happen.
+  'детское порно', 'детская порно', 'детское порево',
+  'малолет', 'малолетк',
+  'педофил', 'педофилия',
+  'дитяче порно', 'дитяча порно',
 ];
 
 // Direct incitement to extreme violence or terrorism. Politics / war debate
@@ -87,6 +90,24 @@ const extremeViolence: string[] = [
   'zdyhny', 'zdokhny',
   'ya tebe vbyu', 'ya tebe znevazhu',
   'masove vbyvstvo',
+  // Native Cyrillic — matched against caseFolded form so naturally-typed
+  // Russian / Ukrainian threats are caught. Stems where possible, full
+  // phrases for direct calls.
+  'убей себя', 'убейся',
+  'сдохни', 'сдохните',
+  'я тебя убью', 'я убью тебя',
+  'я тебя изнасилую',
+  'школьная стрельба', 'расстрел в школе',
+  'массовый расстрел', 'массовое убийство',
+  'как сделать бомбу', 'как собрать бомбу', 'самодельная бомба',
+  'убей всех', 'убить всех',
+  'сожги в огне', 'гори в аду',
+  'геноцид', 'этническая чистка',
+  // Ukrainian native
+  'вбий себе', 'здохни',
+  'я тебе вб\'ю', 'я тебе вбʼю',
+  'як зробити бомбу',
+  'масове вбивство',
 ];
 
 // Slurs (English + Russian + Ukrainian + common transliterations). Keep this
@@ -122,6 +143,16 @@ const slurs: string[] = [
   // Ukrainian transliterations
   'moskal', 'moskali', 'kacap', 'katsap', 'katsapy',
   'zhydovka',
+  // Native Cyrillic — matched against caseFolded form. Stems where possible
+  // so declined forms ("пидор-а", "пидор-у", "пидор-ом"…) all hit.
+  'пидор', 'пидорас', 'пидорашк',
+  'педераст', 'пидик', 'гомик',
+  'жидовк', 'жидяр', 'жопализ',
+  'чурка', 'чурки', 'чурок', 'хач', 'хачи', 'хачик',
+  'негритос', 'нигер',
+  'цыган', 'цыганщин',
+  'даун', 'дауненок', 'олигофрен',
+  'москаль', 'москал', 'кацап', 'кацапы',
 ];
 
 // Graphic sexual content — the kind that doesn't belong on a username, profile
@@ -151,6 +182,18 @@ const explicitSexual: string[] = [
   // Ukrainian (folded)
   'porno video', 'porno foto', 'shliukha', 'shliuxa',
   'znasiluvannia', 'znasiluvaty', 'mynet',
+  // Native Cyrillic — common slang for explicit content / sex acts.
+  'порно', 'порнушк', 'порнуха',
+  'минет', 'отсоси', 'соси хуй',
+  'изнасилован', 'изнасилов',
+  'трахну тебя', 'трахаю', 'трахать',
+  'шлюха', 'шлюх', 'проститутка', 'проститут',
+  'анальный секс', 'анальное',
+  'сосать член', 'соси хуй',
+  // Ukrainian native
+  'порно відео', 'порно фото',
+  'шльондра', 'шлюха',
+  'зґвалтуван', 'зґвалтув',
 ];
 
 // Common English / Russian / Ukrainian profanity. Soft category — used only
@@ -189,6 +232,24 @@ const profanity: string[] = [
   'eb tvoyu mat', 'yob tvoyu mat',
   'sraka', 'srav', 'srany',
   'kurva', 'kurvy',
+  // Native Cyrillic — common Russian / Ukrainian мат. Stems so declined
+  // forms hit ("хуйня", "хуёвый", "пиздец", "ебучий"…). The most common
+  // slurs go in here; longer derived words match via substring.
+  'хуй', 'хуё', 'хуе', 'хую', 'хуя', 'хуи', 'нахуй', 'похуй', 'нихуя',
+  'пизд', 'пиздец', 'пиздос', 'пиздуй',
+  'бляд', 'блят', 'блядин',
+  'ебат', 'ебал', 'ебало', 'ебан', 'ебуч', 'ебись', 'еблан', 'выеб',
+  'мудак', 'мудил', 'мудач',
+  'сука', 'сучк', 'сукин сын',
+  'говн', 'говнюк',
+  'залуп',
+  'манда', 'мандавошк',
+  'идинахуй', 'иди нахуй', 'иди в пизду',
+  'еб твою мать', 'ёб твою мать', 'ебать твою мать',
+  // Ukrainian native
+  'хуйовий', 'хуйово', 'пиздець',
+  'срака', 'сраний', 'засрав',
+  'курва', 'курви',
 ];
 
 export const blocklist: Blocklist = {

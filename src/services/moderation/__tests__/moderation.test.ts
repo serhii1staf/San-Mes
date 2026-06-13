@@ -62,6 +62,26 @@ describe('validateName', () => {
     expect(r.ok).toBe(false);
     expect(r.reasonKey).toMatch(/^moderation\.reason\./);
   });
+
+  // Cyrillic-native pass — the four "Latin" forms can't catch these because
+  // letters like п, и, д have no Latin lookalike. The caseFolded form does.
+  it('rejects Russian-typed slurs (native Cyrillic)', () => {
+    expect(validateName('пидорас').ok).toBe(false);
+    expect(validateName('Пидорас').ok).toBe(false);
+    expect(validateName('Жидовка').ok).toBe(false);
+  });
+
+  it('rejects Russian profanity in usernames', () => {
+    expect(validateName('хуй').ok).toBe(false);
+    expect(validateName('Пиздец').ok).toBe(false);
+    expect(validateName('блядина').ok).toBe(false);
+  });
+
+  it('allows ordinary Russian names', () => {
+    expect(validateName('Иван').ok).toBe(true);
+    expect(validateName('Анна Петрова').ok).toBe(true);
+    expect(validateName('Мария').ok).toBe(true);
+  });
 });
 
 describe('validateBio', () => {

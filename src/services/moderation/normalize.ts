@@ -92,6 +92,16 @@ export interface NormalizedText {
   compactLoose: string;
   /** tight with all whitespace removed — catches multi-word entries with extreme stretching. */
   compactTight: string;
+  /**
+   * Case-folded ORIGINAL text (NFKC + lowercase + strip combining marks +
+   * strip zero-width). NO confusable folding, NO leet expansion. Used to
+   * match Cyrillic-form blocklist entries against natively-typed Russian /
+   * Ukrainian text — the four "Latin" forms above lose Russian-only letters
+   * (б, г, д, ж, и, …) because there's no Latin lookalike to fold them to.
+   */
+  caseFolded: string;
+  /** caseFolded with all whitespace removed — Cyrillic multi-word entries. */
+  caseFoldedCompact: string;
 }
 
 /**
@@ -101,13 +111,17 @@ export interface NormalizedText {
  * Steps (in order):
  *   1. NFKC unicode normalize (e.g. ⁄→/, ﬁ→fi, fullwidth→ASCII).
  *   2. Strip combining marks (\p{Mn}) and zero-width characters.
- *   3. Map Cyrillic confusables (а→a, е→e, …) — case insensitive.
- *   4. Lowercase.
+ *   3. Lowercase — produces `caseFolded` (still Cyrillic).
+ *   4. Map Cyrillic confusables (а→a, е→e, …) — for Latin-bypass detection.
  *   5. Map leet (4→a, $→s, …).
- *   6. Produce four forms (loose, tight, compactLoose, compactTight).
+ *   6. Produce four "Latin" forms (loose, tight, compactLoose, compactTight)
+ *      plus the two `caseFolded*` forms from step 3.
  */
 export function normalize(text: string): NormalizedText {
-  if (!text) return { loose: '', tight: '', compactLoose: '', compactTight: '' };
+  if (!text) return {
+    loose: '', tight: '', compactLoose: '', compactTight: '',
+    caseFolded: '', caseFoldedCompact: '',
+  };
 
   // 1. Unicode normalize. NFKC merges compatibility variants too (so 𝐟 / ｆ
   //    fold to ASCII f).
@@ -116,12 +130,13 @@ export function normalize(text: string): NormalizedText {
   // 2. Strip combining marks + zero-widths.
   s = s.replace(COMBINING_MARKS_RE, '').replace(ZERO_WIDTH_RE, '');
 
-  // 3. Cyrillic → Latin (handles uppercase too; lowercase pass below would
-  //    miss e.g. А [Cyrillic] → a if we only mapped lowercase).
-  s = mapChars(s, CYRILLIC_TO_LATIN);
+  // 3. Lowercase — captured BEFORE confusable folding so we still have the
+  //    original Cyrillic letters available for native-script matching.
+  const caseFolded = s.toLowerCase();
+  const caseFoldedCompact = caseFolded.replace(/\s+/g, '');
 
-  // 4. Lowercase.
-  s = s.toLowerCase();
+  // 4. Cyrillic visual-confusable → Latin (Latin-bypass detection only).
+  s = mapChars(caseFolded, CYRILLIC_TO_LATIN);
 
   // 5. Leet → letter.
   s = mapChars(s, LEET_TO_LATIN);
@@ -131,5 +146,5 @@ export function normalize(text: string): NormalizedText {
   const tight = collapseRuns(s, 1);
   const compactLoose = loose.replace(/\s+/g, '');
   const compactTight = tight.replace(/\s+/g, '');
-  return { loose, tight, compactLoose, compactTight };
+  return { loose, tight, compactLoose, compactTight, caseFolded, caseFoldedCompact };
 }
