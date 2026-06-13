@@ -7,6 +7,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import ContextMenu from 'react-native-context-menu-view';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
+import { WeatherChip } from '../../src/components/ui/WeatherChip';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { UserBadge } from '../../src/components/ui/UserBadge';
 import { useChatStore, useEntityStore, useAuthStore } from '../../src/store';
@@ -367,7 +368,7 @@ export default function MessagesScreen() {
         />
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: theme.spacing.lg, paddingTop: insets.top + 8, paddingBottom: 8 }} pointerEvents="auto">
           <Text variant="subheading" weight="bold">{t('messages.title')}</Text>
-          <View style={{ width: 20 }} />
+          <WeatherChip />
         </View>
       </View>
 

@@ -378,6 +378,12 @@ export default function SettingsScreen() {
             iconTint="teal"
             label={t('settings.widget')}
             onPress={() => router.push('/settings/widget' as any)}
+          />
+          <SettingsRow
+            icon="cloud"
+            iconTint="orange"
+            label={t('settings.weather')}
+            onPress={() => router.push('/settings/weather' as any)}
             isLast
           />
         </View>

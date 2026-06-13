@@ -153,6 +153,14 @@ const ru: Record<string, string> = {
   'moderation.reason.profanity': 'Слишком грубое выражение. Пожалуйста, измените текст.',
   'moderation.warn.posted_with_warning': 'Пост опубликован, но содержание может быть скрыто модерацией.',
 
+  // ─── Weather ────────────────────────────────────────────────────────────
+  'weather_settings.title': 'Погода',
+  'weather_settings.show_label': 'Показывать на главной',
+  'weather_settings.city_label': 'Город',
+  'weather_settings.search_placeholder': 'Введите название города',
+  'weather_settings.hint': 'Данные предоставлены Open-Meteo. Город можно сменить в любой момент.',
+  'settings.weather': 'Погода',
+
   // ─── Notifications ─────────────────────────────────────────────────────
   'notifications.title': 'Уведомления',
   'notifications.empty': 'Нет уведомлений',

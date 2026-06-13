@@ -32,6 +32,15 @@ interface SettingsState {
   // Picked via the existing pixel-icons screen launched with
   // `?purpose=home-header` from a long-press on the title.
   homeHeaderIcon: string | null;
+  // Weather chip on the messages-tab header. Off by default per Apple's
+  // "no auto-fetch on launch" guidance — the user opts in from settings.
+  // City is the human-readable label rendered next to the temperature; lat/
+  // lon drive the Open-Meteo fetch. `null` city means weather is on but the
+  // user has not picked a place yet (chip stays hidden until they do).
+  weatherEnabled: boolean;
+  weatherCityName: string | null;
+  weatherLat: number | null;
+  weatherLon: number | null;
   setHaptic: (enabled: boolean) => void;
   setInAppBrowser: (enabled: boolean) => void;
   setBrowserWidgetPosition: (position: 'top' | 'bottom') => void;
@@ -39,6 +48,8 @@ interface SettingsState {
   setPerfMonitorPosition: (x: number, y: number) => void;
   setPerfMonitorFilter: (kind: string, on: boolean) => void;
   setHomeHeaderIcon: (id: string | null) => void;
+  setWeatherEnabled: (enabled: boolean) => void;
+  setWeatherCity: (city: { name: string; lat: number; lon: number } | null) => void;
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -67,6 +78,11 @@ export const useSettingsStore = create<SettingsState>()(
       // No icon by default — the "San" title stands alone unless the
       // user explicitly picks one from the pixel-icons picker.
       homeHeaderIcon: null,
+      // Weather opt-in defaults: feature OFF, no city picked yet.
+      weatherEnabled: false,
+      weatherCityName: null,
+      weatherLat: null,
+      weatherLon: null,
       setHaptic: (hapticEnabled) => set({ hapticEnabled }),
       setInAppBrowser: (useInAppBrowser) => set({ useInAppBrowser }),
       setBrowserWidgetPosition: (browserWidgetPosition) => set({ browserWidgetPosition }),
@@ -76,6 +92,13 @@ export const useSettingsStore = create<SettingsState>()(
       setPerfMonitorFilter: (kind, on) =>
         set((s) => ({ perfMonitorFilters: { ...s.perfMonitorFilters, [kind]: on } })),
       setHomeHeaderIcon: (homeHeaderIcon) => set({ homeHeaderIcon }),
+      setWeatherEnabled: (weatherEnabled) => set({ weatherEnabled }),
+      setWeatherCity: (city) =>
+        set(
+          city
+            ? { weatherCityName: city.name, weatherLat: city.lat, weatherLon: city.lon }
+            : { weatherCityName: null, weatherLat: null, weatherLon: null }
+        ),
     }),
     {
       name: 'app-settings',
