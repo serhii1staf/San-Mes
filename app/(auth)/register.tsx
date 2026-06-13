@@ -9,6 +9,7 @@ import { EmojiPickerModal } from '../../src/components/ui/EmojiPickerModal';
 import { useAuthStore } from '../../src/store';
 import { registerUser } from '../../src/lib/supabase';
 import { useT } from '../../src/i18n/store';
+import { validateName } from '../../src/services/moderation';
 
 function EmojiStep({ selected, onSelect }: { selected: string; onSelect: (e: string) => void }) {
   const theme = useTheme();
@@ -287,6 +288,19 @@ export default function RegisterScreen() {
   const handleNext = async () => {
     setError('');
     if (step === 0 && nameValid(name) && usernameValid(username)) {
+      // Run the full moderation pipeline now (NFKC + confusable-fold + leet
+      // collapse) before we let the user move past the name step. Catches
+      // obfuscated tries that the cheap inline BANNED_WORDS check misses.
+      const nameCheck = validateName(name);
+      if (!nameCheck.ok) {
+        setError(t(nameCheck.reasonKey || 'moderation.reason.profanity'));
+        return;
+      }
+      const userCheck = validateName(username);
+      if (!userCheck.ok) {
+        setError(t(userCheck.reasonKey || 'moderation.reason.profanity'));
+        return;
+      }
       setStep(1);
     } else if (step === 1 && emoji) {
       setStep(2);

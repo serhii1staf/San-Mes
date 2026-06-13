@@ -14,6 +14,8 @@ import { useAuthStore, UserLink } from '../../src/store/authStore';
 import { updateProfile as updateSupabaseProfile, uploadBanner, loadProfileMeta } from '../../src/lib/supabase';
 import { currentUser } from '../../src/utils/mockData';
 import { useT } from '../../src/i18n/store';
+import { validateName, validateBio } from '../../src/services/moderation';
+import { showToast } from '../../src/store/toastStore';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -154,6 +156,18 @@ export default function EditProfileScreen() {
   };
 
   const handleSave = async () => {
+    // Moderation: validate display name + bio BEFORE persisting. Toast on
+    // reject so the existing field UI doesn't need an inline error slot.
+    const nameCheck = validateName(name);
+    if (!nameCheck.ok) {
+      showToast(t(nameCheck.reasonKey || 'moderation.reason.profanity'), 'alert-circle');
+      return;
+    }
+    const bioCheck = validateBio(bio);
+    if (!bioCheck.ok) {
+      showToast(t(bioCheck.reasonKey || 'moderation.reason.profanity'), 'alert-circle');
+      return;
+    }
     setIsSaving(true);
     try {
       updateProfile({

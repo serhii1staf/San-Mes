@@ -19,6 +19,8 @@ import { accountKey } from '../../src/services/cacheService';
 import { FormatHelpModal } from '../../src/components/ui/FormatHelpModal';
 import { useT } from '../../src/i18n/store';
 import { perfMonitor } from '../../src/services/perfMonitor';
+import { validatePost } from '../../src/services/moderation';
+import { showToast } from '../../src/store/toastStore';
 
 const MAX_CHARS = 500;
 const MAX_IMAGES = 6;
@@ -220,6 +222,20 @@ export default function CreateScreen() {
       if (spam.isSuspicious) {
         Alert.alert(t('create.alert.blocked_title'), spam.reason || t('create.alert.blocked_default'));
         return;
+      }
+    }
+
+    // Content moderation: hard-block on csam / extreme-violence; for other
+    // categories the post still goes through but we surface a one-time
+    // warning toast (the post may end up auto-flagged on the server too).
+    if (content.trim()) {
+      const mod = validatePost(content);
+      if (!mod.ok) {
+        Alert.alert(t('create.alert.blocked_title'), t(mod.reasonKey || 'moderation.reason.profanity'));
+        return;
+      }
+      if (mod.warn) {
+        showToast(t('moderation.warn.posted_with_warning'), 'alert-triangle');
       }
     }
 

@@ -145,6 +145,14 @@ const ru: Record<string, string> = {
   'register.confirm_pin_subtitle': 'Введи код ещё раз',
   'register.error.pins_mismatch': 'Коды не совпадают',
 
+  // ─── Moderation ─────────────────────────────────────────────────────────
+  'moderation.reason.csam': 'Этот текст содержит запрещённое содержимое и не может быть использован.',
+  'moderation.reason.violence': 'Призывы к насилию и угрозы запрещены.',
+  'moderation.reason.slurs': 'Текст содержит оскорбления — пожалуйста, переформулируйте.',
+  'moderation.reason.sexual': 'Откровенный текст не допускается в этом поле.',
+  'moderation.reason.profanity': 'Слишком грубое выражение. Пожалуйста, измените текст.',
+  'moderation.warn.posted_with_warning': 'Пост опубликован, но содержание может быть скрыто модерацией.',
+
   // ─── Notifications ─────────────────────────────────────────────────────
   'notifications.title': 'Уведомления',
   'notifications.empty': 'Нет уведомлений',

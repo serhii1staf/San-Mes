@@ -142,6 +142,14 @@ const en: Record<string, string> = {
   'register.confirm_pin_subtitle': 'Enter the PIN once more',
   'register.error.pins_mismatch': "PINs don't match",
 
+  // ─── Moderation ─────────────────────────────────────────────────────────
+  'moderation.reason.csam': 'This text contains prohibited content and cannot be used.',
+  'moderation.reason.violence': 'Threats and calls for violence are not allowed.',
+  'moderation.reason.slurs': 'This text contains slurs — please rephrase.',
+  'moderation.reason.sexual': 'Explicit text is not allowed in this field.',
+  'moderation.reason.profanity': 'This is too rude. Please change the text.',
+  'moderation.warn.posted_with_warning': 'Post published, but its content may be hidden by moderation.',
+
   // ─── Notifications ─────────────────────────────────────────────────────
   'notifications.title': 'Notifications',
   'notifications.empty': 'No notifications',
