@@ -8,6 +8,8 @@ const ru: Record<string, string> = {
   'common.save': 'Сохранить',
   'common.cancel': 'Отмена',
   'common.apply': 'Применить',
+  'pixel_icons.title': 'Иконки',
+  'pixel_icons.empty_title': 'Без иконки',
   'common.delete': 'Удалить',
   'common.edit': 'Редактировать',
   'common.share': 'Поделиться',

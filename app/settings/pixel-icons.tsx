@@ -277,25 +277,35 @@ export default function PixelIconsScreen() {
 
   return (
     <View
-      style={[styles.root, { backgroundColor: theme.colors.background.primary, paddingTop: insets.top }]}
+      style={[styles.root, { backgroundColor: theme.colors.background.primary }]}
     >
-      {/* Header row — close button + title + (Apply | count). */}
-      <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={12}>
+      {/* Header row — close + centered title + (Apply | count). Sits flush
+          to the top of the modal: iOS modal presentation already provides
+          its own drag-handle inset, so we only add a small breathing pad
+          (no full safe-area insets.top — that pushed the header too far
+          down inside an already-presented modal sheet). */}
+      <View style={[styles.header, { paddingTop: 14 }]}>
+        <Pressable onPress={() => router.back()} hitSlop={12} style={[styles.headerSide, styles.headerSideLeft]}>
           <Feather name="x" size={22} color={theme.colors.text.primary} />
         </Pressable>
-        <Text variant="body" weight="bold">Pixel icons</Text>
-        {isPicker ? (
-          <Pressable onPress={onApply} hitSlop={12}>
-            <Text variant="body" weight="semibold" color={theme.colors.accent.primary}>
-              {t('common.apply')}
+        {/* Absolute-centered title so it sits dead-center regardless of
+            the side actions' widths. */}
+        <View style={styles.headerTitleWrap} pointerEvents="none">
+          <Text variant="body" weight="bold">{t('pixel_icons.title', 'Pixel icons')}</Text>
+        </View>
+        <View style={[styles.headerSide, styles.headerSideRight]}>
+          {isPicker ? (
+            <Pressable onPress={onApply} hitSlop={12}>
+              <Text variant="body" weight="semibold" color={theme.colors.accent.primary}>
+                {t('common.apply')}
+              </Text>
+            </Pressable>
+          ) : (
+            <Text variant="caption" color={theme.colors.text.tertiary}>
+              {PIXEL_ICONS.length}
             </Text>
-          </Pressable>
-        ) : (
-          <Text variant="caption" color={theme.colors.text.tertiary}>
-            {PIXEL_ICONS.length}
-          </Text>
-        )}
+          )}
+        </View>
       </View>
 
       {gridReady ? (
@@ -323,8 +333,9 @@ export default function PixelIconsScreen() {
         </View>
       )}
 
-      {/* Selected-icon footer. Renders the title of whatever icon the user
-          tapped last. Empty by default so the modal opens looking calm. */}
+      {/* Selected-icon footer. Renders just the human-readable title of
+          whichever icon the user tapped last — the registry id used to
+          live here too but it was only useful for debugging. */}
       {selectedIcon ? (
         <View
           style={[
@@ -347,9 +358,6 @@ export default function PixelIconsScreen() {
             <Text variant="body" weight="semibold" numberOfLines={1}>
               {selectedIcon.title}
             </Text>
-            <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>
-              {selectedIcon.id}
-            </Text>
           </View>
         </View>
       ) : null}
@@ -364,7 +372,28 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingBottom: 12,
+    // No paddingTop here — the screen-level wrapper handles it so we can
+    // tune the modal-vs-fullscreen offset in one spot.
+    minHeight: 44,
+  },
+  headerSide: {
+    // Equal-width tap targets on each side so the absolute-centered title
+    // never visually drifts based on the action label's length.
+    minWidth: 60,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  headerSideLeft: { justifyContent: 'flex-start' },
+  headerSideRight: { justifyContent: 'flex-end' },
+  headerTitleWrap: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 14,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'flex-start',
   },
   loaderWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   sectionHeader: { paddingTop: 14, paddingBottom: 6, paddingHorizontal: 4 },

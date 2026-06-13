@@ -28,7 +28,7 @@ Add-Type -AssemblyName System.Drawing
 $root = (Resolve-Path "$PSScriptRoot\..").Path
 $tmp = Join-Path $root '_tmp_pixel'
 $out = Join-Path $root 'assets\pixel-icons'
-$maxDim = 128
+$maxDim = 192
 
 # Background detection thresholds tuned for the off-white halo in the
 # generated source set. Subject pixels stay untouched because the

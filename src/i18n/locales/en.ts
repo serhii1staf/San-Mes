@@ -5,6 +5,8 @@ const en: Record<string, string> = {
   'common.save': 'Save',
   'common.cancel': 'Cancel',
   'common.apply': 'Apply',
+  'pixel_icons.title': 'Icons',
+  'pixel_icons.empty_title': 'No icon',
   'common.delete': 'Delete',
   'common.edit': 'Edit',
   'common.share': 'Share',
