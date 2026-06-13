@@ -596,6 +596,15 @@ const ru: Record<string, string> = {
   'appearance.preview_message': 'Привет! Как дела сегодня? 🌟',
   'appearance.preview_user': 'Мария',
 
+  // AI-applied theme → matching pixel-icon picker carousel that appears
+  // under the action bubble in the AI chat. Keys live in the appearance
+  // namespace because the icon ends up in the home-feed header
+  // (`useSettingsStore.homeHeaderIcon`), which is appearance-related.
+  'appearance.ai.want_icon': 'Применить иконку под эту тему?',
+  'appearance.ai.icon_applied': 'Иконка применена',
+  'appearance.ai.undo': 'Отменить',
+  'appearance.ai.swipe_hint': 'Листайте, чтобы выбрать',
+
   // ─── Theme palette labels ──────────────────────────────────────────────
   'theme.color.coral': 'Коралл',
   'theme.color.sage': 'Шалфей',

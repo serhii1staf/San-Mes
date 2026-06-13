@@ -17,6 +17,7 @@ import { sendMessage, parseActions, applyAction, AIMessage, ParsedAction, getRem
 import { triggerHaptic } from '../../src/utils/haptics';
 import { useT } from '../../src/i18n/store';
 import { perfMonitor } from '../../src/services/perfMonitor';
+import { ThemeIconCarousel } from '../../src/components/pixel-icons/ThemeIconCarousel';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 
@@ -81,8 +82,33 @@ function ActionBubble({ action }: { action: ParsedAction }) {
 function MessageBubble({ message }: { message: AIMessage }) {
   const theme = useTheme();
   const isUser = message.role === 'user';
-  // Deduplicate actions of same type (show only last)
-  const uniqueActions = message.actions ? message.actions.filter((a, i, arr) => arr.findIndex(x => x.type === a.type) === i) : undefined;
+  // Deduplicate actions of same type (show only last). `theme` and
+  // `custom_theme` share a single "theme-class" bucket — otherwise an
+  // AI reply that emits both (a built-in switch + a brand-new theme)
+  // would render as two pills, which the user perceives as a duplicate.
+  const themeBucket = (a: ParsedAction) =>
+    a.type === 'theme' || a.type === 'custom_theme' ? 'theme-class' : a.type;
+  const uniqueActions = message.actions
+    ? message.actions.filter((a, i, arr) => arr.findIndex(x => themeBucket(x) === themeBucket(a)) === i)
+    : undefined;
+  // The (single) theme-class action that fed the bubble — used by
+  // ThemeIconCarousel to pick a hex color and offer matching pixel
+  // icons. Only renders when the action successfully applied.
+  const themeAction = uniqueActions?.find(
+    a => (a.type === 'theme' || a.type === 'custom_theme') && a.applied,
+  );
+  const themeHex = React.useMemo(() => {
+    if (!themeAction) return null;
+    if (themeAction.type === 'custom_theme') {
+      // value format: "Name:#hex"
+      const parts = themeAction.value.split(':');
+      const c = parts[1]?.trim();
+      return c && c.startsWith('#') ? c : null;
+    }
+    // type === 'theme' — resolve key against built-ins + ai-themes
+    const all = [...ACCENT_COLORS, ...useThemeStore.getState().aiThemes];
+    return all.find(x => x.key === themeAction.value)?.color ?? null;
+  }, [themeAction]);
   return (
     <View style={{ alignSelf: isUser ? 'flex-end' : 'flex-start', maxWidth: '82%', marginBottom: 12 }}>
       {!isUser && (
@@ -96,6 +122,7 @@ function MessageBubble({ message }: { message: AIMessage }) {
         <FormattedText color={isUser ? '#FFFFFF' : theme.colors.text.primary} linkColor={isUser ? '#FFFFFF' : theme.colors.accent.primary} style={{ fontSize: 14, lineHeight: 20 }}>{message.content}</FormattedText>
       </View>
       {uniqueActions?.map((action, i) => <ActionBubble key={i} action={action} />)}
+      {themeAction && themeHex ? <ThemeIconCarousel hex={themeHex} /> : null}
     </View>
   );
 }
@@ -175,8 +202,13 @@ export default function AIChatScreen() {
       const response = await sendMessage(recentMessages);
       const { cleanText, actions } = parseActions(response);
 
-      // Deduplicate actions of same type (keep last)
-      const deduped = actions.reduce((acc, a) => { acc.set(a.type, a); return acc; }, new Map<string, ParsedAction>());
+      // Deduplicate actions (keep last). `theme` and `custom_theme` are
+      // bucketed together — otherwise an AI reply that emits both would
+      // apply a built-in theme AND create a custom one in the same turn,
+      // which the user reads as a duplicate.
+      const themeBucket = (a: ParsedAction) =>
+        a.type === 'theme' || a.type === 'custom_theme' ? 'theme-class' : a.type;
+      const deduped = actions.reduce((acc, a) => { acc.set(themeBucket(a), a); return acc; }, new Map<string, ParsedAction>());
       const uniqueActions = Array.from(deduped.values());
 
       const appliedActions: ParsedAction[] = [];
