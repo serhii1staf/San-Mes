@@ -290,8 +290,8 @@ export default function PixelIconsScreen() {
           keyExtractor={keyExtractor}
           contentContainerStyle={{
             paddingHorizontal: 14,
-            // First row sits below the gradient header (height = inset + 64).
-            paddingTop: insets.top + 56,
+            // First row sits below the gradient header (60 px tall fixed).
+            paddingTop: 56,
             paddingBottom: insets.bottom + 90,
           }}
           showsVerticalScrollIndicator={false}
@@ -304,7 +304,7 @@ export default function PixelIconsScreen() {
           removeClippedSubviews={true}
         />
       ) : (
-        <View style={[styles.loaderWrap, { paddingTop: insets.top + 56 }]}>
+        <View style={[styles.loaderWrap, { paddingTop: 56 }]}>
           <ActivityIndicator size="small" color={theme.colors.text.tertiary} />
         </View>
       )}
@@ -312,15 +312,18 @@ export default function PixelIconsScreen() {
       {/* Floating gradient header — same fade pattern used on (tabs)/index.tsx.
           Solid bg at the very top blending to transparent at the bottom of
           the strip, so grid content scrolling underneath fades into the
-          chrome rather than getting hard-clipped by an opaque bar. The
-          header content sits at `insets.top + 8 px` — comfortably below
-          the system safe-area but not pushed half-way down the screen
-          (a previous version sat at `insets.top + 14` which read as too
-          low). */}
+          chrome rather than getting hard-clipped by an opaque bar.
+          The X / title / Apply controls sit at a HARD-CODED `paddingTop: 6`
+          rather than reading from the safe-area inset. iOS modal
+          presentation gives our content its own zeroed inset (the system
+          chrome above the sheet is the OS's, not ours), so adding any
+          inset.top here pushes the header artificially low. 6 px sits
+          right under the modal's drag-handle area without ever feeling
+          crammed. */}
       <View
         style={[
           styles.headerWrapper,
-          { height: insets.top + 64 },
+          { height: 60 },
         ]}
         pointerEvents="box-none"
       >
@@ -337,7 +340,7 @@ export default function PixelIconsScreen() {
         <View
           style={[
             styles.headerContent,
-            { paddingTop: insets.top + 4 },
+            { paddingTop: 6 },
           ]}
           pointerEvents="auto"
         >

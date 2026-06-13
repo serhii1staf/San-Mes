@@ -84,7 +84,6 @@ import { useSettingsStore } from '../../store/settingsStore';
 import { useNotificationsBadge } from '../../store/notificationsBadgeStore';
 import { useDynamicOverlayStore } from '../../store/dynamicOverlayStore';
 import { useThemeStore, ACCENT_COLORS } from '../../store/themeStore';
-import { usePerfPanelStore } from '../../store/perfPanelStore';
 import { perfMonitor } from '../../services/perfMonitor';
 import { kvGetJSONSync } from '../../services/kvStore';
 import { CachedImage } from '../ui/CachedImage';
@@ -108,18 +107,19 @@ const EXPANDED_RADIUS = 24;
 const AUTO_DISMISS_MS = 6000;
 const DISMISS_FADE_MS = 220;
 
-// Less-damped spring than the previous (22, 240, 0.9). Gives the morph an
-// audible "thud" when it lands plus a small overshoot — reads as elastic
-// glass rather than mechanical. Combined with the SCALE_KICK below it
-// produces the liquid-stretch feel the user asked for.
-const SPRING = { damping: 15, stiffness: 200, mass: 1.0 };
+// Tightened from (15, 200, 1.0). The previous low-damped spring had a
+// visible overshoot on collapse that combined with the scale kick to
+// LOOK like the card was re-expanding mid-shrink. Bumping damping to
+// 22 keeps the spring critically-damped so collapse reads as a single
+// smooth motion. Expand still feels elastic via the SCALE_KICK below.
+const SPRING = { damping: 22, stiffness: 220, mass: 0.95 };
 
-// Brief overshoot scale applied during expand/collapse — the surface
-// stretches ~3 % past its target then settles. Driven by a separate
-// shared value sequenced from the same gesture event so the two
-// dimensions land in lockstep without compounding.
+// Brief overshoot scale applied during EXPAND only — the surface
+// stretches ~3 % past its target then settles. Suppressed on collapse
+// because the spring's natural overshoot already provides the
+// rubber-band feel; an extra kick on top creates a visible "pop back
+// to full size" mid-collapse that the user reported as an artifact.
 const SCALE_KICK_EXPAND = 1.03;
-const SCALE_KICK_COLLAPSE = 0.97;
 
 // ─── Glass material — single BlurView per surface, no stacking ─────────────
 
@@ -283,50 +283,6 @@ function DashboardTile({
   );
 }
 
-// ─── FPS tile preview ──────────────────────────────────────────────────────
-
-function FpsTilePreview({ accent, isDark }: { accent: string; isDark: boolean }) {
-  const enabled = useSettingsStore((s) => s.perfMonitorEnabled);
-  const [fps, setFps] = useState<number | null>(() =>
-    enabled ? perfMonitor.snapshot().jsFps || null : null,
-  );
-
-  useEffect(() => {
-    if (!enabled) {
-      setFps(null);
-      return;
-    }
-    let last = 0;
-    const unsub = perfMonitor.subscribe((s) => {
-      const now = Date.now();
-      if (now - last < 480) return;
-      last = now;
-      setFps(s.jsFps || 0);
-    });
-    return unsub;
-  }, [enabled]);
-
-  const color =
-    fps == null
-      ? isDark
-        ? 'rgba(255,255,255,0.5)'
-        : 'rgba(20,20,20,0.5)'
-      : fps >= 50
-      ? '#22c55e'
-      : fps >= 30
-      ? '#f59e0b'
-      : '#ef4444';
-
-  return (
-    <View style={{ alignItems: 'center', justifyContent: 'center' }}>
-      <Feather name="activity" size={20} color={accent} style={{ marginBottom: 4 }} />
-      <RNText style={[styles.tileNumberValue, { color }]}>
-        {fps == null ? '—' : String(fps)}
-      </RNText>
-    </View>
-  );
-}
-
 // ─── Main host ──────────────────────────────────────────────────────────────
 
 function DynamicOverlayHostInner() {
@@ -340,21 +296,15 @@ function DynamicOverlayHostInner() {
   const expanded = useDynamicOverlayStore((s) => s.expanded);
   const toggleExpand = useDynamicOverlayStore((s) => s.toggleExpand);
   const hide = useDynamicOverlayStore((s) => s.hide);
-  const collapse = useDynamicOverlayStore((s) => s.collapse);
 
   const userEmoji = useAuthStore((s) => s.user?.emoji);
   const userAvatar = useAuthStore((s) => s.user?.avatar);
   const userDisplayName = useAuthStore((s) => s.user?.displayName);
   const homeHeaderIcon = useSettingsStore((s) => s.homeHeaderIcon);
-  const perfEnabled = useSettingsStore((s) => s.perfMonitorEnabled);
-  const setPerfEnabled = useSettingsStore((s) => s.setPerfMonitorEnabled);
   const unread = useNotificationsBadge((s) => s.unread);
   const recomputeBadge = useNotificationsBadge((s) => s.recompute);
   const accentKey = useThemeStore((s) => s.accent);
   const aiThemes = useThemeStore((s) => s.aiThemes);
-  const themeMode = useThemeStore((s) => s.mode);
-  const setThemeMode = useThemeStore((s) => s.setMode);
-  const showPerfPanel = usePerfPanelStore((s) => s.show);
 
   const accent = theme.colors.accent.primary;
 
@@ -429,17 +379,22 @@ function DynamicOverlayHostInner() {
     }
   }, [visible, appearance, scaleKick]);
 
-  // Re-fire the scale kick on every expand/collapse transition. Sequenced
-  // via withSequence so the brief overshoot snaps back to 1 even if the
-  // user toggles rapidly. Suppressed during dismiss — the exit
-  // animation has its own overshoot via the spring config, and an extra
-  // kick on top would read as a double-bounce artifact.
+  // Re-fire the scale kick on EXPAND ONLY. On collapse the spring's
+  // natural overshoot is enough — adding a separate kick made the card
+  // visibly "pop back to full size" mid-collapse (the artifact users
+  // reported when tapping the chevron-down).
   useEffect(() => {
     progress.value = withSpring(expanded ? 1 : 0, SPRING);
     if (dismissingRef.current) return;
-    const target = expanded ? SCALE_KICK_EXPAND : SCALE_KICK_COLLAPSE;
-    scaleKick.value = withTiming(target, { duration: 120, easing: Easing.out(Easing.cubic) }, () => {
-      scaleKick.value = withSpring(1, { damping: 12, stiffness: 220 });
+    if (!expanded) {
+      // Snap any stale kick back to neutral immediately. Spring-toward-1
+      // would visibly overshoot DURING the collapse spring, which is the
+      // exact double-bounce we're trying to remove.
+      scaleKick.value = 1;
+      return;
+    }
+    scaleKick.value = withTiming(SCALE_KICK_EXPAND, { duration: 120, easing: Easing.out(Easing.cubic) }, () => {
+      scaleKick.value = withSpring(1, { damping: 14, stiffness: 220 });
     });
   }, [expanded, progress, scaleKick]);
 
@@ -501,10 +456,11 @@ function DynamicOverlayHostInner() {
   const collapsedWidth = Math.min(screenW - 2 * SIDE_MARGIN, COLLAPSED_MAX_WIDTH);
   const collapsedLeft = (screenW - collapsedWidth) / 2;
   const expandedWidth = screenW - 2 * SIDE_MARGIN;
-  // ~38 % of screen height — fits the 3 × 2 tile grid snugly without
-  // leaving a void of empty glass underneath. Earlier 46 % (and 58 %
-  // before that) felt oversized for the actual content.
-  const expandedHeight = Math.round(screenH * 0.38);
+  // ~22 % of screen height — fits a single row of three tiles tightly.
+  // Earlier the grid was 3 × 2 with Mode / Monitor / FPS in the second
+  // row, but the user explicitly asked to remove those, so we collapse
+  // back to a single row of "Theme · Icon · Notifications".
+  const expandedHeight = Math.round(screenH * 0.22);
 
   const containerStyle = useAnimatedStyle(() => ({
     width: interpolate(progress.value, [0, 1], [collapsedWidth, expandedWidth]),
@@ -525,10 +481,14 @@ function DynamicOverlayHostInner() {
       { translateY: interpolate(appearance.value, [0, 1], [-12, 0]) + dragY.value },
       // Liquid-stretch overshoot on tap-expand.
       { scale: scaleKick.value },
-      // Drag-stretch — width grows along the drag axis, height shrinks
-      // slightly (incompressible-fluid feel). Both go to 1 on release.
-      { scaleX: 1 + Math.abs(dragX.value) * 0.0008 + dragStretch.value },
-      { scaleY: 1 - Math.abs(dragX.value) * 0.0004 - dragStretch.value * 0.5 },
+      // Drag-stretch — smoother than the previous version. The direct
+      // dragX coefficient (was 0.0008) made the pill expand in the drag
+      // direction noticeably as soon as movement started. Halved to
+      // 0.0004 so the stretch builds gradually with `dragStretch`
+      // (which itself is normalised by 90 px of motion) doing most of
+      // the work.
+      { scaleX: 1 + Math.abs(dragX.value) * 0.0004 + dragStretch.value },
+      { scaleY: 1 - Math.abs(dragX.value) * 0.0002 - dragStretch.value * 0.4 },
     ],
   }));
 
@@ -536,10 +496,17 @@ function DynamicOverlayHostInner() {
   // Same physics shape as `CustomTabBar`'s sliding-pill drag — pan moves
   // the pill 1:1 within bounds, stretches it slightly with motion, springs
   // back to centre on release. All on the UI thread.
-  const PAN_TRANSLATE_X_MAX = 28;
-  const PAN_TRANSLATE_Y_MAX = 14;
-  const STRETCH_MAX = 0.05;
-  const DRAG_RELEASE_SPRING = { damping: 14, stiffness: 220, mass: 0.9 };
+  //
+  // Tuning round per user feedback: previous version stretched too
+  // sharply (especially horizontally) and the spring-back was too
+  // snappy. Reduced the per-pixel stretch coefficient, raised the Y
+  // travel cap so vertical drags feel like they actually do something,
+  // and softened the release spring so the pill eases back rather than
+  // snapping.
+  const PAN_TRANSLATE_X_MAX = 30;
+  const PAN_TRANSLATE_Y_MAX = 22;
+  const STRETCH_MAX = 0.04;
+  const DRAG_RELEASE_SPRING = { damping: 18, stiffness: 150, mass: 1.1 };
   const panGesture = useMemo(
     () =>
       Gesture.Pan()
@@ -547,8 +514,10 @@ function DynamicOverlayHostInner() {
         .onUpdate((e) => {
           'worklet';
           dragX.value = Math.max(-PAN_TRANSLATE_X_MAX, Math.min(PAN_TRANSLATE_X_MAX, e.translationX));
-          dragY.value = Math.max(-PAN_TRANSLATE_Y_MAX, Math.min(PAN_TRANSLATE_Y_MAX, e.translationY * 0.6));
-          const mag = Math.min(1, Math.sqrt(e.translationX ** 2 + e.translationY ** 2) / 80);
+          // Match the X dampening on Y so vertical drags feel symmetrical
+          // (was 0.6 → reads as "barely moves down" for the same input).
+          dragY.value = Math.max(-PAN_TRANSLATE_Y_MAX, Math.min(PAN_TRANSLATE_Y_MAX, e.translationY * 0.85));
+          const mag = Math.min(1, Math.sqrt(e.translationX ** 2 + e.translationY ** 2) / 90);
           dragStretch.value = mag * STRETCH_MAX;
         })
         .onFinalize(() => {
@@ -610,29 +579,6 @@ function DynamicOverlayHostInner() {
   const goNotifications = useCallback(() => {
     startDismiss(() => router.push('/notifications'));
   }, [startDismiss]);
-
-  const goPerf = useCallback(() => {
-    // FPS tile opens the perf-monitor panel directly. The bubble owns the
-    // panel modal but listens to `usePerfPanelStore` for external opens.
-    startDismiss(() => {
-      // Make sure the bubble itself is enabled — opening the panel while
-      // disabled would just show a panel with empty live-gauges.
-      if (!perfEnabled) {
-        try { setPerfEnabled(true); } catch {}
-      }
-      try { showPerfPanel(); } catch {}
-    });
-  }, [startDismiss, perfEnabled, setPerfEnabled, showPerfPanel]);
-
-  const onModeToggle = useCallback(() => {
-    try { triggerHaptic('selection'); } catch {}
-    setThemeMode(themeMode === 'dark' ? 'light' : 'dark');
-  }, [themeMode, setThemeMode]);
-
-  const onPerfToggle = useCallback(() => {
-    try { triggerHaptic('selection'); } catch {}
-    setPerfEnabled(!perfEnabled);
-  }, [perfEnabled, setPerfEnabled]);
 
   const onTapOutside = useCallback(() => {
     startDismiss();
@@ -748,7 +694,10 @@ function DynamicOverlayHostInner() {
           pointerEvents={expanded ? 'auto' : 'none'}
         >
           <View style={styles.tilesGrid}>
-            {/* ─── Row 1: theme · icon · notifications ───────────── */}
+            {/* Single row of three tiles — Theme · Icon · Notifications.
+                Mode / Monitor / FPS were removed per user feedback: they
+                duplicate functionality already reachable from the perf
+                bubble or settings, and made the widget feel half-empty. */}
             <DashboardTile
               preview={<ThemeTilePreview accent={accent} isDark={isDark} themeName={themeName} />}
               label={t('dynamic_overlay.theme', 'Theme')}
@@ -808,59 +757,6 @@ function DynamicOverlayHostInner() {
               }
               label={t('dynamic_overlay.notifications', 'Notifications')}
               onPress={goNotifications}
-              isDark={isDark}
-              borderColor={tileBorder}
-            />
-
-            {/* ─── Row 2: mode · perf · fps ──────────────────────── */}
-            <DashboardTile
-              preview={
-                <View style={{ alignItems: 'center', justifyContent: 'center' }}>
-                  <Feather
-                    name={themeMode === 'dark' ? 'moon' : 'sun'}
-                    size={26}
-                    color={accent}
-                    style={{ marginBottom: 4 }}
-                  />
-                  <RNText style={[styles.tilePreviewText, { color: isDark ? '#FFFFFF' : '#1A1A1A' }]}>
-                    {themeMode === 'dark'
-                      ? t('dynamic_overlay.mode_dark', 'Dark')
-                      : t('dynamic_overlay.mode_light', 'Light')}
-                  </RNText>
-                </View>
-              }
-              label={t('dynamic_overlay.mode', 'Mode')}
-              onPress={onModeToggle}
-              isDark={isDark}
-              borderColor={tileBorder}
-            />
-
-            <DashboardTile
-              preview={
-                <View style={{ alignItems: 'center', justifyContent: 'center' }}>
-                  <Feather
-                    name={perfEnabled ? 'eye' : 'eye-off'}
-                    size={26}
-                    color={perfEnabled ? accent : (isDark ? 'rgba(255,255,255,0.4)' : 'rgba(20,20,20,0.4)')}
-                    style={{ marginBottom: 4 }}
-                  />
-                  <RNText style={[styles.tilePreviewText, { color: isDark ? '#FFFFFF' : '#1A1A1A' }]}>
-                    {perfEnabled
-                      ? t('common.on', 'On')
-                      : t('common.off', 'Off')}
-                  </RNText>
-                </View>
-              }
-              label={t('dynamic_overlay.perf_toggle', 'Monitor')}
-              onPress={onPerfToggle}
-              isDark={isDark}
-              borderColor={tileBorder}
-            />
-
-            <DashboardTile
-              preview={<FpsTilePreview accent={accent} isDark={isDark} />}
-              label={t('dynamic_overlay.fps', 'FPS')}
-              onPress={goPerf}
               isDark={isDark}
               borderColor={tileBorder}
             />
@@ -946,16 +842,14 @@ const styles = StyleSheet.create({
   tilesGrid: {
     flex: 1,
     flexDirection: 'row',
-    flexWrap: 'wrap',
     gap: 10,
     marginTop: 4,
   },
   tile: {
-    width: '31%',
+    flex: 1,
     aspectRatio: 0.95,
     borderRadius: 16,
     overflow: 'hidden',
-    flexGrow: 1,
   },
   tileInner: {
     flex: 1,
