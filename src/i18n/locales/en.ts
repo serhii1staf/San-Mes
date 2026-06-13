@@ -150,6 +150,21 @@ const en: Record<string, string> = {
   'moderation.reason.profanity': 'This is too rude. Please change the text.',
   'moderation.warn.posted_with_warning': 'Post published, but its content may be hidden by moderation.',
 
+  // ─── Weather ───────────────────────────────────────────────────────────
+  'weather_settings.title': 'Weather',
+  'weather_settings.show_label': 'Show on home tab',
+  'weather_settings.city_label': 'City',
+  'weather_settings.search_placeholder': 'Type a city name',
+  'weather_settings.hint': 'Data provided by Open-Meteo. You can change the city anytime.',
+  'settings.weather': 'Weather',
+  'settings.nasa_apod': 'NASA picture of the day',
+
+  // ─── NASA Astronomy Picture of the Day ─────────────────────────────────
+  'nasa_apod.title': 'Picture of the Day',
+  'nasa_apod.error': "Couldn't load the picture. Check your connection and try again.",
+  'nasa_apod.video_open': 'Open video in browser',
+  'nasa_apod.source': 'Source: NASA Astronomy Picture of the Day',
+
   // ─── Notifications ─────────────────────────────────────────────────────
   'notifications.title': 'Notifications',
   'notifications.empty': 'No notifications',

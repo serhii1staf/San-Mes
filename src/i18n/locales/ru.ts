@@ -160,6 +160,13 @@ const ru: Record<string, string> = {
   'weather_settings.search_placeholder': 'Введите название города',
   'weather_settings.hint': 'Данные предоставлены Open-Meteo. Город можно сменить в любой момент.',
   'settings.weather': 'Погода',
+  'settings.nasa_apod': 'Снимок дня от NASA',
+
+  // ─── NASA Astronomy Picture of the Day ──────────────────────────────────
+  'nasa_apod.title': 'Снимок дня',
+  'nasa_apod.error': 'Не удалось загрузить снимок. Проверьте соединение и попробуйте снова.',
+  'nasa_apod.video_open': 'Открыть видео в браузере',
+  'nasa_apod.source': 'Источник: NASA Astronomy Picture of the Day',
 
   // ─── Notifications ─────────────────────────────────────────────────────
   'notifications.title': 'Уведомления',

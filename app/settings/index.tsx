@@ -384,6 +384,12 @@ export default function SettingsScreen() {
             iconTint="orange"
             label={t('settings.weather')}
             onPress={() => router.push('/settings/weather' as any)}
+          />
+          <SettingsRow
+            icon="moon"
+            iconTint="indigo"
+            label={t('settings.nasa_apod')}
+            onPress={() => router.push('/mini-app-nasa' as any)}
             isLast
           />
         </View>
