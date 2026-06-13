@@ -337,7 +337,7 @@ export default function PixelIconsScreen() {
         <View
           style={[
             styles.headerContent,
-            { paddingTop: insets.top + 8 },
+            { paddingTop: insets.top + 4 },
           ]}
           pointerEvents="auto"
         >

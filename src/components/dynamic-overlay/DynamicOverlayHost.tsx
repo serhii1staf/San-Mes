@@ -73,6 +73,7 @@ import Animated, {
   withTiming,
   Easing,
 } from 'react-native-reanimated';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -85,6 +86,7 @@ import { useDynamicOverlayStore } from '../../store/dynamicOverlayStore';
 import { useThemeStore, ACCENT_COLORS } from '../../store/themeStore';
 import { usePerfPanelStore } from '../../store/perfPanelStore';
 import { perfMonitor } from '../../services/perfMonitor';
+import { kvGetJSONSync } from '../../services/kvStore';
 import { CachedImage } from '../ui/CachedImage';
 import { PixelIcon } from '../pixel-icons/PixelIcon';
 import { triggerHaptic } from '../../utils/haptics';
@@ -94,14 +96,30 @@ import { triggerHaptic } from '../../utils/haptics';
 const COLLAPSED_HEIGHT = 36;
 const COLLAPSED_MAX_WIDTH = 290;
 const SIDE_MARGIN = 16;
-const TOP_GAP_BELOW_NOTCH = 6;
+// Pill sits a touch lower below the notch so the row contents don't read
+// as crammed against the system camera island. iPhones with a Dynamic
+// Island already have ~6 pt of breathing room from the safe-area inset;
+// 12 pt makes the floating pill feel intentionally separate from the
+// system surface.
+const TOP_GAP_BELOW_NOTCH = 12;
 const COLLAPSED_RADIUS = 20;
 const EXPANDED_RADIUS = 24;
 
 const AUTO_DISMISS_MS = 6000;
 const DISMISS_FADE_MS = 220;
 
-const SPRING = { damping: 22, stiffness: 240, mass: 0.9 };
+// Less-damped spring than the previous (22, 240, 0.9). Gives the morph an
+// audible "thud" when it lands plus a small overshoot — reads as elastic
+// glass rather than mechanical. Combined with the SCALE_KICK below it
+// produces the liquid-stretch feel the user asked for.
+const SPRING = { damping: 15, stiffness: 200, mass: 1.0 };
+
+// Brief overshoot scale applied during expand/collapse — the surface
+// stretches ~3 % past its target then settles. Driven by a separate
+// shared value sequenced from the same gesture event so the two
+// dimensions land in lockstep without compounding.
+const SCALE_KICK_EXPAND = 1.03;
+const SCALE_KICK_COLLAPSE = 0.97;
 
 // ─── Glass material — single BlurView per surface, no stacking ─────────────
 
@@ -350,6 +368,23 @@ function DynamicOverlayHostInner() {
     }
   }, [visible, recomputeBadge]);
 
+  // Read TOTAL notifications count from the cache, not just unread. The
+  // unread count drops to 0 the moment the user visits /notifications
+  // (markAllSeen fires on screen mount), which made the tile look broken
+  // when the user had a non-empty notifications list. Showing the total
+  // count + unread badge gives the right "I have N notifications" cue.
+  // Re-reads each time the overlay opens — cache is sync MMKV so the
+  // cost is negligible.
+  const notifTotal = useMemo(() => {
+    if (!visible) return 0;
+    try {
+      const c = kvGetJSONSync<{ data: Array<unknown> } | null>('@san:notifications', null);
+      return Array.isArray(c?.data) ? c!.data.length : 0;
+    } catch {
+      return 0;
+    }
+  }, [visible]);
+
   const themeName = useMemo(() => {
     const builtin = ACCENT_COLORS.find((c) => c.key === accentKey);
     if (builtin) return builtin.label;
@@ -367,21 +402,46 @@ function DynamicOverlayHostInner() {
   // ─── Reanimated state ───────────────────────────────────────────────
   const progress = useSharedValue(0);
   const appearance = useSharedValue(0);
+  // Liquid-stretch scale kick. Sequenced separately from `progress` so the
+  // overshoot reads as a brief "rubber band" tug at the start of an
+  // expand/collapse, not an oscillation around the entire morph timeline.
+  const scaleKick = useSharedValue(1);
+  // Drag-driven X/Y translation + stretch — drives a "rubber band" feel
+  // when the user pans the pill itself. Mirrors the bottom-tab-bar
+  // sliding-pill physics: pill follows the finger 1:1 (clamped),
+  // stretches slightly with motion, then springs back to centre on
+  // release. Drives transform.translate{X,Y} + a scaleX/scaleY kick.
+  const dragX = useSharedValue(0);
+  const dragY = useSharedValue(0);
+  const dragStretch = useSharedValue(0);
   const dismissingRef = useRef(false);
 
   useEffect(() => {
     if (visible) {
       dismissingRef.current = false;
+      // Reset the scale kick to neutral so a previous dismiss cycle's
+      // residual value doesn't bleed into the open animation.
+      scaleKick.value = 1;
       appearance.value = withTiming(1, {
         duration: DISMISS_FADE_MS,
         easing: Easing.out(Easing.cubic),
       });
     }
-  }, [visible, appearance]);
+  }, [visible, appearance, scaleKick]);
 
+  // Re-fire the scale kick on every expand/collapse transition. Sequenced
+  // via withSequence so the brief overshoot snaps back to 1 even if the
+  // user toggles rapidly. Suppressed during dismiss — the exit
+  // animation has its own overshoot via the spring config, and an extra
+  // kick on top would read as a double-bounce artifact.
   useEffect(() => {
     progress.value = withSpring(expanded ? 1 : 0, SPRING);
-  }, [expanded, progress]);
+    if (dismissingRef.current) return;
+    const target = expanded ? SCALE_KICK_EXPAND : SCALE_KICK_COLLAPSE;
+    scaleKick.value = withTiming(target, { duration: 120, easing: Easing.out(Easing.cubic) }, () => {
+      scaleKick.value = withSpring(1, { damping: 12, stiffness: 220 });
+    });
+  }, [expanded, progress, scaleKick]);
 
   // ─── Dismiss flow ───────────────────────────────────────────────────
   // Two-stage:
@@ -399,6 +459,10 @@ function DynamicOverlayHostInner() {
     }
   }, []);
 
+  // Track whether we're in the middle of a dismiss animation. The
+  // expanded-state effect that fires the `scaleKick` overshoot reads
+  // this — if true, the kick is suppressed so the dismiss reads as a
+  // single fluid exit rather than bounce-into-fade.
   const onDismissJS = useCallback(() => {
     hide();
   }, [hide]);
@@ -409,11 +473,13 @@ function DynamicOverlayHostInner() {
       dismissingRef.current = true;
       try { triggerHaptic('selection'); } catch {}
       clearDismissTimer();
-      // Stage 1: spring back to collapsed.
+      // Stage 1: spring back to collapsed (no scaleKick — the kick is
+      // suppressed when `dismissingRef` is true; see the expanded effect
+      // above).
       progress.value = withSpring(0, SPRING);
-      // Stage 2: a beat later, fade the whole thing up + out. The 180 ms
-      // overlap with the collapse spring makes it read as a single fluid
-      // exit rather than two stages.
+      // Stage 2: a beat later, fade up + out. The 180 ms overlap with the
+      // collapse spring makes it read as a single fluid exit rather than
+      // two stages.
       appearance.value = withTiming(
         0,
         { duration: DISMISS_FADE_MS, easing: Easing.in(Easing.cubic) },
@@ -424,19 +490,21 @@ function DynamicOverlayHostInner() {
           }
         },
       );
-      // Update store immediately so child mounts release.
-      if (expanded) collapse();
+      // Don't call collapse() — that re-fires the expanded effect which
+      // would queue another scaleKick on top of our exit. The visible
+      // morph is already driven by `progress` directly above.
     },
-    [progress, appearance, expanded, collapse, onDismissJS, clearDismissTimer],
+    [progress, appearance, onDismissJS, clearDismissTimer],
   );
 
   // ─── Layout interpolation ───────────────────────────────────────────
   const collapsedWidth = Math.min(screenW - 2 * SIDE_MARGIN, COLLAPSED_MAX_WIDTH);
   const collapsedLeft = (screenW - collapsedWidth) / 2;
   const expandedWidth = screenW - 2 * SIDE_MARGIN;
-  // Bumped from 50 % → ~58 % so the 3-column dashboard fits without
-  // tiles squishing on smaller phones.
-  const expandedHeight = Math.round(screenH * 0.58);
+  // ~38 % of screen height — fits the 3 × 2 tile grid snugly without
+  // leaving a void of empty glass underneath. Earlier 46 % (and 58 %
+  // before that) felt oversized for the actual content.
+  const expandedHeight = Math.round(screenH * 0.38);
 
   const containerStyle = useAnimatedStyle(() => ({
     width: interpolate(progress.value, [0, 1], [collapsedWidth, expandedWidth]),
@@ -448,8 +516,51 @@ function DynamicOverlayHostInner() {
       [COLLAPSED_RADIUS, EXPANDED_RADIUS],
     ),
     opacity: appearance.value,
-    transform: [{ translateY: interpolate(appearance.value, [0, 1], [-12, 0]) }],
+    transform: [
+      // Combined translate: appearance lift on entry/exit + drag offset
+      // when the user is panning the pill. The drag is clamped so the
+      // pill never wanders off-screen — feels like the pill is anchored
+      // to its slot but can be tugged in any direction with a rubber band.
+      { translateX: dragX.value },
+      { translateY: interpolate(appearance.value, [0, 1], [-12, 0]) + dragY.value },
+      // Liquid-stretch overshoot on tap-expand.
+      { scale: scaleKick.value },
+      // Drag-stretch — width grows along the drag axis, height shrinks
+      // slightly (incompressible-fluid feel). Both go to 1 on release.
+      { scaleX: 1 + Math.abs(dragX.value) * 0.0008 + dragStretch.value },
+      { scaleY: 1 - Math.abs(dragX.value) * 0.0004 - dragStretch.value * 0.5 },
+    ],
   }));
+
+  // ─── Pan gesture for the rubber-band drag ────────────────────────────
+  // Same physics shape as `CustomTabBar`'s sliding-pill drag — pan moves
+  // the pill 1:1 within bounds, stretches it slightly with motion, springs
+  // back to centre on release. All on the UI thread.
+  const PAN_TRANSLATE_X_MAX = 28;
+  const PAN_TRANSLATE_Y_MAX = 14;
+  const STRETCH_MAX = 0.05;
+  const DRAG_RELEASE_SPRING = { damping: 14, stiffness: 220, mass: 0.9 };
+  const panGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .minDistance(4)
+        .onUpdate((e) => {
+          'worklet';
+          dragX.value = Math.max(-PAN_TRANSLATE_X_MAX, Math.min(PAN_TRANSLATE_X_MAX, e.translationX));
+          dragY.value = Math.max(-PAN_TRANSLATE_Y_MAX, Math.min(PAN_TRANSLATE_Y_MAX, e.translationY * 0.6));
+          const mag = Math.min(1, Math.sqrt(e.translationX ** 2 + e.translationY ** 2) / 80);
+          dragStretch.value = mag * STRETCH_MAX;
+        })
+        .onFinalize(() => {
+          'worklet';
+          dragX.value = withSpring(0, DRAG_RELEASE_SPRING);
+          dragY.value = withSpring(0, DRAG_RELEASE_SPRING);
+          dragStretch.value = withSpring(0, DRAG_RELEASE_SPRING);
+        }),
+    // shared-values are stable refs; gesture is cheap to keep around.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
 
   const bodyStyle = useAnimatedStyle(() => ({
     opacity: interpolate(progress.value, [0.4, 1], [0, 1], Extrapolation.CLAMP),
@@ -553,18 +664,22 @@ function DynamicOverlayHostInner() {
       </Animated.View>
 
       {/* The pill / card itself. Top fixed at insets.top + 6 — never
-          extends above the safe-area inset (Apple compliance). */}
-      <Animated.View
-        style={[
-          styles.container,
-          {
-            top: insets.top + TOP_GAP_BELOW_NOTCH,
-            shadowColor: isDark ? '#000' : 'rgba(0,0,0,0.25)',
-            borderColor: isDark ? 'rgba(255,255,255,0.18)' : 'rgba(255,255,255,0.65)',
-          },
-          containerStyle,
-        ]}
-      >
+          extends above the safe-area inset (Apple compliance). Wrapped
+          in a Pan gesture so the user can drag the pill / card around
+          for a brief rubber-band stretch — same physics as the bottom
+          tab-bar's sliding pill. Releases spring back to centre. */}
+      <GestureDetector gesture={panGesture}>
+        <Animated.View
+          style={[
+            styles.container,
+            {
+              top: insets.top + TOP_GAP_BELOW_NOTCH,
+              shadowColor: isDark ? '#000' : 'rgba(0,0,0,0.25)',
+              borderColor: isDark ? 'rgba(255,255,255,0.18)' : 'rgba(255,255,255,0.65)',
+            },
+            containerStyle,
+          ]}
+        >
         <GlassBackdrop isDark={isDark} radius={EXPANDED_RADIUS} />
         <TopReflection isDark={isDark} radius={EXPANDED_RADIUS} />
 
@@ -665,9 +780,29 @@ function DynamicOverlayHostInner() {
             <DashboardTile
               preview={
                 <View style={{ alignItems: 'center', justifyContent: 'center' }}>
-                  <Feather name="bell" size={26} color={accent} style={{ marginBottom: 4 }} />
+                  <View style={{ position: 'relative' }}>
+                    <Feather name="bell" size={26} color={accent} style={{ marginBottom: 4 }} />
+                    {/* Tiny accent badge in the upper-right of the bell when
+                        the user has anything UNSEEN. Scales the visual cue
+                        so a 0-unread state still shows the total count. */}
+                    {unread > 0 ? (
+                      <View
+                        style={{
+                          position: 'absolute',
+                          top: -2,
+                          right: -4,
+                          width: 8,
+                          height: 8,
+                          borderRadius: 4,
+                          backgroundColor: '#ef4444',
+                          borderWidth: 1.5,
+                          borderColor: isDark ? '#000' : '#fff',
+                        }}
+                      />
+                    ) : null}
+                  </View>
                   <RNText style={[styles.tileNumberValue, { color: isDark ? '#FFFFFF' : '#1A1A1A' }]}>
-                    {unread > 99 ? '99+' : String(unread)}
+                    {notifTotal > 99 ? '99+' : String(notifTotal)}
                   </RNText>
                 </View>
               }
@@ -744,7 +879,8 @@ function DynamicOverlayHostInner() {
             },
           ]}
         />
-      </Animated.View>
+        </Animated.View>
+      </GestureDetector>
     </View>
   );
 }
