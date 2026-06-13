@@ -10,6 +10,7 @@
     "test": "jest --passWithNoTests",
     "lint": "expo lint",
     "ts:check": "tsc --noEmit",
+    "optimize:icons": "node scripts/optimize-pixel-icons.mjs",
     "postinstall": "node -e \"const fs=require('fs');['node_modules/react-native/ReactCommon/fmt/include/fmt/base.h'].forEach(p=>{if(fs.existsSync(p)){let c=fs.readFileSync(p,'utf8');if(c.includes('define FMT_USE_CONSTEVAL 1')){c=c.replace(/#  define FMT_USE_CONSTEVAL 1/g,'#  define FMT_USE_CONSTEVAL 0');fs.writeFileSync(p,c);console.log('Patched:',p)}}});console.log('postinstall: fmt patch check done')\"",
     "eas-build-post-install": "bash eas-build-post-install.sh"
   },
@@ -72,6 +73,7 @@
     "fast-check": "^4.8.0",
     "jest": "^29.7.0",
     "jest-expo": "~54.0.17",
+    "sharp": "^0.35.1",
     "typescript": "^5.3.0"
   },
   "jest": {

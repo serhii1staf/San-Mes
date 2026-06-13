@@ -1,4 +1,10 @@
-# Pixel-icon optimization pipeline.
+# Pixel-icon optimization pipeline (legacy PowerShell version).
+#
+# NOTE: Superseded by `scripts/optimize-pixel-icons.mjs`, which is what
+# `npm run optimize:icons` runs. The Node version uses sharp + WebP and
+# halves the bundle size compared to this PNG pipeline. Kept around as
+# a fallback for the case where sharp's prebuilt binary doesn't install
+# on the contributor's machine.
 #
 # Reads the seven `pixel_characters_pack*.zip` archives from the workspace
 # root, normalises each PNG to 128x128 max (preserving aspect), runs a
