@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { View, Pressable, ScrollView, Dimensions, NativeSyntheticEvent, NativeScrollEvent, Alert } from 'react-native';
+import { View, Pressable, ScrollView, Dimensions, NativeSyntheticEvent, NativeScrollEvent, Alert, InteractionManager, ActivityIndicator } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -125,6 +125,19 @@ export default function AppearanceScreen() {
   const scrollRef = useRef<ScrollView>(null);
   const [activeIndex, setActiveIndex] = useState(Math.max(0, allThemes.findIndex(c => c.key === accent)));
 
+  // Defer the cards carousel past the navigation slide-in. Each ThemePreviewCard
+  // mounts ~10 Feather icons + several Views; for 6+ themes that's a 60-icon
+  // synchronous mount on the open-screen frame and was the dominant source of
+  // the `LONG [settings] long task @ settings ~130ms` markers users were
+  // seeing the moment they tapped "Appearance". Showing a flat placeholder
+  // for the first ~300 ms feels like a regular slide-in completion; cards
+  // pop in on the next frame.
+  const [cardsReady, setCardsReady] = useState(false);
+  useEffect(() => {
+    const handle = InteractionManager.runAfterInteractions(() => setCardsReady(true));
+    return () => handle.cancel();
+  }, []);
+
   const handleScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
     const x = e.nativeEvent.contentOffset.x;
     const index = Math.round(x / (CARD_WIDTH + CARD_GAP));
@@ -161,32 +174,42 @@ export default function AppearanceScreen() {
         </Pressable>
       </View>
 
-      {/* Cards carousel */}
+      {/* Cards carousel — gated past the navigation transition so the
+          slide-in animation isn't competing with 60+ icon mounts. */}
       <View style={{ flex: 1, justifyContent: 'center' }}>
-        <ScrollView
-          ref={scrollRef}
-          horizontal
-          pagingEnabled={false}
-          snapToInterval={CARD_WIDTH + CARD_GAP}
-          decelerationRate="fast"
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ paddingHorizontal: (SCREEN_WIDTH - CARD_WIDTH) / 2, gap: CARD_GAP, alignItems: 'center' }}
-          onScroll={handleScroll}
-          scrollEventThrottle={16}
-        >
-          {allThemes.map((c, index) => (
-            <ThemePreviewCard
-              key={c.key}
-              accentConfig={c}
-              isDark={isDark}
-              isSelected={index === activeIndex}
-              user={user}
-              t={t}
-              previewMessage={previewMessage}
-              previewUser={previewUser}
-            />
-          ))}
-        </ScrollView>
+        {cardsReady ? (
+          <ScrollView
+            ref={scrollRef}
+            horizontal
+            pagingEnabled={false}
+            snapToInterval={CARD_WIDTH + CARD_GAP}
+            decelerationRate="fast"
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ paddingHorizontal: (SCREEN_WIDTH - CARD_WIDTH) / 2, gap: CARD_GAP, alignItems: 'center' }}
+            onScroll={handleScroll}
+            scrollEventThrottle={16}
+          >
+            {allThemes.map((c, index) => (
+              <ThemePreviewCard
+                key={c.key}
+                accentConfig={c}
+                isDark={isDark}
+                isSelected={index === activeIndex}
+                user={user}
+                t={t}
+                previewMessage={previewMessage}
+                previewUser={previewUser}
+              />
+            ))}
+          </ScrollView>
+        ) : (
+          // Placeholder while we wait for the navigation transition to settle.
+          // A faint spinner reads the same as "the cards are about to slide in"
+          // and avoids a frozen blank gap.
+          <View style={{ alignItems: 'center', justifyContent: 'center', height: CARD_WIDTH * 1.1 }}>
+            <ActivityIndicator size="small" color={theme.colors.text.tertiary} />
+          </View>
+        )}
 
         {/* Dots indicator */}
         <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginTop: 20, gap: 6 }}>

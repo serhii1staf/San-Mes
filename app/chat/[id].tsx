@@ -238,6 +238,19 @@ export default function ChatScreen() {
   const [scrollEnabled, setScrollEnabled] = useState(true);
   const [pendingImages, setPendingImages] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
+
+  // Defer the ChatBackgroundLayer mount past the navigation slide-in. When a
+  // user has set a custom chat wallpaper, the layer mounts a CachedImage that
+  // synchronously decodes a full-bleed bitmap on the open-chat frame — that
+  // landed on the same RAF as the slide-in transition and contributed to the
+  // ~120 ms long task users were seeing the moment they tapped a conversation.
+  // Showing a flat bgColor for the first ~300 ms is identical to what users
+  // see with no wallpaper set, so the visual delta is imperceptible.
+  const [chromeReady, setChromeReady] = useState(false);
+  useEffect(() => {
+    const handle = InteractionManager.runAfterInteractions(() => setChromeReady(true));
+    return () => handle.cancel();
+  }, []);
   const [viewerImages, setViewerImages] = useState<{ images: string[]; index: number } | null>(null);
   const [gifPickerVisible, setGifPickerVisible] = useState(false);
   const [searchMode, setSearchMode] = useState(false);
@@ -308,12 +321,17 @@ export default function ChatScreen() {
     }
   }, [id, seedMessages]);
 
-  const settingsMap = useChatSettingsStore((s) => s.settings);
+  // Narrow the chat-settings subscription to only the two slices this chat
+  // actually reads — global defaults and this chat's own overrides. The
+  // previous selector (`s => s.settings`) returned the entire chatId→settings
+  // map, which meant any other chat's settings change re-rendered THIS chat
+  // (and its 5 mounted message bubbles). Two atomic selectors with shallow
+  // equality keep references stable across unrelated updates.
+  const globalSettings = useChatSettingsStore((s) => s.settings[GLOBAL_CHAT_SETTINGS_KEY]);
+  const specificSettings = useChatSettingsStore((s) => s.settings[id || '']);
   const chatSettings = useMemo(() => {
-    const global = settingsMap[GLOBAL_CHAT_SETTINGS_KEY];
-    const specific = settingsMap[id || ''];
-    return { ...DEFAULT_CHAT_SETTINGS, ...global, ...specific };
-  }, [settingsMap, id]);
+    return { ...DEFAULT_CHAT_SETTINGS, ...globalSettings, ...specificSettings };
+  }, [globalSettings, specificSettings]);
 
   const bgColor = theme.colors.background.primary;
   const bgTransparent = bgColor + '00';
@@ -446,7 +464,7 @@ export default function ChatScreen() {
     }
   }, [id, myMessages]);
 
-  const chatLocalName = settingsMap[id || '']?.localName;
+  const chatLocalName = specificSettings?.localName;
   const displayName = chatLocalName || conversation?.participantName || profileData?.display_name || entityConv?.participantName || t('chat.fallback_name');
   const displayEmoji = (conversation as any)?.participantEmoji || profileData?.emoji || entityConv?.participantEmoji || '😊';
   const displayVerified = profileData?.is_verified || cachedProfile?.is_verified || (entityConv as any)?.participantVerified || false;
@@ -805,7 +823,7 @@ export default function ChatScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: bgColor }}>
-      {chatSettings.backgroundImage && (
+      {chromeReady && chatSettings.backgroundImage && (
         <ChatBackgroundLayer uri={chatSettings.backgroundImage} style={StyleSheet.absoluteFill} />
       )}
 

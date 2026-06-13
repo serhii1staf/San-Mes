@@ -179,7 +179,7 @@ export const LinkPreview = React.memo(function LinkPreview({ url, onError, textC
               delayLongPress={delayLongPress}
             >
               {data.image ? (
-                <CachedImage uri={data.image} style={{ width: '100%', aspectRatio: 16 / 9 }} resizeMode="cover" />
+                <CachedImage uri={data.image} style={{ width: '100%', aspectRatio: 16 / 9 }} resizeMode="cover" proxyWidth={400} />
               ) : (
                 <View style={{ width: '100%', aspectRatio: 16 / 9, backgroundColor: '#111' }} />
               )}
@@ -229,7 +229,7 @@ export const LinkPreview = React.memo(function LinkPreview({ url, onError, textC
 
         {data.image ? (
           <View style={{ width: 60, height: 60, borderRadius: THUMB_RADIUS, overflow: 'hidden', backgroundColor: bg }}>
-            <CachedImage uri={data.image} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+            <CachedImage uri={data.image} style={{ width: '100%', height: '100%' }} resizeMode="cover" proxyWidth={60} />
           </View>
         ) : null}
 
