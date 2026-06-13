@@ -11,6 +11,7 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { kvGetStringRawSync, kvSetStringRaw, isMMKVAvailable } from './kvStore';
+import { getWikiPreview, isWikiUrl } from './unfurl/wikipedia';
 
 const UNFURL_ENDPOINT = 'https://san-m-app.com/api/unfurl';
 const CACHE_PREFIX = '@san:lp:'; // link-preview cache (global, not per-account — previews are public)
@@ -212,6 +213,19 @@ async function revalidate(url: string): Promise<void> {
 }
 
 async function fetchFresh(url: string): Promise<LinkPreviewData | null> {
+  // Wikipedia / Wikidata: try the REST APIs first — they're free, structured,
+  // and return a richer preview (lead paragraph, hero thumbnail) than the
+  // generic OG scraper. On failure / non-wiki URL the helper returns null
+  // and we fall through to the existing pipeline below.
+  if (isWikiUrl(url)) {
+    try {
+      const wiki = await getWikiPreview(url);
+      if (wiki) return wiki;
+    } catch {
+      // ignore — fall through to OG scraper
+    }
+  }
+
   let data: LinkPreviewData | null = null;
   try {
     const controller = new AbortController();
