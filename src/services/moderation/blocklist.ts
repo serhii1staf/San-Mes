@@ -30,6 +30,8 @@ export interface Blocklist {
   slurs: string[];
   /** Graphic sexual content not safe for a public timeline. */
   explicitSexual: string[];
+  /** Common profanity / strong swears. Soft category — warns on posts only. */
+  profanity: string[];
 }
 
 // CSAM keyword stems. RegExp form catches common compound forms without
@@ -150,11 +152,50 @@ const explicitSexual: string[] = [
   'znasiluvannia', 'znasiluvaty', 'mynet',
 ];
 
+// Common English / Russian / Ukrainian profanity. Soft category — used only
+// to soft-warn on post composition, hard-block on register / profile.
+//
+// The list replaces what `obscenity`'s English preset used to provide. We
+// keep it minimal but comprehensive enough for the most common swears that
+// don't belong in a username / display name. Entries are normalized form.
+const profanity: string[] = [
+  // English — strong swears
+  'fuck', 'fucker', 'fucking', 'motherfucker', 'fuckface', 'fuckwit',
+  'fucked up', 'shitfuck', 'clusterfuck',
+  'shit', 'shithead', 'shitter', 'bullshit', 'horseshit', 'shitshow',
+  'asshole', 'assholes', 'asshat',
+  'bitch', 'bitches', 'bitching', 'son of a bitch', 'sob',
+  'bastard', 'bastards',
+  'cunt', 'cunts',
+  'cock', 'cocks', 'cocksucker', 'dickhead', 'dickheads',
+  'pussy ass', 'pissoff', 'piss off',
+  'twat', 'wanker', 'wankers', 'wank',
+  'douche', 'douchebag', 'douche bag',
+  // Russian (already in folded Latin form — see normalize.ts confusable map)
+  'huy', 'huya', 'huyu', 'huyov', 'pohuy', 'nahuy', 'nahyu', 'pizdec',
+  'pizda', 'pizde', 'pizdy', 'pizduy',
+  'blyad', 'blyat', 'blya', 'blyadi', 'blyadina',
+  'ebat', 'ebal', 'ebalo', 'ebanyy', 'ebanaya', 'ebanutyy',
+  'ebanyj', 'ebanaja', 'ebanutyj',
+  'ebis', 'ebisya', 'idi nahuy', 'idi v pizdu',
+  'mudak', 'mudilo', 'mudaki',
+  'suka', 'sukin syn', 'sukin', 'suki blya',
+  'govno', 'govnyuk', 'govnyukov',
+  'zalupa', 'zalupy',
+  'manda', 'mandavoshka',
+  // Ukrainian (folded Latin)
+  'huyovyj', 'huyovo', 'pizdeczzz',
+  'eb tvoyu mat', 'yob tvoyu mat',
+  'sraka', 'srav', 'srany',
+  'kurva', 'kurvy',
+];
+
 export const blocklist: Blocklist = {
   csam,
   extremeViolence,
   slurs,
   explicitSexual,
+  profanity,
 };
 
 /** Test whether a normalized text contains any entry from a category list. */

@@ -12,23 +12,17 @@
 // Every check runs the same normalization pipeline so obfuscation tricks
 // (Cyrillic confusables, leet, repeated letters, zero-width inserts) are
 // defeated before any string compare.
+//
+// IMPLEMENTATION NOTE: the previous implementation used the `obscenity` npm
+// package for English profanity coverage. It was dropped because its
+// `package.json` `exports` field doesn't resolve cleanly through Metro on
+// Hermes — `englishDataset.build()` would throw `Cannot read property
+// 'DataSet' of undefined` at runtime, crashing every post submission. The
+// custom blocklist now covers English profanity directly (see `profanity`
+// category in blocklist.ts). No external matcher is loaded.
 
-import { RegExpMatcher, englishDataset, englishRecommendedTransformers } from 'obscenity';
 import { normalize } from './normalize';
 import { blocklist, matchesCategory, matchesCategoryCompact } from './blocklist';
-
-// Single shared matcher built once on first import. Matcher construction is
-// non-trivial, but checks themselves are cheap.
-let cachedMatcher: RegExpMatcher | null = null;
-function getMatcher(): RegExpMatcher {
-  if (!cachedMatcher) {
-    cachedMatcher = new RegExpMatcher({
-      ...englishDataset.build(),
-      ...englishRecommendedTransformers,
-    });
-  }
-  return cachedMatcher;
-}
 
 export type ModerationCategory =
   | 'csam'
@@ -76,15 +70,7 @@ function detectWorstCategory(
   if (all(blocklist.extremeViolence)) return 'extremeViolence';
   if (all(blocklist.slurs)) return 'slurs';
   if (all(blocklist.explicitSexual)) return 'explicitSexual';
-  // obscenity matches against the loose-normalized text — that's enough
-  // because its built-in transformers already handle leet / repeats. We pass
-  // the loose form (which still keeps doubled letters like "book") so we
-  // don't double-fold and produce false positives.
-  try {
-    if (getMatcher().hasMatch(loose)) return 'profanity';
-  } catch {
-    // matcher init failed — silently fall through; custom blocklist still ran
-  }
+  if (all(blocklist.profanity)) return 'profanity';
   return null;
 }
 
