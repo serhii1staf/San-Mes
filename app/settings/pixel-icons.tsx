@@ -118,13 +118,13 @@ export default function PixelIconsScreen() {
                 onPress={() => onPickIcon(ic.id)}
                 style={[
                   styles.cell,
-                  {
-                    backgroundColor: theme.colors.background.elevated,
-                    borderColor:
-                      selectedId === ic.id
-                        ? theme.colors.accent.primary
-                        : theme.colors.border.light,
-                    borderWidth: selectedId === ic.id ? 2 : 1,
+                  // Selected = soft accent halo. Otherwise transparent — the
+                  // icons themselves carry their own silhouette so a filled
+                  // tile would only mute them.
+                  selectedId === ic.id && {
+                    backgroundColor: theme.colors.accent.primary + '14',
+                    borderColor: theme.colors.accent.primary,
+                    borderWidth: 1.5,
                   },
                 ]}
               >
