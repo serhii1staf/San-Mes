@@ -1,7 +1,8 @@
-// Custom blocklist used in addition to obscenity's English preset.
+// Custom blocklist for the client-side moderation pipeline.
 //
-// Entries are compared against the NORMALIZED text (see normalize.ts), so
-// every entry below MUST already be lowercase Latin with leet expanded —
+// Categories: csam / extremeViolence / slurs / explicitSexual / profanity.
+// All matches run against the NORMALIZED text (see normalize.ts), so every
+// entry below MUST already be lowercase Latin with leet expanded —
 // "ниггер" should be entered as "nigger" (the Cyrillic input gets confusable-
 // folded to Latin first), "5h1t" as "shit", and so on.
 //
@@ -155,9 +156,9 @@ const explicitSexual: string[] = [
 // Common English / Russian / Ukrainian profanity. Soft category — used only
 // to soft-warn on post composition, hard-block on register / profile.
 //
-// The list replaces what `obscenity`'s English preset used to provide. We
-// keep it minimal but comprehensive enough for the most common swears that
-// don't belong in a username / display name. Entries are normalized form.
+// Replaces the English profanity coverage that the dropped `obscenity` npm
+// package used to provide. Minimal but covers the strong swears that don't
+// belong in a username / display name. Entries are in normalized form.
 const profanity: string[] = [
   // English — strong swears
   'fuck', 'fucker', 'fucking', 'motherfucker', 'fuckface', 'fuckwit',
