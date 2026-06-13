@@ -5,6 +5,7 @@ import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../../theme';
 import { useT } from '../../i18n/store';
 import { perfMonitor } from '../../services/perfMonitor';
+import { GlassCapsule } from '../ui/GlassCapsule';
 
 // Enable LayoutAnimation on Android (no-op on iOS where it's always on).
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -20,6 +21,14 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
 //
 // The parent drives "edit/reply prefill" and "clear" imperatively via the ref so
 // it still never needs to hold the live text value.
+//
+// Visual: the three child surfaces (image-picker / input bubble / send button)
+// are wrapped in `GlassCapsule` shells so they read as Liquid-Glass material
+// matching the Dynamic Island companion overlay. The shells themselves are
+// memoized — they don't re-render on every keystroke. Only the inner TextInput
+// state churns. NO drag-stretch on this component: three buttons + a TextInput
+// in tight layout would conflict with both editing the text and tapping
+// individual buttons.
 
 export interface ChatInputBarHandle {
   setText: (text: string) => void;
@@ -41,6 +50,7 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
   ref,
 ) {
   const theme = useTheme();
+  const isDark = theme.isDark;
   const t = useT();
   const [text, setText] = useState('');
 
@@ -77,10 +87,31 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
     // the row's bottom edge. Without this the row centers all children, which
     // visually shoves the photo/GIF/send buttons up alongside the text.
     <Reanimated.View style={[styles.row, inputRowStyle]}>
-      <Pressable onPress={onPickImages} style={[styles.iconBtn, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
-        <Feather name="image" size={20} color={theme.colors.accent.primary} />
-      </Pressable>
-      <View style={[styles.inputWrap, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
+      {/* Image-picker button — 44×44 glass capsule. */}
+      <GlassCapsule
+        borderRadius={22}
+        isDark={isDark}
+        style={styles.iconBtn}
+        pointerEvents="box-none"
+      >
+        <Pressable
+          onPress={onPickImages}
+          style={StyleSheet.absoluteFill}
+          android_ripple={{ color: theme.colors.accent.primary + '20', borderless: true, radius: 22 }}
+        >
+          <View style={styles.center}>
+            <Feather name="image" size={20} color={theme.colors.accent.primary} />
+          </View>
+        </Pressable>
+      </GlassCapsule>
+
+      {/* Text input bubble — full-width capsule between the side buttons. */}
+      <GlassCapsule
+        borderRadius={22}
+        isDark={isDark}
+        style={styles.inputWrap}
+        pointerEvents="box-none"
+      >
         <TextInput
           value={text}
           onChangeText={setText}
@@ -100,10 +131,26 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
         <Pressable onPress={onOpenGif} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 4, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8, backgroundColor: theme.colors.accent.primary + '18' }}>
           <Text style={{ fontSize: 11, fontWeight: '800', color: theme.colors.accent.primary }}>GIF</Text>
         </Pressable>
-      </View>
-      <Pressable onPress={handleSend} style={[styles.sendBtn, { backgroundColor: canSend ? theme.colors.accent.primary : theme.colors.background.elevated }]}>
-        <Feather name={isEditing ? 'check' : 'send'} size={18} color={canSend ? '#FFFFFF' : theme.colors.text.tertiary} />
-      </Pressable>
+      </GlassCapsule>
+
+      {/* Send / check button — accent-tinted glass capsule when canSend. */}
+      <GlassCapsule
+        borderRadius={22}
+        isDark={isDark}
+        style={styles.sendBtn}
+        pointerEvents="box-none"
+        tinted={canSend ? { color: theme.colors.accent.primary } : undefined}
+      >
+        <Pressable
+          onPress={handleSend}
+          style={StyleSheet.absoluteFill}
+          android_ripple={{ color: '#ffffff30', borderless: true, radius: 22 }}
+        >
+          <View style={styles.center}>
+            <Feather name={isEditing ? 'check' : 'send'} size={18} color={canSend ? '#FFFFFF' : theme.colors.text.tertiary} />
+          </View>
+        </Pressable>
+      </GlassCapsule>
     </Reanimated.View>
   );
 }));
@@ -114,7 +161,8 @@ const styles = StyleSheet.create({
   // pinned to the bottom (which is the keyboard top), so visually the user
   // sees only the input bubble grow, not the buttons jump.
   row: { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 12, paddingTop: 8 },
-  iconBtn: { width: 44, height: 44, borderRadius: 22, borderWidth: 1, alignItems: 'center', justifyContent: 'center', marginRight: 8 },
-  inputWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 22, paddingHorizontal: 14, paddingVertical: 10, minHeight: 44, borderWidth: 1 },
-  sendBtn: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', marginLeft: 8 },
+  iconBtn: { width: 44, height: 44, marginRight: 8 },
+  inputWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 10, minHeight: 44 },
+  sendBtn: { width: 44, height: 44, marginLeft: 8 },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 });

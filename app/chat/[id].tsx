@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, Alert, Animated, PanResponder, Modal, StatusBar, Dimensions, Keyboard, InteractionManager } from 'react-native';
 import { KeyboardStickyView, useReanimatedKeyboardAnimation, useKeyboardHandler } from 'react-native-keyboard-controller';
-import Reanimated, { useAnimatedStyle, interpolate, Extrapolation, useSharedValue } from 'react-native-reanimated';
+import Reanimated, { useAnimatedStyle, interpolate, Extrapolation, useSharedValue, withSpring } from 'react-native-reanimated';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
 import { Feather } from '@expo/vector-icons';
@@ -19,6 +20,7 @@ import { UserBadge } from '../../src/components/ui/UserBadge';
 import { MessageContextMenu, MessageAction } from '../../src/components/ui/MessageContextMenu';
 import { ChatInputBar, ChatInputBarHandle } from '../../src/components/chat/ChatInputBar';
 import { GiphyPicker } from '../../src/components/ui/GiphyPicker';
+import { GlassCapsule } from '../../src/components/ui/GlassCapsule';
 import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
 import { useChatStore, useEntityStore, useConnectivityStore } from '../../src/store';
 import { useChatSettingsStore, GLOBAL_CHAT_SETTINGS_KEY, DEFAULT_CHAT_SETTINGS } from '../../src/store/chatSettingsStore';
@@ -393,6 +395,54 @@ export default function ChatScreen() {
   );
   const listShiftStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: listShiftY.value }],
+  }));
+
+  // ─── Header Liquid-Glass drag-stretch ────────────────────────────────
+  // Same physics as DynamicOverlayHost: pan moves the header capsule 1:1
+  // within tight bounds, stretches it slightly with motion, springs back
+  // to centre on release. All on the UI thread.
+  //
+  // Release spring is intentionally softer than the overlay (damping 24,
+  // stiffness 100, mass 1.4) so the bar feels even smoother on let-go —
+  // the user explicitly asked for "более плавным" here.
+  //
+  // Pan only activates after 4 px of motion, so taps on the back button /
+  // name pill / avatar still register as discrete taps.
+  const headerDragX = useSharedValue(0);
+  const headerDragY = useSharedValue(0);
+  const headerDragStretch = useSharedValue(0);
+  const HEADER_PAN_X_MAX = 24;
+  const HEADER_PAN_Y_MAX = 18;
+  const HEADER_STRETCH_MAX = 0.025;
+  const HEADER_DRAG_RELEASE_SPRING = { damping: 24, stiffness: 100, mass: 1.4 };
+  const headerPanGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .minDistance(4)
+        .onUpdate((e) => {
+          'worklet';
+          headerDragX.value = Math.max(-HEADER_PAN_X_MAX, Math.min(HEADER_PAN_X_MAX, e.translationX * 0.85));
+          headerDragY.value = Math.max(-HEADER_PAN_Y_MAX, Math.min(HEADER_PAN_Y_MAX, e.translationY * 0.85));
+          const mag = Math.min(1, Math.sqrt(e.translationX ** 2 + e.translationY ** 2) / 110);
+          headerDragStretch.value = mag * HEADER_STRETCH_MAX;
+        })
+        .onFinalize(() => {
+          'worklet';
+          headerDragX.value = withSpring(0, HEADER_DRAG_RELEASE_SPRING);
+          headerDragY.value = withSpring(0, HEADER_DRAG_RELEASE_SPRING);
+          headerDragStretch.value = withSpring(0, HEADER_DRAG_RELEASE_SPRING);
+        }),
+    // shared values are stable refs — the gesture instance is cheap to keep around.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+  const headerCapsuleStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: headerDragX.value },
+      { translateY: headerDragY.value },
+      { scaleX: 1 + Math.abs(headerDragX.value) * 0.0002 + headerDragStretch.value },
+      { scaleY: 1 - Math.abs(headerDragX.value) * 0.0001 - headerDragStretch.value * 0.4 },
+    ],
   }));
 
   // List bottom spacer matches the input bar's real height so the newest
@@ -1000,26 +1050,41 @@ export default function ChatScreen() {
             </Pressable>
           </View>
         ) : (
-          <View style={[styles.headerContent, { paddingTop: insets.top }]} pointerEvents="auto">
-            <Pressable onPress={() => router.back()} style={[styles.headerCircle, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
-              <Feather name="chevron-left" size={22} color={theme.colors.text.primary} />
-            </Pressable>
-            <View style={{ flex: 1, alignItems: 'center' }}>
-              <Pressable
-                onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId, fromChat: '1' } })}
-                onLongPress={openSearch}
-                delayLongPress={300}
-                style={[styles.headerPill, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}
+          <GestureDetector gesture={headerPanGesture}>
+            <Reanimated.View
+              style={[
+                { paddingTop: insets.top, paddingHorizontal: 12, paddingBottom: 8 },
+                headerCapsuleStyle,
+              ]}
+              pointerEvents="box-none"
+            >
+              <GlassCapsule
+                borderRadius={28}
+                isDark={theme.isDark}
+                pointerEvents="box-none"
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 6, paddingVertical: 4 }}
               >
-                <Text variant="caption" weight="semibold" numberOfLines={1} style={{ flexShrink: 1 }}>{displayName}</Text>
-                {displayVerified && <VerifiedBadge size={12} />}
-                {displayBadge && <UserBadge badge={displayBadge} size="sm" />}
-              </Pressable>
-            </View>
-            <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId, fromChat: '1' } })} style={[styles.headerCircle, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light, overflow: 'hidden' }]}>
-              <Avatar emoji={displayEmoji} name={displayName} size="xs" />
-            </Pressable>
-          </View>
+                <Pressable onPress={() => router.back()} style={[styles.headerCircle, { backgroundColor: 'transparent', borderColor: 'transparent' }]}>
+                  <Feather name="chevron-left" size={22} color={theme.colors.text.primary} />
+                </Pressable>
+                <View style={{ flex: 1, alignItems: 'center' }}>
+                  <Pressable
+                    onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId, fromChat: '1' } })}
+                    onLongPress={openSearch}
+                    delayLongPress={300}
+                    style={[styles.headerPill, { backgroundColor: 'transparent', borderColor: 'transparent' }]}
+                  >
+                    <Text variant="caption" weight="semibold" numberOfLines={1} style={{ flexShrink: 1 }}>{displayName}</Text>
+                    {displayVerified && <VerifiedBadge size={12} />}
+                    {displayBadge && <UserBadge badge={displayBadge} size="sm" />}
+                  </Pressable>
+                </View>
+                <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId, fromChat: '1' } })} style={[styles.headerCircle, { backgroundColor: 'transparent', borderColor: 'transparent', overflow: 'hidden' }]}>
+                  <Avatar emoji={displayEmoji} name={displayName} size="xs" />
+                </Pressable>
+              </GlassCapsule>
+            </Reanimated.View>
+          </GestureDetector>
         )}
       </View>
 

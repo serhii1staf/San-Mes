@@ -7,6 +7,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import ContextMenu from 'react-native-context-menu-view';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
+import { GlassCapsule } from '../../src/components/ui/GlassCapsule';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { UserBadge } from '../../src/components/ui/UserBadge';
 import { useChatStore, useEntityStore, useAuthStore } from '../../src/store';
@@ -372,16 +373,22 @@ export default function MessagesScreen() {
       </View>
 
       <View style={{ paddingHorizontal: theme.spacing.base, marginBottom: theme.spacing.sm, marginTop: headerContentHeight }}>
-        <View
+        {/* Liquid-Glass capsule shell. Drag-stretch pan was considered here
+            but skipped: the inner TextInput needs a system-driven tap to
+            focus, and a sibling Pan gesture (even with simultaneousWith)
+            consistently swallowed the focus on warm-load devices. The
+            material-only treatment matches the rest of the chat surfaces
+            without disturbing tap-to-focus. See CHAT_GLASS_NOTES.md for
+            the conflict trace. */}
+        <GlassCapsule
+          borderRadius={theme.borderRadius.pill}
+          isDark={theme.isDark}
+          pointerEvents="box-none"
           style={{
             flexDirection: 'row',
             alignItems: 'center',
-            backgroundColor: theme.colors.background.elevated,
-            borderRadius: theme.borderRadius.pill,
             paddingHorizontal: theme.spacing.base,
             paddingVertical: theme.spacing.sm,
-            borderWidth: 1,
-            borderColor: theme.colors.border.light,
           }}
         >
           <Feather name="search" size={16} color={theme.colors.text.tertiary} />
@@ -399,7 +406,7 @@ export default function MessagesScreen() {
               paddingVertical: theme.spacing.xs,
             }}
           />
-        </View>
+        </GlassCapsule>
       </View>
 
       {/* Category tabs */}
