@@ -5,6 +5,8 @@ const en: Record<string, string> = {
   'common.save': 'Save',
   'common.cancel': 'Cancel',
   'common.apply': 'Apply',
+  'common.on': 'On',
+  'common.off': 'Off',
   'pixel_icons.title': 'Icons',
   'pixel_icons.empty_title': 'No icon',
   'common.delete': 'Delete',
@@ -728,6 +730,10 @@ const en: Record<string, string> = {
   'dynamic_overlay.icon': 'Icon',
   'dynamic_overlay.notifications': 'Notifications',
   'dynamic_overlay.fps': 'FPS',
+  'dynamic_overlay.mode': 'Mode',
+  'dynamic_overlay.mode_dark': 'Dark',
+  'dynamic_overlay.mode_light': 'Light',
+  'dynamic_overlay.perf_toggle': 'Monitor',
   'dynamic_overlay.dismiss_hint': 'Tap outside to dismiss',
 };
 

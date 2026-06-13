@@ -290,9 +290,8 @@ export default function PixelIconsScreen() {
           keyExtractor={keyExtractor}
           contentContainerStyle={{
             paddingHorizontal: 14,
-            // Push content past the fade header so the first row sits in
-            // the fully-visible band, not inside the gradient.
-            paddingTop: insets.top + 64,
+            // First row sits below the gradient header (height = inset + 64).
+            paddingTop: insets.top + 56,
             paddingBottom: insets.bottom + 90,
           }}
           showsVerticalScrollIndicator={false}
@@ -305,7 +304,7 @@ export default function PixelIconsScreen() {
           removeClippedSubviews={true}
         />
       ) : (
-        <View style={[styles.loaderWrap, { paddingTop: insets.top + 64 }]}>
+        <View style={[styles.loaderWrap, { paddingTop: insets.top + 56 }]}>
           <ActivityIndicator size="small" color={theme.colors.text.tertiary} />
         </View>
       )}
@@ -313,13 +312,15 @@ export default function PixelIconsScreen() {
       {/* Floating gradient header — same fade pattern used on (tabs)/index.tsx.
           Solid bg at the very top blending to transparent at the bottom of
           the strip, so grid content scrolling underneath fades into the
-          chrome rather than getting hard-clipped by an opaque bar. The X /
-          title / Apply controls sit BELOW the system safe-area inset so
-          there is room for them to breathe under the notch. */}
+          chrome rather than getting hard-clipped by an opaque bar. The
+          header content sits at `insets.top + 8 px` — comfortably below
+          the system safe-area but not pushed half-way down the screen
+          (a previous version sat at `insets.top + 14` which read as too
+          low). */}
       <View
         style={[
           styles.headerWrapper,
-          { height: insets.top + 78 },
+          { height: insets.top + 64 },
         ]}
         pointerEvents="box-none"
       >
@@ -336,13 +337,16 @@ export default function PixelIconsScreen() {
         <View
           style={[
             styles.headerContent,
-            { paddingTop: insets.top + 14 },
+            { paddingTop: insets.top + 8 },
           ]}
           pointerEvents="auto"
         >
-          {/* Equal-width flex regions on both sides so the centred title
-              sits dead-centre regardless of the action label's width. */}
-          <View style={styles.headerSideContainer}>
+          {/* Three-region row — left action / centred title / right action.
+              Each side region is `flex: 1` so the title sits dead-centre
+              regardless of label width, AND the right action stays pinned
+              to the trailing edge (Apply was drifting toward the centre
+              before because the right region had no `alignItems: 'flex-end'`). */}
+          <View style={[styles.headerSideContainer, { justifyContent: 'flex-start' }]}>
             <Pressable onPress={() => router.back()} hitSlop={12}>
               <Feather name="x" size={22} color={theme.colors.text.primary} />
             </Pressable>
@@ -350,7 +354,7 @@ export default function PixelIconsScreen() {
           <View style={styles.headerCenter}>
             <Text variant="body" weight="bold">{t('pixel_icons.title', 'Pixel icons')}</Text>
           </View>
-          <View style={[styles.headerSideContainer, { alignItems: 'flex-end' }]}>
+          <View style={[styles.headerSideContainer, { justifyContent: 'flex-end' }]}>
             {isPicker ? (
               <Pressable onPress={onApply} hitSlop={12}>
                 <Text variant="body" weight="semibold" color={theme.colors.accent.primary}>

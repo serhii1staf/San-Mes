@@ -1,44 +1,54 @@
 /**
- * DynamicOverlayHost — the actual mounted overlay (collapsed pill +
- * expanded half-screen card) for the Dynamic Island companion feature.
+ * DynamicOverlayHost — Liquid-Glass companion pill that wraps the notch.
  *
  * Two visual states driven by a single shared value (`progress`, 0 → 1):
  *
  *   - Collapsed (progress = 0): ~290 × 36 pill centred horizontally just
  *     below the notch. Shows avatar / display name / theme dot / pixel
- *     icon thumb / chevron-down.
- *   - Expanded  (progress = 1): full-width-minus-margins card, half the
- *     screen height. Same pill content row at the top, then a 2 × 2
- *     dashboard of glass tiles (theme · pixel-icon · notifications · fps).
+ *     icon thumb / chevron-down / X.
+ *   - Expanded  (progress = 1): full-width-minus-margins card, ~58% of
+ *     screen height. Same pill content row at the top, then a 3 × 2
+ *     dashboard of glass tiles with REAL previews of the content they
+ *     represent (theme, icon, notifications, fps, mode, perf monitor).
  *
- * The whole component only mounts when the store flips `visible = true`,
- * so when dismissed there's literally nothing on the tree — zero idle
- * cost. Long-press the Home tab in the bottom bar to summon it (see
- * `app/(tabs)/_layout.tsx` `homeListeners`).
+ * The host fully unmounts when `visible === false` so when dismissed
+ * there's literally nothing on the tree — zero idle cost. Long-press the
+ * Home tab in the bottom navigation to summon it.
  *
  * Critical UX rules (user-driven):
- *  - The overlay NEVER dims or blocks the rest of the UI. Only the pill /
- *    card itself catches touches; everything outside is fully interactive.
- *    No backdrop scrim, no blocked taps anywhere on screen.
- *  - When dismissed, the overlay first morphs back to the collapsed pill
- *    (if it was expanded), then floats UP and fades out — never a hard
- *    cut. This is the inverse of how it appeared.
- *  - Tile contents show real previews — the icon tile renders the actual
- *    selected PixelIcon, the theme tile shows the live accent color and
- *    theme name, etc. Not generic "Edit" labels.
+ *  - The overlay NEVER dims or blocks the rest of the UI when collapsed.
+ *    Only the pill itself catches touches; everything outside passes
+ *    through to the underlying screen.
+ *  - When EXPANDED, a transparent (no scrim) tap-region behind the card
+ *    catches taps that fall outside the card and dismisses smoothly. No
+ *    visible darkening — just dismiss-on-outside-tap behaviour.
+ *  - Dismiss is always animated: collapse the morph back to pill (single
+ *    spring), then float UP and fade out. Never a hard cut. If the user
+ *    triggered dismiss via a destination tap (Theme tile, Notifications,
+ *    etc.), the navigation kicks off AFTER the visible exit animation
+ *    completes — no closing artifact behind the slide-in.
+ *  - Tile contents show real previews — theme tile renders a tiny
+ *    mockup of the theme (background + accent strip + content shape),
+ *    icon tile renders the actual selected PixelIcon, notifications tile
+ *    pulls a fresh unread count via `recompute()` on mount, fps tile
+ *    shows live FPS, mode tile shows current dark/light mode, perf
+ *    tile reflects the perf-monitor toggle.
  *
  * Apple compliance:
- *  - We position strictly within `insets.top + 6` and below. The notch and
- *    the system clock / battery icons stay visible at all times.
+ *  - Top fixed at `insets.top + 6`. Never draws above the safe-area inset.
  *  - We do NOT render INSIDE the Dynamic Island region itself.
  *  - No new permissions, no new native modules, OTA-safe.
  *
  * Performance:
- *  - All state transitions live on the UI thread via Reanimated.
- *  - The FPS tile only subscribes to `perfMonitor` when the perf monitor
- *    is enabled in settings; otherwise it shows a "—" placeholder.
- *  - Auto-dismiss is a single setTimeout in the collapsed state, cleared
- *    eagerly on every interaction.
+ *  - All transitions on the UI thread via Reanimated worklets.
+ *  - One BlurView per surface (the card itself + 6 tile surfaces). All
+ *    iOS material tints are stock chrome materials so the system
+ *    composites them efficiently. No nested or stacked BlurViews — the
+ *    earlier "lens BlurView on top of card BlurView" pattern was the
+ *    expensive one and was removed previously.
+ *  - The FPS tile only subscribes to `perfMonitor` when it's enabled in
+ *    settings; otherwise shows a "—" placeholder.
+ *  - Auto-dismiss is a single setTimeout cleared eagerly on interaction.
  */
 
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -73,6 +83,7 @@ import { useSettingsStore } from '../../store/settingsStore';
 import { useNotificationsBadge } from '../../store/notificationsBadgeStore';
 import { useDynamicOverlayStore } from '../../store/dynamicOverlayStore';
 import { useThemeStore, ACCENT_COLORS } from '../../store/themeStore';
+import { usePerfPanelStore } from '../../store/perfPanelStore';
 import { perfMonitor } from '../../services/perfMonitor';
 import { CachedImage } from '../ui/CachedImage';
 import { PixelIcon } from '../pixel-icons/PixelIcon';
@@ -87,19 +98,12 @@ const TOP_GAP_BELOW_NOTCH = 6;
 const COLLAPSED_RADIUS = 20;
 const EXPANDED_RADIUS = 24;
 
-// 6 seconds of inactivity in collapsed state auto-dismisses the overlay so
-// it doesn't linger if the user opens it then forgets. Cleared eagerly on
-// any interaction (chevron tap, etc.).
 const AUTO_DISMISS_MS = 6000;
+const DISMISS_FADE_MS = 220;
 
 const SPRING = { damping: 22, stiffness: 240, mass: 0.9 };
 
-// Dismiss animation — first collapse if expanded (~280 ms spring), then
-// float up 24 px and fade to 0 (220 ms timing). Total ≈ 500 ms in the
-// worst case, ≈ 220 ms when already collapsed. Inverse of the appearance.
-const DISMISS_FADE_MS = 220;
-
-// ─── Glass material ─────────────────────────────────────────────────────────
+// ─── Glass material — single BlurView per surface, no stacking ─────────────
 
 function GlassBackdrop({ isDark, radius }: { isDark: boolean; radius: number }) {
   if (Platform.OS === 'ios') {
@@ -140,12 +144,67 @@ function TopReflection({ isDark, radius }: { isDark: boolean; radius: number }) 
   );
 }
 
-// ─── Tile (used by the 2×2 dashboard inside the expanded card) ──────────────
+// ─── Theme tile preview — stylish mini-mockup of the active theme ──────────
 //
-// Tiles render REAL previews of the value they represent — the icon tile
-// shows the actual selected PixelIcon, the theme tile shows the live
-// accent color, etc. This is the user-visible payoff for the overlay,
-// so we lean into it: previews are big (44+ px), labels small underneath.
+// Replaces the boring "single accent dot + label" preview. Renders a
+// simulated app surface so the user actually sees what their theme looks
+// like — accent-tinted top stripe, two short content lines, and a small
+// accent action chip. Same idea as `ThemePreviewCard` in
+// `app/settings/appearance.tsx` but stripped down to fit a 4×4 tile.
+
+function ThemeTilePreview({
+  accent,
+  isDark,
+  themeName,
+}: {
+  accent: string;
+  isDark: boolean;
+  themeName: string;
+}) {
+  const cardBg = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)';
+  const lineColor = isDark ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.18)';
+  return (
+    <View style={{ alignItems: 'center', justifyContent: 'center' }}>
+      <View
+        style={{
+          width: 70,
+          height: 50,
+          borderRadius: 9,
+          overflow: 'hidden',
+          backgroundColor: cardBg,
+          borderWidth: 0.5,
+          borderColor: accent + '40',
+        }}
+      >
+        {/* Accent top stripe — reads as a header / top bar in the mockup. */}
+        <View style={{ height: 8, backgroundColor: accent }} />
+        {/* Two content lines + a small action chip. */}
+        <View style={{ paddingHorizontal: 6, paddingTop: 6, gap: 3 }}>
+          <View style={{ height: 3, width: '70%', borderRadius: 1.5, backgroundColor: lineColor }} />
+          <View style={{ height: 3, width: '50%', borderRadius: 1.5, backgroundColor: lineColor }} />
+          <View
+            style={{
+              alignSelf: 'flex-end',
+              marginTop: 4,
+              width: 18,
+              height: 6,
+              borderRadius: 3,
+              backgroundColor: accent,
+            }}
+          />
+        </View>
+      </View>
+      <RNText
+        numberOfLines={1}
+        style={[styles.tilePreviewText, { color: isDark ? '#FFFFFF' : '#1A1A1A', marginTop: 4 }]}
+      >
+        {themeName}
+      </RNText>
+    </View>
+  );
+}
+
+// ─── Generic tile ───────────────────────────────────────────────────────────
 
 function DashboardTile({
   preview,
@@ -162,7 +221,7 @@ function DashboardTile({
 }) {
   return (
     <Pressable onPress={onPress} style={styles.tile}>
-      <View style={[StyleSheet.absoluteFill, { borderRadius: 18, overflow: 'hidden' }]}>
+      <View style={[StyleSheet.absoluteFill, { borderRadius: 16, overflow: 'hidden' }]}>
         {Platform.OS === 'ios' ? (
           <BlurView
             intensity={isDark ? 40 : 60}
@@ -185,7 +244,7 @@ function DashboardTile({
           style={[
             StyleSheet.absoluteFillObject,
             {
-              borderRadius: 18,
+              borderRadius: 16,
               borderWidth: StyleSheet.hairlineWidth,
               borderColor,
             },
@@ -206,7 +265,7 @@ function DashboardTile({
   );
 }
 
-// ─── FPS tile preview — only subscribes when perf monitor is on ─────────────
+// ─── FPS tile preview ──────────────────────────────────────────────────────
 
 function FpsTilePreview({ accent, isDark }: { accent: string; isDark: boolean }) {
   const enabled = useSettingsStore((s) => s.perfMonitorEnabled);
@@ -229,7 +288,6 @@ function FpsTilePreview({ accent, isDark }: { accent: string; isDark: boolean })
     return unsub;
   }, [enabled]);
 
-  // Color the number by health: green ≥ 50, amber 30-49, red < 30.
   const color =
     fps == null
       ? isDark
@@ -266,20 +324,32 @@ function DynamicOverlayHostInner() {
   const hide = useDynamicOverlayStore((s) => s.hide);
   const collapse = useDynamicOverlayStore((s) => s.collapse);
 
-  // Subscribe with field selectors so unrelated profile / icon changes don't
-  // re-render the host tree on every keystroke elsewhere.
   const userEmoji = useAuthStore((s) => s.user?.emoji);
   const userAvatar = useAuthStore((s) => s.user?.avatar);
   const userDisplayName = useAuthStore((s) => s.user?.displayName);
   const homeHeaderIcon = useSettingsStore((s) => s.homeHeaderIcon);
+  const perfEnabled = useSettingsStore((s) => s.perfMonitorEnabled);
+  const setPerfEnabled = useSettingsStore((s) => s.setPerfMonitorEnabled);
   const unread = useNotificationsBadge((s) => s.unread);
+  const recomputeBadge = useNotificationsBadge((s) => s.recompute);
   const accentKey = useThemeStore((s) => s.accent);
   const aiThemes = useThemeStore((s) => s.aiThemes);
+  const themeMode = useThemeStore((s) => s.mode);
+  const setThemeMode = useThemeStore((s) => s.setMode);
+  const showPerfPanel = usePerfPanelStore((s) => s.show);
 
   const accent = theme.colors.accent.primary;
 
-  // Resolve the active theme's display name for the theme tile preview.
-  // Falls back to the accent color hex when the key doesn't match anything.
+  // Recompute the unread count whenever the overlay becomes visible. The
+  // store doesn't auto-refresh — the home-feed bell calls `recompute()` on
+  // focus and we need the same trigger here, otherwise the tile shows a
+  // stale "0" until something else nudges the badge.
+  useEffect(() => {
+    if (visible) {
+      try { recomputeBadge(); } catch {}
+    }
+  }, [visible, recomputeBadge]);
+
   const themeName = useMemo(() => {
     const builtin = ACCENT_COLORS.find((c) => c.key === accentKey);
     if (builtin) return builtin.label;
@@ -288,33 +358,20 @@ function DynamicOverlayHostInner() {
     return accent;
   }, [accentKey, aiThemes, accent]);
 
-  // Truncate long display names to "first 6 chars + …" so the pill stays
-  // narrow. Memoised because the input rarely changes but we mount this
-  // every time the overlay opens.
   const shortName = useMemo(() => {
     const name = userDisplayName || '';
     if (!name) return '';
     return name.length > 6 ? name.slice(0, 6) + '…' : name;
   }, [userDisplayName]);
 
-  // ─── Reanimated progress + appearance ───────────────────────────────
-  // Two shared values:
-  //   - `progress` — 0 (collapsed pill) → 1 (expanded card), drives the
-  //     morph between the two visual states.
-  //   - `appearance` — 0 (hidden / faded out) → 1 (fully on screen), drives
-  //     the entry/exit fade + lift. Inverse-on-dismiss so the overlay
-  //     visibly retreats UP and fades, rather than hard-cutting.
+  // ─── Reanimated state ───────────────────────────────────────────────
   const progress = useSharedValue(0);
   const appearance = useSharedValue(0);
-
-  // Track whether we're in the middle of a dismiss animation — guards the
-  // `hide()` call so an in-flight collapse doesn't fire twice.
   const dismissingRef = useRef(false);
 
   useEffect(() => {
     if (visible) {
       dismissingRef.current = false;
-      // Float in: appear from -10 px above and fade in over ~220 ms.
       appearance.value = withTiming(1, {
         duration: DISMISS_FADE_MS,
         easing: Easing.out(Easing.cubic),
@@ -326,54 +383,60 @@ function DynamicOverlayHostInner() {
     progress.value = withSpring(expanded ? 1 : 0, SPRING);
   }, [expanded, progress]);
 
-  // Smooth dismiss: collapse first if expanded (single spring tick), then
-  // run a reverse fade-up. Touches both shared values on the UI thread; the
-  // store flip happens via `runOnJS` in the timing callback so React tears
-  // down the tree only after the visible animation has finished.
-  const onDismissJS = useCallback(() => {
-    hide();
-  }, [hide]);
-
-  const startDismiss = useCallback(() => {
-    if (dismissingRef.current) return;
-    dismissingRef.current = true;
-    triggerHaptic('selection');
-    // Stop auto-dismiss timer before animating out.
+  // ─── Dismiss flow ───────────────────────────────────────────────────
+  // Two-stage:
+  //   1. Collapse the morph back to pill (spring).
+  //   2. After ~120 ms, fade up + fade out (timing).
+  //
+  // Optional `afterDismiss` runs only AFTER stage 2 completes — used by
+  // tile-tap navigations so the destination route doesn't render
+  // through the half-faded overlay.
+  const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearDismissTimer = useCallback(() => {
     if (dismissTimerRef.current != null) {
       clearTimeout(dismissTimerRef.current);
       dismissTimerRef.current = null;
     }
-    // Always collapse the morph first so the lift-up reads clean.
-    progress.value = withSpring(0, SPRING);
-    // Schedule the fade-up after a short overlap with the collapse so the
-    // two animations blend rather than queue. 180 ms feels like a single
-    // continuous gesture rather than two stages.
-    appearance.value = withTiming(
-      0,
-      { duration: DISMISS_FADE_MS, easing: Easing.in(Easing.cubic) },
-      (finished) => {
-        if (finished) runOnJS(onDismissJS)();
-      },
-    );
-    // Local UI: reset expanded state in the store NOW so the body unmounts
-    // its expensive children early; the visual collapse is driven by
-    // `progress` shared value, not by mount/unmount.
-    if (expanded) collapse();
-  }, [progress, appearance, expanded, collapse, onDismissJS]);
+  }, []);
 
-  // Backdrop is non-interactive in BOTH states. It exists only as the tap
-  // catchment that triggers dismiss when tapped outside the pill / card.
-  // No fill, no scrim — the rest of the UI stays fully visible underneath.
-  // (User-driven: "затемнения не должно быть. виджет никак не должен
-  // влиять на интерфейс".)
+  const onDismissJS = useCallback(() => {
+    hide();
+  }, [hide]);
 
-  // Container animates width / height / left / radius simultaneously so
-  // the morph reads as a single fluid expand rather than two disjoint
-  // anim tracks. `appearance` adds the fade-in/out + 10 px float.
+  const startDismiss = useCallback(
+    (afterDismiss?: () => void) => {
+      if (dismissingRef.current) return;
+      dismissingRef.current = true;
+      try { triggerHaptic('selection'); } catch {}
+      clearDismissTimer();
+      // Stage 1: spring back to collapsed.
+      progress.value = withSpring(0, SPRING);
+      // Stage 2: a beat later, fade the whole thing up + out. The 180 ms
+      // overlap with the collapse spring makes it read as a single fluid
+      // exit rather than two stages.
+      appearance.value = withTiming(
+        0,
+        { duration: DISMISS_FADE_MS, easing: Easing.in(Easing.cubic) },
+        (finished) => {
+          if (finished) {
+            runOnJS(onDismissJS)();
+            if (afterDismiss) runOnJS(afterDismiss)();
+          }
+        },
+      );
+      // Update store immediately so child mounts release.
+      if (expanded) collapse();
+    },
+    [progress, appearance, expanded, collapse, onDismissJS, clearDismissTimer],
+  );
+
+  // ─── Layout interpolation ───────────────────────────────────────────
   const collapsedWidth = Math.min(screenW - 2 * SIDE_MARGIN, COLLAPSED_MAX_WIDTH);
   const collapsedLeft = (screenW - collapsedWidth) / 2;
   const expandedWidth = screenW - 2 * SIDE_MARGIN;
-  const expandedHeight = Math.round(screenH * 0.5);
+  // Bumped from 50 % → ~58 % so the 3-column dashboard fits without
+  // tiles squishing on smaller phones.
+  const expandedHeight = Math.round(screenH * 0.58);
 
   const containerStyle = useAnimatedStyle(() => ({
     width: interpolate(progress.value, [0, 1], [collapsedWidth, expandedWidth]),
@@ -385,48 +448,29 @@ function DynamicOverlayHostInner() {
       [COLLAPSED_RADIUS, EXPANDED_RADIUS],
     ),
     opacity: appearance.value,
-    transform: [
-      { translateY: interpolate(appearance.value, [0, 1], [-12, 0]) },
-    ],
+    transform: [{ translateY: interpolate(appearance.value, [0, 1], [-12, 0]) }],
   }));
 
-  // Body of the expanded card fades in only after the morph is partway
-  // through so it reads as "the pill GREW into a card" rather than
-  // "two views crossfaded".
   const bodyStyle = useAnimatedStyle(() => ({
     opacity: interpolate(progress.value, [0.4, 1], [0, 1], Extrapolation.CLAMP),
     transform: [
-      {
-        translateY: interpolate(
-          progress.value,
-          [0, 1],
-          [-8, 0],
-          Extrapolation.CLAMP,
-        ),
-      },
+      { translateY: interpolate(progress.value, [0, 1], [-8, 0], Extrapolation.CLAMP) },
     ],
   }));
 
-  // Chevron flips 180° when expanded so it points up — a well-understood
-  // affordance for "tap me to collapse this".
   const chevronStyle = useAnimatedStyle(() => ({
-    transform: [
-      {
-        rotate: `${interpolate(progress.value, [0, 1], [0, 180])}deg`,
-      },
-    ],
+    transform: [{ rotate: `${interpolate(progress.value, [0, 1], [0, 180])}deg` }],
   }));
 
-  // Auto-dismiss timer — only runs while in the collapsed state. Re-armed
-  // whenever the overlay first becomes visible or collapses back from the
-  // expanded card. Cleared eagerly on any interaction.
-  const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const clearDismissTimer = useCallback(() => {
-    if (dismissTimerRef.current != null) {
-      clearTimeout(dismissTimerRef.current);
-      dismissTimerRef.current = null;
-    }
-  }, []);
+  // The expanded-state tap-out region only catches when expanded — pointer
+  // events flip on/off via the `expanded` flag. When collapsed, no
+  // catchment exists and every touch outside the small pill passes
+  // through to the underlying screen.
+  const dismissOverlayStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(progress.value, [0, 1], [0, 1], Extrapolation.CLAMP),
+  }));
+
+  // ─── Auto-dismiss (collapsed only) ──────────────────────────────────
   useEffect(() => {
     clearDismissTimer();
     if (visible && !expanded) {
@@ -440,64 +484,75 @@ function DynamicOverlayHostInner() {
   // ─── Interaction handlers ────────────────────────────────────────────
   const onChevron = useCallback(() => {
     clearDismissTimer();
-    triggerHaptic('selection');
+    try { triggerHaptic('selection'); } catch {}
     toggleExpand();
   }, [toggleExpand, clearDismissTimer]);
 
   const goTheme = useCallback(() => {
-    clearDismissTimer();
-    startDismiss();
-    router.push('/settings/appearance');
-  }, [startDismiss, clearDismissTimer]);
+    startDismiss(() => router.push('/settings/appearance'));
+  }, [startDismiss]);
 
   const goIcon = useCallback(() => {
-    clearDismissTimer();
-    startDismiss();
-    router.push('/settings/pixel-icons?purpose=home-header');
-  }, [startDismiss, clearDismissTimer]);
+    startDismiss(() => router.push('/settings/pixel-icons?purpose=home-header'));
+  }, [startDismiss]);
 
   const goNotifications = useCallback(() => {
-    clearDismissTimer();
-    startDismiss();
-    router.push('/notifications');
-  }, [startDismiss, clearDismissTimer]);
+    startDismiss(() => router.push('/notifications'));
+  }, [startDismiss]);
 
-  // Perf-monitor panel ownership lives in the bubble itself; from here the
-  // closest accessible flow is the storage screen — flip the perf monitor
-  // toggle there if the user wants to inspect deeper.
   const goPerf = useCallback(() => {
-    clearDismissTimer();
+    // FPS tile opens the perf-monitor panel directly. The bubble owns the
+    // panel modal but listens to `usePerfPanelStore` for external opens.
+    startDismiss(() => {
+      // Make sure the bubble itself is enabled — opening the panel while
+      // disabled would just show a panel with empty live-gauges.
+      if (!perfEnabled) {
+        try { setPerfEnabled(true); } catch {}
+      }
+      try { showPerfPanel(); } catch {}
+    });
+  }, [startDismiss, perfEnabled, setPerfEnabled, showPerfPanel]);
+
+  const onModeToggle = useCallback(() => {
+    try { triggerHaptic('selection'); } catch {}
+    setThemeMode(themeMode === 'dark' ? 'light' : 'dark');
+  }, [themeMode, setThemeMode]);
+
+  const onPerfToggle = useCallback(() => {
+    try { triggerHaptic('selection'); } catch {}
+    setPerfEnabled(!perfEnabled);
+  }, [perfEnabled, setPerfEnabled]);
+
+  const onTapOutside = useCallback(() => {
     startDismiss();
-    router.push('/settings/storage');
-  }, [startDismiss, clearDismissTimer]);
+  }, [startDismiss]);
 
   if (!visible) return null;
 
-  // Tile-border colour, lifted out so both light + dark themes get a hairline
-  // that's just visible against the glass background.
   const tileBorder = isDark ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.55)';
 
   return (
-    // Root is `pointerEvents="box-none"` so taps inside the overlay's own
-    // children (pill / card / dismiss-region) work, but everything OUTSIDE
-    // those children passes straight through to whatever screen sits below.
-    // The user can keep using the app — settings, scroll, taps, anything —
-    // while the pill is up.
+    // Root is `pointerEvents="box-none"` so when collapsed every touch
+    // outside the pill passes through to whatever screen is mounted
+    // underneath. The expanded-state dismiss region opts back into hit
+    // testing only while expanded.
     <View style={styles.root} pointerEvents="box-none">
-      {/* Invisible tap-catch region that ONLY exists inside the expanded
-          card's footprint outside the card itself. When collapsed it covers
-          ZERO screen real estate, so taps anywhere outside the pill go
-          through. When expanded, taps that fall in the gap between the
-          card edges and the screen edges dismiss the overlay. We achieve
-          this by making the dismiss target the FULL screen but letting it
-          bail out if the touch coordinates land inside the card.
-          To keep this dead simple we use a small dismiss button sitting
-          ABOVE the pill in collapsed state, and rely on the chevron itself
-          for explicit close in either state. No screen-wide tap layer at
-          all — that was the source of the "can't tap settings while
-          overlay is open" bug. */}
+      {/* Tap-outside dismiss region — covers the screen below the safe
+          area top, but is COMPLETELY TRANSPARENT (no scrim, no dim) so
+          the underlying UI stays visible at full opacity. Active only
+          when expanded. */}
+      <Animated.View
+        style={[
+          StyleSheet.absoluteFill,
+          { top: insets.top },
+          dismissOverlayStyle,
+        ]}
+        pointerEvents={expanded ? 'auto' : 'none'}
+      >
+        <Pressable onPress={onTapOutside} style={StyleSheet.absoluteFill} />
+      </Animated.View>
 
-      {/* The pill / card itself. Top is fixed at insets.top + 6 — never
+      {/* The pill / card itself. Top fixed at insets.top + 6 — never
           extends above the safe-area inset (Apple compliance). */}
       <Animated.View
         style={[
@@ -513,11 +568,8 @@ function DynamicOverlayHostInner() {
         <GlassBackdrop isDark={isDark} radius={EXPANDED_RADIUS} />
         <TopReflection isDark={isDark} radius={EXPANDED_RADIUS} />
 
-        {/* Pill content row — visible in both states. In expanded mode it
-            sits at the top of the card. */}
+        {/* Pill content row */}
         <View style={styles.pillRow}>
-          {/* Avatar 22 × 22 — emoji-first since it doesn't need a network
-              hop, falls back to the avatar URL via CachedImage. */}
           <View style={styles.avatar}>
             {userAvatar ? (
               <CachedImage
@@ -526,36 +578,23 @@ function DynamicOverlayHostInner() {
                 proxyWidth={22}
               />
             ) : (
-              <RNText
-                style={styles.avatarEmoji}
-                allowFontScaling={false}
-              >
+              <RNText style={styles.avatarEmoji} allowFontScaling={false}>
                 {userEmoji || '🙂'}
               </RNText>
             )}
           </View>
 
-          {/* Truncated display name */}
           {!!shortName && (
             <RNText
               numberOfLines={1}
-              style={[
-                styles.name,
-                { color: isDark ? '#FFFFFF' : '#1A1A1A' },
-              ]}
+              style={[styles.name, { color: isDark ? '#FFFFFF' : '#1A1A1A' }]}
             >
               {shortName}
             </RNText>
           )}
 
-          {/* Active theme color dot */}
-          <View
-            style={[styles.themeDot, { backgroundColor: accent }]}
-            accessibilityElementsHidden
-            importantForAccessibility="no"
-          />
+          <View style={[styles.themeDot, { backgroundColor: accent }]} />
 
-          {/* Active pixel-icon thumb (only when the user has one set) */}
           {homeHeaderIcon ? (
             <View style={styles.pixelWrap}>
               <PixelIcon id={homeHeaderIcon} size={18} />
@@ -564,14 +603,7 @@ function DynamicOverlayHostInner() {
 
           <View style={{ flex: 1 }} />
 
-          {/* Two-button trailing region: chevron expands/collapses, X
-              dismisses. Both have light haptics. */}
-          <Pressable
-            onPress={onChevron}
-            hitSlop={8}
-            style={styles.chevron}
-            accessibilityRole="button"
-          >
+          <Pressable onPress={onChevron} hitSlop={8} style={styles.chevron}>
             <Animated.View style={chevronStyle}>
               <Feather
                 name="chevron-down"
@@ -581,54 +613,35 @@ function DynamicOverlayHostInner() {
             </Animated.View>
           </Pressable>
           <Pressable
-            onPress={startDismiss}
+            onPress={() => startDismiss()}
             hitSlop={8}
             style={styles.chevron}
             accessibilityRole="button"
             accessibilityLabel={t('common.close', 'Close')}
           >
-            <Feather name="x" size={16} color={isDark ? 'rgba(255,255,255,0.7)' : 'rgba(20,20,20,0.6)'} />
+            <Feather
+              name="x"
+              size={16}
+              color={isDark ? 'rgba(255,255,255,0.7)' : 'rgba(20,20,20,0.6)'}
+            />
           </Pressable>
         </View>
 
-        {/* Expanded card body — renders unconditionally so the layout
-            engine doesn't churn when toggling, but it's invisible (opacity
-            0) and pointer-events disabled in the collapsed state. */}
+        {/* Expanded card body */}
         <Animated.View
           style={[styles.body, bodyStyle]}
           pointerEvents={expanded ? 'auto' : 'none'}
         >
           <View style={styles.tilesGrid}>
-            {/* Theme tile — preview is a big colored ring + theme label */}
+            {/* ─── Row 1: theme · icon · notifications ───────────── */}
             <DashboardTile
-              preview={
-                <View style={{ alignItems: 'center', justifyContent: 'center' }}>
-                  <View
-                    style={{
-                      width: 38,
-                      height: 38,
-                      borderRadius: 19,
-                      backgroundColor: accent,
-                      borderWidth: 2,
-                      borderColor: isDark ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.95)',
-                      marginBottom: 4,
-                    }}
-                  />
-                  <RNText
-                    numberOfLines={1}
-                    style={[styles.tilePreviewText, { color: isDark ? '#FFFFFF' : '#1A1A1A' }]}
-                  >
-                    {themeName}
-                  </RNText>
-                </View>
-              }
+              preview={<ThemeTilePreview accent={accent} isDark={isDark} themeName={themeName} />}
               label={t('dynamic_overlay.theme', 'Theme')}
               onPress={goTheme}
               isDark={isDark}
               borderColor={tileBorder}
             />
 
-            {/* Pixel-icon tile — live preview of the actual selected icon */}
             <DashboardTile
               preview={
                 homeHeaderIcon ? (
@@ -649,7 +662,6 @@ function DynamicOverlayHostInner() {
               borderColor={tileBorder}
             />
 
-            {/* Notifications tile — bell + actual unread count */}
             <DashboardTile
               preview={
                 <View style={{ alignItems: 'center', justifyContent: 'center' }}>
@@ -665,7 +677,51 @@ function DynamicOverlayHostInner() {
               borderColor={tileBorder}
             />
 
-            {/* FPS tile — colored live FPS reading */}
+            {/* ─── Row 2: mode · perf · fps ──────────────────────── */}
+            <DashboardTile
+              preview={
+                <View style={{ alignItems: 'center', justifyContent: 'center' }}>
+                  <Feather
+                    name={themeMode === 'dark' ? 'moon' : 'sun'}
+                    size={26}
+                    color={accent}
+                    style={{ marginBottom: 4 }}
+                  />
+                  <RNText style={[styles.tilePreviewText, { color: isDark ? '#FFFFFF' : '#1A1A1A' }]}>
+                    {themeMode === 'dark'
+                      ? t('dynamic_overlay.mode_dark', 'Dark')
+                      : t('dynamic_overlay.mode_light', 'Light')}
+                  </RNText>
+                </View>
+              }
+              label={t('dynamic_overlay.mode', 'Mode')}
+              onPress={onModeToggle}
+              isDark={isDark}
+              borderColor={tileBorder}
+            />
+
+            <DashboardTile
+              preview={
+                <View style={{ alignItems: 'center', justifyContent: 'center' }}>
+                  <Feather
+                    name={perfEnabled ? 'eye' : 'eye-off'}
+                    size={26}
+                    color={perfEnabled ? accent : (isDark ? 'rgba(255,255,255,0.4)' : 'rgba(20,20,20,0.4)')}
+                    style={{ marginBottom: 4 }}
+                  />
+                  <RNText style={[styles.tilePreviewText, { color: isDark ? '#FFFFFF' : '#1A1A1A' }]}>
+                    {perfEnabled
+                      ? t('common.on', 'On')
+                      : t('common.off', 'Off')}
+                  </RNText>
+                </View>
+              }
+              label={t('dynamic_overlay.perf_toggle', 'Monitor')}
+              onPress={onPerfToggle}
+              isDark={isDark}
+              borderColor={tileBorder}
+            />
+
             <DashboardTile
               preview={<FpsTilePreview accent={accent} isDark={isDark} />}
               label={t('dynamic_overlay.fps', 'FPS')}
@@ -676,7 +732,7 @@ function DynamicOverlayHostInner() {
           </View>
         </Animated.View>
 
-        {/* Hairline border — drawn last so it sits above blur + reflection. */}
+        {/* Hairline border drawn last so it sits above blur + reflection. */}
         <View
           pointerEvents="none"
           style={[
@@ -698,8 +754,6 @@ export const DynamicOverlayHost = memo(DynamicOverlayHostInner);
 // ─── Styles ─────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-  // Full-screen container; `box-none` ensures the rest of the UI underneath
-  // stays touchable. Only the pill / card itself catches touches.
   root: {
     ...StyleSheet.absoluteFillObject,
     zIndex: 9998,
@@ -742,33 +796,14 @@ const styles = StyleSheet.create({
     includeFontPadding: false,
     textAlign: 'center',
   },
-  name: {
-    fontSize: 13,
-    fontWeight: '600',
-    maxWidth: 90,
-  },
-  themeDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  pixelWrap: {
-    width: 18,
-    height: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  chevron: {
-    width: 26,
-    height: 26,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  // Body of the expanded card. Sits BELOW the pill row and fills the rest.
+  name: { fontSize: 13, fontWeight: '600', maxWidth: 90 },
+  themeDot: { width: 8, height: 8, borderRadius: 4 },
+  pixelWrap: { width: 18, height: 18, alignItems: 'center', justifyContent: 'center' },
+  chevron: { width: 26, height: 26, alignItems: 'center', justifyContent: 'center' },
   body: {
     flex: 1,
-    paddingHorizontal: 14,
-    paddingTop: 6,
+    paddingHorizontal: 12,
+    paddingTop: 8,
     paddingBottom: 14,
     zIndex: 1,
   },
@@ -776,38 +811,35 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 12,
-    marginTop: 6,
+    gap: 10,
+    marginTop: 4,
   },
   tile: {
-    width: '47%',
-    aspectRatio: 1.05,
-    borderRadius: 18,
+    width: '31%',
+    aspectRatio: 0.95,
+    borderRadius: 16,
     overflow: 'hidden',
     flexGrow: 1,
   },
   tileInner: {
     flex: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 8,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  tilePreviewWrap: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  tilePreviewWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   tilePreviewText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
-    maxWidth: 110,
+    maxWidth: 86,
+    textAlign: 'center',
   },
   tileLabel: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '500',
     letterSpacing: 0.3,
-    marginTop: 4,
+    marginTop: 2,
     textTransform: 'uppercase',
   },
   tileNumberValue: {
@@ -817,6 +849,4 @@ const styles = StyleSheet.create({
   },
 });
 
-// Defensive default export to avoid accidental "default not found" errors if
-// expo-router ever auto-imports the module path.
 export default DynamicOverlayHost;

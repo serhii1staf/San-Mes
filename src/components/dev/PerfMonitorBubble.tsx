@@ -27,6 +27,7 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useSettingsStore } from '../../store/settingsStore';
+import { usePerfPanelStore } from '../../store/perfPanelStore';
 import { perfMonitor, type PerfSnapshot } from '../../services/perfMonitor';
 import { PerfMonitorPanel } from './PerfMonitorPanel';
 
@@ -93,7 +94,26 @@ function PerfMonitorBubbleInner() {
   const startX = useSharedValue(0);
   const startY = useSharedValue(0);
 
-  const [panelOpen, setPanelOpen] = useState(false);
+  const [panelOpen, setPanelOpenLocal] = useState(false);
+
+  // Allow the panel to be opened externally (e.g. from the Dynamic Island
+  // companion overlay's FPS tile) via a tiny external store. We mirror the
+  // local `panelOpen` flag with the store so legacy callers (the bubble's
+  // own tap handler) keep working unchanged. This is one-way: the store
+  // is the source of truth, the local state is a render trigger.
+  const externalOpen = usePerfPanelStore((s) => s.open);
+  const setExternalOpen = usePerfPanelStore((s) => s.setOpen);
+  useEffect(() => {
+    if (externalOpen !== panelOpen) setPanelOpenLocal(externalOpen);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [externalOpen]);
+  const setPanelOpen = useCallback(
+    (next: boolean) => {
+      setExternalOpen(next);
+      setPanelOpenLocal(next);
+    },
+    [setExternalOpen],
+  );
   const [snap, setSnap] = useState<PerfSnapshot>(() => perfMonitor.snapshot());
 
   // Hoisted, stable JS callback for the worklet to call via runOnJS. Doing

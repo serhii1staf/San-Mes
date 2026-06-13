@@ -8,6 +8,8 @@ const ru: Record<string, string> = {
   'common.save': 'Сохранить',
   'common.cancel': 'Отмена',
   'common.apply': 'Применить',
+  'common.on': 'Вкл',
+  'common.off': 'Выкл',
   'pixel_icons.title': 'Иконки',
   'pixel_icons.empty_title': 'Без иконки',
   'common.delete': 'Удалить',
@@ -731,6 +733,10 @@ const ru: Record<string, string> = {
   'dynamic_overlay.icon': 'Иконка',
   'dynamic_overlay.notifications': 'Уведомления',
   'dynamic_overlay.fps': 'FPS',
+  'dynamic_overlay.mode': 'Режим',
+  'dynamic_overlay.mode_dark': 'Тёмный',
+  'dynamic_overlay.mode_light': 'Светлый',
+  'dynamic_overlay.perf_toggle': 'Монитор',
   'dynamic_overlay.dismiss_hint': 'Тапните в стороне, чтобы скрыть',
 };
 
