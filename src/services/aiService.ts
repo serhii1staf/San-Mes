@@ -109,6 +109,20 @@ export interface ParsedAction {
   type: 'theme' | 'custom_theme' | 'mode' | 'name' | 'emoji' | 'username' | 'bio' | 'font' | 'links';
   value: string;
   applied?: boolean;
+  /**
+   * Per-message persistence for the AI-theme icon-picker carousel.
+   * Only meaningful on `theme` / `custom_theme` actions that successfully
+   * applied. Three states:
+   *   - `undefined` — user has not yet engaged with the icon prompt; the
+   *     bubble re-mount renders the carousel as fresh.
+   *   - `string`    — user picked this pixel-icon id; bubble renders the
+   *     compact "Icon applied · <title> · Undo" confirmation row.
+   *   - `null`      — user explicitly declined an icon (Undo was tapped);
+   *     bubble renders a "No icon · Re-pick" row that, when tapped, sets
+   *     this back to `undefined` to reopen the carousel.
+   * Persisted alongside the rest of the action via `saveChatHistory`.
+   */
+  appliedIconId?: string | null;
 }
 
 // ─── Action Parsing ──────────────────────────────────────────────────────────

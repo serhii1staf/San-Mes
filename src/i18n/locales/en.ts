@@ -601,6 +601,8 @@ const en: Record<string, string> = {
   'appearance.ai.icon_applied': 'Icon applied',
   'appearance.ai.undo': 'Undo',
   'appearance.ai.swipe_hint': 'Swipe to choose',
+  'appearance.ai.no_icon': 'No icon',
+  'appearance.ai.repick': 'Pick again',
 
   // ─── Theme palette labels ──────────────────────────────────────────────
   'theme.color.coral': 'Coral',

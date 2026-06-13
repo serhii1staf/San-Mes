@@ -604,6 +604,8 @@ const ru: Record<string, string> = {
   'appearance.ai.icon_applied': 'Иконка применена',
   'appearance.ai.undo': 'Отменить',
   'appearance.ai.swipe_hint': 'Листайте, чтобы выбрать',
+  'appearance.ai.no_icon': 'Без иконки',
+  'appearance.ai.repick': 'Выбрать снова',
 
   // ─── Theme palette labels ──────────────────────────────────────────────
   'theme.color.coral': 'Коралл',

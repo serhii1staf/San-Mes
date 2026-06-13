@@ -79,7 +79,16 @@ function ActionBubble({ action }: { action: ParsedAction }) {
   );
 }
 
-function MessageBubble({ message }: { message: AIMessage }) {
+interface MessageBubbleProps {
+  message: AIMessage;
+  onActionUpdate: (
+    messageId: string,
+    type: ParsedAction['type'],
+    patch: Partial<ParsedAction>,
+  ) => void;
+}
+
+function MessageBubble({ message, onActionUpdate }: MessageBubbleProps) {
   const theme = useTheme();
   const isUser = message.role === 'user';
   // Deduplicate actions of same type (show only last). `theme` and
@@ -122,12 +131,31 @@ function MessageBubble({ message }: { message: AIMessage }) {
         <FormattedText color={isUser ? '#FFFFFF' : theme.colors.text.primary} linkColor={isUser ? '#FFFFFF' : theme.colors.accent.primary} style={{ fontSize: 14, lineHeight: 20 }}>{message.content}</FormattedText>
       </View>
       {uniqueActions?.map((action, i) => <ActionBubble key={i} action={action} />)}
-      {themeAction && themeHex ? <ThemeIconCarousel hex={themeHex} /> : null}
+      {themeAction && themeHex ? (
+        <ThemeIconCarousel
+          hex={themeHex}
+          appliedIconId={themeAction.appliedIconId}
+          messageId={message.id}
+          actionType={themeAction.type}
+          onActionUpdate={onActionUpdate}
+        />
+      ) : null}
     </View>
   );
 }
 
-const MemoMessageBubble = React.memo(MessageBubble, (prev, next) => prev.message.id === next.message.id && prev.message.content === next.message.content);
+// Memo comparator: include `actions` reference equality so that an
+// `onActionUpdate` patch (which produces a fresh `actions` array) flows
+// down to ThemeIconCarousel. Content/id alone weren't enough — the
+// carousel's persisted `appliedIconId` lives on `actions[i]`.
+const MemoMessageBubble = React.memo(
+  MessageBubble,
+  (prev, next) =>
+    prev.message.id === next.message.id &&
+    prev.message.content === next.message.content &&
+    prev.message.actions === next.message.actions &&
+    prev.onActionUpdate === next.onActionUpdate,
+);
 
 export default function AIChatScreen() {
   const theme = useTheme();
@@ -233,7 +261,53 @@ export default function AIChatScreen() {
   // Inverted data for FlatList — memoized to avoid re-reverse on every keystroke
   const invertedData = React.useMemo(() => [...messages].reverse(), [messages]);
 
-  const renderItem = useCallback(({ item }: { item: AIMessage }) => <MemoMessageBubble message={item} />, []);
+  // Bubble-up handler from the per-message ThemeIconCarousel. Splices a
+  // partial patch into the matching action object and re-saves the full
+  // chat history exactly once per user interaction. Stable identity via
+  // useCallback + functional setter so MessageBubble's memo doesn't break.
+  const handleActionUpdate = useCallback(
+    (
+      messageId: string,
+      type: ParsedAction['type'],
+      patch: Partial<ParsedAction>,
+    ) => {
+      setMessages(prev => {
+        let changed = false;
+        const updated = prev.map(m => {
+          if (m.id !== messageId || !m.actions) return m;
+          const newActions = m.actions.map(a => {
+            // Bind the patch to the exact action type the carousel
+            // is mounted for. There's at most one theme-class action
+            // per message (deduped on send) so this matches uniquely.
+            if (a.type !== type) return a;
+            const merged: ParsedAction = { ...a, ...patch };
+            // `appliedIconId: undefined` (when the key is present in the
+            // patch) is the "Pick again" reset — strip the field so the
+            // persisted JSON stays clean and the carousel re-mounts as
+            // fresh on a future open.
+            if ('appliedIconId' in patch && patch.appliedIconId === undefined) {
+              delete (merged as Partial<ParsedAction>).appliedIconId;
+            }
+            changed = true;
+            return merged;
+          });
+          return { ...m, actions: newActions };
+        });
+        if (!changed) return prev;
+        // Persist exactly once per call — no debounce, no churn.
+        saveChatHistory(updated);
+        return updated;
+      });
+    },
+    [],
+  );
+
+  const renderItem = useCallback(
+    ({ item }: { item: AIMessage }) => (
+      <MemoMessageBubble message={item} onActionUpdate={handleActionUpdate} />
+    ),
+    [handleActionUpdate],
+  );
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
