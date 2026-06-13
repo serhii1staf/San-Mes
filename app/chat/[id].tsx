@@ -20,8 +20,9 @@ import { MessageContextMenu, MessageAction } from '../../src/components/ui/Messa
 import { TranslationSheet } from '../../src/components/ui/TranslationSheet';
 import { ChatInputBar, ChatInputBarHandle } from '../../src/components/chat/ChatInputBar';
 import { GiphyPicker } from '../../src/components/ui/GiphyPicker';
+import { getRealtime, chatChannelName } from '../../src/services/realtime/ably';
 import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
-import { useChatStore, useEntityStore, useConnectivityStore } from '../../src/store';
+import { useChatStore, useEntityStore, useConnectivityStore, useAuthStore } from '../../src/store';
 import { useChatSettingsStore, GLOBAL_CHAT_SETTINGS_KEY, DEFAULT_CHAT_SETTINGS } from '../../src/store/chatSettingsStore';
 import { ChatBackgroundLayer } from '../../src/components/ui/ChatBackgroundLayer';
 import { PixelIcon } from '../../src/components/pixel-icons/PixelIcon';
@@ -489,6 +490,65 @@ export default function ChatScreen() {
     requestAnimationFrame(() => { try { flatListRef.current?.scrollToOffset({ offset: 0, animated: _animated }); } catch {} });
   }, []);
 
+  // ── Realtime channel: incoming messages from the other participant ─────────
+  //
+  // Both sides of a chat use the same `id` route param when navigating to the
+  // chat screen, so they end up subscribed to the same Ably channel. When the
+  // peer publishes a new message we add it to the local store; we deliberately
+  // skip publishes from our own user id because the optimistic addMessage in
+  // handleSend / sendGif already put the message on screen.
+  //
+  // The connection itself is opened lazily via getRealtime() — the wrapper
+  // pulls a 1-hour token from /api/ably-token and reuses one client across
+  // every chat the user opens. We only subscribe / unsubscribe to the
+  // per-chat channel here, not the connection.
+  useEffect(() => {
+    if (!id) return;
+    const realtime = getRealtime();
+    if (!realtime) return; // Not authenticated yet, or no deviceKey — degrade silently.
+    const channel = realtime.channels.get(chatChannelName(id));
+    const ownUserId = useAuthStore.getState().user?.id;
+    const onMessage = (msg: { data?: any }) => {
+      const payload = msg?.data;
+      if (!payload || typeof payload !== 'object') return;
+      // Skip our own publishes — the optimistic addMessage already showed
+      // the message; receiving it again would dupe it. Compare against the
+      // sender id we actually wrote, not the UI marker 'current'.
+      if (payload.senderId && ownUserId && payload.senderId === ownUserId) return;
+      // Dedupe by id against the current store snapshot. Messages from the
+      // peer are tagged with a stable client-side id by the publisher, so
+      // a quick subscribe-after-publish race won't add the same row twice.
+      const existing = useChatStore.getState().messages[id] || [];
+      if (existing.some((m) => m.id === payload.id)) return;
+      // Translate the wire payload into our ChatMessage shape. The peer's
+      // own id is `payload.senderId`; from THIS device's perspective the
+      // sender is "peer", so we mark accordingly so the bubble aligns left.
+      const incoming: ChatMessage = {
+        id: payload.id,
+        conversationId: id,
+        senderId: 'peer',
+        text: payload.text || '',
+        createdAt: payload.createdAt || new Date().toISOString(),
+        isRead: false,
+        replyToId: payload.replyToId,
+        replyToText: payload.replyToText,
+        replyToIsOwn: payload.replyToIsOwn === true ? false : payload.replyToIsOwn === false ? true : undefined,
+        replyToImage: payload.replyToImage,
+        replyPixelIconId: payload.replyPixelIconId,
+        imageUrls: Array.isArray(payload.imageUrls) ? payload.imageUrls : undefined,
+      };
+      addMessage(id, incoming);
+      // Briefly leave the scroll offset alone — if the user is reading
+      // older messages we don't yank them down. scrollToEnd is the
+      // user's own action via tapping a "new message" pill, not a
+      // realtime side effect.
+    };
+    void channel.subscribe('msg', onMessage);
+    return () => {
+      try { channel.unsubscribe('msg', onMessage); } catch {}
+    };
+  }, [id, addMessage]);
+
   // ── Message search ──────────────────────────────────────────────────────────
   const openSearch = useCallback(() => {
     triggerHaptic('light');
@@ -641,6 +701,26 @@ export default function ChatScreen() {
         }
         if (convId) {
           await supabase.from('messages').insert({ conversation_id: convId, sender_id: user.id, text: `::img::${url}::` });
+          // Realtime publish — same pattern as handleSend. The peer sees
+          // the GIF instantly via subscribe-on-mount.
+          try {
+            const realtime = getRealtime();
+            if (realtime && id) {
+              const channel = realtime.channels.get(chatChannelName(id));
+              void channel.publish('msg', {
+                id: newMessage.id,
+                senderId: user.id,
+                text: '',
+                createdAt: newMessage.createdAt,
+                imageUrls: [url],
+                replyToId: newMessage.replyToId,
+                replyToText: newMessage.replyToText,
+                replyToIsOwn: newMessage.replyToIsOwn,
+                replyToImage: newMessage.replyToImage,
+                replyPixelIconId: newMessage.replyPixelIconId,
+              });
+            }
+          } catch {}
         }
       } catch {}
     })();
@@ -787,6 +867,32 @@ export default function ChatScreen() {
         // Encode attached images into the stored text with a marker so it round-trips without schema changes
         const imageMarker = uploadedUrls.length > 0 ? `::img::${uploadedUrls.join('|')}::` : '';
         await supabase.from('messages').insert({ conversation_id: convId, sender_id: user.id, text: imageMarker + text });
+
+        // Publish to the realtime channel so the peer's chat screen picks
+        // up this message instantly. The channel name is `chat:<id>` (the
+        // route param), so both sides see the same channel as long as they
+        // navigated through the same conversation entry. We deliberately
+        // publish AFTER the Supabase insert resolved — that guarantees the
+        // peer's optimistic addMessage maps to a real DB row, so when they
+        // re-open the chat the message persists.
+        try {
+          const realtime = getRealtime();
+          if (realtime && id) {
+            const channel = realtime.channels.get(chatChannelName(id));
+            void channel.publish('msg', {
+              id: newMessage.id,
+              senderId: user.id,
+              text,
+              createdAt: newMessage.createdAt,
+              imageUrls: uploadedUrls.length > 0 ? uploadedUrls : undefined,
+              replyToId: newMessage.replyToId,
+              replyToText: newMessage.replyToText,
+              replyToIsOwn: newMessage.replyToIsOwn,
+              replyToImage: newMessage.replyToImage,
+              replyPixelIconId: newMessage.replyPixelIconId,
+            });
+          }
+        } catch {}
       }
 
       const store = useEntityStore.getState();
