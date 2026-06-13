@@ -70,6 +70,11 @@ export interface ChatMessage {
   replyToText?: string;
   replyToIsOwn?: boolean;
   replyToImage?: string;
+  /** Optional pixel-icon registry id attached to a reply (`pack-1/01_ghost_king`).
+   *  Rendered as a small thumbnail in the reply preview block alongside
+   *  the existing text/image preview. Set from the per-chat
+   *  `chatSettings.replyPixelIcon` at compose time. */
+  replyPixelIconId?: string;
   imageUrls?: string[];
 }
 

@@ -16,6 +16,8 @@ import { useProfileAppearanceStore } from '../../src/store/profileAppearanceStor
 import { SlideUpSheet } from '../../src/components/ui/SlideUpSheet';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { useT } from '../../src/i18n/store';
+import { PixelIcon } from '../../src/components/pixel-icons/PixelIcon';
+import { parseDecoration, emojiToken } from '../../src/components/pixel-icons/decoration';
 
 // Inline-preview font for each family option. Mirrors the regular weight
 // ThemeProvider builds, so the right-side font label renders in the family
@@ -76,9 +78,25 @@ export default function FontsScreen() {
 
   const pickEmoji = (value: string) => {
     triggerHaptic('selection');
-    setPostEmoji(value);
+    // Empty string = off. Anything else is encoded with the explicit
+    // `emoji:` prefix so the persisted JSON is self-describing —
+    // legacy unprefixed entries remain readable via parseDecoration.
+    setPostEmoji(value ? emojiToken(value) : '');
     setEmojiModal(false);
   };
+
+  // Open the pixel-icons picker bound to this surface. Apply inside
+  // the picker writes back via setPostEmoji with the `pixel:` prefix.
+  const openPixelPicker = () => {
+    triggerHaptic('selection');
+    router.push('/settings/pixel-icons?purpose=post-emoji');
+  };
+
+  // Decoded current decoration drives both the right-side meta on the
+  // card row and the active-state highlighting inside the emoji sheet.
+  const decoration = parseDecoration(postEmoji);
+  const activeEmoji = decoration.kind === 'emoji' ? decoration.value : '';
+  const activePixelId = decoration.kind === 'pixel' ? decoration.id : null;
 
   return (
     <View style={{ flex: 1, backgroundColor: bgPrimary }}>
@@ -182,15 +200,50 @@ export default function FontsScreen() {
           </Pressable>
 
           {/* ── Декоративный эмодзи (unchanged) ─────────────────── */}
-          <Pressable onPress={openEmojiSheet} style={styles.row}>
+          <Pressable onPress={openEmojiSheet} style={[styles.row, { borderBottomWidth: 0.5, borderBottomColor: borderLight }]}>
             <RNText allowFontScaling={false} style={[styles.rowLabel, { color: textPrimary }]}>
               {t('fonts.decorative_emoji')}
             </RNText>
             <View style={styles.rowRight}>
-              {postEmoji ? (
+              {activePixelId ? (
+                // When a pixel icon is the current decoration, show it
+                // here too so the user can see at a glance what's active
+                // without opening the picker.
+                <PixelIcon id={activePixelId} size={22} />
+              ) : activeEmoji ? (
                 <RNText style={styles.emojiChip} allowFontScaling={false}>
-                  {postEmoji}
+                  {activeEmoji}
                 </RNText>
+              ) : (
+                <RNText
+                  allowFontScaling={false}
+                  style={[styles.rowMeta, { color: textTertiary }]}
+                >
+                  {t('fonts.off')}
+                </RNText>
+              )}
+              <Feather
+                name="chevron-right"
+                size={16}
+                color={textTertiary}
+                style={{ marginLeft: 4 }}
+              />
+            </View>
+          </Pressable>
+
+          {/* ── Пиксель-иконка ──────────────────────────────────── */}
+          {/* Routes to the existing pixel-icons screen with the
+              post-emoji purpose so Apply writes back to the same
+              postEmoji string (with a `pixel:` prefix). The
+              EmojiPattern / PixelIconPattern in ProfilePostCard +
+              UserProfilePostCard branches on the prefix. */}
+          <Pressable onPress={openPixelPicker} style={styles.row}>
+            <RNText allowFontScaling={false} style={[styles.rowLabel, { color: textPrimary }]}>
+              Pixel icons
+            </RNText>
+            <View style={styles.rowRight}>
+              {activePixelId ? (
+                <PixelIcon id={activePixelId} size={22} />
               ) : (
                 <RNText
                   allowFontScaling={false}
@@ -226,9 +279,9 @@ export default function FontsScreen() {
               style={[
                 styles.emojiCell,
                 {
-                  borderColor: postEmoji === '' ? theme.colors.accent.primary : borderLight,
+                  borderColor: activeEmoji === '' && !activePixelId ? theme.colors.accent.primary : borderLight,
                   backgroundColor:
-                    postEmoji === '' ? theme.colors.accent.primary + '20' : 'transparent',
+                    activeEmoji === '' && !activePixelId ? theme.colors.accent.primary + '20' : 'transparent',
                 },
               ]}
             >
@@ -241,9 +294,9 @@ export default function FontsScreen() {
                 style={[
                   styles.emojiCell,
                   {
-                    borderColor: postEmoji === e ? theme.colors.accent.primary : borderLight,
+                    borderColor: activeEmoji === e ? theme.colors.accent.primary : borderLight,
                     backgroundColor:
-                      postEmoji === e ? theme.colors.accent.primary + '20' : 'transparent',
+                      activeEmoji === e ? theme.colors.accent.primary + '20' : 'transparent',
                   },
                 ]}
               >

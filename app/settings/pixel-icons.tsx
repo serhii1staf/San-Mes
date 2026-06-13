@@ -2,12 +2,20 @@
  * Pixel icons browser — fullscreen modal for previewing the bundled set
  * of 70 AI-generated pixel-art characters across 7 themed packs.
  *
- * For now this is a preview-only screen: tap any icon and the bottom bar
- * surfaces its title. There's no persistence yet — once we wire pixel
- * icons into a concrete surface (post emoji decoration, chat avatar,
- * etc.) we'll add the apply path. The screen is intentionally lightweight
- * so the user can flip through the catalogue and tell me which packs are
- * worth keeping before we scale up the asset pipeline.
+ * Two modes:
+ *
+ * 1. Preview-only (no `?purpose=…` query param). Tapping an icon just
+ *    surfaces its title in the bottom bar — for browsing the catalogue.
+ *
+ * 2. Picker (`?purpose=home-header | post-emoji | chat-reply`). The
+ *    header swaps the icon-count chip for an Apply button, and the
+ *    grid grows a leading "None / Clear" tile so the user can remove
+ *    a previously-chosen icon. Apply writes to the right store and
+ *    pops the screen.
+ *
+ * The screen owns nothing else — every consumer (home header, post
+ * emoji pattern, chat reply) reads the persisted id from its own
+ * store and renders via `PixelIcon` / `PixelIconPattern`.
  *
  * Performance considerations:
  * - The grid is a single FlatList with `numColumns={4}` over a flat list
@@ -20,7 +28,6 @@
  *   animation completes at 60 fps before 70 native Image views start
  *   mounting. Previously this was the dominant source of long tasks on
  *   any screen with a lot of icons (see `settings/appearance.tsx`).
- * - All visible state is local; the screen subscribes to nothing.
  */
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
@@ -34,7 +41,7 @@ import {
 } from 'react-native';
 import { Image } from 'expo-image';
 import { Feather } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
@@ -44,27 +51,54 @@ import {
   PIXEL_PACKS,
   type PixelIcon,
 } from '../../src/components/pixel-icons/registry';
+import { useSettingsStore } from '../../src/store/settingsStore';
+import { useProfileAppearanceStore } from '../../src/store/profileAppearanceStore';
+import { useChatSettingsStore } from '../../src/store/chatSettingsStore';
+import { pixelToken, parseDecoration } from '../../src/components/pixel-icons/decoration';
+import { useT } from '../../src/i18n/store';
 
 const NUM_COLUMNS = 4;
+
+// Discriminator on the `?purpose=` query param. Anything else (or
+// missing) means preview-only — the screen behaves like the original
+// catalogue browser.
+type Purpose = 'home-header' | 'post-emoji' | 'chat-reply' | null;
+
+function parsePurpose(raw: string | string[] | undefined): Purpose {
+  const v = Array.isArray(raw) ? raw[0] : raw;
+  if (v === 'home-header' || v === 'post-emoji' || v === 'chat-reply') return v;
+  return null;
+}
 
 // Flat-list row types — interleaving section headers and rows of N icons
 // gives us trivial virtualization without paying SectionList's overhead.
 type GridRow =
   | { kind: 'header'; packId: string; label: string }
-  | { kind: 'icons'; items: PixelIcon[] };
+  | { kind: 'icons'; items: (PixelIcon | { __none: true })[] };
 
-function buildGridRows(): GridRow[] {
+function buildGridRows(showNoneTile: boolean): GridRow[] {
   const rows: GridRow[] = [];
   const orderedPacks = [...PIXEL_PACKS].sort((a, b) => a.order - b.order);
+
+  // First pack — prepend the "None / Clear" sentinel so the user can
+  // remove a previously-chosen icon without scrolling. Only injected
+  // when the screen is in picker mode.
+  let firstPack = true;
+
   for (const pack of orderedPacks) {
     const items = PIXEL_ICONS.filter((ic) => ic.pack === pack.id);
     if (items.length === 0) continue;
     rows.push({ kind: 'header', packId: pack.id, label: pack.label });
-    // Chunk into rows of NUM_COLUMNS so each row renders the same number
-    // of cells regardless of pack size — keeps layout predictable in the
-    // FlatList and simplifies the renderItem branch.
-    for (let i = 0; i < items.length; i += NUM_COLUMNS) {
-      rows.push({ kind: 'icons', items: items.slice(i, i + NUM_COLUMNS) });
+
+    // Compose the row source — in picker mode, the very first row of
+    // the very first pack starts with the None tile, then the regular
+    // icons. Subsequent rows / packs are unaffected.
+    const sourceItems: (PixelIcon | { __none: true })[] =
+      firstPack && showNoneTile ? [{ __none: true }, ...items] : [...items];
+    firstPack = false;
+
+    for (let i = 0; i < sourceItems.length; i += NUM_COLUMNS) {
+      rows.push({ kind: 'icons', items: sourceItems.slice(i, i + NUM_COLUMNS) });
     }
   }
   return rows;
@@ -73,8 +107,35 @@ function buildGridRows(): GridRow[] {
 export default function PixelIconsScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const t = useT();
 
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // The query string drives the entire mode of this screen — preview
+  // vs picker, plus the chatId binding for the chat-reply purpose.
+  const params = useLocalSearchParams<{ purpose?: string; chatId?: string }>();
+  const purpose = parsePurpose(params.purpose);
+  const chatIdParam = Array.isArray(params.chatId) ? params.chatId[0] : params.chatId;
+  const isPicker = purpose !== null;
+
+  // Seed the selection with whatever the user already has saved for
+  // this purpose, so the picker opens highlighting their current
+  // choice (and the None tile when nothing is set).
+  const initialSelectedId = useMemo<string | null>(() => {
+    if (!isPicker) return null;
+    if (purpose === 'home-header') {
+      return useSettingsStore.getState().homeHeaderIcon;
+    }
+    if (purpose === 'post-emoji') {
+      const decoded = parseDecoration(useProfileAppearanceStore.getState().postEmoji);
+      return decoded.kind === 'pixel' ? decoded.id : null;
+    }
+    if (purpose === 'chat-reply' && chatIdParam) {
+      const settings = useChatSettingsStore.getState().getSettings(chatIdParam);
+      return settings.replyPixelIcon ?? null;
+    }
+    return null;
+  }, [isPicker, purpose, chatIdParam]);
+
+  const [selectedId, setSelectedId] = useState<string | null>(initialSelectedId);
 
   // Defer the grid mount past the modal's slide-in transition. 70 native
   // Image views landing on the same RAF as the slide animation drops the
@@ -87,12 +148,33 @@ export default function PixelIconsScreen() {
     return () => handle.cancel();
   }, []);
 
-  const rows = useMemo(buildGridRows, []);
+  const rows = useMemo(() => buildGridRows(isPicker), [isPicker]);
 
-  const onPickIcon = useCallback((id: string) => {
+  const onPickIcon = useCallback((id: string | null) => {
     triggerHaptic('light');
     setSelectedId(id);
   }, []);
+
+  const onApply = useCallback(() => {
+    triggerHaptic('light');
+    if (purpose === 'home-header') {
+      // Selected id may be `null` (user picked the None tile) — both
+      // branches are valid writes for the home-header surface.
+      useSettingsStore.getState().setHomeHeaderIcon(selectedId);
+    } else if (purpose === 'post-emoji') {
+      // The store schema is a single string; encode the new selection
+      // with the explicit prefix convention. Empty string = off.
+      const next = selectedId ? pixelToken(selectedId) : '';
+      useProfileAppearanceStore.getState().setPostEmoji(next);
+    } else if (purpose === 'chat-reply' && chatIdParam) {
+      // Per-chat field on the chatSettings store. `undefined` clears it
+      // so subsequent reads fall through to the global / default merge.
+      useChatSettingsStore.getState().updateSettings(chatIdParam, {
+        replyPixelIcon: selectedId ?? undefined,
+      });
+    }
+    router.back();
+  }, [purpose, chatIdParam, selectedId]);
 
   const renderItem = useCallback(
     ({ item }: { item: GridRow }) => {
@@ -107,12 +189,46 @@ export default function PixelIconsScreen() {
       }
       // Pad the row to NUM_COLUMNS so the icons in a partial last row
       // align to the left rather than spreading edge-to-edge.
-      const padded = [...item.items];
-      while (padded.length < NUM_COLUMNS) padded.push(null as any);
+      const padded: ((PixelIcon | { __none: true }) | null)[] = [...item.items];
+      while (padded.length < NUM_COLUMNS) padded.push(null);
       return (
         <View style={styles.iconRow}>
-          {padded.map((ic, i) =>
-            ic ? (
+          {padded.map((cell, i) => {
+            if (!cell) {
+              return <View key={`empty-${i}`} style={styles.cell} pointerEvents="none" />;
+            }
+            // None / Clear tile — only present in picker mode. Selected
+            // when `selectedId` is null so the user can clearly see
+            // they're about to remove the icon.
+            if ('__none' in cell) {
+              const isSelected = selectedId === null;
+              return (
+                <Pressable
+                  key="__none__"
+                  onPress={() => onPickIcon(null)}
+                  style={[
+                    styles.cell,
+                    {
+                      borderWidth: 1.5,
+                      borderColor: isSelected
+                        ? theme.colors.accent.primary
+                        : theme.colors.border.light,
+                      backgroundColor: isSelected
+                        ? theme.colors.accent.primary + '14'
+                        : 'transparent',
+                    },
+                  ]}
+                >
+                  <Feather
+                    name="slash"
+                    size={26}
+                    color={isSelected ? theme.colors.accent.primary : theme.colors.text.tertiary}
+                  />
+                </Pressable>
+              );
+            }
+            const ic = cell;
+            return (
               <Pressable
                 key={ic.id}
                 onPress={() => onPickIcon(ic.id)}
@@ -136,19 +252,25 @@ export default function PixelIconsScreen() {
                   transition={0}
                 />
               </Pressable>
-            ) : (
-              <View key={`empty-${i}`} style={styles.cell} pointerEvents="none" />
-            ),
-          )}
+            );
+          })}
         </View>
       );
     },
-    [onPickIcon, selectedId, theme.colors.accent.primary, theme.colors.background.elevated, theme.colors.border.light, theme.colors.text.tertiary],
+    [
+      onPickIcon,
+      selectedId,
+      theme.colors.accent.primary,
+      theme.colors.border.light,
+      theme.colors.text.tertiary,
+    ],
   );
 
   const keyExtractor = useCallback((item: GridRow, idx: number) => {
     if (item.kind === 'header') return `h:${item.packId}`;
-    return `r:${idx}:${item.items[0]?.id ?? ''}`;
+    const first = item.items[0];
+    const firstKey = first ? ('__none' in first ? '__none' : first.id) : '';
+    return `r:${idx}:${firstKey}`;
   }, []);
 
   const selectedIcon = selectedId ? PIXEL_ICONS.find((ic) => ic.id === selectedId) : null;
@@ -157,15 +279,23 @@ export default function PixelIconsScreen() {
     <View
       style={[styles.root, { backgroundColor: theme.colors.background.primary, paddingTop: insets.top }]}
     >
-      {/* Header row — close button + title. Stays static during scroll. */}
+      {/* Header row — close button + title + (Apply | count). */}
       <View style={styles.header}>
         <Pressable onPress={() => router.back()} hitSlop={12}>
           <Feather name="x" size={22} color={theme.colors.text.primary} />
         </Pressable>
         <Text variant="body" weight="bold">Pixel icons</Text>
-        <Text variant="caption" color={theme.colors.text.tertiary}>
-          {PIXEL_ICONS.length}
-        </Text>
+        {isPicker ? (
+          <Pressable onPress={onApply} hitSlop={12}>
+            <Text variant="body" weight="semibold" color={theme.colors.accent.primary}>
+              {t('common.apply')}
+            </Text>
+          </Pressable>
+        ) : (
+          <Text variant="caption" color={theme.colors.text.tertiary}>
+            {PIXEL_ICONS.length}
+          </Text>
+        )}
       </View>
 
       {gridReady ? (

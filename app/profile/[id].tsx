@@ -24,6 +24,7 @@ import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { UserBadge } from '../../src/components/ui/UserBadge';
 import { PostContextMenu } from '../../src/components/ui/PostContextMenu';
 import { UserProfilePostCard } from '../../src/components/ui/UserProfilePostCard';
+import { useProfileAppearanceStore } from '../../src/store/profileAppearanceStore';
 import { PanResponder } from 'react-native';
 import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
 import { useT } from '../../src/i18n/store';
@@ -255,6 +256,10 @@ export default function UserProfileScreen() {
   // Field selector — destructuring the whole store re-rendered this screen on
   // every unrelated auth-state change (badge sync, token refresh, etc.).
   const currentUser = useAuthStore((s) => s.user);
+  // Viewer-side decoration shared with the home profile tab — drives the
+  // faint emoji / pixel-icon pattern on every visible post card. Stable
+  // string so memoized cards only re-render when it actually changes.
+  const postEmoji = useProfileAppearanceStore((s) => s.postEmoji);
   const [isLoading, setIsLoading] = useState(true);
   const [followCounts, setFollowCounts] = useState({ followers: 0, following: 0 });
   const [activeTab, setActiveTab] = useState<TabName>('posts');
@@ -592,6 +597,7 @@ export default function UserProfileScreen() {
             authorVerified={displayProfile.is_verified}
             authorBadge={displayProfile.badge}
             authorId={displayProfile.id}
+            postEmoji={postEmoji}
             onLongPress={handlePostLongPress}
             onImagePress={handlePostImagePress}
           />

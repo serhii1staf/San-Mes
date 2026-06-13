@@ -10,6 +10,9 @@ import { VerifiedBadge } from './VerifiedBadge';
 import { UserBadge } from './UserBadge';
 import { FormattedText } from './FormattedText';
 import { LinkPreview } from './LinkPreview';
+import { EmojiPattern } from './EmojiPattern';
+import { PixelIconPattern } from '../pixel-icons/PixelIconPattern';
+import { parseDecoration } from '../pixel-icons/decoration';
 import { SwipeablePostCard } from './SwipeablePostCard';
 import { extractFirstUrl } from '../../services/linkPreview';
 import { triggerHaptic } from '../../utils/haptics';
@@ -25,6 +28,11 @@ interface UserProfilePostCardProps {
   authorVerified?: boolean;
   authorBadge?: string | null;
   authorId: string;
+  /** Viewer-side decoration (own profile-appearance preference).
+   *  Applied to every card the viewer sees, regardless of author —
+   *  matches the existing `ProfilePostCard` semantics. Optional so
+   *  callers that don't care can omit it. */
+  postEmoji?: string;
   onLongPress: (enrichedPost: any) => void;
   onImagePress: (uri: string, postId: string, allImages: string[]) => void;
 }
@@ -74,6 +82,7 @@ function UserProfilePostCardBase({
   authorVerified,
   authorBadge,
   authorId,
+  postEmoji,
   onLongPress,
   onImagePress,
 }: UserProfilePostCardProps) {
@@ -157,6 +166,19 @@ function UserProfilePostCardBase({
         delayLongPress={400}
         style={[styles.container, themedContainer]}
       >
+        {/* Decoration: viewer-side preference. Same prefix-aware
+            parsing as ProfilePostCard so the same picker writes
+            apply on both surfaces. */}
+        {(() => {
+          const dec = parseDecoration(postEmoji);
+          if (dec.kind === 'emoji') {
+            return <EmojiPattern emoji={dec.value} opacity={theme.isDark ? 0.12 : 0.10} />;
+          }
+          if (dec.kind === 'pixel') {
+            return <PixelIconPattern id={dec.id} opacity={theme.isDark ? 0.18 : 0.14} />;
+          }
+          return null;
+        })()}
         {/* Left: Image grid thumbnail */}
         {hasImage ? (
           <Pressable onPress={() => onImagePress(postImages[0], post.id, postImages)}>
@@ -255,6 +277,7 @@ export const UserProfilePostCard = memo(UserProfilePostCardBase, (prev, next) =>
   prev.authorVerified === next.authorVerified &&
   prev.authorBadge === next.authorBadge &&
   prev.authorId === next.authorId &&
+  prev.postEmoji === next.postEmoji &&
   prev.onLongPress === next.onLongPress &&
   prev.onImagePress === next.onImagePress
 );

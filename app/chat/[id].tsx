@@ -23,6 +23,7 @@ import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
 import { useChatStore, useEntityStore, useConnectivityStore } from '../../src/store';
 import { useChatSettingsStore, GLOBAL_CHAT_SETTINGS_KEY, DEFAULT_CHAT_SETTINGS } from '../../src/store/chatSettingsStore';
 import { ChatBackgroundLayer } from '../../src/components/ui/ChatBackgroundLayer';
+import { PixelIcon } from '../../src/components/pixel-icons/PixelIcon';
 import { supabase, uploadChatImage } from '../../src/lib/supabase';
 import { kvGetJSONSync, kvSetJSON, kvWarm } from '../../src/services/kvStore';
 import { mockMessages, mockConversations, formatMessageTime } from '../../src/utils/mockData';
@@ -49,6 +50,7 @@ const bubbleStyles = StyleSheet.create({
   replyBlock: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingLeft: 8, borderLeftWidth: 2, marginBottom: 6 },
   replyTextWrap: { flex: 1 },
   replyAvatar: { width: 30, height: 30, borderRadius: 6 },
+  replyPixel: { borderRadius: 6 },
   replyHeading: { fontSize: 11 },
   replyBody: { fontSize: 11 },
   imagesRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4 },
@@ -127,10 +129,18 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
             borderWidth: highlighted ? 2 : 0,
             borderColor: highlighted ? theme.colors.accent.primary : 'transparent',
           }}>
-            {message.replyToText || message.replyToImage ? (
+            {message.replyToText || message.replyToImage || message.replyPixelIconId ? (
               <View style={[bubbleStyles.replyBlock, { borderLeftColor: isOwn ? 'rgba(255,255,255,0.7)' : theme.colors.accent.primary }]}>
                 {message.replyToImage ? (
                   <CachedImage uri={message.replyToImage} style={bubbleStyles.replyAvatar} resizeMode="cover" />
+                ) : null}
+                {/* Pixel icon attached to the reply via the chat-level
+                    setting. Renders alongside the text/image preview —
+                    additive, never replaces the existing avatar. Small
+                    so it reads as a decoration rather than the primary
+                    affordance. */}
+                {message.replyPixelIconId ? (
+                  <PixelIcon id={message.replyPixelIconId} size={22} style={bubbleStyles.replyPixel} />
                 ) : null}
                 <View style={bubbleStyles.replyTextWrap}>
                   <Text variant="caption" weight="semibold" color={isOwn ? 'rgba(255,255,255,0.9)' : theme.colors.accent.primary} numberOfLines={1} style={bubbleStyles.replyHeading}>
@@ -191,6 +201,7 @@ const MemoMessageBubble = React.memo(MessageBubble, (prev, next) => {
     pm.replyToText === nm.replyToText &&
     pm.replyToImage === nm.replyToImage &&
     pm.replyToIsOwn === nm.replyToIsOwn &&
+    pm.replyPixelIconId === nm.replyPixelIconId &&
     (pm.imageUrls === nm.imageUrls ||
       (pm.imageUrls?.length === nm.imageUrls?.length &&
         (pm.imageUrls || []).every((u, i) => u === nm.imageUrls?.[i]))) &&
@@ -591,6 +602,12 @@ export default function ChatScreen() {
       replyToText: currentReply?.text || (currentReply?.imageUrls && currentReply.imageUrls.length > 0 ? t('chat.photo') : undefined),
       replyToIsOwn: currentReply ? currentReply.senderId === 'current' : undefined,
       replyToImage: currentReply?.imageUrls?.[0],
+      // Per-chat decorative pixel icon stamped onto reply messages.
+      // Only set when this message is actually a reply — otherwise
+      // there's no reply-block to render the icon in. Read directly
+      // off the merged settings object so it picks up the latest
+      // pick from the picker without a re-render dependency.
+      replyPixelIconId: currentReply ? chatSettings.replyPixelIcon : undefined,
       imageUrls: [url],
     };
     addMessage(id, newMessage);
@@ -696,6 +713,10 @@ export default function ChatScreen() {
       replyToText: currentReply?.text || (currentReply?.imageUrls && currentReply.imageUrls.length > 0 ? (currentReply.imageUrls.length > 1 ? t('chat.photos_count', undefined, { n: currentReply.imageUrls.length }) : t('chat.photo')) : undefined),
       replyToIsOwn: currentReply ? currentReply.senderId === 'current' : undefined,
       replyToImage: currentReply?.imageUrls?.[0],
+      // See sendGif — same per-chat pixel-icon stamp on outgoing
+      // replies. Stays out of non-reply messages so memoized
+      // bubbles don't re-render unnecessarily.
+      replyPixelIconId: currentReply ? chatSettings.replyPixelIcon : undefined,
       imageUrls: localImages.length > 0 ? localImages : undefined,
     };
     addMessage(id, newMessage);
@@ -887,6 +908,27 @@ export default function ChatScreen() {
               <Text variant="caption" weight="semibold" color={theme.colors.accent.primary} style={{ fontSize: 12 }}>{editing ? t('chat.editing') : t('chat.replying')}</Text>
               <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 12 }}>{banner.text || (banner.imageUrls && banner.imageUrls.length > 0 ? `📷 ${banner.imageUrls.length > 1 ? t('chat.photos_count', undefined, { n: banner.imageUrls.length }) : t('chat.photo')}` : '')}</Text>
             </View>
+            {/* Pixel-icon picker entry — only relevant on a reply
+                compose, not on edit. Shows the currently-selected
+                icon (per-chat) so the user can see at a glance what
+                will be stamped onto the outgoing reply. Opens the
+                picker bound to this chat. */}
+            {!editing ? (
+              <Pressable
+                onPress={() => {
+                  triggerHaptic('light');
+                  router.push({ pathname: '/settings/pixel-icons', params: { purpose: 'chat-reply', chatId: id || '' } });
+                }}
+                hitSlop={8}
+                style={{ width: 28, height: 28, alignItems: 'center', justifyContent: 'center' }}
+              >
+                {chatSettings.replyPixelIcon ? (
+                  <PixelIcon id={chatSettings.replyPixelIcon} size={22} />
+                ) : (
+                  <Feather name="image" size={18} color={theme.colors.text.tertiary} />
+                )}
+              </Pressable>
+            ) : null}
             <Pressable onPress={() => { setReplyTo(null); setEditing(null); inputRef.current?.clear(); }} hitSlop={8}>
               <Feather name="x" size={18} color={theme.colors.text.tertiary} />
             </Pressable>

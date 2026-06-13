@@ -15,6 +15,14 @@ export interface ChatSettings {
   localName?: string; // override display name
   bubbleRadius: number; // 12-24
   linkEmoji?: string; // decorative emoji shown faintly in link-preview containers (Telegram-style)
+  // Decorative pixel-icon attached to outgoing reply messages from
+  // this chat. Stable registry id from `PIXEL_ICON_BY_ID`. Read by
+  // the chat input bar when composing a reply: if set, the id is
+  // copied onto the new ChatMessage's `replyPixelIconId` so the
+  // recipient (and the sender on re-render) can render the icon
+  // alongside the existing reply text/image preview. Picked from
+  // the pixel-icons screen launched with `?purpose=chat-reply&chatId=…`.
+  replyPixelIcon?: string;
 }
 
 // Special key for global/default chat settings (applies to all chats without their own overrides)

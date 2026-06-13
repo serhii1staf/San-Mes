@@ -26,12 +26,19 @@ interface SettingsState {
   // PerfEventKind values the panel filters on (NAV, MOUNT, INPUT, IMG, LONG,
   // UI, MARK). Missing key = filter on (default-on behaviour).
   perfMonitorFilters: Record<string, boolean>;
+  // Decorative pixel-icon next to the "San" title on the home feed
+  // header. Stable registry id (e.g. `pack-1/01_ghost_king`) or `null`
+  // when the user hasn't picked one — the title then stays bare.
+  // Picked via the existing pixel-icons screen launched with
+  // `?purpose=home-header` from a long-press on the title.
+  homeHeaderIcon: string | null;
   setHaptic: (enabled: boolean) => void;
   setInAppBrowser: (enabled: boolean) => void;
   setBrowserWidgetPosition: (position: 'top' | 'bottom') => void;
   setPerfMonitorEnabled: (enabled: boolean) => void;
   setPerfMonitorPosition: (x: number, y: number) => void;
   setPerfMonitorFilter: (kind: string, on: boolean) => void;
+  setHomeHeaderIcon: (id: string | null) => void;
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -57,6 +64,9 @@ export const useSettingsStore = create<SettingsState>()(
         UI: true,
         MARK: true,
       },
+      // No icon by default — the "San" title stands alone unless the
+      // user explicitly picks one from the pixel-icons picker.
+      homeHeaderIcon: null,
       setHaptic: (hapticEnabled) => set({ hapticEnabled }),
       setInAppBrowser: (useInAppBrowser) => set({ useInAppBrowser }),
       setBrowserWidgetPosition: (browserWidgetPosition) => set({ browserWidgetPosition }),
@@ -65,6 +75,7 @@ export const useSettingsStore = create<SettingsState>()(
         set({ perfMonitorPosX, perfMonitorPosY }),
       setPerfMonitorFilter: (kind, on) =>
         set((s) => ({ perfMonitorFilters: { ...s.perfMonitorFilters, [kind]: on } })),
+      setHomeHeaderIcon: (homeHeaderIcon) => set({ homeHeaderIcon }),
     }),
     {
       name: 'app-settings',

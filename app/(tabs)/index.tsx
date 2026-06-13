@@ -25,6 +25,8 @@ import { useWidgetSettingsStore } from '../../src/store/widgetSettingsStore';
 import { queueMutation } from '../../src/services/offlineQueue';
 import { useT } from '../../src/i18n/store';
 import { perfMonitor } from '../../src/services/perfMonitor';
+import { useSettingsStore } from '../../src/store/settingsStore';
+import { PixelIcon } from '../../src/components/pixel-icons/PixelIcon';
 
 const FEED_CACHE_KEY = '@san:feed_posts';
 const FEED_LIMIT = 20;
@@ -343,6 +345,19 @@ export default function FeedScreen() {
   const applyUpdate = useUpdateStore((s) => s.applyUpdate);
   const isOnline = useConnectivityStore((s) => s.isOnline);
 
+  // Decorative pixel icon next to the "San" title — a per-device
+  // preference picked from the existing pixel-icons screen with
+  // `?purpose=home-header`. Subscribed field-by-field so the feed
+  // doesn't re-render on unrelated settings flips.
+  const homeHeaderIcon = useSettingsStore((s) => s.homeHeaderIcon);
+  // Long-press only — keeps the tap unclaimed for a future
+  // scroll-to-top binding. Light haptic mirrors the rest of the
+  // long-press paths in the app.
+  const onTitleLongPress = useCallback(() => {
+    triggerHaptic('light');
+    router.push('/settings/pixel-icons?purpose=home-header');
+  }, []);
+
   // Reload from cache when tab gains focus (picks up new posts from create screen).
   // Synchronous MMKV read deferred via InteractionManager so the tab-switch frame
   // is never blocked — keeps navigation buttery on weak devices.
@@ -618,7 +633,10 @@ export default function FeedScreen() {
         <View style={[styles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">
           <LinearGradient colors={[bgColor, bgColor, bgTransparent]} locations={[0, 0.6, 1]} style={StyleSheet.absoluteFill} />
           <View style={[styles.headerContent, { paddingTop: insets.top }]}>
-            <Text variant="subheading" weight="bold">San</Text>
+            <Pressable onLongPress={onTitleLongPress} delayLongPress={350} hitSlop={6} style={styles.titleRow}>
+              {homeHeaderIcon ? <PixelIcon id={homeHeaderIcon} size={26} /> : null}
+              <Text variant="subheading" weight="bold">San</Text>
+            </Pressable>
             <Pressable onPress={() => router.push('/notifications')} style={{ position: 'relative' }}>
               <Feather name="bell" size={22} color={theme.colors.text.primary} />
               <NotificationBellBadge accent={theme.colors.accent.primary} bg={theme.colors.background.primary} />
@@ -638,7 +656,10 @@ export default function FeedScreen() {
         <LinearGradient colors={[bgColor, bgColor, bgTransparent]} locations={[0, 0.55, 1]} style={StyleSheet.absoluteFill} />
         <View style={[styles.headerContent, { paddingTop: insets.top }]} pointerEvents="auto">
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <Text variant="subheading" weight="bold">San</Text>
+            <Pressable onLongPress={onTitleLongPress} delayLongPress={350} hitSlop={6} style={styles.titleRow}>
+              {homeHeaderIcon ? <PixelIcon id={homeHeaderIcon} size={26} /> : null}
+              <Text variant="subheading" weight="bold">San</Text>
+            </Pressable>
             {!isOnline && (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(255,59,48,0.12)', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 }}>
                 <ActivityIndicator size={10} color="#FF3B30" />
@@ -698,4 +719,5 @@ export default function FeedScreen() {
 const styles = StyleSheet.create({
   headerWrapper: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100 },
   headerContent: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 24, paddingBottom: 8 },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
 });

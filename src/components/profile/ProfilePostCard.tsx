@@ -10,6 +10,8 @@ import { UserBadge } from '../ui/UserBadge';
 import { FormattedText } from '../ui/FormattedText';
 import { LinkPreview } from '../ui/LinkPreview';
 import { EmojiPattern } from '../ui/EmojiPattern';
+import { PixelIconPattern } from '../pixel-icons/PixelIconPattern';
+import { parseDecoration } from '../pixel-icons/decoration';
 import { SwipeablePostCard } from '../ui/SwipeablePostCard';
 import { extractFirstUrl } from '../../services/linkPreview';
 import { triggerHaptic } from '../../utils/haptics';
@@ -144,7 +146,20 @@ function ProfilePostCardBase({ post, authorName, authorEmoji, authorVerified, au
         delayLongPress={400}
         style={[styles.container, themedContainer]}
       >
-        {postEmoji ? <EmojiPattern emoji={postEmoji} opacity={theme.isDark ? 0.12 : 0.10} /> : null}
+        {/* Decoration: parsed from the postEmoji string. Legacy raw
+            emoji ("🌸") and explicit "emoji:🌸" both render as
+            EmojiPattern; "pixel:<id>" routes to PixelIconPattern.
+            Keeps the store schema unchanged while supporting both. */}
+        {(() => {
+          const dec = parseDecoration(postEmoji);
+          if (dec.kind === 'emoji') {
+            return <EmojiPattern emoji={dec.value} opacity={theme.isDark ? 0.12 : 0.10} />;
+          }
+          if (dec.kind === 'pixel') {
+            return <PixelIconPattern id={dec.id} opacity={theme.isDark ? 0.18 : 0.14} />;
+          }
+          return null;
+        })()}
 
         {hasImage ? (
           <Pressable onPress={() => onImagePress(imgs[0], post.id, imgs)}>
