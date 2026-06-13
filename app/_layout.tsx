@@ -22,7 +22,6 @@ import { useT } from '../src/i18n/store';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { PerfMonitorBubble } from '../src/components/dev/PerfMonitorBubble';
 import { perfMonitor, installPerfErrorHooks } from '../src/services/perfMonitor';
-import { DynamicOverlayTrigger } from '../src/components/dynamic-overlay/DynamicOverlayTrigger';
 import { DynamicOverlayHost } from '../src/components/dynamic-overlay/DynamicOverlayHost';
 
 // Install the global JS error / promise hooks once at module load so we
@@ -353,14 +352,12 @@ function RootLayout() {
             stays visible on every screen. Defaults to ON; users can hide it
             from the panel that opens when they tap the bubble. */}
         <PerfMonitorBubble />
-        {/* Dynamic Island companion overlay. The trigger is a transparent
-            long-press catcher pinned to the top of the screen (zIndex 1)
-            so it does not block taps in the rest of the UI; the host
-            mounts only when the user activates it (zIndex 9998 — above
-            the perf bubble's container, so an expanded card can briefly
-            cover the bubble). All OTA-safe — no native modules, no new
-            permissions, never draws above `insets.top`. */}
-        <DynamicOverlayTrigger />
+        {/* Dynamic Island companion overlay. Triggered by a long-press on
+            the Home tab in the bottom navigation (see app/(tabs)/_layout.tsx
+            `homeListeners`). Mounts only when the user activates it
+            (zIndex 9998 — above the perf bubble's container). All OTA-safe
+            — no native modules, no new permissions, never draws above
+            `insets.top`. */}
         <DynamicOverlayHost />
       </AuthNavigationGuard>
     </ThemeProvider>

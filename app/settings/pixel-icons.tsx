@@ -40,6 +40,7 @@ import {
   InteractionManager,
 } from 'react-native';
 import { Image } from 'expo-image';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -279,35 +280,9 @@ export default function PixelIconsScreen() {
     <View
       style={[styles.root, { backgroundColor: theme.colors.background.primary }]}
     >
-      {/* Header row — close + centered title + (Apply | count). Sits flush
-          to the top of the modal: iOS modal presentation already provides
-          its own drag-handle inset, so we only add a small breathing pad
-          (no full safe-area insets.top — that pushed the header too far
-          down inside an already-presented modal sheet). */}
-      <View style={[styles.header, { paddingTop: 14 }]}>
-        <Pressable onPress={() => router.back()} hitSlop={12} style={[styles.headerSide, styles.headerSideLeft]}>
-          <Feather name="x" size={22} color={theme.colors.text.primary} />
-        </Pressable>
-        {/* Absolute-centered title so it sits dead-center regardless of
-            the side actions' widths. */}
-        <View style={styles.headerTitleWrap} pointerEvents="none">
-          <Text variant="body" weight="bold">{t('pixel_icons.title', 'Pixel icons')}</Text>
-        </View>
-        <View style={[styles.headerSide, styles.headerSideRight]}>
-          {isPicker ? (
-            <Pressable onPress={onApply} hitSlop={12}>
-              <Text variant="body" weight="semibold" color={theme.colors.accent.primary}>
-                {t('common.apply')}
-              </Text>
-            </Pressable>
-          ) : (
-            <Text variant="caption" color={theme.colors.text.tertiary}>
-              {PIXEL_ICONS.length}
-            </Text>
-          )}
-        </View>
-      </View>
-
+      {/* Grid is the BASE layer — it fills the screen including under the
+          gradient fade header, so content visibly slides up under the
+          translucent shell when scrolled. */}
       {gridReady ? (
         <FlatList
           data={rows}
@@ -315,7 +290,9 @@ export default function PixelIconsScreen() {
           keyExtractor={keyExtractor}
           contentContainerStyle={{
             paddingHorizontal: 14,
-            paddingTop: 8,
+            // Push content past the fade header so the first row sits in
+            // the fully-visible band, not inside the gradient.
+            paddingTop: insets.top + 64,
             paddingBottom: insets.bottom + 90,
           }}
           showsVerticalScrollIndicator={false}
@@ -328,10 +305,66 @@ export default function PixelIconsScreen() {
           removeClippedSubviews={true}
         />
       ) : (
-        <View style={styles.loaderWrap}>
+        <View style={[styles.loaderWrap, { paddingTop: insets.top + 64 }]}>
           <ActivityIndicator size="small" color={theme.colors.text.tertiary} />
         </View>
       )}
+
+      {/* Floating gradient header — same fade pattern used on (tabs)/index.tsx.
+          Solid bg at the very top blending to transparent at the bottom of
+          the strip, so grid content scrolling underneath fades into the
+          chrome rather than getting hard-clipped by an opaque bar. The X /
+          title / Apply controls sit BELOW the system safe-area inset so
+          there is room for them to breathe under the notch. */}
+      <View
+        style={[
+          styles.headerWrapper,
+          { height: insets.top + 78 },
+        ]}
+        pointerEvents="box-none"
+      >
+        <LinearGradient
+          colors={[
+            theme.colors.background.primary,
+            theme.colors.background.primary,
+            theme.colors.background.primary + '00',
+          ]}
+          locations={[0, 0.6, 1]}
+          style={StyleSheet.absoluteFill}
+          pointerEvents="none"
+        />
+        <View
+          style={[
+            styles.headerContent,
+            { paddingTop: insets.top + 14 },
+          ]}
+          pointerEvents="auto"
+        >
+          {/* Equal-width flex regions on both sides so the centred title
+              sits dead-centre regardless of the action label's width. */}
+          <View style={styles.headerSideContainer}>
+            <Pressable onPress={() => router.back()} hitSlop={12}>
+              <Feather name="x" size={22} color={theme.colors.text.primary} />
+            </Pressable>
+          </View>
+          <View style={styles.headerCenter}>
+            <Text variant="body" weight="bold">{t('pixel_icons.title', 'Pixel icons')}</Text>
+          </View>
+          <View style={[styles.headerSideContainer, { alignItems: 'flex-end' }]}>
+            {isPicker ? (
+              <Pressable onPress={onApply} hitSlop={12}>
+                <Text variant="body" weight="semibold" color={theme.colors.accent.primary}>
+                  {t('common.apply')}
+                </Text>
+              </Pressable>
+            ) : (
+              <Text variant="caption" color={theme.colors.text.tertiary}>
+                {PIXEL_ICONS.length}
+              </Text>
+            )}
+          </View>
+        </View>
+      </View>
 
       {/* Selected-icon footer. Renders just the human-readable title of
           whichever icon the user tapped last — the registry id used to
@@ -367,14 +400,33 @@ export default function PixelIconsScreen() {
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
+  // Floating gradient header sits absolutely on top of the grid so content
+  // visibly scrolls under it (Telegram-style fade). Z-index keeps it above
+  // the FlatList, while the gradient itself blends to transparent at the
+  // bottom edge so there's no hard cut where chrome ends and content
+  // starts.
+  headerWrapper: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 100,
+  },
+  headerContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+    minHeight: 44,
+  },
+  // Legacy `header` style kept for backwards-compatibility callers.
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingBottom: 12,
-    // No paddingTop here — the screen-level wrapper handles it so we can
-    // tune the modal-vs-fullscreen offset in one spot.
     minHeight: 44,
   },
   headerSide: {
@@ -386,6 +438,18 @@ const styles = StyleSheet.create({
   },
   headerSideLeft: { justifyContent: 'flex-start' },
   headerSideRight: { justifyContent: 'flex-end' },
+  // New simpler centering: equal flex regions left/right + centered text.
+  headerSideContainer: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  headerCenter: {
+    flexShrink: 1,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   headerTitleWrap: {
     position: 'absolute',
     left: 0,
