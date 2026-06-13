@@ -723,6 +723,13 @@ const ru: Record<string, string> = {
   'perf.copied_one': 'Ошибка скопирована в буфер обмена.',
   'perf.copied_all': 'Все ошибки скопированы в буфер обмена.',
   'perf.copied_log': 'Полный лог скопирован в буфер обмена.',
+
+  // ─── Dynamic Island companion overlay ──────────────────────────────────
+  'dynamic_overlay.theme': 'Тема',
+  'dynamic_overlay.icon': 'Иконка',
+  'dynamic_overlay.notifications': 'Уведомления',
+  'dynamic_overlay.fps': 'FPS',
+  'dynamic_overlay.dismiss_hint': 'Тапните в стороне, чтобы скрыть',
 };
 
 export default ru;

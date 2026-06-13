@@ -720,6 +720,13 @@ const en: Record<string, string> = {
   'perf.copied_one': 'Error copied to clipboard.',
   'perf.copied_all': 'All errors copied to clipboard.',
   'perf.copied_log': 'Full log copied to clipboard.',
+
+  // ─── Dynamic Island companion overlay ──────────────────────────────────
+  'dynamic_overlay.theme': 'Theme',
+  'dynamic_overlay.icon': 'Icon',
+  'dynamic_overlay.notifications': 'Notifications',
+  'dynamic_overlay.fps': 'FPS',
+  'dynamic_overlay.dismiss_hint': 'Tap outside to dismiss',
 };
 
 export default en;
