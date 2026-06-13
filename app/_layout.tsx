@@ -23,6 +23,7 @@ import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { PerfMonitorBubble } from '../src/components/dev/PerfMonitorBubble';
 import { perfMonitor, installPerfErrorHooks } from '../src/services/perfMonitor';
 import { DynamicOverlayHost } from '../src/components/dynamic-overlay/DynamicOverlayHost';
+import { RealtimeAccountBridge } from '../src/components/realtime/RealtimeAccountBridge';
 
 // Install the global JS error / promise hooks once at module load so we
 // capture every crash from the very first render onward (the bubble panel
@@ -352,6 +353,12 @@ function RootLayout() {
             stays visible on every screen. Defaults to ON; users can hide it
             from the panel that opens when they tap the bubble. */}
         <PerfMonitorBubble />
+        {/* App-wide realtime bridge — opens ONE Ably connection for the
+            logged-in user, subscribes to the personal notifications
+            channel so new conversations / messages show up the instant
+            another user sends them. Effects-only, no rendered output.
+            Connection is dropped by switchAccount() on logout / switch. */}
+        <RealtimeAccountBridge />
         {/* Dynamic Island companion overlay. Triggered by a long-press on
             the Home tab in the bottom navigation (see app/(tabs)/_layout.tsx
             `homeListeners`). Mounts only when the user activates it

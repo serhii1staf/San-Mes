@@ -20,7 +20,7 @@ import { MessageContextMenu, MessageAction } from '../../src/components/ui/Messa
 import { TranslationSheet } from '../../src/components/ui/TranslationSheet';
 import { ChatInputBar, ChatInputBarHandle } from '../../src/components/chat/ChatInputBar';
 import { GiphyPicker } from '../../src/components/ui/GiphyPicker';
-import { getRealtime, chatChannelName } from '../../src/services/realtime/ably';
+import { getRealtime, chatChannelName, userNotificationsChannelName } from '../../src/services/realtime/ably';
 import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
 import { useChatStore, useEntityStore, useConnectivityStore, useAuthStore } from '../../src/store';
 import { useChatSettingsStore, GLOBAL_CHAT_SETTINGS_KEY, DEFAULT_CHAT_SETTINGS } from '../../src/store/chatSettingsStore';
@@ -502,27 +502,32 @@ export default function ChatScreen() {
   // pulls a 1-hour token from /api/ably-token and reuses one client across
   // every chat the user opens. We only subscribe / unsubscribe to the
   // per-chat channel here, not the connection.
+  //
+  // Three event types:
+  //   - 'msg'        → new message from peer
+  //   - 'msg.edit'   → peer edited a message they sent earlier
+  //   - 'msg.delete' → peer deleted a message
   useEffect(() => {
     if (!id) return;
     const realtime = getRealtime();
     if (!realtime) return; // Not authenticated yet, or no deviceKey — degrade silently.
     const channel = realtime.channels.get(chatChannelName(id));
     const ownUserId = useAuthStore.getState().user?.id;
-    const onMessage = (msg: { data?: any }) => {
+
+    const onNewMessage = (msg: { data?: any }) => {
       const payload = msg?.data;
       if (!payload || typeof payload !== 'object') return;
       // Skip our own publishes — the optimistic addMessage already showed
-      // the message; receiving it again would dupe it. Compare against the
-      // sender id we actually wrote, not the UI marker 'current'.
+      // the message; receiving it again would dupe it.
       if (payload.senderId && ownUserId && payload.senderId === ownUserId) return;
       // Dedupe by id against the current store snapshot. Messages from the
       // peer are tagged with a stable client-side id by the publisher, so
       // a quick subscribe-after-publish race won't add the same row twice.
       const existing = useChatStore.getState().messages[id] || [];
       if (existing.some((m) => m.id === payload.id)) return;
-      // Translate the wire payload into our ChatMessage shape. The peer's
-      // own id is `payload.senderId`; from THIS device's perspective the
-      // sender is "peer", so we mark accordingly so the bubble aligns left.
+      // Translate the wire payload into our ChatMessage shape. From THIS
+      // device's perspective the sender is "peer", so we mark accordingly
+      // so the bubble aligns left.
       const incoming: ChatMessage = {
         id: payload.id,
         conversationId: id,
@@ -538,16 +543,42 @@ export default function ChatScreen() {
         imageUrls: Array.isArray(payload.imageUrls) ? payload.imageUrls : undefined,
       };
       addMessage(id, incoming);
-      // Briefly leave the scroll offset alone — if the user is reading
-      // older messages we don't yank them down. scrollToEnd is the
-      // user's own action via tapping a "new message" pill, not a
-      // realtime side effect.
     };
-    void channel.subscribe('msg', onMessage);
+
+    // Edit — peer changed text / images of a message we already have.
+    // Match by id; if not found (e.g. message loaded from Supabase has a
+    // different UUID-form id), the update is a silent no-op.
+    const onEdit = (msg: { data?: any }) => {
+      const payload = msg?.data;
+      if (!payload || typeof payload !== 'object' || !payload.id) return;
+      const current = useChatStore.getState().messages[id] || [];
+      const next = current.map((m) =>
+        m.id === payload.id
+          ? { ...m, text: typeof payload.text === 'string' ? payload.text : m.text, imageUrls: Array.isArray(payload.imageUrls) ? payload.imageUrls : m.imageUrls }
+          : m,
+      );
+      setMessages(id, next as any);
+    };
+
+    // Delete — peer removed a message. We just filter it out of the local
+    // list; no Supabase round-trip required because the peer already did
+    // (or will, when DB-side delete lands).
+    const onDelete = (msg: { data?: any }) => {
+      const payload = msg?.data;
+      if (!payload || typeof payload !== 'object' || !payload.id) return;
+      const current = useChatStore.getState().messages[id] || [];
+      setMessages(id, current.filter((m) => m.id !== payload.id) as any);
+    };
+
+    void channel.subscribe('msg', onNewMessage);
+    void channel.subscribe('msg.edit', onEdit);
+    void channel.subscribe('msg.delete', onDelete);
     return () => {
-      try { channel.unsubscribe('msg', onMessage); } catch {}
+      try { channel.unsubscribe('msg', onNewMessage); } catch {}
+      try { channel.unsubscribe('msg.edit', onEdit); } catch {}
+      try { channel.unsubscribe('msg.delete', onDelete); } catch {}
     };
-  }, [id, addMessage]);
+  }, [id, addMessage, setMessages]);
 
   // ── Message search ──────────────────────────────────────────────────────────
   const openSearch = useCallback(() => {
@@ -765,6 +796,16 @@ export default function ChatScreen() {
             const current = useChatStore.getState().messages[id] || [];
             setMessages(id, current.filter((m) => m.id !== message.id) as any);
             triggerHaptic('medium');
+            // Sync delete to the peer in realtime — so when this user
+            // deletes a message on their side, it disappears from the
+            // peer's open chat too. Telegram-style "delete for both".
+            try {
+              const realtime = getRealtime();
+              if (realtime && id) {
+                const channel = realtime.channels.get(chatChannelName(id));
+                void channel.publish('msg.delete', { id: message.id });
+              }
+            } catch {}
           },
         },
       ]);
@@ -788,7 +829,25 @@ export default function ChatScreen() {
         const results = await Promise.all(pendingImages.map((u) => u.startsWith('http') ? Promise.resolve({ url: u, error: null }) : uploadChatImage(u)));
         const urls = results.map((r) => r.url).filter(Boolean) as string[];
         setMessages(id, (useChatStore.getState().messages[id] || []).map((m) => (m.id === editing.id ? { ...m, imageUrls: urls.length ? urls : undefined } : m)) as any);
+        finalImages = urls.length ? urls : undefined;
       }
+      // Sync the edit to the peer's open chat. The receiver's subscription
+      // handler updates the message in place by id. Same caveats as
+      // realtime delete — only matches by message.id, so peers viewing
+      // history loaded from Supabase (which has its own UUIDs) won't see
+      // the edit; but anyone who received the message via the live Ably
+      // stream WILL.
+      try {
+        const realtime = getRealtime();
+        if (realtime && id) {
+          const channel = realtime.channels.get(chatChannelName(id));
+          void channel.publish('msg.edit', {
+            id: editing.id,
+            text,
+            imageUrls: finalImages,
+          });
+        }
+      } catch {}
       return;
     }
 
@@ -875,11 +934,16 @@ export default function ChatScreen() {
         // publish AFTER the Supabase insert resolved — that guarantees the
         // peer's optimistic addMessage maps to a real DB row, so when they
         // re-open the chat the message persists.
+        //
+        // We ALSO publish to the peer's personal `user:<peerId>:notifications`
+        // channel so the message + the conversation entry appear in their
+        // messages-tab list before they open the chat at all (Telegram-style
+        // "new chat appears with first message"). RealtimeAccountBridge
+        // subscribes to this channel app-wide.
         try {
           const realtime = getRealtime();
-          if (realtime && id) {
-            const channel = realtime.channels.get(chatChannelName(id));
-            void channel.publish('msg', {
+          if (realtime) {
+            const messageBody = {
               id: newMessage.id,
               senderId: user.id,
               text,
@@ -890,7 +954,29 @@ export default function ChatScreen() {
               replyToIsOwn: newMessage.replyToIsOwn,
               replyToImage: newMessage.replyToImage,
               replyPixelIconId: newMessage.replyPixelIconId,
-            });
+            };
+            if (id) {
+              const chatChan = realtime.channels.get(chatChannelName(id));
+              void chatChan.publish('msg', messageBody);
+            }
+            if (participantId) {
+              const peerChan = realtime.channels.get(userNotificationsChannelName(participantId));
+              // Pull our own profile out of the auth store to enrich the
+              // notification payload — that way the recipient's bridge has
+              // all the fields it needs to render the conversation row
+              // without an extra `profiles` round-trip.
+              const me = useAuthStore.getState().user;
+              void peerChan.publish('new_message', {
+                conversationId: convId,
+                senderId: user.id,
+                senderName: me?.displayName || '',
+                senderUsername: me?.username || '',
+                senderEmoji: me?.emoji || '😊',
+                lastMessage: text || (uploadedUrls.length > 0 ? '📷' : ''),
+                lastMessageAt: newMessage.createdAt,
+                message: messageBody,
+              });
+            }
           }
         } catch {}
       }
