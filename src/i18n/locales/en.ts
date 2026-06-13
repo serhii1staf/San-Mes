@@ -157,19 +157,13 @@ const en: Record<string, string> = {
   'weather_settings.search_placeholder': 'Type a city name',
   'weather_settings.hint': 'Data provided by Open-Meteo. You can change the city anytime.',
   'settings.weather': 'Weather',
-  'settings.nasa_apod': 'NASA picture of the day',
-
-  // ─── NASA Astronomy Picture of the Day ─────────────────────────────────
-  'nasa_apod.title': 'Picture of the Day',
-  'nasa_apod.error': "Couldn't load the picture. Check your connection and try again.",
-  'nasa_apod.video_open': 'Open video in browser',
-  'nasa_apod.source': 'Source: NASA Astronomy Picture of the Day',
 
   // ─── Translation sheet ─────────────────────────────────────────────────
   'translation.title': 'Translation',
   'translation.original': 'Original',
   'translation.detected': 'Detected: {lang} → {target}',
   'translation.error': "Couldn't translate. Check your connection and try again.",
+  'translation.copy_a11y': 'Copy translation',
   'chat.menu.translate': 'Translate',
 
   // ─── Notifications ─────────────────────────────────────────────────────

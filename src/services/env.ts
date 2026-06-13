@@ -22,11 +22,6 @@ function read(name: string): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-/** NASA APOD API key. `null` → fall back to `DEMO_KEY` (low rate limit). */
-export function getNasaKey(): string {
-  return read('EXPO_PUBLIC_NASA_KEY') || 'DEMO_KEY';
-}
-
 /** LibreTranslate API key. `null` → translation feature is disabled. */
 export function getLibreTranslateKey(): string | null {
   return read('EXPO_PUBLIC_LIBRETRANSLATE_KEY');
