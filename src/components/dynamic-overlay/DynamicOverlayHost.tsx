@@ -550,6 +550,19 @@ function DynamicOverlayHostInner() {
     transform: [{ rotate: `${interpolate(progress.value, [0, 1], [0, 180])}deg` }],
   }));
 
+  // Pill row content drops 8 px downward inside the card when the
+  // overlay is expanded. Collapsed-state geometry stays untouched
+  // (avatar/name/dot/icon/chevron/X are vertically centred in the
+  // 36 px pill row). When expanded, 8 px of paddingTop pushes the same
+  // row content lower so it doesn't read as "stuck against the top
+  // edge" of the bigger card. Driven on the UI thread via the same
+  // `progress` shared value the morph already uses, so there's no
+  // extra render trigger.
+  const pillRowStyle = useAnimatedStyle(() => ({
+    paddingTop: interpolate(progress.value, [0, 1], [0, 8]),
+    height: interpolate(progress.value, [0, 1], [COLLAPSED_HEIGHT, COLLAPSED_HEIGHT + 8]),
+  }));
+
   // The expanded-state tap-out region only catches when expanded — pointer
   // events flip on/off via the `expanded` flag. When collapsed, no
   // catchment exists and every touch outside the small pill passes
@@ -638,7 +651,7 @@ function DynamicOverlayHostInner() {
         <TopReflection isDark={isDark} radius={EXPANDED_RADIUS} />
 
         {/* Pill content row */}
-        <View style={styles.pillRow}>
+        <Animated.View style={[styles.pillRow, pillRowStyle]}>
           <View style={styles.avatar}>
             {userAvatar ? (
               <CachedImage
@@ -694,7 +707,7 @@ function DynamicOverlayHostInner() {
               color={isDark ? 'rgba(255,255,255,0.7)' : 'rgba(20,20,20,0.6)'}
             />
           </Pressable>
-        </View>
+        </Animated.View>
 
         {/* Expanded card body */}
         <Animated.View
