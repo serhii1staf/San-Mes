@@ -11,6 +11,7 @@ import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { UserBadge } from '../../src/components/ui/UserBadge';
 import { useChatStore, useEntityStore, useAuthStore } from '../../src/store';
 import { syncConversations, syncProfiles } from '../../src/services/syncService';
+import { prefetchRecentChatMedia } from '../../src/services/messagesPrefetch';
 import { kvGetJSONSync, kvSetJSON, kvWarm } from '../../src/services/kvStore';
 import { useMiniAppsStore } from '../../src/store/miniAppsStore';
 import { useChatSettingsStore, GLOBAL_CHAT_SETTINGS_KEY } from '../../src/store/chatSettingsStore';
@@ -126,6 +127,15 @@ function ConversationItemBase({ item, tab }: { item: Conversation; index: number
     router.push(`/chat/${item.id}?participantId=${item.participantId}` as any);
   };
 
+  // Long-press is a strong signal the user is about to open this chat (the
+  // native ContextMenu peek-and-pop also fires on long-press). Use that
+  // moment to warm the disk cache for THIS chat's last few message thumbs,
+  // independent of the bulk top-12 prefetch the screen already runs. Cheap,
+  // idempotent (expo-image dedupes by URL).
+  const onRowLongPress = () => {
+    void prefetchRecentChatMedia({ conversationIds: [item.id], budgetUris: 8 });
+  };
+
   return (
     <ContextMenu
       actions={actions}
@@ -133,6 +143,8 @@ function ConversationItemBase({ item, tab }: { item: Conversation; index: number
     >
       <Pressable
         onPress={openChat}
+        onLongPress={onRowLongPress}
+        delayLongPress={250}
         style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: theme.spacing.base }}
       >
         <Avatar emoji={item.participantEmoji} name={item.participantName} size="md" />
@@ -267,6 +279,35 @@ export default function MessagesScreen() {
     });
     return () => handle.cancel();
   }, [user?.id]);
+
+  // Pre-warm expo-image's disk cache for the most likely next chat opens.
+  // The user is almost always parked on this list for a beat or two before
+  // tapping a row — that idle time is enough to fetch the thumbs of the last
+  // few messages in each top conversation, so the chat opens with images
+  // already on disk instead of paying a 0.5–1.5 s cold weserv round-trip.
+  // Gated on `entityConversations` so we only prefetch what's locally
+  // visible, and chunked past `runAfterInteractions` so it never competes
+  // with the navigation transition. The signature ref keys on a stable hash
+  // of the top-12 IDs + their lastMessageAt so we re-run only when the
+  // ordering actually shifts (new message arrives, sync brings in new chats)
+  // rather than on every render.
+  const prefetchSigRef = useRef<string>('');
+  useEffect(() => {
+    if (entityConversations.length === 0) return;
+    // Sort a shallow copy so we don't mutate store state, then take the top 12
+    // by recency. `lastMessageAt` is an ISO string, so lex compare = chrono.
+    const top = [...entityConversations]
+      .sort((a, b) => (b.lastMessageAt || '').localeCompare(a.lastMessageAt || ''))
+      .slice(0, 12);
+    const sig = top.map((c) => `${c.id}:${c.lastMessageAt || ''}`).join('|');
+    if (sig === prefetchSigRef.current) return;
+    prefetchSigRef.current = sig;
+    const ids = top.map((c) => c.id);
+    const handle = InteractionManager.runAfterInteractions(() => {
+      void prefetchRecentChatMedia({ conversationIds: ids, budgetUris: 24 });
+    });
+    return () => handle.cancel();
+  }, [entityConversations]);
 
   // Use entityStore conversations as cache layer; fall back to chatStore if empty
   const conversations: Conversation[] = useMemo(() => {
