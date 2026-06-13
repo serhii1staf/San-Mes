@@ -18,6 +18,30 @@ import { triggerHaptic } from '../../utils/haptics';
 import { formatTimeAgo } from '../../utils/mockData';
 import { useT } from '../../i18n/store';
 import { perfMonitor } from '../../services/perfMonitor';
+import { useSettingsStore } from '../../store/settingsStore';
+
+// ─── Module-level "first frame" latch ──────────────────────────────────
+// The card's link-preview / regex pass is deferred past the first paint to
+// keep initial-mount cost low. Using a module-level latch (instead of per-
+// card `useState`) means once the first batch of cards finishes their
+// frame, every subsequent card mounts directly with `deferred = true` and
+// pays ZERO re-render cost. On the user's perf snapshot we saw ~40 cards
+// commit per profile-open, each previously paying one extra useState +
+// useEffect + setState round-trip — that storm is gone with this latch.
+let __firstFrameDone = false;
+let __firstFramePending: ((b: boolean) => void)[] = [];
+function __scheduleFirstFrameFlush() {
+  if (__firstFrameDone) return;
+  // Only the first card to mount kicks off the RAF. Subsequent cards just
+  // append themselves to the wait list.
+  if (__firstFramePending.length !== 1) return;
+  requestAnimationFrame(() => {
+    __firstFrameDone = true;
+    const list = __firstFramePending;
+    __firstFramePending = [];
+    for (const fn of list) fn(true);
+  });
+}
 
 interface ProfilePostCardProps {
   post: any;
@@ -75,26 +99,35 @@ function ProfilePostCardBase({ post, authorName, authorEmoji, authorVerified, au
   const theme = useTheme();
   const t = useT();
 
-  // Mount-time diagnostic — captures render→commit latency on the JS thread.
-  // Surfaces as `MOUNT ProfilePostCard <ms>` in the perf-monitor panel so
-  // SLOW frames on the (tabs)/profile screen have actionable context. The
-  // markScreenMount helper early-returns when the user has the perf bubble
-  // disabled, so the cost is one boolean check + one call.
-  const renderStart = Date.now();
+  // Mount-time diagnostic — only schedules a useEffect at all when the
+  // perf-monitor panel is enabled. Previously the effect fired on every
+  // card mount unconditionally, paying one Date.now() + microtask per
+  // card. With ~40 cards committing per profile-open that's 40 wasted
+  // microtasks for users who don't have the panel on (i.e. everyone in
+  // production).
+  const perfEnabled = useSettingsStore((s) => s.perfMonitorEnabled);
+  const renderStart = perfEnabled ? Date.now() : 0;
   useEffect(() => {
+    if (!perfEnabled) return;
     perfMonitor.markScreenMount('ProfilePostCard', Date.now() - renderStart);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [perfEnabled]);
 
-  // Defer non-critical children (the LinkPreview block) past the first
-  // paint. The critical-path content — avatar / name / body text /
-  // counters — mounts immediately. The link preview pops in one frame
-  // later so it doesn't compete with the next FlatList batch. This
-  // halves the per-card work the FlatList sees on the first frame.
-  const [deferred, setDeferred] = useState(false);
+  // Defer the LinkPreview pass past the first paint. We use a MODULE-LEVEL
+  // latch (see top of file) so:
+  //   - The first card to mount kicks off one RAF that flips the latch.
+  //   - Every card mounting AFTER that frame initializes its `deferred`
+  //     state with `true` directly — zero re-renders, zero extra effects,
+  //     zero microtasks. This is the optimization the perf snapshot was
+  //     asking for.
+  const [deferred, setDeferred] = useState(__firstFrameDone);
   useEffect(() => {
-    const r = requestAnimationFrame(() => setDeferred(true));
-    return () => cancelAnimationFrame(r);
+    if (__firstFrameDone) return;
+    __firstFramePending.push(setDeferred);
+    __scheduleFirstFrameFlush();
+    // No cleanup needed — the flush callback drains the array atomically.
+    // If the card unmounts before the flush, calling setDeferred on an
+    // unmounted component is a benign no-op in React 18+.
   }, []);
 
   // Pull derived data through `useMemo` so re-renders (theme flip,
