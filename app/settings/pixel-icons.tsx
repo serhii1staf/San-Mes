@@ -290,8 +290,8 @@ export default function PixelIconsScreen() {
           keyExtractor={keyExtractor}
           contentContainerStyle={{
             paddingHorizontal: 14,
-            // First row sits below the gradient header (60 px tall fixed).
-            paddingTop: 56,
+            // First row sits below the gradient header (76 px tall fixed).
+            paddingTop: 72,
             paddingBottom: insets.bottom + 90,
           }}
           showsVerticalScrollIndicator={false}
@@ -304,7 +304,7 @@ export default function PixelIconsScreen() {
           removeClippedSubviews={true}
         />
       ) : (
-        <View style={[styles.loaderWrap, { paddingTop: 56 }]}>
+        <View style={[styles.loaderWrap, { paddingTop: 72 }]}>
           <ActivityIndicator size="small" color={theme.colors.text.tertiary} />
         </View>
       )}
@@ -313,17 +313,15 @@ export default function PixelIconsScreen() {
           Solid bg at the very top blending to transparent at the bottom of
           the strip, so grid content scrolling underneath fades into the
           chrome rather than getting hard-clipped by an opaque bar.
-          The X / title / Apply controls sit at a HARD-CODED `paddingTop: 6`
-          rather than reading from the safe-area inset. iOS modal
-          presentation gives our content its own zeroed inset (the system
-          chrome above the sheet is the OS's, not ours), so adding any
-          inset.top here pushes the header artificially low. 6 px sits
-          right under the modal's drag-handle area without ever feeling
-          crammed. */}
+          Header padding settled at 22 px after several rounds of
+          oscillation: 14 was felt as "too low" / pushed-down, 6 was felt
+          as "too high" / crammed against the modal drag-handle. 22 sits
+          comfortably below the drag handle without diving toward the
+          middle of the sheet. */}
       <View
         style={[
           styles.headerWrapper,
-          { height: 60 },
+          { height: 76 },
         ]}
         pointerEvents="box-none"
       >
@@ -340,7 +338,7 @@ export default function PixelIconsScreen() {
         <View
           style={[
             styles.headerContent,
-            { paddingTop: 6 },
+            { paddingTop: 22 },
           ]}
           pointerEvents="auto"
         >

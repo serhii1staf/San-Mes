@@ -369,15 +369,23 @@ function DynamicOverlayHostInner() {
   useEffect(() => {
     if (visible) {
       dismissingRef.current = false;
-      // Reset the scale kick to neutral so a previous dismiss cycle's
-      // residual value doesn't bleed into the open animation.
+      // Reset every transient shared value to its neutral state. Without
+      // this the pill could "ghost" — if the user dragged it left and the
+      // auto-dismiss timer fired before they released, the next show()
+      // would render the pill at its last drag offset rather than the
+      // centred slot. The host doesn't unmount on hide (we early-return
+      // null AFTER hooks), so shared-values persist across visibility
+      // toggles unless we explicitly reset them here.
       scaleKick.value = 1;
+      dragX.value = 0;
+      dragY.value = 0;
+      dragStretch.value = 0;
       appearance.value = withTiming(1, {
         duration: DISMISS_FADE_MS,
         easing: Easing.out(Easing.cubic),
       });
     }
-  }, [visible, appearance, scaleKick]);
+  }, [visible, appearance, scaleKick, dragX, dragY, dragStretch]);
 
   // Re-fire the scale kick on EXPAND ONLY. On collapse the spring's
   // natural overshoot is enough — adding a separate kick made the card
@@ -481,14 +489,14 @@ function DynamicOverlayHostInner() {
       { translateY: interpolate(appearance.value, [0, 1], [-12, 0]) + dragY.value },
       // Liquid-stretch overshoot on tap-expand.
       { scale: scaleKick.value },
-      // Drag-stretch — smoother than the previous version. The direct
-      // dragX coefficient (was 0.0008) made the pill expand in the drag
-      // direction noticeably as soon as movement started. Halved to
-      // 0.0004 so the stretch builds gradually with `dragStretch`
-      // (which itself is normalised by 90 px of motion) doing most of
-      // the work.
-      { scaleX: 1 + Math.abs(dragX.value) * 0.0004 + dragStretch.value },
-      { scaleY: 1 - Math.abs(dragX.value) * 0.0002 - dragStretch.value * 0.4 },
+      // Drag-stretch — even smoother than v2. The direct dragX / dragY
+      // contributions to the scale axes were halved AGAIN (0.0004 →
+      // 0.0002 / 0.0002 → 0.0001), so the pill's stretch builds almost
+      // entirely from `dragStretch` (which itself ramps gradually over
+      // 110 px of motion). Net effect: barely any visible deformation
+      // for short drags, gentle bulge for long ones.
+      { scaleX: 1 + Math.abs(dragX.value) * 0.0002 + dragStretch.value },
+      { scaleY: 1 - Math.abs(dragX.value) * 0.0001 - dragStretch.value * 0.4 },
     ],
   }));
 
@@ -497,27 +505,27 @@ function DynamicOverlayHostInner() {
   // the pill 1:1 within bounds, stretches it slightly with motion, springs
   // back to centre on release. All on the UI thread.
   //
-  // Tuning round per user feedback: previous version stretched too
-  // sharply (especially horizontally) and the spring-back was too
-  // snappy. Reduced the per-pixel stretch coefficient, raised the Y
-  // travel cap so vertical drags feel like they actually do something,
-  // and softened the release spring so the pill eases back rather than
-  // snapping.
-  const PAN_TRANSLATE_X_MAX = 30;
-  const PAN_TRANSLATE_Y_MAX = 22;
-  const STRETCH_MAX = 0.04;
-  const DRAG_RELEASE_SPRING = { damping: 18, stiffness: 150, mass: 1.1 };
+  // Tuning round 3 per user feedback: previous version still felt too
+  // snappy when releasing. Softer release spring (lower stiffness, more
+  // damping, more mass) gives a slow ease-back. Tighter caps so even
+  // big drags don't yank the pill far enough to feel jumpy.
+  const PAN_TRANSLATE_X_MAX = 24;
+  const PAN_TRANSLATE_Y_MAX = 18;
+  const STRETCH_MAX = 0.025;
+  const DRAG_RELEASE_SPRING = { damping: 22, stiffness: 110, mass: 1.3 };
   const panGesture = useMemo(
     () =>
       Gesture.Pan()
         .minDistance(4)
         .onUpdate((e) => {
           'worklet';
-          dragX.value = Math.max(-PAN_TRANSLATE_X_MAX, Math.min(PAN_TRANSLATE_X_MAX, e.translationX));
-          // Match the X dampening on Y so vertical drags feel symmetrical
-          // (was 0.6 → reads as "barely moves down" for the same input).
+          dragX.value = Math.max(-PAN_TRANSLATE_X_MAX, Math.min(PAN_TRANSLATE_X_MAX, e.translationX * 0.85));
           dragY.value = Math.max(-PAN_TRANSLATE_Y_MAX, Math.min(PAN_TRANSLATE_Y_MAX, e.translationY * 0.85));
-          const mag = Math.min(1, Math.sqrt(e.translationX ** 2 + e.translationY ** 2) / 90);
+          // Stretch builds with finger distance, normalised over a longer
+          // distance (110 px → 0..1) so initial drag has barely any
+          // visible deformation. Smoother ramp-in than the previous
+          // 90 px normalisation.
+          const mag = Math.min(1, Math.sqrt(e.translationX ** 2 + e.translationY ** 2) / 110);
           dragStretch.value = mag * STRETCH_MAX;
         })
         .onFinalize(() => {
