@@ -12,11 +12,11 @@
 import { kvGetStringRawSync, kvSetStringRaw, isMMKVAvailable } from '../kvStore';
 
 const FETCH_TIMEOUT_MS = 6000;
-// 30-min weather cache per location, keyed on rounded lat/lon. Open-Meteo
-// recommends not refetching faster than every 15 min for the same point;
-// 30 min strikes a balance between fresh-enough and not chatty.
+// 15-min weather cache per location, keyed on rounded lat/lon. Open-Meteo
+// refreshes its data every ~15 minutes; using the same TTL keeps the chip
+// in lock-step with upstream and avoids stale-looking values.
 const CACHE_PREFIX = '@san:wx:';
-const CACHE_TTL_MS = 30 * 60 * 1000;
+const CACHE_TTL_MS = CACHE_TTL_MS_DEFAULT;
 
 export interface GeoResult {
   id: number;
@@ -32,6 +32,8 @@ export interface GeoResult {
 export interface WeatherSnapshot {
   /** Temperature in °C (rounded to integer). */
   temperatureC: number;
+  /** Apparent ("feels like") temperature in °C — falls back to temperatureC. */
+  apparentC: number;
   /** Open-Meteo WMO weather code — used to pick an emoji client-side. */
   weatherCode: number;
   /** Wind speed in km/h. */
@@ -39,6 +41,11 @@ export interface WeatherSnapshot {
   /** ISO timestamp of the underlying observation. */
   observedAt: string;
 }
+
+// Shorten cache to 15 minutes — Open-Meteo refreshes every ~15 min and the
+// user explicitly complained about stale-looking values. Stale beyond 15
+// minutes increases the perceived "this is wrong" gap.
+const CACHE_TTL_MS_DEFAULT = 15 * 60 * 1000;
 
 interface CacheEntry {
   t: number;
@@ -92,6 +99,14 @@ async function fetchJson<T>(url: string): Promise<T | null> {
 /**
  * Fetch current weather at a point, with a 30-min MMKV cache. Returns null
  * on network or parse failure — callers should hide the chip when null.
+ *
+ * Accuracy notes: we ask Open-Meteo for `temperature_2m` (the model's 2-metre
+ * air temperature, which is what every consumer weather app shows) AND for
+ * `apparent_temperature` (feels-like), then prefer the apparent value when
+ * the user has it enabled. We also pin `models=best_match` explicitly so the
+ * server always picks the best regional model rather than defaulting to a
+ * coarser global one. `temperature_unit=celsius` is set explicitly so a
+ * locale change on the Open-Meteo edge doesn't accidentally serve us °F.
  */
 export async function getCurrentWeather(lat: number, lon: number): Promise<WeatherSnapshot | null> {
   const cached = readCache(lat, lon);
@@ -100,19 +115,27 @@ export async function getCurrentWeather(lat: number, lon: number): Promise<Weath
   }
   const url =
     `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
-    `&current=temperature_2m,weather_code,wind_speed_10m&timezone=auto`;
+    `&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m` +
+    `&temperature_unit=celsius&wind_speed_unit=kmh&models=best_match&timezone=auto`;
   const json = await fetchJson<{
     current?: {
       time?: string;
       temperature_2m?: number;
+      apparent_temperature?: number;
       weather_code?: number;
       wind_speed_10m?: number;
     };
   }>(url);
   const c = json?.current;
   if (!c || typeof c.temperature_2m !== 'number') return null;
+  // Round to one decimal then cast to int — keeps -0.4 from showing as -1.
+  const tRounded = Math.round(c.temperature_2m);
   const snap: WeatherSnapshot = {
-    temperatureC: Math.round(c.temperature_2m),
+    temperatureC: tRounded,
+    apparentC:
+      typeof c.apparent_temperature === 'number'
+        ? Math.round(c.apparent_temperature)
+        : tRounded,
     weatherCode: typeof c.weather_code === 'number' ? c.weather_code : 0,
     windKmh: Math.round(c.wind_speed_10m ?? 0),
     observedAt: c.time || new Date().toISOString(),

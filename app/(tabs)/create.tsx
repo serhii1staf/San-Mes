@@ -225,18 +225,22 @@ export default function CreateScreen() {
       }
     }
 
-    // Content moderation: hard-block on csam / extreme-violence; for other
-    // categories the post still goes through but we surface a one-time
-    // warning toast (the post may end up auto-flagged on the server too).
+    // Content moderation: hard-block ONLY zero-tolerance categories (CSAM,
+    // extreme violence). Profanity / slurs / explicit content are allowed
+    // — the app aims for neutrality, mirroring how Telegram, Instagram,
+    // and X let users write freely in posts. The strict rule lives only on
+    // usernames / display names (validateName), not on post bodies.
+    //
+    // Apple App Review still requires a moderation surface — that's covered
+    // by the existing report-and-block flow on PostMenuModal, NOT by
+    // upfront filtering of every post.
     if (content.trim()) {
       const mod = validatePost(content);
       if (!mod.ok) {
         Alert.alert(t('create.alert.blocked_title'), t(mod.reasonKey || 'moderation.reason.profanity'));
         return;
       }
-      if (mod.warn) {
-        showToast(t('moderation.warn.posted_with_warning'), 'alert-triangle');
-      }
+      // Soft warnings deliberately ignored — neutral platform.
     }
 
     setIsPosting(true);
