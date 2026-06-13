@@ -19,6 +19,29 @@ import { triggerHaptic } from '../../utils/haptics';
 import { formatTimeAgo } from '../../utils/mockData';
 import { useT } from '../../i18n/store';
 import { perfMonitor } from '../../services/perfMonitor';
+import { useSettingsStore } from '../../store/settingsStore';
+
+// ─── Module-level "first frame" latch ──────────────────────────────────
+// Same pattern as `ProfilePostCard.tsx`: replace per-card useState +
+// useEffect(RAF→setState) with a shared latch so cards mounted after the
+// first frame skip the deferral storm entirely. Each profile open used to
+// pay one extra re-render per card on the next frame; with this latch the
+// first card kicks off one RAF, all subsequent cards initialize their
+// `deferred` state already-true.
+let __firstFrameDone = false;
+let __firstFramePending: ((b: boolean) => void)[] = [];
+function __scheduleFirstFrameFlush() {
+  if (__firstFrameDone) return;
+  // Only the first card to mount kicks off the RAF. Later cards just
+  // append themselves to the wait list; the RAF callback drains the array.
+  if (__firstFramePending.length !== 1) return;
+  requestAnimationFrame(() => {
+    __firstFrameDone = true;
+    const list = __firstFramePending;
+    __firstFramePending = [];
+    for (const fn of list) fn(true);
+  });
+}
 
 interface UserProfilePostCardProps {
   post: any;
@@ -89,25 +112,29 @@ function UserProfilePostCardBase({
   const theme = useTheme();
   const t = useT();
 
-  // Mount-time diagnostic — captures render→commit latency on the JS thread.
-  // Surfaces as `MOUNT UserProfilePostCard <ms>` in the perf-monitor panel so
-  // SLOW frames on profile screens have actionable context. The
-  // markScreenMount helper early-returns when the user has the perf bubble
-  // disabled, so this is essentially free in production.
-  const renderStart = Date.now();
+  // Mount-time diagnostic — only schedules a useEffect when the perf
+  // monitor is on. With ~40 cards committing per profile-open the
+  // unconditional effect was paying 40 microtasks for users who don't
+  // have the panel enabled (i.e. nearly everyone in production).
+  const perfEnabled = useSettingsStore((s) => s.perfMonitorEnabled);
+  const renderStart = perfEnabled ? Date.now() : 0;
   useEffect(() => {
+    if (!perfEnabled) return;
     perfMonitor.markScreenMount('UserProfilePostCard', Date.now() - renderStart);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [perfEnabled]);
 
-  // Defer the LinkPreview block past the first paint. The critical-path
-  // content (avatar, name, body text, counters) appears immediately;
-  // the link preview pops in one frame later so it doesn't compete
-  // with the next FlatList batch.
-  const [deferred, setDeferred] = useState(false);
+  // Defer the LinkPreview block past the first paint via the module-level
+  // latch (see top of file). Cards mounted after the first card's RAF
+  // initialize `deferred` directly with `true` — zero re-renders for the
+  // bulk of cards in any list-mount storm.
+  const [deferred, setDeferred] = useState(__firstFrameDone);
   useEffect(() => {
-    const r = requestAnimationFrame(() => setDeferred(true));
-    return () => cancelAnimationFrame(r);
+    if (__firstFrameDone) return;
+    __firstFramePending.push(setDeferred);
+    __scheduleFirstFrameFlush();
+    // No cleanup — calling setDeferred on an unmounted component is a
+    // benign no-op in React 18+.
   }, []);
 
   const postImages: string[] = useMemo(() => {
