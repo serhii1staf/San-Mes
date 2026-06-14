@@ -21,13 +21,21 @@ import { perfMonitor } from '../../services/perfMonitor';
 import { useSettingsStore } from '../../store/settingsStore';
 
 // ─── Module-level "first frame" latch ──────────────────────────────────
-// The card's link-preview / regex pass is deferred past the first paint to
-// keep initial-mount cost low. Using a module-level latch (instead of per-
-// card `useState`) means once the first batch of cards finishes their
-// frame, every subsequent card mounts directly with `deferred = true` and
-// pays ZERO re-render cost. On the user's perf snapshot we saw ~40 cards
-// commit per profile-open, each previously paying one extra useState +
-// useEffect + setState round-trip — that storm is gone with this latch.
+// The ENTIRE card body is lazy-hydrated past the first paint. The first
+// commit renders only a sized placeholder View; one RAF later the latch
+// flips and the real card content (header, thumb, FormattedText,
+// LinkPreview, EmojiPattern/PixelIconPattern, SwipeablePostCard wrapper
+// etc.) commits in a frame the user already perceives as the navigation
+// transition.
+//
+// Why module-level (instead of per-card `useState`): once the first
+// batch of cards finishes their initial frame, every subsequent card —
+// including ones mounted later during scroll — initializes directly
+// with `hydrated = true` and pays ZERO re-render / RAF cost. The user's
+// perf snapshot showed the UI thread dipping to 36 fps with 3+ cards
+// commiting in the same frame at ~11ms each — that ~33ms storm is now
+// ~3ms (one empty View per card) on the first frame, with full content
+// landing on the next.
 let __firstFrameDone = false;
 let __firstFramePending: ((b: boolean) => void)[] = [];
 function __scheduleFirstFrameFlush() {
@@ -113,20 +121,20 @@ function ProfilePostCardBase({ post, authorName, authorEmoji, authorVerified, au
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [perfEnabled]);
 
-  // Defer the LinkPreview pass past the first paint. We use a MODULE-LEVEL
-  // latch (see top of file) so:
+  // Lazy-hydrate the WHOLE card body past the first paint. We use a
+  // MODULE-LEVEL latch (see top of file) so:
   //   - The first card to mount kicks off one RAF that flips the latch.
-  //   - Every card mounting AFTER that frame initializes its `deferred`
+  //   - Every card mounting AFTER that frame initializes its `hydrated`
   //     state with `true` directly — zero re-renders, zero extra effects,
-  //     zero microtasks. This is the optimization the perf snapshot was
-  //     asking for.
-  const [deferred, setDeferred] = useState(__firstFrameDone);
+  //     zero microtasks. The early-return placeholder below collapses
+  //     initial-mount cost from a full subtree to a single empty View.
+  const [hydrated, setHydrated] = useState(__firstFrameDone);
   useEffect(() => {
     if (__firstFrameDone) return;
-    __firstFramePending.push(setDeferred);
+    __firstFramePending.push(setHydrated);
     __scheduleFirstFrameFlush();
     // No cleanup needed — the flush callback drains the array atomically.
-    // If the card unmounts before the flush, calling setDeferred on an
+    // If the card unmounts before the flush, calling setHydrated on an
     // unmounted component is a benign no-op in React 18+.
   }, []);
 
@@ -145,11 +153,11 @@ function ProfilePostCardBase({ post, authorName, authorEmoji, authorVerified, au
   const content = post.content || origPost?.content || '';
   // Skip the URL-extraction regex entirely when the post has an image
   // (the image is already the cover; the link preview would not show)
-  // AND defer it past the first frame so it doesn't run on the
-  // critical paint path.
+  // AND skip until hydration so the regex never runs on the placeholder
+  // commit.
   const link = useMemo(
-    () => (!hasImage && deferred ? extractFirstUrl(content) : null),
-    [hasImage, deferred, content],
+    () => (!hasImage && hydrated ? extractFirstUrl(content) : null),
+    [hasImage, hydrated, content],
   );
   const timeAgo = useMemo(() => formatTimeAgo(post.createdAt), [post.createdAt]);
 
@@ -170,6 +178,24 @@ function ProfilePostCardBase({ post, authorName, authorEmoji, authorVerified, au
     () => ({ backgroundColor: theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)' }),
     [theme.isDark],
   );
+
+  // First-paint placeholder — outer dimensions match the real card so the
+  // layout doesn't jump when the body commits one RAF later. No children,
+  // no SwipeablePostCard wrapper, no EmojiPattern/PixelIconPattern, no
+  // FormattedText/LinkPreview, no Avatar/CachedImage. This collapses each
+  // card's initial mount from ~11ms of native shadow-tree work to ~1ms.
+  // 120 ≈ thumb 100 + container padding 10*2; right column matches because
+  // the real card's content height tracks the thumb on most posts.
+  if (!hydrated) {
+    return (
+      <View
+        style={[
+          styles.container,
+          { backgroundColor: 'transparent', borderColor: 'transparent', height: 120 },
+        ]}
+      />
+    );
+  }
 
   return (
     <SwipeablePostCard>

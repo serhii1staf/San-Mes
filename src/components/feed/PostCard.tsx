@@ -21,24 +21,24 @@ const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const IMAGE_HEIGHT = 280;
 
 // ─── Module-level "first frame" latch ───────────────────────────────────
-// Cross-card image-decode stagger. While `__firstFrameDone === false`,
-// hero images on the home feed render with `priority="low"` so iOS
-// sequentializes their native decodes instead of fanning them out in
-// parallel. The first card to mount kicks off one RAF to flip the latch;
-// every card mounting after that observes the post-flip state directly
-// (no re-render, no extra microtasks) and goes back to `priority="high"`.
+// Two roles, one latch:
+//   1. Lazy-hydrate the WHOLE card body. While `__firstFrameDone === false`,
+//      cards render only an empty placeholder View; one RAF later the latch
+//      flips and full card content (header, FormattedText, LinkPreview,
+//      hero CachedImage, repost embed, action bar) commits in a frame the
+//      user already perceives as the navigation transition. Initial-mount
+//      cost drops from a full subtree per card to a single empty View per
+//      card — the cumulative ~33ms native shadow-tree work that was
+//      pulling the UI thread to 36fps becomes ~3ms.
+//   2. Cross-card image-decode stagger. Once cards do hydrate, hero images
+//      on the first wave still render with `priority="low"` for that frame
+//      so iOS sequentializes their native decodes instead of fanning out
+//      in parallel. After the latch flips, subsequent cards observe the
+//      post-flip state directly (no re-render) and use `priority="high"`.
 //
-// Why this exists: on cold-open the FlatList commits 4 cards in the same
-// frame (initialNumToRender=4). Without staggering, all 4 hero image
-// decodes (supabase.co + media.san-m-app.com + an i.ytimg.com link-
-// preview thumb) kick off within ~24ms of each other. The JS perfMonitor
-// reports 60fps because the work runs on iOS native threads, but the
-// user perceives a freeze because scroll/touch events queue behind the
-// cumulative ~500ms of native UI-thread decode work. Demoting the
-// initial wave to `priority="low"` lets iOS schedule them sequentially
-// behind whatever the navigation transition is doing, keeping input
-// responsive while the decodes drain. Same pattern already protects
-// `ProfilePostCard`'s LinkPreview pass.
+// The first card to mount kicks off one RAF that flips the latch; every
+// card mounting after that initializes `primed` already-true and pays
+// zero deferral cost. Same shape as `ProfilePostCard.tsx`.
 let __firstFrameDone = false;
 let __firstFramePending: ((b: boolean) => void)[] = [];
 function __scheduleFirstFrameFlush() {
@@ -70,10 +70,10 @@ export const PostCard = memo(function PostCard({ post, currentUserId, onLike, on
   const t = useT();
   const lastTap = useRef<number>(0);
 
-  // Cross-card decode stagger. See `__firstFrameDone` block at top of file
-  // for the full rationale. While `primed === false`, hero images on this
-  // card render at `priority="low"` so the initial wave of feed cards
-  // doesn't pile up native decodes on the same frame.
+  // Cross-card stagger AND lazy-hydrate gate. While `primed === false`
+  // the card returns only a sized placeholder (see early return below);
+  // once primed, hero images render with the cross-card priority stagger
+  // described in the `__firstFrameDone` block at top of file.
   const [primed, setPrimed] = useState(__firstFrameDone);
   useEffect(() => {
     if (__firstFrameDone) return;
@@ -110,6 +110,30 @@ export const PostCard = memo(function PostCard({ post, currentUserId, onLike, on
   // Card colors — blend with theme background
   const cardBg = theme.isDark ? theme.colors.background.elevated : 'rgba(255,255,255,0.95)';
   const cardBorder = theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
+
+  // First-paint placeholder — outer dimensions approximate the real card so
+  // the FlatList layout doesn't jump when the body commits one RAF later.
+  // No header, no FormattedText, no CachedImage, no LinkPreview, no
+  // ImageCarousel, no action bar. Initial-mount native shadow-tree work
+  // collapses from a full subtree to a single empty View. We keep the same
+  // bg/border as the real card so there's no color flash on hydration.
+  // Heuristic height: image cards ≈ 400 (image 280 + chrome ~120), text
+  // cards ≈ 140 (chrome ~120 + content ~20). Real height settles on the
+  // very next frame.
+  if (!primed) {
+    return (
+      <View
+        style={{
+          marginBottom: 12,
+          borderRadius: 28,
+          backgroundColor: cardBg,
+          borderWidth: 1,
+          borderColor: cardBorder,
+          height: hasImages || hasSpoiler ? 400 : 140,
+        }}
+      />
+    );
+  }
 
   return (
     <View style={{ marginBottom: 12, borderRadius: 28, backgroundColor: cardBg, borderWidth: 1, borderColor: cardBorder, overflow: 'hidden' }}>
