@@ -352,7 +352,7 @@ const ru: Record<string, string> = {
 
   // ─── AI chat ───────────────────────────────────────────────────────────
   'ai_chat.title': 'San AI',
-  'ai_chat.input_placeholder': 'Напиши что-нибудь...',
+  'ai_chat.input_placeholder': 'Сообщение',
   'ai_chat.thinking': 'Думаю...',
   'ai_chat.empty_hint': 'Могу сменить тему, имя, эмодзи, био. Просто попроси!',
   'ai_chat.error_connection': 'Ошибка подключения.',
@@ -406,12 +406,14 @@ const ru: Record<string, string> = {
   'ai_chat.flow.create_error': 'Не получилось: {error}',
   'ai_chat.flow.update_success': 'Изменения сохранены',
   'ai_chat.flow.cancelled': 'Отменено',
+  'ai_chat.flow.back': 'Назад',
   'ai_chat.flow.url_invalid': 'Похоже, это не ссылка. Попробуйте ещё раз: «Отправьте ссылку»',
   'ai_chat.flow.signin_required': 'Войдите, чтобы управлять мини-приложениями',
   'ai_chat.manage.title': 'Ваши мини-приложения',
   'ai_chat.manage.empty': 'У вас пока нет мини-приложений. Используйте «Создать» чтобы добавить первое.',
   'ai_chat.manage.delete_title': 'Удалить мини-приложение?',
   'ai_chat.manage.deleted': 'Удалено',
+  'ai_chat.manage.share': 'Поделиться',
 
   // ─── Post context menu ─────────────────────────────────────────────────
   'post_context.repost': 'Репост',

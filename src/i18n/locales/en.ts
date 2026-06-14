@@ -343,7 +343,7 @@ const en: Record<string, string> = {
 
   // ─── AI chat ───────────────────────────────────────────────────────────
   'ai_chat.title': 'San AI',
-  'ai_chat.input_placeholder': 'Type something...',
+  'ai_chat.input_placeholder': 'Message',
   'ai_chat.thinking': 'Thinking...',
   'ai_chat.empty_hint': 'I can change the theme, name, emoji, bio. Just ask!',
   'ai_chat.error_connection': 'Connection error.',
@@ -394,12 +394,14 @@ const en: Record<string, string> = {
   'ai_chat.flow.create_error': "Didn't work: {error}",
   'ai_chat.flow.update_success': 'Changes saved',
   'ai_chat.flow.cancelled': 'Cancelled',
+  'ai_chat.flow.back': 'Back',
   'ai_chat.flow.url_invalid': "That doesn't look like a link. Try again: 'Send the link'",
   'ai_chat.flow.signin_required': 'Sign in to manage mini apps',
   'ai_chat.manage.title': 'Your mini apps',
   'ai_chat.manage.empty': "You don't have any mini apps yet. Use 'Create' to add one.",
   'ai_chat.manage.delete_title': 'Delete mini app?',
   'ai_chat.manage.deleted': 'Deleted',
+  'ai_chat.manage.share': 'Share',
 
   // ─── Post context menu ─────────────────────────────────────────────────
   'post_context.repost': 'Repost',

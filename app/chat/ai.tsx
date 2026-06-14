@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
-import { View, Pressable, TextInput, FlatList, ActivityIndicator, Dimensions, Text as RNText, Platform, LayoutAnimation, UIManager, InteractionManager, Animated, Alert } from 'react-native';
+import { View, Pressable, TextInput, FlatList, ActivityIndicator, Dimensions, Text as RNText, Platform, LayoutAnimation, UIManager, InteractionManager, Animated, Alert, Share } from 'react-native';
 import { KeyboardStickyView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
 import Reanimated, { useAnimatedStyle } from 'react-native-reanimated';
 import { Feather } from '@expo/vector-icons';
@@ -21,6 +21,7 @@ import { useT } from '../../src/i18n/store';
 import { showToast } from '../../src/store/toastStore';
 import { perfMonitor } from '../../src/services/perfMonitor';
 import { ThemeIconCarousel } from '../../src/components/pixel-icons/ThemeIconCarousel';
+import { buildMiniAppShareUrl } from '../../src/utils/miniAppShare';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 
@@ -198,9 +199,10 @@ interface ManageListBubbleProps {
   ownerId: string | undefined;
   onEdit: (app: MiniApp) => void;
   onDelete: (app: MiniApp) => void;
+  onShare: (app: MiniApp) => void;
 }
 
-function ManageListBubble({ ownerId, onEdit, onDelete }: ManageListBubbleProps) {
+function ManageListBubble({ ownerId, onEdit, onDelete, onShare }: ManageListBubbleProps) {
   const theme = useTheme();
   const t = useT();
   // Live selector so creating / deleting elsewhere updates this bubble
@@ -233,7 +235,10 @@ function ManageListBubble({ ownerId, onEdit, onDelete }: ManageListBubbleProps) 
               <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 11, marginTop: 1 }}>{app.description}</Text>
             ) : null}
           </View>
-          <Pressable onPress={() => onEdit(app)} hitSlop={8} style={{ padding: 6, marginLeft: 4 }}>
+          <Pressable onPress={() => onShare(app)} hitSlop={8} style={{ padding: 6, marginLeft: 4 }}>
+            <Feather name="share-2" size={14} color={theme.colors.text.secondary} />
+          </Pressable>
+          <Pressable onPress={() => onEdit(app)} hitSlop={8} style={{ padding: 6 }}>
             <Feather name="edit-2" size={14} color={theme.colors.text.secondary} />
           </Pressable>
           <Pressable onPress={() => onDelete(app)} hitSlop={8} style={{ padding: 6 }}>
@@ -397,6 +402,22 @@ export default function AIChatScreen() {
     [t],
   );
 
+  // Share — produces an internal short share URL via buildMiniAppShareUrl.
+  // The underlying app.url is intentionally NOT included; the recipient
+  // resolves it through the SSR landing page or the in-app deep-link
+  // handler depending on whether they have the app installed.
+  const handleShareApp = useCallback(
+    async (app: MiniApp) => {
+      triggerHaptic('light');
+      try {
+        await Share.share({
+          message: `${app.emoji} ${app.name}\n${buildMiniAppShareUrl(app)}`,
+        });
+      } catch {}
+    },
+    [],
+  );
+
   const runCommand = useCallback(
     (id: CommandId) => {
       setCommandsOpen(false);
@@ -436,6 +457,54 @@ export default function AIChatScreen() {
     setEmojiPickerOpen(false);
     appendItems([aiBubble(t('ai_chat.flow.cancelled'))]);
   }, [appendItems, t]);
+
+  // Step the conversational flow back one prompt. From the first step
+  // (create_name / edit_name) Back fully cancels the flow. From the
+  // emoji and url steps, Back returns to the previous prompt while
+  // preserving the partially-typed draft so the user only re-confirms.
+  const handleFlowBack = useCallback(() => {
+    triggerHaptic('light');
+    switch (flowStep) {
+      case 'create_name':
+      case 'edit_name':
+        // Step 1 → cancel the whole flow.
+        cancelFlow();
+        return;
+      case 'create_emoji':
+        // Pre-fill the input with the draft name so re-confirmation is one tap.
+        setFlowStep('create_name');
+        setEmojiPickerOpen(false);
+        if (draft.name) setInput(draft.name);
+        appendItems([aiBubble(t('ai_chat.flow.prompt_name'))]);
+        return;
+      case 'edit_emoji':
+        setFlowStep('edit_name');
+        setEmojiPickerOpen(false);
+        if (draft.name) setInput(draft.name);
+        appendItems([aiBubble(`${t('ai_chat.flow.prompt_name')} (${draft.name})`)]);
+        return;
+      case 'create_url':
+        // Bounce back to the emoji step — the auto-open useEffect will
+        // re-show the picker. The previously chosen emoji stays in draft.
+        setFlowStep('create_emoji');
+        appendItems([aiBubble(t('ai_chat.flow.prompt_emoji'))]);
+        return;
+      case 'edit_url':
+        setFlowStep('edit_emoji');
+        appendItems([aiBubble(t('ai_chat.flow.prompt_emoji'))]);
+        return;
+      default:
+        return;
+    }
+  }, [flowStep, draft.name, cancelFlow, appendItems, t]);
+
+  const inFlow =
+    flowStep === 'create_name' ||
+    flowStep === 'create_emoji' ||
+    flowStep === 'create_url' ||
+    flowStep === 'edit_name' ||
+    flowStep === 'edit_emoji' ||
+    flowStep === 'edit_url';
 
   const handleSend = useCallback(async () => {
     const text = input.trim();
@@ -566,8 +635,8 @@ export default function AIChatScreen() {
       useNativeDriver: false,
     }).start();
   }, [input.length === 0]);
-  const commandWidth = commandExpand.interpolate({ inputRange: [0, 1], outputRange: [44, 140] });
-  const commandLabelW = commandExpand.interpolate({ inputRange: [0, 1], outputRange: [0, 88] });
+  const commandWidth = commandExpand.interpolate({ inputRange: [0, 1], outputRange: [40, 110] });
+  const commandLabelW = commandExpand.interpolate({ inputRange: [0, 1], outputRange: [0, 64] });
   const commandLabelML = commandExpand.interpolate({ inputRange: [0, 1], outputRange: [0, 5] });
   const commandLabelOpacity = commandExpand.interpolate({ inputRange: [0, 0.55, 1], outputRange: [0, 0, 1] });
 
@@ -647,13 +716,13 @@ export default function AIChatScreen() {
             <View style={{ backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)', borderRadius: 20, borderBottomLeftRadius: 6, paddingHorizontal: 14, paddingVertical: 10 }}>
               <Text style={{ fontSize: 14, color: theme.colors.text.primary, lineHeight: 20 }}>{item.content}</Text>
             </View>
-            <ManageListBubble ownerId={user?.id} onEdit={startEditFlow} onDelete={handleDeleteApp} />
+            <ManageListBubble ownerId={user?.id} onEdit={startEditFlow} onDelete={handleDeleteApp} onShare={handleShareApp} />
           </View>
         );
       }
       return <MemoMessageBubble message={item} onActionUpdate={handleActionUpdate} />;
     },
-    [handleActionUpdate, theme.isDark, theme.colors.text.primary, user?.id, startEditFlow, handleDeleteApp],
+    [handleActionUpdate, theme.isDark, theme.colors.text.primary, user?.id, startEditFlow, handleDeleteApp, handleShareApp],
   );
 
   return (
@@ -759,42 +828,69 @@ export default function AIChatScreen() {
           ) : null}
 
           <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 8 }}>
-            {/* Commands button — collapses to a 44×44 circle while the user is
-                typing, expands back to a labelled pill when the input is empty.
-                Same animation primitive as Music chat. */}
-            <Animated.View style={{ width: commandWidth, height: 44, alignSelf: 'flex-end', overflow: 'hidden' }}>
+            {/* Commands button — same VISUAL height as the input bubble (40px),
+                width animates between full label and icon-only via a single
+                Animated.Value. Mirrors `app/chat/music.tsx` so both AI and
+                Music chats share the same input-bar geometry.
+                When the user is in a conversational flow step, this slot
+                instead renders a Back button so the geometry stays put. */}
+            {inFlow ? (
               <Pressable
-                onPress={() => { triggerHaptic('light'); setCommandsOpen((v) => !v); }}
+                onPress={handleFlowBack}
                 hitSlop={6}
+                accessibilityLabel={t('ai_chat.flow.back')}
                 style={{
-                  width: '100%',
-                  height: '100%',
+                  width: 40,
+                  height: 40,
+                  alignSelf: 'flex-end',
                   flexDirection: 'row',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  borderRadius: 22,
-                  backgroundColor: commandsOpen ? theme.colors.accent.primary : (theme.isDark ? 'rgba(40,40,40,0.95)' : 'rgba(245,245,245,0.95)'),
+                  borderRadius: 20,
+                  backgroundColor: theme.isDark ? 'rgba(40,40,40,0.95)' : 'rgba(245,245,245,0.95)',
                   borderWidth: 1,
                   borderColor: theme.colors.border.light,
                 }}
               >
-                <Feather name="command" size={16} color={commandsOpen ? '#FFFFFF' : theme.colors.accent.primary} />
-                <Animated.Text
-                  numberOfLines={1}
-                  allowFontScaling={false}
-                  style={{
-                    width: commandLabelW,
-                    marginLeft: commandLabelML,
-                    opacity: commandLabelOpacity,
-                    fontSize: 12,
-                    fontWeight: '600',
-                    color: commandsOpen ? '#FFFFFF' : theme.colors.accent.primary,
-                  }}
-                >{t('ai_chat.commands_label')}</Animated.Text>
+                <Feather name="arrow-left" size={16} color={theme.colors.text.secondary} />
               </Pressable>
-            </Animated.View>
+            ) : (
+              <Animated.View style={{ width: commandWidth, height: 40, alignSelf: 'flex-end', overflow: 'hidden' }}>
+                <Pressable
+                  onPress={() => { triggerHaptic('light'); setCommandsOpen((v) => !v); }}
+                  hitSlop={6}
+                  style={{
+                    width: '100%',
+                    height: '100%',
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    // 20 = 50% of 40, so collapsed (40×40) is a perfect circle.
+                    // Expanded (110×40) keeps the same 20px radius.
+                    borderRadius: 20,
+                    backgroundColor: commandsOpen ? theme.colors.accent.primary : (theme.isDark ? 'rgba(40,40,40,0.95)' : 'rgba(245,245,245,0.95)'),
+                    borderWidth: 1,
+                    borderColor: theme.colors.border.light,
+                  }}
+                >
+                  <Feather name="command" size={16} color={commandsOpen ? '#FFFFFF' : theme.colors.accent.primary} />
+                  <Animated.Text
+                    numberOfLines={1}
+                    allowFontScaling={false}
+                    style={{
+                      width: commandLabelW,
+                      marginLeft: commandLabelML,
+                      opacity: commandLabelOpacity,
+                      fontSize: 12,
+                      fontWeight: '600',
+                      color: commandsOpen ? '#FFFFFF' : theme.colors.accent.primary,
+                    }}
+                  >{t('ai_chat.commands_label')}</Animated.Text>
+                </Pressable>
+              </Animated.View>
+            )}
 
-            <View style={{ flex: 1, flexDirection: 'row', alignItems: 'flex-end', backgroundColor: theme.isDark ? 'rgba(40,40,40,0.95)' : 'rgba(245,245,245,0.95)', borderRadius: 24, paddingHorizontal: 16, paddingVertical: 8, borderWidth: 1, borderColor: theme.colors.border.light, minHeight: 44 }}>
+            <View style={{ flex: 1, flexDirection: 'row', alignItems: 'flex-end', backgroundColor: theme.isDark ? 'rgba(40,40,40,0.95)' : 'rgba(245,245,245,0.95)', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 6, borderWidth: 1, borderColor: theme.colors.border.light, minHeight: 40 }}>
               <TextInput
                 value={input}
                 onChangeText={setInput}
@@ -805,8 +901,8 @@ export default function AIChatScreen() {
                 style={{ flex: 1, fontSize: 14, color: theme.colors.text.primary, maxHeight: 100, paddingTop: 0, paddingBottom: 0, minHeight: 22, lineHeight: 20, alignSelf: 'center' }}
                 onContentSizeChange={() => { LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); }}
               />
-              <Pressable onPress={handleSend} disabled={!input.trim() || isLoading} style={{ alignSelf: 'flex-end', width: 32, height: 32, borderRadius: 16, backgroundColor: input.trim() ? theme.colors.accent.primary : 'transparent', alignItems: 'center', justifyContent: 'center', marginLeft: 8, marginBottom: 2 }}>
-                <Feather name="send" size={14} color={input.trim() ? '#FFFFFF' : theme.colors.text.tertiary} />
+              <Pressable onPress={handleSend} disabled={!input.trim() || isLoading} style={{ alignSelf: 'flex-end', width: 28, height: 28, borderRadius: 14, backgroundColor: input.trim() ? theme.colors.accent.primary : 'transparent', alignItems: 'center', justifyContent: 'center', marginLeft: 8, marginBottom: 1 }}>
+                <Feather name="send" size={13} color={input.trim() ? '#FFFFFF' : theme.colors.text.tertiary} />
               </Pressable>
             </View>
           </View>
