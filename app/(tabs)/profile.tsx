@@ -288,10 +288,16 @@ export default function ProfileScreen() {
 
       const half = Math.ceil(data.length / 2);
       const firstHalf = data.slice(0, half).map(buildPost);
-      // Yield to the JS thread so any queued input or animation frame can
-      // run before we do the second half. `await Promise.resolve()` is the
-      // cheapest microtask hand-off available — no allocations, no timers.
-      await Promise.resolve();
+      // Yield to the JS thread with a real macrotask break so any queued
+      // input or RAF callback can run between the two halves. A microtask
+      // (await Promise.resolve()) does NOT split the task boundary —
+      // microtasks drain inside the current macrotask, so the whole 100-
+      // item map would still register as a single long task to the
+      // monitor (and to the OS scheduler). setTimeout(0) yields back to
+      // the event loop, breaking the synchronous burst that was landing
+      // as the 1311 ms long task users saw 5–6 s after the profile tab
+      // opened.
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
       const secondHalf = data.slice(half).map(buildPost);
       const mapped: Post[] = firstHalf.concat(secondHalf);
       setProfilePosts(mapped);
