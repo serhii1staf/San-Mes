@@ -101,9 +101,22 @@ export default function MiniAppScreen() {
   const canShare = !!shareableId;
 
   const handleMinimize = () => {
-    // Store the ACTUAL current URL (not encoded) for reopening
-    useBrowserStore.getState().setMinimized(currentUrl || decodedUrl, displayName, true, appEmoji);
+    // Pop the mini-app screen FIRST, then flip the minimized state ~1
+    // dismiss duration later. Doing both on the same tap (the previous
+    // sequence: setMinimized → router.back()) made the bottom widget
+    // pop in INSTANTLY at the bottom of the screen while the mini-app
+    // surface above was still mid-slide-down — the widget appearance
+    // raced ahead of the iOS dismiss animation, so the user saw the
+    // pill flash in before the page they came from had finished
+    // leaving. Deferring `setMinimized` past the dismiss animation
+    // (`fullScreenModal` slide_from_bottom takes ~280 ms on iOS) lines
+    // the two up: the page slides off, then the widget rises into
+    // place, in sequence rather than overlapping.
+    const url = currentUrl || decodedUrl;
     router.back();
+    setTimeout(() => {
+      useBrowserStore.getState().setMinimized(url, displayName, true, appEmoji);
+    }, 280);
   };
 
   const handleClose = () => {

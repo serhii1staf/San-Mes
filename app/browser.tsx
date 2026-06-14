@@ -28,12 +28,22 @@ export default function BrowserScreen() {
     clearMinimized();
   }, []);
 
-  // When modal is dismissed via swipe (not X button), minimize to bar
+  // When modal is dismissed via swipe (not X button), minimize to bar.
+  // We deliberately defer the `setMinimized` flip past the iOS dismiss
+  // animation (`presentation: 'modal' / slide_from_bottom` ≈ 280 ms) so
+  // the bottom widget rises into place AFTER the page finishes sliding
+  // away — without the timeout the widget popped in instantly while the
+  // page was still mid-animation, racing the dismissal and reading as a
+  // visual glitch. We snapshot the URL at gesture-start because the
+  // screen is already unmounting by the time the timer fires.
   useEffect(() => {
     const unsubscribe = navigation.addListener('beforeRemove', () => {
       if (!closedManually.current) {
-        // Swipe dismiss — save to minimized state
-        setMinimized(currentUrl || decodedUrl, displayDomain);
+        const url = currentUrl || decodedUrl;
+        const domain = displayDomain;
+        setTimeout(() => {
+          setMinimized(url, domain);
+        }, 280);
       }
     });
     return unsubscribe;
