@@ -50,6 +50,11 @@ const en: Record<string, string> = {
   'profile.likes': 'Likes',
   'profile.followers': 'followers',
   'profile.following': 'following',
+  // Capitalised short variants used in the redesigned profile header
+  // (compact pill stats), distinct from the lowercase counter labels
+  // above which still appear inline next to a numeric count.
+  'profile.followers_short': 'Followers',
+  'profile.following_short': 'Following',
   'profile.posts_count': 'posts',
   'profile.no_posts': 'No posts yet',
   'profile.empty_section': 'Nothing here yet',
@@ -227,6 +232,13 @@ const en: Record<string, string> = {
   'edit_profile.link_type': 'Type',
   'edit_profile.link_save': 'Save',
   'edit_profile.link_add': 'Add',
+  // Banner position editor (drag + pinch) — shown after picking a banner
+  // image, or via the "Position" pill on an existing banner.
+  'edit_profile.banner.editor_title': 'Position banner',
+  'edit_profile.banner.editor_hint': 'Drag and pinch to position',
+  'edit_profile.banner.save': 'Save',
+  'edit_profile.banner.cancel': 'Cancel',
+  'edit_profile.banner.adjust': 'Position',
 
   // ─── Emoji categories ──────────────────────────────────────────────────
   'emoji.cat.mood': 'Mood',

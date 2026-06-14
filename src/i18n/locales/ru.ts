@@ -53,6 +53,11 @@ const ru: Record<string, string> = {
   'profile.likes': 'Лайки',
   'profile.followers': 'подписчиков',
   'profile.following': 'подписок',
+  // Capitalised short variants used in the redesigned profile header
+  // (compact pill stats), distinct from the lowercase counter labels
+  // above which still appear inline next to a numeric count.
+  'profile.followers_short': 'Подписчики',
+  'profile.following_short': 'Подписки',
   'profile.posts_count': 'постов',
   'profile.no_posts': 'Ещё нет публикаций',
   'profile.empty_section': 'Пока пусто',
@@ -229,6 +234,13 @@ const ru: Record<string, string> = {
   'edit_profile.link_type': 'Тип',
   'edit_profile.link_save': 'Сохранить',
   'edit_profile.link_add': 'Добавить',
+  // Banner position editor (drag + pinch) — shown after picking a banner
+  // image, or via the "Position" pill on an existing banner.
+  'edit_profile.banner.editor_title': 'Расположение баннера',
+  'edit_profile.banner.editor_hint': 'Перетащите и масштабируйте',
+  'edit_profile.banner.save': 'Сохранить',
+  'edit_profile.banner.cancel': 'Отмена',
+  'edit_profile.banner.adjust': 'Расположить',
 
   // ─── Emoji categories ──────────────────────────────────────────────────
   'emoji.cat.mood': 'Настроение',

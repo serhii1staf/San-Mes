@@ -32,6 +32,7 @@ import { useT } from '../../src/i18n/store';
 import { perfMonitor } from '../../src/services/perfMonitor';
 import { useSettingsStore } from '../../src/store/settingsStore';
 import { useBlockedUsersStore, useIsBlocked } from '../../src/store/blockedUsersStore';
+import { parseBannerTransform, stripBannerTransform } from '../../src/utils/bannerTransform';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const SCREEN_HEIGHT = Dimensions.get('window').height;
@@ -376,6 +377,13 @@ export default function UserProfileScreen() {
     () => scrollY.interpolate({ inputRange: [0, 180, 250], outputRange: [0, 0, 60], extrapolate: 'clamp' }),
     [scrollY],
   );
+  // Center-header stats (Following / Followers pills) — fade out as the
+  // banner scrolls off-screen so they don't fight the floating "follow"
+  // badge that appears once you've scrolled past the avatar.
+  const centerStatsOpacity = useMemo(
+    () => scrollY.interpolate({ inputRange: [0, 80, 160], outputRange: [1, 1, 0], extrapolate: 'clamp' }),
+    [scrollY],
+  );
   const badgeOpacity = useMemo(
     () => scrollY.interpolate({ inputRange: [180, 220], outputRange: [0, 1], extrapolate: 'clamp' }),
     [scrollY],
@@ -613,7 +621,13 @@ export default function UserProfileScreen() {
   }
 
   const isOwnProfile = currentUser?.id === displayProfile.id;
-  const bannerUrl = displayProfile.banner_url;
+  const bannerUrlRaw = displayProfile.banner_url as string | null | undefined;
+  // Banner URL is stored with an optional `#x=&y=&s=` hash carrying the
+  // user-chosen position + zoom (see src/utils/bannerTransform.ts). The
+  // hash must be stripped before the value goes through the image
+  // proxy — `proxiedImageUrl` would otherwise percent-encode it.
+  const bannerUrl = stripBannerTransform(bannerUrlRaw) || undefined;
+  const bannerTransform = parseBannerTransform(bannerUrlRaw);
   // Memoize the userLinks parse — was running on every render. The links
   // string can be ~50–500 chars depending on how many social URLs the user
   // saved; parsing it 60×/sec while the profile re-renders during scroll
@@ -636,8 +650,13 @@ export default function UserProfileScreen() {
         <LinearGradient colors={[theme.colors.background.primary, theme.colors.background.primary, theme.colors.background.primary + '00']} locations={[0, 0.6, 1]} style={{ flex: 1 }} />
       </Animated.View>
 
-      {/* Fixed header buttons - animate out on scroll */}
-      <View style={{ position: 'absolute', top: insets.top + 8, left: 16, right: 16, flexDirection: 'row', justifyContent: 'space-between', zIndex: 100 }}>
+      {/* Fixed header buttons - animate out on scroll. The redesigned
+          layout drops compact follow-stat pills between the back button
+          and the menu button so the counters stay within thumb reach
+          regardless of scroll position; they fade out via
+          `centerStatsOpacity` once the banner has scrolled past, which
+          is also when the floating "follow" badge takes over. */}
+      <View style={{ position: 'absolute', top: insets.top + 8, left: 16, right: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', zIndex: 100 }}>
         <Animated.View style={{ transform: [{ translateX: buttonsTranslateX }] }}>
           <Pressable onPress={() => router.back()} style={{ borderRadius: 17, overflow: 'hidden' }}>
             {chromeReady ? (
@@ -647,6 +666,42 @@ export default function UserProfileScreen() {
             ) : (
               <View style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.4)' }}>
                 <Feather name="chevron-left" size={18} color="#FFFFFF" />
+              </View>
+            )}
+          </Pressable>
+        </Animated.View>
+        <Animated.View pointerEvents="box-none" style={{ flexDirection: 'row', alignItems: 'center', gap: 6, opacity: centerStatsOpacity }}>
+          <Pressable
+            onPress={() => { triggerHaptic('selection'); setFollowsModal('following'); }}
+            hitSlop={6}
+            style={{ borderRadius: 14, overflow: 'hidden' }}
+          >
+            {chromeReady ? (
+              <BlurView intensity={80} tint="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6 }}>
+                <Text variant="caption" weight="bold" color="#FFFFFF" style={{ fontSize: 12 }}>{followCounts.following}</Text>
+                <Text variant="caption" color="rgba(255,255,255,0.85)" style={{ fontSize: 11 }}>{t('profile.following_short')}</Text>
+              </BlurView>
+            ) : (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6, backgroundColor: 'rgba(0,0,0,0.4)' }}>
+                <Text variant="caption" weight="bold" color="#FFFFFF" style={{ fontSize: 12 }}>{followCounts.following}</Text>
+                <Text variant="caption" color="rgba(255,255,255,0.85)" style={{ fontSize: 11 }}>{t('profile.following_short')}</Text>
+              </View>
+            )}
+          </Pressable>
+          <Pressable
+            onPress={() => { triggerHaptic('selection'); setFollowsModal('followers'); }}
+            hitSlop={6}
+            style={{ borderRadius: 14, overflow: 'hidden' }}
+          >
+            {chromeReady ? (
+              <BlurView intensity={80} tint="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6 }}>
+                <Text variant="caption" weight="bold" color="#FFFFFF" style={{ fontSize: 12 }}>{followCounts.followers}</Text>
+                <Text variant="caption" color="rgba(255,255,255,0.85)" style={{ fontSize: 11 }}>{t('profile.followers_short')}</Text>
+              </BlurView>
+            ) : (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6, backgroundColor: 'rgba(0,0,0,0.4)' }}>
+                <Text variant="caption" weight="bold" color="#FFFFFF" style={{ fontSize: 12 }}>{followCounts.followers}</Text>
+                <Text variant="caption" color="rgba(255,255,255,0.85)" style={{ fontSize: 11 }}>{t('profile.followers_short')}</Text>
               </View>
             )}
           </Pressable>
@@ -701,54 +756,101 @@ export default function UserProfileScreen() {
         contentContainerStyle={{ paddingBottom: 100, paddingHorizontal: 16, paddingTop: 12 }}
         ListHeaderComponent={(
           <>
-            {/* Banner — full width, undoes the 16px content gutter */}
-            <View style={{ height: 200, marginHorizontal: -16, marginTop: -12, backgroundColor: theme.colors.accent.primary + '20' }}>
-              {bannerUrl && chromeReady ? <CachedImage uri={bannerUrl} style={{ width: '100%', height: '100%' }} resizeMode="cover" proxyWidth={800} /> : null}
-              <LinearGradient colors={['transparent', theme.colors.background.primary]} style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 60 }} />
+            {/* Banner — bumped to 240 (was 200) for the redesigned
+                centered layout. The lower fade gradient grew with it so
+                the white name/handle overlay reads cleanly. The
+                `transform` on the image applies the user-chosen
+                position + zoom from the URL hash; identity transform
+                for legacy banners means existing data renders
+                unchanged. */}
+            <View style={{ height: 240, marginHorizontal: -16, marginTop: -12, backgroundColor: theme.colors.accent.primary + '20', overflow: 'hidden' }}>
+              {bannerUrl && chromeReady ? (
+                <CachedImage
+                  uri={bannerUrl}
+                  style={{
+                    width: '100%',
+                    height: '100%',
+                    transform: [
+                      { translateX: bannerTransform.translateX },
+                      { translateY: bannerTransform.translateY },
+                      { scale: bannerTransform.scale },
+                    ],
+                  }}
+                  resizeMode="cover"
+                  proxyWidth={800}
+                />
+              ) : null}
+              <LinearGradient colors={['transparent', 'rgba(0,0,0,0.55)']} locations={[0.4, 1]} style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 110 }} pointerEvents="none" />
+              {/* Name + @username overlay — sits in the lower 30% of
+                  the banner, just above the centered avatar. */}
+              <View pointerEvents="none" style={{ position: 'absolute', bottom: 48, left: 0, right: 0, alignItems: 'center', paddingHorizontal: 24 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, maxWidth: '100%' }}>
+                  <Text
+                    variant="caption"
+                    weight="bold"
+                    numberOfLines={1}
+                    style={{ fontSize: 14, color: '#FFFFFF', textShadowColor: 'rgba(0,0,0,0.45)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3, flexShrink: 1 }}
+                  >
+                    {displayProfile.display_name}
+                  </Text>
+                  {displayProfile.is_verified && <VerifiedBadge size={12} />}
+                  {displayProfile.badge && <UserBadge badge={displayProfile.badge} size="sm" />}
+                </View>
+                <Text
+                  variant="caption"
+                  numberOfLines={1}
+                  style={{ fontSize: 11, color: 'rgba(255,255,255,0.85)', marginTop: 2, textShadowColor: 'rgba(0,0,0,0.45)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 }}
+                >
+                  @{displayProfile.username}
+                </Text>
+              </View>
+              <LinearGradient colors={['transparent', theme.colors.background.primary]} style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 36 }} pointerEvents="none" />
             </View>
 
-            {/* Profile info */}
-            <View style={{ marginTop: -90 }}>
+            {/* Centered avatar — overlaps banner bottom by ~36px */}
+            <View style={{ alignSelf: 'center', marginTop: -36 }}>
               <View style={{ width: 72, height: 72, borderRadius: 36, overflow: 'hidden', borderWidth: 3, borderColor: theme.colors.background.primary, backgroundColor: theme.isDark ? 'rgba(30,30,30,0.85)' : 'rgba(255,255,255,0.85)', alignItems: 'center', justifyContent: 'center' }}>
                 <Avatar emoji={displayProfile.emoji || '😊'} size="lg" />
               </View>
+            </View>
 
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}>
-                <View style={{ flex: 1, marginRight: 8 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                    <Text variant="body" weight="bold" numberOfLines={1} style={{ flexShrink: 1 }}>{displayProfile.display_name}</Text>
-                    {displayProfile.is_verified && <VerifiedBadge size={13} />}
-                    {displayProfile.badge && <UserBadge badge={displayProfile.badge} size="sm" />}
-                  </View>
-                  <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>@{displayProfile.username}</Text>
-                </View>
-                {!isOwnProfile && (
-                  <View style={{ flexDirection: 'row', gap: 8 }}>
-                    {fromChat !== '1' && (
-                      <Pressable onPress={() => router.push({ pathname: '/chat/[id]', params: { id: displayProfile.id } })} style={{ width: 36, height: 36, borderRadius: 18, borderWidth: 1, borderColor: theme.colors.border.medium, alignItems: 'center', justifyContent: 'center' }}>
-                        <Feather name="send" size={16} color={theme.colors.text.primary} />
-                      </Pressable>
-                    )}
-                    <Pressable onPress={handleFollow} style={{ paddingHorizontal: 20, paddingVertical: 8, backgroundColor: isFollowingState ? 'transparent' : theme.colors.accent.primary, borderWidth: isFollowingState ? 1 : 0, borderColor: theme.colors.border.medium, borderRadius: 8 }}>
-                      <Text variant="caption" weight="semibold" color={isFollowingState ? theme.colors.text.primary : '#FFFFFF'}>{isFollowingState ? t('profile.unfollow') : t('profile.follow')}</Text>
-                    </Pressable>
+            {/* Action row (Message + Follow) — only for other users.
+                Centered below the avatar so the redesigned layout stays
+                vertically symmetric. */}
+            {!isOwnProfile && (
+              <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 8, marginTop: 12 }}>
+                {fromChat !== '1' && (
+                  <Pressable onPress={() => router.push({ pathname: '/chat/[id]', params: { id: displayProfile.id } })} style={{ width: 36, height: 36, borderRadius: 18, borderWidth: 1, borderColor: theme.colors.border.medium, alignItems: 'center', justifyContent: 'center' }}>
+                    <Feather name="send" size={16} color={theme.colors.text.primary} />
+                  </Pressable>
+                )}
+                <Pressable onPress={handleFollow} style={{ paddingHorizontal: 24, paddingVertical: 8, backgroundColor: isFollowingState ? 'transparent' : theme.colors.accent.primary, borderWidth: isFollowingState ? 1 : 0, borderColor: theme.colors.border.medium, borderRadius: 18 }}>
+                  <Text variant="caption" weight="semibold" color={isFollowingState ? theme.colors.text.primary : '#FFFFFF'}>{isFollowingState ? t('profile.unfollow') : t('profile.follow')}</Text>
+                </Pressable>
+              </View>
+            )}
+
+            {/* Bio + social link icons — centered, no separate counter
+                row (counters live in the top header pills above). */}
+            {(displayProfile.bio || userLinks.length > 0) && (
+              <View style={{ marginTop: isOwnProfile ? 12 : 14, alignItems: 'center', paddingHorizontal: 8 }}>
+                {displayProfile.bio ? (
+                  <LinkedText
+                    style={{
+                      textAlign: 'center',
+                      color: theme.colors.text.secondary,
+                    }}
+                  >
+                    {displayProfile.bio}
+                  </LinkedText>
+                ) : null}
+                {userLinks.length > 0 && (
+                  <View style={{ flexDirection: 'row', marginTop: displayProfile.bio ? 10 : 0, gap: 8, justifyContent: 'center' }}>
+                    {userLinks.map((link: any, idx: number) => <SocialLinkIcon key={idx} type={link.type} url={link.url} />)}
                   </View>
                 )}
               </View>
-
-              <View style={{ flexDirection: 'row', marginTop: 10, gap: 16 }}>
-                <Text variant="caption"><Text variant="caption" weight="bold">{displayPosts.length}</Text> <Text variant="caption" color={theme.colors.text.tertiary}>posts</Text></Text>
-                <Pressable onPress={() => { triggerHaptic('selection'); setFollowsModal('following'); }} hitSlop={6}>
-                  <Text variant="caption"><Text variant="caption" weight="bold">{followCounts.following}</Text> <Text variant="caption" color={theme.colors.text.tertiary}>following</Text></Text>
-                </Pressable>
-                <Pressable onPress={() => { triggerHaptic('selection'); setFollowsModal('followers'); }} hitSlop={6}>
-                  <Text variant="caption"><Text variant="caption" weight="bold">{followCounts.followers}</Text> <Text variant="caption" color={theme.colors.text.tertiary}>followers</Text></Text>
-                </Pressable>
-              </View>
-
-              {displayProfile.bio ? <LinkedText style={{ marginTop: 8 }}>{displayProfile.bio}</LinkedText> : null}
-              {userLinks.length > 0 && <View style={{ flexDirection: 'row', marginTop: 8, gap: 8 }}>{userLinks.map((link: any, idx: number) => <SocialLinkIcon key={idx} type={link.type} url={link.url} />)}</View>}
-            </View>
+            )}
 
             {/* Tabs — full width via negative margin */}
             <View style={{ marginTop: 16, marginHorizontal: -16, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border.light }}>
