@@ -703,6 +703,30 @@ const en: Record<string, string> = {
   'profile.follow': 'Follow',
   'profile.unfollow': 'Unfollow',
 
+  // ─── Followers / Following modal ───────────────────────────────────────
+  'profile.followers_modal.title': 'Followers',
+  'profile.followers_modal.empty': 'No followers yet',
+  'profile.following_modal.title': 'Following',
+  'profile.following_modal.empty': 'Not following anyone yet',
+  'profile.followers_modal.error': 'Could not load the list',
+
+  // ─── Block user (post / profile / comments) ────────────────────────────
+  'block.action': 'Block user',
+  'block.action_unblock': 'Unblock user',
+  'block.confirm_title': 'Block @{username}?',
+  'block.confirm_msg': "They won't see your posts and you won't see theirs. You can undo this later in Blocked.",
+  'block.unblock_confirm_title': 'Unblock @{username}?',
+  'block.unblock_confirm_msg': "You'll be able to see each other's posts and messages again.",
+  'block.toast.blocked': 'User blocked',
+  'block.toast.unblocked': 'User unblocked',
+  'block.placeholder.title': 'Hidden',
+  'block.placeholder.subtitle': 'You blocked this user',
+  'block.placeholder.tap_to_unblock': 'Tap to unblock',
+  'block.section.title': 'Blocked',
+  'block.section.empty': 'No blocked users',
+  'block.section.last_seen': 'was online recently',
+  'block.menu.unblock': 'Unblock',
+
   // ─── Post repost label ─────────────────────────────────────────────────
   'post.repost_label': 'Repost',
   'post.reposted_by': '{name} reposted',

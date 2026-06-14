@@ -715,6 +715,30 @@ const ru: Record<string, string> = {
   'profile.follow': 'Подписаться',
   'profile.unfollow': 'Отписаться',
 
+  // ─── Followers / Following modal ───────────────────────────────────────
+  'profile.followers_modal.title': 'Подписчики',
+  'profile.followers_modal.empty': 'Пока нет подписчиков',
+  'profile.following_modal.title': 'Подписки',
+  'profile.following_modal.empty': 'Пока ни на кого не подписан',
+  'profile.followers_modal.error': 'Не удалось загрузить список',
+
+  // ─── Block user (post / profile / comments) ────────────────────────────
+  'block.action': 'Заблокировать пользователя',
+  'block.action_unblock': 'Разблокировать пользователя',
+  'block.confirm_title': 'Заблокировать @{username}?',
+  'block.confirm_msg': 'Они не увидят ваши посты, а вы не увидите их. Это можно отменить позже в разделе «Заблокированные».',
+  'block.unblock_confirm_title': 'Разблокировать @{username}?',
+  'block.unblock_confirm_msg': 'Вы снова сможете видеть посты и сообщения друг друга.',
+  'block.toast.blocked': 'Пользователь заблокирован',
+  'block.toast.unblocked': 'Пользователь разблокирован',
+  'block.placeholder.title': 'Скрыто',
+  'block.placeholder.subtitle': 'Вы заблокировали этого пользователя',
+  'block.placeholder.tap_to_unblock': 'Нажмите чтобы разблокировать',
+  'block.section.title': 'Заблокированные',
+  'block.section.empty': 'Нет заблокированных пользователей',
+  'block.section.last_seen': 'был(а) недавно',
+  'block.menu.unblock': 'Разблокировать',
+
   // ─── Post repost label ─────────────────────────────────────────────────
   'post.repost_label': 'Репост',
   'post.reposted_by': '{name} репостнул(а)',
