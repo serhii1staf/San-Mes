@@ -756,14 +756,16 @@ export default function UserProfileScreen() {
         contentContainerStyle={{ paddingBottom: 100, paddingHorizontal: 16, paddingTop: 12 }}
         ListHeaderComponent={(
           <>
-            {/* Banner — bumped to 240 (was 200) for the redesigned
-                centered layout. The lower fade gradient grew with it so
-                the white name/handle overlay reads cleanly. The
-                `transform` on the image applies the user-chosen
-                position + zoom from the URL hash; identity transform
-                for legacy banners means existing data renders
+            {/* Banner — 300 (was 240): user wanted more banner real estate
+                so the image reads as a substantial surface, not a strip.
+                The lower fade gradient grew with it (140 / 48) so the
+                white name pill reads cleanly regardless of banner content
+                and the avatar's circular border eases into the content
+                area below. The `transform` on the image applies the
+                user-chosen position + zoom from the URL hash; identity
+                transform for legacy banners means existing data renders
                 unchanged. */}
-            <View style={{ height: 240, marginHorizontal: -16, marginTop: -12, backgroundColor: theme.colors.accent.primary + '20', overflow: 'hidden' }}>
+            <View style={{ height: 300, marginHorizontal: -16, marginTop: -12, backgroundColor: theme.colors.accent.primary + '20', overflow: 'hidden' }}>
               {bannerUrl && chromeReady ? (
                 <CachedImage
                   uri={bannerUrl}
@@ -777,24 +779,34 @@ export default function UserProfileScreen() {
                     ],
                   }}
                   resizeMode="cover"
-                  proxyWidth={800}
+                  // Taller banner needs a higher source resolution so iOS
+                  // doesn't upscale-blur it. 1080 covers the widest iPhone
+                  // we target at 3× DPR with cover-fit headroom for pan/zoom.
+                  proxyWidth={1080}
                 />
               ) : null}
-              <LinearGradient colors={['transparent', 'rgba(0,0,0,0.55)']} locations={[0.4, 1]} style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 110 }} pointerEvents="none" />
-              {/* Name + @username overlay — sits in the lower 30% of
-                  the banner, just above the centered avatar. */}
-              <View pointerEvents="none" style={{ position: 'absolute', bottom: 48, left: 0, right: 0, alignItems: 'center', paddingHorizontal: 24 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, maxWidth: '100%' }}>
-                  <Text
-                    variant="caption"
-                    weight="bold"
-                    numberOfLines={1}
-                    style={{ fontSize: 14, color: '#FFFFFF', textShadowColor: 'rgba(0,0,0,0.45)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3, flexShrink: 1 }}
-                  >
-                    {displayProfile.display_name}
-                  </Text>
-                  {displayProfile.is_verified && <VerifiedBadge size={12} />}
-                  {displayProfile.badge && <UserBadge badge={displayProfile.badge} size="sm" />}
+              <LinearGradient colors={['transparent', 'rgba(0,0,0,0.55)']} locations={[0.4, 1]} style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 140 }} pointerEvents="none" />
+              {/* Name + @username overlay — sits above the centered avatar.
+                  Display name + verified badge + UserBadge wrapped in a
+                  translucent pill so identity feels contained rather than
+                  naked text floating on the image. Flat translucent View
+                  only — no BlurView (chrome budget; see chromeReady). The
+                  @username sits OUTSIDE the pill and keeps its textShadow
+                  for legibility against the gradient. */}
+              <View pointerEvents="none" style={{ position: 'absolute', bottom: 78, left: 0, right: 0, alignItems: 'center', paddingHorizontal: 24 }}>
+                <View style={{ alignSelf: 'center', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 14, backgroundColor: 'rgba(0,0,0,0.32)', borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.18)' }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, maxWidth: '100%' }}>
+                    <Text
+                      variant="caption"
+                      weight="bold"
+                      numberOfLines={1}
+                      style={{ fontSize: 14, color: '#FFFFFF', flexShrink: 1 }}
+                    >
+                      {displayProfile.display_name}
+                    </Text>
+                    {displayProfile.is_verified && <VerifiedBadge size={12} />}
+                    {displayProfile.badge && <UserBadge badge={displayProfile.badge} size="sm" />}
+                  </View>
                 </View>
                 <Text
                   variant="caption"
@@ -804,11 +816,12 @@ export default function UserProfileScreen() {
                   @{displayProfile.username}
                 </Text>
               </View>
-              <LinearGradient colors={['transparent', theme.colors.background.primary]} style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 36 }} pointerEvents="none" />
+              <LinearGradient colors={['transparent', theme.colors.background.primary]} style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 48 }} pointerEvents="none" />
             </View>
 
-            {/* Centered avatar — overlaps banner bottom by ~36px */}
-            <View style={{ alignSelf: 'center', marginTop: -36 }}>
+            {/* Centered avatar — overlaps banner bottom by 72px (was 36) so
+                the identity block rides higher inside the taller banner. */}
+            <View style={{ alignSelf: 'center', marginTop: -72 }}>
               <View style={{ width: 72, height: 72, borderRadius: 36, overflow: 'hidden', borderWidth: 3, borderColor: theme.colors.background.primary, backgroundColor: theme.isDark ? 'rgba(30,30,30,0.85)' : 'rgba(255,255,255,0.85)', alignItems: 'center', justifyContent: 'center' }}>
                 <Avatar emoji={displayProfile.emoji || '😊'} size="lg" />
               </View>

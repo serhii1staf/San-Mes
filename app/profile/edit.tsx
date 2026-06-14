@@ -35,10 +35,10 @@ import {
 
 const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = Dimensions.get('window');
 
-// Editor frame matches the on-display banner height (240) so the user
+// Editor frame matches the on-display banner height (300) so the user
 // is positioning the image inside the exact frame they'll see on the
 // profile screen — what they see here is what shows there.
-const BANNER_EDIT_HEIGHT = 240;
+const BANNER_EDIT_HEIGHT = 300;
 const MIN_SCALE = 1;
 const MAX_SCALE = 3;
 
@@ -402,7 +402,7 @@ export default function EditProfileScreen() {
                   },
                 ]}
                 resizeMode="cover"
-                proxyWidth={800}
+                proxyWidth={1080}
               />
             ) : null}
             <LinearGradient
@@ -683,7 +683,7 @@ export default function EditProfileScreen() {
       </Modal>
 
       {/* Banner position editor — drag + pinch the picked image inside
-          a 240-tall banner-shaped frame, then save. Reanimated drives
+          a 300-tall banner-shaped frame, then save. Reanimated drives
           everything on the UI thread so the gesture stays at 60fps even
           while the JS thread is busy with the rest of the form. The
           GestureHandlerRootView wrapper inside the Modal is mandatory —
