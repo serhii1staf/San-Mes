@@ -87,9 +87,21 @@ export function BrowserBottomBand() {
     // practice produced occasional 1-pixel "white seams" between the
     // band and the tab bar mid-animation. Transforms don't affect layout
     // so the parent stays still; only the band's pixels shift.
+    //
+    // Outer opacity is bound to `opacitySV` too so the BAND ITSELF (the
+    // solid `background.primary` rectangle) fades alongside the inner
+    // content. Without this the inner content faded over 180 ms while
+    // the outer background stayed at full opacity until the height
+    // collapse finished (320 ms) — so for the last ~140 ms the user
+    // saw a band-shaped solid colour rectangle thinning down to a
+    // sliver, which on dark themes against a light parent (or on
+    // light themes anywhere) read as a "white line" flickering at
+    // the bottom of the screen. Driving the entire surface from one
+    // opacity SV erases that residual artefact.
     const progress = heightSV.value / BAND_HEIGHT;
     return {
       height: heightSV.value,
+      opacity: opacitySV.value,
       transform: [{ translateY: -14 * progress }],
     };
   });
