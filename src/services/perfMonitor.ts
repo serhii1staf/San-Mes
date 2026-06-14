@@ -246,7 +246,15 @@ class PerfMonitor {
           return;
         }
         const rawFps = Math.round((this._frameCount * 1000) / elapsed);
-        const fps = Math.min(120, rawFps);
+        // Cap displayed FPS at 60. iPhone non-Pro models are 60 Hz — the
+        // "120 fps" the bubble previously showed on input-tap was a
+        // catch-up artifact, not a real reading. Capping at 60 makes the
+        // value either truthful (on 60 Hz devices) or conservative (on
+        // 120 Hz ProMotion, where we under-report by half — acceptable
+        // since the indicator is for spotting problems, not bragging
+        // rights). Combined with the suppression and >50ms guard above,
+        // the bubble now shows realistic numbers in every scenario.
+        const fps = Math.min(60, rawFps);
         this._jsFps = fps;
         this._pushHistory(this._jsHistory, now, fps);
         this._frameCount = 0;
@@ -287,10 +295,11 @@ class PerfMonitor {
     // a burst that reads as 100+ fps. The bubble keeps showing the last
     // real value until the burst flushes, which is what users want.
     if (now < this._uiSuppressFpsUntil) return;
-    // Same clamp as the JS sampler — the Reanimated frame callback can
-    // also deliver catch-up bursts after a heavy native frame, and a
-    // 150 fps display value is more confusing than helpful.
-    const clamped = Math.min(120, Math.max(0, fps));
+    // Same cap as the JS sampler — 60 fps reflects what 60 Hz iPhones
+    // actually display; on 120 Hz ProMotion devices we under-report
+    // slightly but never produce a misleading "120 fps" reading from a
+    // catch-up burst.
+    const clamped = Math.min(60, Math.max(0, fps));
     this._uiFps = clamped;
     this._pushHistory(this._uiHistory, now, clamped);
     if (this._uiHistory.length > 1 && clamped < 30) {
