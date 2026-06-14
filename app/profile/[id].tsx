@@ -22,6 +22,7 @@ import { formatTimeAgo } from '../../src/utils/mockData';
 import { CachedImage } from '../../src/components/ui/CachedImage';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { UserBadge } from '../../src/components/ui/UserBadge';
+import { LiquidGlassAvatarRing } from '../../src/components/ui/LiquidGlassAvatarRing';
 import { PostContextMenu } from '../../src/components/ui/PostContextMenu';
 import { UserProfilePostCard } from '../../src/components/ui/UserProfilePostCard';
 import { FollowsListModal, FollowsListMode } from '../../src/components/profile/FollowsListModal';
@@ -802,7 +803,7 @@ export default function UserProfileScreen() {
                 BlurView — chrome budget, see chromeReady). The avatar
                 wrapper is a plain View here (no account switcher on other-
                 user profiles). */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', alignSelf: 'stretch', marginTop: -120, paddingHorizontal: 8 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', alignSelf: 'stretch', marginTop: -140, paddingHorizontal: 8 }}>
               <Text
                 numberOfLines={1}
                 style={{
@@ -818,9 +819,7 @@ export default function UserProfileScreen() {
               >
                 @{displayProfile.username}
               </Text>
-              <View style={{ width: 72, height: 72, borderRadius: 36, overflow: 'hidden', borderWidth: 3, borderColor: theme.colors.background.primary, backgroundColor: theme.isDark ? 'rgba(30,30,30,0.85)' : 'rgba(255,255,255,0.85)', alignItems: 'center', justifyContent: 'center' }}>
-                <Avatar emoji={displayProfile.emoji || '😊'} size="lg" />
-              </View>
+              <LiquidGlassAvatarRing emoji={displayProfile.emoji || '😊'} size={80} />
               <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 12 }}>
                 <Text
                   variant="body"

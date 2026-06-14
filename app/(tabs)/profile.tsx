@@ -15,6 +15,7 @@ import { UserBadge } from '../../src/components/ui/UserBadge';
 import { FormattedText } from '../../src/components/ui/FormattedText';
 import { LinkPreview } from '../../src/components/ui/LinkPreview';
 import { EmojiPattern } from '../../src/components/ui/EmojiPattern';
+import { LiquidGlassAvatarRing } from '../../src/components/ui/LiquidGlassAvatarRing';
 import { ProfilePostCard } from '../../src/components/profile/ProfilePostCard';
 import { useProfileAppearanceStore } from '../../src/store/profileAppearanceStore';
 import { extractFirstUrl } from '../../src/services/linkPreview';
@@ -586,7 +587,7 @@ export default function ProfileScreen() {
                 top of the dark gradient for legibility (no BlurView —
                 chrome budget, see chromeReady). The avatar wrapper stays
                 a Pressable so tapping it still opens the account switcher. */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', alignSelf: 'stretch', marginTop: -120, paddingHorizontal: 8 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', alignSelf: 'stretch', marginTop: -140, paddingHorizontal: 8 }}>
               <Text
                 numberOfLines={1}
                 style={{
@@ -603,9 +604,7 @@ export default function ProfileScreen() {
                 @{user.username}
               </Text>
               <Pressable onPress={() => setShowAccountSwitcher(true)}>
-                <View style={{ width: 72, height: 72, borderRadius: 36, overflow: 'hidden', borderWidth: 3, borderColor: theme.colors.background.primary, backgroundColor: theme.isDark ? 'rgba(30,30,30,0.85)' : 'rgba(255,255,255,0.85)', alignItems: 'center', justifyContent: 'center' }}>
-                  <Avatar emoji={user.emoji} size="lg" />
-                </View>
+                <LiquidGlassAvatarRing emoji={user.emoji} size={80} />
               </Pressable>
               <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 12 }}>
                 <Text
@@ -626,18 +625,6 @@ export default function ProfileScreen() {
                 {user.is_verified && <VerifiedBadge size={13} />}
                 {user.badge && <UserBadge badge={user.badge} size="sm" />}
               </View>
-            </View>
-            {/* Edit button — small pill below the avatar, centered. The
-                old layout sat this next to the display name; the redesign
-                lifts identity onto the banner so the action lives where
-                the user's eye lands after seeing the avatar. */}
-            <View style={{ alignSelf: 'center', marginTop: 10 }}>
-              <Pressable onPress={() => { triggerHaptic('light'); router.push('/profile/edit'); }} style={{ borderRadius: 16, overflow: 'hidden' }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 14, paddingVertical: 6, borderRadius: 16, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)', borderWidth: 0.5, borderColor: theme.colors.border.light }}>
-                  <Feather name="edit-2" size={11} color={theme.colors.text.primary} />
-                  <Text variant="caption" weight="semibold" color={theme.colors.text.primary} style={{ fontSize: 12 }}>{t('profile.edit')}</Text>
-                </View>
-              </Pressable>
             </View>
             {/* Bio + social link icons — both centered. Counters used to
                 live here in a 3-text row; they now live in the top header
