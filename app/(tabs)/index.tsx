@@ -691,13 +691,24 @@ export default function FeedScreen() {
         contentContainerStyle={{ paddingHorizontal: theme.spacing.base, paddingBottom: 100, paddingTop: headerContentHeight }}
         showsVerticalScrollIndicator={false}
         removeClippedSubviews={true}
-        // Tightened from 6/5/7 — feed cards do an `extractFirstUrl` regex
-        // pass and may mount a LinkPreview, so dropping the per-batch and
-        // window caps keeps the visible-window mounted on the first frame
-        // without piling 5 fresh cards of off-screen mount work onto it.
-        initialNumToRender={6}
-        maxToRenderPerBatch={4}
-        windowSize={6}
+        // PostCards are heavy: each one carries up to 1+ CachedImage (or
+        // a LinkPreview thumbnail), an Avatar, FormattedText, action bar,
+        // and on reposts an embedded original-post block. The previous
+        // 6/4/6 numbers piled six freshly-allocated cards onto the same
+        // commit on cold-open of the home tab — visible viewport on
+        // iPhone fits 1.5–2 cards, so four off-screen cards were paying
+        // their full mount cost on the navigation-transition frame and
+        // surfacing as the residual `UI<30 @ (tabs)` dip the perf
+        // monitor flagged. Lowered to 4/3/5 so:
+        //   - 4 cards on the cold-mount frame (~2 viewports filled),
+        //   - 3 cards per subsequent batch keeps scroll-into-new-batch
+        //     under the 60 ms long-task threshold,
+        //   - windowSize=5 keeps ~2 viewports of off-screen cushion.
+        // Combined with the LinkPreview RAF defer, no single feed-mount
+        // RAF runs more than ~3 cards' worth of synchronous work.
+        initialNumToRender={4}
+        maxToRenderPerBatch={3}
+        windowSize={5}
         refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={theme.colors.accent.primary} progressViewOffset={headerContentHeight} />}
       />
 
