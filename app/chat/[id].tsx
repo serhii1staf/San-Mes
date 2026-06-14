@@ -24,6 +24,7 @@ import { getRealtime, chatChannelName, userNotificationsChannelName } from '../.
 import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
 import { useChatStore, useEntityStore, useConnectivityStore, useAuthStore } from '../../src/store';
 import { useChatSettingsStore, GLOBAL_CHAT_SETTINGS_KEY, DEFAULT_CHAT_SETTINGS } from '../../src/store/chatSettingsStore';
+import { useBrowserStore } from '../../src/store/browserStore';
 import { ChatBackgroundLayer } from '../../src/components/ui/ChatBackgroundLayer';
 import { PixelIcon } from '../../src/components/pixel-icons/PixelIcon';
 import { supabase, uploadChatImage } from '../../src/lib/supabase';
@@ -365,6 +366,29 @@ export default function ChatScreen() {
   const inputRowStyle = useAnimatedStyle(() => ({
     paddingBottom: interpolate(progress.value, [0, 1], [inputBarBottomPad, 8], Extrapolation.CLAMP),
   }));
+
+  // Compensate the KeyboardStickyView's `offset.opened` for the bottom-
+  // docked browser widget. When the band is active it lives INSIDE the
+  // root flex column as a 56-px-tall sibling of the Stack wrapper, which
+  // squeezes every screen (including this chat) so its bottom edge is
+  // 56 px above the actual screen bottom. The chat input sticks to the
+  // chat-screen bottom, and KSV translates the sticky surface upward by
+  // the keyboard height when the keyboard appears — but because the
+  // chat screen is already 56 px above the screen bottom, the input
+  // ends up 56 px ABOVE the keyboard top instead of right on it. The
+  // user perceives this as an unexpectedly large gap between the input
+  // bar and the keyboard whenever a browser widget is docked at the
+  // bottom. Adding `BAND_HEIGHT` to KSV's `translateY` when the
+  // keyboard is open pushes the input back down into the band's
+  // overlapped region (the keyboard hides the band anyway), so the
+  // input lands flush against the keyboard top in both states.
+  const minimizedUrl = useBrowserStore((s) => s.minimizedUrl);
+  const browserWidgetPosition = useSettingsStore((s) => s.browserWidgetPosition);
+  const stickyOpenedOffset = !!minimizedUrl && browserWidgetPosition === 'bottom' ? 56 : 0;
+  const stickyOffset = useMemo(
+    () => ({ closed: 0, opened: stickyOpenedOffset }),
+    [stickyOpenedOffset],
+  );
 
   // Shift the entire message list upward by exactly the keyboard height when
   // it rises. We drive the translation from `useKeyboardHandler.onMove`
@@ -1104,7 +1128,7 @@ export default function ChatScreen() {
 
       {/* Input bar sticks to the keyboard top; hidden while searching */}
       {!searchMode && (
-      <KeyboardStickyView offset={{ closed: 0, opened: 0 }} style={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}>
+      <KeyboardStickyView offset={stickyOffset} style={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}>
         <Reanimated.View style={[StyleSheet.absoluteFill, backdropStyle]} pointerEvents="none">
           {/* Three-stop fade so messages scrolling above the input bar
               ghost into the chrome rather than getting hard-clipped by a

@@ -29,6 +29,7 @@ import { showToast } from '../../src/store/toastStore';
 import { useT } from '../../src/i18n/store';
 import { perfMonitor } from '../../src/services/perfMonitor';
 import { useSettingsStore } from '../../src/store/settingsStore';
+import { useBrowserStore } from '../../src/store/browserStore';
 
 const REPORT_CATS: { key: string; labelKey: string }[] = [
   { key: 'spam', labelKey: 'report.cat.spam' },
@@ -207,6 +208,27 @@ export default function CommentsScreen() {
     const open = Math.abs(keyboardHeight.value) > 1;
     return { paddingBottom: open ? 8 : (insets.bottom > 0 ? insets.bottom : 14) };
   });
+
+  // Compensate the KeyboardStickyView's `offset.opened` for the bottom-
+  // docked browser widget. When the band is active it lives INSIDE the
+  // root flex column as a 56-px-tall sibling of the Stack wrapper, which
+  // squeezes every screen (including this comments screen) so its bottom
+  // edge sits 56 px above the actual screen bottom. The input sticks to
+  // the screen bottom, and KSV translates the sticky surface upward by
+  // the keyboard height when the keyboard appears — but because the
+  // screen is already 56 px above the screen bottom, the input ends up
+  // 56 px ABOVE the keyboard top instead of right on it. Adding
+  // `BAND_HEIGHT` to KSV's `translateY` while the keyboard is open
+  // pushes the input back down into the band's overlapped region (the
+  // keyboard hides the band anyway), so the input lands flush against
+  // the keyboard top in both states.
+  const minimizedUrl = useBrowserStore((s) => s.minimizedUrl);
+  const browserWidgetPosition = useSettingsStore((s) => s.browserWidgetPosition);
+  const stickyOpenedOffset = !!minimizedUrl && browserWidgetPosition === 'bottom' ? 56 : 0;
+  const stickyOffset = React.useMemo(
+    () => ({ closed: 0, opened: stickyOpenedOffset }),
+    [stickyOpenedOffset],
+  );
   // Shift the comment list upward by the keyboard height so the very last
   // comment stays visible above the input bar when the user taps it. We
   // drive translateY from `useKeyboardHandler.onMove` — the same low-level
@@ -598,7 +620,7 @@ export default function CommentsScreen() {
         )}
 
         {/* Input area — sticks to keyboard (smooth, no lag) */}
-        <KeyboardStickyView offset={{ closed: 0, opened: 0 }} style={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}>
+        <KeyboardStickyView offset={stickyOffset} style={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}>
           {editing ? (
             <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 6, backgroundColor: bgColor }}>
               <View style={{ width: 3, height: 30, borderRadius: 2, backgroundColor: theme.colors.accent.primary, marginRight: 8 }} />
