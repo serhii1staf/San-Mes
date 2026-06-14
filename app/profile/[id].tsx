@@ -620,6 +620,80 @@ export default function UserProfileScreen() {
     setViewingImage({ uri, postId, allImages });
   }, []);
 
+  // ─── Stable FlatList accessors ─────────────────────────────────────────
+  // Inline `renderItem` and `keyExtractor` were rebuilt on every parent
+  // render — including every haptic, scroll-driven state flip, and (most
+  // expensively) every tab tap. FlatList saw fresh function references
+  // and re-evaluated every cell on every render, which is why the user
+  // saw a re-render storm on rapid Posts ↔ Replies ↔ Likes ↔ Media
+  // switching: each tap fired ~6 visible cells through the renderItem
+  // path twice (once because activeTab changed, once because the
+  // function reference itself changed). Hoisting the closures and the
+  // key extractor out of JSX collapses that work to "only when the
+  // dependency actually changed".
+  const keyExtractor = useCallback((item: any) => item.id, []);
+
+  const renderReplyItem = useCallback(
+    ({ item }: { item: any }) => <ProfileReplyCard reply={item as ProfileReply} />,
+    [],
+  );
+
+  const renderLikedItem = useCallback(
+    ({ item }: { item: any }) => (
+      <UserProfilePostCard
+        post={item}
+        authorName={item.authorName}
+        authorUsername={item.authorUsername}
+        authorEmoji={item.authorEmoji}
+        authorVerified={item.authorVerified}
+        authorBadge={item.authorBadge}
+        authorId={item.authorId}
+        postEmoji={postEmoji}
+        onLongPress={handlePostLongPress}
+        onImagePress={handlePostImagePress}
+      />
+    ),
+    [postEmoji, handlePostLongPress, handlePostImagePress],
+  );
+
+  // Fields read by the Posts-tab card. Hoisted so the closure depends
+  // on primitives (stable across most renders) instead of the whole
+  // `displayProfile` object reference, which changes whenever anything
+  // about the profile flips (badge sync, follow count update, etc.).
+  const cardAuthorName = displayProfile?.display_name || 'User';
+  const cardAuthorUsername = displayProfile?.username || 'user';
+  const cardAuthorEmoji = displayProfile?.emoji || '😊';
+  const cardAuthorVerified = displayProfile?.is_verified;
+  const cardAuthorBadge = displayProfile?.badge;
+  const cardAuthorId = displayProfile?.id;
+  const renderPostItem = useCallback(
+    ({ item }: { item: any }) => (
+      <UserProfilePostCard
+        post={item}
+        authorName={cardAuthorName}
+        authorUsername={cardAuthorUsername}
+        authorEmoji={cardAuthorEmoji}
+        authorVerified={cardAuthorVerified}
+        authorBadge={cardAuthorBadge}
+        authorId={cardAuthorId}
+        postEmoji={postEmoji}
+        onLongPress={handlePostLongPress}
+        onImagePress={handlePostImagePress}
+      />
+    ),
+    [
+      cardAuthorName,
+      cardAuthorUsername,
+      cardAuthorEmoji,
+      cardAuthorVerified,
+      cardAuthorBadge,
+      cardAuthorId,
+      postEmoji,
+      handlePostLongPress,
+      handlePostImagePress,
+    ],
+  );
+
   // ─── Likes / Replies tab loaders ───────────────────────────────────────
   // Same lazy-fetch + per-account cache pattern as the home profile tab.
   // Fires only when the user flips into the corresponding tab.
@@ -799,7 +873,12 @@ export default function UserProfileScreen() {
   // function on every parent render and skip its memo bailout.
   const handleCloseMenu = useCallback(() => setShowMenu(false), []);
 
-  const handleFollow = async () => {
+  // Wrapped in useCallback so the memoized listHeader (which lists this
+  // in its deps) keeps a stable reference between renders. Without the
+  // wrap every parent re-render allocated a fresh function and the
+  // header memo invalidated for nothing — the very issue the memo was
+  // supposed to fix.
+  const handleFollow = useCallback(async () => {
     if (!currentUser?.id || !id) return;
     // Self-follow is a no-op — never insert or notify against yourself.
     if (currentUser.id === id) return;
@@ -811,7 +890,7 @@ export default function UserProfileScreen() {
       setFollowCounts(c => ({ ...c, followers: c.followers + 1 }));
       await queueMutation('follow', { followerId: currentUser.id, followingId: id });
     }
-  };
+  }, [currentUser?.id, id, isFollowingState]);
 
   // Adaptive name + @username colour driven by banner brightness. The hook
   // must be called before any conditional return so its position in the
@@ -873,7 +952,20 @@ export default function UserProfileScreen() {
   // image, follow toggling, etc.) flips. Dominant cost previously was the
   // dual-Text adaptive-colour crossfade — replaced with a single
   // Animated.Text + native-driver opacity nudge.
-  const listHeader = (
+  //
+  // FIX (perf hotfix after 9d62fa3 — rapid tab switching dropped to
+  //   ~40 fps with a 205 ms long task right after profile mount):
+  //   listHeader was a plain `const = (...)` JSX expression, so every
+  //   render allocated a fresh element tree for the banner, two
+  //   AdaptiveProfileText labels, the bio block, and the tabs row.
+  //   The `Animated.FlatList` then handed that fresh tree to React
+  //   reconciliation on every parent re-render — including the rapid
+  //   `setActiveTab` chain on tab taps — which walked the entire
+  //   header subtree in one frame and pushed the JS thread past the
+  //   60 fps budget. useMemo with an explicit dep list short-circuits
+  //   the walk at the header root for state flips unrelated to the
+  //   header itself.
+  const listHeader = useMemo(() => (
     <>
       <View style={{ height: 300, marginHorizontal: -16, marginTop: -12, backgroundColor: theme.colors.accent.primary + '20', overflow: 'hidden' }}>
         {bannerUrl && chromeReady ? (
@@ -1016,7 +1108,22 @@ export default function UserProfileScreen() {
       </View>
       <View style={{ height: 12 }} />
     </>
-  );
+  ), [
+    theme,
+    displayProfile,
+    bannerUrl,
+    bannerTransform,
+    chromeReady,
+    bannerIsLight,
+    isOwnProfile,
+    isFollowingState,
+    fromChat,
+    activeTab,
+    userLinks,
+    tabs,
+    handleFollow,
+    t,
+  ]);
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
@@ -1097,6 +1204,12 @@ export default function UserProfileScreen() {
       </View>
 
       <Animated.FlatList
+        // Tab-driven data swap — memoized so consecutive renders within
+        // the same tab hand the FlatList an IDENTICAL reference. Without
+        // this the conditional was rebuilt on every parent re-render
+        // (every haptic, scroll-driven state flip, follow-modal toggle),
+        // which made the FlatList recompute virtualization windows even
+        // though the underlying tab data hadn't actually changed.
         data={
           activeTab === 'posts'
             ? (postsReady ? displayPosts : [])
@@ -1106,42 +1219,14 @@ export default function UserProfileScreen() {
                 ? userReplies
                 : []
         }
-        keyExtractor={(item: any) => item.id}
-        renderItem={({ item }: { item: any }) => {
-          if (activeTab === 'replies') {
-            return <ProfileReplyCard reply={item as ProfileReply} />;
-          }
-          if (activeTab === 'likes') {
-            return (
-              <UserProfilePostCard
-                post={item}
-                authorName={item.authorName}
-                authorUsername={item.authorUsername}
-                authorEmoji={item.authorEmoji}
-                authorVerified={item.authorVerified}
-                authorBadge={item.authorBadge}
-                authorId={item.authorId}
-                postEmoji={postEmoji}
-                onLongPress={handlePostLongPress}
-                onImagePress={handlePostImagePress}
-              />
-            );
-          }
-          return (
-            <UserProfilePostCard
-              post={item}
-              authorName={displayProfile.display_name}
-              authorUsername={displayProfile.username}
-              authorEmoji={displayProfile.emoji || '😊'}
-              authorVerified={displayProfile.is_verified}
-              authorBadge={displayProfile.badge}
-              authorId={displayProfile.id}
-              postEmoji={postEmoji}
-              onLongPress={handlePostLongPress}
-              onImagePress={handlePostImagePress}
-            />
-          );
-        }}
+        keyExtractor={keyExtractor}
+        renderItem={
+          activeTab === 'replies'
+            ? renderReplyItem
+            : activeTab === 'likes'
+              ? renderLikedItem
+              : renderPostItem
+        }
         // Virtualization tuned for weak Android / iPhone 12. Keeps the
         // mounted card count low so gesture handlers, FormattedText, and any
         // LinkPreview unfurls don't all sit on the UI thread at once — the
