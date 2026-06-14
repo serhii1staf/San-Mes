@@ -611,6 +611,11 @@ const en: Record<string, string> = {
   // ─── Mini-app screen (extra) ───────────────────────────────────────────
   'mini_app.collapse': 'Collapse',
   'mini_app.load_failed': 'Failed to load',
+  'mini_app.preview.open': 'Open',
+  'mini_app.preview.loading': 'Loading…',
+  'mini_app.preview.unavailable': 'Mini app unavailable',
+  'mini_app.preview.not_found_title': 'Not found',
+  'mini_app.preview.not_found_msg': 'This mini app is no longer available.',
 
   // ─── Settings → Index sections ─────────────────────────────────────────
   'settings.section.general': 'General',

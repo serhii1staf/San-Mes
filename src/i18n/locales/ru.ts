@@ -623,6 +623,11 @@ const ru: Record<string, string> = {
   // ─── Mini-app screen (extra) ───────────────────────────────────────────
   'mini_app.collapse': 'Свернуть',
   'mini_app.load_failed': 'Не удалось загрузить',
+  'mini_app.preview.open': 'Открыть',
+  'mini_app.preview.loading': 'Загружается…',
+  'mini_app.preview.unavailable': 'Мини-приложение недоступно',
+  'mini_app.preview.not_found_title': 'Не найдено',
+  'mini_app.preview.not_found_msg': 'Это мини-приложение больше недоступно.',
 
   // ─── Settings → Index sections ─────────────────────────────────────────
   'settings.section.general': 'Общие',

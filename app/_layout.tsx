@@ -277,6 +277,7 @@ function RootLayout() {
               <Stack.Screen name="browser" options={{ presentation: 'modal', headerShown: false, animation: 'slide_from_bottom' }} />
               <Stack.Screen name="mini-app" options={{ presentation: 'fullScreenModal', headerShown: false, animation: 'slide_from_bottom' }} />
               <Stack.Screen name="mini/[id]" options={{ headerShown: false, animation: 'fade' }} />
+              <Stack.Screen name="m/[short]" options={{ headerShown: false, animation: 'fade' }} />
               <Stack.Screen name="notifications" />
               <Stack.Screen name="settings/index" />
               <Stack.Screen name="settings/appearance" />

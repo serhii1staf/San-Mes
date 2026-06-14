@@ -7,7 +7,9 @@ import { Text } from './Text';
 import { CachedImage, prefetchImages } from './CachedImage';
 import { EmojiPattern } from './EmojiPattern';
 import { MediaViewerModal, MediaViewerSource, InlineVideoPlayer } from './MediaViewerModal';
+import { MiniAppPreviewCard } from './MiniAppPreviewCard';
 import { getLinkPreview, getCachedPreviewSync, LinkPreviewData } from '../../services/linkPreview';
+import { extractMiniAppShareId } from '../../utils/miniAppShare';
 import { perfMonitor } from '../../services/perfMonitor';
 import { useSettingsStore } from '../../store/settingsStore';
 
@@ -45,7 +47,19 @@ interface LinkPreviewProps {
 
 const THUMB_RADIUS = 14;
 
-export const LinkPreview = React.memo(function LinkPreview({ url, onError, textColor, emoji, static: isStatic, onLongPress, delayLongPress }: LinkPreviewProps) {
+export const LinkPreview = React.memo(function LinkPreview(props: LinkPreviewProps) {
+  // Mini-app share links (new short `/m/<8>` and legacy `/mini/<uuid>`)
+  // get a custom in-app card instead of the generic OG unfurl. We dispatch
+  // to a sibling component so the rest of LinkPreviewInner keeps its hook
+  // order intact regardless of whether the URL is a mini-app share.
+  const miniAppShareId = extractMiniAppShareId(props.url);
+  if (miniAppShareId) {
+    return <MiniAppPreviewCard shortOrFullId={miniAppShareId} textColor={props.textColor} />;
+  }
+  return <LinkPreviewInner {...props} />;
+});
+
+const LinkPreviewInner = React.memo(function LinkPreviewInner({ url, onError, textColor, emoji, static: isStatic, onLongPress, delayLongPress }: LinkPreviewProps) {
   const theme = useTheme();
   const cached = getCachedPreviewSync(url);
   const [data, setData] = useState<LinkPreviewData | null>(cached === undefined ? null : cached);

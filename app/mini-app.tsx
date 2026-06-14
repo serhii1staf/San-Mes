@@ -9,6 +9,7 @@ import { Text } from '../src/components/ui';
 import { SlideUpSheet } from '../src/components/ui/SlideUpSheet';
 import { useBrowserStore } from '../src/store/browserStore';
 import { useMiniAppsStore } from '../src/store/miniAppsStore';
+import { buildMiniAppShareUrl } from '../src/utils/miniAppShare';
 import { useT } from '../src/i18n/store';
 import { triggerHaptic } from '../src/utils/haptics';
 import { showToast } from '../src/store/toastStore';
@@ -116,16 +117,16 @@ export default function MiniAppScreen() {
     showToast(t('toast.report_sent'), 'flag');
   };
 
-  // Share — produces an internal /mini/<id> link. The underlying
-  // third-party URL the WebView proxies to is intentionally NOT included
-  // in the shared message; resolution happens server-side via the SSR
-  // page at api/mini/[id].ts (which also keeps the URL out of its HTML).
+  // Share — produces an internal short share URL via buildMiniAppShareUrl.
+  // The underlying third-party URL the WebView proxies to is intentionally
+  // NOT included; resolution happens server-side via the SSR page at
+  // api/m/[short].ts (which also keeps the URL out of its HTML).
   const handleShare = async () => {
     if (!canShare) return;
     triggerHaptic('light');
     try {
       await Share.share({
-        message: `${appEmoji} ${displayName}\nhttps://san-m-app.com/mini/${shareableId}`,
+        message: `${appEmoji} ${displayName}\n${buildMiniAppShareUrl({ id: shareableId })}`,
       });
     } catch {}
   };

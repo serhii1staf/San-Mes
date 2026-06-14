@@ -12,6 +12,7 @@ import { useAuthStore } from '../../src/store';
 import { showToast } from '../../src/store/toastStore';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { useT } from '../../src/i18n/store';
+import { buildMiniAppShareUrl } from '../../src/utils/miniAppShare';
 
 export default function MiniAppsScreen() {
   const theme = useTheme();
@@ -82,14 +83,15 @@ export default function MiniAppsScreen() {
     router.push({ pathname: '/mini-app', params: { url: encodeURIComponent(app.url), name: app.name, emoji: app.emoji, id: app.id } });
   };
 
-  // Share an internal share URL — resolves through Vercel SSR (api/mini/[id])
-  // when the recipient doesn't have the app, and through the universal/scheme
-  // deep link when they do. The real `app.url` is intentionally left out.
+  // Share an internal share URL (built via buildMiniAppShareUrl) — resolves
+  // through Vercel SSR (api/m/[short]) when the recipient doesn't have the
+  // app, and through the universal/scheme deep link when they do. The real
+  // `app.url` is intentionally left out.
   const handleShare = async (app: MiniApp) => {
     triggerHaptic('light');
     try {
       await Share.share({
-        message: `${app.emoji} ${app.name}\nhttps://san-m-app.com/mini/${app.id}`,
+        message: `${app.emoji} ${app.name}\n${buildMiniAppShareUrl(app)}`,
       });
     } catch {}
   };
