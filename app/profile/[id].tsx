@@ -9,7 +9,7 @@ import * as Clipboard from 'expo-clipboard';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { LinkedText } from '../../src/components/ui/LinkedText';
-import { parseImageUrls, getProfile, getFollowCounts, deletePost, isRepost, supabase } from '../../src/lib/supabase';
+import { parseImageUrls, getProfile, getFollowCounts, deletePost, isRepost, supabase, getLikedPosts, getUserComments } from '../../src/lib/supabase';
 import { useAuthStore } from '../../src/store';
 import { useEntityStore } from '../../src/store';
 import { useFeedStore } from '../../src/store/feedStore';
@@ -25,6 +25,8 @@ import { UserBadge } from '../../src/components/ui/UserBadge';
 import { PostContextMenu } from '../../src/components/ui/PostContextMenu';
 import { UserProfilePostCard } from '../../src/components/ui/UserProfilePostCard';
 import { FollowsListModal, FollowsListMode } from '../../src/components/profile/FollowsListModal';
+import { ProfileReplyCard, ProfileReply } from '../../src/components/profile/ProfileReplyCard';
+import { AdaptiveProfileText } from '../../src/components/profile/AdaptiveProfileText';
 import { useProfileAppearanceStore } from '../../src/store/profileAppearanceStore';
 import { PanResponder } from 'react-native';
 import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
@@ -34,9 +36,12 @@ import { useSettingsStore } from '../../src/store/settingsStore';
 import { useBlockedUsersStore, useIsBlocked } from '../../src/store/blockedUsersStore';
 import { parseBannerTransform, stripBannerTransform } from '../../src/utils/bannerTransform';
 import { useBannerBrightness } from '../../src/hooks/useBannerBrightness';
+import { kvGetJSONSync, kvSetJSON } from '../../src/services/kvStore';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const SCREEN_HEIGHT = Dimensions.get('window').height;
+const LIKED_POSTS_CACHE_PREFIX = '@san:liked_posts:';
+const USER_REPLIES_CACHE_PREFIX = '@san:user_replies:';
 type TabName = 'posts' | 'replies' | 'media' | 'likes';
 
 // Report category KEYS — labels come from the dictionary at render time
@@ -336,6 +341,17 @@ export default function UserProfileScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [followCounts, setFollowCounts] = useState({ followers: 0, following: 0 });
   const [activeTab, setActiveTab] = useState<TabName>('posts');
+  // Lazy-loaded secondary tab data — Likes / Replies. Filled the first
+  // time the user flips into that tab, then cached per-profile in MMKV
+  // so reopening is instant. Cache keys include the target profile id
+  // (the OWNER of this profile, not the viewer) so each profile has
+  // its own slice.
+  const [likedPosts, setLikedPosts] = useState<any[]>([]);
+  const [likedLoaded, setLikedLoaded] = useState(false);
+  const [likedFetching, setLikedFetching] = useState(false);
+  const [userReplies, setUserReplies] = useState<ProfileReply[]>([]);
+  const [repliesLoaded, setRepliesLoaded] = useState(false);
+  const [repliesFetching, setRepliesFetching] = useState(false);
   // Posts cards are heavy (gesture handlers + images). Gate their mount one frame
   // after the tab activates so the tab highlight switches instantly and the heavy
   // mount happens off the tap's critical path — same approach as (tabs)/profile.tsx.
@@ -390,6 +406,24 @@ export default function UserProfileScreen() {
   // range as `centerStatsOpacity` so the two animations land together.
   const centerStatsScale = useMemo(
     () => scrollY.interpolate({ inputRange: [0, 80, 160], outputRange: [1, 1, 0.7], extrapolate: 'clamp' }),
+    [scrollY],
+  );
+  // Identity-row "fly into the avatar" interpolations. Mirror of the
+  // (tabs)/profile.tsx animation so own-profile and other-user
+  // profile feel identical: @username glides right, display name
+  // glides left, both fade to 0 between scrollY 60 and 130. Avatar
+  // never moves. The wrapping Animated.View keeps `flex: 1` so the
+  // avatar's centred slot is preserved during the animation.
+  const usernameTranslateX = useMemo(
+    () => scrollY.interpolate({ inputRange: [0, 60, 130], outputRange: [0, 0, 60], extrapolate: 'clamp' }),
+    [scrollY],
+  );
+  const nameTranslateX = useMemo(
+    () => scrollY.interpolate({ inputRange: [0, 60, 130], outputRange: [0, 0, -60], extrapolate: 'clamp' }),
+    [scrollY],
+  );
+  const identityTextOpacity = useMemo(
+    () => scrollY.interpolate({ inputRange: [0, 60, 130], outputRange: [1, 1, 0], extrapolate: 'clamp' }),
     [scrollY],
   );
   const badgeOpacity = useMemo(
@@ -599,12 +633,149 @@ export default function UserProfileScreen() {
     setViewingImage({ uri, postId, allImages });
   }, []);
 
+  // ─── Likes / Replies tab loaders ───────────────────────────────────────
+  // Same lazy-fetch + per-account cache pattern as the home profile tab.
+  // Fires only when the user flips into the corresponding tab.
+  const loadLikedPosts = useCallback(async () => {
+    if (!id || likedFetching) return;
+    setLikedFetching(true);
+    try {
+      const cacheKey = LIKED_POSTS_CACHE_PREFIX + id;
+      const cached = kvGetJSONSync<any[] | null>(cacheKey, null);
+      if (Array.isArray(cached) && cached.length > 0 && likedPosts.length === 0) {
+        setLikedPosts(cached);
+      }
+
+      const { posts: rows, error } = await getLikedPosts(id, { limit: 50 });
+      if (error || !rows) {
+        setLikedLoaded(true);
+        return;
+      }
+
+      const buildPost = (p: any) => {
+        const repostInfo = isRepost(p.content || '');
+        const parsedImages = parseImageUrls(p.image_url);
+        const authorProfile = Array.isArray(p.profiles) ? p.profiles[0] : p.profiles;
+        return {
+          id: p.id,
+          authorId: p.author_id,
+          authorName: authorProfile?.display_name || 'User',
+          authorUsername: authorProfile?.username || 'user',
+          authorEmoji: authorProfile?.emoji || '😊',
+          authorVerified: !!authorProfile?.is_verified,
+          authorBadge: authorProfile?.badge || null,
+          content: repostInfo.isRepost ? (repostInfo.comment || '') : (p.content || ''),
+          imageUrl: parsedImages[0] || undefined,
+          imageUrls: parsedImages.length > 0 ? parsedImages : undefined,
+          likesCount: p.likes_count || 0,
+          commentsCount: p.comments_count || 0,
+          sharesCount: p.shares_count || 0,
+          createdAt: p.created_at,
+          isRepost: repostInfo.isRepost,
+        };
+      };
+
+      const CHUNK_SIZE = 5;
+      const mapped: any[] = [];
+      for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
+        const chunk = rows.slice(i, i + CHUNK_SIZE).map(buildPost);
+        mapped.push(...chunk);
+        if (i + CHUNK_SIZE < rows.length) {
+          await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        }
+      }
+      setLikedPosts(mapped);
+      setLikedLoaded(true);
+      InteractionManager.runAfterInteractions(() => {
+        try { kvSetJSON(cacheKey, mapped); } catch {}
+      });
+    } catch {
+      setLikedLoaded(true);
+    } finally {
+      setLikedFetching(false);
+    }
+  }, [id, likedFetching, likedPosts.length]);
+
+  const loadUserReplies = useCallback(async () => {
+    if (!id || repliesFetching) return;
+    setRepliesFetching(true);
+    try {
+      const cacheKey = USER_REPLIES_CACHE_PREFIX + id;
+      const cached = kvGetJSONSync<ProfileReply[] | null>(cacheKey, null);
+      if (Array.isArray(cached) && cached.length > 0 && userReplies.length === 0) {
+        setUserReplies(cached);
+      }
+
+      const { replies: rows, error } = await getUserComments(id, { limit: 50 });
+      if (error || !rows) {
+        setRepliesLoaded(true);
+        return;
+      }
+
+      const buildReply = (c: any): ProfileReply => {
+        const parent = Array.isArray(c.posts) ? c.posts[0] : c.posts;
+        const parentAuthor = parent
+          ? (Array.isArray(parent.profiles) ? parent.profiles[0] : parent.profiles)
+          : null;
+        let snippet: string = parent?.content || '';
+        if (snippet.startsWith('::repost::')) {
+          const rest = snippet.slice('::repost::'.length);
+          const sep = rest.indexOf('::');
+          snippet = sep >= 0 ? rest.slice(sep + 2) : '';
+        }
+        if (snippet.length > 80) snippet = snippet.slice(0, 80) + '…';
+        return {
+          id: c.id,
+          postId: c.post_id,
+          content: c.content || '',
+          createdAt: c.created_at,
+          parentAuthorName: parentAuthor?.display_name || 'User',
+          parentAuthorEmoji: parentAuthor?.emoji || '😊',
+          parentAuthorVerified: !!parentAuthor?.is_verified,
+          parentSnippet: snippet,
+        };
+      };
+
+      const CHUNK_SIZE = 5;
+      const mapped: ProfileReply[] = [];
+      for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
+        const chunk = rows.slice(i, i + CHUNK_SIZE).map(buildReply);
+        mapped.push(...chunk);
+        if (i + CHUNK_SIZE < rows.length) {
+          await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        }
+      }
+      setUserReplies(mapped);
+      setRepliesLoaded(true);
+      InteractionManager.runAfterInteractions(() => {
+        try { kvSetJSON(cacheKey, mapped); } catch {}
+      });
+    } catch {
+      setRepliesLoaded(true);
+    } finally {
+      setRepliesFetching(false);
+    }
+  }, [id, repliesFetching, userReplies.length]);
+
+  useEffect(() => {
+    if (activeTab === 'likes' && !likedLoaded && !likedFetching && id) {
+      const handle = InteractionManager.runAfterInteractions(() => loadLikedPosts());
+      return () => handle.cancel();
+    }
+    if (activeTab === 'replies' && !repliesLoaded && !repliesFetching && id) {
+      const handle = InteractionManager.runAfterInteractions(() => loadUserReplies());
+      return () => handle.cancel();
+    }
+  }, [activeTab, likedLoaded, likedFetching, repliesLoaded, repliesFetching, id, loadLikedPosts, loadUserReplies]);
+
   // Stable close handler so the memoized ProfileMenuModal doesn't see a fresh
   // function on every parent render and skip its memo bailout.
   const handleCloseMenu = useCallback(() => setShowMenu(false), []);
 
   const handleFollow = async () => {
     if (!currentUser?.id || !id) return;
+    // Self-follow is a no-op — never insert or notify against yourself.
+    if (currentUser.id === id) return;
     triggerHaptic('medium');
     if (isFollowingState) {
       setFollowCounts(c => ({ ...c, followers: Math.max(0, c.followers - 1) }));
@@ -737,22 +908,51 @@ export default function UserProfileScreen() {
       </View>
 
       <Animated.FlatList
-        data={activeTab === 'posts' && postsReady ? displayPosts : []}
+        data={
+          activeTab === 'posts'
+            ? (postsReady ? displayPosts : [])
+            : activeTab === 'likes'
+              ? likedPosts
+              : activeTab === 'replies'
+                ? userReplies
+                : []
+        }
         keyExtractor={(item: any) => item.id}
-        renderItem={({ item }: { item: any }) => (
-          <UserProfilePostCard
-            post={item}
-            authorName={displayProfile.display_name}
-            authorUsername={displayProfile.username}
-            authorEmoji={displayProfile.emoji || '😊'}
-            authorVerified={displayProfile.is_verified}
-            authorBadge={displayProfile.badge}
-            authorId={displayProfile.id}
-            postEmoji={postEmoji}
-            onLongPress={handlePostLongPress}
-            onImagePress={handlePostImagePress}
-          />
-        )}
+        renderItem={({ item }: { item: any }) => {
+          if (activeTab === 'replies') {
+            return <ProfileReplyCard reply={item as ProfileReply} />;
+          }
+          if (activeTab === 'likes') {
+            return (
+              <UserProfilePostCard
+                post={item}
+                authorName={item.authorName}
+                authorUsername={item.authorUsername}
+                authorEmoji={item.authorEmoji}
+                authorVerified={item.authorVerified}
+                authorBadge={item.authorBadge}
+                authorId={item.authorId}
+                postEmoji={postEmoji}
+                onLongPress={handlePostLongPress}
+                onImagePress={handlePostImagePress}
+              />
+            );
+          }
+          return (
+            <UserProfilePostCard
+              post={item}
+              authorName={displayProfile.display_name}
+              authorUsername={displayProfile.username}
+              authorEmoji={displayProfile.emoji || '😊'}
+              authorVerified={displayProfile.is_verified}
+              authorBadge={displayProfile.badge}
+              authorId={displayProfile.id}
+              postEmoji={postEmoji}
+              onLongPress={handlePostLongPress}
+              onImagePress={handlePostImagePress}
+            />
+          );
+        }}
         // Virtualization tuned for weak Android / iPhone 12. Keeps the
         // mounted card count low so gesture handlers, FormattedText, and any
         // LinkPreview unfurls don't all sit on the UI thread at once — the
@@ -818,47 +1018,63 @@ export default function UserProfileScreen() {
                 wrapper is a plain View here (no account switcher on other-
                 user profiles). */}
             <View style={{ flexDirection: 'row', alignItems: 'center', alignSelf: 'stretch', marginTop: -140, paddingHorizontal: 8 }}>
-              <Text
-                numberOfLines={1}
+              <Animated.View
                 style={{
                   flex: 1,
-                  textAlign: 'right',
-                  fontSize: 13,
-                  color: bannerIsLight ? theme.colors.text.secondary : 'rgba(255,255,255,0.92)',
-                  ...(bannerIsLight ? null : {
-                    textShadowColor: 'rgba(0,0,0,0.6)',
-                    textShadowOffset: { width: 0, height: 1 },
-                    textShadowRadius: 3,
-                  }),
-                  marginRight: 12,
+                  transform: [{ translateX: usernameTranslateX }],
+                  opacity: identityTextOpacity,
                 }}
               >
-                @{displayProfile.username}
-              </Text>
+                <AdaptiveProfileText
+                  isLight={bannerIsLight}
+                  darkBgColor="rgba(255,255,255,0.92)"
+                  lightBgColor={theme.colors.text.secondary}
+                  numberOfLines={1}
+                  style={{
+                    textAlign: 'right',
+                    fontSize: 13,
+                    textShadowColor: 'rgba(0,0,0,0.45)',
+                    textShadowOffset: { width: 0, height: 1 },
+                    textShadowRadius: 2,
+                    marginRight: 12,
+                  }}
+                >
+                  @{displayProfile.username}
+                </AdaptiveProfileText>
+              </Animated.View>
               <View style={{ width: 72, height: 72, borderRadius: 36, overflow: 'hidden', borderWidth: 3, borderColor: theme.colors.background.primary, backgroundColor: theme.isDark ? 'rgba(30,30,30,0.85)' : 'rgba(255,255,255,0.85)', alignItems: 'center', justifyContent: 'center' }}>
                 <Avatar emoji={displayProfile.emoji || '😊'} size="lg" />
               </View>
-              <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 12 }}>
-                <Text
-                  variant="body"
-                  weight="bold"
+              <Animated.View
+                style={{
+                  flex: 1,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 4,
+                  marginLeft: 12,
+                  transform: [{ translateX: nameTranslateX }],
+                  opacity: identityTextOpacity,
+                }}
+              >
+                <AdaptiveProfileText
+                  isLight={bannerIsLight}
+                  darkBgColor="#FFFFFF"
+                  lightBgColor={theme.colors.text.primary}
                   numberOfLines={1}
                   style={{
                     flexShrink: 1,
                     fontSize: 15,
-                    color: bannerIsLight ? theme.colors.text.primary : '#FFFFFF',
-                    ...(bannerIsLight ? null : {
-                      textShadowColor: 'rgba(0,0,0,0.6)',
-                      textShadowOffset: { width: 0, height: 1 },
-                      textShadowRadius: 3,
-                    }),
+                    fontWeight: '700',
+                    textShadowColor: 'rgba(0,0,0,0.45)',
+                    textShadowOffset: { width: 0, height: 1 },
+                    textShadowRadius: 2,
                   }}
                 >
                   {displayProfile.display_name}
-                </Text>
+                </AdaptiveProfileText>
                 {displayProfile.is_verified && <VerifiedBadge size={13} />}
                 {displayProfile.badge && <UserBadge badge={displayProfile.badge} size="sm" />}
-              </View>
+              </Animated.View>
             </View>
 
             {/* Action row (Message + Follow) — only for other users.

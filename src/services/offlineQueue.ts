@@ -185,10 +185,57 @@ export async function queueMutation(type: MutationType, payload: any): Promise<v
     retryCount: 0,
   };
 
-  // 1. Apply optimistic update to entity store
+  // 1. Apply optimistic update to entity store immediately so the UI flips.
   applyOptimisticUpdate(type, payload);
 
-  // 2. Persist mutation to AsyncStorage queue
+  // 2. Decide between online-first send and offline-queue.
+  //
+  //   The previous implementation always wrote into the local queue and
+  //   relied on `processQueue` running to flush it. But `processQueue` is
+  //   only invoked from the connectivity monitor's offline->online edge,
+  //   and the monitor's initial state is `isOnline: true` — so a user
+  //   that opens the app already online would NEVER trigger a flush, and
+  //   their follow/like/comment mutations would sit in AsyncStorage
+  //   forever. That's why follow rows weren't actually persisting:
+  //   the optimistic flag flipped, but `supabase.from('follows').insert`
+  //   was never called.
+  //
+  //   When online we now try the network call directly. If it succeeds
+  //   we don't write to the queue at all — the optimistic update already
+  //   reflects the truth. If it fails (network glitch, transient 5xx)
+  //   we fall through to the queue path so the connectivity monitor
+  //   retries it on the next online edge.
+  let isOnline = true;
+  try {
+    // Lazy import — avoid pulling the connectivity store into modules
+    // that don't already import it (and avoid a cycle: connectivity
+    // monitor lazy-imports this module).
+    const { useConnectivityStore } = await import('./connectivityMonitor');
+    isOnline = useConnectivityStore.getState().isOnline;
+  } catch {
+    // If the store isn't initialised yet (very early app startup), be
+    // optimistic and try the send.
+    isOnline = true;
+  }
+
+  if (isOnline) {
+    try {
+      const result = await sendToServer(mutation);
+      if (result.success) {
+        // Done — no need to enqueue. After-hooks (e.g. inserting the
+        // follow notification row) live in the per-type send path.
+        return;
+      }
+      // Non-retryable client error (e.g. duplicate follow row) — also
+      // leave the queue clean. The optimistic update is already correct
+      // for "already following".
+      if (!result.retryable) return;
+    } catch {
+      // Fall through to enqueue.
+    }
+  }
+
+  // 3. Persist mutation to AsyncStorage queue for retry on reconnect.
   const queue = await getQueue();
   queue.push(mutation);
   await cacheSet(KEYS.mutations, queue);

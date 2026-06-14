@@ -59,6 +59,14 @@ export const useConnectivityStore = create<ConnectivityState>((set, get) => ({
   start: () => {
     if (intervalId) return;
 
+    // Drain any leftover queue from a previous session immediately. The
+    // queue can carry mutations from a session that was killed before
+    // it ever transitioned offline → online (the only edge the polling
+    // loop below reacts to). Without this kick the items would sit in
+    // AsyncStorage until the next time the device actually goes
+    // offline-and-back, which on a stable connection might never happen.
+    triggerProcessQueue();
+
     // Check immediately on start
     checkConnectivity().then((online) => {
       const prev = get().isOnline;

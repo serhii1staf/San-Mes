@@ -654,13 +654,33 @@ export async function deleteComment(commentId: string, authorId: string, postId:
   }
 }
 
-// Follow a user
+// Follow a user. Idempotent: if a row with the same (follower_id,
+// following_id) already exists, the upsert is a no-op rather than a
+// 23505 unique-constraint error. That keeps double-tap on the follow
+// button safe and lets the offline queue replay the same mutation
+// without erroring.
 export async function followUser(followerId: string, followingId: string): Promise<{ error: string | null }> {
+  // Self-follow doesn't make sense and would clutter the user's own
+  // notifications — silently no-op.
+  if (followerId === followingId) return { error: null };
   try {
     const { error } = await supabase
       .from('follows')
-      .insert({ follower_id: followerId, following_id: followingId });
-    return { error: error?.message || null };
+      .upsert(
+        { follower_id: followerId, following_id: followingId },
+        { onConflict: 'follower_id,following_id', ignoreDuplicates: true },
+      );
+    if (error) {
+      // Some Supabase versions surface "duplicate key" as a 409 rather
+      // than honouring `ignoreDuplicates`. Treat that as success — the
+      // user's intent (be following X) is already true.
+      const msg = (error.message || '').toLowerCase();
+      if (msg.includes('duplicate') || msg.includes('unique') || msg.includes('already')) {
+        return { error: null };
+      }
+      return { error: error.message };
+    }
+    return { error: null };
   } catch (e: any) {
     return { error: e?.message || 'Unknown error' };
   }
@@ -705,6 +725,60 @@ export async function getFollowCounts(userId: string): Promise<{ followers: numb
     return { followers: followers || 0, following: following || 0 };
   } catch {
     return { followers: 0, following: 0 };
+  }
+}
+
+// Posts the user has liked. Joined to the post's author profile so the
+// existing post cards can render without a second round-trip per row.
+// Capped at 50 by default — same window as `loadMyPosts` to keep the
+// chunked-build cost bounded on weak devices.
+export async function getLikedPosts(
+  userId: string,
+  opts: { limit?: number } = {},
+): Promise<{ posts: any[]; error: string | null }> {
+  const limit = Math.max(1, Math.min(opts.limit ?? 50, 100));
+  try {
+    const { data, error } = await supabase
+      .from('likes')
+      .select(
+        'created_at, posts:post_id (*, profiles:author_id (id, username, display_name, emoji, badge, is_verified))',
+      )
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (error) return { posts: [], error: error.message };
+    const rows: any[] = [];
+    for (const r of (data || []) as any[]) {
+      const p = Array.isArray(r.posts) ? r.posts[0] : r.posts;
+      if (p && p.id) rows.push(p);
+    }
+    return { posts: rows, error: null };
+  } catch (e: any) {
+    return { posts: [], error: e?.message || 'Unknown error' };
+  }
+}
+
+// Comments authored by the user — their reply history. Joined to the
+// parent post + that post's author profile so the row can render the
+// "in reply to" snippet without a follow-up query. Capped at 50.
+export async function getUserComments(
+  userId: string,
+  opts: { limit?: number } = {},
+): Promise<{ replies: any[]; error: string | null }> {
+  const limit = Math.max(1, Math.min(opts.limit ?? 50, 100));
+  try {
+    const { data, error } = await supabase
+      .from('comments')
+      .select(
+        'id, post_id, content, created_at, posts:post_id (id, content, image_url, author_id, profiles:author_id (id, username, display_name, emoji, is_verified))',
+      )
+      .eq('author_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (error) return { replies: [], error: error.message };
+    return { replies: (data || []) as any[], error: null };
+  } catch (e: any) {
+    return { replies: [], error: e?.message || 'Unknown error' };
   }
 }
 

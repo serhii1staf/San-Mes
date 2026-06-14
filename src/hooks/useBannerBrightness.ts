@@ -5,20 +5,21 @@ import { stripBannerTransform } from '../utils/bannerTransform';
 
 // Adaptive-text-colour data hook for the profile banner.
 //
-// Returns the average luminance of the banner image as a number in
-// 0.0 (dark) .. 1.0 (light), plus a derived `isLight` boolean using a
-// 0.5 cutoff. Display code uses this to pick dark text on light banners
-// and light text on dark banners so the name + @username always read
-// against the surface they sit on.
+// Returns the bottom-region average luminance of the banner image as a
+// number in 0.0 (dark) .. 1.0 (light), plus a derived `isLight` boolean
+// using a 0.55 cutoff (slightly above 0.5 to favour white text on
+// borderline banners — white reads better against the dark gradient
+// backdrop than dark reads against a light banner on borderline cases).
 //
 // Why server-side luminance (not on-device):
 //   React Native core ships no canvas API and no pixel-buffer access.
 //   Computing brightness in JS would require bundling a PNG / JPEG
 //   decoder (hundreds of KB) and burning CPU on every banner load.
 //   The result is a single float per URL, so we fetch it from
-//   /api/banner-brightness, which downsamples server-side and caches
-//   the response at the CDN edge for a week. Repeat profile views pay
-//   zero cost after the first hit anywhere on the network.
+//   /api/banner-brightness, which crops the bottom region (where the
+//   text actually sits), downsamples it, and caches the response at the
+//   CDN edge for a week. Repeat profile views pay zero cost after the
+//   first hit anywhere on the network.
 //
 // Why brightness can be `null`:
 //   For brand-new banners the server hasn't been hit yet, and for
@@ -35,7 +36,12 @@ import { stripBannerTransform } from '../utils/bannerTransform';
 //   render. Never include the hash in the cache key.
 
 const API_ENDPOINT = 'https://san-m-app.com/api/banner-brightness';
-const CACHE_KEY_PREFIX = '@san:banner_brightness:';
+// Versioned cache key — old entries used Rec.601 luma over the full image
+// and a 0.5 cutoff. The new endpoint returns sRGB-correct relative
+// luminance over the bottom 40% of the banner, so the numeric values
+// don't agree with the cached ones. Bumping the suffix forces a
+// one-time re-fetch per banner, after which the new values stick.
+const CACHE_KEY_PREFIX = '@san:banner_brightness_v2:';
 
 interface CacheEntry {
   brightness: number;
@@ -43,9 +49,15 @@ interface CacheEntry {
 }
 
 interface UseBannerBrightnessResult {
-  /** Average luminance 0..1, or null if not yet known. */
+  /** sRGB-correct relative luminance 0..1, or null if not yet known. */
   brightness: number | null;
-  /** True when the banner is light enough that dark text reads better. */
+  /**
+   * True when the banner is light enough that dark text reads better.
+   * Threshold sits at 0.55 (slightly above 0.5) so borderline banners
+   * favour the white-text path — white reads cleanly against the dark
+   * gradient backdrop, while dark text on a borderline-light banner
+   * relies entirely on the surface and can muddy.
+   */
   isLight: boolean;
 }
 
@@ -143,6 +155,6 @@ export function useBannerBrightness(
     };
   }, [stripped]);
 
-  const isLight = brightness != null && brightness >= 0.5;
+  const isLight = brightness != null && brightness >= 0.55;
   return { brightness, isLight };
 }

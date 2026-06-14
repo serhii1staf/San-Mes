@@ -16,6 +16,9 @@ import { FormattedText } from '../../src/components/ui/FormattedText';
 import { LinkPreview } from '../../src/components/ui/LinkPreview';
 import { EmojiPattern } from '../../src/components/ui/EmojiPattern';
 import { ProfilePostCard } from '../../src/components/profile/ProfilePostCard';
+import { UserProfilePostCard } from '../../src/components/ui/UserProfilePostCard';
+import { ProfileReplyCard, ProfileReply } from '../../src/components/profile/ProfileReplyCard';
+import { AdaptiveProfileText } from '../../src/components/profile/AdaptiveProfileText';
 import { useProfileAppearanceStore } from '../../src/store/profileAppearanceStore';
 import { extractFirstUrl } from '../../src/services/linkPreview';
 import { kvGetJSONSync, kvSetJSON } from '../../src/services/kvStore';
@@ -27,7 +30,7 @@ import { showToast } from '../../src/store/toastStore';
 import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
 import { useAuthStore } from '../../src/store';
 import { useFeedStore } from '../../src/store/feedStore';
-import { isRepost, parseImageUrls, getFollowCounts, supabase, deletePost } from '../../src/lib/supabase';
+import { isRepost, parseImageUrls, getFollowCounts, supabase, deletePost, getLikedPosts, getUserComments } from '../../src/lib/supabase';
 import { openUrl } from '../../src/utils/openUrl';
 import { Post } from '../../src/types';
 import { triggerHaptic } from '../../src/utils/haptics';
@@ -42,6 +45,10 @@ import { useBannerBrightness } from '../../src/hooks/useBannerBrightness';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const MY_POSTS_CACHE_KEY = '@san:my_posts';
+// Per-account cache keys for the lazy-loaded "Likes" and "Replies" tabs.
+// Built lazily via accountKey() so signing in/out swaps cache scopes.
+const LIKED_POSTS_CACHE_PREFIX = '@san:liked_posts:';
+const USER_REPLIES_CACHE_PREFIX = '@san:user_replies:';
 type TabName = 'posts' | 'replies' | 'media' | 'likes';
 
 function detectLinkType(url: string): string {
@@ -148,6 +155,16 @@ export default function ProfileScreen() {
     return () => cancelAnimationFrame(handle);
   }, [postsReady]);
   const [activeTab, setActiveTab] = useState<TabName>('posts');
+  // Lazy-loaded secondary tab data. We don't fetch these on profile mount —
+  // fetching only fires the first time the user actually flips to that tab.
+  // Cache keys are per-account so account-switching invalidates instantly
+  // without us tracking the switch manually (kvStore auto-namespaces).
+  const [likedPosts, setLikedPosts] = useState<any[]>([]);
+  const [likedLoaded, setLikedLoaded] = useState(false);
+  const [likedFetching, setLikedFetching] = useState(false);
+  const [userReplies, setUserReplies] = useState<ProfileReply[]>([]);
+  const [repliesLoaded, setRepliesLoaded] = useState(false);
+  const [repliesFetching, setRepliesFetching] = useState(false);
   const [followCounts, setFollowCounts] = useState({ followers: 0, following: 0 });
   const [showQR, setShowQR] = useState(false);
   // Followers / Following list modal — opens when the user taps the
@@ -336,6 +353,158 @@ export default function ProfileScreen() {
     try { const counts = await getFollowCounts(user.id); setFollowCounts(counts); } catch {}
   }, [user?.id]);
 
+  // ─── Likes tab loader ─────────────────────────────────────────────────
+  // Same chunked-build + InteractionManager-deferred persist pattern as
+  // `loadMyPosts` so the JS thread doesn't carry a 50-row map in a
+  // single block. Skips chain-walking on reposts of liked content for
+  // now — the row renders as-is. Follow-up will resolve repost chains
+  // here too.
+  const loadLikedPosts = useCallback(async () => {
+    if (!user?.id || likedFetching) return;
+    setLikedFetching(true);
+    try {
+      // Synchronous MMKV warm-up so re-opening the tab paints instantly
+      // even if the network round-trip hasn't returned.
+      const cacheKey = LIKED_POSTS_CACHE_PREFIX + user.id;
+      const cached = kvGetJSONSync<any[] | null>(cacheKey, null);
+      if (Array.isArray(cached) && cached.length > 0 && likedPosts.length === 0) {
+        setLikedPosts(cached);
+      }
+
+      const { posts: rows, error } = await getLikedPosts(user.id, { limit: 50 });
+      if (error || !rows) {
+        setLikedLoaded(true);
+        return;
+      }
+
+      const buildPost = (p: any) => {
+        const repostInfo = isRepost(p.content || '');
+        const parsedImages = parseImageUrls(p.image_url);
+        const authorProfile = Array.isArray(p.profiles) ? p.profiles[0] : p.profiles;
+        return {
+          id: p.id,
+          authorId: p.author_id,
+          // Per-row author info — liked posts come from any author, not
+          // just the current user. The cards read these as props per
+          // render so each row shows the right name + emoji.
+          authorName: authorProfile?.display_name || 'User',
+          authorUsername: authorProfile?.username || 'user',
+          authorEmoji: authorProfile?.emoji || '😊',
+          authorVerified: !!authorProfile?.is_verified,
+          authorBadge: authorProfile?.badge || null,
+          content: repostInfo.isRepost ? (repostInfo.comment || '') : (p.content || ''),
+          imageUrl: parsedImages[0] || undefined,
+          imageUrls: parsedImages.length > 0 ? parsedImages : undefined,
+          likesCount: p.likes_count || 0,
+          commentsCount: p.comments_count || 0,
+          sharesCount: p.shares_count || 0,
+          isLiked: true,
+          isBookmarked: false,
+          createdAt: p.created_at,
+          isRepost: repostInfo.isRepost,
+        };
+      };
+
+      // Chunks of 5 with macrotask yields — same as `loadMyPosts`.
+      const CHUNK_SIZE = 5;
+      const mapped: any[] = [];
+      for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
+        const chunk = rows.slice(i, i + CHUNK_SIZE).map(buildPost);
+        mapped.push(...chunk);
+        if (i + CHUNK_SIZE < rows.length) {
+          await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        }
+      }
+      setLikedPosts(mapped);
+      setLikedLoaded(true);
+      InteractionManager.runAfterInteractions(() => {
+        try { kvSetJSON(cacheKey, mapped); } catch {}
+      });
+    } catch {
+      setLikedLoaded(true);
+    } finally {
+      setLikedFetching(false);
+    }
+  }, [user?.id, likedFetching, likedPosts.length]);
+
+  // ─── Replies tab loader ───────────────────────────────────────────────
+  const loadUserReplies = useCallback(async () => {
+    if (!user?.id || repliesFetching) return;
+    setRepliesFetching(true);
+    try {
+      const cacheKey = USER_REPLIES_CACHE_PREFIX + user.id;
+      const cached = kvGetJSONSync<ProfileReply[] | null>(cacheKey, null);
+      if (Array.isArray(cached) && cached.length > 0 && userReplies.length === 0) {
+        setUserReplies(cached);
+      }
+
+      const { replies: rows, error } = await getUserComments(user.id, { limit: 50 });
+      if (error || !rows) {
+        setRepliesLoaded(true);
+        return;
+      }
+
+      const buildReply = (c: any): ProfileReply => {
+        const parent = Array.isArray(c.posts) ? c.posts[0] : c.posts;
+        const parentAuthor = parent
+          ? (Array.isArray(parent.profiles) ? parent.profiles[0] : parent.profiles)
+          : null;
+        // Strip the repost prefix from the parent post's snippet so the
+        // mini-preview shows the actual text the reply is responding to.
+        let snippet: string = parent?.content || '';
+        if (snippet.startsWith('::repost::')) {
+          const rest = snippet.slice('::repost::'.length);
+          const sep = rest.indexOf('::');
+          snippet = sep >= 0 ? rest.slice(sep + 2) : '';
+        }
+        if (snippet.length > 80) snippet = snippet.slice(0, 80) + '…';
+        return {
+          id: c.id,
+          postId: c.post_id,
+          content: c.content || '',
+          createdAt: c.created_at,
+          parentAuthorName: parentAuthor?.display_name || 'User',
+          parentAuthorEmoji: parentAuthor?.emoji || '😊',
+          parentAuthorVerified: !!parentAuthor?.is_verified,
+          parentSnippet: snippet,
+        };
+      };
+
+      const CHUNK_SIZE = 5;
+      const mapped: ProfileReply[] = [];
+      for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
+        const chunk = rows.slice(i, i + CHUNK_SIZE).map(buildReply);
+        mapped.push(...chunk);
+        if (i + CHUNK_SIZE < rows.length) {
+          await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        }
+      }
+      setUserReplies(mapped);
+      setRepliesLoaded(true);
+      InteractionManager.runAfterInteractions(() => {
+        try { kvSetJSON(cacheKey, mapped); } catch {}
+      });
+    } catch {
+      setRepliesLoaded(true);
+    } finally {
+      setRepliesFetching(false);
+    }
+  }, [user?.id, repliesFetching, userReplies.length]);
+
+  // Trigger lazy loaders the first time the user opens each secondary
+  // tab. Deferred via InteractionManager so the tab-highlight switch
+  // and the network call don't compete for the same frame.
+  useEffect(() => {
+    if (activeTab === 'likes' && !likedLoaded && !likedFetching && user?.id) {
+      const handle = InteractionManager.runAfterInteractions(() => loadLikedPosts());
+      return () => handle.cancel();
+    }
+    if (activeTab === 'replies' && !repliesLoaded && !repliesFetching && user?.id) {
+      const handle = InteractionManager.runAfterInteractions(() => loadUserReplies());
+      return () => handle.cancel();
+    }
+  }, [activeTab, likedLoaded, likedFetching, repliesLoaded, repliesFetching, user?.id, loadLikedPosts, loadUserReplies]);
+
   // Restore scroll position when tab regains focus. We deliberately do NOT
   // bypass the throttle here anymore — refetching ~100 posts + walking them
   // through the repost-resolution map runs ~150-200 ms of synchronous JS,
@@ -415,6 +584,35 @@ export default function ProfileScreen() {
     [cardAuthorName, cardAuthorEmoji, cardAuthorVerified, cardAuthorBadge, postEmoji, handlePostLongPress, handlePostImagePress],
   );
 
+  // Liked posts come from any author — render using `UserProfilePostCard`
+  // so each row shows the actual author's name + emoji, not the current
+  // user's. ProfilePostCard takes a single shared author and isn't fit
+  // for a heterogenous-author list.
+  const renderLikedItem = useCallback(
+    ({ item }: { item: any }) => (
+      <UserProfilePostCard
+        post={item}
+        authorName={item.authorName}
+        authorUsername={item.authorUsername}
+        authorEmoji={item.authorEmoji}
+        authorVerified={item.authorVerified}
+        authorBadge={item.authorBadge}
+        authorId={item.authorId}
+        postEmoji={postEmoji}
+        onLongPress={handlePostLongPress}
+        onImagePress={handlePostImagePress}
+      />
+    ),
+    [postEmoji, handlePostLongPress, handlePostImagePress],
+  );
+
+  const renderReplyItem = useCallback(
+    ({ item }: { item: ProfileReply }) => <ProfileReplyCard reply={item} />,
+    [],
+  );
+
+  const keyExtractorReply = useCallback((item: ProfileReply) => item.id, []);
+
   // Pull-to-refresh handler
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -455,6 +653,30 @@ export default function ProfileScreen() {
   // same point the opacity starts dropping.
   const centerStatsScale = useMemo(
     () => scrollY.interpolate({ inputRange: [0, 80, 160], outputRange: [1, 1, 0.7], extrapolate: 'clamp' }),
+    [scrollY],
+  );
+  // Identity-row "fly into the avatar" interpolations. As the user
+  // scrolls, the @username (left of avatar) glides right and the
+  // display name (right of avatar) glides left, both fading to 0.
+  // The avatar itself does NOT move — its parent View has no
+  // transform applied. Each side text is wrapped in an Animated.View
+  // that retains its `flex: 1` slot in the row, so the avatar stays
+  // geometrically centered throughout the animation. 60 pt of
+  // translation is enough to read as "moving toward the avatar"
+  // without colliding (the avatar's half-width is ~36 pt, so the
+  // text edges have travelled past the avatar's edge before fully
+  // fading). useNativeDriver: true on the parent Animated.event keeps
+  // these on the UI thread.
+  const usernameTranslateX = useMemo(
+    () => scrollY.interpolate({ inputRange: [0, 60, 130], outputRange: [0, 0, 60], extrapolate: 'clamp' }),
+    [scrollY],
+  );
+  const nameTranslateX = useMemo(
+    () => scrollY.interpolate({ inputRange: [0, 60, 130], outputRange: [0, 0, -60], extrapolate: 'clamp' }),
+    [scrollY],
+  );
+  const identityTextOpacity = useMemo(
+    () => scrollY.interpolate({ inputRange: [0, 60, 130], outputRange: [1, 1, 0], extrapolate: 'clamp' }),
     [scrollY],
   );
 
@@ -529,9 +751,28 @@ export default function ProfileScreen() {
       </View>
       <Animated.FlatList
         ref={scrollViewRef}
-        data={activeTab === 'posts' && postsReady ? userPosts : []}
-        keyExtractor={keyExtractorPost}
-        renderItem={renderPostItem}
+        // Tab-driven data swap. `postsReady` only gates the heavy
+        // post-card mount path (initial open); the lighter likes /
+        // replies tabs render as soon as their loader returns.
+        data={
+          activeTab === 'posts'
+            ? (postsReady ? userPosts : [])
+            : activeTab === 'likes'
+              ? likedPosts
+              : activeTab === 'replies'
+                ? userReplies
+                : []
+        }
+        keyExtractor={activeTab === 'replies' ? keyExtractorReply : keyExtractorPost}
+        renderItem={
+          activeTab === 'posts'
+            ? renderPostItem
+            : activeTab === 'likes'
+              ? renderLikedItem
+              : activeTab === 'replies'
+                ? (renderReplyItem as any)
+                : renderPostItem
+        }
         // Virtualization tuned for weak Android / iPhone 12. The earlier
         // 6/4/7 numbers still let an 18-card profile mount the whole first
         // window inside ~300 ms, which slammed the JS thread into a SLOW
@@ -601,49 +842,69 @@ export default function ProfileScreen() {
                 chrome budget, see chromeReady). The avatar wrapper stays
                 a Pressable so tapping it still opens the account switcher. */}
             <View style={{ flexDirection: 'row', alignItems: 'center', alignSelf: 'stretch', marginTop: -140, paddingHorizontal: 8 }}>
-              <Text
-                numberOfLines={1}
+              {/* Left side — wrapper retains the flex: 1 slot so the
+                  avatar stays centered while the text inside translates
+                  toward it. */}
+              <Animated.View
                 style={{
                   flex: 1,
-                  textAlign: 'right',
-                  fontSize: 13,
-                  color: bannerIsLight ? theme.colors.text.secondary : 'rgba(255,255,255,0.92)',
-                  ...(bannerIsLight ? null : {
-                    textShadowColor: 'rgba(0,0,0,0.6)',
-                    textShadowOffset: { width: 0, height: 1 },
-                    textShadowRadius: 3,
-                  }),
-                  marginRight: 12,
+                  transform: [{ translateX: usernameTranslateX }],
+                  opacity: identityTextOpacity,
                 }}
               >
-                @{user.username}
-              </Text>
+                <AdaptiveProfileText
+                  isLight={bannerIsLight}
+                  darkBgColor="rgba(255,255,255,0.92)"
+                  lightBgColor={theme.colors.text.secondary}
+                  numberOfLines={1}
+                  style={{
+                    textAlign: 'right',
+                    fontSize: 13,
+                    textShadowColor: 'rgba(0,0,0,0.45)',
+                    textShadowOffset: { width: 0, height: 1 },
+                    textShadowRadius: 2,
+                    marginRight: 12,
+                  }}
+                >
+                  @{user.username}
+                </AdaptiveProfileText>
+              </Animated.View>
               <Pressable onPress={() => setShowAccountSwitcher(true)}>
                 <View style={{ width: 72, height: 72, borderRadius: 36, overflow: 'hidden', borderWidth: 3, borderColor: theme.colors.background.primary, backgroundColor: theme.isDark ? 'rgba(30,30,30,0.85)' : 'rgba(255,255,255,0.85)', alignItems: 'center', justifyContent: 'center' }}>
                   <Avatar emoji={user.emoji} size="lg" />
                 </View>
               </Pressable>
-              <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 12 }}>
-                <Text
-                  variant="body"
-                  weight="bold"
+              {/* Right side — same flex: 1 wrapper pattern. */}
+              <Animated.View
+                style={{
+                  flex: 1,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 4,
+                  marginLeft: 12,
+                  transform: [{ translateX: nameTranslateX }],
+                  opacity: identityTextOpacity,
+                }}
+              >
+                <AdaptiveProfileText
+                  isLight={bannerIsLight}
+                  darkBgColor="#FFFFFF"
+                  lightBgColor={theme.colors.text.primary}
                   numberOfLines={1}
                   style={{
                     flexShrink: 1,
                     fontSize: 15,
-                    color: bannerIsLight ? theme.colors.text.primary : '#FFFFFF',
-                    ...(bannerIsLight ? null : {
-                      textShadowColor: 'rgba(0,0,0,0.6)',
-                      textShadowOffset: { width: 0, height: 1 },
-                      textShadowRadius: 3,
-                    }),
+                    fontWeight: '700',
+                    textShadowColor: 'rgba(0,0,0,0.45)',
+                    textShadowOffset: { width: 0, height: 1 },
+                    textShadowRadius: 2,
                   }}
                 >
                   {user.displayName}
-                </Text>
+                </AdaptiveProfileText>
                 {user.is_verified && <VerifiedBadge size={13} />}
                 {user.badge && <UserBadge badge={user.badge} size="sm" />}
-              </View>
+              </Animated.View>
             </View>
             {/* Bio + social link icons — both centered. Counters used to
                 live here in a 3-text row; they now live in the top header
