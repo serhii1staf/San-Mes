@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { View, Pressable, Text as RNText, ActivityIndicator } from 'react-native';
+import { View, Pressable, Text as RNText, ActivityIndicator, Platform, StyleSheet } from 'react-native';
 import { Image } from 'expo-image';
+import { BlurView } from 'expo-blur';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useTheme } from '../../theme';
@@ -165,15 +166,19 @@ export const MiniAppPreviewCard = React.memo(function MiniAppPreviewCard({
   }, [shortOrFullId, resolved]);
 
   const accent = theme.colors.accent.primary;
-  const titleColor = textColor || theme.colors.text.primary;
-  const subColor = textColor || theme.colors.text.tertiary;
-  const bg = theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.025)';
-
-  // User-pickable WebP backdrop. `null` = current transparent look —
-  // matches the historical visual exactly. Skeleton/missing states
-  // intentionally skip the image so error chrome stays readable.
+  // Title + description normally use the standard text colors (or whatever
+  // override the parent passes via `textColor` for own-bubble rendering).
+  // When a WebP backdrop IS active we override BOTH lines to high-contrast
+  // white — the user complained that the title was white but the
+  // description stayed dim grey, which read as inconsistent. With the
+  // overlay tinting the photo darker on dark theme / lighter on light
+  // theme, white text reads cleanly against either.
   const previewBgId = useSettingsStore((s) => s.miniAppPreviewBg);
   const previewBgSource = getMiniAppPreviewSource(previewBgId);
+  const onBackdrop = !!previewBgSource;
+  const titleColor = onBackdrop ? '#FFFFFF' : (textColor || theme.colors.text.primary);
+  const subColor = onBackdrop ? 'rgba(255,255,255,0.85)' : (textColor || theme.colors.text.tertiary);
+  const bg = theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.025)';
   // Soft tint above the image so text + button stay readable. Light
   // theme darkens the photo less than dark theme; values mirror the
   // overlay strength used elsewhere in the app for image-on-text.
@@ -248,8 +253,10 @@ export const MiniAppPreviewCard = React.memo(function MiniAppPreviewCard({
         paddingHorizontal: 10,
         paddingVertical: 10,
         borderRadius: 16,
-        borderLeftWidth: 2,
-        borderLeftColor: textColor ? 'rgba(255,255,255,0.6)' : accent,
+        borderLeftWidth: onBackdrop ? 0 : 2,
+        borderLeftColor: onBackdrop
+          ? 'transparent'
+          : (textColor ? 'rgba(255,255,255,0.6)' : accent),
         backgroundColor: bg,
         // Clip the optional WebP backdrop to the rounded corner. Without
         // `overflow: hidden` the full-bleed image would leak past the
@@ -295,7 +302,9 @@ export const MiniAppPreviewCard = React.memo(function MiniAppPreviewCard({
           width: 48,
           height: 48,
           borderRadius: 14,
-          backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)',
+          backgroundColor: onBackdrop
+            ? 'rgba(255,255,255,0.18)'
+            : (theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)'),
           alignItems: 'center',
           justifyContent: 'center',
           overflow: 'visible',
@@ -310,7 +319,20 @@ export const MiniAppPreviewCard = React.memo(function MiniAppPreviewCard({
           {resolved.name}
         </Text>
         {resolved.description ? (
-          <Text variant="caption" color={subColor} numberOfLines={2} style={{ fontSize: 11, lineHeight: 15, marginTop: 2, opacity: textColor ? 0.85 : 1 }}>
+          <Text
+            variant="caption"
+            color={subColor}
+            numberOfLines={2}
+            style={{
+              fontSize: 11,
+              lineHeight: 15,
+              marginTop: 2,
+              // When we're rendering on a WebP backdrop, both lines are
+              // already white-on-tint so the alpha is baked into subColor.
+              // The legacy own-bubble path still uses the dim opacity.
+              opacity: onBackdrop ? 1 : (textColor ? 0.85 : 1),
+            }}
+          >
             {resolved.description}
           </Text>
         ) : null}
@@ -319,15 +341,66 @@ export const MiniAppPreviewCard = React.memo(function MiniAppPreviewCard({
         onPress={handleOpen}
         hitSlop={6}
         style={{
-          paddingHorizontal: 12,
-          paddingVertical: 7,
+          // Wrapper holds the corner radius + clips the BlurView.
+          // BlurView itself doesn't accept `borderRadius` reliably on
+          // every iOS version, so we always wrap.
           borderRadius: 14,
-          backgroundColor: textColor ? 'rgba(255,255,255,0.18)' : accent + '15',
+          overflow: 'hidden',
         }}
       >
-        <Text variant="caption" weight="semibold" color={textColor || accent} style={{ fontSize: 12 }}>
-          {t('mini_app.preview.open')}
-        </Text>
+        {onBackdrop && Platform.OS === 'ios' ? (
+          // Liquid-glass button: a thin BlurView sits behind the label so
+          // the Open chip reads as material rather than a flat tint. iOS
+          // only — Android falls through to the same translucent path
+          // we use elsewhere in the app, since BlurView there is too
+          // heavy for a 50-px chip rendered inside list cells.
+          <BlurView
+            intensity={50}
+            tint={theme.isDark ? 'dark' : 'light'}
+            style={{
+              paddingHorizontal: 12,
+              paddingVertical: 7,
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            {/* Hairline highlight on top reads as a "lit" rim — same
+                pattern as DynamicOverlayHost / GlassCapsule. */}
+            <View
+              pointerEvents="none"
+              style={[
+                StyleSheet.absoluteFill,
+                {
+                  borderRadius: 14,
+                  borderWidth: StyleSheet.hairlineWidth,
+                  borderColor: theme.isDark ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.10)',
+                },
+              ]}
+            />
+            <Text variant="caption" weight="semibold" color="#FFFFFF" style={{ fontSize: 12 }}>
+              {t('mini_app.preview.open')}
+            </Text>
+          </BlurView>
+        ) : (
+          <View
+            style={{
+              paddingHorizontal: 12,
+              paddingVertical: 7,
+              backgroundColor: onBackdrop
+                ? 'rgba(255,255,255,0.22)'
+                : (textColor ? 'rgba(255,255,255,0.18)' : accent + '15'),
+            }}
+          >
+            <Text
+              variant="caption"
+              weight="semibold"
+              color={onBackdrop ? '#FFFFFF' : (textColor || accent)}
+              style={{ fontSize: 12 }}
+            >
+              {t('mini_app.preview.open')}
+            </Text>
+          </View>
+        )}
       </Pressable>
     </View>
   );

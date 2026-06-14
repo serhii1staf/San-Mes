@@ -2,22 +2,25 @@
  * Mini-app preview backdrop picker — fullscreen modal for choosing the
  * WebP image rendered behind every `MiniAppPreviewCard`.
  *
- * Layout mirrors `app/settings/pixel-icons.tsx` exactly (the geometry
- * the user explicitly asked us to copy):
+ * Layout: single-column stack of FULL-WIDTH demo cards, each rendered at
+ * the exact same dimensions as the real share-link preview (the user
+ * explicitly asked for this — the previous 2-up grid felt cramped and
+ * didn't represent how the card actually looks in chats / comments).
  *
- * - Floating gradient header with a 28-px top inset, X / title /
- *   Apply on a three-region row.
- * - Below it, a 2-column grid of demo cards. Each demo is a small
- *   16:9-ish tile that previews what the chosen WebP looks like
- *   behind the standard preview-card content (emoji + name + button).
- * - First tile is "No background" — selected when the persisted id
- *   is `null` so users can clear a prior choice without scrolling.
- * - Selection is local until the user taps Apply; X cancels.
+ * Each row renders a near-pixel copy of `MiniAppPreviewCard`'s body
+ * (emoji bubble + name + description + Open chip) using a static
+ * "Demo" payload. Tapping a row selects that backdrop locally; the
+ * choice commits to `useSettingsStore.miniAppPreviewBg` only when the
+ * user taps Apply in the floating header.
+ *
+ * The geometry of the floating header (paddingTop: 28, gradient fade)
+ * mirrors `app/settings/pixel-icons.tsx` per the existing convention.
  */
 
 import React, { useState, useCallback, useMemo } from 'react';
-import { View, Pressable, StyleSheet, ScrollView, Text as RNText } from 'react-native';
+import { View, Pressable, StyleSheet, ScrollView, Text as RNText, Platform } from 'react-native';
 import { Image } from 'expo-image';
+import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -32,11 +35,9 @@ import {
   getMiniAppPreviewSource,
 } from '../../src/components/mini-app-previews/registry';
 
-const NUM_COLUMNS = 2;
-// Gap is consumed via marginHorizontal on each tile (see styles.tile),
-// so the grid stays a flat row without gap-prop polyfills.
-const TILE_HORIZONTAL_GAP = 8;
-const GRID_PADDING = 14;
+// Single demo payload — used for every row so contrast comparison is
+// fair. Mirrors the typical real-world card a user would see.
+const DEMO_EMOJI = '🌟';
 
 export default function MiniAppPreviewScreen() {
   const theme = useTheme();
@@ -63,8 +64,7 @@ export default function MiniAppPreviewScreen() {
   }, [selectedId]);
 
   // Build the full ordered list once: a "None" sentinel followed by
-  // every bundled preview. Rendering as a plain ScrollView is fine —
-  // we only ever have 7 tiles total.
+  // every bundled preview. ScrollView is fine — only ever 7 rows.
   const tiles = useMemo<({ kind: 'none' } | { kind: 'preview'; id: string })[]>(
     () => [
       { kind: 'none' },
@@ -75,155 +75,33 @@ export default function MiniAppPreviewScreen() {
 
   return (
     <View style={[styles.root, { backgroundColor: theme.colors.background.primary }]}>
-      {/* Grid sits underneath the floating gradient header so the cards
-          fade in/out behind the chrome on scroll, matching pixel-icons. */}
+      {/* Stack sits underneath the floating gradient header so cards
+          fade in/out behind the chrome on scroll. */}
       <ScrollView
         contentContainerStyle={{
-          paddingHorizontal: GRID_PADDING,
-          paddingTop: 78,
+          paddingHorizontal: 16,
+          paddingTop: 88,
           paddingBottom: insets.bottom + 24,
         }}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.grid}>
-          {tiles.map((tile) => {
-            const isNone = tile.kind === 'none';
-            const id = isNone ? null : tile.id;
-            const isSelected = selectedId === id;
-            const source = isNone ? null : getMiniAppPreviewSource(tile.id);
-            return (
-              <Pressable
-                key={isNone ? '__none__' : tile.id}
-                onPress={() => onPick(id)}
-                style={[
-                  styles.tile,
-                  {
-                    backgroundColor: theme.colors.background.elevated,
-                    borderColor: isSelected
-                      ? theme.colors.accent.primary
-                      : theme.colors.border.light,
-                    borderWidth: isSelected ? 2 : StyleSheet.hairlineWidth,
-                  },
-                ]}
-              >
-                {source ? (
-                  <>
-                    <Image
-                      source={source}
-                      style={StyleSheet.absoluteFill}
-                      contentFit="cover"
-                      cachePolicy="memory-disk"
-                      transition={0}
-                      pointerEvents="none"
-                    />
-                    <View
-                      pointerEvents="none"
-                      style={[
-                        StyleSheet.absoluteFill,
-                        {
-                          backgroundColor: theme.isDark
-                            ? 'rgba(0,0,0,0.35)'
-                            : 'rgba(255,255,255,0.55)',
-                        },
-                      ]}
-                    />
-                  </>
-                ) : null}
-
-                {/* Demo content — same shape as MiniAppPreviewCard so the
-                    user can read the contrast at a glance. Kept compact
-                    for the 2-up grid. */}
-                <View style={styles.demoRow} pointerEvents="none">
-                  <View
-                    style={[
-                      styles.demoEmojiBubble,
-                      {
-                        backgroundColor: theme.isDark
-                          ? 'rgba(255,255,255,0.18)'
-                          : 'rgba(0,0,0,0.08)',
-                      },
-                    ]}
-                  >
-                    <RNText style={styles.demoEmoji} allowFontScaling={false}>
-                      🌟
-                    </RNText>
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text
-                      variant="caption"
-                      weight="semibold"
-                      numberOfLines={1}
-                      style={{ fontSize: 13 }}
-                    >
-                      {t('mini_app_preview.demo_name')}
-                    </Text>
-                    <Text
-                      variant="caption"
-                      color={theme.colors.text.tertiary}
-                      numberOfLines={1}
-                      style={{ fontSize: 11, marginTop: 1 }}
-                    >
-                      {t('mini_app_preview.demo_desc')}
-                    </Text>
-                  </View>
-                </View>
-
-                <View
-                  style={[
-                    styles.demoButton,
-                    {
-                      backgroundColor: theme.colors.accent.primary + '20',
-                    },
-                  ]}
-                  pointerEvents="none"
-                >
-                  <Text
-                    variant="caption"
-                    weight="semibold"
-                    color={theme.colors.accent.primary}
-                    style={{ fontSize: 11 }}
-                  >
-                    {t('mini_app.preview.open')}
-                  </Text>
-                </View>
-
-                {/* "No background" label sits in the empty state's
-                    bottom strip so the tile is obviously a real choice
-                    rather than an accidental empty card. */}
-                {isNone ? (
-                  <View
-                    pointerEvents="none"
-                    style={[
-                      styles.noneBadge,
-                      { borderColor: theme.colors.border.light },
-                    ]}
-                  >
-                    <Feather name="slash" size={11} color={theme.colors.text.tertiary} />
-                    <Text
-                      variant="caption"
-                      color={theme.colors.text.tertiary}
-                      style={{ fontSize: 10, marginLeft: 4 }}
-                    >
-                      {t('mini_app_preview.none')}
-                    </Text>
-                  </View>
-                ) : null}
-
-                {isSelected ? (
-                  <View
-                    pointerEvents="none"
-                    style={[
-                      styles.checkBadge,
-                      { backgroundColor: theme.colors.accent.primary },
-                    ]}
-                  >
-                    <Feather name="check" size={12} color="#FFFFFF" />
-                  </View>
-                ) : null}
-              </Pressable>
-            );
-          })}
-        </View>
+        {tiles.map((tile) => {
+          const isNone = tile.kind === 'none';
+          const id = isNone ? null : tile.id;
+          const isSelected = selectedId === id;
+          const source = isNone ? null : getMiniAppPreviewSource(tile.id);
+          return (
+            <DemoRow
+              key={isNone ? '__none__' : tile.id}
+              source={source}
+              isSelected={isSelected}
+              isNone={isNone}
+              onPress={() => onPick(id)}
+              t={t}
+              theme={theme}
+            />
+          );
+        })}
       </ScrollView>
 
       {/* Floating gradient header — same geometry as pixel-icons:
@@ -263,6 +141,162 @@ export default function MiniAppPreviewScreen() {
   );
 }
 
+// One row in the picker — tappable, full-width, looks exactly like the
+// real `MiniAppPreviewCard` rendered in a chat / comment / post.
+function DemoRow({
+  source,
+  isSelected,
+  isNone,
+  onPress,
+  t,
+  theme,
+}: {
+  source: number | null;
+  isSelected: boolean;
+  isNone: boolean;
+  onPress: () => void;
+  t: (k: string) => string;
+  theme: any;
+}) {
+  const onBackdrop = !!source;
+  const accent = theme.colors.accent.primary;
+  const bg = theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.025)';
+  const titleColor = onBackdrop ? '#FFFFFF' : theme.colors.text.primary;
+  const subColor = onBackdrop ? 'rgba(255,255,255,0.85)' : theme.colors.text.tertiary;
+  const overlayColor = theme.isDark ? 'rgba(0,0,0,0.35)' : 'rgba(255,255,255,0.55)';
+
+  return (
+    <Pressable onPress={onPress} style={styles.rowOuter}>
+      {/* Outer wrapper hosts the selection ring without affecting the
+          inner card's own border-radius / overflow clipping. */}
+      <View
+        style={[
+          styles.cardWrap,
+          {
+            borderColor: isSelected ? accent : 'transparent',
+          },
+        ]}
+      >
+        <View
+          style={[
+            styles.card,
+            {
+              backgroundColor: bg,
+              borderLeftWidth: onBackdrop || isNone ? 0 : 2,
+              borderLeftColor: onBackdrop || isNone ? 'transparent' : accent,
+            },
+          ]}
+        >
+          {/* WebP backdrop + tint, identical to MiniAppPreviewCard. */}
+          {source ? (
+            <>
+              <Image
+                source={source}
+                style={StyleSheet.absoluteFill}
+                contentFit="cover"
+                cachePolicy="memory-disk"
+                transition={0}
+                pointerEvents="none"
+              />
+              <View
+                pointerEvents="none"
+                style={[StyleSheet.absoluteFill, { backgroundColor: overlayColor }]}
+              />
+            </>
+          ) : null}
+
+          {/* Emoji bubble */}
+          <View
+            style={[
+              styles.emojiBubble,
+              {
+                backgroundColor: onBackdrop
+                  ? 'rgba(255,255,255,0.18)'
+                  : theme.isDark
+                  ? 'rgba(255,255,255,0.08)'
+                  : 'rgba(0,0,0,0.04)',
+              },
+            ]}
+            pointerEvents="none"
+          >
+            <RNText style={styles.emoji} allowFontScaling={false}>
+              {isNone ? '✕' : DEMO_EMOJI}
+            </RNText>
+          </View>
+
+          {/* Title + description */}
+          <View style={{ flex: 1 }}>
+            <Text variant="caption" weight="semibold" color={titleColor} numberOfLines={1} style={{ fontSize: 14 }}>
+              {isNone ? t('mini_app_preview.none') : t('mini_app_preview.demo_name')}
+            </Text>
+            <Text variant="caption" color={subColor} numberOfLines={2} style={{ fontSize: 11, lineHeight: 15, marginTop: 2 }}>
+              {t('mini_app_preview.demo_desc')}
+            </Text>
+          </View>
+
+          {/* Open chip — Liquid-Glass on iOS when a backdrop is shown,
+              flat tinted otherwise. Mirrors MiniAppPreviewCard exactly. */}
+          <View style={styles.openWrap}>
+            {onBackdrop && Platform.OS === 'ios' ? (
+              <BlurView
+                intensity={50}
+                tint={theme.isDark ? 'dark' : 'light'}
+                style={styles.openBlur}
+              >
+                <View
+                  pointerEvents="none"
+                  style={[
+                    StyleSheet.absoluteFill,
+                    {
+                      borderRadius: 14,
+                      borderWidth: StyleSheet.hairlineWidth,
+                      borderColor: theme.isDark
+                        ? 'rgba(255,255,255,0.18)'
+                        : 'rgba(0,0,0,0.10)',
+                    },
+                  ]}
+                />
+                <Text variant="caption" weight="semibold" color="#FFFFFF" style={{ fontSize: 12 }}>
+                  {t('mini_app.preview.open')}
+                </Text>
+              </BlurView>
+            ) : (
+              <View
+                style={[
+                  styles.openFlat,
+                  {
+                    backgroundColor: onBackdrop
+                      ? 'rgba(255,255,255,0.22)'
+                      : accent + '15',
+                  },
+                ]}
+              >
+                <Text
+                  variant="caption"
+                  weight="semibold"
+                  color={onBackdrop ? '#FFFFFF' : accent}
+                  style={{ fontSize: 12 }}
+                >
+                  {t('mini_app.preview.open')}
+                </Text>
+              </View>
+            )}
+          </View>
+
+          {isSelected ? (
+            <View
+              pointerEvents="none"
+              style={[styles.checkBadge, { backgroundColor: accent }]}
+            >
+              <Feather name="check" size={12} color="#FFFFFF" />
+            </View>
+          ) : null}
+        </View>
+      </View>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
   root: { flex: 1 },
   headerWrapper: {
@@ -291,54 +325,41 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  grid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    // Negative horizontal margin cancels the per-tile margin so the
-    // outer ScrollView padding stays visually correct.
-    marginHorizontal: -TILE_HORIZONTAL_GAP / 2,
+  rowOuter: { marginBottom: 10 },
+  // 2-px ring around the card when selected, transparent otherwise.
+  // Padding inside reserves space so the ring doesn't push the card.
+  cardWrap: {
+    borderRadius: 18,
+    borderWidth: 2,
+    padding: 0,
   },
-  tile: {
-    // Two columns with horizontal gaps that compose to TILE_HORIZONTAL_GAP
-    // total spacing per row. Fixed aspect ratio gives every backdrop the
-    // same generous canvas without runtime measurement.
-    width: `${100 / NUM_COLUMNS}%`,
-    aspectRatio: 16 / 11,
-    marginBottom: TILE_HORIZONTAL_GAP,
-    borderRadius: 16,
-    overflow: 'hidden',
-    padding: 12,
-    justifyContent: 'space-between',
-  },
-  demoRow: {
+  card: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    borderRadius: 16,
+    overflow: 'hidden',
   },
-  demoEmojiBubble: {
-    width: 32,
-    height: 32,
-    borderRadius: 10,
+  emojiBubble: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  demoEmoji: { fontSize: 18 },
-  demoButton: {
-    alignSelf: 'flex-start',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 10,
-  },
-  noneBadge: {
-    position: 'absolute',
-    left: 10,
-    bottom: 10,
-    flexDirection: 'row',
+  emoji: { fontSize: 26 },
+  openWrap: { borderRadius: 14, overflow: 'hidden' },
+  openBlur: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
     alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 10,
-    borderWidth: StyleSheet.hairlineWidth,
+    justifyContent: 'center',
+  },
+  openFlat: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
   },
   checkBadge: {
     position: 'absolute',
