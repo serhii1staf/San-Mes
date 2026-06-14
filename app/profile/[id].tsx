@@ -24,6 +24,7 @@ import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { UserBadge } from '../../src/components/ui/UserBadge';
 import { PostContextMenu } from '../../src/components/ui/PostContextMenu';
 import { UserProfilePostCard } from '../../src/components/ui/UserProfilePostCard';
+import { FollowsListModal, FollowsListMode } from '../../src/components/profile/FollowsListModal';
 import { useProfileAppearanceStore } from '../../src/store/profileAppearanceStore';
 import { PanResponder } from 'react-native';
 import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
@@ -288,6 +289,8 @@ export default function UserProfileScreen() {
   const [chromeReady, setChromeReady] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const [viewingImage, setViewingImage] = useState<{ uri: string; postId: string; allImages?: string[] } | null>(null);
+  // Followers / Following list modal opened from the header counters.
+  const [followsModal, setFollowsModal] = useState<FollowsListMode | null>(null);
   const { target: contextPost, open: openContextMenu, close: closeContextMenu } = useContextMenuGuard<any>();
   // Virtualization is handled by Animated.FlatList below — no manual windowing
   // needed. Initial mount is gated by `postsReady` so the tab tap stays snappy.
@@ -669,8 +672,12 @@ export default function UserProfileScreen() {
 
               <View style={{ flexDirection: 'row', marginTop: 10, gap: 16 }}>
                 <Text variant="caption"><Text variant="caption" weight="bold">{displayPosts.length}</Text> <Text variant="caption" color={theme.colors.text.tertiary}>posts</Text></Text>
-                <Text variant="caption"><Text variant="caption" weight="bold">{followCounts.following}</Text> <Text variant="caption" color={theme.colors.text.tertiary}>following</Text></Text>
-                <Text variant="caption"><Text variant="caption" weight="bold">{followCounts.followers}</Text> <Text variant="caption" color={theme.colors.text.tertiary}>followers</Text></Text>
+                <Pressable onPress={() => { triggerHaptic('selection'); setFollowsModal('following'); }} hitSlop={6}>
+                  <Text variant="caption"><Text variant="caption" weight="bold">{followCounts.following}</Text> <Text variant="caption" color={theme.colors.text.tertiary}>following</Text></Text>
+                </Pressable>
+                <Pressable onPress={() => { triggerHaptic('selection'); setFollowsModal('followers'); }} hitSlop={6}>
+                  <Text variant="caption"><Text variant="caption" weight="bold">{followCounts.followers}</Text> <Text variant="caption" color={theme.colors.text.tertiary}>followers</Text></Text>
+                </Pressable>
               </View>
 
               {displayProfile.bio ? <LinkedText style={{ marginTop: 8 }}>{displayProfile.bio}</LinkedText> : null}
@@ -739,6 +746,7 @@ export default function UserProfileScreen() {
       )}
 
       <ProfileMenuModal visible={showMenu} profile={displayProfile} onClose={handleCloseMenu} />
+      <FollowsListModal visible={!!followsModal} mode={followsModal || 'followers'} userId={displayProfile?.id || null} onClose={() => setFollowsModal(null)} />
 
       {/* Fullscreen Image Viewer */}
       <Modal visible={!!viewingImage} transparent animationType="none" onRequestClose={() => setViewingImage(null)} statusBarTranslucent>

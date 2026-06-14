@@ -22,6 +22,7 @@ import { kvGetJSONSync, kvSetJSON } from '../../src/services/kvStore';
 import { AccountSwitcher } from '../../src/components/ui/AccountSwitcher';
 import { PostContextMenu } from '../../src/components/ui/PostContextMenu';
 import { SwipeablePostCard } from '../../src/components/ui/SwipeablePostCard';
+import { FollowsListModal, FollowsListMode } from '../../src/components/profile/FollowsListModal';
 import { showToast } from '../../src/store/toastStore';
 import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
 import { useAuthStore } from '../../src/store';
@@ -147,6 +148,9 @@ export default function ProfileScreen() {
   const [activeTab, setActiveTab] = useState<TabName>('posts');
   const [followCounts, setFollowCounts] = useState({ followers: 0, following: 0 });
   const [showQR, setShowQR] = useState(false);
+  // Followers / Following list modal — opens when the user taps the
+  // counters in the profile header. `null` means the modal is closed.
+  const [followsModal, setFollowsModal] = useState<FollowsListMode | null>(null);
   const [viewingImage, setViewingImage] = useState<{ uri: string; postId: string; allImages?: string[] } | null>(null);
   const [showAccountSwitcher, setShowAccountSwitcher] = useState(false);
   const { target: contextPost, open: openContextMenu, close: closeContextMenu } = useContextMenuGuard<any>();
@@ -489,8 +493,12 @@ export default function ProfileScreen() {
               </View>
               <View style={{ flexDirection: 'row', marginTop: 10, gap: 16 }}>
                 <Text variant="caption"><Text variant="caption" weight="bold">{userPosts.length}</Text> <Text variant="caption" color={theme.colors.text.tertiary}>{t('profile.posts_count')}</Text></Text>
-                <Text variant="caption"><Text variant="caption" weight="bold">{followCounts.following}</Text> <Text variant="caption" color={theme.colors.text.tertiary}>{t('profile.following')}</Text></Text>
-                <Text variant="caption"><Text variant="caption" weight="bold">{followCounts.followers}</Text> <Text variant="caption" color={theme.colors.text.tertiary}>{t('profile.followers')}</Text></Text>
+                <Pressable onPress={() => { triggerHaptic('selection'); setFollowsModal('following'); }} hitSlop={6}>
+                  <Text variant="caption"><Text variant="caption" weight="bold">{followCounts.following}</Text> <Text variant="caption" color={theme.colors.text.tertiary}>{t('profile.following')}</Text></Text>
+                </Pressable>
+                <Pressable onPress={() => { triggerHaptic('selection'); setFollowsModal('followers'); }} hitSlop={6}>
+                  <Text variant="caption"><Text variant="caption" weight="bold">{followCounts.followers}</Text> <Text variant="caption" color={theme.colors.text.tertiary}>{t('profile.followers')}</Text></Text>
+                </Pressable>
               </View>
               {user.bio ? <LinkedText style={{ marginTop: 8 }}>{user.bio}</LinkedText> : null}
               {userLinks.length > 0 && <View style={{ flexDirection: 'row', marginTop: 8, gap: 8 }}>{userLinks.map((link, idx) => <SocialLinkIcon key={idx} type={link.type} url={link.url} />)}</View>}
@@ -599,6 +607,7 @@ export default function ProfileScreen() {
       </Modal>
       <AccountSwitcher visible={showAccountSwitcher} onClose={() => setShowAccountSwitcher(false)} />
       <PostContextMenu visible={!!contextPost} post={contextPost} isOwnPost={true} onClose={closeContextMenu} onDelete={async (postId) => { if (user?.id) { await deletePost(postId, user.id); useFeedStore.getState().removePost(postId); loadMyPosts(); showToast(t('toast.post_deleted'), 'trash-2'); } }} />
+      <FollowsListModal visible={!!followsModal} mode={followsModal || 'followers'} userId={user?.id || null} onClose={() => setFollowsModal(null)} />
     </View>
   );
 }
