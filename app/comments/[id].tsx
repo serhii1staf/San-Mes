@@ -28,6 +28,7 @@ import { playSendSound } from '../../src/utils/sounds';
 import { showToast } from '../../src/store/toastStore';
 import { useT } from '../../src/i18n/store';
 import { perfMonitor } from '../../src/services/perfMonitor';
+import { useSettingsStore } from '../../src/store/settingsStore';
 
 const REPORT_CATS: { key: string; labelKey: string }[] = [
   { key: 'spam', labelKey: 'report.cat.spam' },
@@ -193,12 +194,14 @@ export default function CommentsScreen() {
   const t = useT();
   // Mount-time marker — surfaces in the perf-monitor panel as
   // `MOUNT comments/[id] <ms>` so freezes when opening comments have
-  // an actionable starting point.
+  // an actionable starting point. Skipped when the monitor is off.
   const mountStart = useRef(Date.now()).current;
+  const perfEnabled = useSettingsStore((s) => s.perfMonitorEnabled);
   useEffect(() => {
+    if (!perfEnabled) return;
     perfMonitor.markScreenMount('comments/[id]', Date.now() - mountStart);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [perfEnabled]);
   const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
   const inputPadStyle = useAnimatedStyle(() => {
     const open = Math.abs(keyboardHeight.value) > 1;

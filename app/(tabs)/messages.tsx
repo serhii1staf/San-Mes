@@ -16,6 +16,7 @@ import { prefetchRecentChatMedia } from '../../src/services/messagesPrefetch';
 import { kvGetJSONSync, kvSetJSON, kvWarm } from '../../src/services/kvStore';
 import { useMiniAppsStore } from '../../src/store/miniAppsStore';
 import { useChatSettingsStore, GLOBAL_CHAT_SETTINGS_KEY } from '../../src/store/chatSettingsStore';
+import { useSettingsStore } from '../../src/store/settingsStore';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { useT } from '../../src/i18n/store';
 import { Conversation } from '../../src/types';
@@ -213,11 +214,15 @@ export default function MessagesScreen() {
   // Mount-time marker — surfaces in the perf-monitor panel as
   // `MOUNT (tabs)/messages <ms>` so a slow tab switch into Messages can be
   // attributed to the screen's own first render vs. tab-bar transition.
+  // Skipped at the call site when the monitor is off so we don't pay
+  // Date.now() + the function hop on every tab focus.
   const mountStart = useRef(Date.now()).current;
+  const perfEnabled = useSettingsStore((s) => s.perfMonitorEnabled);
   useEffect(() => {
+    if (!perfEnabled) return;
     perfMonitor.markScreenMount('(tabs)/messages', Date.now() - mountStart);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [perfEnabled]);
   // Individual selector — subscribing to the whole store via destructuring
   // would re-render this screen on every unrelated chat-store change (e.g.,
   // typing into a chat input updates messages elsewhere in the store).

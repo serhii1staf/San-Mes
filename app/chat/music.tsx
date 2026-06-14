@@ -19,6 +19,7 @@ import { kvGetJSONSync, kvSetJSON } from '../../src/services/kvStore';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { useT } from '../../src/i18n/store';
 import { perfMonitor } from '../../src/services/perfMonitor';
+import { useSettingsStore } from '../../src/store/settingsStore';
 
 interface MusicMessage { id: string; query: string; track?: Track | null; tracks?: Track[]; ts: number }
 
@@ -37,11 +38,14 @@ export default function MusicChatScreen() {
   const t = useT();
   // Mount-time marker — perf-monitor panel attributes any open-the-music
   // chat freeze either to navigation overhead or to this commit duration.
+  // Skipped at the call site when the monitor is off.
   const mountStart = useRef(Date.now()).current;
+  const perfEnabled = useSettingsStore((s) => s.perfMonitorEnabled);
   useEffect(() => {
+    if (!perfEnabled) return;
     perfMonitor.markScreenMount('chat/music', Date.now() - mountStart);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [perfEnabled]);
   const COMMANDS: CommandDef[] = useMemo(() => [
     { id: 'last', icon: 'rotate-cw', label: t('music_chat.command.last_label'), description: t('music_chat.command.last_desc') },
     { id: 'clear', icon: 'eraser', label: t('music_chat.command.clear_label'), description: t('music_chat.command.clear_desc') },

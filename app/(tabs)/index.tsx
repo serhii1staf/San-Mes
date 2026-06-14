@@ -216,13 +216,16 @@ export default function FeedScreen() {
   const insets = useSafeAreaInsets();
   const t = useT();
   // Mount-time marker — feed open is the first impression on cold start, so
-  // any time spent here is highly user-visible. Free when the perf monitor
-  // is off (singleton early-returns on the disabled flag).
+  // any time spent here is highly user-visible. Skipped at the call site too
+  // when the perf monitor is off so we don't pay the Date.now() + function
+  // hop on the cold-start frame.
   const mountStart = useRef(Date.now()).current;
+  const perfEnabled = useSettingsStore((s) => s.perfMonitorEnabled);
   useEffect(() => {
+    if (!perfEnabled) return;
     perfMonitor.markScreenMount('(tabs)/index', Date.now() - mountStart);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [perfEnabled]);
   // Subscribe field-by-field — pulling the whole user object from useAuthStore
   // re-renders the entire feed screen on any unrelated profile change.
   const userId = useAuthStore((s) => s.user?.id);

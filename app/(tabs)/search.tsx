@@ -13,6 +13,7 @@ import { useMiniAppsStore } from '../../src/store/miniAppsStore';
 import { accountKey } from '../../src/services/cacheService';
 import { useT } from '../../src/i18n/store';
 import { perfMonitor } from '../../src/services/perfMonitor';
+import { useSettingsStore } from '../../src/store/settingsStore';
 
 const SEARCH_HISTORY_KEY = '@san:search_history';
 
@@ -31,12 +32,15 @@ export default function SearchScreen() {
   const insets = useSafeAreaInsets();
   const t = useT();
   // Mount-time marker — search tab is small but still has a synchronous
-  // history hydrate. Free when the perf monitor is off.
+  // history hydrate. Skip at the call site when the monitor is off so we
+  // don't pay the Date.now() + function hop on tab focus.
   const mountStart = useRef(Date.now()).current;
+  const perfEnabled = useSettingsStore((s) => s.perfMonitorEnabled);
   useEffect(() => {
+    if (!perfEnabled) return;
     perfMonitor.markScreenMount('(tabs)/search', Date.now() - mountStart);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [perfEnabled]);
   const [isFocused, setIsFocused] = useState(false);
   const [query, setQuery] = useState('');
   const [profiles, setProfiles] = useState<ProfileResult[]>([]);

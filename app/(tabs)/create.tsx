@@ -19,6 +19,7 @@ import { accountKey } from '../../src/services/cacheService';
 import { FormatHelpModal } from '../../src/components/ui/FormatHelpModal';
 import { useT } from '../../src/i18n/store';
 import { perfMonitor } from '../../src/services/perfMonitor';
+import { useSettingsStore } from '../../src/store/settingsStore';
 import { validatePost } from '../../src/services/moderation';
 
 const MAX_CHARS = 500;
@@ -35,12 +36,14 @@ export default function CreateScreen() {
   // Mount-time marker — surfaces in the perf-monitor panel. Create has
   // photo-picker chrome that occasionally lags on cold tab switch; this
   // attribution helps tell whether that lag is in the screen's first
-  // render or downstream picker work.
+  // render or downstream picker work. Skipped when the monitor is off.
   const mountStart = useRef(Date.now()).current;
+  const perfEnabled = useSettingsStore((s) => s.perfMonitorEnabled);
   useEffect(() => {
+    if (!perfEnabled) return;
     perfMonitor.markScreenMount('(tabs)/create', Date.now() - mountStart);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [perfEnabled]);
   // Field-level selectors so the create screen doesn't re-render on every
   // unrelated feed-store mutation (likes, posts list, etc.) coming from the home tab.
   const user = useAuthStore((s) => s.user);
