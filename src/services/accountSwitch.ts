@@ -16,6 +16,7 @@ import { setThrottleAccount, resetAllThrottles } from './syncThrottle';
 import { useEntityStore } from './entityStore';
 import { useFeedStore } from '../store/feedStore';
 import { useChatStore } from '../store/chatStore';
+import { useBlockedUsersStore } from '../store/blockedUsersStore';
 import { disconnectRealtime } from './realtime/ably';
 
 export function switchAccount(accountId: string | null | undefined): void {
@@ -35,8 +36,16 @@ export function switchAccount(accountId: string | null | undefined): void {
     useEntityStore.setState({ posts: {}, profiles: {}, likes: {}, follows: {}, conversations: [], feedIds: [], myPostIds: [], isHydrated: false } as any);
   } catch {}
 
+  // 2b) Drop the previous account's blocked-users list from memory before
+  //     the new account's hydrate fires. Without this, the new account
+  //     would briefly observe the previous account's block list (one
+  //     frame) which could surface as a flash of "hidden" placeholders
+  //     over the new account's content.
+  try { useBlockedUsersStore.getState().reset(); } catch {}
+
   // 3) Re-hydrate the new account's own cached data.
   try { useEntityStore.getState().hydrate(); } catch {}
+  try { useBlockedUsersStore.getState().hydrate(); } catch {}
 
   // 4) Drop the realtime client. The next consumer (chat screen, global
   //    notification bridge) will lazily reopen it with the new auth.
