@@ -220,12 +220,16 @@ export default function FeedScreen() {
   // when the perf monitor is off so we don't pay the Date.now() + function
   // hop on the cold-start frame.
   const mountStart = useRef(Date.now()).current;
-  const perfEnabled = useSettingsStore((s) => s.perfMonitorEnabled);
+  // Fire ONCE on first mount, regardless of whether perfMonitor was on or
+  // off at that moment. Reading `perfMonitorEnabled` from the store at
+  // effect-time means a later toggle doesn't re-fire this effect with the
+  // long-stale `mountStart` (which was producing fake 3-minute durations
+  // in the snapshot panel). Empty deps + lazy store read = correct semantics.
   useEffect(() => {
-    if (!perfEnabled) return;
+    if (!useSettingsStore.getState().perfMonitorEnabled) return;
     perfMonitor.markScreenMount('(tabs)/index', Date.now() - mountStart);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [perfEnabled]);
+  }, []);
   // Subscribe field-by-field — pulling the whole user object from useAuthStore
   // re-renders the entire feed screen on any unrelated profile change.
   const userId = useAuthStore((s) => s.user?.id);

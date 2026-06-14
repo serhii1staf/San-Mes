@@ -92,12 +92,15 @@ export default function ProfileScreen() {
   // when the monitor is off so we don't pay Date.now() + the function hop
   // on the cold tab-focus frame.
   const mountStart = useRef(Date.now()).current;
-  const perfEnabled = useSettingsStore((s) => s.perfMonitorEnabled);
+  // Fire ONCE on first mount. Reading `perfMonitorEnabled` from the store at
+  // effect-time (not via subscription) means a later toggle doesn't re-fire
+  // this with a stale `mountStart` — that bug was producing fake 3-minute
+  // mount durations whenever perfMonitor flipped after first paint.
   useEffect(() => {
-    if (!perfEnabled) return;
+    if (!useSettingsStore.getState().perfMonitorEnabled) return;
     perfMonitor.markScreenMount('(tabs)/profile', Date.now() - mountStart);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [perfEnabled]);
+  }, []);
   // Selectors over destructuring — pulling the whole user object re-rendered
   // the profile screen on every unrelated profile field change (badge sync, etc.)
   const user = useAuthStore((s) => s.user);

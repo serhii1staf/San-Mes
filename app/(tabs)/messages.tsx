@@ -309,12 +309,13 @@ export default function MessagesScreen() {
   // Skipped at the call site when the monitor is off so we don't pay
   // Date.now() + the function hop on every tab focus.
   const mountStart = useRef(Date.now()).current;
-  const perfEnabled = useSettingsStore((s) => s.perfMonitorEnabled);
+  // Fire ONCE on first mount. See (tabs)/index.tsx for the same fix
+  // rationale — store-read at effect-time avoids stale-mountStart re-fires.
   useEffect(() => {
-    if (!perfEnabled) return;
+    if (!useSettingsStore.getState().perfMonitorEnabled) return;
     perfMonitor.markScreenMount('(tabs)/messages', Date.now() - mountStart);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [perfEnabled]);
+  }, []);
   // Individual selector — subscribing to the whole store via destructuring
   // would re-render this screen on every unrelated chat-store change (e.g.,
   // typing into a chat input updates messages elsewhere in the store).

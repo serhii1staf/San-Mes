@@ -38,12 +38,13 @@ export default function CreateScreen() {
   // attribution helps tell whether that lag is in the screen's first
   // render or downstream picker work. Skipped when the monitor is off.
   const mountStart = useRef(Date.now()).current;
-  const perfEnabled = useSettingsStore((s) => s.perfMonitorEnabled);
+  // Fire ONCE on first mount. See (tabs)/index.tsx for the same fix
+  // rationale — store-read at effect-time avoids stale-mountStart re-fires.
   useEffect(() => {
-    if (!perfEnabled) return;
+    if (!useSettingsStore.getState().perfMonitorEnabled) return;
     perfMonitor.markScreenMount('(tabs)/create', Date.now() - mountStart);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [perfEnabled]);
+  }, []);
   // Field-level selectors so the create screen doesn't re-render on every
   // unrelated feed-store mutation (likes, posts list, etc.) coming from the home tab.
   const user = useAuthStore((s) => s.user);

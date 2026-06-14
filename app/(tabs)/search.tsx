@@ -35,12 +35,13 @@ export default function SearchScreen() {
   // history hydrate. Skip at the call site when the monitor is off so we
   // don't pay the Date.now() + function hop on tab focus.
   const mountStart = useRef(Date.now()).current;
-  const perfEnabled = useSettingsStore((s) => s.perfMonitorEnabled);
+  // Fire ONCE on first mount. See (tabs)/index.tsx for the same fix
+  // rationale — store-read at effect-time avoids stale-mountStart re-fires.
   useEffect(() => {
-    if (!perfEnabled) return;
+    if (!useSettingsStore.getState().perfMonitorEnabled) return;
     perfMonitor.markScreenMount('(tabs)/search', Date.now() - mountStart);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [perfEnabled]);
+  }, []);
   const [isFocused, setIsFocused] = useState(false);
   const [query, setQuery] = useState('');
   const [profiles, setProfiles] = useState<ProfileResult[]>([]);
