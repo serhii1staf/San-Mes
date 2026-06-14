@@ -69,32 +69,45 @@ function ConversationItemBase({ item, tab }: { item: Conversation; index: number
   // shown by the native context menu. Matching by id (or index) keeps logic
   // independent of the user's interface language.
   type ActionDef = { id: 'unarchive' | 'archive' | 'chat_settings' | 'block' | 'unblock' | 'restore' | 'delete' | 'delete_forever'; title: string; systemIcon?: string; destructive?: boolean };
-  let actionDefs: ActionDef[];
-  if (tab === 'archive') {
-    actionDefs = [
-      { id: 'unarchive', title: t('messages.action.unarchive'), systemIcon: 'tray.and.arrow.up' },
-      { id: 'chat_settings', title: t('messages.action.chat_settings'), systemIcon: 'gearshape' },
-      { id: 'delete', title: t('messages.action.delete'), destructive: true, systemIcon: 'trash' },
-    ];
-  } else if (tab === 'blocked') {
-    actionDefs = [
-      { id: 'unblock', title: t('messages.action.unblock'), systemIcon: 'checkmark.circle' },
-      { id: 'delete', title: t('messages.action.delete'), destructive: true, systemIcon: 'trash' },
-    ];
-  } else if (tab === 'deleted') {
-    actionDefs = [
-      { id: 'restore', title: t('messages.action.restore'), systemIcon: 'arrow.uturn.backward' },
-      { id: 'delete_forever', title: t('messages.action.delete_forever'), destructive: true, systemIcon: 'trash' },
-    ];
-  } else {
-    actionDefs = [
+  // Memoized so the native ContextMenu doesn't re-register its actions
+  // on every parent re-render. The previous unmemoized build allocated
+  // a new array + closures every render, which on iOS forced
+  // UIContextMenuInteraction to flush + re-bind its action set per
+  // ConversationItem commit. With 6 visible rows that was the dominant
+  // cost behind the 127 ms long task users saw 47 ms after navigating
+  // into (tabs)/messages.
+  const actionDefs = useMemo<ActionDef[]>(() => {
+    if (tab === 'archive') {
+      return [
+        { id: 'unarchive', title: t('messages.action.unarchive'), systemIcon: 'tray.and.arrow.up' },
+        { id: 'chat_settings', title: t('messages.action.chat_settings'), systemIcon: 'gearshape' },
+        { id: 'delete', title: t('messages.action.delete'), destructive: true, systemIcon: 'trash' },
+      ];
+    }
+    if (tab === 'blocked') {
+      return [
+        { id: 'unblock', title: t('messages.action.unblock'), systemIcon: 'checkmark.circle' },
+        { id: 'delete', title: t('messages.action.delete'), destructive: true, systemIcon: 'trash' },
+      ];
+    }
+    if (tab === 'deleted') {
+      return [
+        { id: 'restore', title: t('messages.action.restore'), systemIcon: 'arrow.uturn.backward' },
+        { id: 'delete_forever', title: t('messages.action.delete_forever'), destructive: true, systemIcon: 'trash' },
+      ];
+    }
+    return [
       { id: 'archive', title: t('messages.action.archive'), systemIcon: 'archivebox' },
       { id: 'chat_settings', title: t('messages.action.chat_settings'), systemIcon: 'gearshape' },
       { id: 'block', title: t('messages.action.block'), systemIcon: 'nosign' },
       { id: 'delete', title: t('messages.action.delete'), destructive: true, systemIcon: 'trash' },
     ];
-  }
-  const actions = actionDefs.map(({ id: _id, ...rest }) => rest);
+  }, [tab, t]);
+  // Bridge-friendly action descriptor for the native ContextMenu. Memoized
+  // so the array reference is stable across re-renders — without this the
+  // native side sees a "new" actions prop each render and re-creates its
+  // UIMenu, which on a 6-row mount accounts for the bulk of the long task.
+  const actions = useMemo(() => actionDefs.map(({ id: _id, ...rest }) => rest), [actionDefs]);
 
   const handleAction = (e: any) => {
     const idx = typeof e.nativeEvent.index === 'number' ? e.nativeEvent.index : -1;
@@ -463,12 +476,15 @@ export default function MessagesScreen() {
           // around each row) creates a UIContextMenuInteraction per view
           // on iOS, which is the dominant cost when this list mounts. 12
           // rows × ~12 ms = the 178 ms long task users were seeing on
-          // the first open of (tabs)/messages. 6/4/6 keeps scroll fast
-          // while moving the bulk of native-bridge wiring out of the
-          // navigation transition frame.
-          initialNumToRender={6}
-          maxToRenderPerBatch={4}
-          windowSize={6}
+          // the first open of (tabs)/messages. Even at 6 rows the burst
+          // landed as a 127 ms task right after navigation. Going to
+          // 4 rows means the visible viewport (≈ 5 rows on most phones)
+          // still feels populated on first paint, and the 5th+ row
+          // batches in over the next two RAF ticks instead of all at
+          // once on the navigation transition frame.
+          initialNumToRender={4}
+          maxToRenderPerBatch={3}
+          windowSize={5}
           updateCellsBatchingPeriod={100}
         />
       )}
