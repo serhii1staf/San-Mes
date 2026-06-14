@@ -25,6 +25,27 @@ import { perfMonitor } from '../../src/services/perfMonitor';
 function AIConversationItem() { return null; }
 function MusicConversationItem() { return null; }
 
+// Stable getItemLayout helper for the conversation FlatList. Hoisted to
+// module scope so its identity is stable across re-renders — the inline
+// `(_, index) => ...` form would have allocated a fresh function on every
+// MessagesScreen commit, defeating any FlatList prop-equality bail-outs.
+//
+// Geometry: Avatar size="md" = 44 px tall, paddingVertical 10 × 2 = 20 px,
+// so each row is 64 px. The ItemSeparatorComponent renders a 0.5 px line
+// between every two rows (count = N - 1), so the per-row pitch FlatList
+// should advance by is 64 + 0.5 = 64.5 — except FlatList's own
+// getItemLayout contract treats `length` as the row's own height and
+// expects `offset` to include preceding separators. We follow the
+// documented form here.
+const MESSAGES_ROW_HEIGHT = 64;
+const MESSAGES_SEPARATOR_HEIGHT = 0.5;
+const MESSAGES_ROW_PITCH = MESSAGES_ROW_HEIGHT + MESSAGES_SEPARATOR_HEIGHT;
+const MESSAGES_ITEM_LAYOUT = (_data: ArrayLike<Conversation> | null | undefined, index: number) => ({
+  length: MESSAGES_ROW_HEIGHT,
+  offset: MESSAGES_ROW_PITCH * index,
+  index,
+});
+
 function MiniAppsRow() {
   const theme = useTheme();
   const t = useT();
@@ -64,6 +85,24 @@ function ConversationItemBase({ item, tab }: { item: Conversation; index: number
   const store = useChatSettingsStore;
   const localName = useChatSettingsStore((s) => s.settings[item.id]?.localName);
   const displayName = localName || item.participantName;
+
+  // Defer the native ContextMenu wrapper by ONE RAF after the row first
+  // commits. iOS's `UIContextMenuInteraction` is set up per-view by the
+  // ContextMenu library, and on the cold mount of (tabs)/messages with
+  // 4 visible rows that setup landed as the dominant cost behind the
+  // residual `LONG @ (tabs)/messages 145 ms` the perf monitor flagged
+  // even after the action-array memoization. Rendering the plain
+  // Pressable on the first frame and upgrading to ContextMenu one RAF
+  // later moves that native setup off the navigation transition frame
+  // — long-press still works (after the same single RAF the user is
+  // physically in the middle of holding their finger down for >250 ms),
+  // and the visible UI is byte-identical because the wrapper itself is
+  // transparent.
+  const [menuReady, setMenuReady] = useState(false);
+  useEffect(() => {
+    const handle = requestAnimationFrame(() => setMenuReady(true));
+    return () => cancelAnimationFrame(handle);
+  }, []);
 
   // Each action has a stable `id` we dispatch on, plus a localized `title`
   // shown by the native context menu. Matching by id (or index) keeps logic
@@ -152,57 +191,97 @@ function ConversationItemBase({ item, tab }: { item: Conversation; index: number
   };
 
   return (
-    <ContextMenu
+    <ConditionalContextMenuRow
+      menuReady={menuReady}
       actions={actions}
-      onPress={handleAction}
+      onAction={handleAction}
+      onPress={openChat}
+      onLongPress={onRowLongPress}
     >
-      <Pressable
-        onPress={openChat}
-        onLongPress={onRowLongPress}
-        delayLongPress={250}
-        style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: theme.spacing.base }}
-      >
-        <Avatar emoji={item.participantEmoji} name={item.participantName} size="md" />
-        <View style={{ flex: 1, marginLeft: 12 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-            <Text variant="body" weight={item.unreadCount > 0 ? 'semibold' : 'regular'} numberOfLines={1} style={{ flexShrink: 1 }}>
-              {displayName}
-            </Text>
-            {item.participantVerified && <VerifiedBadge size={13} />}
-            {item.participantBadge && <UserBadge badge={item.participantBadge} size="sm" />}
-          </View>
-          {item.lastMessage ? (
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
-              <Text
-                variant="caption"
-                color={item.unreadCount > 0 ? theme.colors.text.primary : theme.colors.text.secondary}
-                numberOfLines={1}
-                style={{ flex: 1 }}
-              >
-                {item.lastMessage}
-              </Text>
-              {item.unreadCount > 0 && (
-                <View
-                  style={{
-                    backgroundColor: theme.colors.accent.primary,
-                    borderRadius: 10,
-                    minWidth: 20,
-                    height: 20,
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    paddingHorizontal: 6,
-                    marginLeft: theme.spacing.sm,
-                  }}
-                >
-                  <Text variant="caption" weight="bold" color={theme.colors.text.inverse}>
-                    {item.unreadCount}
-                  </Text>
-                </View>
-              )}
-            </View>
-          ) : null}
+      <Avatar emoji={item.participantEmoji} name={item.participantName} size="md" />
+      <View style={{ flex: 1, marginLeft: 12 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Text variant="body" weight={item.unreadCount > 0 ? 'semibold' : 'regular'} numberOfLines={1} style={{ flexShrink: 1 }}>
+            {displayName}
+          </Text>
+          {item.participantVerified && <VerifiedBadge size={13} />}
+          {item.participantBadge && <UserBadge badge={item.participantBadge} size="sm" />}
         </View>
-      </Pressable>
+        {item.lastMessage ? (
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
+            <Text
+              variant="caption"
+              color={item.unreadCount > 0 ? theme.colors.text.primary : theme.colors.text.secondary}
+              numberOfLines={1}
+              style={{ flex: 1 }}
+            >
+              {item.lastMessage}
+            </Text>
+            {item.unreadCount > 0 && (
+              <View
+                style={{
+                  backgroundColor: theme.colors.accent.primary,
+                  borderRadius: 10,
+                  minWidth: 20,
+                  height: 20,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  paddingHorizontal: 6,
+                  marginLeft: theme.spacing.sm,
+                }}
+              >
+                <Text variant="caption" weight="bold" color={theme.colors.text.inverse}>
+                  {item.unreadCount}
+                </Text>
+              </View>
+            )}
+          </View>
+        ) : null}
+      </View>
+    </ConditionalContextMenuRow>
+  );
+}
+
+// Wraps a row's pressable content in a ContextMenu only once `menuReady`
+// flips true (one RAF after first mount). Hoisted out of ConversationItem
+// so the conditional wrapper logic doesn't re-allocate the Pressable JSX
+// twice — the children are passed through whichever wrapper is active.
+function ConditionalContextMenuRow({
+  menuReady,
+  actions,
+  onAction,
+  onPress,
+  onLongPress,
+  children,
+}: {
+  menuReady: boolean;
+  actions: any[];
+  onAction: (e: any) => void;
+  onPress: () => void;
+  onLongPress: () => void;
+  children: React.ReactNode;
+}) {
+  const theme = useTheme();
+  const rowStyle: ViewStyle = {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: theme.spacing.base,
+  };
+  const inner = (
+    <Pressable
+      onPress={onPress}
+      onLongPress={onLongPress}
+      delayLongPress={250}
+      style={rowStyle}
+    >
+      {children}
+    </Pressable>
+  );
+  if (!menuReady) return inner;
+  return (
+    <ContextMenu actions={actions} onPress={onAction}>
+      {inner}
     </ContextMenu>
   );
 }
@@ -493,6 +572,14 @@ export default function MessagesScreen() {
           maxToRenderPerBatch={3}
           windowSize={5}
           updateCellsBatchingPeriod={100}
+          // Fixed row geometry: Avatar size="md" is 44 px tall + 10 px
+          // top + 10 px bottom padding = 64 px per row; the 0.5 px
+          // separator is rendered as a sibling. Providing getItemLayout
+          // lets FlatList skip the per-row onLayout measurement pass on
+          // the cold-mount frame, shaving the residual mount cost left
+          // after the ContextMenu lazy-mount fix and helping
+          // scroll-to-index work without an intermediate measurement.
+          getItemLayout={MESSAGES_ITEM_LAYOUT}
         />
       )}
 
