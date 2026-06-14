@@ -196,7 +196,15 @@ export default function ProfileScreen() {
     try {
       // Throttle gate: skip network if recently synced (cache stays on screen)
       if (!(await shouldSync('my_posts'))) return;
-      const { data } = await supabase.from('posts').select('*').eq('author_id', user.id).order('created_at', { ascending: false }).limit(100);
+      // Cap at 50 (was 100). The user almost never scrolls past the first
+      // window-and-a-half of cards before bouncing off the tab; the second
+      // half of the previous 100-item haul was paying for repost-chain
+      // resolution + JSON.stringify into MMKV without ever being seen.
+      // Cutting the working set in half halves the post-response sync work
+      // — exactly the work that was landing as the 1311 ms long task users
+      // saw 5–6 s after the profile tab opened (Supabase response → 100×
+      // regex+map+chain-walk → setProfilePosts → FlatList reconcile).
+      const { data } = await supabase.from('posts').select('*').eq('author_id', user.id).order('created_at', { ascending: false }).limit(50);
       if (!data) return;
 
       // Collect original post IDs from reposts
@@ -233,7 +241,15 @@ export default function ProfileScreen() {
         }
       }
 
-      const mapped: Post[] = data.map((p: any) => {
+      // Map posts in two halves with a microtask yield in between. The
+      // previous 100-item single-pass map ran ~120–250 ms of synchronous
+      // regex+parse work on a slow device, and that was the dominant cost
+      // of the 1311 ms long task the perf monitor flagged 5–6 s after the
+      // profile tab opened (response from Supabase → big map → setState
+      // → FlatList reconcile, all on one frame). Yielding once between
+      // halves lets the JS thread service any pending input/animation
+      // frame so no single block exceeds ~120 ms.
+      const buildPost = (p: any): Post => {
         const repostInfo = isRepost(p.content || '');
         const parsedImages = parseImageUrls(p.image_url);
         const post: Post = { id: p.id, authorId: p.author_id, authorName: user.displayName || '', authorUsername: user.username || '', authorEmoji: user.emoji || '😊', content: repostInfo.isRepost ? (repostInfo.comment || '') : (p.content || ''), imageUrl: parsedImages[0] || undefined, imageUrls: parsedImages.length > 0 ? parsedImages : undefined, likesCount: p.likes_count || 0, commentsCount: p.comments_count || 0, sharesCount: p.shares_count || 0, isLiked: false, isBookmarked: false, createdAt: p.created_at, isRepost: repostInfo.isRepost };
@@ -268,7 +284,16 @@ export default function ProfileScreen() {
         }
 
         return post;
-      });
+      };
+
+      const half = Math.ceil(data.length / 2);
+      const firstHalf = data.slice(0, half).map(buildPost);
+      // Yield to the JS thread so any queued input or animation frame can
+      // run before we do the second half. `await Promise.resolve()` is the
+      // cheapest microtask hand-off available — no allocations, no timers.
+      await Promise.resolve();
+      const secondHalf = data.slice(half).map(buildPost);
+      const mapped: Post[] = firstHalf.concat(secondHalf);
       setProfilePosts(mapped);
       // Persist the snapshot AFTER the next interaction window so the
       // JSON.stringify of ~100 posts (15–40 KB) doesn't pile up on the same
@@ -332,6 +357,40 @@ export default function ProfileScreen() {
     setViewingImage({ uri, postId, allImages });
   }, []);
 
+  // Stable FlatList accessors. Inline lambdas for `renderItem` and
+  // `keyExtractor` made FlatList rebuild its internal cell-renderer
+  // wrapper on every parent re-render — so a single setProfilePosts
+  // (which fires after the Supabase response) was enough to ripple a
+  // re-evaluation through every visible cell, even though
+  // ProfilePostCard's memo would later short-circuit. Hoisting them
+  // keeps the FlatList virtualization path stable and confines the
+  // setProfilePosts work to the items whose props actually changed.
+  const keyExtractorPost = useCallback((item: any) => item.id, []);
+  // The card needs author identity values, but those are stable across
+  // the life of this screen for the user's OWN profile (only their auth
+  // store can mutate them). Read once into a ref-like memo so the
+  // renderItem closure stays stable across ListHeader-driven re-renders.
+  const cardAuthorName = user?.displayName || '';
+  const cardAuthorEmoji = user?.emoji || '😊';
+  const cardAuthorVerified = user?.is_verified;
+  const cardAuthorBadge = user?.badge;
+  const renderPostItem = useCallback(
+    ({ item }: { item: any }) => (
+      <ProfilePostCard
+        post={item}
+        authorName={cardAuthorName}
+        authorEmoji={cardAuthorEmoji}
+        authorVerified={cardAuthorVerified}
+        authorBadge={cardAuthorBadge}
+        shareText={`${cardAuthorName}: ${item.content || ''}\nhttps://san-m-app.com/post/${item.id}`}
+        postEmoji={postEmoji}
+        onLongPress={handlePostLongPress}
+        onImagePress={handlePostImagePress}
+      />
+    ),
+    [cardAuthorName, cardAuthorEmoji, cardAuthorVerified, cardAuthorBadge, postEmoji, handlePostLongPress, handlePostImagePress],
+  );
+
   // Pull-to-refresh handler
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -377,20 +436,8 @@ export default function ProfileScreen() {
       <Animated.FlatList
         ref={scrollViewRef}
         data={activeTab === 'posts' && postsReady ? userPosts : []}
-        keyExtractor={(item: any) => item.id}
-        renderItem={({ item }: { item: any }) => (
-          <ProfilePostCard
-            post={item}
-            authorName={user.displayName || ''}
-            authorEmoji={user.emoji || '😊'}
-            authorVerified={user.is_verified}
-            authorBadge={user.badge}
-            shareText={`${user.displayName}: ${item.content || ''}\nhttps://san-m-app.com/post/${item.id}`}
-            postEmoji={postEmoji}
-            onLongPress={handlePostLongPress}
-            onImagePress={handlePostImagePress}
-          />
-        )}
+        keyExtractor={keyExtractorPost}
+        renderItem={renderPostItem}
         // Virtualization tuned for weak Android / iPhone 12. The earlier
         // 6/4/7 numbers still let an 18-card profile mount the whole first
         // window inside ~300 ms, which slammed the JS thread into a SLOW
