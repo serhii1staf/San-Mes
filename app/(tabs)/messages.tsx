@@ -11,6 +11,7 @@ import { WeatherChip } from '../../src/components/ui/WeatherChip';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { UserBadge } from '../../src/components/ui/UserBadge';
 import { useChatStore, useEntityStore, useAuthStore } from '../../src/store';
+import { useBlockedUsersStore } from '../../src/store/blockedUsersStore';
 import { syncConversations, syncProfiles } from '../../src/services/syncService';
 import { prefetchRecentChatMedia } from '../../src/services/messagesPrefetch';
 import { kvGetJSONSync, kvSetJSON, kvWarm } from '../../src/services/kvStore';
@@ -79,6 +80,17 @@ function MiniAppsRow() {
 
 type ChatTab = 'chats' | 'apps' | 'archive' | 'blocked' | 'deleted';
 
+// Synthetic conversation prefix used for user-level blocked users that
+// don't have an existing chat. Lets the Blocked tab list everyone the
+// viewer has blocked (via `useBlockedUsersStore`) — chat or no chat —
+// while keeping the rest of the screen's chat-id pipeline unchanged.
+// Tapping a synthetic row routes to the user's profile (it has no chat
+// to open); the long-press menu offers an "Unblock user" action that
+// removes the id from the user-level block list.
+const SYNTHETIC_USER_BLOCK_PREFIX = '__user_block:';
+const isSyntheticUserBlockId = (id: string) => id.startsWith(SYNTHETIC_USER_BLOCK_PREFIX);
+const userIdFromSyntheticId = (id: string) => id.slice(SYNTHETIC_USER_BLOCK_PREFIX.length);
+
 function ConversationItemBase({ item, tab }: { item: Conversation; index: number; tab: ChatTab }) {
   const theme = useTheme();
   const t = useT();
@@ -107,7 +119,7 @@ function ConversationItemBase({ item, tab }: { item: Conversation; index: number
   // Each action has a stable `id` we dispatch on, plus a localized `title`
   // shown by the native context menu. Matching by id (or index) keeps logic
   // independent of the user's interface language.
-  type ActionDef = { id: 'unarchive' | 'archive' | 'chat_settings' | 'block' | 'unblock' | 'restore' | 'delete' | 'delete_forever'; title: string; systemIcon?: string; destructive?: boolean };
+  type ActionDef = { id: 'unarchive' | 'archive' | 'chat_settings' | 'block' | 'unblock' | 'unblock_user' | 'restore' | 'delete' | 'delete_forever'; title: string; systemIcon?: string; destructive?: boolean };
   // Memoized so the native ContextMenu doesn't re-register its actions
   // on every parent re-render. The previous unmemoized build allocated
   // a new array + closures every render, which on iOS forced
@@ -124,6 +136,14 @@ function ConversationItemBase({ item, tab }: { item: Conversation; index: number
       ];
     }
     if (tab === 'blocked') {
+      // User-level blocked rows expose a different unblock that targets
+      // the user's id rather than the chatId. Same visible label but a
+      // distinct dispatch id keeps both code paths cleanly separated.
+      if (isSyntheticUserBlockId(item.id)) {
+        return [
+          { id: 'unblock_user', title: t('block.menu.unblock'), systemIcon: 'checkmark.circle' },
+        ];
+      }
       return [
         { id: 'unblock', title: t('messages.action.unblock'), systemIcon: 'checkmark.circle' },
         { id: 'delete', title: t('messages.action.delete'), destructive: true, systemIcon: 'trash' },
@@ -166,6 +186,26 @@ function ConversationItemBase({ item, tab }: { item: Conversation; index: number
         ]);
         break;
       case 'unblock': s.unblockChat(item.id); break;
+      case 'unblock_user': {
+        // User-level unblock — remove from `useBlockedUsersStore`. Confirm
+        // first so the user can't accidentally unblock by long-pressing a
+        // row in the Blocked tab. After unblock, posts/comments by this
+        // user reappear in feed/profile/comments via the wrapper checks.
+        const userId = userIdFromSyntheticId(item.id);
+        const username = item.participantUsername || item.participantName || '';
+        Alert.alert(
+          t('block.unblock_confirm_title', undefined, { username }),
+          t('block.unblock_confirm_msg'),
+          [
+            { text: t('common.cancel'), style: 'cancel' },
+            {
+              text: t('block.menu.unblock'),
+              onPress: () => useBlockedUsersStore.getState().unblock(userId),
+            },
+          ],
+        );
+        break;
+      }
       case 'restore': s.restoreChat(item.id); break;
       case 'delete':
         Alert.alert(t('messages.confirm.delete_title'), item.participantName, [
@@ -178,6 +218,13 @@ function ConversationItemBase({ item, tab }: { item: Conversation; index: number
   };
 
   const openChat = () => {
+    // Synthetic user-block rows have no real chat — tapping them opens
+    // the user's profile instead. From there the user can navigate
+    // through the unblock affordance on the profile menu.
+    if (isSyntheticUserBlockId(item.id)) {
+      router.push({ pathname: '/profile/[id]', params: { id: userIdFromSyntheticId(item.id) } });
+      return;
+    }
     router.push(`/chat/${item.id}?participantId=${item.participantId}` as any);
   };
 
@@ -327,6 +374,10 @@ export default function MessagesScreen() {
   const archived = useChatSettingsStore((s) => s.archived);
   const blocked = useChatSettingsStore((s) => s.blocked);
   const deleted = useChatSettingsStore((s) => s.deleted);
+  // User-level blocked ids (post-menu / profile-menu block flow). The
+  // Blocked tab merges synthetic rows for these into the existing
+  // chat-level blocked list so both kinds of blocks live in one place.
+  const blockedUserIds = useBlockedUsersStore((s) => s.ids);
 
   // San AI / Music chats are no longer surfaced in this list — they live
   // exclusively behind the FAB. The list shows only real conversations.
@@ -442,15 +493,59 @@ export default function MessagesScreen() {
     if (activeTab === 'apps') return [];
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
-      // Search only within non-deleted, non-blocked chats
-      return conversations.filter((c) => c.participantName.toLowerCase().includes(q) && !deleted.includes(c.id) && !blocked.includes(c.id));
+      // Search only within non-deleted, non-blocked chats. User-level
+      // blocked authors are also excluded here — they wouldn't show up
+      // in normal search results in any case (they appear in the Blocked
+      // tab only).
+      return conversations.filter(
+        (c) =>
+          c.participantName.toLowerCase().includes(q) &&
+          !deleted.includes(c.id) &&
+          !blocked.includes(c.id) &&
+          !blockedUserIds.includes(c.participantId),
+      );
     }
-    if (activeTab === 'archive') return conversations.filter(c => archived.includes(c.id) && !deleted.includes(c.id) && !blocked.includes(c.id));
-    if (activeTab === 'blocked') return conversations.filter(c => blocked.includes(c.id) && !deleted.includes(c.id));
+    if (activeTab === 'archive') return conversations.filter(c => archived.includes(c.id) && !deleted.includes(c.id) && !blocked.includes(c.id) && !blockedUserIds.includes(c.participantId));
+    if (activeTab === 'blocked') {
+      // Chat-level blocked conversations come straight from
+      // `chatSettingsStore.blocked` (existing behaviour).
+      const chatBlocked = conversations.filter(c => blocked.includes(c.id) && !deleted.includes(c.id));
+      // User-level blocked users get synthetic Conversation rows so
+      // they show up next to chat-level blocks. We hydrate the row
+      // visuals from `entityStore.profiles` when available so the
+      // avatar/badge/name match what the user sees elsewhere; if a
+      // profile isn't cached locally, fall back to a generic row.
+      // Skip ids that already have a chat-level blocked row (avoids
+      // duplicate listing of the same person under two buckets).
+      const profiles = useEntityStore.getState().profiles;
+      const chatBlockedUserIds = new Set(chatBlocked.map((c) => c.participantId));
+      const userBlocked: Conversation[] = blockedUserIds
+        .filter((uid) => !chatBlockedUserIds.has(uid))
+        .map((uid) => {
+          const p: any = profiles[uid] || {};
+          return {
+            id: `${SYNTHETIC_USER_BLOCK_PREFIX}${uid}`,
+            participantId: uid,
+            participantName: p.display_name || p.username || 'User',
+            participantUsername: p.username || '',
+            participantEmoji: p.emoji || '😊',
+            participantVerified: !!p.is_verified,
+            participantBadge: p.badge || null,
+            // Telegram-style hint that this is a blocked user — keeps the
+            // row layout identical (last-message line) without a misleading
+            // history. Localised via the same key the placeholder uses.
+            lastMessage: t('block.section.last_seen'),
+            lastMessageAt: '',
+            unreadCount: 0,
+            isOnline: false,
+          };
+        });
+      return [...chatBlocked, ...userBlocked];
+    }
     if (activeTab === 'deleted') return conversations.filter(c => deleted.includes(c.id));
-    // 'chats' — exclude archived, blocked, deleted
-    return conversations.filter(c => !archived.includes(c.id) && !blocked.includes(c.id) && !deleted.includes(c.id));
-  }, [conversations, activeTab, searchQuery, archived, blocked, deleted]);
+    // 'chats' — exclude archived, blocked (chat or user), deleted.
+    return conversations.filter(c => !archived.includes(c.id) && !blocked.includes(c.id) && !deleted.includes(c.id) && !blockedUserIds.includes(c.participantId));
+  }, [conversations, activeTab, searchQuery, archived, blocked, deleted, blockedUserIds, t]);
 
   const containerStyle: ViewStyle = {
     flex: 1,
