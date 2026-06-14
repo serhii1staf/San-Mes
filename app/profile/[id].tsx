@@ -31,6 +31,7 @@ import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
 import { useT } from '../../src/i18n/store';
 import { perfMonitor } from '../../src/services/perfMonitor';
 import { useSettingsStore } from '../../src/store/settingsStore';
+import { useBlockedUsersStore, useIsBlocked } from '../../src/store/blockedUsersStore';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const SCREEN_HEIGHT = Dimensions.get('window').height;
@@ -153,6 +154,52 @@ function ProfileMenuModalImpl({ visible, profile, onClose }: { visible: boolean;
     handleClose();
   };
 
+  // Block / unblock the profile owner. Apple compliance guideline 1.2
+  // requires UGC apps to expose a top-level block flow on user profiles
+  // (not only as a buried action under a post menu) — this is that
+  // affordance. On confirm, flips the local block list which immediately
+  // hides any cached posts of theirs across the app via the wrapper
+  // checks in PostCard / UserProfilePostCard / CommentRow.
+  const handleBlockToggle = () => {
+    if (!profile) return;
+    triggerHaptic('medium');
+    const isBlockedNow = useBlockedUsersStore.getState().isBlocked(profile.id);
+    if (isBlockedNow) {
+      Alert.alert(
+        t('block.unblock_confirm_title', undefined, { username: profile.username || '' }),
+        t('block.unblock_confirm_msg'),
+        [
+          { text: t('common.cancel'), style: 'cancel' },
+          {
+            text: t('block.menu.unblock'),
+            onPress: () => {
+              useBlockedUsersStore.getState().unblock(profile.id);
+              showToast(t('block.toast.unblocked'), 'check');
+              handleClose();
+            },
+          },
+        ],
+      );
+    } else {
+      Alert.alert(
+        t('block.confirm_title', undefined, { username: profile.username || '' }),
+        t('block.confirm_msg'),
+        [
+          { text: t('common.cancel'), style: 'cancel' },
+          {
+            text: t('block.action'),
+            style: 'destructive',
+            onPress: () => {
+              useBlockedUsersStore.getState().block(profile.id);
+              showToast(t('block.toast.blocked'), 'slash');
+              handleClose();
+            },
+          },
+        ],
+      );
+    }
+  };
+
   if (!profile) return null;
   const translateY = Animated.add(slideAnim, dragY);
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(`https://san-m-app.com/profile/${profile.id}`)}`;
@@ -205,6 +252,7 @@ function ProfileMenuModalImpl({ visible, profile, onClose }: { visible: boolean;
                   <MenuItem icon="link" label={t('profile_menu.copy_link')} onPress={handleCopyLink} theme={theme} />
                   <MenuItem icon="share-2" label={t('profile_menu.share_profile')} onPress={handleShare} theme={theme} />
                   <MenuItem icon="flag" label={t('profile_menu.report')} onPress={() => { triggerHaptic('light'); switchToReport(); }} theme={theme} destructive />
+                  <ProfileBlockMenuItem profileId={profile.id} onPress={handleBlockToggle} theme={theme} />
                 </>
               ) : (
                 <>
@@ -234,6 +282,24 @@ function MenuItem({ icon, label, onPress, theme, destructive }: { icon: string; 
       </View>
       <Text variant="body" color={color} style={{ marginLeft: 14 }}>{label}</Text>
     </Pressable>
+  );
+}
+
+// Block / unblock entry for the profile menu. Subscribes to the
+// blocked-users store so the label flips immediately after the
+// confirmation dialog without forcing the parent ProfileMenuModal to
+// re-render every block-list mutation.
+function ProfileBlockMenuItem({ profileId, onPress, theme }: { profileId: string; onPress: () => void; theme: any }) {
+  const t = useT();
+  const isBlocked = useIsBlocked(profileId);
+  return (
+    <MenuItem
+      icon={isBlocked ? 'check-circle' : 'slash'}
+      label={isBlocked ? t('block.action_unblock') : t('block.action')}
+      onPress={onPress}
+      theme={theme}
+      destructive={!isBlocked}
+    />
   );
 }
 
