@@ -539,6 +539,7 @@ const en: Record<string, string> = {
   'mini_apps.create': 'Create',
   'mini_apps.empty': 'No mini apps yet',
   'mini_apps.empty_hint': 'Tap + to create one',
+  'mini_apps.share': 'Share',
 
   // ─── Settings → Widget ─────────────────────────────────────────────────
   'widget_settings.title': 'Widget',

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Pressable, TextInput, FlatList, Alert, ActivityIndicator, Text as RNText, StyleSheet } from 'react-native';
+import { View, Pressable, TextInput, FlatList, Alert, ActivityIndicator, Text as RNText, StyleSheet, Share } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -10,6 +10,7 @@ import { Text } from '../../src/components/ui';
 import { useMiniAppsStore, MiniApp } from '../../src/store/miniAppsStore';
 import { useAuthStore } from '../../src/store';
 import { showToast } from '../../src/store/toastStore';
+import { triggerHaptic } from '../../src/utils/haptics';
 import { useT } from '../../src/i18n/store';
 
 export default function MiniAppsScreen() {
@@ -78,7 +79,32 @@ export default function MiniAppsScreen() {
   };
 
   const handleOpen = (app: MiniApp) => {
-    router.push({ pathname: '/mini-app', params: { url: encodeURIComponent(app.url), name: app.name, emoji: app.emoji } });
+    router.push({ pathname: '/mini-app', params: { url: encodeURIComponent(app.url), name: app.name, emoji: app.emoji, id: app.id } });
+  };
+
+  // Share an internal share URL — resolves through Vercel SSR (api/mini/[id])
+  // when the recipient doesn't have the app, and through the universal/scheme
+  // deep link when they do. The real `app.url` is intentionally left out.
+  const handleShare = async (app: MiniApp) => {
+    triggerHaptic('light');
+    try {
+      await Share.share({
+        message: `${app.emoji} ${app.name}\nhttps://san-m-app.com/mini/${app.id}`,
+      });
+    } catch {}
+  };
+
+  const handleLongPress = (app: MiniApp) => {
+    triggerHaptic('light');
+    const isOwner = user?.id === app.creator_id;
+    const buttons: { text: string; style?: 'cancel' | 'destructive'; onPress?: () => void }[] = [
+      { text: t('mini_apps.share'), onPress: () => handleShare(app) },
+    ];
+    if (isOwner) {
+      buttons.push({ text: t('common.delete'), style: 'destructive', onPress: () => handleDelete(app) });
+    }
+    buttons.push({ text: t('common.cancel'), style: 'cancel' });
+    Alert.alert(`${app.emoji} ${app.name}`, undefined, buttons);
   };
 
   const handleDelete = (app: MiniApp) => {
@@ -148,7 +174,7 @@ export default function MiniAppsScreen() {
             </View>
           }
           renderItem={({ item }) => (
-            <Pressable onPress={() => handleOpen(item)} onLongPress={() => { if (user?.id === item.creator_id) handleDelete(item); }} delayLongPress={500} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 16, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: theme.colors.border.light }}>
+            <Pressable onPress={() => handleOpen(item)} onLongPress={() => handleLongPress(item)} delayLongPress={500} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 16, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: theme.colors.border.light }}>
               <View style={{ width: 48, height: 48, borderRadius: 14, backgroundColor: theme.colors.accent.primary + '15', alignItems: 'center', justifyContent: 'center', overflow: 'visible' }}>
                 <RNText style={{ fontSize: 24 }} allowFontScaling={false}>{item.emoji}</RNText>
               </View>

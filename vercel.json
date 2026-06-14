@@ -6,6 +6,7 @@
     { "source": "/", "destination": "/api/index" },
     { "source": "/post/:id", "destination": "/api/index" },
     { "source": "/profile/:id", "destination": "/api/index" },
+    { "source": "/mini/:id", "destination": "/api/mini/:id" },
     { "source": "/api/(.*)", "destination": "/api/$1" }
   ]
 }

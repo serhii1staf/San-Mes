@@ -8,7 +8,7 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
       details: [
         {
           appIDs: ['SY2H67GC49.com.sanmes.app'],
-          paths: ['/profile/*', '/post/*'],
+          paths: ['/profile/*', '/post/*', '/mini/*'],
         },
       ],
     },

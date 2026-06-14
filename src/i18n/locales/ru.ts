@@ -548,6 +548,7 @@ const ru: Record<string, string> = {
   'mini_apps.create': 'Создать',
   'mini_apps.empty': 'Нет мини-приложений',
   'mini_apps.empty_hint': 'Нажмите + чтобы создать',
+  'mini_apps.share': 'Поделиться',
 
   // ─── Settings → Widget ─────────────────────────────────────────────────
   'widget_settings.title': 'Виджет',

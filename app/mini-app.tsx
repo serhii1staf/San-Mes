@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { View, Pressable, ActivityIndicator } from 'react-native';
+import { View, Pressable, ActivityIndicator, Share } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { Feather } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -8,6 +8,7 @@ import { BlurView } from 'expo-blur';
 import { Text } from '../src/components/ui';
 import { SlideUpSheet } from '../src/components/ui/SlideUpSheet';
 import { useBrowserStore } from '../src/store/browserStore';
+import { useMiniAppsStore } from '../src/store/miniAppsStore';
 import { useT } from '../src/i18n/store';
 import { triggerHaptic } from '../src/utils/haptics';
 import { showToast } from '../src/store/toastStore';
@@ -40,7 +41,7 @@ export default function MiniAppScreen() {
   const insets = useSafeAreaInsets();
   const theme = useTheme();
   const t = useT();
-  const { url, name, emoji } = useLocalSearchParams<{ url: string; name: string; emoji: string }>();
+  const { url, name, emoji, id } = useLocalSearchParams<{ url: string; name: string; emoji: string; id?: string }>();
   const webViewRef = useRef<WebView>(null);
   const [currentUrl, setCurrentUrl] = useState('');
   const [isLoading, setIsLoading] = useState(true);
@@ -84,6 +85,20 @@ export default function MiniAppScreen() {
   const displayName = name || 'App';
   const appEmoji = emoji || '📱';
 
+  // Resolve the public mini-app id used for sharing. Most call sites
+  // (settings list, search, FAB, push notifications) push us with the id
+  // in params; the minimised-bar call sites only carry url+name+emoji, so
+  // we fall back to a URL match against the local store. If neither
+  // works, the share button hides itself rather than expose the raw URL.
+  const shareableId = (() => {
+    const fromParams = (id || '').trim();
+    if (fromParams) return fromParams;
+    const apps = useMiniAppsStore.getState().apps;
+    const byUrl = apps.find((a) => a.url === decodedUrl);
+    return byUrl?.id || '';
+  })();
+  const canShare = !!shareableId;
+
   const handleMinimize = () => {
     // Store the ACTUAL current URL (not encoded) for reopening
     useBrowserStore.getState().setMinimized(currentUrl || decodedUrl, displayName, true, appEmoji);
@@ -99,6 +114,20 @@ export default function MiniAppScreen() {
     triggerHaptic('medium');
     setReportOpen(false);
     showToast(t('toast.report_sent'), 'flag');
+  };
+
+  // Share — produces an internal /mini/<id> link. The underlying
+  // third-party URL the WebView proxies to is intentionally NOT included
+  // in the shared message; resolution happens server-side via the SSR
+  // page at api/mini/[id].ts (which also keeps the URL out of its HTML).
+  const handleShare = async () => {
+    if (!canShare) return;
+    triggerHaptic('light');
+    try {
+      await Share.share({
+        message: `${appEmoji} ${displayName}\nhttps://san-m-app.com/mini/${shareableId}`,
+      });
+    } catch {}
   };
 
   return (
@@ -179,6 +208,11 @@ export default function MiniAppScreen() {
         </Pressable>
         <View style={{ borderRadius: 14, overflow: 'hidden' }}>
           <BlurView intensity={80} tint="dark" style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 12 }}>
+            {canShare ? (
+              <Pressable onPress={handleShare} hitSlop={6}>
+                <Feather name="share" size={13} color="#FFFFFF" />
+              </Pressable>
+            ) : null}
             <Pressable onPress={() => { triggerHaptic('light'); setReportOpen(true); }} hitSlop={6}>
               <Feather name="flag" size={13} color="#FFFFFF" />
             </Pressable>
