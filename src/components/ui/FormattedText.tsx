@@ -57,8 +57,23 @@ export const FormattedText = memo(function FormattedText({ children, style, colo
   const parts = React.useMemo(() => parseFormatting(children), [children]);
   let spoilerIdx = 0;
 
+  // FIX (regression in 9d62fa3): only forward `numberOfLines` to the
+  // root <Text> when the caller actually passed a value. Spreading it
+  // as `numberOfLines={undefined}` looked equivalent to omitting the
+  // prop, but on iOS/RN 0.81 the native text layer reads the JS-side
+  // attribute as "set to nil" and clamps the rendered line count to 0
+  // for nested <Text> trees that already carry textShadow/colour
+  // overrides — which is exactly the shape every comment row uses
+  // (FormattedText wraps a tree of inline <Text> spans for bold /
+  // mentions / spoilers / etc.). Result: comments under posts went
+  // blank because the root <Text> was set to "0 lines visible".
+  // Building the prop bag conditionally restores the original RN
+  // behaviour for callers that don't ask for truncation, while the
+  // ProfileReplyCard caller (which DOES pass a number) keeps working.
+  const truncationProps = numberOfLines !== undefined ? { numberOfLines } : null;
+
   return (
-    <RNText numberOfLines={numberOfLines} style={[{ color: textColor, fontSize: 14 * (theme.fontScale || 1) }, style]}>
+    <RNText {...truncationProps} style={[{ color: textColor, fontSize: 14 * (theme.fontScale || 1) }, style]}>
       {parts.map((part, i) => {
         switch (part.type) {
           case 'text':
