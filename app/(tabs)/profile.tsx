@@ -127,22 +127,20 @@ export default function ProfileScreen() {
     return () => handle.cancel();
   }, []);
   // Heavy iOS chrome — `expo-blur` BlurView (×3 on this screen) and the
-  // banner CachedImage — must NOT mount during the navigation transition
-  // into this tab. BlurView spins up a CALayer with a backdrop filter and
-  // the banner kicks off a network fetch + decode; both land on the same
-  // frame as the tab open animation and were a major source of
-  // `SLOW ui<30 @ (tabs)/profile`. Render a flat-coloured fallback for
-  // each and swap to the real thing once interactions settle. The
-  // fallback dimensions / borderRadius match the BlurView exactly, and
-  // the banner placeholder reuses the existing accent-tinted background
-  // so there's no visible flash.
+  // banner CachedImage — must NOT mount on the same commit as the post
+  // cards. BlurView spins up a CALayer with a backdrop filter and the
+  // banner kicks off a network fetch + decode; landing all of that on
+  // the same frame as `postsReady` flipping was the dominant cause of
+  // the UI thread dropping to ~32 fps on the cold-open scroll (the user
+  // saw it as "~1 second hang"). Stagger chromeReady ONE RAF AFTER
+  // postsReady so the post cards commit on one frame and the heavy
+  // chrome commits on the next — no single frame carries both storms.
   const [chromeReady, setChromeReady] = useState(false);
   useEffect(() => {
-    const handle = InteractionManager.runAfterInteractions(() => {
-      setChromeReady(true);
-    });
-    return () => handle.cancel();
-  }, []);
+    if (!postsReady) return;
+    const handle = requestAnimationFrame(() => setChromeReady(true));
+    return () => cancelAnimationFrame(handle);
+  }, [postsReady]);
   const [activeTab, setActiveTab] = useState<TabName>('posts');
   const [followCounts, setFollowCounts] = useState({ followers: 0, following: 0 });
   const [showQR, setShowQR] = useState(false);
@@ -477,7 +475,7 @@ export default function ProfileScreen() {
         ListHeaderComponent={(
           <>
             <View style={{ height: 200, marginHorizontal: -16, marginTop: -12, backgroundColor: theme.colors.accent.primary + '20' }}>
-              {bannerUrl && chromeReady ? <CachedImage uri={bannerUrl} style={{ width: '100%', height: '100%' }} resizeMode="cover" proxyWidth={800} /> : null}
+              {bannerUrl && chromeReady ? <CachedImage uri={bannerUrl} style={{ width: '100%', height: '100%' }} resizeMode="cover" proxyWidth={480} /> : null}
               <LinearGradient colors={['transparent', theme.colors.background.primary]} style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 60 }} />
             </View>
             <View style={{ marginTop: -90 }}>
