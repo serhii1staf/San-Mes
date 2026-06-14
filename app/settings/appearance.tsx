@@ -1,5 +1,5 @@
-import React, { useRef, useState, useEffect } from 'react';
-import { View, Pressable, ScrollView, Dimensions, NativeSyntheticEvent, NativeScrollEvent, Alert, InteractionManager, ActivityIndicator } from 'react-native';
+import React, { useRef, useState, useEffect, useCallback } from 'react';
+import { View, Pressable, FlatList, Dimensions, NativeSyntheticEvent, NativeScrollEvent, Alert, InteractionManager, ActivityIndicator } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -122,7 +122,7 @@ export default function AppearanceScreen() {
   const { user } = useAuthStore();
   const isDark = mode === 'dark';
   const allThemes = [...ACCENT_COLORS, ...aiThemes];
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<FlatList<typeof allThemes[number]>>(null);
   const [activeIndex, setActiveIndex] = useState(Math.max(0, allThemes.findIndex(c => c.key === accent)));
 
   // Defer the cards carousel past the navigation slide-in. Each ThemePreviewCard
@@ -154,12 +154,46 @@ export default function AppearanceScreen() {
   useEffect(() => {
     const idx = Math.max(0, allThemes.findIndex(c => c.key === accent));
     if (idx > 0 && scrollRef.current) {
-      // Set initial position without animation, then no jarring scroll
+      // Set initial position without animation, then no jarring scroll.
+      // Use scrollToIndex on FlatList — getItemLayout below makes this O(1).
       setTimeout(() => {
-        scrollRef.current?.scrollTo({ x: idx * (CARD_WIDTH + CARD_GAP), animated: false });
+        try {
+          scrollRef.current?.scrollToIndex({ index: idx, animated: false });
+        } catch {}
       }, 100);
     }
   }, []);
+
+  // Stable getItemLayout — required for scrollToIndex on a horizontal
+  // FlatList and lets the list skip layout measurement entirely (the
+  // measurement pass is what made the previous ScrollView mount all 10+
+  // theme cards synchronously, the dominant cause of the ~127 ms long task
+  // users saw the moment they tapped Appearance).
+  const getItemLayout = useCallback(
+    (_: any, index: number) => ({
+      length: CARD_WIDTH + CARD_GAP,
+      offset: (CARD_WIDTH + CARD_GAP) * index,
+      index,
+    }),
+    [],
+  );
+
+  const renderTheme = useCallback(
+    ({ item, index }: { item: typeof allThemes[number]; index: number }) => (
+      <View style={{ marginRight: CARD_GAP }}>
+        <ThemePreviewCard
+          accentConfig={item}
+          isDark={isDark}
+          isSelected={index === activeIndex}
+          user={user}
+          t={t}
+          previewMessage={previewMessage}
+          previewUser={previewUser}
+        />
+      </View>
+    ),
+    [activeIndex, isDark, user, t, previewMessage, previewUser],
+  );
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
@@ -174,34 +208,44 @@ export default function AppearanceScreen() {
         </Pressable>
       </View>
 
-      {/* Cards carousel — gated past the navigation transition so the
-          slide-in animation isn't competing with 60+ icon mounts. */}
+      {/* Cards carousel — virtualized FlatList so only ~3 of the 10+ theme
+          cards are mounted at once. Used to be a plain horizontal
+          ScrollView that mounted every card synchronously, which was the
+          dominant cause of the 100-150 ms long task the perf monitor was
+          flagging on every "Appearance" open. */}
       <View style={{ flex: 1, justifyContent: 'center' }}>
         {cardsReady ? (
-          <ScrollView
+          <FlatList
             ref={scrollRef}
+            data={allThemes}
+            keyExtractor={(c) => c.key}
             horizontal
             pagingEnabled={false}
             snapToInterval={CARD_WIDTH + CARD_GAP}
             decelerationRate="fast"
             showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ paddingHorizontal: (SCREEN_WIDTH - CARD_WIDTH) / 2, gap: CARD_GAP, alignItems: 'center' }}
+            contentContainerStyle={{
+              // Mirrors the previous paddingHorizontal: (SCREEN_WIDTH - CARD_WIDTH) / 2
+              // so the first/last cards still center to the viewport.
+              paddingHorizontal: (SCREEN_WIDTH - CARD_WIDTH) / 2,
+              alignItems: 'center',
+            }}
             onScroll={handleScroll}
             scrollEventThrottle={16}
-          >
-            {allThemes.map((c, index) => (
-              <ThemePreviewCard
-                key={c.key}
-                accentConfig={c}
-                isDark={isDark}
-                isSelected={index === activeIndex}
-                user={user}
-                t={t}
-                previewMessage={previewMessage}
-                previewUser={previewUser}
-              />
-            ))}
-          </ScrollView>
+            renderItem={renderTheme}
+            getItemLayout={getItemLayout}
+            // Tight virtualization: 2 cards initial, 1 per batch, 3-card
+            // window. Keeps the open-screen frame light while still leaving
+            // a card or two pre-rendered ahead of the user's scroll position.
+            initialNumToRender={2}
+            maxToRenderPerBatch={1}
+            windowSize={3}
+            removeClippedSubviews
+            // The carousel almost always opens centered on the active card
+            // (see the scrollToIndex effect below), so initialScrollIndex
+            // skips an unnecessary scroll-then-snap on first render.
+            initialScrollIndex={Math.max(0, allThemes.findIndex(c => c.key === accent))}
+          />
         ) : (
           // Placeholder while we wait for the navigation transition to settle.
           // A faint spinner reads the same as "the cards are about to slide in"

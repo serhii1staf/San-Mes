@@ -188,7 +188,14 @@ class PerfMonitor {
       // Publish about twice per second so the bubble label can update
       // without flooding the JS bridge with re-renders.
       if (elapsed >= 500) {
-        const fps = Math.round((this._frameCount * 1000) / elapsed);
+        // Clamp to 120 fps — the maximum a ProMotion display can render. We
+        // see RAF "catch-up" bursts after a long task ends (queued frames
+        // fire back-to-back in <16 ms each), which would otherwise show as
+        // 150+ fps in the bubble — confusingly suggesting better-than-
+        // physical performance. The clamp keeps the displayed value bounded
+        // by what the device's compositor can actually present.
+        const rawFps = Math.round((this._frameCount * 1000) / elapsed);
+        const fps = Math.min(120, rawFps);
         this._jsFps = fps;
         this._pushHistory(this._jsHistory, now, fps);
         this._frameCount = 0;
@@ -221,9 +228,13 @@ class PerfMonitor {
 
   /** Called from the Reanimated frame-callback worklet (via runOnJS). */
   pushUiFps(fps: number) {
-    this._uiFps = fps;
-    this._pushHistory(this._uiHistory, Date.now(), fps);
-    if (this._uiHistory.length > 1 && fps < 30) {
+    // Same clamp as the JS sampler — the Reanimated frame callback can
+    // also deliver catch-up bursts after a heavy native frame, and a
+    // 150 fps display value is more confusing than helpful.
+    const clamped = Math.min(120, Math.max(0, fps));
+    this._uiFps = clamped;
+    this._pushHistory(this._uiHistory, Date.now(), clamped);
+    if (this._uiHistory.length > 1 && clamped < 30) {
       this._record({
         ts: Date.now(),
         type: 'slow',
