@@ -322,8 +322,22 @@ export default function FeedScreen() {
     if (sig === widgetSigRef.current) return;
     widgetSigRef.current = sig;
     const handle = InteractionManager.runAfterInteractions(() => {
-      // Warm the image cache for the first screenful so scrolling is instant.
-      prefetchImages(posts.slice(0, 12).flatMap((p) => [p.imageUrl, ...(p.imageUrls || []), p.originalPost?.imageUrl]));
+      // Warm the image cache for the visible viewport ONLY. Previously this
+      // grabbed up to 12 posts × ~5 URLs each (`imageUrl` + `imageUrls` array
+      // + repost-embed image) — up to ~60 simultaneous prefetches on the
+      // native image decoder. When the user then scrolled, every new card
+      // mounted by FlatList virtualization landed BEHIND those prefetches in
+      // the decode queue, dropping the UI thread to ~39 fps.
+      // Visible viewport on iPhone fits ~1.5-2 cards (initialNumToRender=2),
+      // so 4 hero images × 1 URL each is more than enough warm-up. Reposts
+      // and carousels load lazily as the user reaches them.
+      const heroes: string[] = [];
+      const limit = Math.min(posts.length, 4);
+      for (let i = 0; i < limit; i++) {
+        const u = posts[i].imageUrl || posts[i].imageUrls?.[0];
+        if (u) heroes.push(u);
+      }
+      if (heroes.length > 0) prefetchImages(heroes);
       const { postCount } = useWidgetSettingsStore.getState();
       updateFeedWidget(posts.map((p) => ({
         id: p.id,
