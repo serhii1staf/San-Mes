@@ -283,9 +283,9 @@ export default function NotificationsScreen() {
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.colors.accent.primary} progressViewOffset={headerContentHeight} />}
           showsVerticalScrollIndicator={false}
           removeClippedSubviews
-          initialNumToRender={14}
-          maxToRenderPerBatch={10}
-          windowSize={9}
+          initialNumToRender={8}
+          maxToRenderPerBatch={4}
+          windowSize={6}
         />
       )}
     </View>

@@ -248,6 +248,13 @@ export default function AdminScreen() {
             data={userPosts}
             keyExtractor={item => item.id}
             contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 40 }}
+            // Admin panel — list can hit hundreds of items per user. Tight
+            // virtualization keeps the initial render cheap and the scroll
+            // smooth even on the largest accounts.
+            removeClippedSubviews
+            initialNumToRender={8}
+            maxToRenderPerBatch={4}
+            windowSize={6}
             renderItem={({ item }) => {
               const imgs = parseImageUrls(item.image_url);
               return (
@@ -396,6 +403,13 @@ export default function AdminScreen() {
           data={users}
           keyExtractor={item => item.id}
           contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 40 }}
+          // Admin user list — hundreds of rows, each with an Avatar +
+          // badge + 3 Pressables. Default virtualization rendered every
+          // row on the open-screen frame on a populated DB.
+          removeClippedSubviews
+          initialNumToRender={8}
+          maxToRenderPerBatch={4}
+          windowSize={6}
           renderItem={({ item }) => {
             const badge = BADGES.find(b => b.key === item.badge);
             return (

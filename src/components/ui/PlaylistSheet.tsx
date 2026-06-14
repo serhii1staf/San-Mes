@@ -168,9 +168,14 @@ export function PlaylistSheet({ visible, tracks, onClose }: PlaylistSheetProps) 
                   showsVerticalScrollIndicator={false}
                   bounces={false}
                   removeClippedSubviews
-                  initialNumToRender={10}
-                  maxToRenderPerBatch={8}
-                  windowSize={7}
+                  // Tightened from 10/8/7. Each row is a 40×40 thumbnail +
+                  // text + a CachedImage decode; piling 10 of those onto the
+                  // open-the-sheet frame produced a perceptible stutter on
+                  // weak devices. 8/4/6 covers the visible area and streams
+                  // the rest in one row at a time.
+                  initialNumToRender={8}
+                  maxToRenderPerBatch={4}
+                  windowSize={6}
                 />
               )}
             </View>

@@ -183,9 +183,13 @@ export function GiphyPicker({ visible, onClose, onSelect }: GiphyPickerProps) {
               keyboardShouldPersistTaps="handled"
               keyboardDismissMode="on-drag"
               removeClippedSubviews
-              initialNumToRender={12}
-              maxToRenderPerBatch={12}
-              windowSize={7}
+              // Tightened from 12/12/7. With numColumns=3 each "row" is 3
+              // GIF cells, so initialNumToRender=9 = 3 fully-rendered rows
+              // (≈ visible-window height); maxToRenderPerBatch=3 streams
+              // one row per batch instead of 4 rows in one go.
+              initialNumToRender={9}
+              maxToRenderPerBatch={3}
+              windowSize={5}
               onEndReachedThreshold={0.6}
               onEndReached={handleEndReached}
               renderItem={({ item }) => (

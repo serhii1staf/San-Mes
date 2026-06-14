@@ -175,6 +175,13 @@ export default function MiniAppsScreen() {
           data={apps}
           keyExtractor={item => item.id}
           contentContainerStyle={{ paddingHorizontal: 20, paddingTop: showCreate ? 16 : headerContentHeight + 16, paddingBottom: 40 }}
+          // Mini-apps screen — virtualization tight by default since each
+          // row pulls an emoji bubble + two Pressables; users can publish
+          // many apps over time and the screen should stay snappy.
+          removeClippedSubviews
+          initialNumToRender={8}
+          maxToRenderPerBatch={4}
+          windowSize={6}
           ListEmptyComponent={
             <View style={{ alignItems: 'center', paddingTop: 60 }}>
               <RNText style={{ fontSize: 40 }} allowFontScaling={false}>🎮</RNText>

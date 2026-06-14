@@ -691,9 +691,13 @@ export default function FeedScreen() {
         contentContainerStyle={{ paddingHorizontal: theme.spacing.base, paddingBottom: 100, paddingTop: headerContentHeight }}
         showsVerticalScrollIndicator={false}
         removeClippedSubviews={true}
+        // Tightened from 6/5/7 — feed cards do an `extractFirstUrl` regex
+        // pass and may mount a LinkPreview, so dropping the per-batch and
+        // window caps keeps the visible-window mounted on the first frame
+        // without piling 5 fresh cards of off-screen mount work onto it.
         initialNumToRender={6}
-        maxToRenderPerBatch={5}
-        windowSize={7}
+        maxToRenderPerBatch={4}
+        windowSize={6}
         refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={theme.colors.accent.primary} progressViewOffset={headerContentHeight} />}
       />
 
