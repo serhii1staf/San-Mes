@@ -93,7 +93,11 @@ export function PlaylistSheet({ visible, tracks, onClose }: PlaylistSheetProps) 
         style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, paddingHorizontal: 4, borderRadius: 12, backgroundColor: active ? theme.colors.accent.primary + '15' : 'transparent' }}
       >
         <Text variant="caption" color={theme.colors.text.tertiary} style={{ width: 22, textAlign: 'center', fontSize: 11 }}>{index + 1}</Text>
-        <CachedImage uri={item.artwork} style={{ width: 40, height: 40, borderRadius: 8, marginLeft: 6, backgroundColor: 'rgba(0,0,0,0.1)' }} resizeMode="cover" />
+        {/* Tracks beyond the first ~6 are off-screen on initial paint —
+            `priority="low"` keeps their decodes behind anything visible
+            (e.g. the player's own artwork, header icons) so opening the
+            sheet stays smooth on populated playlists. */}
+        <CachedImage uri={item.artwork} style={{ width: 40, height: 40, borderRadius: 8, marginLeft: 6, backgroundColor: 'rgba(0,0,0,0.1)' }} resizeMode="cover" priority={index < 3 ? 'normal' : 'low'} />
         <View style={{ flex: 1, marginLeft: 10, marginRight: 6 }}>
           <Text variant="caption" weight="semibold" numberOfLines={1} style={{ fontSize: 13 }}>{item.title}</Text>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>

@@ -194,7 +194,12 @@ export function GiphyPicker({ visible, onClose, onSelect }: GiphyPickerProps) {
               onEndReached={handleEndReached}
               renderItem={({ item }) => (
                 <Pressable onPress={() => select(item.sendUrl)} style={{ width: CELL_W, height: CELL_W, borderRadius: 10, overflow: 'hidden', backgroundColor: theme.colors.background.secondary }}>
-                  <CachedImage uri={item.previewUrl} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                  {/* GIFs in a scrolling grid — `priority="low"` lets
+                      expo-image's loader prioritize visible GIFs first
+                      and queue the off-screen rows behind them, so a
+                      fast scroll doesn't pile decode work on the JS
+                      thread. */}
+                  <CachedImage uri={item.previewUrl} style={{ width: '100%', height: '100%' }} resizeMode="cover" priority="low" />
                 </Pressable>
               )}
               ListFooterComponent={loadingMore ? <View style={{ paddingVertical: 16 }}><ActivityIndicator color={theme.colors.accent.primary} /></View> : null}

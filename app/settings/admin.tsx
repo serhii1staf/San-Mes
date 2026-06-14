@@ -255,12 +255,12 @@ export default function AdminScreen() {
             initialNumToRender={8}
             maxToRenderPerBatch={4}
             windowSize={6}
-            renderItem={({ item }) => {
+            renderItem={({ item, index }) => {
               const imgs = parseImageUrls(item.image_url);
               return (
                 <Pressable onPress={() => { setSelectedPost(item); setShowPostModal(true); }} style={{ backgroundColor: theme.colors.background.elevated, borderRadius: 16, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: theme.colors.border.light }}>
                   <View style={{ flexDirection: 'row', gap: 10 }}>
-                    {imgs[0] && <CachedImage uri={imgs[0]} style={{ width: 50, height: 50, borderRadius: 10 }} resizeMode="cover" />}
+                    {imgs[0] && <CachedImage uri={imgs[0]} style={{ width: 50, height: 50, borderRadius: 10 }} resizeMode="cover" priority={index < 4 ? 'normal' : 'low'} />}
                     <View style={{ flex: 1 }}>
                       <Text variant="caption" numberOfLines={2} color={theme.colors.text.secondary}>{item.content || t('admin.no_text')}</Text>
                       <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 10, marginTop: 4 }}>{formatTimeAgo(item.created_at)}</Text>
