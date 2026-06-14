@@ -117,9 +117,16 @@ export default function AppearanceScreen() {
   const t = useT();
   const previewMessage = t('appearance.preview_message');
   const previewUser = t('appearance.preview_user');
-  const { mode, accent, setAccent, aiThemes } = useThemeStore();
+  // Field-level selectors — destructuring re-rendered the whole screen on
+  // every unrelated theme-store mutation (font-size change, AI-theme
+  // additions). Each selector subscription is cheap; what's expensive is
+  // a single wide subscription firing on every store key change.
+  const mode = useThemeStore((s) => s.mode);
+  const accent = useThemeStore((s) => s.accent);
+  const setAccent = useThemeStore((s) => s.setAccent);
+  const aiThemes = useThemeStore((s) => s.aiThemes);
   const removeAiTheme = (key: string) => useThemeStore.setState((s) => ({ aiThemes: s.aiThemes.filter(t => t.key !== key) }));
-  const { user } = useAuthStore();
+  const user = useAuthStore((s) => s.user);
   const isDark = mode === 'dark';
   const allThemes = [...ACCENT_COLORS, ...aiThemes];
   const scrollRef = useRef<FlatList<typeof allThemes[number]>>(null);

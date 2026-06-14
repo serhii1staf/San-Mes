@@ -18,8 +18,15 @@ export default function MiniAppsScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
-  const { user } = useAuthStore();
-  const { apps, isLoading, loadApps, createApp, deleteApp } = useMiniAppsStore();
+  // Field-level selectors — destructuring re-rendered this screen on every
+  // unrelated auth-store change (token refresh, badge sync) and on every
+  // unrelated mini-apps mutation.
+  const user = useAuthStore((s) => s.user);
+  const apps = useMiniAppsStore((s) => s.apps);
+  const isLoading = useMiniAppsStore((s) => s.isLoading);
+  const loadApps = useMiniAppsStore((s) => s.loadApps);
+  const createApp = useMiniAppsStore((s) => s.createApp);
+  const deleteApp = useMiniAppsStore((s) => s.deleteApp);
   const [showCreate, setShowCreate] = useState(false);
   const [editingApp, setEditingApp] = useState<MiniApp | null>(null);
   const [name, setName] = useState('');

@@ -97,7 +97,9 @@ export default function SettingsScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
-  const { logout } = useAuthStore();
+  // Field-level selector — destructuring the whole auth store re-rendered
+  // this screen on every unrelated auth-state change.
+  const logout = useAuthStore((s) => s.logout);
   // Field-level selectors — pulling the whole settings store re-rendered
   // the screen on every unrelated state change.
   const hapticEnabled = useSettingsStore((s) => s.hapticEnabled);

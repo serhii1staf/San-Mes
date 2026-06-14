@@ -13,7 +13,9 @@ export default function DeviceKeyScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
-  const { user } = useAuthStore();
+  // Field selector — destructuring the whole auth store re-rendered this
+  // screen on every unrelated auth-state change (token refresh, badge sync).
+  const user = useAuthStore((s) => s.user);
   const [copied, setCopied] = useState(false);
 
   const deviceKey = user?.deviceKey || 'XXXXXXXXXXXX';
