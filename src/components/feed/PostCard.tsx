@@ -1,4 +1,4 @@
-import React, { useState, useRef, memo } from 'react';
+import React, { useState, useRef, useMemo, memo } from 'react';
 import { View, Pressable, ViewStyle, Dimensions, ScrollView, NativeSyntheticEvent, NativeScrollEvent, Text as RNText } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -39,9 +39,23 @@ export const PostCard = memo(function PostCard({ post, currentUserId, onLike, on
   const handleLike = () => { triggerHaptic('light'); onLike(post.id); };
   const handleDoubleTap = () => { if (!post.isLiked) onLike(post.id); };
 
-  const imageUrls = post.imageUrls && post.imageUrls.length > 0 ? post.imageUrls : post.imageUrl ? [post.imageUrl] : [];
+  // Memoize the image-url collection — was re-allocating an array on every
+  // render when the post had `imageUrl` (singular). For a feed scroll over
+  // 50 cards that's 50 throwaway arrays per scroll commit.
+  const imageUrls = useMemo<string[]>(
+    () => (post.imageUrls && post.imageUrls.length > 0 ? post.imageUrls : post.imageUrl ? [post.imageUrl] : []),
+    [post.imageUrls, post.imageUrl],
+  );
   const hasImages = imageUrls.length > 0 && !post.isSpoilerImage;
   const hasSpoiler = post.isSpoilerImage && imageUrls.length > 0;
+
+  // Memoize the URL extraction so the regex only runs when the post text
+  // actually changes. The IIFE below previously ran extractFirstUrl on every
+  // render of every plain-text card on the feed.
+  const linkPreviewUrl = useMemo<string | null>(
+    () => (!post.isRepost && !hasImages && !hasSpoiler ? extractFirstUrl(post.content) : null),
+    [post.isRepost, hasImages, hasSpoiler, post.content],
+  );
 
   // Card colors — blend with theme background
   const cardBg = theme.isDark ? theme.colors.background.elevated : 'rgba(255,255,255,0.95)';
@@ -89,14 +103,11 @@ export const PostCard = memo(function PostCard({ post, currentUserId, onLike, on
       ) : null}
 
       {/* Link preview — only when the post has a URL and no image of its own */}
-      {!post.isRepost && !hasImages && !hasSpoiler && (() => {
-        const link = extractFirstUrl(post.content);
-        return link ? (
-          <View style={{ paddingHorizontal: 16, paddingBottom: 10 }}>
-            <LinkPreview url={link} />
-          </View>
-        ) : null;
-      })()}
+      {linkPreviewUrl ? (
+        <View style={{ paddingHorizontal: 16, paddingBottom: 10 }}>
+          <LinkPreview url={linkPreviewUrl} />
+        </View>
+      ) : null}
 
       {/* Original post embed (reposts) */}
       {post.isRepost && post.originalPost && (
