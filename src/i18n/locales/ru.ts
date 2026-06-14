@@ -390,6 +390,29 @@ const ru: Record<string, string> = {
   'music_chat.alert.empty_playlist_title': 'Плейлист пуст',
   'music_chat.alert.empty_playlist_msg': 'Сначала найдите хотя бы один трек.',
 
+  // ─── AI chat — commands flow (mini-app create / manage) ────────────────
+  // The AI chat exposes a small commands panel (matching Music chat) that
+  // lets the user spin up a conversational mini-app create/edit flow.
+  // None of these prompts hit the LLM — the bubbles are inlined verbatim.
+  'ai_chat.commands_label': 'Команды',
+  'ai_chat.command.create_label': 'Создать мини-приложение',
+  'ai_chat.command.create_desc': 'Имя, эмодзи и ссылка — за три шага',
+  'ai_chat.command.manage_label': 'Управление мини-приложениями',
+  'ai_chat.command.manage_desc': 'Изменить или удалить свои мини-приложения',
+  'ai_chat.flow.prompt_name': 'Введите имя',
+  'ai_chat.flow.prompt_emoji': 'Выберите эмодзи',
+  'ai_chat.flow.prompt_url': 'Отправьте ссылку',
+  'ai_chat.flow.create_success': 'Мини-приложение создано! Найди его в поиске и в списке мини-приложений',
+  'ai_chat.flow.create_error': 'Не получилось: {error}',
+  'ai_chat.flow.update_success': 'Изменения сохранены',
+  'ai_chat.flow.cancelled': 'Отменено',
+  'ai_chat.flow.url_invalid': 'Похоже, это не ссылка. Попробуйте ещё раз: «Отправьте ссылку»',
+  'ai_chat.flow.signin_required': 'Войдите, чтобы управлять мини-приложениями',
+  'ai_chat.manage.title': 'Ваши мини-приложения',
+  'ai_chat.manage.empty': 'У вас пока нет мини-приложений. Используйте «Создать» чтобы добавить первое.',
+  'ai_chat.manage.delete_title': 'Удалить мини-приложение?',
+  'ai_chat.manage.deleted': 'Удалено',
+
   // ─── Post context menu ─────────────────────────────────────────────────
   'post_context.repost': 'Репост',
   'post_context.copy': 'Скопировать',

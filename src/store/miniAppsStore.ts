@@ -28,6 +28,10 @@ interface MiniAppsStore {
   isLoading: boolean;
   loadApps: () => Promise<void>;
   createApp: (app: Omit<MiniApp, 'id' | 'created_at'>) => Promise<{ error: string | null }>;
+  updateApp: (
+    id: string,
+    updates: Partial<Pick<MiniApp, 'name' | 'emoji' | 'url' | 'description'>>,
+  ) => Promise<{ error: string | null }>;
   deleteApp: (id: string) => Promise<void>;
   searchApps: (query: string) => MiniApp[];
 }
@@ -60,6 +64,27 @@ export const useMiniAppsStore = create<MiniAppsStore>()(
             .single();
           if (error) return { error: error.message };
           if (data) set((s) => ({ apps: [data, ...s.apps] }));
+          return { error: null };
+        } catch (e: any) {
+          return { error: e?.message || t('common.error') };
+        }
+      },
+
+      updateApp: async (id, updates) => {
+        try {
+          const { data, error } = await supabase
+            .from('mini_apps')
+            .update(updates)
+            .eq('id', id)
+            .select()
+            .single();
+          if (error) return { error: error.message };
+          // Local-first: even if Supabase didn't echo a row back (rare),
+          // we still merge the patch into the cached entry so the UI
+          // reflects the user's edit immediately.
+          set((s) => ({
+            apps: s.apps.map((a) => (a.id === id ? { ...a, ...(data || updates) } : a)),
+          }));
           return { error: null };
         } catch (e: any) {
           return { error: e?.message || t('common.error') };

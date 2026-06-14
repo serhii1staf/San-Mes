@@ -381,6 +381,26 @@ const en: Record<string, string> = {
   'music_chat.alert.empty_playlist_title': 'Playlist is empty',
   'music_chat.alert.empty_playlist_msg': 'Find at least one track first.',
 
+  // ─── AI chat — commands flow (mini-app create / manage) ────────────────
+  'ai_chat.commands_label': 'Commands',
+  'ai_chat.command.create_label': 'Create a mini app',
+  'ai_chat.command.create_desc': 'Name, emoji, and a link — in three steps',
+  'ai_chat.command.manage_label': 'Manage mini apps',
+  'ai_chat.command.manage_desc': 'Edit or delete your mini apps',
+  'ai_chat.flow.prompt_name': 'Type a name',
+  'ai_chat.flow.prompt_emoji': 'Pick an emoji',
+  'ai_chat.flow.prompt_url': 'Send the link',
+  'ai_chat.flow.create_success': 'Mini app created! Find it in search and in the mini apps list',
+  'ai_chat.flow.create_error': "Didn't work: {error}",
+  'ai_chat.flow.update_success': 'Changes saved',
+  'ai_chat.flow.cancelled': 'Cancelled',
+  'ai_chat.flow.url_invalid': "That doesn't look like a link. Try again: 'Send the link'",
+  'ai_chat.flow.signin_required': 'Sign in to manage mini apps',
+  'ai_chat.manage.title': 'Your mini apps',
+  'ai_chat.manage.empty': "You don't have any mini apps yet. Use 'Create' to add one.",
+  'ai_chat.manage.delete_title': 'Delete mini app?',
+  'ai_chat.manage.deleted': 'Deleted',
+
   // ─── Post context menu ─────────────────────────────────────────────────
   'post_context.repost': 'Repost',
   'post_context.copy': 'Copy',
