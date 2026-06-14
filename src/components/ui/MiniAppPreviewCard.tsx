@@ -1,10 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { View, Pressable, Text as RNText, ActivityIndicator } from 'react-native';
+import { Image } from 'expo-image';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useTheme } from '../../theme';
 import { Text } from './Text';
 import { useMiniAppsStore, MiniApp } from '../../store/miniAppsStore';
+import { useSettingsStore } from '../../store/settingsStore';
+import { getMiniAppPreviewSource } from '../mini-app-previews/registry';
 import { supabase } from '../../lib/supabase';
 import { useT } from '../../i18n/store';
 import { kvGetJSONSync, kvSetJSON } from '../../services/kvStore';
@@ -166,6 +169,18 @@ export const MiniAppPreviewCard = React.memo(function MiniAppPreviewCard({
   const subColor = textColor || theme.colors.text.tertiary;
   const bg = theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.025)';
 
+  // User-pickable WebP backdrop. `null` = current transparent look —
+  // matches the historical visual exactly. Skeleton/missing states
+  // intentionally skip the image so error chrome stays readable.
+  const previewBgId = useSettingsStore((s) => s.miniAppPreviewBg);
+  const previewBgSource = getMiniAppPreviewSource(previewBgId);
+  // Soft tint above the image so text + button stay readable. Light
+  // theme darkens the photo less than dark theme; values mirror the
+  // overlay strength used elsewhere in the app for image-on-text.
+  const previewOverlayColor = theme.isDark
+    ? 'rgba(0,0,0,0.35)'
+    : 'rgba(255,255,255,0.55)';
+
   // Skeleton — single thin row to match LinkPreview's loading state.
   if (loading && !resolved) {
     return (
@@ -236,8 +251,45 @@ export const MiniAppPreviewCard = React.memo(function MiniAppPreviewCard({
         borderLeftWidth: 2,
         borderLeftColor: textColor ? 'rgba(255,255,255,0.6)' : accent,
         backgroundColor: bg,
+        // Clip the optional WebP backdrop to the rounded corner. Without
+        // `overflow: hidden` the full-bleed image would leak past the
+        // 16-px radius on iOS.
+        overflow: 'hidden',
       }}
     >
+      {/* User-pickable WebP backdrop. Sits absolutely behind every other
+          child so it never affects the row's layout, then a soft tint
+          on top keeps text + button readable. Skipped entirely when the
+          user has not chosen one (`null` keeps the current visual). */}
+      {previewBgSource ? (
+        <>
+          <Image
+            source={previewBgSource}
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+            }}
+            contentFit="cover"
+            cachePolicy="memory-disk"
+            transition={0}
+            pointerEvents="none"
+          />
+          <View
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: previewOverlayColor,
+            }}
+          />
+        </>
+      ) : null}
       <View
         style={{
           width: 48,

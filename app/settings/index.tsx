@@ -374,6 +374,12 @@ export default function SettingsScreen() {
             onPress={() => router.push('/settings/pixel-icons' as any)}
           />
           <SettingsRow
+            icon="image"
+            iconTint="pink"
+            label={t('settings.mini_app_preview')}
+            onPress={() => router.push('/settings/mini-app-preview' as any)}
+          />
+          <SettingsRow
             icon="layout"
             iconTint="teal"
             label={t('settings.widget')}

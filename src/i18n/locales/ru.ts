@@ -799,6 +799,14 @@ const ru: Record<string, string> = {
   'dynamic_overlay.mode_light': 'Светлый',
   'dynamic_overlay.perf_toggle': 'Монитор',
   'dynamic_overlay.dismiss_hint': 'Тапните в стороне, чтобы скрыть',
+
+  // ─── Mini-app preview backdrop picker ─────────────────────────────────
+  'settings.mini_app_preview': 'Превью мини-приложений',
+  'mini_app_preview.title': 'Превью мини-приложений',
+  'mini_app_preview.apply': 'Применить',
+  'mini_app_preview.none': 'Без фона',
+  'mini_app_preview.demo_name': 'Demo',
+  'mini_app_preview.demo_desc': 'Превью обложки',
 };
 
 export default ru;

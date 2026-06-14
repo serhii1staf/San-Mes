@@ -787,6 +787,14 @@ const en: Record<string, string> = {
   'dynamic_overlay.mode_light': 'Light',
   'dynamic_overlay.perf_toggle': 'Monitor',
   'dynamic_overlay.dismiss_hint': 'Tap outside to dismiss',
+
+  // ─── Mini-app preview backdrop picker ─────────────────────────────────
+  'settings.mini_app_preview': 'Mini-app preview',
+  'mini_app_preview.title': 'Mini-app preview',
+  'mini_app_preview.apply': 'Apply',
+  'mini_app_preview.none': 'No background',
+  'mini_app_preview.demo_name': 'Demo',
+  'mini_app_preview.demo_desc': 'Cover preview',
 };
 
 export default en;

@@ -32,6 +32,11 @@ interface SettingsState {
   // Picked via the existing pixel-icons screen launched with
   // `?purpose=home-header` from a long-press on the title.
   homeHeaderIcon: string | null;
+  // Background image rendered full-bleed inside `MiniAppPreviewCard`.
+  // Stable registry id from `mini-app-previews/registry.ts` (e.g.
+  // `preview_3`) or `null` when the card stays transparent (default).
+  // Picked from `app/settings/mini-app-preview.tsx`.
+  miniAppPreviewBg: string | null;
   // Weather chip on the messages-tab header. Off by default per Apple's
   // "no auto-fetch on launch" guidance — the user opts in from settings.
   // City is the human-readable label rendered next to the temperature; lat/
@@ -48,6 +53,7 @@ interface SettingsState {
   setPerfMonitorPosition: (x: number, y: number) => void;
   setPerfMonitorFilter: (kind: string, on: boolean) => void;
   setHomeHeaderIcon: (id: string | null) => void;
+  setMiniAppPreviewBg: (id: string | null) => void;
   setWeatherEnabled: (enabled: boolean) => void;
   setWeatherCity: (city: { name: string; lat: number; lon: number } | null) => void;
 }
@@ -78,6 +84,9 @@ export const useSettingsStore = create<SettingsState>()(
       // No icon by default — the "San" title stands alone unless the
       // user explicitly picks one from the pixel-icons picker.
       homeHeaderIcon: null,
+      // No preview-card background by default — `MiniAppPreviewCard`
+      // keeps its current transparent look until the user picks one.
+      miniAppPreviewBg: null,
       // Weather opt-in defaults: feature OFF, no city picked yet.
       weatherEnabled: false,
       weatherCityName: null,
@@ -92,6 +101,7 @@ export const useSettingsStore = create<SettingsState>()(
       setPerfMonitorFilter: (kind, on) =>
         set((s) => ({ perfMonitorFilters: { ...s.perfMonitorFilters, [kind]: on } })),
       setHomeHeaderIcon: (homeHeaderIcon) => set({ homeHeaderIcon }),
+      setMiniAppPreviewBg: (miniAppPreviewBg) => set({ miniAppPreviewBg }),
       setWeatherEnabled: (weatherEnabled) => set({ weatherEnabled }),
       setWeatherCity: (city) =>
         set(

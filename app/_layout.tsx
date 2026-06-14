@@ -347,6 +347,14 @@ function RootLayout() {
                   headerShown: false,
                 }}
               />
+              <Stack.Screen
+                name="settings/mini-app-preview"
+                options={{
+                  presentation: 'modal',
+                  animation: 'slide_from_bottom',
+                  headerShown: false,
+                }}
+              />
             </Stack>
           </View>
           <BrowserBottomBand />
