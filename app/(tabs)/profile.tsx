@@ -164,19 +164,21 @@ export default function ProfileScreen() {
   const scrollViewRef = useRef<any>(null);
   const hasRestoredScroll = useRef(false);
 
-  // 1. On mount: if store is empty, hydrate from MMKV (instant, no flicker)
-  // then fetch fresh in the background. The MMKV read is synchronous so we
-  // defer it via InteractionManager to keep the tab-switch frame buttery on
-  // weak devices — same approach as (tabs)/index.tsx.
+  // 1. On mount: if store is empty, hydrate from MMKV synchronously.
+  // Reading ~50 cached posts takes ~1-2ms — well under one frame budget —
+  // so we do NOT defer this through InteractionManager. Deferring meant
+  // the profile tab mounted EMPTY, the navigation transition played for
+  // ~300 ms over an empty screen, then `runAfterInteractions` finally
+  // fired and the cache materialized. That ~300 ms empty-tab gap was
+  // exactly the "freeze" users saw on cold-open → profile tab → scroll.
+  // Running the MMKV read on the same commit as mount means the FlatList
+  // sees real posts on the very first render, with zero empty-tab gap.
   useEffect(() => {
     if (userPosts.length > 0) return; // Store already has data — show instantly
-    const handle = InteractionManager.runAfterInteractions(() => {
-      try {
-        const parsed = kvGetJSONSync<any[]>(MY_POSTS_CACHE_KEY, []);
-        if (Array.isArray(parsed) && parsed.length > 0) setProfilePosts(parsed);
-      } catch {}
-    });
-    return () => handle.cancel();
+    try {
+      const parsed = kvGetJSONSync<any[]>(MY_POSTS_CACHE_KEY, []);
+      if (Array.isArray(parsed) && parsed.length > 0) setProfilePosts(parsed);
+    } catch {}
   }, []);
 
   // 2. Fetch fresh data once (if not already fetched). Defer until after
