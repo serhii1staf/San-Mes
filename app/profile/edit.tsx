@@ -6,6 +6,15 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import * as ImagePicker from 'expo-image-picker';
+import {
+  Gesture,
+  GestureDetector,
+  GestureHandlerRootView,
+} from 'react-native-gesture-handler';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+} from 'react-native-reanimated';
 import { useTheme } from '../../src/theme';
 import { Text, Input, Avatar } from '../../src/components/ui';
 import { CachedImage } from '../../src/components/ui/CachedImage';
@@ -16,8 +25,22 @@ import { currentUser } from '../../src/utils/mockData';
 import { useT } from '../../src/i18n/store';
 import { validateName, validateBio } from '../../src/services/moderation';
 import { showToast } from '../../src/store/toastStore';
+import {
+  BannerTransform,
+  IDENTITY_BANNER_TRANSFORM,
+  parseBannerTransform,
+  serializeBannerTransform,
+  stripBannerTransform,
+} from '../../src/utils/bannerTransform';
 
-const { height: SCREEN_HEIGHT } = Dimensions.get('window');
+const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = Dimensions.get('window');
+
+// Editor frame matches the on-display banner height (240) so the user
+// is positioning the image inside the exact frame they'll see on the
+// profile screen — what they see here is what shows there.
+const BANNER_EDIT_HEIGHT = 240;
+const MIN_SCALE = 1;
+const MAX_SCALE = 3;
 
 const LINK_TYPES = [
   { key: 'github', label: 'GitHub', icon: 'github', patterns: ['github.com'] },
@@ -126,14 +149,33 @@ export default function EditProfileScreen() {
   const [linkUrl, setLinkUrl] = useState('');
   const [linkType, setLinkType] = useState('website');
   const [isSaving, setIsSaving] = useState(false);
-  const [bannerUri, setBannerUri] = useState<string | null>((user as any)?.bannerUrl || null);
+  // Banner: separate the underlying image URL from the position/zoom
+  // transform. The user.bannerUrl string may already carry an
+  // `#x=&y=&s=` hash from a prior save — split it on mount so the
+  // editor and persistence both work with structured data.
+  //
+  // Maintainers: see src/utils/bannerTransform.ts for the encoding
+  // contract. Do NOT pass `bannerUri + hash` directly to a CachedImage
+  // / image proxy — always strip the hash first.
+  const initialBanner = (user as any)?.bannerUrl as string | undefined;
+  const [bannerUri, setBannerUri] = useState<string | null>(stripBannerTransform(initialBanner) || null);
+  const [bannerTransform, setBannerTransform] = useState<BannerTransform>(parseBannerTransform(initialBanner));
+  // Banner editor modal — opens after picking a new image (so the user
+  // can position it before save) and via the "Position" pill (so the
+  // user can re-frame an existing banner without re-uploading).
+  const [showBannerEditor, setShowBannerEditor] = useState(false);
 
   // Load banner from server-side meta in case the local copy got dropped.
   useEffect(() => {
     if (user?.id && !bannerUri) {
       loadProfileMeta(user.id)
         .then(({ meta }) => {
-          if (meta?.banner_url) setBannerUri(meta.banner_url);
+          if (meta?.banner_url) {
+            // Server-side string may carry the same #x=&y=&s= hash —
+            // split it the same way we do at mount.
+            setBannerUri(stripBannerTransform(meta.banner_url) || null);
+            setBannerTransform(parseBannerTransform(meta.banner_url));
+          }
         })
         .catch(() => {});
     }
@@ -152,8 +194,29 @@ export default function EditProfileScreen() {
     });
     if (!result.canceled && result.assets[0]) {
       setBannerUri(result.assets[0].uri);
+      // New picks reset the transform to identity — the previous
+      // position only made sense for the previous image. The editor
+      // pops up immediately so the user can frame the new image
+      // before save.
+      setBannerTransform({ ...IDENTITY_BANNER_TRANSFORM });
+      setShowBannerEditor(true);
     }
   };
+
+  // Open the editor against the existing banner so the user can re-frame
+  // it without picking a new image.
+  const adjustBanner = () => {
+    if (!bannerUri) return;
+    setShowBannerEditor(true);
+  };
+
+  // Persist a transform from the editor back into the screen state. The
+  // actual upload + URL serialization happens in handleSave.
+  const handleBannerEditorSave = (next: BannerTransform) => {
+    setBannerTransform(next);
+    setShowBannerEditor(false);
+  };
+  const handleBannerEditorCancel = () => setShowBannerEditor(false);
 
   const handleSave = async () => {
     // Moderation: validate display name + bio BEFORE persisting. Toast on
@@ -170,13 +233,19 @@ export default function EditProfileScreen() {
     }
     setIsSaving(true);
     try {
+      // Local optimistic update — apply the transform onto the local
+      // URI immediately so the redesigned profile screen picks it up
+      // without waiting for the network round-trip below.
+      const localBannerUrl = bannerUri
+        ? serializeBannerTransform(bannerUri, bannerTransform)
+        : undefined;
       updateProfile({
         displayName: name,
         username,
         bio,
         emoji: selectedEmoji,
         links,
-        bannerUrl: bannerUri || undefined,
+        bannerUrl: localBannerUrl,
       });
 
       if (user?.id) {
@@ -188,16 +257,23 @@ export default function EditProfileScreen() {
           } catch {}
         }
 
+        // Encode the transform as a hash on the final (uploaded) URL
+        // so the next render of either profile screen will read it
+        // back and apply the same position.
+        const persistedUrl = finalBannerUrl
+          ? serializeBannerTransform(finalBannerUrl, bannerTransform)
+          : undefined;
+
         await updateSupabaseProfile(user.id, {
           display_name: name,
           bio,
           emoji: selectedEmoji,
-          banner_url: finalBannerUrl || undefined,
+          banner_url: persistedUrl || undefined,
           links: links.length > 0 ? links : [],
         });
 
-        if (finalBannerUrl && finalBannerUrl !== bannerUri) {
-          updateProfile({ bannerUrl: finalBannerUrl });
+        if (persistedUrl && persistedUrl !== localBannerUrl) {
+          updateProfile({ bannerUrl: persistedUrl });
         }
       }
     } catch {
@@ -304,13 +380,27 @@ export default function EditProfileScreen() {
         {/* Banner — full-bleed at the top with a tap-to-pick affordance.
             Uses CachedImage so the same banner URL doesn't re-fetch every
             time the screen mounts (regular <Image> bypassed expo-image's
-            cache, which is why the banner used to flash on each reopen). */}
+            cache, which is why the banner used to flash on each reopen).
+            Applies the user-chosen transform here too so the editor's
+            preview matches what the actual profile screens render.
+            The "Position" pill is a NESTED Pressable; React Native's
+            responder system gives the inner pressable priority so a tap
+            on it opens the editor instead of the picker. */}
         <Pressable onPress={pickBanner}>
           <View style={[styles.banner, { backgroundColor: accent + '20', paddingTop: insets.top + 56 }]}>
             {bannerUri ? (
               <CachedImage
                 uri={bannerUri}
-                style={StyleSheet.absoluteFillObject}
+                style={[
+                  StyleSheet.absoluteFillObject,
+                  {
+                    transform: [
+                      { translateX: bannerTransform.translateX },
+                      { translateY: bannerTransform.translateY },
+                      { scale: bannerTransform.scale },
+                    ],
+                  },
+                ]}
                 resizeMode="cover"
                 proxyWidth={800}
               />
@@ -326,6 +416,16 @@ export default function EditProfileScreen() {
                   {t('edit_profile.add_banner')}
                 </Text>
               </View>
+            )}
+            {/* Re-open the position editor without re-uploading. Only
+                shown when there's something to position. */}
+            {bannerUri && (
+              <Pressable onPress={adjustBanner} hitSlop={8} style={styles.bannerAdjustPill}>
+                <Feather name="move" size={12} color="#FFFFFF" />
+                <RNText style={styles.bannerEditText} allowFontScaling={false}>
+                  {t('edit_profile.banner.adjust')}
+                </RNText>
+              </Pressable>
             )}
             <View style={styles.bannerEditPill}>
               <Feather name="edit-2" size={12} color="#FFFFFF" />
@@ -581,9 +681,294 @@ export default function EditProfileScreen() {
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      {/* Banner position editor — drag + pinch the picked image inside
+          a 240-tall banner-shaped frame, then save. Reanimated drives
+          everything on the UI thread so the gesture stays at 60fps even
+          while the JS thread is busy with the rest of the form. The
+          GestureHandlerRootView wrapper inside the Modal is mandatory —
+          gesture handlers don't propagate into RN's portal-rendered
+          modals from the app-level root. */}
+      <BannerPositionEditorModal
+        visible={showBannerEditor}
+        uri={bannerUri}
+        initial={bannerTransform}
+        onCancel={handleBannerEditorCancel}
+        onSave={handleBannerEditorSave}
+      />
     </View>
   );
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Banner position editor
+// ─────────────────────────────────────────────────────────────────────────
+// The picked image lives inside a banner-shaped frame; the user drags +
+// pinches to position. Gestures drive shared values via reanimated, so
+// the entire transform pipeline runs on the UI thread without crossing
+// the JS bridge — which matters because the parent screen is doing a lot
+// of other work (form state, image cache invalidations, etc.).
+//
+// On save, the committed shared values are read back via runOnJS into a
+// plain `BannerTransform` object and handed to the parent via `onSave`.
+// Cancel restores the editor's saved state; the parent's transform stays
+// untouched.
+interface BannerPositionEditorModalProps {
+  visible: boolean;
+  uri: string | null;
+  initial: BannerTransform;
+  onCancel: () => void;
+  onSave: (transform: BannerTransform) => void;
+}
+
+function BannerPositionEditorModal({
+  visible,
+  uri,
+  initial,
+  onCancel,
+  onSave,
+}: BannerPositionEditorModalProps) {
+  const theme = useTheme();
+  const insets = useSafeAreaInsets();
+  const t = useT();
+
+  // Live values driven by the gestures.
+  const translateX = useSharedValue(initial.translateX);
+  const translateY = useSharedValue(initial.translateY);
+  const scale = useSharedValue(initial.scale);
+  // Snapshot of the values at the start of each gesture so the live
+  // delta can be applied on top — keeps successive pans/pinches from
+  // resetting position back to (0,0,1).
+  const savedTranslateX = useSharedValue(initial.translateX);
+  const savedTranslateY = useSharedValue(initial.translateY);
+  const savedScale = useSharedValue(initial.scale);
+
+  // Re-seed the shared values whenever the modal opens against a
+  // potentially different `initial`. Without this, opening the editor
+  // a second time after a Cancel would still show the previously
+  // committed in-modal state.
+  useEffect(() => {
+    if (!visible) return;
+    translateX.value = initial.translateX;
+    translateY.value = initial.translateY;
+    scale.value = initial.scale;
+    savedTranslateX.value = initial.translateX;
+    savedTranslateY.value = initial.translateY;
+    savedScale.value = initial.scale;
+  }, [visible, initial.translateX, initial.translateY, initial.scale]);
+
+  // Pan: translates the cover-fitted image inside the frame. No
+  // hard clamp here — at 1× the user can drag the edge inwards to
+  // intentionally show the background tint, which is fine; the
+  // serializer's MAX_TRANSLATE guard catches anything pathological.
+  const panGesture = Gesture.Pan()
+    .onStart(() => {
+      savedTranslateX.value = translateX.value;
+      savedTranslateY.value = translateY.value;
+    })
+    .onUpdate((e) => {
+      translateX.value = savedTranslateX.value + e.translationX;
+      translateY.value = savedTranslateY.value + e.translationY;
+    })
+    .onEnd(() => {
+      savedTranslateX.value = translateX.value;
+      savedTranslateY.value = translateY.value;
+    });
+
+  // Pinch: clamps to 1×–3× per the spec. Hard clamp during the gesture
+  // means the visible value can never escape bounds, so onEnd can just
+  // commit the current value without a spring snap-back.
+  const pinchGesture = Gesture.Pinch()
+    .onStart(() => {
+      savedScale.value = scale.value;
+    })
+    .onUpdate((e) => {
+      const next = savedScale.value * e.scale;
+      if (next < MIN_SCALE) scale.value = MIN_SCALE;
+      else if (next > MAX_SCALE) scale.value = MAX_SCALE;
+      else scale.value = next;
+    })
+    .onEnd(() => {
+      savedScale.value = scale.value;
+    });
+
+  const composedGesture = Gesture.Simultaneous(panGesture, pinchGesture);
+
+  const animatedImageStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: translateX.value },
+      { translateY: translateY.value },
+      { scale: scale.value },
+    ],
+  }));
+
+  // Commit the live transform back to the JS thread on save.
+  const handleSave = () => {
+    const next: BannerTransform = {
+      translateX: translateX.value,
+      translateY: translateY.value,
+      scale: scale.value,
+    };
+    onSave(next);
+  };
+
+  if (!uri) return null;
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onCancel}
+      statusBarTranslucent
+    >
+      {/* GestureHandlerRootView is required inside Modal — RN portals the
+          modal contents outside the app's gesture root, so handlers
+          attached to <GestureDetector> wouldn't fire without this. */}
+      <GestureHandlerRootView style={editorStyles.root}>
+        <View style={[editorStyles.dim, { paddingTop: insets.top }]}>
+          <View style={editorStyles.headerRow}>
+            <Pressable
+              onPress={onCancel}
+              hitSlop={10}
+              style={editorStyles.headerBtn}
+            >
+              <RNText style={editorStyles.headerBtnText} allowFontScaling={false}>
+                {t('edit_profile.banner.cancel')}
+              </RNText>
+            </Pressable>
+            <RNText
+              style={editorStyles.headerTitle}
+              allowFontScaling={false}
+              numberOfLines={1}
+            >
+              {t('edit_profile.banner.editor_title')}
+            </RNText>
+            <Pressable
+              onPress={handleSave}
+              hitSlop={10}
+              style={[editorStyles.headerBtn, editorStyles.headerBtnSave]}
+            >
+              <RNText
+                style={[editorStyles.headerBtnText, editorStyles.headerBtnSaveText]}
+                allowFontScaling={false}
+              >
+                {t('edit_profile.banner.save')}
+              </RNText>
+            </Pressable>
+          </View>
+
+          {/* Banner-shaped frame containing the gesture-driven image.
+              `overflow: 'hidden'` clips the transformed image to the
+              frame so the user only ever sees what would render on
+              the actual profile screen. */}
+          <View
+            style={[
+              editorStyles.frame,
+              {
+                width: SCREEN_WIDTH,
+                height: BANNER_EDIT_HEIGHT,
+                backgroundColor: theme.colors.accent.primary + '33',
+              },
+            ]}
+          >
+            <GestureDetector gesture={composedGesture}>
+              <Animated.View style={[StyleSheet.absoluteFill, animatedImageStyle]}>
+                <CachedImage
+                  uri={uri}
+                  style={StyleSheet.absoluteFillObject}
+                  resizeMode="cover"
+                  proxyWidth={800}
+                />
+              </Animated.View>
+            </GestureDetector>
+            {/* Subtle inset border so the frame edge is visible against
+                the dimmed backdrop even when the image is light. */}
+            <View pointerEvents="none" style={editorStyles.frameBorder} />
+          </View>
+
+          <View style={editorStyles.hintWrap} pointerEvents="none">
+            <View style={editorStyles.hintPill}>
+              <Feather name="move" size={12} color="#FFFFFF" />
+              <RNText style={editorStyles.hintText} allowFontScaling={false}>
+                {t('edit_profile.banner.editor_hint')}
+              </RNText>
+            </View>
+          </View>
+        </View>
+      </GestureHandlerRootView>
+    </Modal>
+  );
+}
+
+const editorStyles = StyleSheet.create({
+  root: { flex: 1 },
+  dim: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.92)',
+    alignItems: 'center',
+  },
+  headerRow: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  headerBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+  },
+  headerBtnSave: {
+    backgroundColor: 'rgba(255,255,255,0.95)',
+  },
+  headerBtnText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  headerBtnSaveText: {
+    color: '#000000',
+  },
+  headerTitle: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
+    flex: 1,
+    textAlign: 'center',
+    marginHorizontal: 8,
+  },
+  frame: {
+    overflow: 'hidden',
+    marginTop: 24,
+  },
+  frameBorder: {
+    ...StyleSheet.absoluteFillObject,
+    borderWidth: 0.5,
+    borderColor: 'rgba(255,255,255,0.18)',
+  },
+  hintWrap: {
+    marginTop: 28,
+    alignItems: 'center',
+  },
+  hintPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+  },
+  hintText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '500',
+  },
+});
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
@@ -681,6 +1066,21 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.5)',
   },
   bannerEditText: { color: '#FFFFFF', fontSize: 11, fontWeight: '600' },
+  // "Position" pill — bottom-LEFT of the banner so it doesn't collide
+  // with the existing edit-banner pill on the right. Mirrors the same
+  // visual treatment so the two pills read as siblings.
+  bannerAdjustPill: {
+    position: 'absolute',
+    bottom: 12,
+    left: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 14,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
   avatarWrap: {
     alignItems: 'center',
     marginTop: -48,
