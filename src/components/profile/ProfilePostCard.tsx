@@ -20,36 +20,25 @@ import { useT } from '../../i18n/store';
 import { perfMonitor } from '../../services/perfMonitor';
 import { useSettingsStore } from '../../store/settingsStore';
 
-// ─── Module-level "first frame" latch ──────────────────────────────────
-// The ENTIRE card body is lazy-hydrated past the first paint. The first
-// commit renders only a sized placeholder View; one RAF later the latch
-// flips and the real card content (header, thumb, FormattedText,
-// LinkPreview, EmojiPattern/PixelIconPattern, SwipeablePostCard wrapper
-// etc.) commits in a frame the user already perceives as the navigation
-// transition.
+// ─── Per-card lazy hydrate ──────────────────────────────────────────────
+// Each card defers its body ONE RAF after its own mount so the FlatList
+// commit that lands a freshly-virtualized card carries only an empty
+// placeholder, with the heavy subtree (FormattedText, LinkPreview,
+// EmojiPattern/PixelIconPattern, SwipeablePostCard wrapper, image grid)
+// committing on the NEXT frame.
 //
-// Why module-level (instead of per-card `useState`): once the first
-// batch of cards finishes their initial frame, every subsequent card —
-// including ones mounted later during scroll — initializes directly
-// with `hydrated = true` and pays ZERO re-render / RAF cost. The user's
-// perf snapshot showed the UI thread dipping to 36 fps with 3+ cards
-// commiting in the same frame at ~11ms each — that ~33ms storm is now
-// ~3ms (one empty View per card) on the first frame, with full content
-// landing on the next.
-let __firstFrameDone = false;
-let __firstFramePending: ((b: boolean) => void)[] = [];
-function __scheduleFirstFrameFlush() {
-  if (__firstFrameDone) return;
-  // Only the first card to mount kicks off the RAF. Subsequent cards just
-  // append themselves to the wait list.
-  if (__firstFramePending.length !== 1) return;
-  requestAnimationFrame(() => {
-    __firstFrameDone = true;
-    const list = __firstFramePending;
-    __firstFramePending = [];
-    for (const fn of list) fn(true);
-  });
-}
+// Why per-card (instead of a module-level "first frame done" latch): the
+// previous module-level latch flipped to `true` once the initial 2 cards
+// had finished their first paint, which meant every subsequent card —
+// including ones mounted DURING SCROLL as FlatList virtualization ran —
+// initialized with `hydrated = true` and committed its full body in a
+// single frame. With ~11 ms of native shadow-tree work per card body, a
+// scroll batch landing 2-3 cards on the same frame storms the UI thread
+// — that was the perceived "~1 second hang" users reported when they
+// opened the profile tab cold and immediately scrolled. Per-card RAF
+// spreads each card's mount across two frames regardless of where it
+// lands in the session, so no scroll-induced commit ever carries more
+// than a handful of empty placeholders + at most one full body.
 
 interface ProfilePostCardProps {
   post: any;
@@ -121,21 +110,16 @@ function ProfilePostCardBase({ post, authorName, authorEmoji, authorVerified, au
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [perfEnabled]);
 
-  // Lazy-hydrate the WHOLE card body past the first paint. We use a
-  // MODULE-LEVEL latch (see top of file) so:
-  //   - The first card to mount kicks off one RAF that flips the latch.
-  //   - Every card mounting AFTER that frame initializes its `hydrated`
-  //     state with `true` directly — zero re-renders, zero extra effects,
-  //     zero microtasks. The early-return placeholder below collapses
-  //     initial-mount cost from a full subtree to a single empty View.
-  const [hydrated, setHydrated] = useState(__firstFrameDone);
+  // Lazy-hydrate the WHOLE card body past the first paint. Each card runs
+  // its OWN RAF after mounting — see the header comment for the full
+  // rationale. The placeholder fallback below collapses an initial-mount
+  // commit from a full subtree to a single empty View, which is what
+  // gives each scroll-induced card mount one cheap "warm-up" frame
+  // before the real subtree commits.
+  const [hydrated, setHydrated] = useState(false);
   useEffect(() => {
-    if (__firstFrameDone) return;
-    __firstFramePending.push(setHydrated);
-    __scheduleFirstFrameFlush();
-    // No cleanup needed — the flush callback drains the array atomically.
-    // If the card unmounts before the flush, calling setHydrated on an
-    // unmounted component is a benign no-op in React 18+.
+    const handle = requestAnimationFrame(() => setHydrated(true));
+    return () => cancelAnimationFrame(handle);
   }, []);
 
   // Pull derived data through `useMemo` so re-renders (theme flip,
