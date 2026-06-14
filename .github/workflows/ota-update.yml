@@ -26,7 +26,11 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        # --omit=optional skips platform-specific optional binaries (e.g. sharp's
+        # @img/sharp-wasm32 → @emnapi/runtime chain) that aren't reproducible
+        # across Linux / Windows / macOS lockfiles. Sharp is a dev-only asset
+        # optimization tool — not needed for the OTA bundle build.
+        run: npm ci --omit=optional
 
       - name: Setup Expo
         uses: expo/expo-github-action@v8
