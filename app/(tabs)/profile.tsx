@@ -453,9 +453,9 @@ export default function ProfileScreen() {
         // RAF without stealing time from a swipe gesture. The user can
         // briefly see empty space at the bottom while flicking fast,
         // but no stutter — a strict win on weak devices.
-        initialNumToRender={3}
+        initialNumToRender={2}
         maxToRenderPerBatch={1}
-        windowSize={4}
+        windowSize={3}
         updateCellsBatchingPeriod={100}
         removeClippedSubviews={true}
         showsVerticalScrollIndicator={false}

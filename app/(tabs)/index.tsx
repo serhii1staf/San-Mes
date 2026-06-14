@@ -693,22 +693,19 @@ export default function FeedScreen() {
         removeClippedSubviews={true}
         // PostCards are heavy: each one carries up to 1+ CachedImage (or
         // a LinkPreview thumbnail), an Avatar, FormattedText, action bar,
-        // and on reposts an embedded original-post block. The previous
-        // 6/4/6 numbers piled six freshly-allocated cards onto the same
-        // commit on cold-open of the home tab — visible viewport on
-        // iPhone fits 1.5–2 cards, so four off-screen cards were paying
-        // their full mount cost on the navigation-transition frame and
-        // surfacing as the residual `UI<30 @ (tabs)` dip the perf
-        // monitor flagged. Lowered to 4/3/5 so:
-        //   - 4 cards on the cold-mount frame (~2 viewports filled),
-        //   - 3 cards per subsequent batch keeps scroll-into-new-batch
-        //     under the 60 ms long-task threshold,
-        //   - windowSize=5 keeps ~2 viewports of off-screen cushion.
-        // Combined with the LinkPreview RAF defer, no single feed-mount
-        // RAF runs more than ~3 cards' worth of synchronous work.
-        initialNumToRender={4}
-        maxToRenderPerBatch={3}
-        windowSize={5}
+        // and on reposts an embedded original-post block. iPhone viewport
+        // fits 1.5-2 cards above the fold, so any further "off-screen"
+        // mounts on cold open are paying their cost on the navigation
+        // transition frame and showing up as native UI-thread dips.
+        // 2/1/3 means: 2 cards on first paint (visible viewport), 1
+        // card per subsequent batch, ~1 viewport cushion. Combined with
+        // the lazy-hydrate latch in PostCard (placeholder first commit,
+        // hydrate one RAF later), the cold-open frame's UI-thread work
+        // is now ~2 placeholders × 1ms with no parallel image decodes
+        // before the first paint settles.
+        initialNumToRender={2}
+        maxToRenderPerBatch={1}
+        windowSize={3}
         refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={theme.colors.accent.primary} progressViewOffset={headerContentHeight} />}
       />
 
