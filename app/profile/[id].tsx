@@ -786,44 +786,59 @@ export default function UserProfileScreen() {
                 />
               ) : null}
               <LinearGradient colors={['transparent', 'rgba(0,0,0,0.55)']} locations={[0.4, 1]} style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 140 }} pointerEvents="none" />
-              {/* Name + @username overlay — sits above the centered avatar.
-                  Display name + verified badge + UserBadge wrapped in a
-                  translucent pill so identity feels contained rather than
-                  naked text floating on the image. Flat translucent View
-                  only — no BlurView (chrome budget; see chromeReady). The
-                  @username sits OUTSIDE the pill and keeps its textShadow
-                  for legibility against the gradient. */}
-              <View pointerEvents="none" style={{ position: 'absolute', bottom: 78, left: 0, right: 0, alignItems: 'center', paddingHorizontal: 24 }}>
-                <View style={{ alignSelf: 'center', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 14, backgroundColor: 'rgba(0,0,0,0.32)', borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.18)' }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, maxWidth: '100%' }}>
-                    <Text
-                      variant="caption"
-                      weight="bold"
-                      numberOfLines={1}
-                      style={{ fontSize: 14, color: '#FFFFFF', flexShrink: 1 }}
-                    >
-                      {displayProfile.display_name}
-                    </Text>
-                    {displayProfile.is_verified && <VerifiedBadge size={12} />}
-                    {displayProfile.badge && <UserBadge badge={displayProfile.badge} size="sm" />}
-                  </View>
-                </View>
-                <Text
-                  variant="caption"
-                  numberOfLines={1}
-                  style={{ fontSize: 11, color: 'rgba(255,255,255,0.85)', marginTop: 2, textShadowColor: 'rgba(0,0,0,0.45)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 }}
-                >
-                  @{displayProfile.username}
-                </Text>
-              </View>
               <LinearGradient colors={['transparent', theme.colors.background.primary]} style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 48 }} pointerEvents="none" />
             </View>
 
-            {/* Centered avatar — overlaps banner bottom by 72px (was 36) so
-                the identity block rides higher inside the taller banner. */}
-            <View style={{ alignSelf: 'center', marginTop: -72 }}>
+            {/* Horizontal identity row — @username on the LEFT, avatar in
+                the CENTER, display name + badges on the RIGHT. Sits ON the
+                banner's lower-fade region (marginTop: -120 lifts the row
+                deep into the banner; that single negative margin pulls
+                ALL downstream content up too — message/follow row, bio,
+                links, tabs, posts ride higher with no extra changes).
+                flex:1 on each side keeps the avatar geometrically centered
+                no matter the side-text widths; numberOfLines={1} truncates
+                instead of pushing the avatar off-axis. White text +
+                textShadow on top of the dark gradient for legibility (no
+                BlurView — chrome budget, see chromeReady). The avatar
+                wrapper is a plain View here (no account switcher on other-
+                user profiles). */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', alignSelf: 'stretch', marginTop: -120, paddingHorizontal: 8 }}>
+              <Text
+                numberOfLines={1}
+                style={{
+                  flex: 1,
+                  textAlign: 'right',
+                  fontSize: 13,
+                  color: 'rgba(255,255,255,0.92)',
+                  textShadowColor: 'rgba(0,0,0,0.6)',
+                  textShadowOffset: { width: 0, height: 1 },
+                  textShadowRadius: 3,
+                  marginRight: 12,
+                }}
+              >
+                @{displayProfile.username}
+              </Text>
               <View style={{ width: 72, height: 72, borderRadius: 36, overflow: 'hidden', borderWidth: 3, borderColor: theme.colors.background.primary, backgroundColor: theme.isDark ? 'rgba(30,30,30,0.85)' : 'rgba(255,255,255,0.85)', alignItems: 'center', justifyContent: 'center' }}>
                 <Avatar emoji={displayProfile.emoji || '😊'} size="lg" />
+              </View>
+              <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 12 }}>
+                <Text
+                  variant="body"
+                  weight="bold"
+                  numberOfLines={1}
+                  style={{
+                    flexShrink: 1,
+                    fontSize: 15,
+                    color: '#FFFFFF',
+                    textShadowColor: 'rgba(0,0,0,0.6)',
+                    textShadowOffset: { width: 0, height: 1 },
+                    textShadowRadius: 3,
+                  }}
+                >
+                  {displayProfile.display_name}
+                </Text>
+                {displayProfile.is_verified && <VerifiedBadge size={13} />}
+                {displayProfile.badge && <UserBadge badge={displayProfile.badge} size="sm" />}
               </View>
             </View>
 
