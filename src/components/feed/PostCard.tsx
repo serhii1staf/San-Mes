@@ -82,9 +82,16 @@ export const PostCard = memo(function PostCard({ post, currentUserId, onLike, on
     // No cleanup: the flush callback drains the array atomically; calling
     // setPrimed on an unmounted component is a benign no-op in React 18+.
   }, []);
-  // Hero image priority — `high` once the first frame has settled, `low`
-  // during the very first wave of cards on cold-open of the home tab.
-  const heroPriority: 'high' | 'low' = primed ? 'high' : 'low';
+  // Hero image priority — always `low`. iOS schedules `low`-priority decodes
+  // serially on its image-decode queue rather than fanning them out in
+  // parallel, which is what was causing the user-perceived ~1s scroll
+  // judder on cold-open of feed/profile (4 cards × parallel decodes
+  // saturated the native UI thread). The visible-paint delay is sub-frame
+  // — `expo-image`'s memory-disk cache plus the prefetch path mean cached
+  // bytes still appear within one frame; only NEW decodes get serialized.
+  // Pinning to `low` always (not just during the first frame) means
+  // scroll-induced new card mounts also stagger.
+  const heroPriority: 'high' | 'low' = 'low';
 
   const handleLike = () => { triggerHaptic('light'); onLike(post.id); };
   const handleDoubleTap = () => { if (!post.isLiked) onLike(post.id); };
