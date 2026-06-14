@@ -307,23 +307,30 @@ export default function MessagesScreen() {
   // Gated on `entityConversations` so we only prefetch what's locally
   // visible, and chunked past `runAfterInteractions` so it never competes
   // with the navigation transition. The signature ref keys on a stable hash
-  // of the top-12 IDs + their lastMessageAt so we re-run only when the
+  // of the top-8 IDs + their lastMessageAt so we re-run only when the
   // ordering actually shifts (new message arrives, sync brings in new chats)
   // rather than on every render.
   const prefetchSigRef = useRef<string>('');
   useEffect(() => {
     if (entityConversations.length === 0) return;
-    // Sort a shallow copy so we don't mutate store state, then take the top 12
-    // by recency. `lastMessageAt` is an ISO string, so lex compare = chrono.
+    // Sort a shallow copy so we don't mutate store state, then take the top 8
+    // by recency — matches `MAX_CONVERSATIONS` in `messagesPrefetch.ts` so
+    // the sig only churns when something inside the prefetch window moves.
+    // `lastMessageAt` is an ISO string, so lex compare = chrono.
     const top = [...entityConversations]
       .sort((a, b) => (b.lastMessageAt || '').localeCompare(a.lastMessageAt || ''))
-      .slice(0, 12);
+      .slice(0, 8);
     const sig = top.map((c) => `${c.id}:${c.lastMessageAt || ''}`).join('|');
     if (sig === prefetchSigRef.current) return;
     prefetchSigRef.current = sig;
     const ids = top.map((c) => c.id);
     const handle = InteractionManager.runAfterInteractions(() => {
-      void prefetchRecentChatMedia({ conversationIds: ids, budgetUris: 24 });
+      // Smaller budget (12 URIs) keeps the total wall-clock work this
+      // function does after the chat-opens transition under control on
+      // weak devices — combined with the per-chat `setTimeout(0)` yield
+      // inside `prefetchRecentChatMedia`, no individual JS task crosses
+      // the 60 ms long-task threshold.
+      void prefetchRecentChatMedia({ conversationIds: ids, budgetUris: 12 });
     });
     return () => handle.cancel();
   }, [entityConversations]);

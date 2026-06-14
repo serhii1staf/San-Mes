@@ -16,11 +16,16 @@
 //
 // Cost
 // ----
-// 12 chats × 3 messages × ~2 URIs each = ~72 cheap MMKV reads + a single
+// 8 chats × 3 messages × ~2 URIs each = ~48 cheap MMKV reads + a single
 // `Image.prefetch(uris)` batch (which expo-image dedupes internally and
-// runs on its own scheduler). The MMKV reads happen on the JS thread but
-// are chunked across microtasks via `await Promise.resolve()` so we never
-// block the JS thread for more than one chat's loop body at a time.
+// runs on its own scheduler). Each chat's `kvGetJSONSync` + `JSON.parse`
+// runs on the JS thread, so to keep no single task above the 60 ms
+// long-task threshold we yield to the MACROTASK queue (`setTimeout(0)`)
+// between conversations — `Promise.resolve()` only drains microtasks
+// off the same task and was the dominant cause of the 145 ms long task
+// users were seeing on `(tabs)/messages` right after navigating into a
+// chat (12 sequential parses of large `chat_messages:<id>` blobs piled
+// up onto a single InteractionManager-deferred task).
 
 import { kvGetJSONSync } from './kvStore';
 import { prefetchImages } from '../components/ui/CachedImage';
@@ -28,15 +33,15 @@ import { extractFirstUrl, getCachedPreviewSync } from './linkPreview';
 import type { ChatMessage } from '../types';
 
 interface PrefetchOpts {
-  /** Conversation IDs ordered most-recently-active first. Capped at 12. */
+  /** Conversation IDs ordered most-recently-active first. Capped at 8. */
   conversationIds: string[];
-  /** Hard cap on total image URIs queued to expo-image. Defaults to 24. */
+  /** Hard cap on total image URIs queued to expo-image. Defaults to 16. */
   budgetUris?: number;
 }
 
-const MAX_CONVERSATIONS = 12;
+const MAX_CONVERSATIONS = 8;
 const MESSAGES_PER_CHAT = 3;
-const DEFAULT_BUDGET = 24;
+const DEFAULT_BUDGET = 16;
 
 /**
  * Warm expo-image's disk cache for the recent media of the listed
@@ -50,7 +55,10 @@ const DEFAULT_BUDGET = 24;
  *        - the first http(s) URL extracted from `text`, ONLY if a link
  *          preview is already cached (so we surface the OG image without
  *          firing speculative /api/unfurl requests).
- *   3. Yield to the JS thread between conversations via `await Promise.resolve()`.
+ *   3. Yield to the JS thread between conversations via a real macrotask
+ *      (`setTimeout(0)`) so the native side and any pending RAF callbacks
+ *      get a slot, and the perf monitor never sees a single task longer
+ *      than one chat's parse.
  *
  * After all chats are scanned, the deduped URI list is handed to
  * `prefetchImages`, which routes each URL through the weserv proxy at a
@@ -64,13 +72,21 @@ export async function prefetchRecentChatMedia(opts: PrefetchOpts): Promise<void>
   const seen = new Set<string>();
   const collected: string[] = [];
 
-  for (const id of ids) {
+  for (let i = 0; i < ids.length; i++) {
+    const id = ids[i];
     if (collected.length >= budgetUris) break;
-    // Yield to the JS thread between conversations so this never piles up
-    // into a long task even if MMKV warm-up is cold and the JSON.parse is
-    // sizeable.
-    // eslint-disable-next-line no-await-in-loop
-    await Promise.resolve();
+    // Yield to the MACROTASK queue (not just microtasks) between chats.
+    // `await Promise.resolve()` only drains microtasks off the SAME task,
+    // so 8 sequential `kvGetJSONSync` + `JSON.parse` calls of large
+    // `chat_messages:<id>` blobs all landed on the JS thread as a single
+    // 100-200 ms task. `setTimeout(0)` actually relinquishes the thread
+    // back to native between chats — each iteration becomes its own
+    // measurable task, well under the 60 ms long-task threshold. Skipped
+    // on the first iteration so the first chat's parse runs immediately.
+    if (i > 0) {
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
 
     let messages: ChatMessage[];
     try {
