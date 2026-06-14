@@ -23,6 +23,7 @@ const Host = forwardRef<Handle>((_, ref) => {
   }));
   return null;
 });
+Host.displayName = 'TestHost';
 
 // Make rAF synchronous-ish so the hook's deferred setState lands inside act().
 beforeAll(() => {

@@ -42,6 +42,15 @@ jest.mock('expo-av', () => {
       setPositionAsync: jest.fn(async (ms: number) => {
         position = ms;
       }),
+      // Mirrors the real expo-av `Audio.Sound#setStatusAsync` API used by
+      // musicStore.toggle() and musicStore.seek(): `shouldPlay` and
+      // `positionMillis` are independent — either, both, or neither may be
+      // present in a single call. Anything `undefined` leaves the field
+      // untouched (matches expo-av semantics).
+      setStatusAsync: jest.fn(async (opts: { shouldPlay?: boolean; positionMillis?: number } = {}) => {
+        if (typeof opts.shouldPlay === 'boolean') playing = opts.shouldPlay;
+        if (typeof opts.positionMillis === 'number') position = opts.positionMillis;
+      }),
       stopAsync: jest.fn(async () => {
         playing = false;
       }),
