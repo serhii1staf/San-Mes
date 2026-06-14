@@ -37,7 +37,10 @@ export default function FontsScreen() {
   const t = useT();
   const fontFamily = useThemeStore((s) => s.fontFamily);
   const fontSize = useThemeStore((s) => s.fontSize);
-  const { postEmoji, setPostEmoji } = useProfileAppearanceStore();
+  // Field-level selectors — destructuring re-rendered the screen on every
+  // unrelated profile-appearance mutation.
+  const postEmoji = useProfileAppearanceStore((s) => s.postEmoji);
+  const setPostEmoji = useProfileAppearanceStore((s) => s.setPostEmoji);
   const [emojiModal, setEmojiModal] = useState(false);
 
   const bgPrimary = theme.colors.background.primary;

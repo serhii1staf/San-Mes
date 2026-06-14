@@ -18,7 +18,10 @@ export default function BrowserScreen() {
   const [canGoBack, setCanGoBack] = useState(false);
   const webViewRef = useRef<WebView>(null);
   const closedManually = useRef(false);
-  const { setMinimized, clearMinimized } = useBrowserStore();
+  // Field-level selectors — destructuring re-rendered the whole browser
+  // screen on every unrelated browser-store change.
+  const setMinimized = useBrowserStore((s) => s.setMinimized);
+  const clearMinimized = useBrowserStore((s) => s.clearMinimized);
 
   // Clear minimized state when browser opens (user tapped the mini-bar)
   useEffect(() => {

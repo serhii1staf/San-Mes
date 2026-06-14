@@ -27,7 +27,12 @@ export default function WidgetScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
-  const { postCount, content, setPostCount, setContent } = useWidgetSettingsStore();
+  // Field-level selectors — destructuring re-rendered the whole screen on
+  // every unrelated widget-store change.
+  const postCount = useWidgetSettingsStore((s) => s.postCount);
+  const content = useWidgetSettingsStore((s) => s.content);
+  const setPostCount = useWidgetSettingsStore((s) => s.setPostCount);
+  const setContent = useWidgetSettingsStore((s) => s.setContent);
   const [refreshing, setRefreshing] = useState(false);
 
   const handleRefresh = () => {
