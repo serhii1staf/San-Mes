@@ -4,18 +4,29 @@ import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useTheme } from '../../theme';
 import { Text, Avatar } from '../ui';
+import { CachedImage } from '../ui/CachedImage';
+import { FormattedText } from '../ui/FormattedText';
+import { LinkPreview } from '../ui/LinkPreview';
 import { VerifiedBadge } from '../ui/VerifiedBadge';
 import { triggerHaptic } from '../../utils/haptics';
 import { formatTimeAgo } from '../../utils/mockData';
+import { extractFirstUrl } from '../../services/linkPreview';
 import { useT } from '../../i18n/store';
 
 // Profile "Replies" tab row.
 //
 // Shows a single reply the profile owner authored: a small parent-post
 // snippet on top (author name + ~80 chars of original content, tappable
-// to jump straight into that thread) and the user's own reply text +
+// to jump straight into that thread), an optional preview row for the
+// parent post's first image / link, and the user's own reply text +
 // timestamp underneath. Tapping anywhere on the card opens the parent
 // post's comments screen so the reply lands in context.
+//
+// `FormattedText` renders both the parent snippet and the reply body so
+// **bold**, *italic*, `code`, ||spoiler||, @mentions, #hashtags and
+// http(s) links display the way they would in the real thread instead
+// of leaking the raw markers. `numberOfLines` truncation still applies
+// because FormattedText delegates to a single RN <Text> root.
 //
 // Markers from the comments storage scheme that need stripping for the
 // preview text:
@@ -39,19 +50,6 @@ function stripCommentTokens(text: string): string {
   return s.trim();
 }
 
-function stripPostContent(text: string): string {
-  if (!text) return '';
-  // Reposts store `::repost::{originalId}::{comment}` — show only the
-  // comment portion (or empty for bare reposts).
-  if (text.startsWith(REPOST_PREFIX)) {
-    const rest = text.slice(REPOST_PREFIX.length);
-    const sepIdx = rest.indexOf('::');
-    if (sepIdx >= 0) return rest.slice(sepIdx + 2);
-    return '';
-  }
-  return text;
-}
-
 export interface ProfileReply {
   id: string;
   postId: string;
@@ -61,6 +59,23 @@ export interface ProfileReply {
   parentAuthorEmoji: string;
   parentAuthorVerified?: boolean;
   parentSnippet: string;
+  /**
+   * First image URL of the parent post, if any. When the parent is
+   * itself a repost, the loader resolves the chain to the original
+   * post and stores the original's image here so the preview reflects
+   * what the user is actually replying to. Pipe-separated multi-image
+   * posts collapse to the FIRST URL plus a `parentImageCount` for the
+   * "+N" pill — same convention as the home feed.
+   */
+  parentImageUrl?: string;
+  /** Total number of images on the parent post (for the +N pill). */
+  parentImageCount?: number;
+  /**
+   * First http(s) URL detected in the parent post's text via
+   * `extractFirstUrl`. Only used when the parent has no images — that's
+   * the layout that fits without crowding the card.
+   */
+  parentLinkUrl?: string;
 }
 
 const styles = StyleSheet.create({
@@ -81,6 +96,24 @@ const styles = StyleSheet.create({
   },
   parentMeta: { flex: 1 },
   parentName: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  thumb: {
+    width: 40,
+    height: 40,
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
+  thumbBadge: {
+    position: 'absolute',
+    right: -4,
+    top: -4,
+    minWidth: 16,
+    height: 16,
+    paddingHorizontal: 4,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  linkPreviewRow: { marginBottom: 8, marginHorizontal: 4 },
   replyBody: { paddingHorizontal: 4 },
   timeText: { fontSize: 10, marginTop: 6 },
 });
@@ -117,6 +150,17 @@ function ProfileReplyCardBase({ reply }: ProfileReplyCardProps) {
   const replyText = stripCommentTokens(reply.content);
   const isGifOnly = reply.content?.includes(GIF_TOKEN) && !replyText;
 
+  // Image takes layout precedence — if the parent post has an image we
+  // show that thumbnail and skip the (heavier) link preview, even when
+  // the snippet text also contains a URL. This keeps the card compact
+  // on dense reply lists. Falls back to extracting a URL from the
+  // snippet only when no image exists.
+  const showThumb = !!reply.parentImageUrl;
+  const linkUrl = !showThumb
+    ? reply.parentLinkUrl || extractFirstUrl(reply.parentSnippet)
+    : null;
+  const extraImages = Math.max(0, (reply.parentImageCount || 0) - 1);
+
   const openThread = () => {
     triggerHaptic('selection');
     router.push({ pathname: '/comments/[id]', params: { id: reply.postId } });
@@ -124,7 +168,8 @@ function ProfileReplyCardBase({ reply }: ProfileReplyCardProps) {
 
   return (
     <Pressable onPress={openThread} style={containerStyle}>
-      {/* Parent post mini-preview — author + truncated content. Tappable
+      {/* Parent post mini-preview — author + truncated content + (if any)
+          a 40×40 thumbnail of the original post's first image. Tappable
           via the outer Pressable; we don't add a second nested press
           target to avoid swallowing the parent press in some Android
           versions. */}
@@ -137,20 +182,67 @@ function ProfileReplyCardBase({ reply }: ProfileReplyCardProps) {
             </Text>
             {reply.parentAuthorVerified ? <VerifiedBadge size={10} /> : null}
           </View>
-          <Text
-            variant="caption"
-            color={theme.colors.text.tertiary}
-            numberOfLines={1}
-            style={{ fontSize: 11, marginTop: 1 }}
-          >
-            {reply.parentSnippet || t('profile.empty_section')}
-          </Text>
+          {reply.parentSnippet ? (
+            <FormattedText
+              numberOfLines={1}
+              color={theme.colors.text.tertiary}
+              style={{ fontSize: 11, marginTop: 1 }}
+            >
+              {reply.parentSnippet}
+            </FormattedText>
+          ) : (
+            <Text
+              variant="caption"
+              color={theme.colors.text.tertiary}
+              numberOfLines={1}
+              style={{ fontSize: 11, marginTop: 1 }}
+            >
+              {t('profile.empty_section')}
+            </Text>
+          )}
         </View>
+        {showThumb ? (
+          <View style={[styles.thumb, { backgroundColor: theme.colors.border.light }]}>
+            <CachedImage
+              uri={reply.parentImageUrl as string}
+              style={{ width: '100%', height: '100%' }}
+              resizeMode="cover"
+              proxyWidth={120}
+              // Decorative chrome inside a denser list — same priority
+              // hint as the home-feed link-preview thumbnails so the
+              // image decoder doesn't queue these ahead of the user's
+              // primary feed scroll work.
+              priority="low"
+            />
+            {extraImages > 0 ? (
+              <View
+                style={[
+                  styles.thumbBadge,
+                  { backgroundColor: theme.colors.accent.primary, borderWidth: 1.5, borderColor: theme.colors.background.primary },
+                ]}
+              >
+                <Text variant="caption" weight="bold" color="#FFFFFF" style={{ fontSize: 9, lineHeight: 11 }}>
+                  +{extraImages}
+                </Text>
+              </View>
+            ) : null}
+          </View>
+        ) : null}
         <Feather name="chevron-right" size={14} color={theme.colors.text.tertiary} />
       </View>
 
+      {/* Compact link preview — only when the parent has no images.
+          LinkPreview reuses its own per-URL metadata cache + image
+          prefetch so we don't re-fetch on every reply card mount. */}
+      {linkUrl ? (
+        <View style={styles.linkPreviewRow}>
+          <LinkPreview url={linkUrl} static />
+        </View>
+      ) : null}
+
       {/* The user's reply text (or a "GIF" hint if the reply was a GIF
-          with no caption). */}
+          with no caption). FormattedText so **bold**, *italic*, `code`,
+          and other markers render as actual styled text. */}
       <View style={styles.replyBody}>
         {isGifOnly ? (
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -160,13 +252,9 @@ function ProfileReplyCardBase({ reply }: ProfileReplyCardProps) {
             </Text>
           </View>
         ) : (
-          <Text
-            variant="body"
-            numberOfLines={4}
-            style={{ fontSize: 13, lineHeight: 18 }}
-          >
+          <FormattedText style={{ fontSize: 13, lineHeight: 18 }}>
             {replyText}
-          </Text>
+          </FormattedText>
         )}
         <Text variant="caption" color={theme.colors.text.tertiary} style={styles.timeText}>
           {formatTimeAgo(reply.createdAt)}
@@ -181,5 +269,8 @@ export const ProfileReplyCard = memo(
   (prev, next) =>
     prev.reply.id === next.reply.id &&
     prev.reply.content === next.reply.content &&
-    prev.reply.parentSnippet === next.reply.parentSnippet,
+    prev.reply.parentSnippet === next.reply.parentSnippet &&
+    prev.reply.parentImageUrl === next.reply.parentImageUrl &&
+    prev.reply.parentImageCount === next.reply.parentImageCount &&
+    prev.reply.parentLinkUrl === next.reply.parentLinkUrl,
 );

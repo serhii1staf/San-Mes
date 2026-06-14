@@ -1,36 +1,39 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Animated, StyleProp, TextStyle } from 'react-native';
 
-// Smooth-crossfade text wrapper for the @username + display-name labels
-// that sit on top of the profile banner. Driven by `isLight` (resolved
-// from the banner's bottom-region luminance via useBannerBrightness),
-// which the parent computes once per render — when it flips, the
-// component animates a single Animated.Value driver from 0 → 1 (or 1 → 0)
-// over 250 ms and uses JS-driver colour interpolation between the
-// dark- and light-variant colours.
+// Adaptive @username + display-name labels that sit on top of the profile
+// banner. Driven by `isLight` (resolved from the banner's bottom-region
+// luminance via useBannerBrightness): when the banner reads dark we render
+// near-white text; when it reads light we render near-black.
 //
-// Why a single Animated.Text + colour interpolation instead of two
-// stacked Animated.Texts crossfading via opacity:
-//   - Colour interpolation never causes layout reflow. Two stacked
-//     Texts would either need absolute-positioning over a hidden
-//     layout-driver (extra DOM and a third measurement) or risk
-//     bumping the row's intrinsic size mid-fade.
-//   - Banner brightness is sticky once resolved (cached per URL).
-//     The transition fires at most ONCE per profile open, when the
-//     fetch-deferred brightness lands and tips the threshold. JS-
-//     driver colour animation for one short hop is well within
-//     budget; we are not animating per-frame for hours.
+// Implementation note (perf):
+//   The previous version drove a JS-thread Animated colour interpolation
+//   between the dark and light variants on every `isLight` change. That
+//   meant 4 Text trees rendering on the profile screen (×2 for own + other
+//   profile), each with a JS-driver value chained off the shared scrollY
+//   driver — and JS-driver Animated values pump every frame on the JS
+//   thread, contributing to the 10–15 fps drop the user reported on tab
+//   switching.
+//
+//   The current approach uses ONE Animated.Text per identity element with
+//   plain React-state colour (set imperatively the moment `isLight` flips)
+//   and a SHARED Animated.Value-driven opacity nudge. The opacity sits at
+//   1 in steady state; on `isLight` change, snap to 0 then animate back to
+//   1 over 200 ms with `useNativeDriver: true`. Native-driver opacity is
+//   GPU-cheap and never touches the JS thread mid-animation. The colour
+//   itself is a plain string on `style.color`, so there is no per-frame
+//   bridge traffic during steady-state scroll.
 //
 // Layout / shadow rules:
 //   - The component only swaps `color`; it does NOT swap textShadow,
-//     fontSize, fontWeight, or any layout-affecting style. Those stay
-//     on the parent <Animated.Text> via the `style` prop.
-//   - The parent passes a `style` that already includes textShadow
-//     (white text on dark gradient gets the shadow; on light
-//     backgrounds the shadow is barely visible and never harms
-//     legibility). Keeping the shadow always-on is the user-visible
-//     "guarantee minimum contrast on every banner" the spec calls
-//     for, layered on top of the existing dark gradient backdrop.
+//     fontSize, fontWeight, or any layout-affecting style. Those stay on
+//     the parent <Animated.Text> via the `style` prop.
+//   - The parent passes a `style` that already includes textShadow (white
+//     text on dark gradient gets the shadow; on light backgrounds the
+//     shadow is barely visible and never harms legibility). Always-on
+//     shadow plus the dark gradient backdrop is the user-visible
+//     "guarantee minimum contrast on every banner" the original spec
+//     called for.
 
 interface AdaptiveProfileTextProps {
   /** True when the banner reads as light → use dark text colour. */
@@ -42,7 +45,7 @@ interface AdaptiveProfileTextProps {
   numberOfLines?: number;
   /**
    * Style applied to the Animated.Text. Pass everything except colour
-   * here — the component overrides `color` with its animated value.
+   * here — the component overrides `color` with its imperative value.
    */
   style?: StyleProp<TextStyle>;
   children: React.ReactNode;
@@ -56,29 +59,37 @@ export function AdaptiveProfileText({
   style,
   children,
 }: AdaptiveProfileTextProps) {
-  // Driver: 0 → dark-banner (white text), 1 → light-banner (dark text).
-  // Initial value matches `isLight` on first paint so the very first
-  // frame already shows the right colour for cached brightness.
-  const driver = useRef(new Animated.Value(isLight ? 1 : 0)).current;
+  // Plain React state for the colour. Reads correctly on the very first
+  // paint (matches `isLight` initial value) and only changes when the
+  // brightness flips.
+  const [resolvedColor, setResolvedColor] = useState(isLight ? lightBgColor : darkBgColor);
+  // Steady-state opacity = 1. On flip, snap to 0 → animate back to 1.
+  const opacity = useRef(new Animated.Value(1)).current;
+  // Track previous `isLight` so we don't run the nudge on the very first
+  // mount (the initial colour already matches and there is nothing to
+  // crossfade away from).
+  const prevIsLight = useRef(isLight);
 
   useEffect(() => {
-    Animated.timing(driver, {
-      toValue: isLight ? 1 : 0,
-      duration: 250,
-      // Colour interpolation is not supported by the native driver in
-      // RN's Animated; we drive it from JS. Fine because this animation
-      // fires at most once per banner-brightness resolution.
-      useNativeDriver: false,
+    if (prevIsLight.current === isLight) return;
+    prevIsLight.current = isLight;
+    // Snap, swap colour, fade back. The colour swap happens between
+    // `setValue(0)` and the `Animated.timing` start so the user never
+    // sees the old colour at full opacity bleeding into the new colour.
+    opacity.setValue(0);
+    setResolvedColor(isLight ? lightBgColor : darkBgColor);
+    Animated.timing(opacity, {
+      toValue: 1,
+      duration: 200,
+      useNativeDriver: true,
     }).start();
-  }, [isLight, driver]);
-
-  const color = driver.interpolate({
-    inputRange: [0, 1],
-    outputRange: [darkBgColor, lightBgColor],
-  });
+  }, [isLight, lightBgColor, darkBgColor, opacity]);
 
   return (
-    <Animated.Text numberOfLines={numberOfLines} style={[style, { color }]}>
+    <Animated.Text
+      numberOfLines={numberOfLines}
+      style={[style, { color: resolvedColor, opacity }]}
+    >
       {children}
     </Animated.Text>
   );

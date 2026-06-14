@@ -444,6 +444,32 @@ export default function ProfileScreen() {
         return;
       }
 
+      // Resolve repost chains for parent posts so the preview reflects
+      // the ORIGINAL post the reply is responding to (its image and the
+      // text where any URL would be detected). Same approach as
+      // `loadMyPosts`: collect missing IDs, batch-fetch, follow-the-chain.
+      const originalIds: string[] = [];
+      for (const c of rows) {
+        const parent = Array.isArray(c.posts) ? c.posts[0] : c.posts;
+        const text: string = parent?.content || '';
+        if (text.startsWith('::repost::')) {
+          const rest = text.slice('::repost::'.length);
+          const sep = rest.indexOf('::');
+          const oid = sep >= 0 ? rest.slice(0, sep) : rest;
+          if (oid) originalIds.push(oid);
+        }
+      }
+      const originalsMap: Record<string, any> = {};
+      if (originalIds.length > 0) {
+        const { data: originals } = await supabase
+          .from('posts')
+          .select('id, content, image_url')
+          .in('id', originalIds);
+        if (originals) {
+          for (const o of originals) originalsMap[o.id] = o;
+        }
+      }
+
       const buildReply = (c: any): ProfileReply => {
         const parent = Array.isArray(c.posts) ? c.posts[0] : c.posts;
         const parentAuthor = parent
@@ -451,13 +477,31 @@ export default function ProfileScreen() {
           : null;
         // Strip the repost prefix from the parent post's snippet so the
         // mini-preview shows the actual text the reply is responding to.
-        let snippet: string = parent?.content || '';
-        if (snippet.startsWith('::repost::')) {
-          const rest = snippet.slice('::repost::'.length);
+        // When the parent IS a repost we ALSO swap in the original
+        // post's image / text for the preview row, so the user sees what
+        // they actually replied to (not the repost wrapper).
+        let snippetSource: string = parent?.content || '';
+        let imageSource: string | null | undefined = parent?.image_url;
+        if (snippetSource.startsWith('::repost::')) {
+          const rest = snippetSource.slice('::repost::'.length);
           const sep = rest.indexOf('::');
-          snippet = sep >= 0 ? rest.slice(sep + 2) : '';
+          const originalId = sep >= 0 ? rest.slice(0, sep) : rest;
+          const repostComment = sep >= 0 ? rest.slice(sep + 2) : '';
+          const orig = originalsMap[originalId];
+          if (orig) {
+            // Prefer the original's body text + image; if the repost
+            // carried a comment too, that's still readable inside the
+            // thread itself — we only show one snippet line here.
+            snippetSource = orig.content || repostComment;
+            imageSource = orig.image_url || imageSource;
+          } else {
+            snippetSource = repostComment;
+          }
         }
+        let snippet = snippetSource || '';
         if (snippet.length > 80) snippet = snippet.slice(0, 80) + '…';
+        const parsedImages = parseImageUrls(imageSource);
+        const link = parsedImages.length === 0 ? extractFirstUrl(snippetSource) : null;
         return {
           id: c.id,
           postId: c.post_id,
@@ -467,6 +511,9 @@ export default function ProfileScreen() {
           parentAuthorEmoji: parentAuthor?.emoji || '😊',
           parentAuthorVerified: !!parentAuthor?.is_verified,
           parentSnippet: snippet,
+          parentImageUrl: parsedImages[0] || undefined,
+          parentImageCount: parsedImages.length,
+          parentLinkUrl: link || undefined,
         };
       };
 
@@ -655,47 +702,154 @@ export default function ProfileScreen() {
     () => scrollY.interpolate({ inputRange: [0, 80, 160], outputRange: [1, 1, 0.7], extrapolate: 'clamp' }),
     [scrollY],
   );
-  // Identity-row "fly into the avatar" interpolations. As the user
-  // scrolls, the @username (left of avatar) glides right and the
-  // display name (right of avatar) glides left, both fading to 0.
-  // The avatar itself does NOT move — its parent View has no
-  // transform applied. Each side text is wrapped in an Animated.View
-  // that retains its `flex: 1` slot in the row, so the avatar stays
-  // geometrically centered throughout the animation. 60 pt of
-  // translation is enough to read as "moving toward the avatar"
-  // without colliding (the avatar's half-width is ~36 pt, so the
-  // text edges have travelled past the avatar's edge before fully
-  // fading). useNativeDriver: true on the parent Animated.event keeps
-  // these on the UI thread.
-  const usernameTranslateX = useMemo(
-    () => scrollY.interpolate({ inputRange: [0, 60, 130], outputRange: [0, 0, 60], extrapolate: 'clamp' }),
-    [scrollY],
-  );
-  const nameTranslateX = useMemo(
-    () => scrollY.interpolate({ inputRange: [0, 60, 130], outputRange: [0, 0, -60], extrapolate: 'clamp' }),
-    [scrollY],
-  );
-  const identityTextOpacity = useMemo(
-    () => scrollY.interpolate({ inputRange: [0, 60, 130], outputRange: [1, 1, 0], extrapolate: 'clamp' }),
-    [scrollY],
-  );
+  // NOTE: a previous iteration animated the @username + display-name
+  // toward the avatar on scroll (translateX + opacity). It was removed
+  // — the user found the motion distracting and the dual-text colour
+  // crossfade required to keep adaptive name colour smooth doubled
+  // the Text-tree count for nothing visible. Identity row now stays
+  // static during scroll. Pills above shrink/fade as before.
 
   if (!user) return <View style={{ flex: 1, backgroundColor: theme.colors.background.primary, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator size="large" color={theme.colors.accent.primary} /></View>;
 
-  const userLinks: { type: string; url: string }[] = (user as any).links || [];
+  const userLinks = useMemo<{ type: string; url: string }[]>(() => (user as any)?.links || [], [user]);
   const bannerUrlRaw = (user as any)?.bannerUrl as string | undefined;
   // Banner URL is stored with an optional `#x=&y=&s=` hash carrying the
   // user-chosen position + zoom. The hash must be stripped before the
   // value goes through the image proxy (it would be percent-encoded into
   // the proxy URL and never reach the upstream as a fragment).
   const bannerUrl = stripBannerTransform(bannerUrlRaw) || undefined;
-  const bannerTransform = parseBannerTransform(bannerUrlRaw);
+  // Memoize the parsed transform — the banner image style array is read
+  // by both the JSX below and the ListHeader useMemo's dep list, so we
+  // need a stable object reference that only changes when the raw URL
+  // changes. Without this, every render recomputes a fresh
+  // {translateX, translateY, scale} object and busts the ListHeader memo.
+  const bannerTransform = useMemo(() => parseBannerTransform(bannerUrlRaw), [bannerUrlRaw]);
   // Adaptive name + @username colour — when the banner reads as light,
   // we render dark text; when it reads as dark (or unknown), we keep
   // the white-with-shadow legacy look.
   const { isLight: bannerIsLight } = useBannerBrightness(bannerUrl);
-  const tabs: { key: TabName; label: string }[] = [{ key: 'posts', label: t('profile.posts') }, { key: 'replies', label: t('profile.replies') }, { key: 'media', label: t('profile.media') }, { key: 'likes', label: t('profile.likes') }];
+  // Tabs labels depend on the i18n `t` function. The result is content-
+  // stable per locale; memoize so the ListHeader memo doesn't see a fresh
+  // array on every render.
+  const tabs = useMemo<{ key: TabName; label: string }[]>(
+    () => [
+      { key: 'posts', label: t('profile.posts') },
+      { key: 'replies', label: t('profile.replies') },
+      { key: 'media', label: t('profile.media') },
+      { key: 'likes', label: t('profile.likes') },
+    ],
+    [t],
+  );
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(`https://san-m-app.com/profile/${user.id}`)}`;
+
+  // ─── ListHeaderComponent — memoized ────────────────────────────────────
+  // Why memoize: FlatList passes the JSX through untouched, so React still
+  // reconciles every child of the header on every parent re-render. The
+  // header carries a CachedImage banner, a BlurView avatar wrapper, and
+  // two AdaptiveProfileText labels — when state unrelated to the header
+  // changes (likedFetching, repliesFetching, viewingImage, refreshing,
+  // etc.) the reconciler walks all of those subtrees for nothing.
+  // Caching the JSX value short-circuits the walk at the header root.
+  //
+  // Dominant cost previously: dual-Text adaptive-colour crossfade (now
+  // single Text) + reconciliation of the three BlurView pills above on
+  // every state flip. Tab-switch flash (the user's "data reloads" report)
+  // came from `setPostsReady(false)` clearing `data` for ~16 ms during
+  // tab taps; that gate was removed above.
+  const listHeader = useMemo(() => (
+    <>
+      <View style={{ height: 300, marginHorizontal: -16, marginTop: -12, backgroundColor: theme.colors.accent.primary + '20', overflow: 'hidden' }}>
+        {bannerUrl && chromeReady ? (
+          <CachedImage
+            uri={bannerUrl}
+            style={{
+              width: '100%',
+              height: '100%',
+              transform: [
+                { translateX: bannerTransform.translateX },
+                { translateY: bannerTransform.translateY },
+                { scale: bannerTransform.scale },
+              ],
+            }}
+            resizeMode="cover"
+            proxyWidth={1080}
+          />
+        ) : null}
+        <LinearGradient colors={['transparent', 'rgba(0,0,0,0.55)']} locations={[0.4, 1]} style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 140 }} pointerEvents="none" />
+        <LinearGradient colors={['transparent', theme.colors.background.primary]} style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 48 }} pointerEvents="none" />
+      </View>
+      <View style={{ flexDirection: 'row', alignItems: 'center', alignSelf: 'stretch', marginTop: -140, paddingHorizontal: 8 }}>
+        <View style={{ flex: 1 }}>
+          <AdaptiveProfileText
+            isLight={bannerIsLight}
+            darkBgColor="rgba(255,255,255,0.92)"
+            lightBgColor={theme.colors.text.secondary}
+            numberOfLines={1}
+            style={{
+              textAlign: 'right',
+              fontSize: 13,
+              textShadowColor: 'rgba(0,0,0,0.45)',
+              textShadowOffset: { width: 0, height: 1 },
+              textShadowRadius: 2,
+              marginRight: 12,
+            }}
+          >
+            @{user.username}
+          </AdaptiveProfileText>
+        </View>
+        <Pressable onPress={() => setShowAccountSwitcher(true)}>
+          <View style={{ width: 72, height: 72, borderRadius: 36, overflow: 'hidden', borderWidth: 3, borderColor: theme.colors.background.primary, backgroundColor: theme.isDark ? 'rgba(30,30,30,0.85)' : 'rgba(255,255,255,0.85)', alignItems: 'center', justifyContent: 'center' }}>
+            <Avatar emoji={user.emoji} size="lg" />
+          </View>
+        </Pressable>
+        <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 12 }}>
+          <AdaptiveProfileText
+            isLight={bannerIsLight}
+            darkBgColor="#FFFFFF"
+            lightBgColor={theme.colors.text.primary}
+            numberOfLines={1}
+            style={{
+              flexShrink: 1,
+              fontSize: 15,
+              fontWeight: '700',
+              textShadowColor: 'rgba(0,0,0,0.45)',
+              textShadowOffset: { width: 0, height: 1 },
+              textShadowRadius: 2,
+            }}
+          >
+            {user.displayName}
+          </AdaptiveProfileText>
+          {user.is_verified && <VerifiedBadge size={13} />}
+          {user.badge && <UserBadge badge={user.badge} size="sm" />}
+        </View>
+      </View>
+      {(user.bio || userLinks.length > 0) && (
+        <View style={{ marginTop: 12, alignItems: 'center', paddingHorizontal: 8 }}>
+          {user.bio ? (
+            <LinkedText
+              style={{
+                textAlign: 'center',
+                color: theme.colors.text.secondary,
+              }}
+            >
+              {user.bio}
+            </LinkedText>
+          ) : null}
+          {userLinks.length > 0 && (
+            <View style={{ flexDirection: 'row', marginTop: user.bio ? 10 : 0, gap: 8, justifyContent: 'center' }}>
+              {userLinks.map((link, idx) => <SocialLinkIcon key={idx} type={link.type} url={link.url} />)}
+            </View>
+          )}
+        </View>
+      )}
+      <View style={{ marginTop: 16, marginHorizontal: -16, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border.light }}>
+        <View style={{ flexDirection: 'row' }}>{tabs.map((tab) => (<Pressable key={tab.key} onPress={() => { triggerHaptic('selection'); setActiveTab(tab.key); }} style={{ flex: 1, alignItems: 'center', paddingVertical: 11 }}><Text variant="caption" weight={activeTab === tab.key ? 'bold' : 'regular'} color={activeTab === tab.key ? theme.colors.text.primary : theme.colors.text.tertiary}>{tab.label}</Text></Pressable>))}</View>
+        <View style={{ position: 'absolute', bottom: 0, height: 2, backgroundColor: theme.colors.accent.primary, width: SCREEN_WIDTH / 4, left: tabs.findIndex(t => t.key === activeTab) * (SCREEN_WIDTH / 4) }} />
+      </View>
+      <View style={{ height: 12 }} />
+    </>
+  ), [theme, user, bannerUrl, bannerTransform, chromeReady, bannerIsLight, activeTab, userLinks, tabs]);
+
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
@@ -792,150 +946,7 @@ export default function ProfileScreen() {
         onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true })}
         scrollEventThrottle={16}
         contentContainerStyle={{ paddingBottom: 100, paddingHorizontal: 16, paddingTop: 12 }}
-        ListHeaderComponent={(
-          <>
-            {/* Banner — 300 (was 240): user wanted more banner real estate
-                so the image reads as a substantial surface, not a strip.
-                The lower fade gradient grew with it (140 / 48) so the
-                white name pill reads cleanly regardless of banner content
-                and the avatar's circular border eases into the content
-                area below. The `transform` on the image applies the
-                user-chosen position + zoom from the URL hash; identity
-                transform for legacy banners means existing data renders
-                unchanged. */}
-            <View style={{ height: 300, marginHorizontal: -16, marginTop: -12, backgroundColor: theme.colors.accent.primary + '20', overflow: 'hidden' }}>
-              {bannerUrl && chromeReady ? (
-                <CachedImage
-                  uri={bannerUrl}
-                  style={{
-                    width: '100%',
-                    height: '100%',
-                    transform: [
-                      { translateX: bannerTransform.translateX },
-                      { translateY: bannerTransform.translateY },
-                      { scale: bannerTransform.scale },
-                    ],
-                  }}
-                  resizeMode="cover"
-                  // Taller banner needs a higher source resolution so iOS
-                  // doesn't upscale-blur it. 1080 covers the widest iPhone
-                  // we target at 3× DPR with cover-fit headroom for pan/zoom.
-                  proxyWidth={1080}
-                />
-              ) : null}
-              <LinearGradient colors={['transparent', 'rgba(0,0,0,0.55)']} locations={[0.4, 1]} style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 140 }} pointerEvents="none" />
-              {/* Soft fade into screen background — extended to 48 so the
-                  taller banner eases organically into content and the
-                  avatar's circular border blends in. */}
-              <LinearGradient colors={['transparent', theme.colors.background.primary]} style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 48 }} pointerEvents="none" />
-            </View>
-            {/* Horizontal identity row — @username on the LEFT, avatar in
-                the CENTER, display name + badges on the RIGHT. Sits ON the
-                banner's lower-fade region (marginTop: -120 lifts the row
-                deep into the banner; that single negative margin pulls
-                ALL downstream content up too — edit pill, bio, links,
-                tabs, posts ride higher with no extra changes). flex:1 on
-                each side keeps the avatar geometrically centered no matter
-                the side-text widths; numberOfLines={1} truncates instead
-                of pushing the avatar off-axis. White text + textShadow on
-                top of the dark gradient for legibility (no BlurView —
-                chrome budget, see chromeReady). The avatar wrapper stays
-                a Pressable so tapping it still opens the account switcher. */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', alignSelf: 'stretch', marginTop: -140, paddingHorizontal: 8 }}>
-              {/* Left side — wrapper retains the flex: 1 slot so the
-                  avatar stays centered while the text inside translates
-                  toward it. */}
-              <Animated.View
-                style={{
-                  flex: 1,
-                  transform: [{ translateX: usernameTranslateX }],
-                  opacity: identityTextOpacity,
-                }}
-              >
-                <AdaptiveProfileText
-                  isLight={bannerIsLight}
-                  darkBgColor="rgba(255,255,255,0.92)"
-                  lightBgColor={theme.colors.text.secondary}
-                  numberOfLines={1}
-                  style={{
-                    textAlign: 'right',
-                    fontSize: 13,
-                    textShadowColor: 'rgba(0,0,0,0.45)',
-                    textShadowOffset: { width: 0, height: 1 },
-                    textShadowRadius: 2,
-                    marginRight: 12,
-                  }}
-                >
-                  @{user.username}
-                </AdaptiveProfileText>
-              </Animated.View>
-              <Pressable onPress={() => setShowAccountSwitcher(true)}>
-                <View style={{ width: 72, height: 72, borderRadius: 36, overflow: 'hidden', borderWidth: 3, borderColor: theme.colors.background.primary, backgroundColor: theme.isDark ? 'rgba(30,30,30,0.85)' : 'rgba(255,255,255,0.85)', alignItems: 'center', justifyContent: 'center' }}>
-                  <Avatar emoji={user.emoji} size="lg" />
-                </View>
-              </Pressable>
-              {/* Right side — same flex: 1 wrapper pattern. */}
-              <Animated.View
-                style={{
-                  flex: 1,
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 4,
-                  marginLeft: 12,
-                  transform: [{ translateX: nameTranslateX }],
-                  opacity: identityTextOpacity,
-                }}
-              >
-                <AdaptiveProfileText
-                  isLight={bannerIsLight}
-                  darkBgColor="#FFFFFF"
-                  lightBgColor={theme.colors.text.primary}
-                  numberOfLines={1}
-                  style={{
-                    flexShrink: 1,
-                    fontSize: 15,
-                    fontWeight: '700',
-                    textShadowColor: 'rgba(0,0,0,0.45)',
-                    textShadowOffset: { width: 0, height: 1 },
-                    textShadowRadius: 2,
-                  }}
-                >
-                  {user.displayName}
-                </AdaptiveProfileText>
-                {user.is_verified && <VerifiedBadge size={13} />}
-                {user.badge && <UserBadge badge={user.badge} size="sm" />}
-              </Animated.View>
-            </View>
-            {/* Bio + social link icons — both centered. Counters used to
-                live here in a 3-text row; they now live in the top header
-                pills above so this block stays tight and visually clean. */}
-            {(user.bio || userLinks.length > 0) && (
-              <View style={{ marginTop: 12, alignItems: 'center', paddingHorizontal: 8 }}>
-                {user.bio ? (
-                  <LinkedText
-                    style={{
-                      textAlign: 'center',
-                      color: theme.colors.text.secondary,
-                    }}
-                  >
-                    {user.bio}
-                  </LinkedText>
-                ) : null}
-                {userLinks.length > 0 && (
-                  <View style={{ flexDirection: 'row', marginTop: user.bio ? 10 : 0, gap: 8, justifyContent: 'center' }}>
-                    {userLinks.map((link, idx) => <SocialLinkIcon key={idx} type={link.type} url={link.url} />)}
-                  </View>
-                )}
-              </View>
-            )}
-            <View style={{ marginTop: 16, marginHorizontal: -16, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border.light }}>
-              <View style={{ flexDirection: 'row' }}>{tabs.map((tab) => (<Pressable key={tab.key} onPress={() => { triggerHaptic('selection'); if (tab.key === 'posts') { setPostsReady(false); requestAnimationFrame(() => setActiveTab('posts')); setTimeout(() => setPostsReady(true), 16); } else { setActiveTab(tab.key); } }} style={{ flex: 1, alignItems: 'center', paddingVertical: 11 }}><Text variant="caption" weight={activeTab === tab.key ? 'bold' : 'regular'} color={activeTab === tab.key ? theme.colors.text.primary : theme.colors.text.tertiary}>{tab.label}</Text></Pressable>))}</View>
-              <View style={{ position: 'absolute', bottom: 0, height: 2, backgroundColor: theme.colors.accent.primary, width: SCREEN_WIDTH / 4, left: tabs.findIndex(t => t.key === activeTab) * (SCREEN_WIDTH / 4) }} />
-            </View>
-            {/* Match the previous 12px gap between tabs and the first post. */}
-            <View style={{ height: 12 }} />
-          </>
-        )}
+        ListHeaderComponent={listHeader}
         ListEmptyComponent={(
           <View style={{ alignItems: 'center', paddingVertical: 40 }}>
             <Text variant="caption" color={theme.colors.text.tertiary}>

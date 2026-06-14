@@ -10,6 +10,13 @@ interface FormattedTextProps {
   color?: string;
   linkColor?: string;
   /**
+   * Truncate the rendered text after this many lines. Forwarded to the
+   * root <Text> so the FormattedText keeps the same truncation
+   * semantics as a plain <Text>. Used by ProfileReplyCard to keep the
+   * parent-post snippet on a single line and the user's reply at four.
+   */
+  numberOfLines?: number;
+  /**
    * Optional override for what happens when the user taps a parsed link.
    * Modal-hosted contexts (PostContextMenu, MessageContextMenu, …) MUST
    * pass this so they can dismiss themselves before the navigation runs —
@@ -32,7 +39,7 @@ interface FormattedTextProps {
  * __underline__ — underlined text
  * #hashtag — clickable hashtag (accent color)
  */
-export const FormattedText = memo(function FormattedText({ children, style, color, linkColor, onLinkPress }: FormattedTextProps) {
+export const FormattedText = memo(function FormattedText({ children, style, color, linkColor, numberOfLines, onLinkPress }: FormattedTextProps) {
   const theme = useTheme();
   const [revealedSpoilers, setRevealedSpoilers] = useState<Set<number>>(new Set());
   const textColor = color || theme.colors.text.primary;
@@ -51,7 +58,7 @@ export const FormattedText = memo(function FormattedText({ children, style, colo
   let spoilerIdx = 0;
 
   return (
-    <RNText style={[{ color: textColor, fontSize: 14 * (theme.fontScale || 1) }, style]}>
+    <RNText numberOfLines={numberOfLines} style={[{ color: textColor, fontSize: 14 * (theme.fontScale || 1) }, style]}>
       {parts.map((part, i) => {
         switch (part.type) {
           case 'text':
