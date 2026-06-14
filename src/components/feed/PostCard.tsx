@@ -1,4 +1,4 @@
-import React, { useState, useRef, useMemo, memo } from 'react';
+import React, { useState, useRef, useMemo, useEffect, memo } from 'react';
 import { View, Pressable, ViewStyle, Dimensions, ScrollView, NativeSyntheticEvent, NativeScrollEvent, Text as RNText } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -20,6 +20,40 @@ import { useT } from '../../i18n/store';
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const IMAGE_HEIGHT = 280;
 
+// ─── Module-level "first frame" latch ───────────────────────────────────
+// Cross-card image-decode stagger. While `__firstFrameDone === false`,
+// hero images on the home feed render with `priority="low"` so iOS
+// sequentializes their native decodes instead of fanning them out in
+// parallel. The first card to mount kicks off one RAF to flip the latch;
+// every card mounting after that observes the post-flip state directly
+// (no re-render, no extra microtasks) and goes back to `priority="high"`.
+//
+// Why this exists: on cold-open the FlatList commits 4 cards in the same
+// frame (initialNumToRender=4). Without staggering, all 4 hero image
+// decodes (supabase.co + media.san-m-app.com + an i.ytimg.com link-
+// preview thumb) kick off within ~24ms of each other. The JS perfMonitor
+// reports 60fps because the work runs on iOS native threads, but the
+// user perceives a freeze because scroll/touch events queue behind the
+// cumulative ~500ms of native UI-thread decode work. Demoting the
+// initial wave to `priority="low"` lets iOS schedule them sequentially
+// behind whatever the navigation transition is doing, keeping input
+// responsive while the decodes drain. Same pattern already protects
+// `ProfilePostCard`'s LinkPreview pass.
+let __firstFrameDone = false;
+let __firstFramePending: ((b: boolean) => void)[] = [];
+function __scheduleFirstFrameFlush() {
+  if (__firstFrameDone) return;
+  // Only the first card to mount kicks off the RAF. Subsequent cards just
+  // append themselves to the wait list, so we don't queue N RAFs.
+  if (__firstFramePending.length !== 1) return;
+  requestAnimationFrame(() => {
+    __firstFrameDone = true;
+    const list = __firstFramePending;
+    __firstFramePending = [];
+    for (const fn of list) fn(true);
+  });
+}
+
 interface PostCardProps {
   post: Post;
   currentUserId?: string;
@@ -35,6 +69,22 @@ export const PostCard = memo(function PostCard({ post, currentUserId, onLike, on
   const theme = useTheme();
   const t = useT();
   const lastTap = useRef<number>(0);
+
+  // Cross-card decode stagger. See `__firstFrameDone` block at top of file
+  // for the full rationale. While `primed === false`, hero images on this
+  // card render at `priority="low"` so the initial wave of feed cards
+  // doesn't pile up native decodes on the same frame.
+  const [primed, setPrimed] = useState(__firstFrameDone);
+  useEffect(() => {
+    if (__firstFrameDone) return;
+    __firstFramePending.push(setPrimed);
+    __scheduleFirstFrameFlush();
+    // No cleanup: the flush callback drains the array atomically; calling
+    // setPrimed on an unmounted component is a benign no-op in React 18+.
+  }, []);
+  // Hero image priority — `high` once the first frame has settled, `low`
+  // during the very first wave of cards on cold-open of the home tab.
+  const heroPriority: 'high' | 'low' = primed ? 'high' : 'low';
 
   const handleLike = () => { triggerHaptic('light'); onLike(post.id); };
   const handleDoubleTap = () => { if (!post.isLiked) onLike(post.id); };
@@ -123,9 +173,12 @@ export const PostCard = memo(function PostCard({ post, currentUserId, onLike, on
             </View>
           )}
           {post.originalPost.imageUrls && post.originalPost.imageUrls.length > 0 ? (
-            <CachedImage uri={post.originalPost.imageUrls[0]} style={{ width: '100%', height: 140 }} resizeMode="cover" />
+            // Repost embed image — secondary content inside a quoted block,
+            // so it's marked low priority. iOS routes the parent post's
+            // hero (if any) ahead of this on the native decode queue.
+            <CachedImage uri={post.originalPost.imageUrls[0]} style={{ width: '100%', height: 140 }} resizeMode="cover" priority="low" />
           ) : post.originalPost.imageUrl ? (
-            <CachedImage uri={post.originalPost.imageUrl} style={{ width: '100%', height: 140 }} resizeMode="cover" />
+            <CachedImage uri={post.originalPost.imageUrl} style={{ width: '100%', height: 140 }} resizeMode="cover" priority="low" />
           ) : null}
         </View>
       )}
@@ -134,10 +187,13 @@ export const PostCard = memo(function PostCard({ post, currentUserId, onLike, on
       {hasImages && !post.isRepost && (
         imageUrls.length === 1 ? (
           <Pressable onPress={() => { const now = Date.now(); if (now - lastTap.current < 300) handleDoubleTap(); lastTap.current = now; }}>
-            <CachedImage uri={imageUrls[0]} style={{ width: '100%', height: IMAGE_HEIGHT, marginBottom: 0 }} resizeMode="cover" />
+            {/* Single hero image — `priority` follows the cross-card latch
+                (low during first frame of cold-open, high afterwards). See
+                `__firstFrameDone` block at top of file. */}
+            <CachedImage uri={imageUrls[0]} style={{ width: '100%', height: IMAGE_HEIGHT, marginBottom: 0 }} resizeMode="cover" priority={heroPriority} />
           </Pressable>
         ) : (
-          <ImageCarousel imageUrls={imageUrls} onDoubleTap={handleDoubleTap} />
+          <ImageCarousel imageUrls={imageUrls} onDoubleTap={handleDoubleTap} heroPriority={heroPriority} />
         )
       )}
 
@@ -177,7 +233,7 @@ export const PostCard = memo(function PostCard({ post, currentUserId, onLike, on
 });
 
 // Image carousel for multiple images
-function ImageCarousel({ imageUrls, onDoubleTap }: { imageUrls: string[]; onDoubleTap: () => void }) {
+function ImageCarousel({ imageUrls, onDoubleTap, heroPriority }: { imageUrls: string[]; onDoubleTap: () => void; heroPriority: 'high' | 'low' }) {
   const [activeIndex, setActiveIndex] = useState(0);
   const lastTapRef = useRef<number>(0);
   const imgWidth = SCREEN_WIDTH - 32;
@@ -194,7 +250,13 @@ function ImageCarousel({ imageUrls, onDoubleTap }: { imageUrls: string[]; onDoub
       <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false} onScroll={handleScroll} scrollEventThrottle={16}>
         {imageUrls.map((url, i) => (
           <Pressable key={i} onPress={handlePress}>
-            <CachedImage uri={url} style={{ width: imgWidth, height: IMAGE_HEIGHT }} resizeMode="cover" />
+            {/* Within-card stagger: only the visible (first) image takes
+                `heroPriority`; off-screen carousel pages are `low` so iOS
+                queues them behind the first page's decode. The user sees
+                the first page render first, then off-screen pages stream
+                in as they're scrolled into view (or as the decoder gets
+                idle frames). */}
+            <CachedImage uri={url} style={{ width: imgWidth, height: IMAGE_HEIGHT }} resizeMode="cover" priority={i === 0 ? heroPriority : 'low'} />
           </Pressable>
         ))}
       </ScrollView>
