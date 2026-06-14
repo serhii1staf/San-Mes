@@ -13,6 +13,7 @@ import { Post } from '../../types';
 import { triggerHaptic } from '../../utils/haptics';
 import { useAuthStore } from '../../store/authStore';
 import { useFeedStore } from '../../store/feedStore';
+import { useBlockedUsersStore } from '../../store/blockedUsersStore';
 import { deletePost } from '../../lib/supabase';
 import { showToast } from '../../store/toastStore';
 import { sharePost } from '../../utils/sharePost';
@@ -116,6 +117,44 @@ export function PostMenuModal({ visible, post, onClose }: PostMenuModalProps) {
     ]);
   };
 
+  // Block the post's author. The block is local — we add the author to
+  // `useBlockedUsersStore` so feed/profile/comments wrappers immediately
+  // swap their content for the BlockedContentPlaceholder. Apple guideline
+  // 1.2 (UGC apps must offer a block flow) is what makes this required;
+  // see `.kiro/steering/apple-compliance.md`. There is intentionally no
+  // server write here — the schema doesn't yet have a blocked_users table.
+  const handleBlock = () => {
+    if (!post) return;
+    triggerHaptic('medium');
+    // Use the displayed (effective) author for repost-aware blocking: when
+    // the user is looking at a repost, "Block user" should target the
+    // ORIGINAL author rather than the reposter, because that's whose
+    // content is actually being hidden by the action.
+    const targetId = post.isRepost && post.originalPost ? (post.originalPost as any).authorId || post.authorId : post.authorId;
+    const targetUsername = post.isRepost && post.originalPost ? (post.originalPost as any).authorUsername || post.authorUsername : post.authorUsername;
+    Alert.alert(
+      t('block.confirm_title', undefined, { username: targetUsername || '' }),
+      t('block.confirm_msg'),
+      [
+        { text: t('common.cancel'), style: 'cancel' },
+        {
+          text: t('block.action'),
+          style: 'destructive',
+          onPress: () => {
+            useBlockedUsersStore.getState().block(targetId);
+            // Drop the post from the feed store immediately too, so
+            // the visible card disappears even on screens that don't
+            // wrap PostCard in the blocked-aware filter (e.g. legacy
+            // call sites). Other-author posts re-mount on next sync.
+            try { removePost(post.id); } catch {}
+            showToast(t('block.toast.blocked'), 'slash');
+            dismiss();
+          },
+        },
+      ],
+    );
+  };
+
   const translateY = Animated.add(slideAnim, dragY);
   const sheetBg = theme.isDark ? theme.colors.background.elevated : '#FFFFFF';
 
@@ -160,6 +199,7 @@ export function PostMenuModal({ visible, post, onClose }: PostMenuModalProps) {
               <MenuItem icon="bookmark" label={t('post_menu.save')} onPress={() => { triggerHaptic('light'); showToast(t('toast.saved'), 'bookmark'); dismiss(); }} theme={theme} />
               {isOwnPost && <MenuItem icon="trash-2" label={t('post_menu.delete')} onPress={handleDelete} theme={theme} destructive />}
               {!isOwnPost && <MenuItem icon="flag" label={t('post_menu.report')} onPress={() => { triggerHaptic('light'); switchToReport(); }} theme={theme} destructive />}
+              {!isOwnPost && <MenuItem icon="slash" label={t('block.action')} onPress={handleBlock} theme={theme} destructive />}
             </>
           ) : (
             <>

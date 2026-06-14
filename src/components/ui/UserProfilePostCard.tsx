@@ -20,6 +20,8 @@ import { formatTimeAgo } from '../../utils/mockData';
 import { useT } from '../../i18n/store';
 import { perfMonitor } from '../../services/perfMonitor';
 import { useSettingsStore } from '../../store/settingsStore';
+import { useIsBlocked } from '../../store/blockedUsersStore';
+import { BlockedContentPlaceholder } from '../feed/BlockedContentPlaceholder';
 
 // ─── Module-level "first frame" latch ──────────────────────────────────
 // Same pattern as `ProfilePostCard.tsx`: the ENTIRE card body is lazy-
@@ -111,6 +113,17 @@ function UserProfilePostCardBase({
 }: UserProfilePostCardProps) {
   const theme = useTheme();
   const t = useT();
+
+  // Block-aware short circuit: if the viewer has blocked this profile's
+  // owner, every post on this profile screen is rendered as the placeholder
+  // card. This keeps the user from accidentally seeing content from a
+  // blocked author when they navigate into that profile (e.g. via a
+  // pre-block bookmark or a deep link). The unblock affordance lives on
+  // the placeholder itself.
+  const isAuthorBlocked = useIsBlocked(authorId);
+  if (isAuthorBlocked) {
+    return <BlockedContentPlaceholder blockedUserId={authorId} username={authorUsername} variant="card" />;
+  }
 
   // Mount-time diagnostic — only schedules a useEffect when the perf
   // monitor is on. With ~40 cards committing per profile-open the

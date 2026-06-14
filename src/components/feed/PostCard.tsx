@@ -16,6 +16,8 @@ import { Post } from '../../types';
 import { formatTimeAgo } from '../../utils/mockData';
 import { triggerHaptic } from '../../utils/haptics';
 import { useT } from '../../i18n/store';
+import { useIsBlocked } from '../../store/blockedUsersStore';
+import { BlockedContentPlaceholder } from './BlockedContentPlaceholder';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const IMAGE_HEIGHT = 280;
@@ -69,6 +71,31 @@ export const PostCard = memo(function PostCard({ post, currentUserId, onLike, on
   const theme = useTheme();
   const t = useT();
   const lastTap = useRef<number>(0);
+
+  // Block-aware short circuit. When the viewer has blocked this post's
+  // author (or the original author of a repost), swap the entire card
+  // for the placeholder. The placeholder is memoized so virtualization
+  // doesn't pay re-render cost as the list scrolls.
+  //
+  // We check the EFFECTIVE author — for a repost, the original author's
+  // content is what would be visible. Blocking the reposter alone
+  // shouldn't keep showing the original author's content, and blocking
+  // the original author should hide reposts of their content too.
+  const effectiveAuthorId =
+    post.isRepost && post.originalPost ? (post.originalPost as any).authorId || post.authorId : post.authorId;
+  const effectiveAuthorUsername =
+    post.isRepost && post.originalPost ? (post.originalPost as any).authorUsername || post.authorUsername : post.authorUsername;
+  const isBlockedReposter = useIsBlocked(post.isRepost ? post.authorId : null);
+  const isBlockedAuthor = useIsBlocked(effectiveAuthorId);
+  if (isBlockedAuthor || isBlockedReposter) {
+    return (
+      <BlockedContentPlaceholder
+        blockedUserId={isBlockedAuthor ? effectiveAuthorId : post.authorId}
+        username={isBlockedAuthor ? effectiveAuthorUsername : post.authorUsername}
+        variant="card"
+      />
+    );
+  }
 
   // Cross-card stagger AND lazy-hydrate gate. While `primed === false`
   // the card returns only a sized placeholder (see early return below);

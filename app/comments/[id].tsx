@@ -30,6 +30,8 @@ import { useT } from '../../src/i18n/store';
 import { perfMonitor } from '../../src/services/perfMonitor';
 import { useSettingsStore } from '../../src/store/settingsStore';
 import { useBrowserStore } from '../../src/store/browserStore';
+import { useIsBlocked } from '../../src/store/blockedUsersStore';
+import { BlockedContentPlaceholder } from '../../src/components/feed/BlockedContentPlaceholder';
 
 const REPORT_CATS: { key: string; labelKey: string }[] = [
   { key: 'spam', labelKey: 'report.cat.spam' },
@@ -120,6 +122,22 @@ type CommentRowProps = {
 const CommentRow = React.memo(function CommentRow({ item, onLongPress, onReply }: CommentRowProps) {
   const theme = useTheme();
   const t = useT();
+  // Block-aware short circuit: comments authored by a blocked user are
+  // swapped for the inline placeholder so the rest of the thread stays
+  // intact. Tapping the placeholder offers an unblock confirmation — the
+  // user can also unblock from the messages-tab Blocked section.
+  const authorId: string | undefined = item.profiles?.id || item.author_id;
+  const isAuthorBlocked = useIsBlocked(authorId);
+  if (isAuthorBlocked && authorId) {
+    return (
+      <BlockedContentPlaceholder
+        blockedUserId={authorId}
+        username={item.profiles?.username}
+        variant="inline"
+      />
+    );
+  }
+
   const parsed = parseReply(item.content || '');
   const gif = parseGif(parsed.body);
   const link = !gif ? extractFirstUrl(parsed.body) : null;
