@@ -286,20 +286,29 @@ export default function ProfileScreen() {
         return post;
       };
 
-      const half = Math.ceil(data.length / 2);
-      const firstHalf = data.slice(0, half).map(buildPost);
-      // Yield to the JS thread with a real macrotask break so any queued
-      // input or RAF callback can run between the two halves. A microtask
-      // (await Promise.resolve()) does NOT split the task boundary —
-      // microtasks drain inside the current macrotask, so the whole 100-
-      // item map would still register as a single long task to the
-      // monitor (and to the OS scheduler). setTimeout(0) yields back to
-      // the event loop, breaking the synchronous burst that was landing
-      // as the 1311 ms long task users saw 5–6 s after the profile tab
-      // opened.
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
-      const secondHalf = data.slice(half).map(buildPost);
-      const mapped: Post[] = firstHalf.concat(secondHalf);
+      // Map posts in small chunks with a macrotask yield between each so
+      // no single chunk exceeds the 60 ms long-task threshold. Previous
+      // 2-half approach left each half at ~25 posts × ~5ms = ~125ms,
+      // still big enough to register as a long task on slow devices and
+      // freeze scroll for a frame. Chunks of 5 keep each batch at
+      // ~25-30ms — comfortably below the threshold even with
+      // repost-chain walking on top.
+      const CHUNK_SIZE = 5;
+      const mapped: Post[] = [];
+      for (let i = 0; i < data.length; i += CHUNK_SIZE) {
+        const chunk = data.slice(i, i + CHUNK_SIZE).map(buildPost);
+        mapped.push(...chunk);
+        // Yield to the macrotask queue so any queued input/animation
+        // frame can run between chunks. A microtask
+        // (await Promise.resolve()) does NOT split the task boundary —
+        // microtasks drain inside the current macrotask. setTimeout(0)
+        // hands back to the event loop, breaking the synchronous burst
+        // that previously landed as a 123ms+ long task while the user
+        // was scrolling through profile.
+        if (i + CHUNK_SIZE < data.length) {
+          await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        }
+      }
       setProfilePosts(mapped);
       // Persist the snapshot AFTER the next interaction window so the
       // JSON.stringify of ~100 posts (15–40 KB) doesn't pile up on the same
