@@ -84,6 +84,23 @@ const LinkPreviewInner = React.memo(function LinkPreviewInner({ url, onError, te
   const [fullscreen, setFullscreen] = useState<MediaViewerSource | null>(null);
   const mounted = useRef(true);
 
+  // Defer the actual <CachedImage /> mount by one RAF after this preview
+  // first commits. The thumbnail decode (especially i.ytimg.com hqdefault
+  // → mqdefault) was landing on the same frame as the parent screen's
+  // navigation transition + list mount — perf monitor surfaced this as
+  // `IMG i.ytimg.com 121 ms` right after `MOUNT comments/[id]`. We still
+  // call `prefetchImages` synchronously below so the network fetch + disk
+  // warm-up race ahead of the actual element mount; one RAF later the
+  // CachedImage commits and expo-image dedupes against the in-flight
+  // prefetch (`cachePolicy="memory-disk"`), so the visible paint is
+  // virtually unchanged but the decode no longer competes with the
+  // navigation frame.
+  const [imageReady, setImageReady] = useState(false);
+  useEffect(() => {
+    const handle = requestAnimationFrame(() => setImageReady(true));
+    return () => cancelAnimationFrame(handle);
+  }, []);
+
   useEffect(() => {
     mounted.current = true;
     // Warm the image cache for the preview thumbnail as soon as metadata is
@@ -224,7 +241,7 @@ const LinkPreviewInner = React.memo(function LinkPreviewInner({ url, onError, te
               onLongPress={onLongPress}
               delayLongPress={delayLongPress}
             >
-              {data.image ? (
+              {data.image && imageReady ? (
                 <CachedImage
                   uri={ytThumb(data.image) as string}
                   style={{ width: '100%', aspectRatio: 16 / 9 }}
@@ -243,7 +260,10 @@ const LinkPreviewInner = React.memo(function LinkPreviewInner({ url, onError, te
                   transition={0}
                 />
               ) : (
-                <View style={{ width: '100%', aspectRatio: 16 / 9, backgroundColor: '#111' }} />
+                // Flat black placeholder until the post-RAF mount swap.
+                // The 16:9 box keeps layout stable so the play button
+                // doesn't shift when CachedImage finally commits.
+                <View style={{ width: '100%', aspectRatio: 16 / 9, backgroundColor: '#000' }} />
               )}
               {/* Play button */}
               <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
@@ -289,10 +309,15 @@ const LinkPreviewInner = React.memo(function LinkPreviewInner({ url, onError, te
         {/* Decorative emoji pattern behind the row (faint, non-interactive) */}
         {emoji ? <EmojiPattern emoji={emoji} opacity={textColor ? 0.18 : 0.12} seed={url} /> : null}
 
-        {data.image ? (
+        {data.image && imageReady ? (
           <View style={{ width: 60, height: 60, borderRadius: THUMB_RADIUS, overflow: 'hidden', backgroundColor: bg }}>
             <CachedImage uri={ytThumb(data.image) as string} style={{ width: '100%', height: '100%' }} resizeMode="cover" proxyWidth={60} priority="low" />
           </View>
+        ) : data.image ? (
+          // Flat tinted box reserves the layout slot until the next-RAF
+          // swap. Same rationale as the video layout above — the network
+          // + decode races on a frame after the parent screen's mount.
+          <View style={{ width: 60, height: 60, borderRadius: THUMB_RADIUS, backgroundColor: bg }} />
         ) : null}
 
         <View style={{ flex: 1, paddingVertical: 2 }}>
