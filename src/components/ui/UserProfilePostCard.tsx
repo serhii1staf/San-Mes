@@ -114,16 +114,14 @@ function UserProfilePostCardBase({
   const theme = useTheme();
   const t = useT();
 
-  // Block-aware short circuit: if the viewer has blocked this profile's
-  // owner, every post on this profile screen is rendered as the placeholder
-  // card. This keeps the user from accidentally seeing content from a
-  // blocked author when they navigate into that profile (e.g. via a
-  // pre-block bookmark or a deep link). The unblock affordance lives on
-  // the placeholder itself.
+  // Block-awareness — read the viewer's block state for this profile up
+  // front. The actual early return (block placeholder swap) MUST happen
+  // AFTER every other hook in this component has been called. React's
+  // rules of hooks require a stable hook-count per render: returning
+  // before subsequent useState/useEffect/useMemo/useCallback calls would
+  // crash with "Rendered fewer hooks than expected" → WatchdogTermination
+  // on the false→true transition (the moment the user blocks someone).
   const isAuthorBlocked = useIsBlocked(authorId);
-  if (isAuthorBlocked) {
-    return <BlockedContentPlaceholder blockedUserId={authorId} username={authorUsername} variant="card" />;
-  }
 
   // Mount-time diagnostic — only schedules a useEffect when the perf
   // monitor is on. With ~40 cards committing per profile-open the
@@ -197,6 +195,18 @@ function UserProfilePostCardBase({
       authorId,
     });
   }, [post, authorName, authorUsername, authorEmoji, authorVerified, authorBadge, authorId, onLongPress]);
+
+  // ─── All hooks called above. Conditional early returns below.
+
+  // Block-aware short circuit: if the viewer has blocked this profile's
+  // owner, every post on this profile screen is rendered as the placeholder
+  // card. This keeps the user from accidentally seeing content from a
+  // blocked author when they navigate into that profile (e.g. via a
+  // pre-block bookmark or a deep link). The unblock affordance lives on
+  // the placeholder itself.
+  if (isAuthorBlocked) {
+    return <BlockedContentPlaceholder blockedUserId={authorId} username={authorUsername} variant="card" />;
+  }
 
   // First-paint placeholder — outer dimensions match the real card so the
   // layout doesn't jump when the body commits one RAF later. No children,
