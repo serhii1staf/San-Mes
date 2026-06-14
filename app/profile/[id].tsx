@@ -22,7 +22,6 @@ import { formatTimeAgo } from '../../src/utils/mockData';
 import { CachedImage } from '../../src/components/ui/CachedImage';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { UserBadge } from '../../src/components/ui/UserBadge';
-import { LiquidGlassAvatarRing } from '../../src/components/ui/LiquidGlassAvatarRing';
 import { PostContextMenu } from '../../src/components/ui/PostContextMenu';
 import { UserProfilePostCard } from '../../src/components/ui/UserProfilePostCard';
 import { FollowsListModal, FollowsListMode } from '../../src/components/profile/FollowsListModal';
@@ -34,6 +33,7 @@ import { perfMonitor } from '../../src/services/perfMonitor';
 import { useSettingsStore } from '../../src/store/settingsStore';
 import { useBlockedUsersStore, useIsBlocked } from '../../src/store/blockedUsersStore';
 import { parseBannerTransform, stripBannerTransform } from '../../src/utils/bannerTransform';
+import { useBannerBrightness } from '../../src/hooks/useBannerBrightness';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const SCREEN_HEIGHT = Dimensions.get('window').height;
@@ -385,6 +385,13 @@ export default function UserProfileScreen() {
     () => scrollY.interpolate({ inputRange: [0, 80, 160], outputRange: [1, 1, 0], extrapolate: 'clamp' }),
     [scrollY],
   );
+  // Pair the opacity fade-out with a subtle shrink so the pills don't
+  // just dissolve in place — they tuck away as they fade. Same input
+  // range as `centerStatsOpacity` so the two animations land together.
+  const centerStatsScale = useMemo(
+    () => scrollY.interpolate({ inputRange: [0, 80, 160], outputRange: [1, 1, 0.7], extrapolate: 'clamp' }),
+    [scrollY],
+  );
   const badgeOpacity = useMemo(
     () => scrollY.interpolate({ inputRange: [180, 220], outputRange: [0, 1], extrapolate: 'clamp' }),
     [scrollY],
@@ -608,6 +615,13 @@ export default function UserProfileScreen() {
     }
   };
 
+  // Adaptive name + @username colour driven by banner brightness. The hook
+  // must be called before any conditional return so its position in the
+  // hook-ordering stays stable across renders. `displayProfile` may be
+  // undefined on the first paint — the hook handles null/undefined input.
+  const bannerUrlForBrightness = stripBannerTransform(displayProfile?.banner_url) || undefined;
+  const { isLight: bannerIsLight } = useBannerBrightness(bannerUrlForBrightness);
+
   if (isLoading && !displayProfile) {
     return <View style={{ flex: 1, backgroundColor: theme.colors.background.primary, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator size="large" color={theme.colors.accent.primary} /></View>;
   }
@@ -671,7 +685,7 @@ export default function UserProfileScreen() {
             )}
           </Pressable>
         </Animated.View>
-        <Animated.View pointerEvents="box-none" style={{ flexDirection: 'row', alignItems: 'center', gap: 6, opacity: centerStatsOpacity }}>
+        <Animated.View pointerEvents="box-none" style={{ flexDirection: 'row', alignItems: 'center', gap: 6, opacity: centerStatsOpacity, transform: [{ scale: centerStatsScale }] }}>
           <Pressable
             onPress={() => { triggerHaptic('selection'); setFollowsModal('following'); }}
             hitSlop={6}
@@ -810,16 +824,20 @@ export default function UserProfileScreen() {
                   flex: 1,
                   textAlign: 'right',
                   fontSize: 13,
-                  color: 'rgba(255,255,255,0.92)',
-                  textShadowColor: 'rgba(0,0,0,0.6)',
-                  textShadowOffset: { width: 0, height: 1 },
-                  textShadowRadius: 3,
+                  color: bannerIsLight ? theme.colors.text.secondary : 'rgba(255,255,255,0.92)',
+                  ...(bannerIsLight ? null : {
+                    textShadowColor: 'rgba(0,0,0,0.6)',
+                    textShadowOffset: { width: 0, height: 1 },
+                    textShadowRadius: 3,
+                  }),
                   marginRight: 12,
                 }}
               >
                 @{displayProfile.username}
               </Text>
-              <LiquidGlassAvatarRing emoji={displayProfile.emoji || '😊'} size={80} />
+              <View style={{ width: 72, height: 72, borderRadius: 36, overflow: 'hidden', borderWidth: 3, borderColor: theme.colors.background.primary, backgroundColor: theme.isDark ? 'rgba(30,30,30,0.85)' : 'rgba(255,255,255,0.85)', alignItems: 'center', justifyContent: 'center' }}>
+                <Avatar emoji={displayProfile.emoji || '😊'} size="lg" />
+              </View>
               <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 12 }}>
                 <Text
                   variant="body"
@@ -828,10 +846,12 @@ export default function UserProfileScreen() {
                   style={{
                     flexShrink: 1,
                     fontSize: 15,
-                    color: '#FFFFFF',
-                    textShadowColor: 'rgba(0,0,0,0.6)',
-                    textShadowOffset: { width: 0, height: 1 },
-                    textShadowRadius: 3,
+                    color: bannerIsLight ? theme.colors.text.primary : '#FFFFFF',
+                    ...(bannerIsLight ? null : {
+                      textShadowColor: 'rgba(0,0,0,0.6)',
+                      textShadowOffset: { width: 0, height: 1 },
+                      textShadowRadius: 3,
+                    }),
                   }}
                 >
                   {displayProfile.display_name}
@@ -843,16 +863,53 @@ export default function UserProfileScreen() {
 
             {/* Action row (Message + Follow) — only for other users.
                 Centered below the avatar so the redesigned layout stays
-                vertically symmetric. */}
+                vertically symmetric. Send button is BlurView-tinted (gated
+                on `chromeReady` for the same perf-budget reason as the
+                rest of the screen's chrome) so it reads as glass on the
+                banner. Follow pill is shrunk to 32 height with explicit
+                centering — `minWidth: 96` keeps the pill balanced
+                between "Подписаться" and "Отписаться". */}
             {!isOwnProfile && (
               <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 8, marginTop: 12 }}>
                 {fromChat !== '1' && (
-                  <Pressable onPress={() => router.push({ pathname: '/chat/[id]', params: { id: displayProfile.id } })} style={{ width: 36, height: 36, borderRadius: 18, borderWidth: 1, borderColor: theme.colors.border.medium, alignItems: 'center', justifyContent: 'center' }}>
-                    <Feather name="send" size={16} color={theme.colors.text.primary} />
+                  <Pressable
+                    onPress={() => router.push({ pathname: '/chat/[id]', params: { id: displayProfile.id } })}
+                    style={{ width: 32, height: 32, borderRadius: 16, overflow: 'hidden' }}
+                  >
+                    {chromeReady ? (
+                      <BlurView intensity={70} tint={theme.isDark ? 'dark' : 'light'} style={{ width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' }}>
+                        <Feather name="send" size={14} color={theme.colors.text.primary} />
+                      </BlurView>
+                    ) : (
+                      <View style={{ width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)' }}>
+                        <Feather name="send" size={14} color={theme.colors.text.primary} />
+                      </View>
+                    )}
                   </Pressable>
                 )}
-                <Pressable onPress={handleFollow} style={{ paddingHorizontal: 24, paddingVertical: 8, backgroundColor: isFollowingState ? 'transparent' : theme.colors.accent.primary, borderWidth: isFollowingState ? 1 : 0, borderColor: theme.colors.border.medium, borderRadius: 18 }}>
-                  <Text variant="caption" weight="semibold" color={isFollowingState ? theme.colors.text.primary : '#FFFFFF'}>{isFollowingState ? t('profile.unfollow') : t('profile.follow')}</Text>
+                <Pressable
+                  onPress={handleFollow}
+                  style={{
+                    minWidth: 96,
+                    height: 32,
+                    paddingHorizontal: 16,
+                    backgroundColor: isFollowingState ? 'transparent' : theme.colors.accent.primary,
+                    borderWidth: isFollowingState ? 1 : 0,
+                    borderColor: theme.colors.border.medium,
+                    borderRadius: 16,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Text
+                    variant="caption"
+                    weight="semibold"
+                    color={isFollowingState ? theme.colors.text.primary : '#FFFFFF'}
+                    align="center"
+                    style={{ fontSize: 13, lineHeight: 16 }}
+                  >
+                    {isFollowingState ? t('profile.unfollow') : t('profile.follow')}
+                  </Text>
                 </Pressable>
               </View>
             )}

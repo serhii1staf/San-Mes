@@ -15,7 +15,6 @@ import { UserBadge } from '../../src/components/ui/UserBadge';
 import { FormattedText } from '../../src/components/ui/FormattedText';
 import { LinkPreview } from '../../src/components/ui/LinkPreview';
 import { EmojiPattern } from '../../src/components/ui/EmojiPattern';
-import { LiquidGlassAvatarRing } from '../../src/components/ui/LiquidGlassAvatarRing';
 import { ProfilePostCard } from '../../src/components/profile/ProfilePostCard';
 import { useProfileAppearanceStore } from '../../src/store/profileAppearanceStore';
 import { extractFirstUrl } from '../../src/services/linkPreview';
@@ -39,6 +38,7 @@ import { useT } from '../../src/i18n/store';
 import { perfMonitor } from '../../src/services/perfMonitor';
 import { useSettingsStore } from '../../src/store/settingsStore';
 import { parseBannerTransform, stripBannerTransform } from '../../src/utils/bannerTransform';
+import { useBannerBrightness } from '../../src/hooks/useBannerBrightness';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const MY_POSTS_CACHE_KEY = '@san:my_posts';
@@ -448,6 +448,15 @@ export default function ProfileScreen() {
     () => scrollY.interpolate({ inputRange: [0, 80, 160], outputRange: [1, 1, 0], extrapolate: 'clamp' }),
     [scrollY],
   );
+  // Pair the opacity fade-out with a subtle shrink so the pills don't
+  // just dissolve in place — they tuck away as they fade. Same input
+  // range so the two animations land together; output 1→1→0.7 holds
+  // full size while the banner is in view, then scales down at the
+  // same point the opacity starts dropping.
+  const centerStatsScale = useMemo(
+    () => scrollY.interpolate({ inputRange: [0, 80, 160], outputRange: [1, 1, 0.7], extrapolate: 'clamp' }),
+    [scrollY],
+  );
 
   if (!user) return <View style={{ flex: 1, backgroundColor: theme.colors.background.primary, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator size="large" color={theme.colors.accent.primary} /></View>;
 
@@ -459,6 +468,10 @@ export default function ProfileScreen() {
   // the proxy URL and never reach the upstream as a fragment).
   const bannerUrl = stripBannerTransform(bannerUrlRaw) || undefined;
   const bannerTransform = parseBannerTransform(bannerUrlRaw);
+  // Adaptive name + @username colour — when the banner reads as light,
+  // we render dark text; when it reads as dark (or unknown), we keep
+  // the white-with-shadow legacy look.
+  const { isLight: bannerIsLight } = useBannerBrightness(bannerUrl);
   const tabs: { key: TabName; label: string }[] = [{ key: 'posts', label: t('profile.posts') }, { key: 'replies', label: t('profile.replies') }, { key: 'media', label: t('profile.media') }, { key: 'likes', label: t('profile.likes') }];
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(`https://san-m-app.com/profile/${user.id}`)}`;
 
@@ -476,7 +489,7 @@ export default function ProfileScreen() {
             keeps the stats within thumb reach without scrolling. Fades
             with `centerStatsOpacity` on scroll so it doesn't fight the
             sticky-title gradient that fades in at scrollY ≈ 50–120. */}
-        <Animated.View pointerEvents="box-none" style={{ flexDirection: 'row', alignItems: 'center', gap: 6, opacity: centerStatsOpacity }}>
+        <Animated.View pointerEvents="box-none" style={{ flexDirection: 'row', alignItems: 'center', gap: 6, opacity: centerStatsOpacity, transform: [{ scale: centerStatsScale }] }}>
           <Pressable
             onPress={() => { triggerHaptic('selection'); setFollowsModal('following'); }}
             hitSlop={6}
@@ -594,17 +607,21 @@ export default function ProfileScreen() {
                   flex: 1,
                   textAlign: 'right',
                   fontSize: 13,
-                  color: 'rgba(255,255,255,0.92)',
-                  textShadowColor: 'rgba(0,0,0,0.6)',
-                  textShadowOffset: { width: 0, height: 1 },
-                  textShadowRadius: 3,
+                  color: bannerIsLight ? theme.colors.text.secondary : 'rgba(255,255,255,0.92)',
+                  ...(bannerIsLight ? null : {
+                    textShadowColor: 'rgba(0,0,0,0.6)',
+                    textShadowOffset: { width: 0, height: 1 },
+                    textShadowRadius: 3,
+                  }),
                   marginRight: 12,
                 }}
               >
                 @{user.username}
               </Text>
               <Pressable onPress={() => setShowAccountSwitcher(true)}>
-                <LiquidGlassAvatarRing emoji={user.emoji} size={80} />
+                <View style={{ width: 72, height: 72, borderRadius: 36, overflow: 'hidden', borderWidth: 3, borderColor: theme.colors.background.primary, backgroundColor: theme.isDark ? 'rgba(30,30,30,0.85)' : 'rgba(255,255,255,0.85)', alignItems: 'center', justifyContent: 'center' }}>
+                  <Avatar emoji={user.emoji} size="lg" />
+                </View>
               </Pressable>
               <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 12 }}>
                 <Text
@@ -614,10 +631,12 @@ export default function ProfileScreen() {
                   style={{
                     flexShrink: 1,
                     fontSize: 15,
-                    color: '#FFFFFF',
-                    textShadowColor: 'rgba(0,0,0,0.6)',
-                    textShadowOffset: { width: 0, height: 1 },
-                    textShadowRadius: 3,
+                    color: bannerIsLight ? theme.colors.text.primary : '#FFFFFF',
+                    ...(bannerIsLight ? null : {
+                      textShadowColor: 'rgba(0,0,0,0.6)',
+                      textShadowOffset: { width: 0, height: 1 },
+                      textShadowRadius: 3,
+                    }),
                   }}
                 >
                   {user.displayName}
