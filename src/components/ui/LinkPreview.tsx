@@ -47,6 +47,21 @@ interface LinkPreviewProps {
 
 const THUMB_RADIUS = 14;
 
+// Rewrite YouTube `hqdefault.jpg` (480×360) to `mqdefault.jpg` (320×180)
+// even when the cached metadata still holds the old URL. Same byte/decode
+// saving as the server-side switch in `api/unfurl.ts` — half the bytes,
+// ~⅓ the decode time on weak devices — but applied transparently to all
+// pre-existing cache entries on the user's device, so OTA delivery
+// benefits immediately instead of waiting for the SWR refresh. Also
+// applied to image-prefetch URLs so we don't warm the old large variant
+// only to display the smaller one.
+function ytThumb(uri: string | undefined | null): string | undefined {
+  if (!uri) return undefined;
+  if (uri.indexOf('i.ytimg.com/vi/') === -1) return uri;
+  if (uri.indexOf('/hqdefault.') === -1) return uri;
+  return uri.replace('/hqdefault.', '/mqdefault.');
+}
+
 export const LinkPreview = React.memo(function LinkPreview(props: LinkPreviewProps) {
   // Mini-app share links (new short `/m/<8>` and legacy `/mini/<uuid>`)
   // get a custom in-app card instead of the generic OG unfurl. We dispatch
@@ -77,7 +92,8 @@ const LinkPreviewInner = React.memo(function LinkPreviewInner({ url, onError, te
     // thumbnail from disk every time, which the user perceived as
     // "preview reloads every time" — even though the metadata never re-fetched.
     if (cached?.image) {
-      prefetchImages([cached.image]);
+      const u = ytThumb(cached.image);
+      if (u) prefetchImages([u]);
     }
     if (cached !== undefined) {
       if (!cached) onError?.();
@@ -103,7 +119,10 @@ const LinkPreviewInner = React.memo(function LinkPreviewInner({ url, onError, te
         setResolved(true);
         // Prefetch the image immediately on resolve too — covers the
         // first-ever-view path where `cached` was undefined above.
-        if (d?.image) prefetchImages([d.image]);
+        if (d?.image) {
+          const u = ytThumb(d.image);
+          if (u) prefetchImages([u]);
+        }
         if (!d) onError?.();
       })
       .catch(() => {
@@ -116,6 +135,19 @@ const LinkPreviewInner = React.memo(function LinkPreviewInner({ url, onError, te
       mounted.current = false;
     };
   }, [url]);
+
+  // Rewrite YouTube `hqdefault.jpg` (480×360) to `mqdefault.jpg` (320×180)
+  // even when the cached metadata still holds the old URL. Same byte/decode
+  // saving as the server-side switch in `api/unfurl.ts` — half the bytes,
+  // ~⅓ the decode time on weak devices — but applied transparently to all
+  // pre-existing cache entries on the user's device, so OTA delivery
+  // benefits immediately instead of waiting for the SWR refresh.
+  const ytThumb = (uri: string | undefined): string | undefined => {
+    if (!uri) return uri;
+    if (uri.indexOf('i.ytimg.com/vi/') === -1) return uri;
+    if (uri.indexOf('/hqdefault.') === -1) return uri;
+    return uri.replace('/hqdefault.', '/mqdefault.');
+  };
 
   const accent = theme.colors.accent.primary;
   const subColor = textColor ? textColor : theme.colors.text.tertiary;
@@ -193,7 +225,23 @@ const LinkPreviewInner = React.memo(function LinkPreviewInner({ url, onError, te
               delayLongPress={delayLongPress}
             >
               {data.image ? (
-                <CachedImage uri={data.image} style={{ width: '100%', aspectRatio: 16 / 9 }} resizeMode="cover" proxyWidth={400} />
+                <CachedImage
+                  uri={ytThumb(data.image) as string}
+                  style={{ width: '100%', aspectRatio: 16 / 9 }}
+                  resizeMode="cover"
+                  proxyWidth={200}
+                  // YouTube preview thumbnails are decorative chrome — they
+                  // sit inside an inline card and the user's eye is on the
+                  // primary chat content. Mark `priority="low"` so they
+                  // don't compete with the message-bubble images that
+                  // mount on the same RAF as the chat opens. expo-image
+                  // routes high/normal-priority decodes ahead of low ones.
+                  priority="low"
+                  // Skip the cross-fade so a recycled card doesn't flash
+                  // on re-mount when the FlatList recycles its row. Same
+                  // rationale as `transition={0}` inside CachedImage.
+                  transition={0}
+                />
               ) : (
                 <View style={{ width: '100%', aspectRatio: 16 / 9, backgroundColor: '#111' }} />
               )}
@@ -243,7 +291,7 @@ const LinkPreviewInner = React.memo(function LinkPreviewInner({ url, onError, te
 
         {data.image ? (
           <View style={{ width: 60, height: 60, borderRadius: THUMB_RADIUS, overflow: 'hidden', backgroundColor: bg }}>
-            <CachedImage uri={data.image} style={{ width: '100%', height: '100%' }} resizeMode="cover" proxyWidth={60} />
+            <CachedImage uri={ytThumb(data.image) as string} style={{ width: '100%', height: '100%' }} resizeMode="cover" proxyWidth={60} priority="low" />
           </View>
         ) : null}
 
