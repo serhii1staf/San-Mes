@@ -131,6 +131,20 @@ class PerfMonitor {
   // so the user can correlate "5 images mid-decode" with the freeze frame.
   private _pendingDecodes = 0;
 
+  // After a long-task / stall, RAF (and the Reanimated frame callback) deliver
+  // "catch-up" bursts where several queued frames fire back-to-back in <16 ms
+  // each. The naive `(frameCount * 1000) / elapsed` over a 500 ms window then
+  // reads as 100+ fps even on a 60 Hz device, which is more confusing than
+  // helpful (especially on input-tap where the keyboard animation pauses RAF
+  // briefly). The fix is hysteresis: when we detect a stall on either thread,
+  // suppress the displayed FPS reading for the duration of the catch-up burst
+  // (~700 ms is enough to cover even the worst observed bursts on iPhone 12).
+  // Independent windows per thread so a JS-thread stall doesn't blank the
+  // UI-thread reading and vice-versa.
+  private _jsSuppressFpsUntil = 0;
+  private _uiSuppressFpsUntil = 0;
+  private static readonly _SUPPRESS_MS = 700;
+
   // Per-host log-rate throttle for `markImageDecode`. Stored as a small array
   // of timestamps per host so the cleanup is constant time.
   private _imgHostThrottle = new Map<string, number[]>();
@@ -158,8 +172,16 @@ class PerfMonitor {
     this._started = true;
     this._lastSampleTs = Date.now();
     let lastFrameTs = Date.now();
+    // Largest single-frame dt observed within the current 500 ms publish
+    // window. If anything in the window blew past ~50 ms (e.g. keyboard
+    // focus animation pausing RAF, or a sub-long-task hitch), the window's
+    // (frameCount * 1000)/elapsed reading is contaminated by the catch-up
+    // burst that follows and we drop it on publish. Reset on each publish.
+    let maxDtInWindow = 0;
     const tick = () => {
       const now = Date.now();
+      const dt = lastFrameTs ? now - lastFrameTs : 0;
+      if (dt > maxDtInWindow) maxDtInWindow = dt;
       // Single-frame stall detection. Anything ≥120 ms between two RAF
       // callbacks means the JS thread was blocked by one big task — that's
       // far more diagnostic than a sustained <30 fps window because it
@@ -169,6 +191,14 @@ class PerfMonitor {
       if (lastFrameTs && now - lastFrameTs > 120 && now - lastFrameTs < 5000) {
         const dur = now - lastFrameTs;
         this._lastLongTaskMs = dur;
+        // Suppress BOTH thread fps readings for the catch-up window. On
+        // the JS side a stall is followed by a flurry of queued RAF
+        // callbacks firing in <16 ms each, which would otherwise read
+        // as 100+ fps in the bubble. On the UI side Reanimated's frame
+        // callback exhibits the same catch-up pattern when the native
+        // thread resumes after a heavy commit.
+        this._jsSuppressFpsUntil = now + PerfMonitor._SUPPRESS_MS;
+        this._uiSuppressFpsUntil = now + PerfMonitor._SUPPRESS_MS;
         this._record({
           ts: now,
           type: 'slow',
@@ -188,18 +218,40 @@ class PerfMonitor {
       // Publish about twice per second so the bubble label can update
       // without flooding the JS bridge with re-renders.
       if (elapsed >= 500) {
-        // Clamp to 120 fps — the maximum a ProMotion display can render. We
-        // see RAF "catch-up" bursts after a long task ends (queued frames
-        // fire back-to-back in <16 ms each), which would otherwise show as
-        // 150+ fps in the bubble — confusingly suggesting better-than-
-        // physical performance. The clamp keeps the displayed value bounded
-        // by what the device's compositor can actually present.
+        // While we're inside the post-stall suppression window, throw
+        // away the sample (don't update _jsFps, don't push history) but
+        // still reset the counters so the NEXT window starts fresh
+        // after the catch-up burst has flushed. This keeps the bubble
+        // showing the last "real" FPS instead of an inflated catch-up
+        // value, which was the source of the spurious "120 fps" the
+        // user saw on input tap (keyboard-focus pauses RAF briefly).
+        if (now < this._jsSuppressFpsUntil) {
+          this._frameCount = 0;
+          this._lastSampleTs = now;
+          this._rafHandle = requestAnimationFrame(tick) as unknown as number;
+          return;
+        }
+        // Sub-threshold-pause guard: catch the case where the JS thread
+        // paused 50–120 ms (e.g. a keyboard-focus animation interrupting
+        // RAF) without crossing the long-task bar. Those pauses still
+        // produce a catch-up burst that inflates fps. If any single frame
+        // in this window had dt > 50 ms, drop the sample. This is what
+        // killed the spurious "120 fps" / "150 fps" readings on input
+        // tap that the user reported.
+        if (maxDtInWindow > 50) {
+          this._frameCount = 0;
+          this._lastSampleTs = now;
+          maxDtInWindow = 0;
+          this._rafHandle = requestAnimationFrame(tick) as unknown as number;
+          return;
+        }
         const rawFps = Math.round((this._frameCount * 1000) / elapsed);
         const fps = Math.min(120, rawFps);
         this._jsFps = fps;
         this._pushHistory(this._jsHistory, now, fps);
         this._frameCount = 0;
         this._lastSampleTs = now;
+        maxDtInWindow = 0;
         // Sustained jank below 30 fps still gets its own marker so the user
         // can distinguish a single hitch from a long stutter.
         if (this._jsHistory.length > 1 && fps < 30) {
@@ -228,15 +280,22 @@ class PerfMonitor {
 
   /** Called from the Reanimated frame-callback worklet (via runOnJS). */
   pushUiFps(fps: number) {
+    const now = Date.now();
+    // Suppress UI-thread reading during the post-stall catch-up window —
+    // the Reanimated frame callback batches frames the same way RAF does,
+    // and after a JS-thread freeze (or a heavy native commit) it delivers
+    // a burst that reads as 100+ fps. The bubble keeps showing the last
+    // real value until the burst flushes, which is what users want.
+    if (now < this._uiSuppressFpsUntil) return;
     // Same clamp as the JS sampler — the Reanimated frame callback can
     // also deliver catch-up bursts after a heavy native frame, and a
     // 150 fps display value is more confusing than helpful.
     const clamped = Math.min(120, Math.max(0, fps));
     this._uiFps = clamped;
-    this._pushHistory(this._uiHistory, Date.now(), clamped);
+    this._pushHistory(this._uiHistory, now, clamped);
     if (this._uiHistory.length > 1 && clamped < 30) {
       this._record({
-        ts: Date.now(),
+        ts: now,
         type: 'slow',
         kind: 'UI',
         label: `ui<30 @ ${this._currentRoute}`,
