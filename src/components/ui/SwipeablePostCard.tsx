@@ -44,6 +44,17 @@ export function SwipeablePostCard({ children }: SwipeablePostCardProps) {
     }
   }, []);
 
+  // Clear the 3-second auto-reset timer on unmount. Without this, if a
+  // user swipes a card open then scrolls fast enough to recycle the row
+  // before the timer fires, the closure keeps Animated.Value references
+  // alive and resetPosition runs on a torn-down view — harmless but a
+  // small leak that adds up across a long scroll session.
+  useEffect(() => {
+    return () => {
+      if (timer.current) { clearTimeout(timer.current); timer.current = null; }
+    };
+  }, []);
+
   // Lazy-init the PanResponder past the navigation/scroll interaction.
   //
   // Why: every visible card was previously calling `PanResponder.create({ ... })`

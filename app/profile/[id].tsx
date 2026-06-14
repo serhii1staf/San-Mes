@@ -545,8 +545,16 @@ export default function UserProfileScreen() {
 
   const isOwnProfile = currentUser?.id === displayProfile.id;
   const bannerUrl = displayProfile.banner_url;
+  // Memoize the userLinks parse — was running on every render. The links
+  // string can be ~50–500 chars depending on how many social URLs the user
+  // saved; parsing it 60×/sec while the profile re-renders during scroll
+  // is wasted work. Keyed on the raw string so a profile-edit invalidates.
   const profileLinksRaw = displayProfile.links;
-  const userLinks: { type: string; url: string }[] = profileLinksRaw ? (typeof profileLinksRaw === 'string' ? JSON.parse(profileLinksRaw) : profileLinksRaw) : [];
+  const userLinks = useMemo<{ type: string; url: string }[]>(() => {
+    if (!profileLinksRaw) return [];
+    if (typeof profileLinksRaw !== 'string') return profileLinksRaw as any;
+    try { return JSON.parse(profileLinksRaw); } catch { return []; }
+  }, [profileLinksRaw]);
   const tabs: { key: TabName; label: string }[] = [
     { key: 'posts', label: t('profile.posts') }, { key: 'replies', label: t('profile.replies') },
     { key: 'media', label: t('profile.media') }, { key: 'likes', label: t('profile.likes') },

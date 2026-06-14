@@ -33,7 +33,10 @@ export const useUpdateStore = create<UpdateStoreState>()((set, get) => ({
         set({ status: 'downloading', progress: 20, message: t('update.downloading'), updateAvailable: true });
 
         // Start download with progress simulation
-        // expo-updates doesn't provide real progress, so we simulate it
+        // expo-updates doesn't provide real progress, so we simulate it.
+        // The interval lives in a try/finally so it ALWAYS clears, even
+        // when fetchUpdateAsync throws — without that the simulator kept
+        // ticking after the rejection landed in the catch below.
         const progressInterval = setInterval(() => {
           const current = get().progress;
           if (current < 85) {
@@ -41,9 +44,11 @@ export const useUpdateStore = create<UpdateStoreState>()((set, get) => ({
           }
         }, 500);
 
-        await Updates.fetchUpdateAsync();
-
-        clearInterval(progressInterval);
+        try {
+          await Updates.fetchUpdateAsync();
+        } finally {
+          clearInterval(progressInterval);
+        }
         set({ status: 'ready', progress: 100, message: t('update.ready') });
       } else {
         set({ status: 'idle', progress: 0, message: '', updateAvailable: false });
