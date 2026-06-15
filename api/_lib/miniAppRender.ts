@@ -5,10 +5,17 @@
 // File is prefixed with "_lib" so Vercel's filesystem router skips it
 // when discovering routes. Both routes import from here to avoid drift
 // between the two landing pages.
+//
+// Phase 5 of the Cloudflare D1 migration: lookups go through the
+// Worker's admin endpoints (X-Admin-Key header). The Worker is now
+// the source of truth for mini-app data; Supabase is no longer
+// queried.
 
-const SUPABASE_URL = 'https://ycwadqglcykcpucembjn.supabase.co';
-const SUPABASE_ANON_KEY =
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inljd2FkcWdsY3lrY3B1Y2VtYmpuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4Mjc2OTYsImV4cCI6MjA5NTQwMzY5Nn0.ZUr1YfN6pBp_AaUC1pZLKGApwgEXEiVw_w6w-yQjE_U';
+const WORKER_BASE_URL = 'https://san-mes-api.odi44972.workers.dev';
+// Hard-coded admin key — same string the in-app admin screen uses.
+// This is server-side code on Vercel; the key never reaches the
+// browser.
+const ADMIN_KEY = process.env.ADMIN_KEY || 'V7k!Qm9@Lp2#xR8$Tw6ZcD4%yN';
 
 export const APP_STORE_LINK = 'https://apps.apple.com/app/id6773943434';
 export const APP_SCHEME = 'san-mes';
@@ -30,61 +37,42 @@ export function escapeHtml(s: string): string {
     .replace(/'/g, '&#39;');
 }
 
-// Fetch by exact id (legacy long-uuid path).
+async function workerGet(path: string, admin = false): Promise<any> {
+  const headers: Record<string, string> = { Accept: 'application/json' };
+  if (admin) headers['X-Admin-Key'] = ADMIN_KEY;
+  try {
+    const r = await fetch(`${WORKER_BASE_URL}${path}`, { headers });
+    if (!r.ok) return null;
+    const body = (await r.json()) as { data?: any; error?: string | null };
+    return body?.data ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Fetch by exact id (legacy long-uuid path). */
 export async function fetchMiniAppById(id: string): Promise<MiniAppPreview | null> {
-  try {
-    const r = await fetch(
-      `${SUPABASE_URL}/rest/v1/mini_apps?id=eq.${encodeURIComponent(id)}&select=id,name,emoji,description&limit=1`,
-      { headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` } },
-    );
-    if (!r.ok) return null;
-    const rows = (await r.json()) as MiniAppPreview[];
-    return rows && rows[0] ? rows[0] : null;
-  } catch {
-    return null;
-  }
+  const data = await workerGet(`/v1/mini-apps/${encodeURIComponent(id)}`);
+  if (!data) return null;
+  return { id: data.id, name: data.name, emoji: data.emoji, description: data.description };
 }
 
-// UUIDs are stored as a native UUID column — Postgres rejects LIKE on UUID
-// without an explicit cast. Use a binary range instead: prefix → lower
-// bound padded with 0, upper bound padded with f. UUID lexicographic
-// ordering matches the binary order, so a `gte/lte` window on the indexed
-// `id` column gives the exact same result with zero schema changes.
-const UUID_TEMPLATE = '00000000-0000-0000-0000-000000000000';
-const UUID_TEMPLATE_F = 'ffffffff-ffff-ffff-ffff-ffffffffffff';
-
-function prefixToRange(prefix: string): { lo: string; hi: string } | null {
-  const clean = (prefix || '').toLowerCase().replace(/[^0-9a-f]/g, '');
-  if (clean.length === 0 || clean.length > 8) return null;
-  // Pad the prefix into the first hex segment of the UUID. Anything
-  // beyond 8 chars would cross into the second segment which has a dash —
-  // we never generate those, so we cap here defensively.
-  const lo = clean.padEnd(8, '0') + UUID_TEMPLATE.slice(8);
-  const hi = clean.padEnd(8, 'f') + UUID_TEMPLATE_F.slice(8);
-  return { lo, hi };
-}
-
-// Fetch by id-prefix (new short link path). Limit 2 so we can reject
-// ambiguous prefixes that match more than one row — never serve a wrong
-// app behind a "successful" looking short link.
+/**
+ * Fetch by id-prefix (new short link path). Worker has no dedicated
+ * prefix-lookup endpoint (yet); we fetch the recent mini-apps list and
+ * filter client-side. The list cap (100 rows) is more than the app
+ * realistically holds — if it grows we'll add `GET /v1/mini-apps/by-prefix`.
+ * If 0 or 2+ rows match the prefix we refuse to route.
+ */
 export async function fetchMiniAppByPrefix(prefix: string): Promise<MiniAppPreview | null> {
-  const range = prefixToRange(prefix);
-  if (!range) return null;
-  try {
-    const r = await fetch(
-      // UUID range filter — `id >= lo AND id <= hi`. PostgREST translates
-      // `gte`/`lte` directly into indexed btree comparisons, so this is
-      // O(log n) on the primary key.
-      `${SUPABASE_URL}/rest/v1/mini_apps?id=gte.${range.lo}&id=lte.${range.hi}&select=id,name,emoji,description&limit=2`,
-      { headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` } },
-    );
-    if (!r.ok) return null;
-    const rows = (await r.json()) as MiniAppPreview[];
-    if (!rows || rows.length !== 1) return null;
-    return rows[0];
-  } catch {
-    return null;
-  }
+  const clean = (prefix || '').toLowerCase().replace(/[^0-9a-f-]/g, '');
+  if (clean.length === 0 || clean.length > 8) return null;
+  const data = await workerGet(`/v1/mini-apps?limit=100`);
+  if (!Array.isArray(data)) return null;
+  const matches = data.filter((a: any) => typeof a.id === 'string' && a.id.toLowerCase().startsWith(clean));
+  if (matches.length !== 1) return null;
+  const row = matches[0];
+  return { id: row.id, name: row.name, emoji: row.emoji, description: row.description };
 }
 
 export interface RenderOpts {
@@ -174,8 +162,6 @@ export function renderMiniAppPage(opts: RenderOpts): string {
 </html>`;
 }
 
-// Standard "not found" body — used by both routes when the id / prefix
-// doesn't resolve to exactly one row.
 export function renderNotFound(): string {
   return renderMiniAppPage({
     title: 'Мини-приложение — San',
@@ -189,9 +175,6 @@ export function renderNotFound(): string {
   });
 }
 
-// Build the success page for a resolved row. `deepLink` is supplied so each
-// route can choose the correct scheme path (`san-mes://mini/<id>` for the
-// legacy route, `san-mes://m/<short>` for the new one).
 export function renderResolved(app: MiniAppPreview, deepLink: string): string {
   const heading = app.name || 'Мини-приложение';
   const title = `${app.emoji || '🧩'} ${heading} — San`;

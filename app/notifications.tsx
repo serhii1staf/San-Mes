@@ -7,7 +7,7 @@ import { router } from 'expo-router';
 import { useTheme } from '../src/theme';
 import { Text, Avatar } from '../src/components/ui';
 import { VerifiedBadge } from '../src/components/ui/VerifiedBadge';
-import { supabase } from '../src/lib/supabase';
+import { apiGet } from '../src/services/apiClient';
 import { useAuthStore } from '../src/store';
 import { kvGetJSONSync, kvSetJSON } from '../src/services/kvStore';
 import { useNotificationsBadge } from '../src/store/notificationsBadgeStore';
@@ -101,52 +101,41 @@ export default function NotificationsScreen() {
   const load = useCallback(async () => {
     if (!userId) return;
     try {
-      // 1) All MY posts (we only notify on activity targeting my own content).
-      const { data: myPosts } = await supabase
-        .from('posts')
-        .select('id, content')
-        .eq('author_id', userId)
-        .order('created_at', { ascending: false })
-        .limit(200);
-      const myPostIds = (myPosts || []).map((p: any) => p.id);
-      const postPreviewById = new Map<string, string>();
-      for (const p of myPosts || []) {
-        const text = (p.content || '').replace(/^::[a-z]+::[^:]+::/i, '').trim();
-        postPreviewById.set(p.id, text.slice(0, 80));
+      // Phase 5: one Worker round-trip instead of three Supabase calls.
+      // The endpoint synthesises likes/comments/follows targeting the
+      // current authed user and returns them with the actor profile
+      // already embedded.
+      const { data, error } = await apiGet<{
+        likes: any[];
+        comments: any[];
+        follows: any[];
+      }>('/v1/notifications');
+      if (error || !data) {
+        setLoading(false);
+        setRefreshing(false);
+        return;
       }
 
-      // 2) Run the three event queries in parallel — separate plans, no joins,
-      // each cheap on its own. We cap each batch to avoid pulling huge lists
-      // for very active users.
-      const [likesRes, commentsRes, followsRes] = await Promise.all([
-        myPostIds.length > 0
-          ? supabase.from('likes')
-              .select('user_id, post_id, created_at, profiles:user_id (id, username, display_name, emoji, is_verified)')
-              .in('post_id', myPostIds)
-              .neq('user_id', userId)
-              .order('created_at', { ascending: false })
-              .limit(80)
-          : Promise.resolve({ data: [] }) as any,
-        myPostIds.length > 0
-          ? supabase.from('comments')
-              .select('id, author_id, post_id, content, created_at, profiles:author_id (id, username, display_name, emoji, is_verified)')
-              .in('post_id', myPostIds)
-              .neq('author_id', userId)
-              .order('created_at', { ascending: false })
-              .limit(80)
-          : Promise.resolve({ data: [] }) as any,
-        supabase.from('follows')
-          .select('follower_id, created_at, profiles:follower_id (id, username, display_name, emoji, is_verified)')
-          .eq('following_id', userId)
-          .neq('follower_id', userId)
-          .order('created_at', { ascending: false })
-          .limit(80),
-      ]);
+      // The post-preview map is built client-side. We only need it for
+      // the rows attached to the user's own posts, which the Worker
+      // already filtered down to — but the post text isn't in the
+      // notifications payload (the screen only shows a short preview),
+      // so we re-fetch the matching post bodies from the entity store
+      // when present and leave them blank otherwise. The entity store
+      // already holds every post the user has rendered recently.
+      const { useEntityStore } = await import('../src/store');
+      const postsById = useEntityStore.getState().posts;
+      const previewFor = (postId: string | undefined): string | undefined => {
+        if (!postId) return undefined;
+        const p = postsById[postId];
+        if (!p) return undefined;
+        return (p.content || '').replace(/^::[a-z]+::[^:]+::/i, '').trim().slice(0, 80);
+      };
 
       const profileOf = (row: any) => Array.isArray(row?.profiles) ? row.profiles[0] : row?.profiles;
 
       const merged: Notification[] = [];
-      for (const r of (likesRes.data || [])) {
+      for (const r of data.likes || []) {
         const p = profileOf(r);
         if (!p) continue;
         merged.push({
@@ -159,10 +148,10 @@ export default function NotificationsScreen() {
           actorEmoji: p.emoji || '😊',
           actorVerified: !!p.is_verified,
           postId: r.post_id,
-          postPreview: postPreviewById.get(r.post_id),
+          postPreview: previewFor(r.post_id),
         });
       }
-      for (const r of (commentsRes.data || [])) {
+      for (const r of data.comments || []) {
         const p = profileOf(r);
         if (!p) continue;
         merged.push({
@@ -175,11 +164,11 @@ export default function NotificationsScreen() {
           actorEmoji: p.emoji || '😊',
           actorVerified: !!p.is_verified,
           postId: r.post_id,
-          postPreview: postPreviewById.get(r.post_id),
+          postPreview: previewFor(r.post_id),
           commentText: (r.content || '').slice(0, 120),
         });
       }
-      for (const r of (followsRes.data || [])) {
+      for (const r of data.follows || []) {
         const p = profileOf(r);
         if (!p) continue;
         merged.push({
@@ -196,12 +185,9 @@ export default function NotificationsScreen() {
 
       // Newest first.
       merged.sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
-      // Cap the list — older events are noise.
       const trimmed = merged.slice(0, 150);
       setItems(trimmed);
       try { kvSetJSON(CACHE_KEY, { ts: Date.now(), data: trimmed }); } catch {}
-      // The user is looking at the screen, so consider every fetched
-      // notification "seen" — clears the home-tab badge.
       useNotificationsBadge.getState().markAllSeen();
     } catch {
       // Network error — keep whatever was on screen.

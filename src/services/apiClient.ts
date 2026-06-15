@@ -1,10 +1,10 @@
 // Typed wrapper around `fetch` to the san-mes Worker.
 //
-// Phase 2 of the Cloudflare D1 migration: read traffic that lands on
-// the Worker comes through here. The wrapper exists so callers don't
-// each re-implement the same boilerplate (timeout, JSON parsing, auth
+// Phase 5 of the Cloudflare D1 migration: every read/write from the
+// app funnels through here. The wrapper exists so callers don't each
+// re-implement the same boilerplate (timeout, JSON parsing, auth
 // header injection, perfMonitor integration) and so we can swap the
-// transport behind a single seam later (Phase 5 cutover).
+// transport behind a single seam later.
 //
 // Contract:
 //   - Returns `{ data, error }` matching the existing `getXxx` shape so
@@ -14,19 +14,17 @@
 //     is wasted while disconnected.
 //   - Treats 5xx as `{ data: null, error: '<message>' }` and reports
 //     it to perfMonitor so we surface failures, but DOES NOT retry.
-//     Reads are expected to fail visibly; writes have their own
-//     offlineQueue retry path.
-//   - Surfaces the Worker's `error` string verbatim so callers can
-//     branch on shapes like `'unauthorised'` / `'forbidden'`.
+//   - On 401 we clear the token and notify the auth store so the
+//     user re-authenticates. Other 4xx surface verbatim so callers
+//     can branch on shapes like `'unauthorised'` / `'forbidden'`.
 //   - JSON parse failure → 500 with the raw status surfaced.
 //
-// The Worker URL is hard-coded for Phase 2; Phase 2.5 may move it
-// behind a feature flag for staging vs prod. Hard-coded HTTPS keeps
-// the iOS App Transport Security default intact (no exception domains
-// needed — the Worker is HTTPS-only).
+// The Worker URL is hard-coded to keep the iOS App Transport Security
+// default intact (no exception domains needed — the Worker is
+// HTTPS-only).
 
-import { supabase } from '../lib/supabase';
 import { perfMonitor } from './perfMonitor';
+import { clearAuthToken, getAuthToken } from './authClient';
 
 export const WORKER_BASE_URL = 'https://san-mes-api.odi44972.workers.dev';
 
@@ -63,21 +61,31 @@ async function isOnline(): Promise<boolean> {
 }
 
 /**
- * Read the current Supabase session's access token, if any. Today the
- * app uses PIN-based custom auth (no Supabase auth session), so this
- * almost always resolves to `null` — that's fine because every Phase
- * 2 read endpoint serves anonymous content. The hook stays in place
- * so the future Auth-via-Supabase migration (Phase 6) can flow JWTs
- * through transparently.
+ * Read the active Worker JWT from MMKV (set by `authClient` after
+ * register / login / refresh). Synchronous because MMKV is. Returns
+ * `null` if the user isn't authenticated yet.
  */
-async function getAuthHeader(): Promise<string | null> {
+function getAuthHeader(): string | null {
+  const token = getAuthToken();
+  return token ? `Bearer ${token}` : null;
+}
+
+/**
+ * Force-clears the local auth state when the Worker says the token is
+ * dead. The auth store is lazy-imported because importing it eagerly
+ * pulls in zustand + persist middleware on a path that runs on every
+ * request — and on a 200 we don't need any of that. Notifying the
+ * store wipes `user` / `isAuthenticated`, which causes the root
+ * navigator to bounce the user back to the welcome screen.
+ */
+async function handleUnauthorised(): Promise<void> {
   try {
-    const { data } = await supabase.auth.getSession();
-    const token = data?.session?.access_token;
-    return token ? `Bearer ${token}` : null;
-  } catch {
-    return null;
-  }
+    clearAuthToken();
+  } catch {}
+  try {
+    const { useAuthStore } = await import('../store/authStore');
+    useAuthStore.getState().logout();
+  } catch {}
 }
 
 interface InternalRequestOptions extends ApiOptions {
@@ -100,7 +108,7 @@ async function request<T>(path: string, opts: InternalRequestOptions): Promise<A
     ...(opts.headers ?? {}),
   };
   if (!opts.skipAuth) {
-    const auth = await getAuthHeader();
+    const auth = getAuthHeader();
     if (auth) headers['Authorization'] = auth;
   }
 
@@ -137,11 +145,15 @@ async function request<T>(path: string, opts: InternalRequestOptions): Promise<A
       return { data: null, error: msg };
     }
 
+    if (res.status === 401) {
+      // Token expired or rotated. Clear local auth + nudge the auth
+      // store so the next render bounces to the welcome screen.
+      // Don't await — the unauth flow is best-effort and shouldn't
+      // delay returning the response.
+      void handleUnauthorised();
+    }
+
     if (res.status >= 500) {
-      // 5xx is logged but not retried — the Worker is the authoritative
-      // failure source and offlineQueue's write retry path doesn't apply
-      // to reads. Callers that need graceful degradation fall through
-      // to Supabase on a non-null error.
       const errMsg = body.error ?? `http-${res.status}`;
       perfMonitor.recordError(`apiClient ${opts.method} ${path}: 5xx ${errMsg}`);
       return { data: null, error: errMsg };
@@ -165,12 +177,16 @@ export function apiGet<T>(path: string, opts: ApiOptions = {}): Promise<ApiRespo
   return request<T>(path, { ...opts, method: 'GET' });
 }
 
-export function apiPost<T>(path: string, body: unknown, opts: ApiOptions = {}): Promise<ApiResponse<T>> {
+export function apiPost<T>(path: string, body?: unknown, opts: ApiOptions = {}): Promise<ApiResponse<T>> {
   return request<T>(path, { ...opts, method: 'POST', body });
 }
 
 export function apiPatch<T>(path: string, body: unknown, opts: ApiOptions = {}): Promise<ApiResponse<T>> {
   return request<T>(path, { ...opts, method: 'PATCH', body });
+}
+
+export function apiPut<T>(path: string, body?: unknown, opts: ApiOptions = {}): Promise<ApiResponse<T>> {
+  return request<T>(path, { ...opts, method: 'PUT', body });
 }
 
 export function apiDelete<T>(path: string, opts: ApiOptions = {}): Promise<ApiResponse<T>> {

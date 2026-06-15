@@ -1,6 +1,12 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage, StateStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import {
+  clearAuthToken,
+  getAuthToken,
+  me as authMe,
+  setAuthToken,
+} from '../services/authClient';
 
 const appStorage: StateStorage = {
   setItem: async (name: string, value: string) => {
@@ -45,24 +51,76 @@ interface AuthStoreState {
   logout: () => void;
   setLoading: (loading: boolean) => void;
   updateProfile: (updates: Partial<User>) => void;
+  /**
+   * Re-hydrate the user object from the Worker's `/v1/auth/me` if a
+   * token is in MMKV. Called once on app boot from the root layout.
+   * Returns `true` when the user is authenticated, `false` otherwise.
+   */
+  restoreSession: () => Promise<boolean>;
 }
 
 export const useAuthStore = create<AuthStoreState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       user: null,
       token: null,
       isAuthenticated: false,
       isLoading: false,
       hasHydrated: false,
       setHasHydrated: (hydrated) => set({ hasHydrated: hydrated }),
-      login: (user, token) => set({ user, token: token || 'mock-token', isAuthenticated: true }),
-      logout: () => set({ user: null, token: null, isAuthenticated: false }),
+      login: (user, token) => {
+        // Mirror the JWT into MMKV so apiClient picks it up immediately
+        // — zustand-persist writes are async, MMKV is synchronous.
+        if (token) {
+          try { setAuthToken(token); } catch {}
+        }
+        set({ user, token: token || getAuthToken() || 'mock-token', isAuthenticated: true });
+      },
+      logout: () => {
+        try { clearAuthToken(); } catch {}
+        set({ user: null, token: null, isAuthenticated: false });
+      },
       setLoading: (isLoading) => set({ isLoading }),
       updateProfile: (updates) =>
         set((state) => ({
           user: state.user ? { ...state.user, ...updates } : null,
         })),
+      restoreSession: async () => {
+        const tok = getAuthToken();
+        if (!tok) return false;
+        try {
+          const { profile, error } = await authMe();
+          if (error || !profile) {
+            // Token is dead — wipe it so the next paint shows welcome.
+            try { clearAuthToken(); } catch {}
+            set({ user: null, token: null, isAuthenticated: false });
+            return false;
+          }
+          const existing = get().user;
+          set({
+            user: {
+              id: profile.id,
+              username: profile.username,
+              displayName: profile.display_name,
+              emoji: profile.emoji,
+              bio: profile.bio,
+              deviceKey: profile.device_key,
+              badge: profile.badge || undefined,
+              is_verified: !!profile.is_verified,
+              bannerUrl: profile.banner_url || undefined,
+              links: (profile.links || undefined) as any,
+              // Preserve the in-memory PIN if the user already entered
+              // one this session — the Worker doesn't send it back.
+              pin: existing?.pin,
+            },
+            token: tok,
+            isAuthenticated: true,
+          });
+          return true;
+        } catch {
+          return false;
+        }
+      },
     }),
     {
       name: 'auth-state',

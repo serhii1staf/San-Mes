@@ -167,6 +167,51 @@ register('GET', '/v1/posts/:id', async (req, env, _ctx, params) => {
   return ok(req, shapePost(row));
 });
 
+// ── PATCH /v1/posts/:id ───────────────────────────────────────────────
+//
+// Author-scoped edit. Body: { content?, image_url? }. The "edit a
+// post" UI (`(tabs)/create.tsx` edit mode) calls this to update its
+// own row in place. Empty body returns the current row unchanged.
+register('PATCH', '/v1/posts/:id', async (req, env, _ctx, params, authedUserId) => {
+  if (!authedUserId) return fail(req, 'unauthorised', 401);
+  const id = parseUuid(params.id);
+  if (!id) return fail(req, 'invalid post id', 400);
+
+  const body = await readJson<{ content?: unknown; image_url?: unknown }>(req);
+  if (!body.ok) return fail(req, body.error, 400);
+
+  const owner = await queryOne<{ author_id: string }>(
+    env,
+    `SELECT author_id FROM posts WHERE id = ? LIMIT 1`,
+    [id],
+  );
+  if (!owner) return ok(req, null);
+  if (owner.author_id !== authedUserId) return fail(req, 'forbidden', 403);
+
+  const sets: string[] = [];
+  const binds: unknown[] = [];
+  if (typeof body.value.content === 'string') {
+    sets.push('content = ?');
+    binds.push(body.value.content.slice(0, 8000));
+  }
+  if (typeof body.value.image_url === 'string' || body.value.image_url === null) {
+    sets.push('image_url = ?');
+    binds.push(body.value.image_url == null ? null : String(body.value.image_url).slice(0, 4000));
+  }
+  if (sets.length > 0) {
+    binds.push(id);
+    const stmt = env.DB.prepare(`UPDATE posts SET ${sets.join(', ')} WHERE id = ?`);
+    await stmt.bind(...(binds as any[])).run();
+  }
+
+  const updated = await queryOne<PostRow>(
+    env,
+    `${POST_SELECT_WITH_AUTHOR} WHERE p.id = ? LIMIT 1`,
+    [id],
+  );
+  return ok(req, updated ? shapePost(updated) : null);
+});
+
 // ── DELETE /v1/posts/:id ─────────────────────────────────────────────
 //
 // Author-scoped. Cascades: deletes likes + comments + reposts that

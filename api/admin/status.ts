@@ -13,9 +13,12 @@ import crypto from 'crypto';
 
 const ADMIN_PASSWORD = 'V7k!Qm9@Lp2#xR8$Tw6ZcD4%yN';
 
-const SUPABASE_URL = 'https://ycwadqglcykcpucembjn.supabase.co';
-const SUPABASE_ANON_KEY =
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inljd2FkcWdsY3lrY3B1Y2VtYmpuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4Mjc2OTYsImV4cCI6MjA5NTQwMzY5Nn0.ZUr1YfN6pBp_AaUC1pZLKGApwgEXEiVw_w6w-yQjE_U';
+// Phase 5 of the Cloudflare D1 migration: row counts come from the
+// Worker's admin endpoint (gated by the same X-Admin-Key the in-app
+// admin screen uses). The "DB" service we report on is now D1, not
+// Supabase Postgres.
+const WORKER_BASE_URL = 'https://san-mes-api.odi44972.workers.dev';
+const ADMIN_KEY = process.env.ADMIN_KEY || ADMIN_PASSWORD;
 const R2_PUBLIC_BASE = 'https://media.san-m-app.com';
 
 // R2 S3 credentials (Object Read & Write) — used to measure storage usage.
@@ -25,7 +28,10 @@ const R2_SECRET_ACCESS_KEY = '6bb6d3c4bdd20d97afe13610e89c5817e2f1167905f047ef29
 const R2_BUCKET = 'san';
 const R2_HOST = `${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`;
 const R2_FREE_BYTES = 10 * 1024 * 1024 * 1024; // 10 GB free tier
-const SUPABASE_DB_FREE_BYTES = 500 * 1024 * 1024; // 500 MB free tier (Postgres)
+// D1 free tier — 5 GB total, but the relevant cap for a usage bar is
+// the daily-row-read limit. We track storage size in bytes for the
+// progress bar; the limit value below is the storage cap.
+const D1_DB_FREE_BYTES = 5 * 1024 * 1024 * 1024;
 
 const TIMEOUT_MS = 4000;
 
@@ -53,36 +59,27 @@ function fetchT(url: string, init?: RequestInit): Promise<Response> {
   return fetch(url, { ...init, signal: c.signal }).finally(() => clearTimeout(t)) as Promise<Response>;
 }
 
-// Count rows in a table using a HEAD request with count=exact (no rows returned).
-async function tableCount(table: string): Promise<number> {
-  const r = await fetchT(`${SUPABASE_URL}/rest/v1/${table}?select=id`, {
-    method: 'HEAD',
-    headers: {
-      apikey: SUPABASE_ANON_KEY,
-      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-      Prefer: 'count=exact',
-      Range: '0-0',
-    },
+// Fetch row counts from the Worker's admin endpoint. The Worker
+// returns all four counts in a single SQL trip; we project a single
+// number per metric the status panel needs.
+async function workerCounts(): Promise<{
+  profiles: number;
+  posts: number;
+  comments: number;
+  posts_with_img: number;
+}> {
+  const r = await fetchT(`${WORKER_BASE_URL}/v1/admin/counts`, {
+    headers: { Accept: 'application/json', 'X-Admin-Key': ADMIN_KEY },
   });
-  const cr = r.headers.get('content-range') || '';
-  const total = cr.split('/')[1];
-  return total ? parseInt(total, 10) : 0;
-}
-
-// Count rows matching a PostgREST filter (e.g. image_url=not.is.null).
-async function tableCountFilter(table: string, filter: string): Promise<number> {
-  const r = await fetchT(`${SUPABASE_URL}/rest/v1/${table}?select=id&${filter}`, {
-    method: 'HEAD',
-    headers: {
-      apikey: SUPABASE_ANON_KEY,
-      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-      Prefer: 'count=exact',
-      Range: '0-0',
-    },
-  });
-  const cr = r.headers.get('content-range') || '';
-  const total = cr.split('/')[1];
-  return total ? parseInt(total, 10) : 0;
+  if (!r.ok) throw new Error(`worker counts: ${r.status}`);
+  const body = (await r.json()) as { data?: any };
+  const d = body?.data ?? {};
+  return {
+    profiles: d.profiles || 0,
+    posts: d.posts || 0,
+    comments: d.comments || 0,
+    posts_with_img: d.posts_with_img || 0,
+  };
 }
 
 // ---- R2 storage usage via S3 ListObjectsV2 (SigV4 signed) ------------------
@@ -216,18 +213,22 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   }
 
   // Run all checks in parallel.
-  const [profiles, posts, comments, r2, r2use, postsWithImg, vercelRegion] = await Promise.all([
-    timed(() => tableCount('profiles')),
-    timed(() => tableCount('posts')),
-    timed(() => tableCount('comments')),
+  const [counts, r2, r2use, vercelRegion] = await Promise.all([
+    timed(() => workerCounts()),
     timed(() => fetchT(`${R2_PUBLIC_BASE}/test/hello.txt`, { method: 'GET' }).then((r) => r.ok)),
     timed(() => r2Usage()),
-    timed(() => tableCountFilter('posts', 'image_url=not.is.null')),
     Promise.resolve(process.env.VERCEL_REGION || 'unknown'),
   ]);
 
-  // Supabase is healthy if the count query (a real DB read) succeeded.
-  const dbOk = profiles.ok;
+  // The Worker is the data layer now. It's healthy if the counts call
+  // came back without an error. The previous Supabase-DB shape stays
+  // in the response so the in-app status screen doesn't have to
+  // change — we just relabel the row.
+  const dbOk = counts.ok;
+  const profileCount = counts.value?.profiles ?? 0;
+  const postCount = counts.value?.posts ?? 0;
+  const commentCount = counts.value?.comments ?? 0;
+  const postsWithImg = counts.value?.posts_with_img ?? 0;
 
   // R2 storage: prefer the live S3 measurement; if it failed (e.g. serverless
   // clock skew breaks SigV4), fall back to an estimate from the number of
@@ -236,7 +237,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   const liveObjects = r2use.value?.objects ?? 0;
   const measuredStorage = r2use.ok && liveObjects > 0;
   const AVG_IMG_BYTES = 180 * 1024;
-  const estObjects = postsWithImg.value ?? 0;
+  const estObjects = postsWithImg;
   const storageBytes = measuredStorage ? liveBytes : estObjects * AVG_IMG_BYTES;
   const storageObjects = measuredStorage ? liveObjects : estObjects;
 
@@ -249,11 +250,11 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       detail: `Регион: ${vercelRegion}`,
     },
     {
-      key: 'supabase',
-      name: 'Supabase (база данных)',
+      key: 'd1',
+      name: 'Cloudflare D1 (база данных)',
       status: dbOk ? 'online' : 'degraded',
-      latencyMs: profiles.ms,
-      detail: dbOk ? 'Запросы выполняются' : profiles.error || 'нет ответа',
+      latencyMs: counts.ms,
+      detail: dbOk ? 'Запросы выполняются' : counts.error || 'нет ответа',
     },
     {
       key: 'r2',
@@ -265,9 +266,6 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   ];
 
   // Usage bars: value/limit pairs the UI can render as progress bars.
-  const profileCount = profiles.value ?? 0;
-  const postCount = posts.value ?? 0;
-  const commentCount = comments.value ?? 0;
   // Rough DB size estimate: rows × avg bytes/row (no server-side stats on the
   // free tier, so we approximate to drive the bar — clearly labelled as est.).
   const estDbBytes = profileCount * 600 + postCount * 1200 + commentCount * 400;
@@ -286,7 +284,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       key: 'db_size',
       label: 'База данных (оценка)',
       used: estDbBytes,
-      limit: SUPABASE_DB_FREE_BYTES,
+      limit: D1_DB_FREE_BYTES,
       unit: 'bytes',
       extra: `${profileCount + postCount + commentCount} строк`,
       measured: false,
@@ -298,10 +296,10 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     services,
     usage,
     metrics: {
-      profiles: profiles.value ?? null,
-      posts: posts.value ?? null,
-      comments: comments.value ?? null,
-      dbLatencyMs: profiles.ms,
+      profiles: profileCount,
+      posts: postCount,
+      comments: commentCount,
+      dbLatencyMs: counts.ms,
       storageBytes,
       storageObjects,
     },

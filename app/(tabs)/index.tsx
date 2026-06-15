@@ -13,7 +13,7 @@ import { PostMenuModal } from '../../src/components/feed/PostMenuModal';
 import { useFeedStore, useAuthStore } from '../../src/store';
 import { useNotificationsBadge } from '../../src/store/notificationsBadgeStore';
 import { Post } from '../../src/types';
-import { getPosts, isRepost, parseImageUrls, isImageSpoiler, toggleLike as apiToggleLike, supabase } from '../../src/lib/supabase';
+import { getPosts, isRepost, parseImageUrls, isImageSpoiler, toggleLike as apiToggleLike } from '../../src/lib/supabase';
 import { useUpdateStore } from '../../src/store/updateStore';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { useConnectivityStore } from '../../src/services/connectivityMonitor';
@@ -471,8 +471,13 @@ export default function FeedScreen() {
 
       // Fetch missing referenced posts (with profiles) for repost chain resolution
       if (missingIds.size > 0) {
-        const { data: missingPosts } = await supabase.from('posts').select('*, profiles:author_id (display_name, username, emoji, badge, is_verified)').in('id', Array.from(missingIds));
-        if (missingPosts) {
+        const { apiGet } = await import('../../src/services/apiClient');
+        const idList = Array.from(missingIds);
+        const fetched = await Promise.all(
+          idList.map((mid) => apiGet<any>(`/v1/posts/${encodeURIComponent(mid)}`).then((r) => r.data).catch(() => null)),
+        );
+        const missingPosts = fetched.filter(Boolean) as any[];
+        if (missingPosts.length > 0) {
           for (const mp of missingPosts) {
             postsById[mp.id] = mp;
             // Also check if this post is itself a repost needing resolution
@@ -484,10 +489,10 @@ export default function FeedScreen() {
           // Second pass: fetch any newly discovered missing IDs (one level deeper)
           const newMissing = Array.from(missingIds).filter(id => !postsById[id]);
           if (newMissing.length > 0) {
-            const { data: deepPosts } = await supabase.from('posts').select('*, profiles:author_id (display_name, username, emoji, badge, is_verified)').in('id', newMissing);
-            if (deepPosts) {
-              for (const dp of deepPosts) postsById[dp.id] = dp;
-            }
+            const fetched2 = await Promise.all(
+              newMissing.map((nid) => apiGet<any>(`/v1/posts/${encodeURIComponent(nid)}`).then((r) => r.data).catch(() => null)),
+            );
+            for (const dp of fetched2) if (dp) postsById[dp.id] = dp;
           }
         }
       }
@@ -553,8 +558,13 @@ export default function FeedScreen() {
         }
       }
       if (missingIds.size > 0) {
-        const { data: missingPosts } = await supabase.from('posts').select('*, profiles:author_id (display_name, username, emoji, badge, is_verified)').in('id', Array.from(missingIds));
-        if (missingPosts) {
+        const { apiGet } = await import('../../src/services/apiClient');
+        const idList = Array.from(missingIds);
+        const fetched = await Promise.all(
+          idList.map((mid) => apiGet<any>(`/v1/posts/${encodeURIComponent(mid)}`).then((r) => r.data).catch(() => null)),
+        );
+        const missingPosts = fetched.filter(Boolean) as any[];
+        if (missingPosts.length > 0) {
           for (const mp of missingPosts) {
             postsById[mp.id] = mp;
             const mri = isRepost(mp.content || '');
@@ -562,8 +572,10 @@ export default function FeedScreen() {
           }
           const newMissing = Array.from(missingIds).filter(id => !postsById[id]);
           if (newMissing.length > 0) {
-            const { data: deepPosts } = await supabase.from('posts').select('*, profiles:author_id (display_name, username, emoji, badge, is_verified)').in('id', newMissing);
-            if (deepPosts) { for (const dp of deepPosts) postsById[dp.id] = dp; }
+            const fetched2 = await Promise.all(
+              newMissing.map((nid) => apiGet<any>(`/v1/posts/${encodeURIComponent(nid)}`).then((r) => r.data).catch(() => null)),
+            );
+            for (const dp of fetched2) if (dp) postsById[dp.id] = dp;
           }
         }
       }

@@ -34,6 +34,30 @@ function assertAdmin(req: Request, env: import('../db').Env): Response | null {
   return null;
 }
 
+// ── GET /v1/admin/counts ─────────────────────────────────────────────
+//
+// Returns row counts for the principal tables. Used by the in-app
+// services-status panel + the Vercel `/api/admin/status` endpoint.
+register('GET', '/v1/admin/counts', async (req, env) => {
+  const guard = assertAdmin(req, env);
+  if (guard) return guard;
+  const row = await queryOne<{ profiles: number; posts: number; comments: number; posts_with_img: number }>(
+    env,
+    `SELECT
+        (SELECT COUNT(*) FROM profiles) AS profiles,
+        (SELECT COUNT(*) FROM posts)    AS posts,
+        (SELECT COUNT(*) FROM comments) AS comments,
+        (SELECT COUNT(*) FROM posts WHERE image_url IS NOT NULL AND image_url != '') AS posts_with_img`,
+    [],
+  );
+  return ok(req, {
+    profiles: row?.profiles ?? 0,
+    posts: row?.posts ?? 0,
+    comments: row?.comments ?? 0,
+    posts_with_img: row?.posts_with_img ?? 0,
+  });
+});
+
 // ── GET /v1/admin/profiles ────────────────────────────────────────────
 register('GET', '/v1/admin/profiles', async (req, env) => {
   const guard = assertAdmin(req, env);

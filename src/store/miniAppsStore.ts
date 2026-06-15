@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage, StateStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { supabase } from '../lib/supabase';
+import { apiDelete, apiGet, apiPatch, apiPost } from '../services/apiClient';
 import { accountKey } from '../services/cacheService';
 import { t } from '../i18n/store';
 
@@ -45,11 +45,7 @@ export const useMiniAppsStore = create<MiniAppsStore>()(
       loadApps: async () => {
         set({ isLoading: true });
         try {
-          const { data } = await supabase
-            .from('mini_apps')
-            .select('*')
-            .order('created_at', { ascending: false })
-            .limit(50);
+          const { data } = await apiGet<MiniApp[]>('/v1/mini-apps?limit=50');
           if (data) set({ apps: data });
         } catch {}
         set({ isLoading: false });
@@ -57,13 +53,28 @@ export const useMiniAppsStore = create<MiniAppsStore>()(
 
       createApp: async (app) => {
         try {
-          const { data, error } = await supabase
-            .from('mini_apps')
-            .insert(app)
-            .select()
-            .single();
-          if (error) return { error: error.message };
-          if (data) set((s) => ({ apps: [data, ...s.apps] }));
+          const { data, error } = await apiPost<MiniApp & { profiles?: unknown }>(
+            '/v1/mini-apps',
+            {
+              name: app.name,
+              description: app.description,
+              emoji: app.emoji,
+              url: app.url,
+            },
+          );
+          if (error) return { error };
+          if (data) {
+            const next: MiniApp = {
+              id: data.id,
+              creator_id: data.creator_id,
+              name: data.name,
+              description: data.description,
+              emoji: data.emoji,
+              url: data.url,
+              created_at: data.created_at,
+            };
+            set((s) => ({ apps: [next, ...s.apps] }));
+          }
           return { error: null };
         } catch (e: any) {
           return { error: e?.message || t('common.error') };
@@ -72,18 +83,26 @@ export const useMiniAppsStore = create<MiniAppsStore>()(
 
       updateApp: async (id, updates) => {
         try {
-          const { data, error } = await supabase
-            .from('mini_apps')
-            .update(updates)
-            .eq('id', id)
-            .select()
-            .single();
-          if (error) return { error: error.message };
-          // Local-first: even if Supabase didn't echo a row back (rare),
-          // we still merge the patch into the cached entry so the UI
-          // reflects the user's edit immediately.
+          const { data, error } = await apiPatch<MiniApp>(`/v1/mini-apps/${encodeURIComponent(id)}`, updates);
+          if (error) return { error };
+          // Local-first merge — even if the Worker didn't echo a row
+          // back (rare), we still apply the patch to the cached entry.
           set((s) => ({
-            apps: s.apps.map((a) => (a.id === id ? { ...a, ...(data || updates) } : a)),
+            apps: s.apps.map((a) =>
+              a.id === id
+                ? {
+                    ...a,
+                    ...(data
+                      ? {
+                          name: data.name,
+                          description: data.description,
+                          emoji: data.emoji,
+                          url: data.url,
+                        }
+                      : updates),
+                  }
+                : a,
+            ),
           }));
           return { error: null };
         } catch (e: any) {
@@ -92,8 +111,13 @@ export const useMiniAppsStore = create<MiniAppsStore>()(
       },
 
       deleteApp: async (id) => {
-        await supabase.from('mini_apps').delete().eq('id', id);
+        try {
+          await apiDelete(`/v1/mini-apps/${encodeURIComponent(id)}`);
+        } catch {}
         set((s) => ({ apps: s.apps.filter(a => a.id !== id) }));
+        // Reference `get` so the linter/treeshaker keeps the binding —
+        // it's part of the persist API contract even when unused here.
+        void get;
       },
 
       searchApps: (query) => {

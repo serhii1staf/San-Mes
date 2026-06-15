@@ -37,12 +37,12 @@ import * as Ably from 'ably';
 
 const TOKEN_TTL_MS = 60 * 60 * 1000;
 
-// Hard-coded Supabase URL + anon key, matching the convention in the other
-// /api routes (api/index.ts, api/admin/status.ts). The anon key is a public
-// JWT and safe to embed; it only reads through RLS.
-const SUPABASE_URL = 'https://ycwadqglcykcpucembjn.supabase.co';
-const SUPABASE_ANON_KEY =
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inljd2FkcWdsY3lrY3B1Y2VtYmpuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4Mjc2OTYsImV4cCI6MjA5NTQwMzY5Nn0.ZUr1YfN6pBp_AaUC1pZLKGApwgEXEiVw_w6w-yQjE_U';
+// Hard-coded Worker URL — same as the rest of the SSR functions.
+// We verify the (userId, deviceKey) pair against the Worker's admin
+// profile-by-id endpoint instead of Supabase REST (Phase 5 of the
+// Cloudflare D1 migration).
+const WORKER_BASE_URL = 'https://san-mes-api.odi44972.workers.dev';
+const ADMIN_KEY = process.env.ADMIN_KEY || 'V7k!Qm9@Lp2#xR8$Tw6ZcD4%yN';
 
 function send(res: ServerResponse, status: number, body: unknown): void {
   res.statusCode = status;
@@ -99,30 +99,24 @@ async function verifyAuth(input: AuthInput): Promise<boolean> {
   const userId = input.userId?.trim();
   const deviceKey = input.deviceKey?.trim();
   if (!userId || !deviceKey) return false;
-  // Cheap shape check: Supabase user IDs are UUIDs; device keys are 8+ chars
-  // of base32. Reject obviously-malformed input before hitting the DB so
-  // bots probing the endpoint don't burn rows on PostgREST.
+  // Cheap shape check: profile IDs are UUIDs; device keys are 8+ chars
+  // of base32. Reject obviously-malformed input before hitting the
+  // Worker so bots probing the endpoint don't burn rows.
   if (!/^[0-9a-f-]{20,}$/i.test(userId)) return false;
   if (!/^[A-Z0-9-]{6,40}$/i.test(deviceKey)) return false;
 
-  // PostgREST select — RLS allows public read on profiles by id+device_key
-  // for the existing login flow. We re-use the same path here.
-  const url =
-    `${SUPABASE_URL}/rest/v1/profiles` +
-    `?select=id,device_key` +
-    `&id=eq.${encodeURIComponent(userId)}` +
-    `&device_key=eq.${encodeURIComponent(deviceKey)}` +
-    `&limit=1`;
+  // Phase 5: profile lookup goes through the Worker's admin endpoint.
+  // The X-Admin-Key gates the call so a leaked client can't hit this
+  // endpoint directly to enumerate profiles.
   try {
+    const url = `${WORKER_BASE_URL}/v1/admin/profiles/${encodeURIComponent(userId)}`;
     const resp = await fetch(url, {
-      headers: {
-        apikey: SUPABASE_ANON_KEY,
-        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-      },
+      headers: { Accept: 'application/json', 'X-Admin-Key': ADMIN_KEY },
     });
     if (!resp.ok) return false;
-    const rows = (await resp.json()) as Array<{ id: string; device_key: string }>;
-    return Array.isArray(rows) && rows.length === 1;
+    const body = (await resp.json()) as { data?: { id?: string; device_key?: string } | null };
+    const row = body?.data;
+    return !!row && row.id === userId && row.device_key === deviceKey;
   } catch {
     return false;
   }

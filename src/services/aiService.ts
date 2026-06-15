@@ -1,6 +1,5 @@
 import { useThemeStore, ACCENT_COLORS } from '../store/themeStore';
 import { useAuthStore } from '../store/authStore';
-import { supabase } from '../lib/supabase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const API_URL = 'https://integrate.api.nvidia.com/v1/chat/completions';
@@ -217,14 +216,16 @@ export async function applyAction(action: ParsedAction): Promise<boolean> {
       case 'name': {
         const user = useAuthStore.getState().user;
         if (!user) return false;
-        await supabase.from('profiles').update({ display_name: action.value }).eq('id', user.id);
+        const { updateProfile } = await import('../lib/supabase');
+        await updateProfile(user.id, { display_name: action.value });
         useAuthStore.getState().updateProfile({ displayName: action.value });
         return true;
       }
       case 'emoji': {
         const user = useAuthStore.getState().user;
         if (!user) return false;
-        await supabase.from('profiles').update({ emoji: action.value }).eq('id', user.id);
+        const { updateProfile } = await import('../lib/supabase');
+        await updateProfile(user.id, { emoji: action.value });
         useAuthStore.getState().updateProfile({ emoji: action.value });
         return true;
       }
@@ -233,7 +234,8 @@ export async function applyAction(action: ParsedAction): Promise<boolean> {
         if (!user) return false;
         const clean = action.value.replace(/[^a-zA-Z0-9_]/g, '').toLowerCase();
         if (!clean) return false;
-        const { error } = await supabase.from('profiles').update({ username: clean }).eq('id', user.id);
+        const { updateProfile } = await import('../lib/supabase');
+        const { error } = await updateProfile(user.id, { username: clean });
         if (error) return false;
         useAuthStore.getState().updateProfile({ username: clean });
         return true;
@@ -241,7 +243,8 @@ export async function applyAction(action: ParsedAction): Promise<boolean> {
       case 'bio': {
         const user = useAuthStore.getState().user;
         if (!user) return false;
-        await supabase.from('profiles').update({ bio: action.value }).eq('id', user.id);
+        const { updateProfile } = await import('../lib/supabase');
+        await updateProfile(user.id, { bio: action.value });
         useAuthStore.getState().updateProfile({ bio: action.value });
         return true;
       }
@@ -263,7 +266,8 @@ export async function applyAction(action: ParsedAction): Promise<boolean> {
           return { type, url };
         });
         if (links.length === 0) return false;
-        await supabase.from('profiles').update({ links }).eq('id', user.id);
+        const { updateProfile } = await import('../lib/supabase');
+        await updateProfile(user.id, { links } as any);
         useAuthStore.getState().updateProfile({ links } as any);
         return true;
       }

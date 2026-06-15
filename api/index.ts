@@ -1,9 +1,10 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 
-// Public Supabase read access (anon key) to render real post/profile previews.
-const SUPABASE_URL = 'https://ycwadqglcykcpucembjn.supabase.co';
-const SUPABASE_ANON_KEY =
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inljd2FkcWdsY3lrY3B1Y2VtYmpuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4Mjc2OTYsImV4cCI6MjA5NTQwMzY5Nn0.ZUr1YfN6pBp_AaUC1pZLKGApwgEXEiVw_w6w-yQjE_U';
+// Phase 5 of the Cloudflare D1 migration: SSR fetches go through the
+// Worker's admin endpoints (gated by the X-Admin-Key header). Supabase
+// is no longer queried from the server.
+const WORKER_BASE_URL = 'https://san-mes-api.odi44972.workers.dev';
+const ADMIN_KEY = process.env.ADMIN_KEY || 'V7k!Qm9@Lp2#xR8$Tw6ZcD4%yN';
 
 // App Store link (app not published yet) + custom scheme deep link for the
 // installed app. The page tries the scheme first, then falls back to the store.
@@ -30,34 +31,30 @@ function firstImage(imageUrl?: string | null): string | null {
   return parts[0] || null;
 }
 
-async function sbGet(path: string): Promise<any[] | null> {
+async function workerGet(path: string): Promise<any> {
   try {
-    const r = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
-      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
+    const r = await fetch(`${WORKER_BASE_URL}${path}`, {
+      headers: { Accept: 'application/json', 'X-Admin-Key': ADMIN_KEY },
     });
     if (!r.ok) return null;
-    return (await r.json()) as any[];
+    const body = (await r.json()) as { data?: any; error?: string | null };
+    return body?.data ?? null;
   } catch {
     return null;
   }
 }
 
 async function fetchPost(id: string) {
-  const rows = await sbGet(
-    `posts?id=eq.${encodeURIComponent(id)}&select=id,content,image_url,created_at,likes_count,comments_count,author_id,profiles:author_id(username,display_name,emoji,is_verified,banner_url)&limit=1`
-  );
-  return rows && rows[0] ? rows[0] : null;
+  // Worker returns the same shape Supabase did (`profiles:author_id`
+  // embed) so the renderer below doesn't change.
+  return await workerGet(`/v1/admin/posts/${encodeURIComponent(id)}`);
 }
 
 async function fetchProfile(id: string) {
-  const byId = await sbGet(
-    `profiles?id=eq.${encodeURIComponent(id)}&select=id,username,display_name,emoji,bio,is_verified,banner_url&limit=1`
-  );
-  if (byId && byId[0]) return byId[0];
-  const byName = await sbGet(
-    `profiles?username=eq.${encodeURIComponent(id)}&select=id,username,display_name,emoji,bio,is_verified,banner_url&limit=1`
-  );
-  return byName && byName[0] ? byName[0] : null;
+  // First try id, fall back to username — same as the legacy two-step.
+  const byId = await workerGet(`/v1/admin/profiles/${encodeURIComponent(id)}`);
+  if (byId) return byId;
+  return await workerGet(`/v1/admin/profiles/by-username/${encodeURIComponent(id)}`);
 }
 
 const VERIFIED_SVG =

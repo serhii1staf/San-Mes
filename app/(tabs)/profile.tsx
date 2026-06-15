@@ -30,7 +30,7 @@ import { showToast } from '../../src/store/toastStore';
 import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
 import { useAuthStore } from '../../src/store';
 import { useFeedStore } from '../../src/store/feedStore';
-import { isRepost, parseImageUrls, getFollowCounts, supabase, deletePost, getLikedPosts, getUserComments } from '../../src/lib/supabase';
+import { isRepost, parseImageUrls, getFollowCounts, deletePost, getLikedPosts, getUserComments } from '../../src/lib/supabase';
 import { openUrl } from '../../src/utils/openUrl';
 import { Post } from '../../src/types';
 import { triggerHaptic } from '../../src/utils/haptics';
@@ -177,11 +177,15 @@ export default function ProfileScreen() {
   // Sync badge/is_verified from DB on mount (in case it changed via admin panel)
   useEffect(() => {
     if (!user?.id) return;
-    supabase.from('profiles').select('badge, is_verified').eq('id', user.id).single().then(({ data }) => {
+    (async () => {
+      const { apiGet } = await import('../../src/services/apiClient');
+      const { data } = await apiGet<{ badge: string | null; is_verified: boolean }>(
+        `/v1/profiles/${encodeURIComponent(user.id)}`,
+      );
       if (data && (data.badge !== user.badge || data.is_verified !== user.is_verified)) {
         updateProfile({ badge: data.badge || undefined, is_verified: data.is_verified || false });
       }
-    }).catch(() => {});
+    })().catch(() => {});
   }, [user?.id]);
   const [refreshing, setRefreshing] = useState(false);
   const hasFetched = useRef(false);
@@ -233,7 +237,9 @@ export default function ProfileScreen() {
       // Page size dropped from 50 to 25 as part of the egress-reduction
       // pass — the user can scroll for more via existing pagination,
       // and the first paint becomes ~half as expensive on weak devices.
-      const { data } = await supabase.from('posts').select('*').eq('author_id', user.id).order('created_at', { ascending: false }).limit(25);
+      // Phase 5: routes through the Worker via apiGet.
+      const { apiGet } = await import('../../src/services/apiClient');
+      const { data } = await apiGet<any[]>(`/v1/profiles/${encodeURIComponent(user.id)}/posts?limit=25`);
       if (!data) return;
 
       // Collect original post IDs from reposts
@@ -248,8 +254,11 @@ export default function ProfileScreen() {
       // Fetch original posts for reposts (with author profiles)
       let originalsMap: Record<string, any> = {};
       if (originalPostIds.length > 0) {
-        const { data: originals } = await supabase.from('posts').select('*, profiles:author_id (display_name, username, emoji, badge, is_verified)').in('id', originalPostIds);
-        if (originals) {
+        const fetched = await Promise.all(
+          originalPostIds.map((oid) => apiGet<any>(`/v1/posts/${encodeURIComponent(oid)}`).then((r) => r.data).catch(() => null)),
+        );
+        const originals = fetched.filter(Boolean) as any[];
+        if (originals.length > 0) {
           for (const o of originals) {
             originalsMap[o.id] = o;
           }
@@ -262,10 +271,10 @@ export default function ProfileScreen() {
             }
           }
           if (deeperIds.length > 0) {
-            const { data: deepPosts } = await supabase.from('posts').select('*, profiles:author_id (display_name, username, emoji, badge, is_verified)').in('id', deeperIds);
-            if (deepPosts) {
-              for (const dp of deepPosts) originalsMap[dp.id] = dp;
-            }
+            const deeper = await Promise.all(
+              deeperIds.map((d) => apiGet<any>(`/v1/posts/${encodeURIComponent(d)}`).then((r) => r.data).catch(() => null)),
+            );
+            for (const dp of deeper) if (dp) originalsMap[dp.id] = dp;
           }
         }
       }
@@ -464,13 +473,13 @@ export default function ProfileScreen() {
       }
       const originalsMap: Record<string, any> = {};
       if (originalIds.length > 0) {
-        const { data: originals } = await supabase
-          .from('posts')
-          .select('id, content, image_url')
-          .in('id', originalIds);
-        if (originals) {
-          for (const o of originals) originalsMap[o.id] = o;
-        }
+        const { apiGet } = await import('../../src/services/apiClient');
+        const fetched = await Promise.all(
+          originalIds.map((oid) =>
+            apiGet<any>(`/v1/posts/${encodeURIComponent(oid)}`).then((r) => r.data).catch(() => null),
+          ),
+        );
+        for (const o of fetched) if (o) originalsMap[o.id] = o;
       }
 
       const buildReply = (c: any): ProfileReply => {

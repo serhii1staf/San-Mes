@@ -9,7 +9,7 @@ import * as Clipboard from 'expo-clipboard';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { LinkedText } from '../../src/components/ui/LinkedText';
-import { parseImageUrls, getProfile, getFollowCounts, deletePost, isRepost, supabase, getLikedPosts, getUserComments } from '../../src/lib/supabase';
+import { parseImageUrls, getProfile, getFollowCounts, deletePost, isRepost, getLikedPosts, getUserComments } from '../../src/lib/supabase';
 import { extractFirstUrl } from '../../src/services/linkPreview';
 import { useAuthStore } from '../../src/store';
 import { useEntityStore } from '../../src/store';
@@ -526,11 +526,21 @@ export default function UserProfileScreen() {
     // Mark as requested up-front so concurrent runs of this effect (triggered
     // by rapid userPosts changes) don't issue duplicate queries.
     for (const oid of repostOriginalIds) requestedOriginalIds.current.add(oid);
-    supabase.from('posts').select('*, profiles:author_id (display_name, username, emoji)').in('id', repostOriginalIds).then(({ data }) => {
-      if (!data) return;
+    // Phase 5: bulk-fetch each original post via the Worker. There's no
+    // batched endpoint, but the dependency tree is rarely deeper than
+    // 1-2 levels and the count of repost-originals on a profile screen
+    // is small (page size 25). We parallelise with Promise.all.
+    (async () => {
+      const { apiGet } = await import('../../src/services/apiClient');
+      const fetched = await Promise.all(
+        repostOriginalIds.map((oid) =>
+          apiGet<any>(`/v1/posts/${encodeURIComponent(oid)}`).then((r) => r.data).catch(() => null),
+        ),
+      );
+      const data = fetched.filter(Boolean) as any[];
+      if (data.length === 0) return;
       const map: Record<string, any> = { ...resolvedOriginals };
       for (const o of data) map[o.id] = o;
-      // Check for deeper chain
       const deeperIds: string[] = [];
       for (const o of data) {
         const ori = isRepost(o.content || '');
@@ -543,14 +553,15 @@ export default function UserProfileScreen() {
       }
       if (deeperIds.length > 0) {
         for (const oid of deeperIds) requestedOriginalIds.current.add(oid);
-        supabase.from('posts').select('*, profiles:author_id (display_name, username, emoji)').in('id', deeperIds).then(({ data: deep }) => {
-          if (deep) { for (const dp of deep) map[dp.id] = dp; }
-          setResolvedOriginals(map);
-        });
-      } else {
-        setResolvedOriginals(map);
+        const deeper = await Promise.all(
+          deeperIds.map((oid) =>
+            apiGet<any>(`/v1/posts/${encodeURIComponent(oid)}`).then((r) => r.data).catch(() => null),
+          ),
+        );
+        for (const dp of deeper) if (dp) map[dp.id] = dp;
       }
-    });
+      setResolvedOriginals(map);
+    })();
   }, [userPosts]);
 
   const displayPosts = React.useMemo(() => {
@@ -789,13 +800,13 @@ export default function UserProfileScreen() {
       }
       const originalsMap: Record<string, any> = {};
       if (originalIds.length > 0) {
-        const { data: originals } = await supabase
-          .from('posts')
-          .select('id, content, image_url')
-          .in('id', originalIds);
-        if (originals) {
-          for (const o of originals) originalsMap[o.id] = o;
-        }
+        const { apiGet } = await import('../../src/services/apiClient');
+        const fetched = await Promise.all(
+          originalIds.map((oid) =>
+            apiGet<any>(`/v1/posts/${encodeURIComponent(oid)}`).then((r) => r.data).catch(() => null),
+          ),
+        );
+        for (const o of fetched) if (o) originalsMap[o.id] = o;
       }
 
       const buildReply = (c: any): ProfileReply => {

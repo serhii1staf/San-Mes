@@ -342,8 +342,8 @@ export default function CommentsScreen() {
 
   const loadPost = async () => {
     if (!postId) return;
-    const { supabase } = await import('../../src/lib/supabase');
-    const { data } = await supabase.from('posts').select('*, profiles:author_id (id, display_name, username, emoji, badge, is_verified)').eq('id', postId).single();
+    const { apiGet } = await import('../../src/services/apiClient');
+    const { data } = await apiGet<any>(`/v1/posts/${encodeURIComponent(postId)}`);
     if (data) setPostData(data);
   };
 
@@ -409,8 +409,8 @@ export default function CommentsScreen() {
     }
     if (!useConnectivityStore.getState().isOnline) return;
     const handle = InteractionManager.runAfterInteractions(async () => {
-      const { supabase } = await import('../../src/lib/supabase');
-      const { data } = await supabase.from('posts').select('*, profiles:author_id (id, display_name, username, emoji, badge, is_verified)').eq('id', info.originalPostId).single();
+      const { apiGet } = await import('../../src/services/apiClient');
+      const { data } = await apiGet<any>(`/v1/posts/${encodeURIComponent(info.originalPostId!)}`);
       if (!cancelled && data) setRepostOriginal(data);
     });
     return () => { cancelled = true; handle.cancel(); };

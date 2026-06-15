@@ -7,7 +7,6 @@ import { Avatar } from './Avatar';
 import { VerifiedBadge } from './VerifiedBadge';
 import { useAuthStore } from '../../store/authStore';
 import { useAccountsStore, SavedAccount } from '../../store/accountsStore';
-import { supabase } from '../../lib/supabase';
 import { showToast } from '../../store/toastStore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Updates from 'expo-updates';
@@ -79,9 +78,13 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
   };
 
   const switchToAccount = async (account: SavedAccount) => {
-    // Verify account still exists in DB
-    const { data: profile } = await supabase.from('profiles').select('*').eq('id', account.id).single();
-    if (!profile) {
+    // Re-login so we get a fresh Worker JWT scoped to this account.
+    // The saved `pin + deviceKey` is enough to re-issue without
+    // re-prompting; if the account is gone (deleted on another device)
+    // the login fails and we drop the row.
+    const { loginUser } = await import('../../lib/supabase');
+    const { profile, error } = await loginUser({ deviceKey: account.deviceKey, pin: account.pin });
+    if (error || !profile) {
       Alert.alert(t('common.error'), t('account_switcher.not_found'));
       removeAccount(account.id);
       return;
@@ -96,7 +99,9 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
     switchAccount(profile.id);
 
     // Persist the new account to the auth store BEFORE reloading so the fresh
-    // launch comes up already logged into the target account.
+    // launch comes up already logged into the target account. The `loginUser`
+    // call above also wrote the fresh JWT into MMKV, so apiClient will see it
+    // immediately.
     login({
       id: profile.id,
       username: profile.username,
@@ -109,7 +114,7 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
       is_verified: profile.is_verified || false,
       bannerUrl: profile.banner_url || undefined,
       links: profile.links || undefined,
-    }, 'token-' + Date.now());
+    });
 
     // Show a full-screen cover in the app's background color so the native reload
     // doesn't flash white. Then reload on the next tick (avoids the navigation race).
@@ -130,17 +135,13 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
       return;
     }
     setIsLoading(true);
-    // Find profile by device key
-    const { data: profile } = await supabase.from('profiles').select('*').eq('device_key', deviceKey).single();
-    if (!profile) {
-      Alert.alert(t('common.error'), t('account_switcher.not_found'));
-      setIsLoading(false);
-      return;
-    }
-    // Verify PIN
-    const { hashPin } = await import('../../lib/supabase');
-    if (profile.pin_hash && profile.pin_hash !== hashPin(pin)) {
-      Alert.alert(t('common.error'), t('account_switcher.error.wrong_pin'));
+    // Use the loginUser flow — it verifies the device key + PIN against
+    // the Worker and writes a fresh JWT into MMKV. Wrong PIN or unknown
+    // device key both surface as `error: 'invalid_key_or_pin'`.
+    const { loginUser } = await import('../../lib/supabase');
+    const { profile, error } = await loginUser({ deviceKey, pin });
+    if (error || !profile) {
+      Alert.alert(t('common.error'), error || t('account_switcher.error.wrong_pin'));
       setIsLoading(false);
       return;
     }
@@ -173,7 +174,7 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
       is_verified: profile.is_verified || false,
       bannerUrl: profile.banner_url || undefined,
       links: profile.links || undefined,
-    }, 'token-' + Date.now());
+    });
 
     setIsLoading(false);
 

@@ -1,12 +1,17 @@
+// Background sync — keeps the local entity store + on-disk caches
+// fresh. Phase 5 of the Cloudflare D1 migration: all reads land on
+// the Worker via `apiClient`. The previous direct-`supabase.from(...)`
+// fallbacks are gone; there's no second authoritative source anymore.
+
 import {
   getPosts,
   getProfile,
   getProfiles,
   getConversations,
   getMessages,
-  supabase,
 } from '../lib/supabase';
 
+import { apiGet } from './apiClient';
 import { useEntityStore } from './entityStore';
 import { shouldSync } from './syncThrottle';
 
@@ -23,18 +28,16 @@ import {
   LocalMessage,
 } from './cacheService';
 
-// ─── Sync Functions ──────────────────────────────────────────────────────────
-
 /**
- * Sync the main feed: fetch posts from Supabase, update entity store, persist to cache.
+ * Sync the main feed: fetch posts via the Worker, update entity store,
+ * persist to cache.
  */
-export async function syncFeed(userId?: string): Promise<void> {
+export async function syncFeed(_userId?: string): Promise<void> {
   if (!await shouldSync('feed', 5 * 60 * 1000)) return; // 5 min
   try {
     const { posts, error } = await getPosts(20, 0);
     if (error || !posts.length) return;
 
-    // Map to local types
     const localPosts: LocalPost[] = posts.map((p: any) => ({
       id: p.id,
       author_id: p.author_id,
@@ -49,12 +52,12 @@ export async function syncFeed(userId?: string): Promise<void> {
 
     const feedIds = localPosts.map((p) => p.id);
 
-    // Update store (triggers UI re-render)
     const store = useEntityStore.getState();
     store.upsertPosts(localPosts);
     store.setFeedIds(feedIds);
 
-    // Also extract and cache profiles from joined data
+    // Extract embedded profiles from joined data so the post-card render
+    // doesn't immediately have to refetch the author.
     for (const p of posts) {
       const profileData = Array.isArray(p.profiles) ? p.profiles[0] : p.profiles;
       if (profileData?.id) {
@@ -75,10 +78,8 @@ export async function syncFeed(userId?: string): Promise<void> {
       }
     }
 
-    // Persist to cache
     await cacheFeed(localPosts);
 
-    // Also persist all profiles to batch cache for hydration
     const { cacheAllProfiles } = await import('./cacheService');
     const allProfiles = Object.values(store.profiles);
     await cacheAllProfiles(allProfiles);
@@ -87,11 +88,8 @@ export async function syncFeed(userId?: string): Promise<void> {
   }
 }
 
-/**
- * Sync a single profile by ID.
- */
 export async function syncProfile(profileId: string): Promise<void> {
-  if (!await shouldSync(`profile:${profileId}`, 10 * 60 * 1000)) return; // 10 min
+  if (!await shouldSync(`profile:${profileId}`, 10 * 60 * 1000)) return;
   try {
     const { profile, error } = await getProfile(profileId);
     if (error || !profile) return;
@@ -112,24 +110,19 @@ export async function syncProfile(profileId: string): Promise<void> {
 
     const store = useEntityStore.getState();
     store.upsertProfile(localProfile);
-
     await cacheProfile(profileId, localProfile);
   } catch (e) {
     console.warn('[SyncService] syncProfile failed:', e);
   }
 }
 
-/**
- * Sync all profiles (for search/discover).
- */
 export async function syncProfiles(): Promise<void> {
-  if (!await shouldSync('all_profiles', 15 * 60 * 1000)) return; // 15 min
+  if (!await shouldSync('all_profiles', 15 * 60 * 1000)) return;
   try {
     const { profiles, error } = await getProfiles();
     if (error || !profiles.length) return;
 
     const store = useEntityStore.getState();
-
     for (const profile of profiles) {
       const localProfile: LocalProfile = {
         id: profile.id,
@@ -144,14 +137,6 @@ export async function syncProfiles(): Promise<void> {
         created_at: profile.created_at || null,
         updated_at: profile.updated_at || null,
       };
-
-      // upsertProfile already writes the per-profile entry via cacheProfile()
-      // and schedules the coalesced batch flush — calling cacheProfile again
-      // here just doubled the synchronous JSON.stringify + MMKV write per
-      // iteration, with no payoff. Yield once between iterations instead so
-      // a 50-profile sync still hands RAF callbacks room to fire between
-      // upserts (preserving the breathing room the previous awaited write
-      // gave us, without redoing the same persistence work).
       store.upsertProfile(localProfile);
       await Promise.resolve();
     }
@@ -161,26 +146,21 @@ export async function syncProfiles(): Promise<void> {
 }
 
 /**
- * Sync likes for a user: fetch liked post IDs from Supabase.
+ * Sync the user's likes — turned into a thin Worker read against the
+ * `/v1/profiles/:id/likes` endpoint. The endpoint returns posts; we
+ * project to the post-id list the entity store wants.
  */
 export async function syncLikes(userId: string): Promise<void> {
-  if (!await shouldSync(`likes:${userId}`, 10 * 60 * 1000)) return; // 10 min
+  if (!await shouldSync(`likes:${userId}`, 10 * 60 * 1000)) return;
   try {
-    const { data, error } = await supabase
-      .from('likes')
-      .select('post_id')
-      .eq('user_id', userId);
-
+    const { data, error } = await apiGet<any[]>(`/v1/profiles/${encodeURIComponent(userId)}/likes?limit=100`);
     if (error || !data) return;
-
-    const postIds = data.map((row: any) => row.post_id as string);
+    const postIds = data.map((p: any) => p.id as string);
 
     const store = useEntityStore.getState();
-    // Clear existing likes for this user and set fresh ones
     for (const postId of postIds) {
       store.setLike(userId, postId);
     }
-
     await cacheLikes(userId, postIds);
   } catch (e) {
     console.warn('[SyncService] syncLikes failed:', e);
@@ -188,48 +168,32 @@ export async function syncLikes(userId: string): Promise<void> {
 }
 
 /**
- * Sync follows for a user: fetch following IDs from Supabase.
+ * Sync the user's follows — fetches the `following` list via the
+ * Worker. The legacy version did its own `select('following_id')` on
+ * Supabase; the Worker variant gives the full embedded profile, but
+ * we project to the id list the entity store consumes.
  */
 export async function syncFollows(userId: string): Promise<void> {
-  if (!await shouldSync(`follows:${userId}`, 10 * 60 * 1000)) return; // 10 min
+  if (!await shouldSync(`follows:${userId}`, 10 * 60 * 1000)) return;
   try {
-    const { data, error } = await supabase
-      .from('follows')
-      .select('following_id')
-      .eq('follower_id', userId);
-
+    const { data, error } = await apiGet<{ id: string }[]>(`/v1/profiles/${encodeURIComponent(userId)}/following?limit=200`);
     if (error || !data) return;
-
-    const followingIds = data.map((row: any) => row.following_id as string);
+    const followingIds = data.map((p) => p.id);
 
     const store = useEntityStore.getState();
-    // Set follows for this user
     for (const followingId of followingIds) {
       store.setFollow(userId, followingId);
     }
-
     await cacheFollows(userId, followingIds);
   } catch (e) {
     console.warn('[SyncService] syncFollows failed:', e);
   }
 }
 
-/**
- * Sync posts authored by a specific user (for profile screen).
- */
 export async function syncUserPosts(userId: string): Promise<void> {
-  if (!await shouldSync(`user_posts:${userId}`, 5 * 60 * 1000)) return; // 5 min
+  if (!await shouldSync(`user_posts:${userId}`, 5 * 60 * 1000)) return;
   try {
-    const { data, error } = await supabase
-      .from('posts')
-      .select(`
-        *,
-        profiles:author_id (id, username, display_name, emoji)
-      `)
-      .eq('author_id', userId)
-      .order('created_at', { ascending: false })
-      .limit(25);
-
+    const { data, error } = await apiGet<any[]>(`/v1/profiles/${encodeURIComponent(userId)}/posts?limit=25`);
     if (error || !data || !data.length) return;
 
     const localPosts: LocalPost[] = data.map((p: any) => ({
@@ -254,20 +218,15 @@ export async function syncUserPosts(userId: string): Promise<void> {
   }
 }
 
-/**
- * Sync conversations for a user.
- */
 export async function syncConversations(userId: string): Promise<void> {
-  if (!await shouldSync(`conversations:${userId}`, 3 * 60 * 1000)) return; // 3 min
+  if (!await shouldSync(`conversations:${userId}`, 3 * 60 * 1000)) return;
   try {
     const { conversations, error } = await getConversations(userId);
     if (error || !conversations.length) return;
 
-    // Map to local conversation type
     const localConversations: LocalConversation[] = conversations.map((c: any) => {
       const conv = Array.isArray(c.conversations) ? c.conversations[0] : c.conversations;
       const profile = Array.isArray(c.profiles) ? c.profiles[0] : c.profiles;
-
       return {
         id: conv?.id || c.conversation_id,
         participantId: profile?.id || '',
@@ -281,22 +240,17 @@ export async function syncConversations(userId: string): Promise<void> {
 
     const store = useEntityStore.getState();
     store.setConversations(localConversations);
-
     await cacheConversations(localConversations);
   } catch (e) {
     console.warn('[SyncService] syncConversations failed:', e);
   }
 }
 
-/**
- * Sync messages for a specific conversation.
- */
 export async function syncMessages(conversationId: string): Promise<void> {
-  if (!await shouldSync(`messages:${conversationId}`, 60 * 1000)) return; // 1 min
+  if (!await shouldSync(`messages:${conversationId}`, 60 * 1000)) return;
   try {
     const { messages, error } = await getMessages(conversationId);
     if (error || !messages.length) return;
-
     const localMessages: LocalMessage[] = messages.map((m: any) => ({
       id: m.id,
       conversation_id: m.conversation_id,
@@ -305,16 +259,12 @@ export async function syncMessages(conversationId: string): Promise<void> {
       created_at: m.created_at,
       status: 'synced' as const,
     }));
-
     await cacheMessages(conversationId, localMessages);
   } catch (e) {
     console.warn('[SyncService] syncMessages failed:', e);
   }
 }
 
-/**
- * Full sync: run all sync functions in parallel.
- */
 export async function fullSync(userId: string): Promise<void> {
   try {
     await Promise.all([

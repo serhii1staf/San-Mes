@@ -9,10 +9,9 @@ import { Text } from './Text';
 import { useMiniAppsStore, MiniApp } from '../../store/miniAppsStore';
 import { useSettingsStore } from '../../store/settingsStore';
 import { getMiniAppPreviewSource } from '../mini-app-previews/registry';
-import { supabase } from '../../lib/supabase';
 import { useT } from '../../i18n/store';
 import { kvGetJSONSync, kvSetJSON } from '../../services/kvStore';
-import { miniAppPrefixRange } from '../../utils/miniAppShare';
+import { apiGet } from '../../services/apiClient';
 
 // In-app rich preview for a mini-app share link.
 //
@@ -114,41 +113,19 @@ export const MiniAppPreviewCard = React.memo(function MiniAppPreviewCard({
       try {
         const isShort = shortOrFullId.length <= 12 && !shortOrFullId.includes('-');
         if (isShort) {
-          // UUID column: LIKE doesn't work, use a btree range on the
-          // indexed `id`. `limit(2)` so an ambiguous prefix matching 2+
-          // rows is rejected rather than silently routed to the wrong app.
-          const range = miniAppPrefixRange(shortOrFullId);
-          if (!range) {
-            setMissing(true);
-            cachePut(shortOrFullId, null);
-            return;
-          }
-          const { data } = await supabase
-            .from('mini_apps')
-            .select('id, name, emoji, description, url')
-            .gte('id', range.lo)
-            .lte('id', range.hi)
-            .limit(2);
-          if (cancelled) return;
-          if (data && data.length === 1) {
-            const row = data[0] as CachedRow['d'];
-            setResolved(row);
-            cachePut(shortOrFullId, row);
-          } else {
-            setMissing(true);
-            cachePut(shortOrFullId, null);
-          }
+          // Short prefix → no public Worker route exists today; we fall
+          // back to "missing" and let the user open the share-link
+          // landing page (`/m/<short>`) which still resolves on the
+          // Vercel SSR side. The full-uuid path below is the common one
+          // (the in-app share-card always renders a full id).
+          setMissing(true);
+          cachePut(shortOrFullId, null);
         } else {
-          const { data } = await supabase
-            .from('mini_apps')
-            .select('id, name, emoji, description, url')
-            .eq('id', shortOrFullId)
-            .limit(1);
+          const { data, error } = await apiGet<CachedRow['d']>(`/v1/mini-apps/${encodeURIComponent(shortOrFullId)}`);
           if (cancelled) return;
-          if (data && data.length === 1) {
-            const row = data[0] as CachedRow['d'];
-            setResolved(row);
-            cachePut(shortOrFullId, row);
+          if (data && !error) {
+            setResolved(data);
+            cachePut(shortOrFullId, data);
           } else {
             setMissing(true);
             cachePut(shortOrFullId, null);

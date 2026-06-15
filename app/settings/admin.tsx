@@ -7,7 +7,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { CachedImage } from '../../src/components/ui/CachedImage';
-import { supabase, parseImageUrls, adminDeletePost } from '../../src/lib/supabase';
+import { parseImageUrls, adminDeletePost } from '../../src/lib/supabase';
+import { apiGet, apiPatch } from '../../src/services/apiClient';
 import { useFeedStore } from '../../src/store/feedStore';
 import { useSettingsStore } from '../../src/store/settingsStore';
 import { WORKER_BASE_URL } from '../../src/services/apiClient';
@@ -104,14 +105,22 @@ export default function AdminScreen() {
 
   const loadUsers = useCallback(async () => {
     setLoading(true);
-    const { data } = await supabase.from('profiles').select('*').order('created_at', { ascending: false }).limit(50);
+    // Phase 5: admin reads route through the Worker behind the
+    // X-Admin-Key header (the same value as the existing
+    // ADMIN_PASSWORD constant). Returns the same row shape Supabase did.
+    const { data } = await apiGet<any[]>('/v1/admin/profiles?limit=50', {
+      headers: { 'X-Admin-Key': ADMIN_PASSWORD },
+    });
     if (data) setUsers(data);
     setLoading(false);
   }, []);
 
   const loadUserPosts = useCallback(async (userId: string) => {
     setLoading(true);
-    const { data } = await supabase.from('posts').select('*').eq('author_id', userId).order('created_at', { ascending: false }).limit(30);
+    const { data } = await apiGet<any[]>(
+      `/v1/admin/profiles/${encodeURIComponent(userId)}/posts?limit=30`,
+      { headers: { 'X-Admin-Key': ADMIN_PASSWORD } },
+    );
     if (data) setUserPosts(data);
     setLoading(false);
   }, []);
@@ -158,13 +167,21 @@ export default function AdminScreen() {
   };
 
   const handleToggleVerify = async (userId: string, currentlyVerified: boolean) => {
-    await supabase.from('profiles').update({ is_verified: !currentlyVerified }).eq('id', userId);
+    await apiPatch(
+      `/v1/admin/profiles/${encodeURIComponent(userId)}`,
+      { is_verified: !currentlyVerified },
+      { headers: { 'X-Admin-Key': ADMIN_PASSWORD } },
+    );
     setUsers(prev => prev.map(u => u.id === userId ? { ...u, is_verified: !currentlyVerified } : u));
     if (selectedUser?.id === userId) setSelectedUser({ ...selectedUser, is_verified: !currentlyVerified });
   };
 
   const handleSetBadge = async (userId: string, badge: string | null) => {
-    await supabase.from('profiles').update({ badge }).eq('id', userId);
+    await apiPatch(
+      `/v1/admin/profiles/${encodeURIComponent(userId)}`,
+      { badge },
+      { headers: { 'X-Admin-Key': ADMIN_PASSWORD } },
+    );
     setUsers(prev => prev.map(u => u.id === userId ? { ...u, badge } : u));
     if (selectedUser?.id === userId) setSelectedUser({ ...selectedUser, badge });
   };

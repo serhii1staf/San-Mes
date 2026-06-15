@@ -1,7 +1,40 @@
+// Phase 5/6 of the Cloudflare D1 migration.
+//
+// This module used to be the canonical Supabase client + every read /
+// write helper. Today the data layer is the san-mes Worker (D1 +
+// custom JWTs) — every database function below delegates to
+// `apiClient` (and `authClient` for auth flows). The Supabase JS
+// client is still imported for one purpose only: as a `getPublicUrl()`
+// formatter for legacy banner / post images that pre-date the R2
+// migration. NO database queries go through it anymore.
+//
+// The function names + return shapes are unchanged so existing call
+// sites compile without edits. Internally each function is now a
+// 2-3 line wrapper around an apiClient call. The `dataLayer` flag in
+// settingsStore stays as an emergency escape hatch (defaulted to
+// `'d1'`); we don't honour `'supabase'` anymore — flipping the flag
+// just logs a perfMonitor warning and stays on D1.
+
 import { createClient } from '@supabase/supabase-js';
 import { Platform } from 'react-native';
 import { uploadToR2, isR2PublicConfigured } from './r2';
 import { t } from '../i18n/store';
+import {
+  apiDelete,
+  apiGet,
+  apiPatch,
+  apiPost,
+  apiPut,
+} from '../services/apiClient';
+import * as authClient from '../services/authClient';
+import { perfMonitor } from '../services/perfMonitor';
+
+// ─── Legacy Supabase clients ──────────────────────────────────────────
+//
+// Kept ONLY for storage uploads to existing buckets (`post-images`,
+// `avatars`). When R2 is configured every new upload lands there
+// first; the Supabase fallback survives so old image URLs keep
+// resolving. There are NO database queries through this client.
 
 const SUPABASE_URL = 'https://ycwadqglcykcpucembjn.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inljd2FkcWdsY3lrY3B1Y2VtYmpuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4Mjc2OTYsImV4cCI6MjA5NTQwMzY5Nn0.ZUr1YfN6pBp_AaUC1pZLKGApwgEXEiVw_w6w-yQjE_U';
@@ -15,15 +48,15 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   },
 });
 
-// Storage client with service_role to bypass RLS for file uploads (buckets are public, content is non-secret)
 const storageClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
 
 export { SUPABASE_URL, SUPABASE_ANON_KEY };
 
-// Upload a chat image: aggressively compressed (resized + JPEG quality) to keep files in KB, not MB.
-// GIFs are uploaded as-is to preserve animation.
+// ─── Image upload helpers (R2 primary, Supabase fallback) ────────────
+
+/** Upload a chat image: aggressively compressed to keep files in KB. GIFs preserved. */
 export async function uploadChatImage(imageUri: string): Promise<{ url: string | null; error: string | null }> {
   try {
     const ext = imageUri.split('.').pop()?.toLowerCase() || 'jpg';
@@ -31,46 +64,33 @@ export async function uploadChatImage(imageUri: string): Promise<{ url: string |
     let finalUri = imageUri;
     let contentType = 'image/jpeg';
     let fileExt = 'jpg';
-
     if (isGif) {
-      // Keep GIFs untouched so the animation survives
       contentType = 'image/gif';
       fileExt = 'gif';
     } else {
-      // Resize to max 1280px on the long edge + compress to ~0.5 quality → typically tens of KB
       try {
         const { manipulateAsync, SaveFormat } = await import('expo-image-manipulator');
         const result = await manipulateAsync(imageUri, [{ resize: { width: 1280 } }], { compress: 0.5, format: SaveFormat.JPEG });
         finalUri = result.uri;
-      } catch {
-        // Fall back to original if manipulation fails
-      }
+      } catch {}
     }
-
     const filename = `chat_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.${fileExt}`;
-
-    // Primary: upload to Cloudflare R2 (free egress, offloads Supabase traffic).
     if (isR2PublicConfigured()) {
       const r2 = await uploadToR2(finalUri, `chat/${filename}`, contentType);
       if (r2.url) return { url: r2.url, error: null };
-      // If R2 fails for any reason, fall through to Supabase so chat still works.
     }
-
     const formData = new FormData();
     formData.append('', { uri: finalUri, name: filename, type: contentType } as any);
-
     const uploadUrl = `${SUPABASE_URL}/storage/v1/object/post-images/${filename}`;
     const response = await fetch(uploadUrl, {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}`, 'x-upsert': 'true' },
       body: formData,
     });
-
     if (!response.ok) {
       const errText = await response.text();
       return { url: null, error: `Upload failed: ${errText}` };
     }
-
     const { data } = supabase.storage.from('post-images').getPublicUrl(filename);
     return { url: data.publicUrl, error: null };
   } catch (e: any) {
@@ -78,17 +98,13 @@ export async function uploadChatImage(imageUri: string): Promise<{ url: string |
   }
 }
 
-// Upload post image to storage, return public URL
+/** Upload post image to storage, return public URL. */
 export async function uploadPostImage(imageUri: string): Promise<{ url: string | null; error: string | null }> {
   try {
-    // Compress + resize every image (resize to 1280px long edge, JPEG ~0.5 quality)
-    // so uploads/downloads stay in tens of KB instead of megabytes. This drastically
-    // cuts storage and egress traffic. GIFs are left untouched to keep animation.
     let finalUri = imageUri;
     let contentType = 'image/jpeg';
     let fileExt = 'jpg';
     const ext = imageUri.split('.').pop()?.toLowerCase() || 'jpg';
-
     if (ext === 'gif') {
       contentType = 'image/gif';
       fileExt = 'gif';
@@ -97,43 +113,25 @@ export async function uploadPostImage(imageUri: string): Promise<{ url: string |
         const { manipulateAsync, SaveFormat } = await import('expo-image-manipulator');
         const result = await manipulateAsync(imageUri, [{ resize: { width: 1280 } }], { compress: 0.5, format: SaveFormat.JPEG });
         finalUri = result.uri;
-      } catch (e) {
-        // If manipulator fails, upload as-is
-      }
+      } catch {}
     }
-
     const filename = `post_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.${fileExt}`;
-
-    // Primary: upload to Cloudflare R2 (free egress, offloads Supabase traffic).
     if (isR2PublicConfigured()) {
       const r2 = await uploadToR2(finalUri, `post/${filename}`, contentType);
       if (r2.url) return { url: r2.url, error: null };
-      // If R2 fails, fall through to Supabase so posting still works.
     }
-
-    // Use FormData approach which works correctly in React Native
     const formData = new FormData();
-    formData.append('', {
-      uri: finalUri,
-      name: filename,
-      type: contentType,
-    } as any);
-
+    formData.append('', { uri: finalUri, name: filename, type: contentType } as any);
     const uploadUrl = `${SUPABASE_URL}/storage/v1/object/post-images/${filename}`;
     const response = await fetch(uploadUrl, {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}`,
-        'x-upsert': 'true',
-      },
+      headers: { 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}`, 'x-upsert': 'true' },
       body: formData,
     });
-
     if (!response.ok) {
       const errText = await response.text();
       return { url: null, error: `Upload failed: ${errText}` };
     }
-
     const { data } = supabase.storage.from('post-images').getPublicUrl(filename);
     return { url: data.publicUrl, error: null };
   } catch (e: any) {
@@ -141,30 +139,56 @@ export async function uploadPostImage(imageUri: string): Promise<{ url: string |
   }
 }
 
-// ---- Image URL helpers ----
+/** Upload a banner image. Preserves GIF / WebP animation. */
+export async function uploadBanner(userId: string, imageUri: string): Promise<{ url: string | null; error: string | null }> {
+  try {
+    const lower = imageUri.toLowerCase();
+    let ext: 'gif' | 'png' | 'webp' | 'jpg' = 'jpg';
+    let mimeType: string = 'image/jpeg';
+    if (lower.endsWith('.gif') || lower.includes('.gif?')) { ext = 'gif'; mimeType = 'image/gif'; }
+    else if (lower.endsWith('.png') || lower.includes('.png?')) { ext = 'png'; mimeType = 'image/png'; }
+    else if (lower.endsWith('.webp') || lower.includes('.webp?')) { ext = 'webp'; mimeType = 'image/webp'; }
+    const path = `banners/${userId}.${ext}`;
+    const formData = new FormData();
+    formData.append('', { uri: imageUri, name: `${userId}.${ext}`, type: mimeType } as any);
+    const uploadUrl = `${SUPABASE_URL}/storage/v1/object/avatars/${path}`;
+    const response = await fetch(uploadUrl, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}`, 'x-upsert': 'true' },
+      body: formData,
+    });
+    if (!response.ok) {
+      const errText = await response.text();
+      return { url: null, error: `Upload failed: ${errText}` };
+    }
+    const { data } = supabase.storage.from('avatars').getPublicUrl(path);
+    const publicUrl = data.publicUrl + '?t=' + Date.now();
+    return { url: publicUrl, error: null };
+  } catch (e: any) {
+    return { url: null, error: e?.message || 'Unknown error' };
+  }
+}
+
+// ─── Image URL helpers ─────────────────────────────────────────────────
 
 const IMAGE_URL_SEPARATOR = '|';
-
 const SPOILER_PREFIX = '::spoiler::';
 
-/** Check if image_url is marked as spoiler */
 export function isImageSpoiler(imageUrl: string | null | undefined): boolean {
   return !!imageUrl && imageUrl.startsWith(SPOILER_PREFIX);
 }
 
-/** Parse pipe-separated image URLs from the image_url column. Strips spoiler prefix. */
 export function parseImageUrls(imageUrl: string | null | undefined): string[] {
   if (!imageUrl) return [];
   const clean = imageUrl.startsWith(SPOILER_PREFIX) ? imageUrl.slice(SPOILER_PREFIX.length) : imageUrl;
   return clean.split(IMAGE_URL_SEPARATOR).filter(Boolean);
 }
 
-/** Join multiple image URLs into a pipe-separated string for storage. */
 export function joinImageUrls(urls: string[]): string {
   return urls.join(IMAGE_URL_SEPARATOR);
 }
 
-// ---- Database API ----
+// ─── Types (unchanged) ─────────────────────────────────────────────────
 
 export interface DBProfile {
   id: string;
@@ -174,6 +198,10 @@ export interface DBProfile {
   bio: string;
   pin_hash: string;
   device_key: string;
+  banner_url?: string | null;
+  links?: { type: string; url: string }[] | null;
+  badge?: string | null;
+  is_verified?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -189,10 +217,8 @@ export interface DBPost {
   created_at: string;
 }
 
-// Repost marker prefix
 const REPOST_PREFIX = '::repost::';
 
-// Check if a post is a repost
 export function isRepost(content: string): { isRepost: boolean; originalPostId?: string; comment?: string } {
   if (content.startsWith(REPOST_PREFIX)) {
     const rest = content.slice(REPOST_PREFIX.length);
@@ -205,36 +231,24 @@ export function isRepost(content: string): { isRepost: boolean; originalPostId?:
   return { isRepost: false };
 }
 
-// Create a repost
-export async function createRepost(authorId: string, originalPostId: string, comment?: string, imageUrl?: string): Promise<{ post: DBPost | null; error: string | null }> {
-  const content = `${REPOST_PREFIX}${originalPostId}::${comment || ''}`;
-  const { data, error } = await supabase
-    .from('posts')
-    .insert({ author_id: authorId, content, image_url: imageUrl || null })
-    .select()
-    .single();
-  if (error) return { post: null, error: error.message };
-  // Increment shares_count on original post
-  const { data: orig } = await supabase.from('posts').select('shares_count').eq('id', originalPostId).single();
-  if (orig) {
-    await supabase.from('posts').update({ shares_count: (orig.shares_count || 0) + 1 }).eq('id', originalPostId);
-  }
-  return { post: data, error: null };
-}
+// ─── Auth shims (delegate to authClient) ─────────────────────────────
 
-// Simple hash for PIN (not cryptographically secure, but sufficient for demo)
+/**
+ * Mirror of the server-side hashPin — kept for backwards compat with
+ * any cached payloads that include a pre-computed hash. New auth flows
+ * pass the raw PIN to the Worker and let it hash there.
+ */
 export function hashPin(pin: string): string {
   let hash = 0;
   const str = pin + 'san_salt_2024';
   for (let i = 0; i < str.length; i++) {
     const char = str.charCodeAt(i);
     hash = ((hash << 5) - hash) + char;
-    hash = hash & hash; // Convert to 32bit integer
+    hash = hash & hash;
   }
   return Math.abs(hash).toString(36);
 }
 
-// Register a new user
 export async function registerUser(params: {
   username: string;
   displayName: string;
@@ -242,648 +256,210 @@ export async function registerUser(params: {
   pin: string;
   deviceKey: string;
 }): Promise<{ profile: DBProfile | null; error: string | null }> {
-  const { data, error } = await supabase
-    .from('profiles')
-    .insert({
-      username: params.username,
-      display_name: params.displayName,
-      emoji: params.emoji,
-      pin_hash: hashPin(params.pin),
-      device_key: params.deviceKey,
-      bio: '',
-    })
-    .select()
-    .single();
-
-  if (error) {
-    if (error.message.includes('duplicate') || error.message.includes('unique')) {
-      return { profile: null, error: t('auth.error.username_taken') };
-    }
-    return { profile: null, error: error.message };
-  }
-
-  return { profile: data, error: null };
+  const { profile, error } = await authClient.register(params);
+  return { profile: profile as DBProfile | null, error };
 }
 
-// Login with device key + PIN
 export async function loginUser(params: {
   deviceKey: string;
   pin: string;
 }): Promise<{ profile: DBProfile | null; error: string | null }> {
-  const { data, error } = await supabase
-    .from('profiles')
-    .select('*')
-    .eq('device_key', params.deviceKey)
-    .eq('pin_hash', hashPin(params.pin))
-    .single();
-
-  if (error || !data) {
-    return { profile: null, error: t('auth.error.invalid_key_or_pin') };
-  }
-
-  return { profile: data, error: null };
+  const { profile, error } = await authClient.login(params);
+  return { profile: profile as DBProfile | null, error };
 }
 
-// Login with just PIN (for same device — match any user with that pin hash)
 export async function loginWithPin(pin: string): Promise<{ profile: DBProfile | null; error: string | null }> {
-  const { data, error } = await supabase
-    .from('profiles')
-    .select('*')
-    .eq('pin_hash', hashPin(pin))
-    .limit(1)
-    .single();
+  const { profile, error } = await authClient.loginWithPin(pin);
+  return { profile: profile as DBProfile | null, error };
+}
 
-  if (error || !data) {
-    return { profile: null, error: t('auth.error.invalid_pin') };
-  }
+export async function deleteAccount(_userId: string): Promise<{ error: string | null }> {
+  const { error } = await authClient.deleteAccount();
+  if (error) return { error };
+  return { error: null };
+}
 
+// ─── Reads ─────────────────────────────────────────────────────────────
+
+export async function getPosts(limit: number = 20, offset: number = 0): Promise<{ posts: any[]; error: string | null; hasMore: boolean }> {
+  const { data, error } = await apiGet<any[]>(`/v1/feed?limit=${limit}&offset=${offset}`);
+  if (error) return { posts: [], error, hasMore: false };
+  const posts = data || [];
+  return { posts, error: null, hasMore: posts.length === limit };
+}
+
+export async function getProfile(userId: string): Promise<{ profile: DBProfile | null; error: string | null }> {
+  const { data, error } = await apiGet<DBProfile>(`/v1/profiles/${userId}`);
+  if (error) return { profile: null, error };
   return { profile: data, error: null };
 }
 
-// Get all posts with author info
-export async function getPosts(limit: number = 20, offset: number = 0): Promise<{ posts: any[]; error: string | null; hasMore: boolean }> {
-  const { data, error } = await supabase
-    .from('posts')
-    .select(`
-      *,
-      profiles:author_id (id, username, display_name, emoji, badge, is_verified)
-    `)
-    .order('created_at', { ascending: false })
-    .range(offset, offset + limit - 1);
-
-  if (error) return { posts: [], error: error.message, hasMore: false };
-  return { posts: data || [], error: null, hasMore: (data || []).length === limit };
+export async function getProfiles(): Promise<{ profiles: DBProfile[]; error: string | null }> {
+  const { data, error } = await apiGet<DBProfile[]>(`/v1/profiles?limit=50`);
+  if (error) return { profiles: [], error };
+  return { profiles: data || [], error: null };
 }
 
-// Create a post
-export async function createPost(authorId: string, content: string, imageUrl?: string): Promise<{ post: DBPost | null; error: string | null }> {
-  const { data, error } = await supabase
-    .from('posts')
-    .insert({
-      author_id: authorId,
-      content,
-      image_url: imageUrl || null,
-    })
-    .select()
-    .single();
-
-  if (error) return { post: null, error: error.message };
-  return { post: data, error: null };
+export async function getComments(postId: string): Promise<{ comments: any[]; error: string | null }> {
+  const { data, error } = await apiGet<any[]>(`/v1/posts/${encodeURIComponent(postId)}/comments`);
+  if (error) return { comments: [], error };
+  return { comments: data || [], error: null };
 }
 
-// Delete a post
-export async function deletePost(postId: string, authorId: string): Promise<{ error: string | null }> {
-  try {
-    // Delete related likes and comments first
-    await supabase.from('likes').delete().eq('post_id', postId);
-    await supabase.from('comments').delete().eq('post_id', postId);
-    // Delete the post itself (only if author matches)
-    const { error } = await supabase
-      .from('posts')
-      .delete()
-      .eq('id', postId)
-      .eq('author_id', authorId);
-    return { error: error?.message || null };
-  } catch (e: any) {
-    return { error: e?.message || 'Unknown error' };
-  }
-}
-
-// Admin delete — no author check, also removes images from storage and cleans reposts
-export async function adminDeletePost(postId: string): Promise<{ error: string | null }> {
-  try {
-    // Get post data first to find image URLs
-    const { data: post } = await supabase.from('posts').select('image_url, content').eq('id', postId).single();
-
-    // Delete images from storage
-    if (post?.image_url) {
-      const urls = post.image_url.split('|||');
-      for (const url of urls) {
-        // Extract storage path from URL
-        const match = url.match(/post-images\/(.+)$/);
-        if (match) {
-          await storageClient.storage.from('post-images').remove([match[1]]);
-        }
-      }
-    }
-
-    // Delete reposts that reference this post
-    await supabase.from('posts').delete().like('content', `::repost::${postId}%`);
-
-    // Delete related likes and comments
-    await supabase.from('likes').delete().eq('post_id', postId);
-    await supabase.from('comments').delete().eq('post_id', postId);
-
-    // Delete the post itself (no author check)
-    const { error } = await supabase.from('posts').delete().eq('id', postId);
-    return { error: error?.message || null };
-  } catch (e: any) {
-    return { error: e?.message || 'Unknown error' };
-  }
-}
-
-// Get conversations for a user
-export async function getConversations(userId: string): Promise<{ conversations: any[]; error: string | null }> {
-  const { data, error } = await supabase
-    .from('conversation_participants')
-    .select(`
-      conversation_id,
-      conversations:conversation_id (id, created_at),
-      profiles:user_id (id, username, display_name, emoji, is_verified, badge)
-    `)
-    .neq('user_id', userId);
-
-  if (error) return { conversations: [], error: error.message };
+export async function getConversations(_userId: string): Promise<{ conversations: any[]; error: string | null }> {
+  const { data, error } = await apiGet<any[]>('/v1/conversations');
+  if (error) return { conversations: [], error };
   return { conversations: data || [], error: null };
 }
 
-// Get messages for a conversation
 export async function getMessages(conversationId: string): Promise<{ messages: any[]; error: string | null }> {
-  const { data, error } = await supabase
-    .from('messages')
-    .select('*')
-    .eq('conversation_id', conversationId)
-    .order('created_at', { ascending: true });
-
-  if (error) return { messages: [], error: error.message };
+  const { data, error } = await apiGet<any[]>(`/v1/conversations/${encodeURIComponent(conversationId)}/messages`);
+  if (error) return { messages: [], error };
   return { messages: data || [], error: null };
 }
 
-// Send a message
-export async function sendMessage(conversationId: string, senderId: string, text: string): Promise<{ error: string | null }> {
-  const { error } = await supabase
-    .from('messages')
-    .insert({
-      conversation_id: conversationId,
-      sender_id: senderId,
-      text,
-    });
-
-  return { error: error?.message || null };
+export async function getFollowCounts(userId: string): Promise<{ followers: number; following: number }> {
+  const { data } = await apiGet<{ followers: number; following: number }>(`/v1/profiles/${userId}/follow-counts`);
+  return { followers: data?.followers || 0, following: data?.following || 0 };
 }
 
-// Update profile (basic fields in DB — including banner_url and links)
-export async function updateProfile(userId: string, updates: Partial<{ display_name: string; emoji: string; bio: string; banner_url: string; links: any }>): Promise<{ error: string | null }> {
-  const payload: any = { ...updates, updated_at: new Date().toISOString() };
-  try {
-    const { error } = await supabase
-      .from('profiles')
-      .update(payload)
-      .eq('id', userId);
-    return { error: error?.message || null };
-  } catch (e: any) {
-    return { error: e?.message || 'Unknown error' };
+export async function getLikedPosts(
+  userId: string,
+  opts: { limit?: number } = {},
+): Promise<{ posts: any[]; error: string | null }> {
+  const limit = Math.max(1, Math.min(opts.limit ?? 50, 100));
+  const { data, error } = await apiGet<any[]>(`/v1/profiles/${userId}/likes?limit=${limit}`);
+  if (error) return { posts: [], error };
+  return { posts: data || [], error: null };
+}
+
+export async function getUserComments(
+  userId: string,
+  opts: { limit?: number } = {},
+): Promise<{ replies: any[]; error: string | null }> {
+  const limit = Math.max(1, Math.min(opts.limit ?? 50, 100));
+  const { data, error } = await apiGet<any[]>(`/v1/profiles/${userId}/replies?limit=${limit}`);
+  if (error) return { replies: [], error };
+  return { replies: data || [], error: null };
+}
+
+export async function isFollowing(followerId: string, followingId: string): Promise<boolean> {
+  const { data } = await apiGet<{ exists: boolean }>(`/v1/follows/${followerId}/${followingId}/exists`);
+  return !!data?.exists;
+}
+
+// ─── Writes ────────────────────────────────────────────────────────────
+
+export async function createPost(_authorId: string, content: string, imageUrl?: string): Promise<{ post: DBPost | null; error: string | null }> {
+  const { data, error } = await apiPost<DBPost>('/v1/posts', {
+    content,
+    image_url: imageUrl ?? null,
+  });
+  if (error) return { post: null, error };
+  return { post: data, error: null };
+}
+
+export async function deletePost(postId: string, _authorId: string): Promise<{ error: string | null }> {
+  const { error } = await apiDelete<{ deleted: boolean }>(`/v1/posts/${encodeURIComponent(postId)}`);
+  return { error };
+}
+
+export async function adminDeletePost(postId: string): Promise<{ error: string | null }> {
+  const { error } = await apiDelete<{ deleted: boolean }>(
+    `/v1/admin/posts/${encodeURIComponent(postId)}`,
+    { headers: { 'X-Admin-Key': 'V7k!Qm9@Lp2#xR8$Tw6ZcD4%yN' } },
+  );
+  return { error };
+}
+
+export async function toggleLike(_userId: string, postId: string): Promise<{ liked: boolean; error: string | null }> {
+  const { data, error } = await apiPost<{ liked: boolean }>(`/v1/posts/${encodeURIComponent(postId)}/like`);
+  if (error) return { liked: false, error };
+  return { liked: !!data?.liked, error: null };
+}
+
+export async function createComment(postId: string, _authorId: string, content: string): Promise<{ error: string | null }> {
+  const { error } = await apiPost(`/v1/posts/${encodeURIComponent(postId)}/comments`, { content });
+  return { error };
+}
+
+export async function updateComment(commentId: string, _authorId: string, content: string): Promise<{ error: string | null }> {
+  const { error } = await apiPatch(`/v1/comments/${encodeURIComponent(commentId)}`, { content });
+  return { error };
+}
+
+export async function deleteComment(commentId: string, _authorId: string, postId: string): Promise<{ error: string | null }> {
+  const { error } = await apiDelete(`/v1/comments/${encodeURIComponent(commentId)}?postId=${encodeURIComponent(postId)}`);
+  return { error };
+}
+
+export async function followUser(_followerId: string, followingId: string): Promise<{ error: string | null }> {
+  const { error } = await apiPut(`/v1/profiles/${encodeURIComponent(followingId)}/follow`);
+  if (error) {
+    const m = error.toLowerCase();
+    if (m.includes('cannot follow self')) return { error: null };
+    return { error };
   }
+  return { error: null };
 }
 
-// ---- Profile Meta — now stored directly in profiles table ----
+export async function unfollowUser(_followerId: string, followingId: string): Promise<{ error: string | null }> {
+  const { error } = await apiDelete(`/v1/profiles/${encodeURIComponent(followingId)}/follow`);
+  return { error };
+}
+
+export async function sendMessage(conversationId: string, _senderId: string, text: string): Promise<{ error: string | null }> {
+  const { error } = await apiPost(`/v1/conversations/${encodeURIComponent(conversationId)}/messages`, { text });
+  return { error };
+}
+
+export async function createRepost(_authorId: string, originalPostId: string, comment?: string, _imageUrl?: string): Promise<{ post: DBPost | null; error: string | null }> {
+  const { data, error } = await apiPost<DBPost>('/v1/posts/repost', {
+    originalPostId,
+    comment: comment ?? '',
+  });
+  if (error) return { post: null, error };
+  return { post: data, error: null };
+}
+
+export async function updateProfile(
+  _userId: string,
+  updates: Partial<{ display_name: string; emoji: string; bio: string; banner_url: string; links: any; username: string; badge: string | null; is_verified: boolean }>,
+): Promise<{ error: string | null }> {
+  const { error } = await apiPatch('/v1/profiles/me', updates);
+  if (error) {
+    perfMonitor.recordError(`updateProfile: ${error}`);
+    return { error };
+  }
+  return { error: null };
+}
+
+// ─── Profile meta ──────────────────────────────────────────────────────
+//
+// banner_url + links live on the `profiles` row directly; the meta
+// helpers are thin wrappers around `updateProfile` / `getProfile` so
+// existing call sites don't need to know the underlying shape.
 
 export interface ProfileMeta {
   banner_url?: string;
   links?: { type: string; url: string }[];
 }
 
-// Save profile meta (writes banner_url and links to profiles table)
 export async function saveProfileMeta(userId: string, meta: ProfileMeta): Promise<{ error: string | null }> {
-  const payload: any = { updated_at: new Date().toISOString() };
-  if (meta.banner_url !== undefined) payload.banner_url = meta.banner_url;
-  if (meta.links !== undefined) payload.links = meta.links;
-  try {
-    const { error } = await supabase
-      .from('profiles')
-      .update(payload)
-      .eq('id', userId);
-    return { error: error?.message || null };
-  } catch (e: any) {
-    return { error: e?.message || 'Unknown error' };
-  }
+  return updateProfile(userId, {
+    banner_url: meta.banner_url,
+    links: meta.links,
+  });
 }
 
-// Load profile meta from profiles table
 export async function loadProfileMeta(userId: string): Promise<{ meta: ProfileMeta | null; error: string | null }> {
-  try {
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('banner_url, links')
-      .eq('id', userId)
-      .single();
-    if (error || !data) return { meta: null, error: null };
-    return { meta: { banner_url: data.banner_url || undefined, links: data.links || undefined }, error: null };
-  } catch (e: any) {
-    return { meta: null, error: null };
-  }
-}
-
-// Upload banner image to storage, return public URL.
-// Preserves animated formats (GIF / animated WebP) by detecting the source
-// extension instead of forcing JPEG.
-export async function uploadBanner(userId: string, imageUri: string): Promise<{ url: string | null; error: string | null }> {
-  try {
-    const lower = imageUri.toLowerCase();
-    let ext: 'gif' | 'png' | 'webp' | 'jpg' = 'jpg';
-    let mimeType: string = 'image/jpeg';
-    if (lower.endsWith('.gif') || lower.includes('.gif?')) {
-      ext = 'gif';
-      mimeType = 'image/gif';
-    } else if (lower.endsWith('.png') || lower.includes('.png?')) {
-      ext = 'png';
-      mimeType = 'image/png';
-    } else if (lower.endsWith('.webp') || lower.includes('.webp?')) {
-      ext = 'webp';
-      mimeType = 'image/webp';
-    }
-    const path = `banners/${userId}.${ext}`;
-    
-    // Use FormData approach which works correctly in React Native
-    const formData = new FormData();
-    formData.append('', {
-      uri: imageUri,
-      name: `${userId}.${ext}`,
-      type: mimeType,
-    } as any);
-
-    // Upload using fetch directly to Supabase Storage API (service_role for RLS bypass)
-    const uploadUrl = `${SUPABASE_URL}/storage/v1/object/avatars/${path}`;
-    const response = await fetch(uploadUrl, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}`,
-        'x-upsert': 'true',
-      },
-      body: formData,
-    });
-
-    if (!response.ok) {
-      const errText = await response.text();
-      return { url: null, error: `Upload failed: ${errText}` };
-    }
-    
-    const { data } = supabase.storage.from('avatars').getPublicUrl(path);
-    // Add cache-busting param to force reload
-    const publicUrl = data.publicUrl + '?t=' + Date.now();
-    return { url: publicUrl, error: null };
-  } catch (e: any) {
-    return { url: null, error: e?.message || 'Unknown error' };
-  }
-}
-
-// Get profile by ID (for sync). Phase 2 of the D1 migration: when
-// `useD1Reads` is on, we attempt the Worker first and fall through to
-// Supabase on any error. Falling through preserves the user's flow
-// even if the Worker is mid-deploy or the schema doesn't have the row
-// yet (D1 is empty in early Phase 2). The fallback is logged to
-// `perfMonitor` so we surface schema mismatches early.
-export async function getProfile(userId: string): Promise<{ profile: DBProfile | null; error: string | null }> {
-  try {
-    const { useSettingsStore } = await import('../store/settingsStore');
-    if (useSettingsStore.getState().useD1Reads) {
-      const { apiGet } = await import('../services/apiClient');
-      const { perfMonitor } = await import('../services/perfMonitor');
-      const res = await apiGet<DBProfile>(`/v1/profiles/${userId}`);
-      if (!res.error) {
-        return { profile: res.data, error: null };
-      }
-      // Treat 'offline' as an explicit fallback signal — Supabase itself
-      // would also fail, but we still try because its `getSession`-less
-      // path can sometimes succeed against a flaky network where the
-      // connectivity probe is too pessimistic.
-      perfMonitor.recordError(`getProfile fallback to supabase: ${res.error}`);
-    }
-  } catch {
-    // Lazy-import or store hydration race — fall through to Supabase.
-  }
-
-  const { data, error } = await supabase
-    .from('profiles')
-    .select('*')
-    .eq('id', userId)
-    .single();
-
-  if (error || !data) return { profile: null, error: error?.message || 'Not found' };
-  return { profile: data, error: null };
-}
-
-// Toggle like
-export async function toggleLike(userId: string, postId: string): Promise<{ liked: boolean; error: string | null }> {
-  try {
-    // Check if already liked
-    const { data: existing } = await supabase
-      .from('likes')
-      .select('*')
-      .eq('user_id', userId)
-      .eq('post_id', postId)
-      .maybeSingle();
-
-    if (existing) {
-      // Unlike
-      await supabase.from('likes').delete().eq('user_id', userId).eq('post_id', postId);
-      // Decrement likes_count directly
-      const { data: post } = await supabase.from('posts').select('likes_count').eq('id', postId).single();
-      if (post) {
-        await supabase.from('posts').update({ likes_count: Math.max((post.likes_count || 0) - 1, 0) }).eq('id', postId);
-      }
-      return { liked: false, error: null };
-    } else {
-      // Like
-      await supabase.from('likes').insert({ user_id: userId, post_id: postId });
-      // Increment likes_count directly
-      const { data: post } = await supabase.from('posts').select('likes_count').eq('id', postId).single();
-      if (post) {
-        await supabase.from('posts').update({ likes_count: (post.likes_count || 0) + 1 }).eq('id', postId);
-      }
-      return { liked: true, error: null };
-    }
-  } catch (e: any) {
-    return { liked: false, error: e?.message || 'Unknown error' };
-  }
-}
-
-// Get all profiles (for search/discover)
-export async function getProfiles(): Promise<{ profiles: DBProfile[]; error: string | null }> {
-  const { data, error } = await supabase
-    .from('profiles')
-    .select('*')
-    .order('created_at', { ascending: false })
-    .limit(50);
-
-  if (error) return { profiles: [], error: error.message };
-  return { profiles: data || [], error: null };
-}
-
-
-
-// Get comments for a post
-export async function getComments(postId: string): Promise<{ comments: any[]; error: string | null }> {
-  try {
-    const { data, error } = await supabase
-      .from('comments')
-      .select(`*, profiles:author_id (id, username, display_name, emoji)`)
-      .eq('post_id', postId)
-      .order('created_at', { ascending: true });
-    if (error) return { comments: [], error: error.message };
-    return { comments: data || [], error: null };
-  } catch (e: any) {
-    return { comments: [], error: e?.message || 'Unknown error' };
-  }
-}
-
-// Create a comment
-export async function createComment(postId: string, authorId: string, content: string): Promise<{ error: string | null }> {
-  try {
-    const { error } = await supabase
-      .from('comments')
-      .insert({ post_id: postId, author_id: authorId, content });
-    if (error) return { error: error.message };
-    // Increment comment count directly
-    const { data: post } = await supabase.from('posts').select('comments_count').eq('id', postId).single();
-    if (post) {
-      await supabase.from('posts').update({ comments_count: (post.comments_count || 0) + 1 }).eq('id', postId);
-    }
-    return { error: null };
-  } catch (e: any) {
-    return { error: e?.message || 'Unknown error' };
-  }
-}
-
-// Update a comment's content (author-scoped)
-export async function updateComment(commentId: string, authorId: string, content: string): Promise<{ error: string | null }> {
-  try {
-    const { error } = await supabase
-      .from('comments')
-      .update({ content })
-      .eq('id', commentId)
-      .eq('author_id', authorId);
-    return { error: error?.message || null };
-  } catch (e: any) {
-    return { error: e?.message || 'Unknown error' };
-  }
-}
-
-// Delete a comment (author-scoped) and decrement the post's comment count
-export async function deleteComment(commentId: string, authorId: string, postId: string): Promise<{ error: string | null }> {
-  try {
-    const { error } = await supabase
-      .from('comments')
-      .delete()
-      .eq('id', commentId)
-      .eq('author_id', authorId);
-    if (error) return { error: error.message };
-    const { data: post } = await supabase.from('posts').select('comments_count').eq('id', postId).single();
-    if (post) {
-      await supabase.from('posts').update({ comments_count: Math.max(0, (post.comments_count || 0) - 1) }).eq('id', postId);
-    }
-    return { error: null };
-  } catch (e: any) {
-    return { error: e?.message || 'Unknown error' };
-  }
-}
-
-// Follow a user. Idempotent: if a row with the same (follower_id,
-// following_id) already exists, the upsert is a no-op rather than a
-// 23505 unique-constraint error. That keeps double-tap on the follow
-// button safe and lets the offline queue replay the same mutation
-// without erroring.
-export async function followUser(followerId: string, followingId: string): Promise<{ error: string | null }> {
-  // Self-follow doesn't make sense and would clutter the user's own
-  // notifications — silently no-op.
-  if (followerId === followingId) return { error: null };
-  try {
-    const { error } = await supabase
-      .from('follows')
-      .upsert(
-        { follower_id: followerId, following_id: followingId },
-        { onConflict: 'follower_id,following_id', ignoreDuplicates: true },
-      );
-    if (error) {
-      // Some Supabase versions surface "duplicate key" as a 409 rather
-      // than honouring `ignoreDuplicates`. Treat that as success — the
-      // user's intent (be following X) is already true.
-      const msg = (error.message || '').toLowerCase();
-      if (msg.includes('duplicate') || msg.includes('unique') || msg.includes('already')) {
-        return { error: null };
-      }
-      return { error: error.message };
-    }
-    return { error: null };
-  } catch (e: any) {
-    return { error: e?.message || 'Unknown error' };
-  }
-}
-
-// Unfollow a user
-export async function unfollowUser(followerId: string, followingId: string): Promise<{ error: string | null }> {
-  try {
-    const { error } = await supabase
-      .from('follows')
-      .delete()
-      .eq('follower_id', followerId)
-      .eq('following_id', followingId);
-    return { error: error?.message || null };
-  } catch (e: any) {
-    return { error: e?.message || 'Unknown error' };
-  }
-}
-
-// Check if following
-export async function isFollowing(followerId: string, followingId: string): Promise<boolean> {
-  try {
-    const { data, error } = await supabase
-      .from('follows')
-      .select('follower_id')
-      .eq('follower_id', followerId)
-      .eq('following_id', followingId)
-      .maybeSingle();
-    return !!data;
-  } catch {
-    return false;
-  }
-}
-
-// Get follower/following counts
-export async function getFollowCounts(userId: string): Promise<{ followers: number; following: number }> {
-  try {
-    const [{ count: followers }, { count: following }] = await Promise.all([
-      supabase.from('follows').select('*', { count: 'exact', head: true }).eq('following_id', userId),
-      supabase.from('follows').select('*', { count: 'exact', head: true }).eq('follower_id', userId),
-    ]);
-    return { followers: followers || 0, following: following || 0 };
-  } catch {
-    return { followers: 0, following: 0 };
-  }
-}
-
-// Posts the user has liked. Joined to the post's author profile so the
-// existing post cards can render without a second round-trip per row.
-// Capped at 50 by default — same window as `loadMyPosts` to keep the
-// chunked-build cost bounded on weak devices.
-export async function getLikedPosts(
-  userId: string,
-  opts: { limit?: number } = {},
-): Promise<{ posts: any[]; error: string | null }> {
-  const limit = Math.max(1, Math.min(opts.limit ?? 50, 100));
-  try {
-    const { data, error } = await supabase
-      .from('likes')
-      .select(
-        'created_at, posts:post_id (*, profiles:author_id (id, username, display_name, emoji, badge, is_verified))',
-      )
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false })
-      .limit(limit);
-    if (error) return { posts: [], error: error.message };
-    const rows: any[] = [];
-    for (const r of (data || []) as any[]) {
-      const p = Array.isArray(r.posts) ? r.posts[0] : r.posts;
-      if (p && p.id) rows.push(p);
-    }
-    return { posts: rows, error: null };
-  } catch (e: any) {
-    return { posts: [], error: e?.message || 'Unknown error' };
-  }
-}
-
-// Comments authored by the user — their reply history. Joined to the
-// parent post + that post's author profile so the row can render the
-// "in reply to" snippet without a follow-up query. Capped at 50.
-export async function getUserComments(
-  userId: string,
-  opts: { limit?: number } = {},
-): Promise<{ replies: any[]; error: string | null }> {
-  const limit = Math.max(1, Math.min(opts.limit ?? 50, 100));
-  try {
-    const { data, error } = await supabase
-      .from('comments')
-      .select(
-        'id, post_id, content, created_at, posts:post_id (id, content, image_url, author_id, profiles:author_id (id, username, display_name, emoji, is_verified))',
-      )
-      .eq('author_id', userId)
-      .order('created_at', { ascending: false })
-      .limit(limit);
-    if (error) return { replies: [], error: error.message };
-    return { replies: (data || []) as any[], error: null };
-  } catch (e: any) {
-    return { replies: [], error: e?.message || 'Unknown error' };
-  }
-}
-
-// Permanently delete a user account and all associated data (App Store / Google Play requirement).
-export async function deleteAccount(userId: string): Promise<{ error: string | null }> {
-  try {
-    // IMPORTANT: every delete goes through the service-role client (`storageClient`),
-    // which bypasses Row-Level Security. The anon client silently deletes 0 rows
-    // when RLS is enabled — that's why a "deleted" account could still log in.
-    const db = storageClient;
-
-    // 1. Find the user's posts to clean their dependents and storage images.
-    const { data: posts } = await db.from('posts').select('id, image_url').eq('author_id', userId);
-    const postIds = (posts || []).map((p: any) => p.id);
-
-    // 2. Delete images of the user's posts from storage.
-    try {
-      const files: string[] = [];
-      for (const p of (posts || [])) {
-        const urls = parseImageUrls(p.image_url);
-        for (const u of urls) {
-          const name = u.split('/').pop();
-          if (name) files.push(name);
-        }
-      }
-      if (files.length > 0) {
-        await db.storage.from('post-images').remove(files);
-      }
-    } catch {}
-
-    // 3. Delete likes/comments on the user's posts + reposts referencing them.
-    if (postIds.length > 0) {
-      await db.from('likes').delete().in('post_id', postIds);
-      await db.from('comments').delete().in('post_id', postIds);
-      for (const pid of postIds) {
-        await db.from('posts').delete().like('content', `::repost::${pid}%`);
-      }
-    }
-
-    // 4. Delete the user's own likes, comments, follows (both directions), posts.
-    await db.from('likes').delete().eq('user_id', userId);
-    await db.from('comments').delete().eq('author_id', userId);
-    await db.from('follows').delete().eq('follower_id', userId);
-    await db.from('follows').delete().eq('following_id', userId);
-    await db.from('posts').delete().eq('author_id', userId);
-
-    // 5. Delete the user's messages and conversation memberships.
-    //    Also delete the conversations themselves (and any remaining messages /
-    //    memberships in them) so no trace of the user's chats remains.
-    try {
-      const { data: myConvs } = await db
-        .from('conversation_participants')
-        .select('conversation_id')
-        .eq('user_id', userId);
-      const convIds = (myConvs || []).map((c: any) => c.conversation_id).filter(Boolean);
-      await db.from('messages').delete().eq('sender_id', userId);
-      if (convIds.length > 0) {
-        await db.from('messages').delete().in('conversation_id', convIds);
-        await db.from('conversation_participants').delete().in('conversation_id', convIds);
-        await db.from('conversations').delete().in('id', convIds);
-      }
-      await db.from('conversation_participants').delete().eq('user_id', userId);
-    } catch {}
-
-    // 6. Delete mini-apps created by the user (if any).
-    try { await db.from('mini_apps').delete().eq('creator_id', userId); } catch {}
-
-    // 7. Finally delete the profile itself.
-    const { error } = await db.from('profiles').delete().eq('id', userId);
-    if (error) return { error: error.message };
-
-    // 8. VERIFY the profile is actually gone — the account must be impossible to
-    //    log back into. If the row still exists, report failure instead of a
-    //    false success.
-    const { data: stillThere } = await db.from('profiles').select('id').eq('id', userId).maybeSingle();
-    if (stillThere) {
-      return { error: t('auth.error.delete_partial') };
-    }
-
-    return { error: null };
-  } catch (e: any) {
-    return { error: e?.message || t('auth.error.delete_generic') };
-  }
+  const { profile, error } = await getProfile(userId);
+  if (error || !profile) return { meta: null, error: error || null };
+  return {
+    meta: {
+      banner_url: profile.banner_url || undefined,
+      links: profile.links || undefined,
+    },
+    error: null,
+  };
 }

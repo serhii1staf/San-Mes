@@ -27,7 +27,7 @@ import { useChatSettingsStore, GLOBAL_CHAT_SETTINGS_KEY, DEFAULT_CHAT_SETTINGS }
 import { useBrowserStore } from '../../src/store/browserStore';
 import { ChatBackgroundLayer } from '../../src/components/ui/ChatBackgroundLayer';
 import { PixelIcon } from '../../src/components/pixel-icons/PixelIcon';
-import { supabase, uploadChatImage } from '../../src/lib/supabase';
+import { uploadChatImage } from '../../src/lib/supabase';
 import { kvGetJSONSync, kvSetJSON, kvWarm } from '../../src/services/kvStore';
 import { mockMessages, mockConversations, formatMessageTime } from '../../src/utils/mockData';
 import { showToast } from '../../src/store/toastStore';
@@ -449,9 +449,12 @@ export default function ChatScreen() {
     // on the same frame as first paint and contributing to the 60→40 fps
     // drop when opening a chat with no cached profile.
     const handle = InteractionManager.runAfterInteractions(() => {
-      supabase.from('profiles').select('*').eq('id', participantId).single().then(({ data }) => {
-        if (data) setProfileData(data);
-      }).catch(() => {});
+      // Phase 5: profile fetch goes through the Worker.
+      import('../../src/services/apiClient').then(({ apiGet }) =>
+        apiGet<any>(`/v1/profiles/${encodeURIComponent(participantId)}`).then(({ data }) => {
+          if (data) setProfileData(data);
+        }).catch(() => {})
+      );
     });
     return () => handle.cancel();
   }, [participantId, conversation, cachedProfile]);
@@ -740,26 +743,18 @@ export default function ChatScreen() {
         const { useAuthStore } = await import('../../src/store');
         const user = useAuthStore.getState().user;
         if (!user) return;
-        const { data: myConvs } = await supabase.from('conversation_participants').select('conversation_id').eq('user_id', user.id);
-        const { data: theirConvs } = await supabase.from('conversation_participants').select('conversation_id').eq('user_id', participantId);
-        let convId: string | null = null;
-        if (myConvs && theirConvs) {
-          const myIds = new Set(myConvs.map((c: any) => c.conversation_id));
-          const shared = theirConvs.find((c: any) => myIds.has(c.conversation_id));
-          if (shared) convId = shared.conversation_id;
-        }
-        if (!convId) {
-          const { data: newConv } = await supabase.from('conversations').insert({}).select().single();
-          if (newConv) {
-            convId = newConv.id;
-            await supabase.from('conversation_participants').insert([
-              { conversation_id: convId, user_id: user.id },
-              { conversation_id: convId, user_id: participantId },
-            ]);
-          }
-        }
+        const { apiPost } = await import('../../src/services/apiClient');
+        // Idempotent: returns existing 1:1 conversation if one already
+        // exists between this pair, otherwise creates and returns the new id.
+        const { data: convData } = await apiPost<{ conversation_id: string }>(
+          '/v1/conversations',
+          { otherUserId: participantId },
+        );
+        const convId = convData?.conversation_id || null;
         if (convId) {
-          await supabase.from('messages').insert({ conversation_id: convId, sender_id: user.id, text: `::img::${url}::` });
+          await apiPost(`/v1/conversations/${encodeURIComponent(convId)}/messages`, {
+            text: `::img::${url}::`,
+          });
           // Realtime publish — same pattern as handleSend. The peer sees
           // the GIF instantly via subscribe-on-mount.
           try {
@@ -929,31 +924,20 @@ export default function ChatScreen() {
       const user = useAuthStore.getState().user;
       if (!user) return;
 
-      const { data: myConvs } = await supabase.from('conversation_participants').select('conversation_id').eq('user_id', user.id);
-      const { data: theirConvs } = await supabase.from('conversation_participants').select('conversation_id').eq('user_id', participantId);
-
-      let convId: string | null = null;
-      if (myConvs && theirConvs) {
-        const myIds = new Set(myConvs.map((c: any) => c.conversation_id));
-        const shared = theirConvs.find((c: any) => myIds.has(c.conversation_id));
-        if (shared) convId = shared.conversation_id;
-      }
-
-      if (!convId) {
-        const { data: newConv } = await supabase.from('conversations').insert({}).select().single();
-        if (newConv) {
-          convId = newConv.id;
-          await supabase.from('conversation_participants').insert([
-            { conversation_id: convId, user_id: user.id },
-            { conversation_id: convId, user_id: participantId },
-          ]);
-        }
-      }
+      const { apiPost } = await import('../../src/services/apiClient');
+      const { data: convData } = await apiPost<{ conversation_id: string }>(
+        '/v1/conversations',
+        { otherUserId: participantId },
+      );
+      const convId = convData?.conversation_id || null;
 
       if (convId) {
-        // Encode attached images into the stored text with a marker so it round-trips without schema changes
+        // Encode attached images into the stored text with a marker so it
+        // round-trips without schema changes.
         const imageMarker = uploadedUrls.length > 0 ? `::img::${uploadedUrls.join('|')}::` : '';
-        await supabase.from('messages').insert({ conversation_id: convId, sender_id: user.id, text: imageMarker + text });
+        await apiPost(`/v1/conversations/${encodeURIComponent(convId)}/messages`, {
+          text: imageMarker + text,
+        });
 
         // Publish to the realtime channel so the peer's chat screen picks
         // up this message instantly. The channel name is `chat:<id>` (the

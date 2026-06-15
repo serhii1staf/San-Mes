@@ -12,7 +12,7 @@ import { CachedImage } from '../../src/components/ui/CachedImage';
 import { useAuthStore } from '../../src/store/authStore';
 import { useFeedStore } from '../../src/store/feedStore';
 import { useConnectivityStore } from '../../src/store';
-import { createRepost, createPost, supabase, uploadPostImage, joinImageUrls } from '../../src/lib/supabase';
+import { createRepost, createPost, uploadPostImage, joinImageUrls } from '../../src/lib/supabase';
 import { queueMutation, generateTempId } from '../../src/services/offlineQueue';
 import { useEntityStore } from '../../src/services/entityStore';
 import { accountKey } from '../../src/services/cacheService';
@@ -80,16 +80,17 @@ export default function CreateScreen() {
   // Load repost data from store
   useEffect(() => {
     if (pendingRepostId) {
-      supabase.from('posts').select('*, profiles:author_id (display_name, emoji)').eq('id', pendingRepostId).single().then(async ({ data }) => {
-        if (data) {
-          let originalData = data;
-          // Follow repost chain to find actual original content
+      (async () => {
+        const { apiGet } = await import('../../src/services/apiClient');
+        let originalData: any = (await apiGet<any>(`/v1/posts/${encodeURIComponent(pendingRepostId)}`)).data;
+        if (originalData) {
+          // Follow repost chain to find actual original content.
           const { isRepost: isRepostFn } = await import('../../src/lib/supabase');
           let depth = 0;
           while (originalData && depth < 10) {
             const ri = isRepostFn(originalData.content || '');
             if (ri.isRepost && ri.originalPostId) {
-              const { data: deeper } = await supabase.from('posts').select('*, profiles:author_id (display_name, emoji)').eq('id', ri.originalPostId).single();
+              const { data: deeper } = await apiGet<any>(`/v1/posts/${encodeURIComponent(ri.originalPostId)}`);
               if (deeper) {
                 originalData = deeper;
                 depth++;
@@ -108,7 +109,7 @@ export default function CreateScreen() {
           });
         }
         setPendingRepost(null);
-      });
+      })();
     }
   }, [pendingRepostId]);
 
@@ -310,15 +311,14 @@ export default function CreateScreen() {
             }
           }
 
-          const { data, error } = await supabase
-            .from('posts')
-            .update({ content: postContent, image_url: imageUrl || null })
-            .eq('id', editingPostId)
-            .select()
-            .single();
+          const { apiPatch } = await import('../../src/services/apiClient');
+          const { data, error } = await apiPatch<any>(
+            `/v1/posts/${encodeURIComponent(editingPostId)}`,
+            { content: postContent, image_url: imageUrl || null },
+          );
 
-          if (error) {
-            Alert.alert(t('create.alert.error_title'), error.message);
+          if (error || !data) {
+            Alert.alert(t('create.alert.error_title'), error || 'edit failed');
             // Do NOT clear the form on error
             return;
           }

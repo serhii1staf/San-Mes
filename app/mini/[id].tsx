@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import { View, ActivityIndicator } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
-import { supabase } from '../../src/lib/supabase';
+import { apiGet } from '../../src/services/apiClient';
 import { useMiniAppsStore } from '../../src/store/miniAppsStore';
 import { useTheme } from '../../src/theme';
 
@@ -43,14 +43,12 @@ export default function MiniDeepLinkScreen() {
       }
 
       // Cold path: the user opened a share link for an app they've never
-      // seen. Pull the row directly from Supabase so we can hand the URL
-      // to the WebView screen.
+      // seen. Pull the row directly from the Worker so we can hand the
+      // URL to the WebView screen.
       try {
-        const { data } = await supabase
-          .from('mini_apps')
-          .select('id, name, emoji, url')
-          .eq('id', targetId)
-          .maybeSingle();
+        const { data } = await apiGet<{ id: string; name: string; emoji: string; url: string }>(
+          `/v1/mini-apps/${encodeURIComponent(targetId)}`,
+        );
         if (cancelled) return;
         if (data?.url) {
           router.replace({
