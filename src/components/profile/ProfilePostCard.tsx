@@ -135,6 +135,20 @@ function ProfilePostCardBase({ post, authorName, authorEmoji, authorVerified, au
   }, [post.imageUrls, post.imageUrl, origPost?.imageUrls, origPost?.imageUrl]);
   const hasImage = imgs.length > 0;
   const content = post.content || origPost?.content || '';
+  // A repost embed's image comes from the ORIGINAL post (`origPost`), which
+  // the feed already rendered through the weserv proxy at its default width
+  // (≈800 px). The thumbnail here is only 100 px, so requesting the image at
+  // proxyWidth=100 produces a DIFFERENT proxy URL — and therefore a different
+  // expo-image cache key — than the feed used, missing the already-decoded
+  // bytes and showing an empty container until a fresh fetch lands (the
+  // reported bug). When the image is sourced from the repost original,
+  // request the feed-aligned width (proxyWidth=400 → w=800 after DPR) so the
+  // cached bytes are reused and the thumbnail paints instantly. Own-post
+  // thumbnails (often a just-uploaded local URI that bypasses the proxy)
+  // keep the tighter 100 px width.
+  const imgFromRepostOriginal =
+    isRepostPost && !(post.imageUrls && post.imageUrls.length) && !post.imageUrl;
+  const singleProxyWidth = imgFromRepostOriginal ? 400 : 100;
   // Skip the URL-extraction regex entirely when the post has an image
   // (the image is already the cover; the link preview would not show)
   // AND skip until hydration so the regex never runs on the placeholder
@@ -208,7 +222,7 @@ function ProfilePostCardBase({ post, authorName, authorEmoji, authorVerified, au
           <Pressable onPress={() => onImagePress(imgs[0], post.id, imgs)}>
             <View style={styles.thumbWrap}>
               {imgs.length === 1 ? (
-                <CachedImage uri={imgs[0]} style={styles.thumbSingle} resizeMode="cover" proxyWidth={100} />
+                <CachedImage uri={imgs[0]} style={styles.thumbSingle} resizeMode="cover" proxyWidth={singleProxyWidth} />
               ) : imgs.length === 2 ? (
                 <View style={styles.thumbRow}>
                   <CachedImage uri={imgs[0]} style={styles.thumbHalf} resizeMode="cover" proxyWidth={49} />
