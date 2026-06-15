@@ -11,6 +11,7 @@ import { VerifiedBadge } from '../ui/VerifiedBadge';
 import { triggerHaptic } from '../../utils/haptics';
 import { formatTimeAgo } from '../../utils/mockData';
 import { extractFirstUrl } from '../../services/linkPreview';
+import { parseGif } from '../../services/giphy';
 import { useT } from '../../i18n/store';
 
 // Profile "Replies" tab row.
@@ -48,6 +49,20 @@ function stripCommentTokens(text: string): string {
   }
   if (s.startsWith(GIF_TOKEN)) return '';
   return s.trim();
+}
+
+// Extract the reply BODY (what the user actually wrote), unwrapping the
+// reply-to-reply quote token if present. The body may itself be a GIF
+// marker (`::gif::{url}`), which `parseGif` then resolves to a URL. This
+// is the same unwrap rule the comments screen uses via `parseReply`, so a
+// GIF reply renders identically in the Replies tab and the thread.
+function getReplyBody(text: string): string {
+  if (!text) return '';
+  if (text.startsWith(REPLY_TOKEN)) {
+    const idx = text.indexOf('::', REPLY_TOKEN.length);
+    if (idx > 0) return text.slice(idx + 2);
+  }
+  return text;
 }
 
 export interface ProfileReply {
@@ -115,6 +130,13 @@ const styles = StyleSheet.create({
   },
   linkPreviewRow: { marginBottom: 8, marginHorizontal: 4 },
   replyBody: { paddingHorizontal: 4 },
+  replyGif: {
+    width: 120,
+    height: 120,
+    borderRadius: 14,
+    marginTop: 2,
+    backgroundColor: 'rgba(127,127,127,0.12)',
+  },
   timeText: { fontSize: 10, marginTop: 6 },
 });
 
@@ -148,7 +170,10 @@ function ProfileReplyCardBase({ reply }: ProfileReplyCardProps) {
   );
 
   const replyText = stripCommentTokens(reply.content);
-  const isGifOnly = reply.content?.includes(GIF_TOKEN) && !replyText;
+  // Resolve a GIF the reply itself carries (GIF-only or a reply-to-reply
+  // whose body is a GIF). Reuses the comments screen's `parseGif` so the
+  // token contract stays in one place.
+  const replyGifUrl = parseGif(getReplyBody(reply.content));
 
   // Image takes layout precedence — if the parent post has an image we
   // show that thumbnail and skip the (heavier) link preview, even when
@@ -240,17 +265,19 @@ function ProfileReplyCardBase({ reply }: ProfileReplyCardProps) {
         </View>
       ) : null}
 
-      {/* The user's reply text (or a "GIF" hint if the reply was a GIF
-          with no caption). FormattedText so **bold**, *italic*, `code`,
-          and other markers render as actual styled text. */}
+      {/* The user's reply: an actual GIF preview when the reply is a GIF
+          (rendered via CachedImage, which proxies giphy/R2 URLs), otherwise
+          the reply text. FormattedText so **bold**, *italic*, `code`, and
+          other markers render as styled text. */}
       <View style={styles.replyBody}>
-        {isGifOnly ? (
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            <Feather name="image" size={12} color={theme.colors.text.tertiary} />
-            <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 12 }}>
-              {t('notifications.tag_gif')}
-            </Text>
-          </View>
+        {replyGifUrl ? (
+          <CachedImage
+            uri={replyGifUrl}
+            style={styles.replyGif}
+            resizeMode="cover"
+            proxyWidth={240}
+            priority="low"
+          />
         ) : (
           <FormattedText style={{ fontSize: 13, lineHeight: 18 }}>
             {replyText}
