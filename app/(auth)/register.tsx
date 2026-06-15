@@ -338,20 +338,24 @@ export default function RegisterScreen() {
       if (profile) {
         const { switchAccount } = require('../../src/services/accountSwitch');
         switchAccount(profile.id);
-        login(
-          {
-            id: profile.id,
-            username: profile.username,
-            displayName: profile.display_name,
-            emoji: profile.emoji,
-            pin,
-            deviceKey: profile.device_key,
-            bio: bio.trim(),
-            badge: profile.badge || undefined,
-            is_verified: profile.is_verified || false,
-          },
-          'token-' + Date.now()
-        );
+        // DO NOT pass a synthetic token here — `registerUser` (via
+        // authClient) has already written the real Worker-issued JWT
+        // into MMKV. Passing a placeholder would clobber that JWT and
+        // every subsequent authed request would fail signature
+        // verification, returning 401 → apiClient would log the user
+        // straight back out. `login(user)` reads the real token via
+        // the MMKV fallback inside the auth store.
+        login({
+          id: profile.id,
+          username: profile.username,
+          displayName: profile.display_name,
+          emoji: profile.emoji,
+          pin,
+          deviceKey: profile.device_key,
+          bio: bio.trim(),
+          badge: profile.badge || undefined,
+          is_verified: profile.is_verified || false,
+        });
         router.replace('/(tabs)');
       }
     }

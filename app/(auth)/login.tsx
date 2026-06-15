@@ -42,22 +42,25 @@ export default function LoginScreen() {
     const { switchAccount } = require('../../src/services/accountSwitch');
     switchAccount(profile.id);
 
-    login(
-      {
-        id: profile.id,
-        username: profile.username,
-        displayName: profile.display_name,
-        emoji: profile.emoji,
-        bio: profile.bio,
-        pin,
-        deviceKey: profile.device_key,
-        badge: profile.badge || undefined,
-        is_verified: profile.is_verified || false,
-        bannerUrl: profile.banner_url || undefined,
-        links: profile.links || undefined,
-      },
-      'token-' + Date.now()
-    );
+    // DO NOT pass a synthetic token here — `loginUser` (via
+    // authClient) has already written the real Worker-issued JWT into
+    // MMKV. A placeholder would clobber that JWT and every subsequent
+    // authed request would fail signature verification (401 →
+    // apiClient logs the user straight back out). `login(user)` reads
+    // the real token via the MMKV fallback inside the auth store.
+    login({
+      id: profile.id,
+      username: profile.username,
+      displayName: profile.display_name,
+      emoji: profile.emoji,
+      bio: profile.bio,
+      pin,
+      deviceKey: profile.device_key,
+      badge: profile.badge || undefined,
+      is_verified: profile.is_verified || false,
+      bannerUrl: profile.banner_url || undefined,
+      links: profile.links || undefined,
+    });
     setIsLoading(false);
     router.replace('/(tabs)');
   };

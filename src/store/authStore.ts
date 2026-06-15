@@ -71,10 +71,26 @@ export const useAuthStore = create<AuthStoreState>()(
       login: (user, token) => {
         // Mirror the JWT into MMKV so apiClient picks it up immediately
         // — zustand-persist writes are async, MMKV is synchronous.
-        if (token) {
-          try { setAuthToken(token); } catch {}
+        //
+        // Hardening: only write the supplied token when it actually
+        // looks like a JWT (a JWS compact serialisation always starts
+        // with the base64-encoded `{"` which is the literal `eyJ`).
+        // The auth screens previously passed `'token-' + Date.now()`
+        // here, which silently clobbered the real JWT that authClient
+        // had already saved — every subsequent authed request then
+        // 401'd against the Worker and the user got logged straight
+        // out. Guarding here means a stray synthetic value can't ever
+        // recreate that bug.
+        const looksLikeJwt = typeof token === 'string' && token.startsWith('eyJ');
+        if (looksLikeJwt) {
+          try { setAuthToken(token!); } catch {}
         }
-        set({ user, token: token || getAuthToken() || 'mock-token', isAuthenticated: true });
+        const persistedToken = getAuthToken();
+        set({
+          user,
+          token: looksLikeJwt ? token! : (persistedToken || token || 'mock-token'),
+          isAuthenticated: true,
+        });
       },
       logout: () => {
         try { clearAuthToken(); } catch {}
