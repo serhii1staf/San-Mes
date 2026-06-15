@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { View, FlatList, Pressable, ViewStyle, TextInput, StyleSheet, Text as RNText, Alert, Animated, Easing, InteractionManager } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import ContextMenu from 'react-native-context-menu-view';
@@ -429,6 +429,27 @@ export default function MessagesScreen() {
     });
     return () => handle.cancel();
   }, [user?.id]);
+
+  // Background-refresh conversations whenever the tab regains focus, so a
+  // conversation created since the last view (e.g. a brand-new chat started
+  // by an incoming message while we were on another tab) shows up without a
+  // manual pull-to-refresh. Cache-first: `syncConversations` reconciles into
+  // the entity store and only repaints changed rows, so there's no flash.
+  // `syncConversations` is gated by a 3-minute `shouldSync` throttle, so
+  // rapid tab-switching collapses to at most one network round-trip — the
+  // bridge's live `notif.message` upsert is the instant path, this is the
+  // backstop. Deferred past the focus transition so the throttle read +
+  // request never compete with the tab-switch animation.
+  useFocusEffect(
+    useCallback(() => {
+      const uid = useAuthStore.getState().user?.id;
+      if (!uid) return;
+      const handle = InteractionManager.runAfterInteractions(() => {
+        syncConversations(uid);
+      });
+      return () => handle.cancel();
+    }, []),
+  );
 
   // Pre-warm expo-image's disk cache for the most likely next chat opens.
   // The user is almost always parked on this list for a beat or two before
