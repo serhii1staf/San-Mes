@@ -3,6 +3,7 @@ import { useAuthStore } from '../../store/authStore';
 import { useEntityStore } from '../../services/entityStore';
 import { useChatStore } from '../../store/chatStore';
 import { useFeedStore } from '../../store/feedStore';
+import { useNotificationsBadge } from '../../store/notificationsBadgeStore';
 import {
   feedPublicChannelName,
   getRealtime,
@@ -77,27 +78,28 @@ export function RealtimeAccountBridge(): null {
       const onNotif = (msg: { name?: string; data?: any }) => {
         const payload = msg?.data;
         if (!payload || typeof payload !== 'object') return;
+        const name = msg.name || '';
 
-        if (msg.name === 'new_conversation' || msg.name === 'new_message' || msg.name === 'notif.message') {
-          // Two payload shapes converge here:
-          //   - Legacy client-side ably publishes use `conversationId`
-          //     + sender metadata (sender pings recipient directly from
-          //     the chat screen).
-          //   - Worker-side `notif.message` uses snake_case
-          //     (`conversation_id`, `sender_id`, `preview`, `ts`) and
-          //     ships only what the recipient needs to bump the badge.
+        // ── Incoming message ping ──────────────────────────────────────
+        // Canonical path: the Worker's `POST /v1/conversations/:id/messages`
+        // publishes `notif.message` with snake_case fields
+        // (`conversation_id`, `sender_id`, `preview`, `ts`). We also keep
+        // backward-compat with the legacy client-side `new_message` /
+        // `new_conversation` publishes (camelCase `conversationId` + an
+        // embedded `message` object).
+        if (name === 'new_conversation' || name === 'new_message' || name === 'notif.message') {
           const conversationId = String(
             payload.conversationId || payload.conversation_id || '',
           );
           if (!conversationId) return;
+          const senderId = String(payload.senderId || payload.sender_id || '');
 
           // 1) Upsert the conversation row in the entity store so the
-          //    messages tab shows it immediately. We use participantId
-          //    as the dedupe key — never two rows for the same peer.
+          //    messages tab shows it immediately. Dedupe by conversation id
+          //    OR participant id — never two rows for the same peer.
           try {
             const store = useEntityStore.getState();
             const existing = store.conversations || [];
-            const senderId = String(payload.senderId || payload.sender_id || '');
             const idx = existing.findIndex(
               (c: any) =>
                 c.id === conversationId ||
@@ -127,34 +129,68 @@ export function RealtimeAccountBridge(): null {
             }
           } catch {}
 
-          // 2) If the message body is on the payload, append it to the
-          //    chat's local message store too. That way when the user
-          //    opens the chat for the first time it already shows the
-          //    incoming message — no spinner, no fetch round-trip.
-          if (payload.message && payload.message.id) {
-            try {
-              const chatStore = useChatStore.getState();
-              const existing = chatStore.messages[conversationId] || [];
-              if (!existing.some((m: any) => m.id === payload.message.id)) {
-                chatStore.addMessage(conversationId, {
-                  id: String(payload.message.id),
-                  conversationId,
-                  senderId: 'peer',
-                  text: String(payload.message.text || ''),
-                  createdAt: String(payload.message.createdAt || new Date().toISOString()),
-                  isRead: false,
-                  imageUrls: Array.isArray(payload.message.imageUrls) ? payload.message.imageUrls : undefined,
-                } as any);
+          // 2) Drop the previewed message into this conversation's chat
+          //    store so it's already on screen when the user opens the
+          //    chat — no spinner, no fetch round-trip.
+          try {
+            const chatStore = useChatStore.getState();
+            const existing = chatStore.messages[conversationId] || [];
+
+            // Legacy rich payload carries a full `message` object; the
+            // Worker carries only a trimmed `preview` string. Build a
+            // ChatMessage either way, tagging the sender as 'peer' so the
+            // bubble aligns left.
+            const rich = payload.message && payload.message.id ? payload.message : null;
+            const ts = String(payload.ts || rich?.createdAt || new Date().toISOString());
+            // Stable id derived from conversation + ts so a later full
+            // history load (real DB ids) doesn't duplicate this preview,
+            // and so a redelivered ping is a no-op.
+            const stableId = rich?.id ? String(rich.id) : `peer-${conversationId}-${ts}`;
+            const previewText = String(rich?.text ?? payload.preview ?? '');
+
+            // Parse the in-app image marker (`::img::url1|url2::text`) the
+            // chat screen uses, so an image preview shows the thumbnail
+            // instead of the raw marker text.
+            let text = previewText;
+            let imageUrls: string[] | undefined = Array.isArray(rich?.imageUrls)
+              ? rich.imageUrls
+              : undefined;
+            if (!imageUrls && previewText.startsWith('::img::')) {
+              const end = previewText.indexOf('::', 7);
+              if (end !== -1) {
+                const urls = previewText.slice(7, end).split('|').filter(Boolean);
+                if (urls.length) imageUrls = urls;
+                text = previewText.slice(end + 2);
               }
-            } catch {}
-          }
+            }
+
+            if (!existing.some((m: any) => m.id === stableId)) {
+              chatStore.addMessage(conversationId, {
+                id: stableId,
+                conversationId,
+                senderId: 'peer',
+                text,
+                createdAt: ts,
+                isRead: false,
+                imageUrls,
+              } as any);
+            }
+          } catch {}
+
+          // 3) Bump the unread notifications badge so the bell updates
+          //    live even when the recipient isn't on the messages tab.
+          try { useNotificationsBadge.getState().increment(1); } catch {}
+          return;
         }
 
-        // `notif.like` / `notif.comment` / `notif.follow` are pings
-        // only — the per-screen subscriptions (post:<id>,
-        // user:<id>:follows) carry the actual state deltas. We let
-        // these flow past silently so the unread-badge logic has room
-        // to grow without rewriting the bridge each time.
+        // ── Activity pings (like / comment / follow) ───────────────────
+        // The Worker publishes these from posts.ts / follows.ts. The
+        // per-screen subscriptions (post:<id>, user:<id>:follows) carry the
+        // actual state deltas; here we only bump the bell badge so it
+        // updates live.
+        if (name === 'notif.like' || name === 'notif.comment' || name === 'notif.follow') {
+          try { useNotificationsBadge.getState().increment(1); } catch {}
+        }
       };
 
       void notifChannel.subscribe(onNotif);

@@ -31,6 +31,12 @@ interface NotificationsBadgeState {
   // Recompute the badge from the MMKV-backed notifications cache + lastSeenTs.
   // Cheap (sync MMKV reads + filter), call freely on mount/focus.
   recompute: () => void;
+  // Optimistically bump the unread count by `by` (default 1). Used by the
+  // realtime bridge when a live `notif.*` ping arrives before the
+  // notifications cache (the source `recompute` reads from) has been
+  // refetched — so the bell badge updates the instant the event lands
+  // rather than only after the user next opens the notifications screen.
+  increment: (by?: number) => void;
   // Mark every currently-cached notification as seen. Called by the
   // notifications screen after a successful fetch so the badge clears
   // immediately when the user actually views the list.
@@ -89,5 +95,10 @@ export const useNotificationsBadge = create<NotificationsBadgeState>((set) => ({
     const ts = Date.now();
     try { kvSetJSON(LAST_SEEN_KEY, ts); } catch {}
     set({ unread: 0 });
+  },
+
+  increment: (by = 1) => {
+    if (!Number.isFinite(by) || by <= 0) return;
+    set((s) => ({ unread: s.unread + by }));
   },
 }));
