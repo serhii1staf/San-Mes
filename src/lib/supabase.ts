@@ -527,8 +527,32 @@ export async function uploadBanner(userId: string, imageUri: string): Promise<{ 
   }
 }
 
-// Get profile by ID (for sync)
+// Get profile by ID (for sync). Phase 2 of the D1 migration: when
+// `useD1Reads` is on, we attempt the Worker first and fall through to
+// Supabase on any error. Falling through preserves the user's flow
+// even if the Worker is mid-deploy or the schema doesn't have the row
+// yet (D1 is empty in early Phase 2). The fallback is logged to
+// `perfMonitor` so we surface schema mismatches early.
 export async function getProfile(userId: string): Promise<{ profile: DBProfile | null; error: string | null }> {
+  try {
+    const { useSettingsStore } = await import('../store/settingsStore');
+    if (useSettingsStore.getState().useD1Reads) {
+      const { apiGet } = await import('../services/apiClient');
+      const { perfMonitor } = await import('../services/perfMonitor');
+      const res = await apiGet<DBProfile>(`/v1/profiles/${userId}`);
+      if (!res.error) {
+        return { profile: res.data, error: null };
+      }
+      // Treat 'offline' as an explicit fallback signal — Supabase itself
+      // would also fail, but we still try because its `getSession`-less
+      // path can sometimes succeed against a flaky network where the
+      // connectivity probe is too pessimistic.
+      perfMonitor.recordError(`getProfile fallback to supabase: ${res.error}`);
+    }
+  } catch {
+    // Lazy-import or store hydration race — fall through to Supabase.
+  }
+
   const { data, error } = await supabase
     .from('profiles')
     .select('*')
