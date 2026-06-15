@@ -7,3 +7,4 @@ export { Logo } from './Logo';
 
 export { CachedImage } from './CachedImage';
 export { LinkPreview } from './LinkPreview';
+export { ShrinkingModalTitle } from './ShrinkingModalTitle';

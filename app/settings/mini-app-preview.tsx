@@ -27,6 +27,7 @@ import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
+import { ShrinkingModalTitle } from '../../src/components/ui';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { useSettingsStore } from '../../src/store/settingsStore';
 import { useT } from '../../src/i18n/store';
@@ -124,9 +125,11 @@ export default function MiniAppPreviewScreen() {
             </Pressable>
           </View>
           <View style={styles.headerCenter}>
-            <Text variant="body" weight="bold">
-              {t('mini_app_preview.title')}
-            </Text>
+            <ShrinkingModalTitle>
+              <Text variant="body" weight="bold">
+                {t('mini_app_preview.title')}
+              </Text>
+            </ShrinkingModalTitle>
           </View>
           <View style={[styles.headerSide, { justifyContent: 'flex-end' }]}>
             <Pressable onPress={onApply} hitSlop={12}>

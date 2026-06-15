@@ -22,6 +22,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { useTheme } from '../../src/theme';
+import { ShrinkingModalTitle } from '../../src/components/ui';
 import { CachedImage } from '../../src/components/ui/CachedImage';
 import {
   useThemeStore,
@@ -212,7 +213,7 @@ export default function FontsFamilyScreen() {
       </View>
 
       {/* ── Floating header pills ───────────────────────────────────── */}
-      <View style={[styles.headerRow, { top: insets.top + 8 }]} pointerEvents="box-none">
+      <View style={[styles.headerRow, { top: 28 }]} pointerEvents="box-none">
         <Pressable onPress={handleCancel} hitSlop={10} style={styles.headerPill}>
           <BlurView intensity={80} tint="dark" style={styles.headerPillInner}>
             <Feather name="x" size={18} color="#FFFFFF" />
@@ -221,14 +222,16 @@ export default function FontsFamilyScreen() {
         <View style={styles.headerTitleAbs} pointerEvents="box-none">
           <View style={styles.headerTitlePill}>
             <BlurView intensity={80} tint="dark" style={styles.headerTitleInner}>
-              <RNText
-                style={styles.headerTitleText}
-                allowFontScaling={false}
-                numberOfLines={1}
-                ellipsizeMode="tail"
-              >
-                {t('fonts.font_title')}
-              </RNText>
+              <ShrinkingModalTitle>
+                <RNText
+                  style={styles.headerTitleText}
+                  allowFontScaling={false}
+                  numberOfLines={1}
+                  ellipsizeMode="tail"
+                >
+                  {t('fonts.font_title')}
+                </RNText>
+              </ShrinkingModalTitle>
             </BlurView>
           </View>
         </View>

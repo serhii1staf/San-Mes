@@ -21,6 +21,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
 import { useTheme } from '../../src/theme';
+import { ShrinkingModalTitle } from '../../src/components/ui';
 import { ChatPreviewBubbles } from '../../src/components/ui/ChatPreviewBubbles';
 import {
   useChatSettingsStore,
@@ -111,7 +112,7 @@ export default function ChatFontScreen() {
       />
 
       {/* ── Floating header pills ───────────────────────────────────── */}
-      <View style={[styles.headerRow, { top: insets.top + 8 }]} pointerEvents="box-none">
+      <View style={[styles.headerRow, { top: 28 }]} pointerEvents="box-none">
         <Pressable onPress={onCancel} hitSlop={10} style={styles.headerPill}>
           <BlurView intensity={80} tint="dark" style={styles.headerPillInner}>
             <Feather name="x" size={18} color="#FFFFFF" />
@@ -120,9 +121,11 @@ export default function ChatFontScreen() {
         <View style={styles.headerTitleAbs} pointerEvents="box-none">
           <View style={styles.headerTitlePill}>
             <BlurView intensity={80} tint="dark" style={styles.headerTitleInner}>
-              <RNText style={styles.headerTitleText} allowFontScaling={false} numberOfLines={1} ellipsizeMode="tail">
-                {t('chat_settings.font_family')}
-              </RNText>
+              <ShrinkingModalTitle>
+                <RNText style={styles.headerTitleText} allowFontScaling={false} numberOfLines={1} ellipsizeMode="tail">
+                  {t('chat_settings.font_family')}
+                </RNText>
+              </ShrinkingModalTitle>
             </BlurView>
           </View>
         </View>

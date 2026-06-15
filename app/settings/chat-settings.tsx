@@ -35,6 +35,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
+import { ShrinkingModalTitle } from '../../src/components/ui';
 import { SlideUpSheet } from '../../src/components/ui/SlideUpSheet';
 import {
   useChatSettingsStore,
@@ -134,7 +135,13 @@ export default function ChatSettingsScreen() {
   const accent = theme.colors.accent.primary;
   const danger = '#FF3B30';
 
-  const headerContentHeight = insets.top + 48;
+  // Header rides high on the slide-up sheet — fixed 28px top offset to
+  // match the pixel-icons reference modal, rather than `insets.top + 8`
+  // (which pushed the buttons too far down on a bottom-sheet). Content
+  // padding tracks the same ~40px gap below the header so the cards keep
+  // the same visual distance and never slide under the chrome.
+  const HEADER_TOP = 28;
+  const headerContentHeight = HEADER_TOP + 40;
   const headerGradientHeight = headerContentHeight + 28;
   const bgTransparent = bgPrimary + '00';
 
@@ -163,17 +170,19 @@ export default function ChatSettingsScreen() {
           locations={[0, 0.55, 1]}
           style={StyleSheet.absoluteFill}
         />
-        <View style={[styles.headerRow, { paddingTop: insets.top + 8 }]} pointerEvents="auto">
+        <View style={[styles.headerRow, { paddingTop: HEADER_TOP }]} pointerEvents="auto">
           <Pressable
             onPress={() => router.back()}
             hitSlop={10}
-            style={[styles.headerBack, { left: theme.spacing.lg, top: insets.top + 8 }]}
+            style={[styles.headerBack, { left: theme.spacing.lg, top: HEADER_TOP }]}
           >
             <Feather name="chevron-left" size={24} color={textPrimary} />
           </Pressable>
-          <Text variant="subheading" weight="bold" numberOfLines={1}>
-            {headerTitle}
-          </Text>
+          <ShrinkingModalTitle>
+            <Text variant="subheading" weight="bold" numberOfLines={1}>
+              {headerTitle}
+            </Text>
+          </ShrinkingModalTitle>
         </View>
       </View>
 

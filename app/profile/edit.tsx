@@ -17,6 +17,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useTheme } from '../../src/theme';
 import { Text, Input, Avatar } from '../../src/components/ui';
+import { ShrinkingModalTitle } from '../../src/components/ui';
 import { CachedImage } from '../../src/components/ui/CachedImage';
 import { SlideUpSheet } from '../../src/components/ui/SlideUpSheet';
 import { useAuthStore, UserLink } from '../../src/store/authStore';
@@ -343,7 +344,7 @@ export default function EditProfileScreen() {
           style={StyleSheet.absoluteFill}
         />
       </View>
-      <View style={[styles.headerRow, { top: insets.top + 8 }]} pointerEvents="box-none">
+      <View style={[styles.headerRow, { top: 28 }]} pointerEvents="box-none">
         <Pressable onPress={handleClose} hitSlop={10} style={styles.headerPill}>
           <BlurView intensity={80} tint="dark" style={styles.headerPillInner}>
             <Feather name="x" size={18} color="#FFFFFF" />
@@ -352,14 +353,16 @@ export default function EditProfileScreen() {
         <View style={styles.headerTitleAbs} pointerEvents="box-none">
           <View style={styles.headerTitlePill}>
             <BlurView intensity={80} tint="dark" style={styles.headerTitleInner}>
-              <RNText
-                style={styles.headerTitleText}
-                allowFontScaling={false}
-                numberOfLines={1}
-                ellipsizeMode="tail"
-              >
-                {t('edit_profile.title')}
-              </RNText>
+              <ShrinkingModalTitle>
+                <RNText
+                  style={styles.headerTitleText}
+                  allowFontScaling={false}
+                  numberOfLines={1}
+                  ellipsizeMode="tail"
+                >
+                  {t('edit_profile.title')}
+                </RNText>
+              </ShrinkingModalTitle>
             </BlurView>
           </View>
         </View>
