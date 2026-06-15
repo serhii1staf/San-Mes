@@ -126,22 +126,44 @@ async function verifyAuth(input: AuthInput): Promise<boolean> {
  * Build a least-privilege capability map for the given user id.
  *
  * Channel naming convention used by the app:
- *   - `chat:<conversationId>`       → message stream for one conversation
- *   - `user:<userId>:notifications` → user's notification channel
- *   - `user:<userId>:presence`      → user's presence channel
+ *   - `chat:<conversationId>`         → message stream for one chat
+ *   - `user:<userId>:notifications`   → user's notification channel
+ *   - `user:<userId>:presence`        → user's presence channel
+ *   - `user:<userId>:profile`         → bio / banner / display-name
+ *                                       sync across own devices
+ *   - `user:<userId>:follows`         → incoming + outgoing follow
+ *                                       graph events
+ *   - `post:<postId>`                 → per-post comment + like events
+ *   - `feed:public`                   → global feed firehose
  *
- * Granting broad rights on `chat:*` is a deliberate tradeoff documented
- * here so a future hardening pass (per-conversation tokens) is easy to
- * spot. Per-conversation tokens would require a participant lookup on
- * every token mint, which slows auth noticeably. The chat-history REST
- * endpoint enforces participant membership at read time, so a malicious
- * token holder can see live messages from a chat they don't belong to,
- * but no history. Acceptable for v1; harden when traffic grows.
+ * Capability rules:
+ *   - `chat:*` keeps publish + subscribe + presence + history (existing
+ *     1:1 chat flow publishes from the sender's client).
+ *   - `user:<self>:*` keeps full publish + subscribe (the user owns
+ *     these channels). The Worker is the canonical publisher of the
+ *     `:profile`, `:follows`, `:notifications` events; granting publish
+ *     to the device too is harmless because the per-channel listeners
+ *     don't accept arbitrary client payloads — and a device may legit
+ *     publish presence on `user:<self>:presence`.
+ *   - `post:*` and `feed:public` are SUBSCRIBE-ONLY. Only the Worker
+ *     publishes there; the device should never be able to fabricate a
+ *     `post.new` or `comment.delete`.
+ *
+ * Granting broad rights on `chat:*` is a deliberate tradeoff
+ * documented here so a future hardening pass (per-conversation tokens)
+ * is easy to spot. Per-conversation tokens would require a
+ * participant lookup on every token mint, which slows auth noticeably.
+ * The chat-history REST endpoint enforces participant membership at
+ * read time, so a malicious token holder can see live messages from a
+ * chat they don't belong to, but no history. Acceptable for v1;
+ * harden when traffic grows.
  */
 function buildCapability(userId: string): Record<string, string[]> {
   return {
     'chat:*': ['publish', 'subscribe', 'presence', 'history'],
     [`user:${userId}:*`]: ['publish', 'subscribe', 'presence', 'history'],
+    'post:*': ['subscribe', 'history'],
+    'feed:public': ['subscribe', 'history'],
   };
 }
 
@@ -189,14 +211,18 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   }
 
   // Use the Ably REST client to sign a TokenRequest. The Ably SDK does the
-  // HMAC-SHA256 + nonce + timestamp dance for us.
+  // HMAC-SHA256 + nonce + timestamp dance for us. We hand the capability
+  // map to Ably as a JSON-stringified blob — Ably accepts either a typed
+  // object or a string, and stringify side-steps the strict
+  // `capabilityOp` literal-array typing the SDK declares (which gets
+  // brittle as we add new channels here).
   let tokenRequest;
   try {
     const rest = new Ably.Rest({ key: rootKey });
     tokenRequest = await rest.auth.createTokenRequest({
       ttl: TOKEN_TTL_MS,
       clientId: userId,
-      capability: buildCapability(userId),
+      capability: JSON.stringify(buildCapability(userId)),
     });
   } catch (e: any) {
     return send(res, 500, {
