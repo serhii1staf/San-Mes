@@ -355,6 +355,21 @@ export default function CommentsScreen() {
       setIsLoading(false);
       return;
     }
+    // 5-minute TTL gate. The synchronous MMKV hydrate above already paints
+    // the last-known thread, so when the user pops back into the same post
+    // within five minutes we skip the network refetch entirely. New
+    // comments still appear because the create / edit / delete paths below
+    // refresh the cache after their mutation lands. Without this gate, a
+    // rapid back-tap-back-tap of the same comments screen burned three
+    // identical reads of every comment row + author profile per cycle —
+    // measurable Supabase egress and a visible spinner flash on each.
+    const TTL_MS = 5 * 60 * 1000;
+    const tsKey = `comments:${postId}:ts`;
+    const lastFetch = kvGetJSONSync<number>(tsKey, 0);
+    if (initialCommentsRef.current && initialCommentsRef.current.length > 0 && Date.now() - lastFetch < TTL_MS) {
+      setIsLoading(false);
+      return;
+    }
     // Don't show the spinner if we already painted cached comments.
     if (comments.length === 0) setIsLoading(true);
     // Safety: never let the spinner spin forever if the request stalls.
@@ -364,6 +379,7 @@ export default function CommentsScreen() {
       if (Array.isArray(data)) {
         setComments(data);
         kvSetJSON(`comments:${postId}`, data);
+        kvSetJSON(tsKey, Date.now());
         if (data.length > 0) {
           setTimeout(() => listRef.current?.scrollToEnd({ animated: false }), 150);
         }

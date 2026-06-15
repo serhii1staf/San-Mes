@@ -707,7 +707,7 @@ export default function UserProfileScreen() {
         setLikedPosts(cached);
       }
 
-      const { posts: rows, error } = await getLikedPosts(id, { limit: 50 });
+      const { posts: rows, error } = await getLikedPosts(id, { limit: 25 });
       if (error || !rows) {
         setLikedLoaded(true);
         return;
@@ -767,7 +767,7 @@ export default function UserProfileScreen() {
         setUserReplies(cached);
       }
 
-      const { replies: rows, error } = await getUserComments(id, { limit: 50 });
+      const { replies: rows, error } = await getUserComments(id, { limit: 25 });
       if (error || !rows) {
         setRepliesLoaded(true);
         return;

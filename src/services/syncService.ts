@@ -31,7 +31,7 @@ import {
 export async function syncFeed(userId?: string): Promise<void> {
   if (!await shouldSync('feed', 5 * 60 * 1000)) return; // 5 min
   try {
-    const { posts, error } = await getPosts(100, 0);
+    const { posts, error } = await getPosts(20, 0);
     if (error || !posts.length) return;
 
     // Map to local types
@@ -228,7 +228,7 @@ export async function syncUserPosts(userId: string): Promise<void> {
       `)
       .eq('author_id', userId)
       .order('created_at', { ascending: false })
-      .limit(100);
+      .limit(25);
 
     if (error || !data || !data.length) return;
 

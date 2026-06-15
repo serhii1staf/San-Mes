@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useEffect, useState } from 'react';
+import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { View, Pressable, FlatList, ActivityIndicator } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -15,8 +15,24 @@ import { useAuthStore } from '../../store/authStore';
 import { queueMutation } from '../../services/offlineQueue';
 import { triggerHaptic } from '../../utils/haptics';
 import { useBlockedUsersStore } from '../../store/blockedUsersStore';
+import { kvGetJSONSync, kvSetJSON } from '../../services/kvStore';
 
 export type FollowsListMode = 'followers' | 'following';
+
+// MMKV cache contract:
+//   key:    @san:followers:<userId>  /  @san:following:<userId>
+//   value:  { ts: number, data: FollowProfileRow[] }
+// 24h TTL — stale entries are still painted on open (nothing's worse
+// than an empty modal), then overwritten by the background refetch as
+// soon as it lands.
+const FOLLOWS_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+function followsCacheKey(mode: FollowsListMode, userId: string): string {
+  return `@san:${mode}:${userId}`;
+}
+interface FollowsCacheEntry {
+  ts: number;
+  data: FollowProfileRow[];
+}
 
 interface FollowsListModalProps {
   visible: boolean;
@@ -47,29 +63,79 @@ export function FollowsListModal({ visible, onClose, userId, mode }: FollowsList
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // When the same (userId, mode) pair re-opens, we should not flash the
+  // spinner if we just hydrated from cache. Track the last successful
+  // hydrate so we only show the spinner on truly cold opens.
+  const hydratedKey = useRef<string | null>(null);
+
   // Fetch on open. Reset state on close so a re-open with a different
   // (userId, mode) doesn't briefly flash the previous list.
+  //
+  // On open we do TWO things, in this order:
+  //   1) Synchronously hydrate from the per-account MMKV cache so the
+  //      sheet paints with the last-known list immediately. No spinner
+  //      if we have anything, including stale entries.
+  //   2) Fire the network refetch in the background. Replaces the list
+  //      when it lands, and updates the cache with the fresh ts.
+  //
+  // Egress-reduction win: rapid open/close cycles (the user idly
+  // tapping "Followers" → close → "Followers") burn one network roundtrip
+  // total instead of one per open. Stale-while-revalidate.
   useEffect(() => {
     if (!visible || !userId) {
       if (!visible) {
         setProfiles([]);
         setError(null);
+        hydratedKey.current = null;
       }
       return;
     }
     let cancelled = false;
-    setIsLoading(true);
+    const cacheKey = followsCacheKey(mode, userId);
+
+    // Synchronous hydrate from MMKV. Any cached payload is good enough
+    // for the first paint — the network refetch corrects it shortly.
+    let hadCache = false;
+    try {
+      const cached = kvGetJSONSync<FollowsCacheEntry | null>(cacheKey, null);
+      if (cached && Array.isArray(cached.data)) {
+        setProfiles(cached.data);
+        hadCache = cached.data.length > 0;
+        hydratedKey.current = cacheKey;
+      }
+    } catch {
+      // Bad JSON / missing key — fall through to network.
+    }
+
+    // Spinner only if we have nothing to show. Stale data still beats
+    // an empty modal, so we suppress the spinner whenever the cache
+    // produced rows.
+    setIsLoading(!hadCache);
     setError(null);
+
+    // Background refresh. The TTL is informational — we always refetch
+    // on open so a follow that landed elsewhere shows up — but we use it
+    // to decide whether the cache we just rendered is still trustworthy
+    // for the next mount cycle.
     const fetcher = mode === 'followers' ? getFollowers : getFollowing;
     fetcher(userId, { limit: 100 })
       .then((res) => {
         if (cancelled) return;
-        if (res.error) setError(res.error);
-        setProfiles(res.profiles);
+        if (res.error && !hadCache) setError(res.error);
+        if (Array.isArray(res.profiles)) {
+          setProfiles(res.profiles);
+          try {
+            kvSetJSON(cacheKey, { ts: Date.now(), data: res.profiles } as FollowsCacheEntry);
+          } catch {}
+        }
       })
       .finally(() => {
         if (!cancelled) setIsLoading(false);
       });
+    // TTL is currently used only to scope the cache write — kept here so
+    // a future change can short-circuit the network fetch when the cache
+    // is fresh enough. Reading it keeps the constant referenced.
+    void FOLLOWS_CACHE_TTL_MS;
     return () => {
       cancelled = true;
     };

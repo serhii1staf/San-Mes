@@ -230,7 +230,10 @@ export default function ProfileScreen() {
       // — exactly the work that was landing as the 1311 ms long task users
       // saw 5–6 s after the profile tab opened (Supabase response → 100×
       // regex+map+chain-walk → setProfilePosts → FlatList reconcile).
-      const { data } = await supabase.from('posts').select('*').eq('author_id', user.id).order('created_at', { ascending: false }).limit(50);
+      // Page size dropped from 50 to 25 as part of the egress-reduction
+      // pass — the user can scroll for more via existing pagination,
+      // and the first paint becomes ~half as expensive on weak devices.
+      const { data } = await supabase.from('posts').select('*').eq('author_id', user.id).order('created_at', { ascending: false }).limit(25);
       if (!data) return;
 
       // Collect original post IDs from reposts
@@ -371,7 +374,7 @@ export default function ProfileScreen() {
         setLikedPosts(cached);
       }
 
-      const { posts: rows, error } = await getLikedPosts(user.id, { limit: 50 });
+      const { posts: rows, error } = await getLikedPosts(user.id, { limit: 25 });
       if (error || !rows) {
         setLikedLoaded(true);
         return;
@@ -438,7 +441,7 @@ export default function ProfileScreen() {
         setUserReplies(cached);
       }
 
-      const { replies: rows, error } = await getUserComments(user.id, { limit: 50 });
+      const { replies: rows, error } = await getUserComments(user.id, { limit: 25 });
       if (error || !rows) {
         setRepliesLoaded(true);
         return;
