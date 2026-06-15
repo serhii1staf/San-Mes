@@ -115,6 +115,15 @@ register('POST', '/v1/conversations/:id/messages', async (req, env, ctx, params,
     [conversationId, authedUserId],
   );
   const preview = text.slice(0, 200);
+  // Carry the FULL message (capped) alongside the badge preview. This is
+  // the delivery backstop: a recipient whose chat screen ISN'T open (or who
+  // never shared the `chat:<convId>` channel because the two peers entered
+  // from different routes) still gets the whole message into their chat
+  // store via RealtimeAccountBridge, deduped by `message_id`. The badge
+  // keeps using `preview`. We cap the realtime `text` at 4 KB so the
+  // WebSocket frame stays small — a longer body is rehydrated from the DB
+  // on chat open.
+  const realtimeText = text.length > 4096 ? text.slice(0, 4096) : text;
   for (const row of otherParticipants) {
     publishEvent(
       env,
@@ -123,6 +132,9 @@ register('POST', '/v1/conversations/:id/messages', async (req, env, ctx, params,
       {
         conversation_id: conversationId,
         sender_id: authedUserId,
+        message_id: id,
+        text: realtimeText,
+        created_at: now,
         preview,
         ts: now,
       },

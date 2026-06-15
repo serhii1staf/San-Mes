@@ -136,17 +136,31 @@ export function RealtimeAccountBridge(): null {
             const chatStore = useChatStore.getState();
             const existing = chatStore.messages[conversationId] || [];
 
-            // Legacy rich payload carries a full `message` object; the
-            // Worker carries only a trimmed `preview` string. Build a
-            // ChatMessage either way, tagging the sender as 'peer' so the
-            // bubble aligns left.
+            // Three payload shapes, in priority order:
+            //   1) Worker `notif.message` (current): snake_case full message
+            //      — `message_id`, `text`, `created_at` (+ `preview` badge).
+            //   2) Legacy client `new_message`: an embedded `message` object.
+            //   3) Worker preview-only (pre-backstop): just `preview` + `ts`.
+            // Build a ChatMessage from whichever is present, tagging the
+            // sender as 'peer' so the bubble aligns left.
             const rich = payload.message && payload.message.id ? payload.message : null;
-            const ts = String(payload.ts || rich?.createdAt || new Date().toISOString());
-            // Stable id derived from conversation + ts so a later full
-            // history load (real DB ids) doesn't duplicate this preview,
-            // and so a redelivered ping is a no-op.
-            const stableId = rich?.id ? String(rich.id) : `peer-${conversationId}-${ts}`;
-            const previewText = String(rich?.text ?? payload.preview ?? '');
+            const ts = String(
+              payload.created_at || payload.ts || rich?.createdAt || new Date().toISOString(),
+            );
+            // Stable id keyed off the REAL DB message id (`message_id` from the
+            // Worker, or `message.id` from the legacy payload) so the full
+            // history load — which carries the same DB id — dedupes against
+            // this backstop instead of duplicating it. Only when neither is
+            // present do we fall back to a conversation+ts synthetic id.
+            const dbMessageId = rich?.id
+              ? String(rich.id)
+              : payload.message_id
+                ? String(payload.message_id)
+                : '';
+            const stableId = dbMessageId || `peer-${conversationId}-${ts}`;
+            // Prefer the full `text` field; fall back to the legacy rich text,
+            // then the trimmed preview for pre-backstop publishes.
+            const previewText = String(rich?.text ?? payload.text ?? payload.preview ?? '');
 
             // Parse the in-app image marker (`::img::url1|url2::text`) the
             // chat screen uses, so an image preview shows the thumbnail
