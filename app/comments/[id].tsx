@@ -340,6 +340,84 @@ export default function CommentsScreen() {
     return () => handle.cancel();
   }, [postId]);
 
+  // Realtime: live updates for the per-post channel. New / edited /
+  // deleted comments + the post's like count are all fanned out from
+  // the Worker on `post:<id>`. Subscribe ONLY while this screen is
+  // mounted — the bridge handles cross-app channels (notifications,
+  // profile, follows, feed); per-post subs are scoped per-screen so
+  // memory + connection footprint stays minimal. Subscribe is deferred
+  // past the navigation transition for the same cold-open reason as
+  // the bridge: the WebSocket subscribe on a fresh post id otherwise
+  // lands on the same RAF as the comments-list mount and steals frame
+  // time.
+  useEffect(() => {
+    if (!postId) return;
+    let cancelled = false;
+    let cleanup: (() => void) | null = null;
+    const handle = InteractionManager.runAfterInteractions(async () => {
+      if (cancelled) return;
+      const { getRealtime, postChannelName } = await import('../../src/services/realtime/ably');
+      const realtime = getRealtime();
+      if (!realtime) return;
+      const channel = realtime.channels.get(postChannelName(postId));
+
+      const onEvent = (msg: { name?: string; data?: any }) => {
+        const payload = msg?.data;
+        if (!payload || typeof payload !== 'object') return;
+
+        if (msg.name === 'comment.new') {
+          const c = payload.comment;
+          if (!c || !c.id) return;
+          // De-dupe — the author's own create path already inserted
+          // the row optimistically via `loadComments` after the POST
+          // succeeded.
+          setComments((prev) => (prev.some((x) => x.id === c.id) ? prev : [...prev, c]));
+          return;
+        }
+        if (msg.name === 'comment.edit') {
+          const id = String(payload.id || '');
+          if (!id) return;
+          setComments((prev) =>
+            prev.map((c) => (c.id === id ? { ...c, content: payload.content ?? c.content } : c)),
+          );
+          return;
+        }
+        if (msg.name === 'comment.delete') {
+          const id = String(payload.id || '');
+          if (!id) return;
+          setComments((prev) => prev.filter((c) => c.id !== id));
+          return;
+        }
+        if (msg.name === 'post.like' || msg.name === 'post.unlike') {
+          const newCount =
+            typeof payload.likes_count === 'number' ? payload.likes_count : null;
+          if (newCount == null) return;
+          // Reflect the canonical count on the post header + entity
+          // store (the comments screen reads from both).
+          setPostData((prev: any) => (prev ? { ...prev, likes_count: newCount } : prev));
+          try {
+            const { useEntityStore } = require('../../src/store');
+            const entity = useEntityStore.getState();
+            const cached = entity.posts[postId];
+            if (cached) {
+              entity.upsertPost({ ...cached, likes_count: newCount });
+            }
+          } catch {}
+        }
+      };
+
+      void channel.subscribe(onEvent);
+      cleanup = () => {
+        try { channel.unsubscribe(onEvent); } catch {}
+      };
+    });
+    return () => {
+      cancelled = true;
+      handle.cancel();
+      if (cleanup) cleanup();
+    };
+  }, [postId]);
+
   const loadPost = async () => {
     if (!postId) return;
     const { apiGet } = await import('../../src/services/apiClient');

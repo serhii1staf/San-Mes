@@ -2,85 +2,121 @@ import { useEffect } from 'react';
 import { useAuthStore } from '../../store/authStore';
 import { useEntityStore } from '../../services/entityStore';
 import { useChatStore } from '../../store/chatStore';
-import { getRealtime, userNotificationsChannelName } from '../../services/realtime/ably';
+import { useFeedStore } from '../../store/feedStore';
+import {
+  feedPublicChannelName,
+  getRealtime,
+  userFollowsChannelName,
+  userNotificationsChannelName,
+  userProfileChannelName,
+} from '../../services/realtime/ably';
+import { isRepost, parseImageUrls, isImageSpoiler } from '../../lib/supabase';
+import type { Post } from '../../types';
 
 // App-wide realtime bridge.
 //
-// Mounts once when the user is authenticated, opens a single Ably connection,
-// and subscribes to the user's PERSONAL notifications channel
-// (`user:<myId>:notifications`). This channel is how OTHER conversation
-// screens reach this user — when someone sends a message to a chat that's
-// not currently open on this device, the sender publishes both to the
-// chat channel AND to the recipient's notifications channel, and the
-// bridge picks it up here.
+// Mounts once when the user is authenticated, opens a single Ably
+// connection, and subscribes to a small set of channels:
 //
-// Two event types handled:
-//   - 'new_message'  → upsert conversation in entity store + bump unread
-//                      counter on the messages tab
-//   - 'new_conversation' → insert a fresh conversation entry so the chat
-//                          appears in the recipient's list before they
-//                          ever open it (Telegram-style)
+//   - `user:<myId>:notifications`  — incoming pings: new conversations,
+//                                    likes, comments, follows, message
+//                                    previews. Drives the bell + msg
+//                                    tab badges.
+//   - `user:<myId>:profile`        — bio / display name / banner edits
+//                                    made on another device land here so
+//                                    every signed-in surface stays
+//                                    consistent.
+//   - `user:<myId>:follows`        — follow graph events on both
+//                                    directions: incoming `follow.added`
+//                                    / `follow.removed`, and the user's
+//                                    own `follow.outgoing.*` events so
+//                                    multi-device sessions never drift.
+//   - `feed:public`                — global firehose of new / edited /
+//                                    deleted posts. We dedupe by id and
+//                                    skip events authored by the current
+//                                    user (already added locally).
 //
-// The bridge has zero rendered output — it's effects-only. Mounted once
-// inside AuthNavigationGuard so it runs only when the user is logged in.
-// Its connection is released by `disconnectRealtime()` (called from
-// switchAccount) when the user logs out / switches accounts.
+// All of this runs effects-only (no rendered output). The bridge sits
+// inside AuthNavigationGuard so it only mounts while the user is signed
+// in, and the cached connection is released by `disconnectRealtime()`
+// from `switchAccount` on logout / account switch.
 export function RealtimeAccountBridge(): null {
   const userId = useAuthStore((s) => s.user?.id || null);
 
   useEffect(() => {
     if (!userId) return;
-    // Defer the Ably client construction + channel.subscribe past the
+    // Defer the Ably client construction + channel.subscribes past the
     // current RAF so the cold-open critical path (app shell paint →
-    // first tab render) is never competing with the WebSocket handshake
-    // that `new Ably.Realtime(...)` kicks off. The bridge mounts inside
-    // AuthNavigationGuard at app shell, which lands on the same frame
-    // as the (tabs)/index commit on a cold open — without this defer
-    // the auth-callback fetch (`POST /api/ably-token`) and the
-    // subsequent socket open both fire inline with the first tab's
-    // mount, and the WebSocket setup steals UI thread time from the
-    // navigation transition into whichever tab the user taps next.
-    // 0 ms timeout (macrotask) is enough to push past the current
-    // commit + RAF; the user can't perceive a 0–16 ms delay before
-    // realtime starts listening, but they do feel the cold-open
-    // freeze if it doesn't.
+    // first tab render) is never competing with the WebSocket
+    // handshake that `new Ably.Realtime(...)` kicks off. The bridge
+    // mounts inside AuthNavigationGuard at app shell, which lands on
+    // the same frame as the (tabs)/index commit on a cold open —
+    // without this defer the auth-callback fetch
+    // (`POST /api/ably-token`) and the subsequent socket open both
+    // fire inline with the first tab's mount, and the WebSocket setup
+    // steals UI thread time from the navigation transition into
+    // whichever tab the user taps next. 0 ms timeout (macrotask) is
+    // enough to push past the current commit + RAF; the user can't
+    // perceive a 0–16 ms delay before realtime starts listening, but
+    // they do feel the cold-open freeze if it doesn't.
     let cancelled = false;
-    let cleanup: (() => void) | null = null;
+    const cleanups: Array<() => void> = [];
 
     const timer = setTimeout(() => {
       if (cancelled) return;
       const realtime = getRealtime();
       if (!realtime) return; // No deviceKey or auth not ready — degrade silently.
 
-      const channel = realtime.channels.get(userNotificationsChannelName(userId));
+      // ─── notifications ─────────────────────────────────────────────
+      // Existing flow: new conversation rows + new-message previews.
+      // We tack `notif.like` / `notif.comment` / `notif.follow` /
+      // `notif.message` onto the same channel so a fresh device picks
+      // up activity hints without subscribing to anything else.
+      const notifChannel = realtime.channels.get(userNotificationsChannelName(userId));
 
-      const onEvent = (msg: { name?: string; data?: any }) => {
+      const onNotif = (msg: { name?: string; data?: any }) => {
         const payload = msg?.data;
         if (!payload || typeof payload !== 'object') return;
 
-        if (msg.name === 'new_conversation' || msg.name === 'new_message') {
-          const conversationId = String(payload.conversationId || '');
+        if (msg.name === 'new_conversation' || msg.name === 'new_message' || msg.name === 'notif.message') {
+          // Two payload shapes converge here:
+          //   - Legacy client-side ably publishes use `conversationId`
+          //     + sender metadata (sender pings recipient directly from
+          //     the chat screen).
+          //   - Worker-side `notif.message` uses snake_case
+          //     (`conversation_id`, `sender_id`, `preview`, `ts`) and
+          //     ships only what the recipient needs to bump the badge.
+          const conversationId = String(
+            payload.conversationId || payload.conversation_id || '',
+          );
           if (!conversationId) return;
 
           // 1) Upsert the conversation row in the entity store so the
-          //    messages tab shows it immediately. We use participantId as
-          //    the dedupe key — we never want two rows for the same peer.
+          //    messages tab shows it immediately. We use participantId
+          //    as the dedupe key — never two rows for the same peer.
           try {
             const store = useEntityStore.getState();
             const existing = store.conversations || [];
+            const senderId = String(payload.senderId || payload.sender_id || '');
             const idx = existing.findIndex(
               (c: any) =>
                 c.id === conversationId ||
-                (payload.senderId && c.participantId === payload.senderId),
+                (senderId && c.participantId === senderId),
+            );
+            const lastMessage = String(
+              payload.lastMessage || payload.preview || '',
+            );
+            const lastMessageAt = String(
+              payload.lastMessageAt || payload.ts || new Date().toISOString(),
             );
             const nextRow = {
               id: conversationId,
-              participantId: String(payload.senderId || ''),
+              participantId: senderId,
               participantName: String(payload.senderName || ''),
               participantUsername: String(payload.senderUsername || ''),
               participantEmoji: String(payload.senderEmoji || '😊'),
-              lastMessage: String(payload.lastMessage || ''),
-              lastMessageAt: String(payload.lastMessageAt || new Date().toISOString()),
+              lastMessage,
+              lastMessageAt,
             };
             if (idx >= 0) {
               const merged = [...existing];
@@ -113,20 +149,238 @@ export function RealtimeAccountBridge(): null {
             } catch {}
           }
         }
+
+        // `notif.like` / `notif.comment` / `notif.follow` are pings
+        // only — the per-screen subscriptions (post:<id>,
+        // user:<id>:follows) carry the actual state deltas. We let
+        // these flow past silently so the unread-badge logic has room
+        // to grow without rewriting the bridge each time.
       };
 
-      void channel.subscribe(onEvent);
-      cleanup = () => {
-        try { channel.unsubscribe(onEvent); } catch {}
+      void notifChannel.subscribe(onNotif);
+      cleanups.push(() => {
+        try { notifChannel.unsubscribe(onNotif); } catch {}
+      });
+
+      // ─── profile edits (own user, multi-device sync) ────────────────
+      const profileChannel = realtime.channels.get(userProfileChannelName(userId));
+      const onProfile = (msg: { name?: string; data?: any }) => {
+        const payload = msg?.data;
+        if (msg.name !== 'profile.edit' || !payload || typeof payload !== 'object') return;
+
+        // Map the Worker's snake_case delta to the auth store's
+        // camelCase shape. We only touch fields actually present on
+        // the payload so a banner edit doesn't blank the bio.
+        try {
+          const updates: Record<string, unknown> = {};
+          if ('display_name' in payload) updates.displayName = payload.display_name;
+          if ('emoji' in payload) updates.emoji = payload.emoji;
+          if ('bio' in payload) updates.bio = payload.bio;
+          if ('banner_url' in payload) updates.bannerUrl = payload.banner_url;
+          if ('badge' in payload) updates.badge = payload.badge;
+          if ('is_verified' in payload) updates.is_verified = !!payload.is_verified;
+          if ('username' in payload) updates.username = payload.username;
+          if ('links' in payload) updates.links = payload.links;
+          if (Object.keys(updates).length > 0) {
+            useAuthStore.getState().updateProfile(updates as any);
+          }
+        } catch {}
+
+        // Mirror into the entity store so any avatar / username that
+        // renders from the cached profile (post cards, comments)
+        // updates without a refetch.
+        try {
+          const entity = useEntityStore.getState();
+          const existing = entity.profiles[userId];
+          if (existing) {
+            const merged = {
+              ...existing,
+              display_name: payload.display_name ?? existing.display_name,
+              username: payload.username ?? existing.username,
+              emoji: payload.emoji ?? existing.emoji,
+              bio: payload.bio ?? existing.bio,
+              banner_url: payload.banner_url ?? existing.banner_url,
+              badge: payload.badge ?? existing.badge,
+              is_verified:
+                'is_verified' in payload ? !!payload.is_verified : existing.is_verified,
+            };
+            entity.upsertProfile(merged as any);
+          }
+        } catch {}
       };
+      void profileChannel.subscribe(onProfile);
+      cleanups.push(() => {
+        try { profileChannel.unsubscribe(onProfile); } catch {}
+      });
+
+      // ─── follow events (incoming + outgoing) ────────────────────────
+      const followsChannel = realtime.channels.get(userFollowsChannelName(userId));
+      const onFollow = (msg: { name?: string; data?: any }) => {
+        const payload = msg?.data;
+        if (!payload || typeof payload !== 'object') return;
+        const followerId = String(payload.follower_id || '');
+        const followingId = String(payload.following_id || '');
+        if (!followerId || !followingId) return;
+
+        try {
+          const entity = useEntityStore.getState();
+          if (msg.name === 'follow.added' || msg.name === 'follow.outgoing.added') {
+            entity.setFollow(followerId, followingId);
+          } else if (msg.name === 'follow.removed' || msg.name === 'follow.outgoing.removed') {
+            entity.removeFollow(followerId, followingId);
+          }
+        } catch {}
+      };
+      void followsChannel.subscribe(onFollow);
+      cleanups.push(() => {
+        try { followsChannel.unsubscribe(onFollow); } catch {}
+      });
+
+      // ─── public feed firehose ───────────────────────────────────────
+      // Hot — gets every public-feed event in the world. We bound
+      // memory two ways:
+      //   1) Skip self-authored events; the local optimistic path
+      //      already added them.
+      //   2) Only insert into stores when the feed cache is hot
+      //      (entity store has been hydrated). Otherwise drop silently
+      //      so a fresh device doesn't accumulate orphaned posts in
+      //      memory.
+      const feedChannel = realtime.channels.get(feedPublicChannelName());
+      const onFeed = (msg: { name?: string; data?: any }) => {
+        const payload = msg?.data;
+        if (!payload || typeof payload !== 'object') return;
+
+        if (msg.name === 'post.new') {
+          const post = payload.post;
+          if (!post || typeof post !== 'object') return;
+          // Skip self — local optimistic add already covers it. We use
+          // either the wrapped `author_id` or the embedded profile id
+          // since the Worker shape varies slightly between create and
+          // repost paths.
+          const authorId = post.author_id || post.profiles?.id;
+          if (authorId === userId) return;
+          try {
+            const entity = useEntityStore.getState();
+            if (!entity.isHydrated) return;
+            // Upsert author profile + post. `upsertPost` is a no-op
+            // if we already have it (e.g. the message was redelivered).
+            if (post.profiles && typeof post.profiles === 'object') {
+              entity.upsertProfile(post.profiles as any);
+            }
+            entity.upsertPost(post as any);
+            // Prepend the new id so it appears at the top of any
+            // surface that reads from `getFeedPosts`.
+            const ids = entity.feedIds;
+            if (!ids.includes(post.id)) {
+              entity.setFeedIds([post.id, ...ids].slice(0, 200));
+            }
+
+            // The home tab keeps its own `Post[]`-shaped state in the
+            // feed store for compatibility with the local optimistic
+            // add flow. Map the Worker's snake_case shape to the
+            // app's Post shape and prepend so the UI updates without
+            // a refetch.
+            const mapped = mapWorkerPostToAppPost(post);
+            if (mapped) {
+              const feedState = useFeedStore.getState();
+              if (!feedState.posts.some((p) => p.id === mapped.id)) {
+                feedState.addPost(mapped);
+              }
+            }
+          } catch {}
+        } else if (msg.name === 'post.delete') {
+          const id = String(payload.id || '');
+          if (!id) return;
+          try {
+            useEntityStore.getState().removePost(id);
+            useFeedStore.getState().removePost(id);
+          } catch {}
+        } else if (msg.name === 'post.edit') {
+          const id = String(payload.id || '');
+          if (!id) return;
+          try {
+            const entity = useEntityStore.getState();
+            const existing = entity.posts[id];
+            if (existing) {
+              entity.upsertPost({
+                ...existing,
+                content: typeof payload.content === 'string' ? payload.content : existing.content,
+                image_url:
+                  payload.image_url === undefined
+                    ? existing.image_url
+                    : payload.image_url,
+              } as any);
+            }
+            // Local optimistic mirror — only patch the fields the user
+            // would notice change; preserve like / comment counts.
+            const feedState = useFeedStore.getState();
+            const partial: Partial<Post> = {};
+            if (typeof payload.content === 'string') partial.content = payload.content;
+            if (payload.image_url !== undefined) {
+              partial.imageUrl = payload.image_url || undefined;
+              partial.imageUrls = payload.image_url
+                ? parseImageUrls(payload.image_url)
+                : undefined;
+              partial.isSpoilerImage = payload.image_url
+                ? isImageSpoiler(payload.image_url)
+                : false;
+            }
+            if (Object.keys(partial).length > 0) {
+              feedState.updatePost(id, partial);
+            }
+          } catch {}
+        }
+      };
+      void feedChannel.subscribe(onFeed);
+      cleanups.push(() => {
+        try { feedChannel.unsubscribe(onFeed); } catch {}
+      });
     }, 0);
 
     return () => {
       cancelled = true;
       clearTimeout(timer);
-      if (cleanup) cleanup();
+      for (const fn of cleanups) fn();
     };
   }, [userId]);
 
   return null;
+}
+
+// ─── helpers ─────────────────────────────────────────────────────────────
+
+/**
+ * Map a Worker-shaped post (snake_case + embedded profiles row) to the
+ * camelCase `Post` shape the home-tab feed store consumes. Returns null
+ * for malformed payloads so a corrupt realtime message can never crash
+ * the bridge.
+ */
+function mapWorkerPostToAppPost(p: any): Post | null {
+  if (!p || typeof p !== 'object' || !p.id) return null;
+  const repostInfo = isRepost(p.content || '');
+  const parsedImages = parseImageUrls(p.image_url);
+  const spoiler = isImageSpoiler(p.image_url);
+  const profile = Array.isArray(p.profiles) ? p.profiles[0] : p.profiles;
+  const post: Post = {
+    id: String(p.id),
+    authorId: String(p.author_id || profile?.id || ''),
+    authorName: profile?.display_name || 'User',
+    authorUsername: profile?.username || 'user',
+    authorEmoji: profile?.emoji || '😊',
+    authorBadge: profile?.badge || undefined,
+    authorVerified: !!profile?.is_verified,
+    content: repostInfo.isRepost ? (repostInfo.comment || '') : (p.content || ''),
+    imageUrl: parsedImages[0] || undefined,
+    imageUrls: parsedImages.length > 0 ? parsedImages : undefined,
+    isSpoilerImage: spoiler,
+    likesCount: p.likes_count || 0,
+    commentsCount: p.comments_count || 0,
+    sharesCount: p.shares_count || 0,
+    isLiked: false,
+    isBookmarked: false,
+    createdAt: String(p.created_at || new Date().toISOString()),
+    isRepost: repostInfo.isRepost,
+  };
+  if (!post.content && !post.imageUrl && !post.isRepost) return null;
+  return post;
 }

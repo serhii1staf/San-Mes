@@ -170,3 +170,43 @@ export function chatChannelName(conversationId: string): string {
 export function userNotificationsChannelName(userId: string): string {
   return `user:${userId}:notifications`;
 }
+
+/**
+ * Per-user profile-edits channel. The Worker publishes to this from
+ * `PATCH /v1/profiles/me` so every other device the user is signed in
+ * on applies the bio / display name / banner change instantly.
+ */
+export function userProfileChannelName(userId: string): string {
+  return `user:${userId}:profile`;
+}
+
+/**
+ * Per-user follow-graph channel. Published to by the Worker on follow /
+ * unfollow — both for the followed user (incoming events
+ * `follow.added` / `follow.removed`) and for the actor (outgoing events
+ * `follow.outgoing.added` / `follow.outgoing.removed`) so multi-device
+ * sessions stay in sync.
+ */
+export function userFollowsChannelName(userId: string): string {
+  return `user:${userId}:follows`;
+}
+
+/**
+ * Per-post events channel. Carries `comment.new`, `comment.edit`,
+ * `comment.delete`, `post.like`, `post.unlike`, `post.edit`,
+ * `post.delete`, `post.repost`. Subscribed by the comments screen and
+ * any other place that hosts live post state.
+ */
+export function postChannelName(postId: string): string {
+  return `post:${postId}`;
+}
+
+/**
+ * Public feed firehose. Every new post (including reposts), every edit,
+ * every delete fans out here. The bridge subscribes lazily so the home
+ * tab gets fresh content without a refetch — and unsubscribes when the
+ * user signs out.
+ */
+export function feedPublicChannelName(): string {
+  return 'feed:public';
+}
