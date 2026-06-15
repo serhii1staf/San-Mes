@@ -43,6 +43,9 @@ const PILL_TOP = TAB_ROW_PADDING_V + PILL_INSET_Y;
 const BAR_BORDER_RADIUS = 32;
 const BAR_HORIZONTAL_MARGIN = 16;
 const BAR_BOTTOM_MARGIN = 24;
+// Height of the bottom background-fade behind the floating bar. Mirrors the
+// home header fade (~bar height + margin + a soft fade above the bar top).
+const BAR_FADE_HEIGHT = 132;
 
 // Liquid feel — pill follows finger 1:1, but stretches and never switches tabs mid-drag
 const PAN_MIN_DISTANCE = 6;
@@ -378,6 +381,10 @@ export const CustomTabBar = React.memo(function CustomTabBar({
   // the system back/home/recents buttons. Adding the inset lifts the bar so
   // it always floats ABOVE the system nav bar on every device.
   const insets = useSafeAreaInsets();
+  // Theme background for the bottom fade — mirrors the home header's
+  // top fade so feed content dissolves into the background under the bar.
+  const bgColor = theme.colors.background.primary;
+  const bgTransparent = bgColor + '00';
 
   const [slotWidth, setSlotWidth] = useState(0);
   const hasMounted = useRef(false);
@@ -568,20 +575,19 @@ export const CustomTabBar = React.memo(function CustomTabBar({
 
   return (
     <View style={styles.wrapper} pointerEvents="box-none">
-      {/* Soft fade above the bar so content dissolves into glass.
-          The container now adds the Android system-nav inset to its bottom
-          margin so the floating pill clears the nav bar. That grew the
-          wrapper (and this absoluteFill gradient) by `insets.bottom`, which
-          pushed the gradient's dark stop DOWN into the inset gap below the
-          bar — so the dim behind the visible bar looked gone. Pull the
-          gradient's bottom edge back up by the same inset on Android so its
-          dark stop sits behind the bar exactly as before. iOS is unchanged
-          (the inset term is 0, leaving a plain absoluteFill). */}
+      {/* Bottom fade — the mirror of the home feed's top header fade.
+          transparent → solid theme background, so content dissolves into the
+          background as it scrolls under the floating bar (instead of a dark
+          dim). Explicit height makes the fade read like the header rather
+          than being squeezed into the short bar wrapper; on Android we extend
+          it by the system-nav inset so the solid end covers down to the nav
+          bar. */}
       <LinearGradient
-        colors={['transparent', isDark ? 'rgba(0,0,0,0.4)' : 'rgba(255,255,255,0.3)']}
+        colors={[bgTransparent, bgColor, bgColor]}
+        locations={[0, 0.55, 1]}
         style={[
-          StyleSheet.absoluteFill,
-          { bottom: Platform.OS === 'android' ? insets.bottom : 0 },
+          styles.bottomFade,
+          { height: BAR_FADE_HEIGHT + (Platform.OS === 'android' ? insets.bottom : 0) },
         ]}
         pointerEvents="none"
       />
@@ -672,6 +678,7 @@ const styles = StyleSheet.create({
     right: 0,
   },
   gestureRoot: {},
+  bottomFade: { position: 'absolute', left: 0, right: 0, bottom: 0 },
   container: {
     position: 'relative',
     flexDirection: 'row',

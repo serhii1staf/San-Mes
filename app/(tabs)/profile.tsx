@@ -787,14 +787,23 @@ export default function ProfileScreen() {
             proxyWidth={1080}
           />
         ) : null}
-        {/* Banner dissolves into the screen background using the SAME
-            transparent → bg → solid three-stop fade as the chat input bar
-            (see app/chat/[id].tsx). Replaces the old dark dim the user
-            disliked — theme-aware via the screen's background color. */}
+        {/* Banner dissolves into the screen background — same transparent→bg
+            fade as the chat input bar, a touch shorter now, with a light
+            frost (same BlurView family as the settings button but low
+            intensity) so the banner edge reads softly. chromeReady-gated so
+            the blur layer never mounts on the same commit as the post cards. */}
+        {chromeReady ? (
+          <BlurView
+            intensity={24}
+            tint={theme.isDark ? 'dark' : 'light'}
+            style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 104 }}
+            pointerEvents="none"
+          />
+        ) : null}
         <LinearGradient
           colors={[theme.colors.background.primary + '00', theme.colors.background.primary + 'B3', theme.colors.background.primary]}
           locations={[0, 0.45, 1]}
-          style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 140 }}
+          style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 104 }}
           pointerEvents="none"
         />
       </View>
