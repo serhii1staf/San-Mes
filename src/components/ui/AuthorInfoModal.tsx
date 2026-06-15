@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Modal, Pressable, ScrollView, Linking, Animated, Dimensions, PanResponder, ActivityIndicator, StatusBar } from 'react-native';
+import { View, Modal, Pressable, ScrollView, Linking, Animated, Dimensions, PanResponder, ActivityIndicator } from 'react-native';
+import { ModalStatusBar } from './ModalStatusBar';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme';
@@ -138,7 +139,7 @@ export function AuthorInfoModal({ visible, track, onClose }: AuthorInfoModalProp
 
   return (
     <Modal visible={visible} transparent animationType="none" onRequestClose={dismiss} statusBarTranslucent>
-      <StatusBar hidden />
+      <ModalStatusBar />
       <View style={{ flex: 1 }}>
         {/* Backdrop */}
         <Animated.View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)', opacity: backdropAnim }}>

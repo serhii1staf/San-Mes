@@ -1,5 +1,6 @@
 import React, { useRef, useCallback, useState } from 'react';
-import { View, Modal, Pressable, StyleSheet, Animated, PanResponder, ScrollView, StatusBar, Dimensions } from 'react-native';
+import { View, Modal, Pressable, StyleSheet, Animated, PanResponder, ScrollView, Dimensions } from 'react-native';
+import { ModalStatusBar } from './ModalStatusBar';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme';
@@ -194,7 +195,7 @@ function MusicFullPlayerContent() {
 
   return (
     <Modal visible transparent animationType="none" statusBarTranslucent onRequestClose={animateClose}>
-      <StatusBar hidden />
+      <ModalStatusBar />
       <View style={StyleSheet.absoluteFill}>
         {/* Backdrop — tap dismisses. */}
         <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.5)' }]}>

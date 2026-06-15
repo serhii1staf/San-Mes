@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, Alert, Animated, PanResponder, Modal, StatusBar, Dimensions, Keyboard, InteractionManager, type ViewToken } from 'react-native';
+import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, Alert, Animated, PanResponder, Modal, Dimensions, Keyboard, InteractionManager, type ViewToken } from 'react-native';
 import { KeyboardStickyView, useReanimatedKeyboardAnimation, useKeyboardHandler } from 'react-native-keyboard-controller';
 import Reanimated, { useAnimatedStyle, interpolate, Extrapolation, useSharedValue } from 'react-native-reanimated';
 import * as Clipboard from 'expo-clipboard';
@@ -11,6 +11,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { CachedImage } from '../../src/components/ui/CachedImage';
+import { ModalStatusBar } from '../../src/components/ui/ModalStatusBar';
 import { FormattedText } from '../../src/components/ui/FormattedText';
 import { LinkPreview } from '../../src/components/ui/LinkPreview';
 import { extractFirstUrl } from '../../src/services/linkPreview';
@@ -1532,7 +1533,7 @@ export default function ChatScreen() {
 
       {/* Fullscreen image viewer */}
       <Modal visible={!!viewerImages} transparent animationType="fade" onRequestClose={() => setViewerImages(null)} statusBarTranslucent>
-        <StatusBar hidden />
+        <ModalStatusBar />
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.95)' }}>
           <Pressable onPress={() => setViewerImages(null)} style={{ position: 'absolute', top: insets.top + 12, right: 16, zIndex: 10, width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' }}>
             <Feather name="x" size={20} color="#FFFFFF" />

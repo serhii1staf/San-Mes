@@ -582,8 +582,11 @@ export const CustomTabBar = React.memo(function CustomTabBar({
             {
               borderColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.5)',
               shadowColor: isDark ? '#000' : 'rgba(0,0,0,0.15)',
-              // Float above the system nav bar (Android) / home indicator (iOS).
-              marginBottom: BAR_BOTTOM_MARGIN + insets.bottom,
+              // Float above the system nav bar on Android (edge-to-edge draws
+              // behind it). iOS already positioned the bar correctly above the
+              // home indicator, so we add the inset on Android only — adding it
+              // on iOS pushed the bar up unnecessarily.
+              marginBottom: BAR_BOTTOM_MARGIN + (Platform.OS === 'android' ? insets.bottom : 0),
             },
           ]}
           onLayout={onBarLayout}

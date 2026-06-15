@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { View, Pressable, Modal, TextInput, FlatList, Animated, StatusBar, Dimensions, ActivityIndicator, Keyboard } from 'react-native';
+import { View, Pressable, Modal, TextInput, FlatList, Animated, Dimensions, ActivityIndicator, Keyboard } from 'react-native';
+import { ModalStatusBar } from './ModalStatusBar';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme';
@@ -121,7 +122,7 @@ export function GiphyPicker({ visible, onClose, onSelect }: GiphyPickerProps) {
 
   return (
     <Modal visible={visible || mounted} transparent animationType="none" onRequestClose={dismiss} statusBarTranslucent>
-      <StatusBar hidden />
+      <ModalStatusBar />
       {/* Backdrop — same 0.4 black dim as the feed menu */}
       <Animated.View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)', opacity: backdropAnim }}>
         <Pressable style={{ flex: 1 }} onPress={dismiss} />

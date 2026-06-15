@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
-import { View, Pressable, Modal, Animated, Dimensions, ScrollView, StatusBar, Easing } from 'react-native';
+import { View, Pressable, Modal, Animated, Dimensions, ScrollView, Easing } from 'react-native';
+import { ModalStatusBar } from './ModalStatusBar';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme';
@@ -146,7 +147,7 @@ export function CommentContextMenu({ visible, comment, isOwn, displayBody, reply
 
   return (
     <Modal visible={visible} transparent animationType="none" onRequestClose={() => dismiss()} statusBarTranslucent>
-      <StatusBar hidden />
+      <ModalStatusBar />
       <Pressable style={{ flex: 1 }} onPress={() => dismiss()}>
         <Animated.View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', opacity: fade }} />
 

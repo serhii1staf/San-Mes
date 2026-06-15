@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Pressable, Modal, Animated, StatusBar, Dimensions, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Pressable, Modal, Animated, Dimensions, KeyboardAvoidingView, Platform } from 'react-native';
+import { ModalStatusBar } from './ModalStatusBar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme';
 
@@ -60,7 +61,7 @@ export function SlideUpSheet({ visible, onClose, children }: SlideUpSheetProps) 
 
   return (
     <Modal visible={visible || mounted} transparent animationType="none" onRequestClose={dismiss} statusBarTranslucent>
-      <StatusBar hidden />
+      <ModalStatusBar />
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}

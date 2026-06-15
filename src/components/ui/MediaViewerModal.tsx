@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { View, Pressable, Modal, StatusBar, Dimensions, ActivityIndicator } from 'react-native';
+import { View, Pressable, Modal, Dimensions, ActivityIndicator } from 'react-native';
+import { ModalStatusBar } from './ModalStatusBar';
 import { Feather } from '@expo/vector-icons';
 import { WebView } from 'react-native-webview';
 import YoutubePlayer from 'react-native-youtube-iframe';
@@ -33,7 +34,7 @@ export function MediaViewerModal({ visible, source, onClose }: MediaViewerModalP
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent supportedOrientations={['portrait', 'landscape']}>
-      <StatusBar hidden />
+      <ModalStatusBar />
       <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.97)' }}>
         <Pressable
           onPress={onClose}
