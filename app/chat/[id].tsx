@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, Alert, Animated, PanResponder, Modal, StatusBar, Dimensions, Keyboard, InteractionManager } from 'react-native';
+import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, Alert, Animated, PanResponder, Modal, StatusBar, Dimensions, Keyboard, InteractionManager, type ViewToken } from 'react-native';
 import { KeyboardStickyView, useReanimatedKeyboardAnimation, useKeyboardHandler } from 'react-native-keyboard-controller';
 import Reanimated, { useAnimatedStyle, interpolate, Extrapolation, useSharedValue } from 'react-native-reanimated';
 import * as Clipboard from 'expo-clipboard';
@@ -91,7 +91,7 @@ const bubbleStyles = StyleSheet.create({
   timestamp: { marginTop: 3, alignSelf: 'flex-end', fontSize: 10 },
 });
 
-function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, linkEmoji, highlighted, onReply, onLongPress, onSwipeActive, onImagePress }: { message: ChatMessage; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string; linkEmoji?: string; highlighted?: boolean; onReply: (m: ChatMessage) => void; onLongPress: (m: ChatMessage) => void; onSwipeActive: (active: boolean) => void; onImagePress: (images: string[], index: number) => void }) {
+function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, linkEmoji, highlighted, isVisible, onReply, onLongPress, onSwipeActive, onImagePress }: { message: ChatMessage; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string; linkEmoji?: string; highlighted?: boolean; isVisible?: boolean; onReply: (m: ChatMessage) => void; onLongPress: (m: ChatMessage) => void; onSwipeActive: (active: boolean) => void; onImagePress: (images: string[], index: number) => void }) {
   const theme = useTheme();
   const t = useT();
   const fontFamilyStyle = fontFamily === 'mono' ? 'monospace' : fontFamily === 'serif' ? 'serif' : undefined;
@@ -187,7 +187,20 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
               <View style={[bubbleStyles.imagesRow, { marginBottom: message.text ? 6 : 0 }]}>
                 {message.imageUrls.map((uri, idx) => (
                   <Pressable key={idx} onPress={() => onImagePress(message.imageUrls!, idx)} onLongPress={() => { triggerHaptic('medium'); onLongPress(message); }} delayLongPress={300}>
-                    <CachedImage uri={uri} style={message.imageUrls!.length === 1 ? bubbleStyles.imageSingle : bubbleStyles.imageMulti} resizeMode="cover" />
+                    <CachedImage
+                      uri={uri}
+                      style={message.imageUrls!.length === 1 ? bubbleStyles.imageSingle : bubbleStyles.imageMulti}
+                      resizeMode="cover"
+                      // Decode at low priority so a heavy GIF/photo never
+                      // competes with the chat-open transition or scroll
+                      // frames on weak devices.
+                      priority="low"
+                      // Pause GIF animation while this bubble is scrolled
+                      // off-screen — no UI-thread frame decoding for content
+                      // the user can't see. `isVisible` undefined (anywhere
+                      // that doesn't track viewability) leaves autoplay on.
+                      autoplay={isVisible}
+                    />
                   </Pressable>
                 ))}
               </View>
@@ -241,7 +254,8 @@ const MemoMessageBubble = React.memo(MessageBubble, (prev, next) => {
     prev.bubbleRadius === next.bubbleRadius &&
     prev.fontFamily === next.fontFamily &&
     prev.linkEmoji === next.linkEmoji &&
-    prev.highlighted === next.highlighted
+    prev.highlighted === next.highlighted &&
+    prev.isVisible === next.isVisible
   );
 });
 
@@ -1228,6 +1242,34 @@ export default function ChatScreen() {
   // opening or closing — see `useContextMenuGuard` (declared above with the
   // other hooks) for the time-lock + requestAnimationFrame defer.
 
+  // ── GIF off-screen pause (viewability tracking) ───────────────────────
+  // Track which message rows are actually on screen so animated images
+  // (GIFs) only decode frames while visible. `viewabilityReady` guards the
+  // window before FlatList has reported its first viewable set — until then
+  // we treat everything as visible so nothing is paused incorrectly on open.
+  // Both config + handler are ref-stable: FlatList warns (and can crash on
+  // some RN versions) if either identity changes between renders.
+  const [visibleIds, setVisibleIds] = useState<Set<string>>(() => new Set());
+  const [viewabilityReady, setViewabilityReady] = useState(false);
+  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 35 }).current;
+  const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ViewToken[] }) => {
+    const next = new Set<string>();
+    for (const v of viewableItems) {
+      if (v.isViewable && v.item?.id) next.add(v.item.id as string);
+    }
+    setViewabilityReady(true);
+    setVisibleIds((prev) => {
+      // Skip the state write (and the consequent re-render) when the
+      // viewable set is unchanged — avoids churn on tiny scroll jitters.
+      if (prev.size === next.size) {
+        let same = true;
+        for (const id of next) if (!prev.has(id)) { same = false; break; }
+        if (same) return prev;
+      }
+      return next;
+    });
+  }).current;
+
   const renderItem = useCallback(({ item }: { item: ChatMessage; index: number }) => {
     const m = parseMessage(item);
     return (
@@ -1239,13 +1281,14 @@ export default function ChatScreen() {
         fontFamily={chatSettings.fontFamily}
         linkEmoji={chatSettings.linkEmoji}
         highlighted={item.id === activeMatchId}
+        isVisible={!viewabilityReady || visibleIds.has(item.id)}
         onReply={startReply}
         onLongPress={onMessageLongPress}
         onSwipeActive={handleSwipeActive}
         onImagePress={openImageViewer}
       />
     );
-  }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, chatSettings.linkEmoji, startReply, handleSwipeActive, openImageViewer, parseMessage, activeMatchId, onMessageLongPress, currentUserId]);
+  }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, chatSettings.linkEmoji, startReply, handleSwipeActive, openImageViewer, parseMessage, activeMatchId, onMessageLongPress, currentUserId, visibleIds, viewabilityReady]);
 
   // Stable callback refs for FlatList — without these, every parent render
   // hands FlatList fresh function identities and breaks its row recycling
@@ -1306,6 +1349,8 @@ export default function ChatScreen() {
         // 80 ms is invisible to the user and lets scroll frames win.
         updateCellsBatchingPeriod={80}
         onScrollToIndexFailed={onScrollToIndexFailedCb}
+        viewabilityConfig={viewabilityConfig}
+        onViewableItemsChanged={onViewableItemsChanged}
       />
       </Reanimated.View>
 

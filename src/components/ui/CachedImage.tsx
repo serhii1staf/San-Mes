@@ -101,6 +101,15 @@ interface CachedImageProps {
   resizeMode?: 'cover' | 'contain' | 'fill' | 'center';
   proxyWidth?: number;
   noProxy?: boolean;
+  /**
+   * Animation control for animated images (GIF/WebP). When the caller passes
+   * `false` we both set expo-image's `autoplay={false}` AND imperatively call
+   * `stopAnimating()` — toggling the prop alone does not reliably halt an
+   * already-running animation. Used by the chat list to pause GIFs that
+   * scroll off-screen so the UI thread isn't decoding frames the user can't
+   * see. Leave undefined everywhere else (zero added cost — no ref/effect).
+   */
+  autoplay?: boolean;
   [key: string]: any;
 }
 
@@ -110,12 +119,31 @@ export const CachedImage = memo(function CachedImage({
   resizeMode = 'cover',
   proxyWidth,
   noProxy,
+  autoplay,
   ...props
 }: CachedImageProps) {
   // Reset proxy-failure state when the source URL changes — otherwise a row
   // recycled in a list would keep falling back forever after a single bad URL.
   const [proxyFailed, setProxyFailed] = useState(false);
   useEffect(() => { setProxyFailed(false); }, [uri]);
+
+  // Imperative handle to the underlying expo-image, used only when the caller
+  // opts into animation control via the `autoplay` prop. expo-image exposes
+  // start/stopAnimating() on the component ref.
+  const imageRef = useRef<{ startAnimating?: () => Promise<void>; stopAnimating?: () => Promise<void> } | null>(null);
+  useEffect(() => {
+    // No-op for the overwhelming majority of callers that never pass
+    // `autoplay` — keeps the cost at a single undefined check.
+    if (autoplay === undefined) return;
+    const ref = imageRef.current;
+    if (!ref) return;
+    try {
+      if (autoplay) ref.startAnimating?.();
+      else ref.stopAnimating?.();
+    } catch {
+      // Static images have no animation to control; ignore.
+    }
+  }, [autoplay]);
 
   // Perf-monitor instrumentation. Counts in-flight decodes via the
   // pendingDecodes gauge and records the URI→onLoad latency per host so the
@@ -171,8 +199,12 @@ export const CachedImage = memo(function CachedImage({
 
   return (
     <Image
+      ref={imageRef as any}
       source={{ uri: finalUri }}
       style={style}
+      // Pass through animation control when the caller opts in; undefined
+      // leaves expo-image at its default (autoplay on).
+      autoplay={autoplay}
       contentFit={resizeMode === 'contain' ? 'contain' : resizeMode === 'fill' ? 'fill' : 'cover'}
       // Keep decoded images in memory AND on disk → re-entering a chat shows
       // them instantly with no black flash or re-download.
