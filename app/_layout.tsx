@@ -24,6 +24,7 @@ import { PerfMonitorBubble } from '../src/components/dev/PerfMonitorBubble';
 import { perfMonitor, installPerfErrorHooks } from '../src/services/perfMonitor';
 import { DynamicOverlayHost } from '../src/components/dynamic-overlay/DynamicOverlayHost';
 import { RealtimeAccountBridge } from '../src/components/realtime/RealtimeAccountBridge';
+import { NavigationBarController } from '../src/components/system/NavigationBarController';
 
 // Install the global JS error / promise hooks once at module load so we
 // capture every crash from the very first render onward (the bubble panel
@@ -262,6 +263,7 @@ function RootLayout() {
   return (
     <KeyboardProvider>
     <ThemeProvider>
+      <NavigationBarController />
       <AuthNavigationGuard>
         <BrowserMiniBar />
         <MusicBottomIndicator />
