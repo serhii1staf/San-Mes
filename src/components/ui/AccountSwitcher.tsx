@@ -7,10 +7,7 @@ import { Avatar } from './Avatar';
 import { VerifiedBadge } from './VerifiedBadge';
 import { useAuthStore } from '../../store/authStore';
 import { useAccountsStore, SavedAccount } from '../../store/accountsStore';
-import { showToast } from '../../store/toastStore';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Updates from 'expo-updates';
-import { resetAllThrottles } from '../../services/syncThrottle';
 import { useT } from '../../i18n/store';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -78,6 +75,17 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
   };
 
   const switchToAccount = async (account: SavedAccount) => {
+    // Show the full-screen cover IMMEDIATELY, before any async work
+    // runs. The previous flow ran loginUser → switchAccount → login →
+    // setSwitching(true) all in one go, which meant the user tapped a
+    // row and watched the modal sit motionless until the whole chain
+    // resolved (and on weak devices the synchronous chunk inside
+    // switchAccount — entityStore.hydrate, disconnectRealtime — was
+    // long enough to register as a "the app froze" event). Painting
+    // the cover first gives unambiguous tap feedback; the heavy work
+    // then runs behind it where any micro-stutter is invisible.
+    setSwitching(true);
+
     // Re-login so we get a fresh Worker JWT scoped to this account.
     // The saved `pin + deviceKey` is enough to re-issue without
     // re-prompting; if the account is gone (deleted on another device)
@@ -85,6 +93,8 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
     const { loginUser } = await import('../../lib/supabase');
     const { profile, error } = await loginUser({ deviceKey: account.deviceKey, pin: account.pin });
     if (error || !profile) {
+      // Roll the cover back up so the alert isn't covered by it.
+      setSwitching(false);
       Alert.alert(t('common.error'), t('account_switcher.not_found'));
       removeAccount(account.id);
       return;
@@ -93,8 +103,10 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
     saveCurrentAccount();
 
     // Re-scope cache + flush previous account's in-memory data (Telegram-style
-    // isolation). A reload follows, but this guarantees no cross-account bleed
-    // even if reload is unavailable (dev client).
+    // isolation). switchAccount now defers the heavy hydrate + realtime
+    // teardown past the next interaction so it can't compete with the
+    // cover paint above. A reload follows, but this guarantees no
+    // cross-account bleed even if reload is unavailable (dev client).
     const { switchAccount } = await import('../../services/accountSwitch');
     switchAccount(profile.id);
 
@@ -116,9 +128,8 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
       links: profile.links || undefined,
     });
 
-    // Show a full-screen cover in the app's background color so the native reload
-    // doesn't flash white. Then reload on the next tick (avoids the navigation race).
-    setSwitching(true);
+    // Reload on the next tick (avoids the navigation race). The cover
+    // is already up so we don't need a delay to "give it time to paint".
     setTimeout(() => {
       Updates.reloadAsync().catch(() => {
         // If reload isn't available (e.g. dev client), just close the sheet —
@@ -126,7 +137,7 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
         setSwitching(false);
         onClose();
       });
-    }, 120);
+    }, 60);
   };
 
   const handleAddAccount = async () => {

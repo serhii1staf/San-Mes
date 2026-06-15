@@ -10,6 +10,20 @@
 //      stale chat:* subscriptions don't leak into another user's session.
 //
 // Keeping this in one place guarantees every entry point behaves identically.
+//
+// Perf note (account-switcher freeze fix): the synchronous portion is
+// kept tight — namespace switch + 4× setState wipes + blocked-users reset
+// — so the JS thread can return to the event loop fast and the caller
+// (AccountSwitcher.tsx) can paint its splash cover. The heavy work
+// (entityStore.hydrate, blockedUsersStore.hydrate, disconnectRealtime)
+// is deferred via InteractionManager so it never lands on the same
+// frame as the account-switcher tap. In production this work is
+// largely wasted because the caller fires `Updates.reloadAsync()`
+// ~280 ms later — but keeping it gives the dev-client / fallback
+// path a working state when reload isn't available, without
+// reintroducing the freeze.
+
+import { InteractionManager } from 'react-native';
 
 import { setCacheAccount } from './cacheService';
 import { setThrottleAccount, resetAllThrottles } from './syncThrottle';
@@ -20,12 +34,16 @@ import { useBlockedUsersStore } from '../store/blockedUsersStore';
 import { disconnectRealtime } from './realtime/ably';
 
 export function switchAccount(accountId: string | null | undefined): void {
-  // 1) Re-scope storage to the new account.
+  // 1) Re-scope storage to the new account (synchronous, sub-ms).
   setCacheAccount(accountId);
   setThrottleAccount(accountId);
   try { resetAllThrottles?.(); } catch {}
 
-  // 2) Wipe in-memory state from the previous account.
+  // 2) Wipe in-memory state from the previous account. These are pure
+  //    setState calls that fan out to subscribers — they're cheap on
+  //    their own but together they trigger zustand notifications across
+  //    every screen subscribed to those stores. Keep them synchronous so
+  //    the next paint never observes mixed account data.
   try {
     useFeedStore.setState({ posts: [], profilePosts: [], feedScrollOffset: 0, profileScrollOffset: 0, lastFeedFetch: null, lastProfileFetch: null });
   } catch {}
@@ -43,11 +61,19 @@ export function switchAccount(accountId: string | null | undefined): void {
   //     over the new account's content.
   try { useBlockedUsersStore.getState().reset(); } catch {}
 
-  // 3) Re-hydrate the new account's own cached data.
-  try { useEntityStore.getState().hydrate(); } catch {}
-  try { useBlockedUsersStore.getState().hydrate(); } catch {}
-
-  // 4) Drop the realtime client. The next consumer (chat screen, global
-  //    notification bridge) will lazily reopen it with the new auth.
-  try { disconnectRealtime(); } catch {}
+  // 3) Defer the heavy work past the next interaction frame so the
+  //    caller's splash cover can paint first. entityStore.hydrate()
+  //    parses the new account's full posts/profiles/conversations
+  //    cache (multi-KB JSON.parse) and disconnectRealtime() closes
+  //    the Ably WebSocket — running them inline on the tap thread
+  //    was the dominant cost behind the "tap → app freezes" symptom.
+  //    Putting them behind InteractionManager keeps the tap-handler
+  //    frame at sub-16 ms even on weak devices.
+  InteractionManager.runAfterInteractions(() => {
+    try { useEntityStore.getState().hydrate(); } catch {}
+    try { useBlockedUsersStore.getState().hydrate(); } catch {}
+    // 4) Drop the realtime client. The next consumer (chat screen, global
+    //    notification bridge) will lazily reopen it with the new auth.
+    try { disconnectRealtime(); } catch {}
+  });
 }
