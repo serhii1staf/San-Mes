@@ -77,15 +77,39 @@ function getAuthHeader(): string | null {
  * request — and on a 200 we don't need any of that. Notifying the
  * store wipes `user` / `isAuthenticated`, which causes the root
  * navigator to bounce the user back to the welcome screen.
+ *
+ * Hardening: in a 401 storm (e.g. the auth token in MMKV is
+ * corrupt and every parallel fetch fails simultaneously), we must
+ * NOT fire dozens of dynamic imports + logout dispatches at once.
+ * That pattern was implicated in a Hermes EXC_BAD_ACCESS crash
+ * (`GCScope::_newChunkAndPHV`) seen in production right after the
+ * D1 cutover. The simple in-flight latch + 1-second throttle below
+ * caps the work to one logout per second per cold-started JS
+ * runtime, which is more than enough for the actual "your token
+ * expired" case.
  */
+let _unauthInFlight = false;
+let _lastUnauthAt = 0;
 async function handleUnauthorised(): Promise<void> {
+  const now = Date.now();
+  if (_unauthInFlight) return;
+  if (now - _lastUnauthAt < 1000) return;
+  _unauthInFlight = true;
+  _lastUnauthAt = now;
   try {
     clearAuthToken();
   } catch {}
   try {
     const { useAuthStore } = await import('../store/authStore');
-    useAuthStore.getState().logout();
+    // Skip the dispatch when the store already reflects the
+    // logged-out state — saves the entire root re-render path.
+    if (useAuthStore.getState().isAuthenticated) {
+      useAuthStore.getState().logout();
+    }
   } catch {}
+  finally {
+    _unauthInFlight = false;
+  }
 }
 
 interface InternalRequestOptions extends ApiOptions {
