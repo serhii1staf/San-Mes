@@ -582,8 +582,8 @@ export const CustomTabBar = React.memo(function CustomTabBar({
           end, not be covered by a solid slab). transparent → light → ~80%
           background. On Android we extend it by the system-nav inset. */}
       <LinearGradient
-        colors={[bgTransparent, bgColor + '66', bgColor + 'CC']}
-        locations={[0, 0.5, 1]}
+        colors={[bgTransparent, bgColor + '80', bgColor + 'D9']}
+        locations={[0, 0.45, 1]}
         style={[
           styles.bottomFade,
           { height: BAR_FADE_HEIGHT + (Platform.OS === 'android' ? insets.bottom : 0) },
