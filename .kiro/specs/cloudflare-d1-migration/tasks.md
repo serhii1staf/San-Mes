@@ -52,23 +52,49 @@ Move read traffic onto the Worker. Writes still go to Supabase via
 `offlineQueue.ts`. A feature flag `useD1Reads` (default `false` in
 prod) gates the cutover so we can flip one screen at a time.
 
-- [ ] 2.1 Implement Phase 2 endpoints listed in `design.md`:
+- [x] 2.1 Implement Phase 2 endpoints listed in `design.md`:
       `/v1/feed`, `/v1/profiles[/:id]`, `/v1/posts/:id/comments`,
       `/v1/profiles/:id/{followers,following,follow-counts,likes,comments}`,
       `/v1/conversations[/:id/messages]`, `/v1/mini-apps`.
-- [ ] 2.2 Add `src/services/apiClient.ts` — typed wrapper around
-      `fetch` to the Worker base URL with auth header injection.
-- [ ] 2.3 Add `useD1Reads` to `src/store/settingsStore.ts`. Default
-      `__DEV__ ? true : false`.
-- [ ] 2.4 Port one read at a time: `getProfile`, then `getPosts`,
-      then `getComments`, then follows lists. Each port is its own
-      commit so rollbacks are surgical.
-- [ ] 2.5 On every ported function, fall through to Supabase when
+      Plus `/v1/profiles/by-username/:username`,
+      `/v1/profiles/by-device-key/:deviceKey`,
+      `/v1/profiles/:id/posts`, `/v1/profiles/:id/replies` (renamed
+      from `comments` to disambiguate from `/posts/:id/comments`),
+      `/v1/mini-apps/:id`. Smoke tests via `vitest run` cover the
+      router + util + a few representative endpoints.
+- [x] 2.2 Add `src/services/apiClient.ts` — typed wrapper around
+      `fetch` to the Worker base URL with auth header injection,
+      8 s default timeout, offline short-circuit, perfMonitor
+      integration. Exposes `apiGet`, `apiPost`, `apiPatch`,
+      `apiDelete`.
+- [x] 2.3 Add `useD1Reads` to `src/store/settingsStore.ts`. Default
+      `__DEV__ ? true : false`. Persisted via the existing settings
+      store storage layer.
+- [ ] 2.4 Port one read at a time: each is its own commit so
+      rollbacks are surgical. Worker errors fall through to Supabase
+      and log to perfMonitor.
+      - [x] 2.4.1 `getProfile` — proof-of-concept wiring shipped in
+            `feat(profile): wire getProfile through useD1Reads flag`.
+      - [ ] 2.4.2 `getPosts` (feed read).
+      - [ ] 2.4.3 `getProfiles` (discover list).
+      - [ ] 2.4.4 `getComments` (post comments thread).
+      - [ ] 2.4.5 `getFollowers` / `getFollowing` (modal lists).
+      - [ ] 2.4.6 `getFollowCounts` (profile header counts).
+      - [ ] 2.4.7 `getLikedPosts` / `getUserComments` (profile tabs).
+      - [ ] 2.4.8 `getConversations` / `getMessages` (chat list,
+            chat thread).
+      - [ ] 2.4.9 `miniAppsStore.loadApps` + the `app/mini/[id].tsx`
+            single-app fetch.
+- [x] 2.5 On every ported function, fall through to Supabase when
       the Worker call fails. Log the error to perfMonitor so we
-      surface schema mismatches early.
+      surface schema mismatches early. Implemented for `getProfile`;
+      remaining ports inherit the same pattern.
 - [ ] 2.6 Manual smoke: feed, profile, comments, notifications,
       followers/following modal — all populate correctly with the
       flag on AND with the flag off.
+- [x] 2.7 Developer toggle on `app/settings/admin.tsx` (admin-only
+      screen) under a "D1 migration" section. Shows the current
+      Worker URL alongside for sanity-checking deploys.
 
 ## Phase 3 — Dual-write
 

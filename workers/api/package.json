@@ -1,16 +1,19 @@
 {
   "name": "san-mes-api",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "private": true,
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "tail": "wrangler tail",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20251209.0",
     "typescript": "^5.7.0",
+    "vitest": "^2.1.8",
     "wrangler": "^4.63.0"
   },
   "dependencies": {

@@ -46,6 +46,15 @@ interface SettingsState {
   weatherCityName: string | null;
   weatherLat: number | null;
   weatherLon: number | null;
+  // Phase 2 of the Cloudflare D1 migration. When true, ported `getXxx`
+  // helpers route through the `apiClient` Worker reads; when false they
+  // continue to query Supabase directly. The flag exists so we can
+  // flip cohorts on / off without a binary release — defaults `true`
+  // in dev so we exercise the Worker on every dev session, and `false`
+  // in prod until validation completes (see `tasks.md` Phase 2.6).
+  // Worker errors silently fall through to the Supabase path; this
+  // flag is purely opt-in for the WORKER-FIRST attempt.
+  useD1Reads: boolean;
   setHaptic: (enabled: boolean) => void;
   setInAppBrowser: (enabled: boolean) => void;
   setBrowserWidgetPosition: (position: 'top' | 'bottom') => void;
@@ -56,6 +65,7 @@ interface SettingsState {
   setMiniAppPreviewBg: (id: string | null) => void;
   setWeatherEnabled: (enabled: boolean) => void;
   setWeatherCity: (city: { name: string; lat: number; lon: number } | null) => void;
+  setUseD1Reads: (v: boolean) => void;
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -92,6 +102,10 @@ export const useSettingsStore = create<SettingsState>()(
       weatherCityName: null,
       weatherLat: null,
       weatherLon: null,
+      // D1 read shadowing — opt-in. Default `__DEV__` so dev sessions
+      // exercise the Worker every cold-open while prod stays on the
+      // legacy Supabase path until the admin toggle flips it.
+      useD1Reads: __DEV__,
       setHaptic: (hapticEnabled) => set({ hapticEnabled }),
       setInAppBrowser: (useInAppBrowser) => set({ useInAppBrowser }),
       setBrowserWidgetPosition: (browserWidgetPosition) => set({ browserWidgetPosition }),
@@ -109,6 +123,7 @@ export const useSettingsStore = create<SettingsState>()(
             ? { weatherCityName: city.name, weatherLat: city.lat, weatherLon: city.lon }
             : { weatherCityName: null, weatherLat: null, weatherLon: null }
         ),
+      setUseD1Reads: (useD1Reads) => set({ useD1Reads }),
     }),
     {
       name: 'app-settings',

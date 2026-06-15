@@ -9,6 +9,8 @@ import { Text, Avatar } from '../../src/components/ui';
 import { CachedImage } from '../../src/components/ui/CachedImage';
 import { supabase, parseImageUrls, adminDeletePost } from '../../src/lib/supabase';
 import { useFeedStore } from '../../src/store/feedStore';
+import { useSettingsStore } from '../../src/store/settingsStore';
+import { WORKER_BASE_URL } from '../../src/services/apiClient';
 import { accountKey } from '../../src/services/cacheService';
 import { formatTimeAgo } from '../../src/utils/mockData';
 import { t as tStatic, useT, useI18nStore } from '../../src/i18n/store';
@@ -398,6 +400,8 @@ export default function AdminScreen() {
         </Pressable>
       </View>
 
+      <D1MigrationSection theme={theme} />
+
       {loading ? <ActivityIndicator style={{ marginTop: 40 }} /> : (
         <FlatList
           data={users}
@@ -443,6 +447,46 @@ function MetricCard({ theme, label, value }: { theme: any; label: string; value:
     <View style={{ flex: 1, backgroundColor: theme.colors.background.elevated, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: theme.colors.border.light, alignItems: 'center' }}>
       <Text variant="subheading" weight="bold" style={{ fontSize: 22 }}>{value ?? '—'}</Text>
       <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginTop: 2 }}>{label}</Text>
+    </View>
+  );
+}
+
+// Cloudflare D1 migration developer toggle. Lives only inside the
+// admin screen because flipping reads to the Worker is internal-only
+// during Phase 2 — end users never see this. The Worker URL is shown
+// alongside as a sanity check before flipping the toggle (e.g. while
+// QAing a fresh deploy).
+//
+// The toggle controls every read helper that has been ported through
+// the `useD1Reads` flag (see `tasks.md` Phase 2.4 sub-list). Helpers
+// that haven't been ported still go to Supabase regardless of this
+// switch, so flipping it on a partially-ported build is safe.
+function D1MigrationSection({ theme }: { theme: any }) {
+  const useD1Reads = useSettingsStore((s) => s.useD1Reads);
+  const setUseD1Reads = useSettingsStore((s) => s.setUseD1Reads);
+  return (
+    <View style={{ paddingHorizontal: 16, marginBottom: 12 }}>
+      <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginBottom: 8 }}>D1 migration</Text>
+      <View style={{ backgroundColor: theme.colors.background.elevated, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: theme.colors.border.light }}>
+        <Pressable
+          onPress={() => setUseD1Reads(!useD1Reads)}
+          hitSlop={8}
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}
+        >
+          <Feather name={useD1Reads ? 'toggle-right' : 'toggle-left'} size={28} color={useD1Reads ? '#10B981' : theme.colors.text.tertiary} />
+          <View style={{ flex: 1 }}>
+            <Text variant="body" weight="semibold">Use D1 reads</Text>
+            <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={2} style={{ marginTop: 2 }}>
+              When ON, ported reads hit the Cloudflare Worker first and fall through to Supabase on error.
+            </Text>
+          </View>
+        </Pressable>
+        <View style={{ height: 1, backgroundColor: theme.colors.border.light, marginVertical: 12 }} />
+        <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>Worker URL</Text>
+        <Text variant="caption" numberOfLines={1} style={{ marginTop: 2, fontFamily: 'monospace' as any, fontSize: 11 }}>
+          {WORKER_BASE_URL}
+        </Text>
+      </View>
     </View>
   );
 }
