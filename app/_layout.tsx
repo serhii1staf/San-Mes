@@ -232,6 +232,17 @@ function RootLayout() {
       initRateLimits();
       cacheCleanup();
       useConnectivityStore.getState().start();
+      // Refresh the viewer's follow graph from the server once on boot so
+      // follow buttons reconcile to server truth app-wide (the entity store
+      // only rehydrates the cached follow set synchronously above).
+      // `syncFollows` is internally throttled, so this is a cheap no-op when
+      // it ran recently. Deferred to the idle frame so it never competes
+      // with first paint.
+      if (currentUser?.id) {
+        import('../src/services/syncService')
+          .then(({ syncFollows }) => syncFollows(currentUser.id))
+          .catch(() => {});
+      }
     }, 0);
 
     return () => clearTimeout(idle);

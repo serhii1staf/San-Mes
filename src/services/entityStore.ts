@@ -155,11 +155,20 @@ export const useEntityStore = create<EntityState>()((set, get) => ({
 
   hydrate: async () => {
     try {
-      const { getCachedFeed, getCachedConversations, getCachedLikes, getCachedAllProfiles } = await import('./cacheService');
-      const [feed, conversations, profiles] = await Promise.all([
+      const { getCachedFeed, getCachedConversations, getCachedLikes, getCachedAllProfiles, getCachedFollows, getCacheAccount } = await import('./cacheService');
+      // Follows are scoped to the active account (the viewer). Rehydrate
+      // them on cold start / account switch so follow buttons show the
+      // correct state before the network resolves. `getCacheAccount()` is
+      // set in _layout.tsx before hydrate() runs, so it already points at
+      // the active viewer here.
+      const accountId = getCacheAccount();
+      const [feed, conversations, profiles, follows] = await Promise.all([
         getCachedFeed(),
         getCachedConversations(),
         getCachedAllProfiles(),
+        accountId && accountId !== 'anon'
+          ? getCachedFollows(accountId)
+          : Promise.resolve([] as string[]),
       ]);
 
       const postsMap: Record<string, LocalPost> = {};
@@ -179,7 +188,12 @@ export const useEntityStore = create<EntityState>()((set, get) => ({
         }
       }
 
-      set({ posts: postsMap, feedIds, conversations, profiles: profilesMap, isHydrated: true });
+      const followsMap: Record<string, string[]> =
+        accountId && accountId !== 'anon' && Array.isArray(follows) && follows.length > 0
+          ? { [accountId]: follows }
+          : {};
+
+      set({ posts: postsMap, feedIds, conversations, profiles: profilesMap, follows: followsMap, isHydrated: true });
     } catch (e) {
       console.warn('[EntityStore] Hydration failed:', e);
       set({ isHydrated: true });

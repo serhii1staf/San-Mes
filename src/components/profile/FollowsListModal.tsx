@@ -252,6 +252,30 @@ const FollowsRow = memo(
     );
     const isSelf = !!currentUserId && currentUserId === profile.id;
 
+    // Reconcile the REAL follow state from the server when this row first
+    // mounts. The entity store only knows about follows set optimistically
+    // this session, so a freshly-opened list could render every "Подписаться"
+    // button as not-followed even when the DB rows exist. One cheap
+    // per-row `isFollowing` call (lists are capped, the modal is not a hot
+    // path) writes server truth back into the store, which re-renders the
+    // button via the selector above. Skips self-rows and the no-viewer case.
+    useEffect(() => {
+      if (!currentUserId || isSelf || !profile.id) return;
+      let cancelled = false;
+      import('../../lib/supabase')
+        .then((m) => m.isFollowing(currentUserId, profile.id))
+        .then((following) => {
+          if (cancelled) return;
+          const entity = useEntityStore.getState();
+          if (following) entity.setFollow(currentUserId, profile.id);
+          else entity.removeFollow(currentUserId, profile.id);
+        })
+        .catch(() => {});
+      return () => {
+        cancelled = true;
+      };
+    }, [currentUserId, isSelf, profile.id]);
+
     const handleFollowPress = useCallback(() => {
       if (!currentUserId || isSelf) return;
       triggerHaptic('medium');

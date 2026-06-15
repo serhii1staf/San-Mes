@@ -493,6 +493,23 @@ export default function UserProfileScreen() {
 
       // Load follow counts from Supabase (keep direct call for counts display)
       getFollowCounts(id).then((counts) => setFollowCounts(counts)).catch(() => {});
+
+      // Resolve the REAL follow state from the server and write it into the
+      // entity store. The store only knew about follows set optimistically
+      // this session (or via syncFollows), so on a fresh profile open / cold
+      // start the button could show "Подписаться" even though the DB row
+      // exists. Reconciling here makes the button reflect server truth on
+      // every profile open, regardless of session or cache. Self-profiles
+      // are skipped (you can't follow yourself).
+      if (currentUser?.id && id && currentUser.id !== id) {
+        import('../../src/lib/supabase').then(({ isFollowing }) =>
+          isFollowing(currentUser.id, id).then((following) => {
+            const entity = useEntityStore.getState();
+            if (following) entity.setFollow(currentUser.id, id);
+            else entity.removeFollow(currentUser.id, id);
+          }).catch(() => {})
+        ).catch(() => {});
+      }
     });
     return () => handle.cancel();
   }, [id]);
