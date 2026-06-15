@@ -515,6 +515,68 @@ export default function ChatScreen() {
   const displayBadge = profileData?.badge || cachedProfile?.badge || (entityConv as any)?.participantBadge || null;
   const profileId = participantId;
 
+  // ── Canonical conversation reconciliation (Bug 3) ─────────────────────
+  // A chat opened from a profile carries the OTHER user's id as the route
+  // `id`, not a conversation id. The conversation is created lazily on the
+  // first send (POST /v1/conversations is idempotent — create-or-get). Once
+  // the server hands back the canonical conversation id we must converge the
+  // whole local picture onto it, otherwise the messages tab (keyed by the
+  // real conversation id from the server) and this screen (keyed by the user
+  // id) drift apart — the conversation then either duplicates or goes missing
+  // from the list. This helper:
+  //   1) upserts the conversation row in the entity store, deduped by the
+  //      stable participant user id (matching RealtimeAccountBridge);
+  //   2) migrates any optimistic messages from the user-id bucket into the
+  //      canonical conversation-id bucket;
+  //   3) rewrites the route param so `id` becomes the canonical id, which
+  //      re-keys the realtime channel, the message selector and the reopen
+  //      path with zero extra plumbing.
+  const reconcileConversation = useCallback(
+    (convId: string | null, lastMessage: string) => {
+      if (!convId) return;
+      try {
+        const store = useEntityStore.getState();
+        const existing = store.conversations || [];
+        const idx = existing.findIndex(
+          (c) => c.id === convId || (!!participantId && c.participantId === participantId),
+        );
+        const row = {
+          id: convId,
+          participantId: participantId || '',
+          participantName: displayName || t('chat.fallback_name'),
+          participantUsername: '',
+          participantEmoji: displayEmoji,
+          lastMessage,
+          lastMessageAt: new Date().toISOString(),
+        };
+        if (idx >= 0) {
+          const merged = [...existing];
+          merged[idx] = { ...existing[idx], ...row };
+          store.setConversations(merged as any);
+        } else {
+          store.setConversations([row as any, ...existing]);
+        }
+      } catch {}
+
+      if (convId !== id) {
+        try {
+          const cs = useChatStore.getState();
+          const fromOld = cs.messages[id] || [];
+          if (fromOld.length > 0) {
+            const intoNew = cs.messages[convId] || [];
+            const seen = new Set(intoNew.map((m: any) => m.id));
+            const mergedMsgs = [...intoNew, ...fromOld.filter((m: any) => !seen.has(m.id))];
+            setMessages(convId, mergedMsgs as any);
+          }
+        } catch {}
+        try {
+          router.setParams({ id: convId, participantId: participantId || '' } as any);
+        } catch {}
+      }
+    },
+    [id, participantId, displayName, displayEmoji, setMessages, t],
+  );
+
   // Inverted list: the newest message is at scroll offset 0, so "scroll to end"
   // (newest) = scroll to offset 0. No manual scroll needed on open.
   const scrollToEnd = useCallback((_animated = true) => {
@@ -756,11 +818,13 @@ export default function ChatScreen() {
             text: `::img::${url}::`,
           });
           // Realtime publish — same pattern as handleSend. The peer sees
-          // the GIF instantly via subscribe-on-mount.
+          // the GIF instantly via subscribe-on-mount. Publish on the
+          // canonical conversation channel so a profile-initiated chat
+          // reaches a peer who opened the chat from their messages tab.
           try {
             const realtime = getRealtime();
             if (realtime && id) {
-              const channel = realtime.channels.get(chatChannelName(id));
+              const channel = realtime.channels.get(chatChannelName(convId));
               void channel.publish('msg', {
                 id: newMessage.id,
                 senderId: user.id,
@@ -774,11 +838,39 @@ export default function ChatScreen() {
                 replyPixelIconId: newMessage.replyPixelIconId,
               });
             }
+            // Ping the peer's personal channel so the conversation row +
+            // preview appear in their messages tab before they open the
+            // chat (Telegram-style), matching handleSend.
+            if (realtime && participantId) {
+              const peerChan = realtime.channels.get(userNotificationsChannelName(participantId));
+              const me = useAuthStore.getState().user;
+              void peerChan.publish('new_message', {
+                conversationId: convId,
+                senderId: user.id,
+                senderName: me?.displayName || '',
+                senderUsername: me?.username || '',
+                senderEmoji: me?.emoji || '😊',
+                lastMessage: '📷',
+                lastMessageAt: newMessage.createdAt,
+                message: {
+                  id: newMessage.id,
+                  senderId: user.id,
+                  text: '',
+                  createdAt: newMessage.createdAt,
+                  imageUrls: [url],
+                },
+              });
+            }
           } catch {}
+
+          // Converge local state onto the canonical conversation id (Bug 3)
+          // so a GIF-first chat started from a profile shows up in the
+          // messages list and reopens to the same thread.
+          reconcileConversation(convId, '📷');
         }
       } catch {}
     })();
-  }, [id, replyTo, addMessage, scrollToEnd, participantId, t]);
+  }, [id, replyTo, addMessage, scrollToEnd, participantId, t, reconcileConversation]);
 
   // Translation sheet state — receives source text on demand and animates
   // up. Reset to '' when closed so the next open re-fetches (the service
@@ -920,7 +1012,7 @@ export default function ChatScreen() {
     }
 
     try {
-      const { useAuthStore, useEntityStore } = await import('../../src/store');
+      const { useAuthStore } = await import('../../src/store');
       const user = useAuthStore.getState().user;
       if (!user) return;
 
@@ -968,7 +1060,7 @@ export default function ChatScreen() {
               replyPixelIconId: newMessage.replyPixelIconId,
             };
             if (id) {
-              const chatChan = realtime.channels.get(chatChannelName(id));
+              const chatChan = realtime.channels.get(chatChannelName(convId));
               void chatChan.publish('msg', messageBody);
             }
             if (participantId) {
@@ -993,11 +1085,10 @@ export default function ChatScreen() {
         } catch {}
       }
 
-      const store = useEntityStore.getState();
-      const existingConvs = store.conversations;
-      if (!existingConvs.find(c => c.participantId === participantId)) {
-        store.setConversations([{ id: convId || id || '', participantId: participantId || '', participantName: displayName || t('chat.fallback_name'), participantUsername: '', participantEmoji: displayEmoji }, ...existingConvs]);
-      }
+      // Converge the local picture onto the canonical conversation id the
+      // server just handed back (Bug 3) — upserts the list row deduped by
+      // participant, migrates optimistic messages, and re-keys the route.
+      reconcileConversation(convId, text || (uploadedUrls.length > 0 ? '📷' : ''));
     } catch {}
   };
 
