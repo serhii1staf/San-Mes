@@ -575,16 +575,15 @@ export const CustomTabBar = React.memo(function CustomTabBar({
 
   return (
     <View style={styles.wrapper} pointerEvents="box-none">
-      {/* Bottom fade — the mirror of the home feed's top header fade.
-          transparent → solid theme background, so content dissolves into the
-          background as it scrolls under the floating bar (instead of a dark
-          dim). Explicit height makes the fade read like the header rather
-          than being squeezed into the short bar wrapper; on Android we extend
-          it by the system-nav inset so the solid end covers down to the nav
-          bar. */}
+      {/* Bottom fade — the mirror of the home feed's top header fade, but it
+          never reaches full opacity: the bottom stop is ~80% so feed content
+          stays faintly visible THROUGH the fade all the way down to the
+          screen edge (the user wants content to show through to the very
+          end, not be covered by a solid slab). transparent → light → ~80%
+          background. On Android we extend it by the system-nav inset. */}
       <LinearGradient
-        colors={[bgTransparent, bgColor, bgColor]}
-        locations={[0, 0.55, 1]}
+        colors={[bgTransparent, bgColor + '66', bgColor + 'CC']}
+        locations={[0, 0.5, 1]}
         style={[
           styles.bottomFade,
           { height: BAR_FADE_HEIGHT + (Platform.OS === 'android' ? insets.bottom : 0) },
