@@ -14,6 +14,7 @@ import { register } from '../router';
 import { exec, normalizeProfile, query, queryOne } from '../db';
 import { parseLimit, parseOffset, parseUuid } from '../util';
 import { readJson } from '../validate';
+import { channels, publishEvent } from '../realtime';
 
 // ── helpers ─────────────────────────────────────────────────────────────
 
@@ -374,46 +375,94 @@ register('GET', '/v1/profiles/:id/follow-counts', async (req, env, _ctx, params)
 // Authed only. Updates whichever subset of editable columns the body
 // carries. `username` is unique-checked separately so we can return
 // the canonical `username_taken` error string the client branches on.
-register('PATCH', '/v1/profiles/me', async (req, env, _ctx, _params, authedUserId) => {
+register('PATCH', '/v1/profiles/me', async (req, env, ctx, _params, authedUserId) => {
   if (!authedUserId) return fail(req, 'unauthorised', 401);
   const body = await readJson<Record<string, unknown>>(req);
   if (!body.ok) return fail(req, body.error, 400);
   const v = body.value;
 
+  // Pull the current row up front so we can compute a real delta. The
+  // realtime payload only carries fields that actually changed (vs. the
+  // body which can carry no-op updates) — this keeps the per-message
+  // size small and ensures peers don't bust local memo equality on a
+  // re-apply of identical values.
+  const current = await queryOne<Record<string, unknown>>(
+    env,
+    `SELECT ${PROFILE_FULL_COLUMNS} FROM profiles WHERE id = ? LIMIT 1`,
+    [authedUserId],
+  );
+
   const sets: string[] = [];
   const binds: unknown[] = [];
+  // `delta` is the set of fields whose values are different post-update
+  // — never includes secrets (pin_hash, device_key) by construction.
+  const delta: Record<string, unknown> = {};
+
+  const recordChange = (key: string, nextValue: unknown) => {
+    const prev = current ? current[key] : undefined;
+    if (prev !== nextValue) {
+      delta[key] = nextValue;
+    }
+  };
 
   if (typeof v.display_name === 'string') {
+    const next = v.display_name.slice(0, 64);
     sets.push('display_name = ?');
-    binds.push(v.display_name.slice(0, 64));
+    binds.push(next);
+    recordChange('display_name', next);
   }
   if (typeof v.emoji === 'string') {
+    const next = v.emoji.slice(0, 16);
     sets.push('emoji = ?');
-    binds.push(v.emoji.slice(0, 16));
+    binds.push(next);
+    recordChange('emoji', next);
   }
   if (typeof v.bio === 'string') {
+    const next = v.bio.slice(0, 240);
     sets.push('bio = ?');
-    binds.push(v.bio.slice(0, 240));
+    binds.push(next);
+    recordChange('bio', next);
   }
   if (typeof v.banner_url === 'string') {
+    const next = v.banner_url.slice(0, 4000);
     sets.push('banner_url = ?');
-    binds.push(v.banner_url.slice(0, 4000));
+    binds.push(next);
+    recordChange('banner_url', next);
   } else if (v.banner_url === null) {
     // Explicit clear — `null` overrides the existing banner.
     sets.push('banner_url = ?');
     binds.push(null);
+    recordChange('banner_url', null);
   }
   if (Array.isArray(v.links) || v.links === null) {
+    const nextStored = v.links == null ? null : JSON.stringify(v.links);
     sets.push('links = ?');
-    binds.push(v.links == null ? null : JSON.stringify(v.links));
+    binds.push(nextStored);
+    // Compare the JSON string representation so the delta detection
+    // works against the asJson-normalised current row too.
+    const currentLinks = current?.links;
+    const currentStored =
+      currentLinks == null
+        ? null
+        : typeof currentLinks === 'string'
+          ? currentLinks
+          : JSON.stringify(currentLinks);
+    if (nextStored !== currentStored) {
+      delta['links'] = v.links == null ? null : v.links;
+    }
   }
   if (typeof v.badge === 'string' || v.badge === null) {
+    const next = v.badge == null ? null : String(v.badge).slice(0, 32);
     sets.push('badge = ?');
-    binds.push(v.badge == null ? null : String(v.badge).slice(0, 32));
+    binds.push(next);
+    recordChange('badge', next);
   }
   if (typeof v.is_verified === 'boolean') {
     sets.push('is_verified = ?');
     binds.push(v.is_verified ? 1 : 0);
+    // Compare against the boolean projection that callers actually see.
+    const prev = !!current?.is_verified;
+    if (prev !== v.is_verified) delta['is_verified'] = v.is_verified;
   }
 
   // Username has its own uniqueness gate.
@@ -428,22 +477,19 @@ register('PATCH', '/v1/profiles/me', async (req, env, _ctx, _params, authedUserI
     if (taken) return fail(req, 'username_taken', 400);
     sets.push('username = ?');
     binds.push(username);
+    recordChange('username', username);
   }
 
   if (sets.length === 0) {
     // Nothing to update — return the current row.
-    const current = await queryOne<Record<string, unknown>>(
-      env,
-      `SELECT ${PROFILE_FULL_COLUMNS} FROM profiles WHERE id = ? LIMIT 1`,
-      [authedUserId],
-    );
     return ok(req, normalizeProfile(current));
   }
 
   // Always touch updated_at so the syncService timestamp comparison
   // reflects the change.
+  const updatedAt = new Date().toISOString();
   sets.push('updated_at = ?');
-  binds.push(new Date().toISOString());
+  binds.push(updatedAt);
   binds.push(authedUserId);
 
   await exec(env, `UPDATE profiles SET ${sets.join(', ')} WHERE id = ?`, binds);
@@ -452,6 +498,19 @@ register('PATCH', '/v1/profiles/me', async (req, env, _ctx, _params, authedUserI
     `SELECT ${PROFILE_FULL_COLUMNS} FROM profiles WHERE id = ? LIMIT 1`,
     [authedUserId],
   );
+
+  // Only fan out when something actually changed. Always include the
+  // user id so subscribers don't have to remember which channel they
+  // came from, and the fresh updated_at so caches can pick a winner.
+  if (Object.keys(delta).length > 0) {
+    publishEvent(
+      env,
+      channels.userProfile(authedUserId),
+      'profile.edit',
+      { id: authedUserId, ...delta, updated_at: updatedAt },
+      ctx,
+    );
+  }
   return ok(req, normalizeProfile(updated));
 });
 

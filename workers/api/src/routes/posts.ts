@@ -25,6 +25,7 @@ import { register } from '../router';
 import { batch, normalizeProfile, query, queryOne } from '../db';
 import { parseUuid } from '../util';
 import { asStr, readJson } from '../validate';
+import { channels, publishEvent } from '../realtime';
 
 interface PostRow {
   id: string;
@@ -90,7 +91,7 @@ function shapePost(row: PostRow) {
 //
 // REGISTERED FIRST — the static `/repost` segment must shadow any
 // future `:id` capture we add. Body: { originalPostId, comment? }.
-register('POST', '/v1/posts/repost', async (req, env, _ctx, _params, authedUserId) => {
+register('POST', '/v1/posts/repost', async (req, env, ctx, _params, authedUserId) => {
   if (!authedUserId) return fail(req, 'unauthorised', 401);
   const body = await readJson<{ originalPostId?: unknown; comment?: unknown }>(req);
   if (!body.ok) return fail(req, body.error, 400);
@@ -122,14 +123,28 @@ register('POST', '/v1/posts/repost', async (req, env, _ctx, _params, authedUserI
     `${POST_SELECT_WITH_AUTHOR} WHERE p.id = ? LIMIT 1`,
     [id],
   );
-  return ok(req, created ? shapePost(created) : null);
+  const shaped = created ? shapePost(created) : null;
+  if (shaped) {
+    // Repost shows up in the public feed like any other post.
+    publishEvent(env, channels.feedPublic(), 'post.new', { post: shaped }, ctx);
+    // The original post's per-post channel gets a count bump so any
+    // viewer of that post sees `shares_count` tick up.
+    publishEvent(
+      env,
+      channels.post(originalPostId),
+      'post.repost',
+      { original_post_id: originalPostId, by: authedUserId },
+      ctx,
+    );
+  }
+  return ok(req, shaped);
 });
 
 // ── POST /v1/posts ────────────────────────────────────────────────────
 //
 // Body: { content, image_url? }. Authed only. Returns the new post +
 // embedded author profile so callers can render without a refetch.
-register('POST', '/v1/posts', async (req, env, _ctx, _params, authedUserId) => {
+register('POST', '/v1/posts', async (req, env, ctx, _params, authedUserId) => {
   if (!authedUserId) return fail(req, 'unauthorised', 401);
   const body = await readJson<{ content?: unknown; image_url?: unknown }>(req);
   if (!body.ok) return fail(req, body.error, 400);
@@ -151,7 +166,13 @@ register('POST', '/v1/posts', async (req, env, _ctx, _params, authedUserId) => {
     `${POST_SELECT_WITH_AUTHOR} WHERE p.id = ? LIMIT 1`,
     [id],
   );
-  return ok(req, created ? shapePost(created) : null);
+  const shaped = created ? shapePost(created) : null;
+  if (shaped) {
+    // Fan out to the public feed so every device with the home tab
+    // hot can prepend the new card without a refetch.
+    publishEvent(env, channels.feedPublic(), 'post.new', { post: shaped }, ctx);
+  }
+  return ok(req, shaped);
 });
 
 // ── GET /v1/posts/:id ────────────────────────────────────────────────────
@@ -172,7 +193,7 @@ register('GET', '/v1/posts/:id', async (req, env, _ctx, params) => {
 // Author-scoped edit. Body: { content?, image_url? }. The "edit a
 // post" UI (`(tabs)/create.tsx` edit mode) calls this to update its
 // own row in place. Empty body returns the current row unchanged.
-register('PATCH', '/v1/posts/:id', async (req, env, _ctx, params, authedUserId) => {
+register('PATCH', '/v1/posts/:id', async (req, env, ctx, params, authedUserId) => {
   if (!authedUserId) return fail(req, 'unauthorised', 401);
   const id = parseUuid(params.id);
   if (!id) return fail(req, 'invalid post id', 400);
@@ -209,7 +230,21 @@ register('PATCH', '/v1/posts/:id', async (req, env, _ctx, params, authedUserId) 
     `${POST_SELECT_WITH_AUTHOR} WHERE p.id = ? LIMIT 1`,
     [id],
   );
-  return ok(req, updated ? shapePost(updated) : null);
+  const shaped = updated ? shapePost(updated) : null;
+  if (shaped) {
+    // Compact delta — the recipients already have the rest of the row
+    // cached. Sending the whole post again would multiply payload size
+    // for no gain.
+    const delta = {
+      id: shaped.id,
+      content: shaped.content,
+      image_url: shaped.image_url,
+      updated_at: new Date().toISOString(),
+    };
+    publishEvent(env, channels.feedPublic(), 'post.edit', delta, ctx);
+    publishEvent(env, channels.post(id), 'post.edit', delta, ctx);
+  }
+  return ok(req, shaped);
 });
 
 // ── DELETE /v1/posts/:id ─────────────────────────────────────────────
@@ -217,7 +252,7 @@ register('PATCH', '/v1/posts/:id', async (req, env, _ctx, params, authedUserId) 
 // Author-scoped. Cascades: deletes likes + comments + reposts that
 // reference this post, then the post itself. Wrapped in a single D1
 // batch so the row counts never end up partially applied.
-register('DELETE', '/v1/posts/:id', async (req, env, _ctx, params, authedUserId) => {
+register('DELETE', '/v1/posts/:id', async (req, env, ctx, params, authedUserId) => {
   if (!authedUserId) return fail(req, 'unauthorised', 401);
   const id = parseUuid(params.id);
   if (!id) return fail(req, 'invalid post id', 400);
@@ -238,6 +273,8 @@ register('DELETE', '/v1/posts/:id', async (req, env, _ctx, params, authedUserId)
     { sql: `DELETE FROM posts WHERE content LIKE ?`, params: [`::repost::${id}%`] },
     { sql: `DELETE FROM posts WHERE id = ?`, params: [id] },
   ]);
+  publishEvent(env, channels.feedPublic(), 'post.delete', { id }, ctx);
+  publishEvent(env, channels.post(id), 'post.delete', { id }, ctx);
   return ok(req, { deleted: true });
 });
 
@@ -246,10 +283,19 @@ register('DELETE', '/v1/posts/:id', async (req, env, _ctx, params, authedUserId)
 // Toggle. If a (user_id, post_id) row exists, deletes it and decrements
 // the post's likes_count. Otherwise inserts and increments. Atomic via
 // D1.batch — clients see one of two stable post states.
-register('POST', '/v1/posts/:id/like', async (req, env, _ctx, params, authedUserId) => {
+register('POST', '/v1/posts/:id/like', async (req, env, ctx, params, authedUserId) => {
   if (!authedUserId) return fail(req, 'unauthorised', 401);
   const postId = parseUuid(params.id);
   if (!postId) return fail(req, 'invalid post id', 400);
+
+  // Look up the author once up front: cheap (single PK probe) and lets
+  // us decide whether to ping the post owner about the like in the
+  // same trip. Missing post → silent no-op so a stale UI doesn't 404.
+  const meta = await queryOne<{ author_id: string }>(
+    env,
+    `SELECT author_id FROM posts WHERE id = ? LIMIT 1`,
+    [postId],
+  );
 
   const existing = await queryOne<{ user_id: string }>(
     env,
@@ -262,6 +308,25 @@ register('POST', '/v1/posts/:id/like', async (req, env, _ctx, params, authedUser
       { sql: `DELETE FROM likes WHERE user_id = ? AND post_id = ?`, params: [authedUserId, postId] },
       { sql: `UPDATE posts SET likes_count = MAX(COALESCE(likes_count, 0) - 1, 0) WHERE id = ?`, params: [postId] },
     ]);
+    // Re-read the count so peers display the canonical value rather
+    // than hand-rolling a -1 that might race with another tap.
+    const after = await queryOne<{ likes_count: number }>(
+      env,
+      `SELECT likes_count FROM posts WHERE id = ? LIMIT 1`,
+      [postId],
+    );
+    publishEvent(
+      env,
+      channels.post(postId),
+      'post.unlike',
+      {
+        post_id: postId,
+        user_id: authedUserId,
+        liked: false,
+        likes_count: after?.likes_count ?? 0,
+      },
+      ctx,
+    );
     return ok(req, { liked: false });
   }
 
@@ -276,6 +341,35 @@ register('POST', '/v1/posts/:id/like', async (req, env, _ctx, params, authedUser
       params: [postId],
     },
   ]);
+  const after = await queryOne<{ likes_count: number }>(
+    env,
+    `SELECT likes_count FROM posts WHERE id = ? LIMIT 1`,
+    [postId],
+  );
+  publishEvent(
+    env,
+    channels.post(postId),
+    'post.like',
+    {
+      post_id: postId,
+      user_id: authedUserId,
+      liked: true,
+      likes_count: after?.likes_count ?? 1,
+    },
+    ctx,
+  );
+  // Tell the post author another device "someone liked your post" —
+  // skipping self-likes so the user doesn't ping themselves on
+  // accidental own-post taps.
+  if (meta && meta.author_id && meta.author_id !== authedUserId) {
+    publishEvent(
+      env,
+      channels.userNotifications(meta.author_id),
+      'notif.like',
+      { post_id: postId, by: authedUserId, ts: now },
+      ctx,
+    );
+  }
   return ok(req, { liked: true });
 });
 
@@ -284,7 +378,7 @@ register('POST', '/v1/posts/:id/like', async (req, env, _ctx, params, authedUser
 // Body: { content }. Authed only. Inserts the comment + bumps the
 // post's comments_count atomically. Returns the new comment with the
 // author profile embedded.
-register('POST', '/v1/posts/:id/comments', async (req, env, _ctx, params, authedUserId) => {
+register('POST', '/v1/posts/:id/comments', async (req, env, ctx, params, authedUserId) => {
   if (!authedUserId) return fail(req, 'unauthorised', 401);
   const postId = parseUuid(params.id);
   if (!postId) return fail(req, 'invalid post id', 400);
@@ -340,7 +434,7 @@ register('POST', '/v1/posts/:id/comments', async (req, env, _ctx, params, authed
     [id],
   );
   if (!row) return ok(req, null);
-  return ok(req, {
+  const shaped = {
     id: row.id,
     post_id: row.post_id,
     author_id: row.author_id,
@@ -357,7 +451,28 @@ register('POST', '/v1/posts/:id/comments', async (req, env, _ctx, params, authed
           links: null,
         })
       : null,
-  });
+  };
+
+  publishEvent(env, channels.post(postId), 'comment.new', { comment: shaped }, ctx);
+
+  // Ping the post author on a different device so they see the comment
+  // landed even if the home tab isn't focused. Skip self-comments —
+  // a user replying on their own post doesn't notify themselves.
+  const postOwner = await queryOne<{ author_id: string }>(
+    env,
+    `SELECT author_id FROM posts WHERE id = ? LIMIT 1`,
+    [postId],
+  );
+  if (postOwner && postOwner.author_id && postOwner.author_id !== authedUserId) {
+    publishEvent(
+      env,
+      channels.userNotifications(postOwner.author_id),
+      'notif.comment',
+      { post_id: postId, comment_id: id, by: authedUserId, ts: now },
+      ctx,
+    );
+  }
+  return ok(req, shaped);
 });
 
 // ── GET /v1/posts/:id/comments ──────────────────────────────────────────

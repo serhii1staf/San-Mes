@@ -14,9 +14,10 @@
 
 import { fail, ok } from '../http';
 import { register } from '../router';
-import { batch, exec, queryOne } from '../db';
+import { batch, exec, query, queryOne } from '../db';
 import { parseUuid } from '../util';
 import { asStr, readJson } from '../validate';
+import { channels, publishEvent } from '../realtime';
 
 // ── POST /v1/conversations ────────────────────────────────────────────
 //
@@ -70,7 +71,7 @@ register('POST', '/v1/conversations', async (req, env, _ctx, _params, authedUser
 });
 
 // ── POST /v1/conversations/:id/messages ───────────────────────────────
-register('POST', '/v1/conversations/:id/messages', async (req, env, _ctx, params, authedUserId) => {
+register('POST', '/v1/conversations/:id/messages', async (req, env, ctx, params, authedUserId) => {
   if (!authedUserId) return fail(req, 'unauthorised', 401);
   const conversationId = parseUuid(params.id);
   if (!conversationId) return fail(req, 'invalid conversation id', 400);
@@ -96,6 +97,38 @@ register('POST', '/v1/conversations/:id/messages', async (req, env, _ctx, params
     `INSERT INTO messages (id, conversation_id, sender_id, text, created_at) VALUES (?, ?, ?, ?, ?)`,
     [id, conversationId, authedUserId, text, now],
   );
+
+  // The chat:<id> channel is published from the SENDER'S client (see
+  // app/chat/[id].tsx) — both peers' chat-screen subscriptions get the
+  // message in lock step and we don't double-publish here.
+  //
+  // What the sender's client CAN'T reach is a recipient who isn't on
+  // the chat screen yet (e.g. the messages tab is open elsewhere, or
+  // the app is backgrounded). For that we ping each OTHER participant
+  // on their personal notifications channel so the messages-tab badge
+  // and conversation row update without polling. Trim the preview hard
+  // — the realtime payload should never carry a 16 KB chat body.
+  const otherParticipants = await query<{ user_id: string }>(
+    env,
+    `SELECT user_id FROM conversation_participants
+      WHERE conversation_id = ? AND user_id != ?`,
+    [conversationId, authedUserId],
+  );
+  const preview = text.slice(0, 200);
+  for (const row of otherParticipants) {
+    publishEvent(
+      env,
+      channels.userNotifications(row.user_id),
+      'notif.message',
+      {
+        conversation_id: conversationId,
+        sender_id: authedUserId,
+        preview,
+        ts: now,
+      },
+      ctx,
+    );
+  }
 
   return ok(req, {
     id,
