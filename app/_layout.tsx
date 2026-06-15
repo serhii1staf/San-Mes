@@ -20,6 +20,7 @@ import { setCacheAccount } from '../src/services/cacheService';
 import { setThrottleAccount } from '../src/services/syncThrottle';
 import { useT } from '../src/i18n/store';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { PerfMonitorBubble } from '../src/components/dev/PerfMonitorBubble';
 import { perfMonitor, installPerfErrorHooks } from '../src/services/perfMonitor';
 import { DynamicOverlayHost } from '../src/components/dynamic-overlay/DynamicOverlayHost';
@@ -261,6 +262,7 @@ function RootLayout() {
   if (!ready) return null;
 
   return (
+    <GestureHandlerRootView style={styles.gestureRoot}>
     <KeyboardProvider>
     <ThemeProvider>
       <NavigationBarController />
@@ -392,6 +394,7 @@ function RootLayout() {
       </AuthNavigationGuard>
     </ThemeProvider>
     </KeyboardProvider>
+    </GestureHandlerRootView>
   );
 }
 
@@ -399,6 +402,7 @@ const styles = StyleSheet.create({
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#141414' },
   rootColumn: { flex: 1 },
   stackWrapper: { flex: 1 },
+  gestureRoot: { flex: 1 },
 });
 
 // Wrap with Sentry.wrap so the root component is included in the

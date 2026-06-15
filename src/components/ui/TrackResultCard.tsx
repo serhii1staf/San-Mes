@@ -38,7 +38,7 @@ function TrackResultCardBase({ track }: { track: Track }) {
   return (
     <View style={{ backgroundColor: active ? theme.colors.accent.primary + '15' : (theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)'), borderRadius: 16, padding: 8, borderWidth: active ? 1 : 0, borderColor: theme.colors.accent.primary }}>
       <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-        <CachedImage uri={track.artwork} style={{ width: 52, height: 52, borderRadius: 10, backgroundColor: 'rgba(0,0,0,0.1)' }} resizeMode="cover" />
+        <CachedImage uri={track.artwork} style={{ width: 52, height: 52, borderRadius: 10, backgroundColor: 'rgba(0,0,0,0.1)' }} resizeMode="cover" priority="low" proxyWidth={64} />
         <View style={{ flex: 1, marginLeft: 10, marginRight: 8 }}>
           <Text variant="caption" weight="semibold" numberOfLines={1} style={{ fontSize: 13 }}>{track.title}</Text>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>

@@ -180,7 +180,6 @@ export default function MiniAppScreen() {
         domStorageEnabled
         bounces={true}
         scrollEnabled={true}
-        decelerationRate="normal"
         allowsInlineMediaPlayback
         mediaPlaybackRequiresUserAction={false}
         allowsFullscreenVideo
