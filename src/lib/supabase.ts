@@ -10,15 +10,11 @@
 //
 // The function names + return shapes are unchanged so existing call
 // sites compile without edits. Internally each function is now a
-// 2-3 line wrapper around an apiClient call. The `dataLayer` flag in
-// settingsStore stays as an emergency escape hatch (defaulted to
-// `'d1'`); we don't honour `'supabase'` anymore — flipping the flag
-// just logs a perfMonitor warning and stays on D1.
+// 2-3 line wrapper around an apiClient call.
 
 import { createClient } from '@supabase/supabase-js';
 import { Platform } from 'react-native';
 import { uploadToR2, isR2PublicConfigured } from './r2';
-import { t } from '../i18n/store';
 import {
   apiDelete,
   apiGet,

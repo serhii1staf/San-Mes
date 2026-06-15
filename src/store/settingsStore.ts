@@ -46,21 +46,6 @@ interface SettingsState {
   weatherCityName: string | null;
   weatherLat: number | null;
   weatherLon: number | null;
-  // Phase 5 of the Cloudflare D1 migration. The data layer is now D1
-  // by default; `'supabase'` is left as an emergency escape hatch for
-  // future debugging but `src/lib/supabase.ts` no longer honours it
-  // (it logs a perfMonitor warning and stays on the Worker). The flag
-  // exists so the admin screen can show "production is on D1" with
-  // unambiguous wording.
-  dataLayer: 'd1' | 'supabase';
-  setDataLayer: (v: 'd1' | 'supabase') => void;
-  /**
-   * @deprecated Phase-2 read shadowing flag — superseded by `dataLayer`.
-   * Reads true when `dataLayer === 'd1'` so legacy callers still work
-   * during OTA migration. New code should use `dataLayer` directly.
-   */
-  useD1Reads: boolean;
-  setUseD1Reads: (v: boolean) => void;
   setHaptic: (enabled: boolean) => void;
   setInAppBrowser: (enabled: boolean) => void;
   setBrowserWidgetPosition: (position: 'top' | 'bottom') => void;
@@ -107,13 +92,6 @@ export const useSettingsStore = create<SettingsState>()(
       weatherCityName: null,
       weatherLat: null,
       weatherLon: null,
-      // D1 is the default in production. Supabase is kept only as an
-      // emergency escape-hatch label; the data layer ignores the flag
-      // and always uses the Worker.
-      dataLayer: 'd1' as const,
-      // Legacy phase-2 mirror so anything still reading `useD1Reads`
-      // gets a truthy value when D1 is the active layer.
-      useD1Reads: true,
       setHaptic: (hapticEnabled) => set({ hapticEnabled }),
       setInAppBrowser: (useInAppBrowser) => set({ useInAppBrowser }),
       setBrowserWidgetPosition: (browserWidgetPosition) => set({ browserWidgetPosition }),
@@ -131,9 +109,6 @@ export const useSettingsStore = create<SettingsState>()(
             ? { weatherCityName: city.name, weatherLat: city.lat, weatherLon: city.lon }
             : { weatherCityName: null, weatherLat: null, weatherLon: null }
         ),
-      setDataLayer: (dataLayer) => set({ dataLayer, useD1Reads: dataLayer === 'd1' }),
-      setUseD1Reads: (useD1Reads) =>
-        set({ useD1Reads, dataLayer: useD1Reads ? 'd1' : 'supabase' }),
     }),
     {
       name: 'app-settings',
