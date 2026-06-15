@@ -63,27 +63,51 @@
         [
           {
             "name": "Classic",
-            "ios": "./assets/app-icons/classic.png"
+            "ios": "./assets/app-icons/classic.png",
+            "android": {
+              "foregroundImage": "./assets/app-icons/classic.png",
+              "backgroundColor": "#FFF8F0"
+            }
           },
           {
             "name": "Dark",
-            "ios": "./assets/app-icons/dark.png"
+            "ios": "./assets/app-icons/dark.png",
+            "android": {
+              "foregroundImage": "./assets/app-icons/dark.png",
+              "backgroundColor": "#141414"
+            }
           },
           {
             "name": "Blue",
-            "ios": "./assets/app-icons/blue.png"
+            "ios": "./assets/app-icons/blue.png",
+            "android": {
+              "foregroundImage": "./assets/app-icons/blue.png",
+              "backgroundColor": "#0A84FF"
+            }
           },
           {
             "name": "Orange",
-            "ios": "./assets/app-icons/orange.png"
+            "ios": "./assets/app-icons/orange.png",
+            "android": {
+              "foregroundImage": "./assets/app-icons/orange.png",
+              "backgroundColor": "#FF7A00"
+            }
           },
           {
             "name": "Mono",
-            "ios": "./assets/app-icons/mono.png"
+            "ios": "./assets/app-icons/mono.png",
+            "android": {
+              "foregroundImage": "./assets/app-icons/mono.png",
+              "backgroundColor": "#141414"
+            }
           },
           {
             "name": "Gradient",
-            "ios": "./assets/app-icons/gradient.png"
+            "ios": "./assets/app-icons/gradient.png",
+            "android": {
+              "foregroundImage": "./assets/app-icons/gradient.png",
+              "backgroundColor": "#141414"
+            }
           }
         ]
       ],
