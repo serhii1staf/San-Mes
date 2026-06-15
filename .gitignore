@@ -57,3 +57,10 @@ expo-env.d.ts
 # version control.
 telegram_ios_settings_icon_pack*.zip
 pixel_characters_pack*.zip
+
+# Cloudflare Worker scaffold — the Worker has its own package.json and
+# package-lock.json (committed). Local-only state must stay out of git.
+workers/api/node_modules/
+workers/api/.dev.vars
+workers/api/.wrangler/
+workers/api/dist/
