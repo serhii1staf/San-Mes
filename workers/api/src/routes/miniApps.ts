@@ -35,6 +35,44 @@ register('GET', '/v1/mini-apps', async (req, env) => {
   return ok(req, rows);
 });
 
+// ── GET /v1/mini-apps/by-short/:prefix ────────────────────────────────
+//
+// In-app deep-link handler at `app/m/[short].tsx` calls this to resolve
+// an 8-char id prefix to the full row without paging through the
+// `/v1/mini-apps?limit=100` list. Public (no auth) for the same reason
+// the rest of the read endpoints under `/v1/mini-apps` are public:
+// the rows are already returned by the list endpoint that drives the
+// settings + search screens. Refusing to route ambiguous prefixes
+// (0 or 2+ matches → 200 + null) matches the existing SSR contract.
+//
+// Registered BEFORE `/v1/mini-apps/:id` so the more-specific path
+// takes priority — see the router's "register the more specific
+// pattern first" rule. The two routes don't actually collide
+// (different segment counts), but ordering kept consistent with
+// admin.ts to make additions safer.
+register('GET', '/v1/mini-apps/by-short/:prefix', async (req, env, _ctx, params) => {
+  const clean = (params.prefix || '').toLowerCase().replace(/[^0-9a-f-]/g, '');
+  if (clean.length === 0 || clean.length > 8) return fail(req, 'invalid prefix', 400);
+  const rows = await query<{
+    id: string;
+    creator_id: string;
+    name: string;
+    description: string;
+    emoji: string;
+    url: string;
+    created_at: string;
+  }>(
+    env,
+    `SELECT id, creator_id, name, description, emoji, url, created_at
+       FROM mini_apps
+      WHERE id LIKE ?
+      LIMIT 2`,
+    [`${clean}%`],
+  );
+  if (rows.length !== 1) return ok(req, null);
+  return ok(req, rows[0]);
+});
+
 // ── POST /v1/mini-apps ────────────────────────────────────────────────
 //
 // Body: { name, description, emoji, url }. Authed only.

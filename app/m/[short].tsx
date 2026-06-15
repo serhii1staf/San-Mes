@@ -12,12 +12,16 @@ import { useT } from '../../src/i18n/store';
 //
 // Resolves the prefix to a full mini-app id by:
 //   1. Searching the local store first (instant for apps the user already has).
-//   2. If the cache misses, fetching the full mini-apps list via the
-//      Worker and finding the row whose id starts with the prefix. We
-//      use the list endpoint instead of a dedicated prefix-lookup
-//      because mini-app counts stay small (dozens, not thousands) on
-//      the timescale this app cares about. If the count grows we'll
-//      add a `GET /v1/mini-apps/by-prefix/:p` endpoint.
+//   2. If the cache misses, hitting the Worker's `/v1/mini-apps/by-short/:prefix`
+//      endpoint, which does an indexed `id LIKE 'prefix%'` lookup.
+//      Returns 200 + null when 0 or 2+ rows match the prefix
+//      (ambiguous), so we treat that as "not found" identically.
+//
+// The previous version paged through `/v1/mini-apps?limit=100` and
+// filtered by prefix in JS — that silently dropped older mini-apps once
+// the table grew past 100 rows, which was the root of the "Mini-app
+// unavailable" bug some users hit when opening shared links to apps
+// that weren't in the latest 100.
 //
 // The legacy long-uuid route stays at app/mini/[id].tsx — see vercel.json.
 export default function MiniShortDeepLinkScreen() {
@@ -51,28 +55,26 @@ export default function MiniShortDeepLinkScreen() {
         return;
       }
 
-      // 2. Cold path — fetch the full list and pick the unique prefix
-      //    match. If 0 or 2+ rows match the prefix we refuse to route.
+      // 2. Cold path — direct lookup via the dedicated by-short endpoint.
+      //    Returns null on 0 or 2+ matches (ambiguous prefix); we treat
+      //    that the same as "not found".
       try {
-        const { data } = await apiGet<{ id: string; name: string; emoji: string; url: string }[]>(
-          '/v1/mini-apps?limit=100',
+        const { data } = await apiGet<{ id: string; name: string; emoji: string; url: string } | null>(
+          `/v1/mini-apps/by-short/${encodeURIComponent(prefix)}`,
         );
         if (cancelled) return;
-        const matches = (data || []).filter((a) => a.id.toLowerCase().startsWith(prefix));
-        if (matches.length === 1) {
-          const row = matches[0];
+        if (data && data.id && data.url) {
           router.replace({
             pathname: '/mini-app',
             params: {
-              url: encodeURIComponent(row.url),
-              name: row.name,
-              emoji: row.emoji,
-              id: row.id,
+              url: encodeURIComponent(data.url),
+              name: data.name,
+              emoji: data.emoji,
+              id: data.id,
             },
           });
           return;
         }
-        // 0 or 2+ matches — show a generic "not found" alert and bail.
         Alert.alert(t('mini_app.preview.not_found_title'), t('mini_app.preview.not_found_msg'));
         if (router.canGoBack()) router.back();
         else router.replace('/(tabs)');

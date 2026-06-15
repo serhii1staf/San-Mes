@@ -269,3 +269,75 @@ register('DELETE', '/v1/admin/posts/:id', async (req, env, _ctx, params) => {
   ]);
   return ok(req, { deleted: true });
 });
+
+// ── GET /v1/admin/mini-apps/by-short/:prefix ──────────────────────────
+//
+// Used by the Vercel SSR functions (`api/m/[short].ts`) to resolve
+// 8-char id prefixes back to the full mini-app row without paging
+// through the public `/v1/mini-apps?limit=100` list. The list-based
+// fallback was the root of the "Mini-app unavailable" bug some users
+// hit: once the table grew past 100 rows, an older mini-app's prefix
+// would silently fall off the response. This endpoint hits an indexed
+// `id LIKE 'prefix%'` lookup so resolution doesn't depend on row
+// count or recency. Register BEFORE `/v1/admin/mini-apps/:id` so the
+// more-specific path wins. Returns a non-null row only when the
+// prefix uniquely identifies one mini-app — 0 or 2+ matches → 200 + null,
+// matching the SSR's "ambiguous prefix" behaviour.
+register('GET', '/v1/admin/mini-apps/by-short/:prefix', async (req, env, _ctx, params) => {
+  const guard = assertAdmin(req, env);
+  if (guard) return guard;
+  // Sanitize: lowercase, hex+dash only, max 8 chars (a UUID prefix).
+  const clean = (params.prefix || '').toLowerCase().replace(/[^0-9a-f-]/g, '');
+  if (clean.length === 0 || clean.length > 8) return fail(req, 'invalid prefix', 400);
+  const rows = await query<{
+    id: string;
+    creator_id: string;
+    name: string;
+    description: string;
+    emoji: string;
+    url: string;
+    created_at: string;
+  }>(
+    env,
+    `SELECT id, creator_id, name, description, emoji, url, created_at
+       FROM mini_apps
+      WHERE id LIKE ?
+      LIMIT 2`,
+    [`${clean}%`],
+  );
+  // Refuse to route an ambiguous prefix — same contract the SSR was
+  // already enforcing client-side via the list+filter approach.
+  if (rows.length !== 1) return ok(req, null);
+  return ok(req, rows[0]);
+});
+
+// ── GET /v1/admin/mini-apps/:id ───────────────────────────────────────
+//
+// Used by the Vercel SSR functions (`api/mini/[id].ts`) for the legacy
+// long-uuid share links. Same shape as the public
+// `/v1/mini-apps/:id` endpoint but routed under `/v1/admin/...` so all
+// SSR-side mini-app reads share one auth path (admin key) and one
+// rate-limit budget.
+register('GET', '/v1/admin/mini-apps/:id', async (req, env, _ctx, params) => {
+  const guard = assertAdmin(req, env);
+  if (guard) return guard;
+  const id = parseUuid(params.id);
+  if (!id) return fail(req, 'invalid mini-app id', 400);
+  const row = await queryOne<{
+    id: string;
+    creator_id: string;
+    name: string;
+    description: string;
+    emoji: string;
+    url: string;
+    created_at: string;
+  }>(
+    env,
+    `SELECT id, creator_id, name, description, emoji, url, created_at
+       FROM mini_apps
+      WHERE id = ?
+      LIMIT 1`,
+    [id],
+  );
+  return ok(req, row);
+});

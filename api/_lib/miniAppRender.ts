@@ -52,27 +52,33 @@ async function workerGet(path: string, admin = false): Promise<any> {
 
 /** Fetch by exact id (legacy long-uuid path). */
 export async function fetchMiniAppById(id: string): Promise<MiniAppPreview | null> {
-  const data = await workerGet(`/v1/mini-apps/${encodeURIComponent(id)}`);
+  // Routes through the admin endpoint so SSR-side mini-app reads share
+  // one auth path (X-Admin-Key) and one rate-limit budget. Returns the
+  // narrow preview-only shape — the underlying third-party URL is
+  // intentionally NOT exposed by this route.
+  const data = await workerGet(`/v1/admin/mini-apps/${encodeURIComponent(id)}`, true);
   if (!data) return null;
   return { id: data.id, name: data.name, emoji: data.emoji, description: data.description };
 }
 
 /**
- * Fetch by id-prefix (new short link path). Worker has no dedicated
- * prefix-lookup endpoint (yet); we fetch the recent mini-apps list and
- * filter client-side. The list cap (100 rows) is more than the app
- * realistically holds — if it grows we'll add `GET /v1/mini-apps/by-prefix`.
- * If 0 or 2+ rows match the prefix we refuse to route.
+ * Fetch by id-prefix (new short link path). Routes through the
+ * Worker's `by-short` admin endpoint, which does an indexed
+ * `id LIKE 'prefix%'` lookup against the full `mini_apps` table —
+ * not the top-100 newest list. The previous list+filter approach
+ * silently dropped older mini-apps off the response once the table
+ * grew past 100 rows, which was the root of the "Mini-app
+ * unavailable" bug some users hit. The Worker still returns null
+ * (200 + null body) when 0 or 2+ rows match the prefix, matching
+ * the "ambiguous prefix" contract the SSR was already enforcing
+ * client-side.
  */
 export async function fetchMiniAppByPrefix(prefix: string): Promise<MiniAppPreview | null> {
   const clean = (prefix || '').toLowerCase().replace(/[^0-9a-f-]/g, '');
   if (clean.length === 0 || clean.length > 8) return null;
-  const data = await workerGet(`/v1/mini-apps?limit=100`);
-  if (!Array.isArray(data)) return null;
-  const matches = data.filter((a: any) => typeof a.id === 'string' && a.id.toLowerCase().startsWith(clean));
-  if (matches.length !== 1) return null;
-  const row = matches[0];
-  return { id: row.id, name: row.name, emoji: row.emoji, description: row.description };
+  const data = await workerGet(`/v1/admin/mini-apps/by-short/${encodeURIComponent(clean)}`, true);
+  if (!data) return null;
+  return { id: data.id, name: data.name, emoji: data.emoji, description: data.description };
 }
 
 export interface RenderOpts {
