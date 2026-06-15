@@ -115,15 +115,15 @@ export default function ChatBubbleRadiusScreen() {
           </BlurView>
         </Pressable>
         <View style={styles.headerTitleAbs} pointerEvents="box-none">
-          <View style={styles.headerTitlePill}>
-            <BlurView intensity={80} tint="dark" style={styles.headerTitleInner}>
-              <ShrinkingModalTitle>
+          <ShrinkingModalTitle>
+            <View style={styles.headerTitlePill}>
+              <BlurView intensity={80} tint="dark" style={styles.headerTitleInner}>
                 <RNText style={styles.headerTitleText} allowFontScaling={false} numberOfLines={1} ellipsizeMode="tail">
                   {t('chat_settings.bubble_radius')}
                 </RNText>
-              </ShrinkingModalTitle>
-            </BlurView>
-          </View>
+              </BlurView>
+            </View>
+          </ShrinkingModalTitle>
         </View>
         <Pressable onPress={onApply} hitSlop={10} style={styles.headerPill}>
           <BlurView intensity={80} tint="dark" style={[styles.headerPillInner, { paddingHorizontal: 14 }]}>
