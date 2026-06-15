@@ -13,6 +13,16 @@ export interface Env {
   JWT_SECRET: string;
   /** Shared secret for `/v1/admin/*` endpoints — `wrangler secret put ADMIN_KEY`. */
   ADMIN_KEY: string;
+  /**
+   * Ably Root API key for server-side realtime publishes — `wrangler
+   * secret put ABLY_ROOT_KEY`. Optional: when missing, every
+   * `publishEvent(...)` call short-circuits silently and the app falls
+   * back to refresh-on-demand behavior. The Worker NEVER ships this
+   * value to a client; it lives only inside the Worker isolate and is
+   * sent as a `Basic <base64>` header on outbound `https://rest.ably.io`
+   * requests.
+   */
+  ABLY_ROOT_KEY?: string;
 }
 
 export type Row = Record<string, unknown>;
