@@ -274,12 +274,64 @@ export default function CreateScreen() {
         const { post, error } = await createRepost(user.id, repostData.id, content.trim() || undefined, repostImageUrl);
         if (error) {
           Alert.alert(t('create.alert.error_title'), error);
-        } else {
-          setContent('');
-          setImageUris([]);
-          setRepostData(null);
+          setIsPosting(false);
+          return;
         }
+        // Optimistically push the new repost into the profile posts store
+        // + caches, mirroring the regular createPost branch. Without this
+        // the repost persisted to D1 but never appeared in the user's own
+        // profile: `loadMyPosts` is throttle-gated (shouldSync('my_posts')),
+        // so on the next profile visit it returns early and the cache —
+        // which never got the new repost — is what renders. The user saw
+        // "I reposted but it's not in my profile". Building the Post here
+        // with its `originalPost` resolved (we already have `repostData`)
+        // makes it show instantly, exactly like a fresh post.
+        if (post) {
+          const { parseImageUrls } = await import('../../src/lib/supabase');
+          const repostImages = parseImageUrls(repostImageUrl);
+          const newRepost = {
+            id: post.id,
+            authorId: user.id,
+            authorName: user.displayName || '',
+            authorUsername: user.username || '',
+            authorEmoji: user.emoji || '😊',
+            content: content.trim() || '',
+            imageUrl: repostImages[0] || undefined,
+            imageUrls: repostImages.length > 0 ? repostImages : undefined,
+            likesCount: 0,
+            commentsCount: 0,
+            sharesCount: 0,
+            isLiked: false,
+            isBookmarked: false,
+            createdAt: post.created_at,
+            isRepost: true,
+            originalPost: {
+              id: repostData.id,
+              authorName: repostData.authorName,
+              authorUsername: (repostData as any).authorUsername || 'user',
+              authorEmoji: repostData.authorEmoji,
+              content: repostData.content,
+              imageUrl: repostData.imageUrl,
+              imageUrls: repostData.imageUrl ? [repostData.imageUrl] : undefined,
+            },
+          };
+          try {
+            const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+            const feedCached = await AsyncStorage.getItem(accountKey('@san:feed_posts'));
+            const feedPosts = feedCached ? JSON.parse(feedCached) : [];
+            await AsyncStorage.setItem(accountKey('@san:feed_posts'), JSON.stringify([newRepost, ...feedPosts].slice(0, 20)));
+            const myCached = await AsyncStorage.getItem(accountKey('@san:my_posts'));
+            const myPosts = myCached ? JSON.parse(myCached) : [];
+            await AsyncStorage.setItem(accountKey('@san:my_posts'), JSON.stringify([newRepost, ...myPosts].slice(0, 20)));
+          } catch {}
+          const currentProfilePosts = useFeedStore.getState().profilePosts;
+          useFeedStore.getState().setProfilePosts([newRepost, ...currentProfilePosts].slice(0, 20));
+        }
+        setContent('');
+        setImageUris([]);
+        setRepostData(null);
         setIsPosting(false);
+        router.replace('/(tabs)');
         return;
       }
 
