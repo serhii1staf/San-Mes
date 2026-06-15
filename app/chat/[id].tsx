@@ -20,7 +20,7 @@ import { MessageContextMenu, MessageAction } from '../../src/components/ui/Messa
 import { TranslationSheet } from '../../src/components/ui/TranslationSheet';
 import { ChatInputBar, ChatInputBarHandle } from '../../src/components/chat/ChatInputBar';
 import { GiphyPicker } from '../../src/components/ui/GiphyPicker';
-import { getRealtime, chatChannelName, userNotificationsChannelName } from '../../src/services/realtime/ably';
+import { getRealtime, chatChannelName } from '../../src/services/realtime/ably';
 import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
 import { useChatStore, useEntityStore, useConnectivityStore, useAuthStore } from '../../src/store';
 import { useChatSettingsStore, GLOBAL_CHAT_SETTINGS_KEY, DEFAULT_CHAT_SETTINGS } from '../../src/store/chatSettingsStore';
@@ -957,29 +957,12 @@ export default function ChatScreen() {
                 replyPixelIconId: newMessage.replyPixelIconId,
               });
             }
-            // Ping the peer's personal channel so the conversation row +
-            // preview appear in their messages tab before they open the
-            // chat (Telegram-style), matching handleSend.
-            if (realtime && participantId) {
-              const peerChan = realtime.channels.get(userNotificationsChannelName(participantId));
-              const me = useAuthStore.getState().user;
-              void peerChan.publish('new_message', {
-                conversationId: convId,
-                senderId: user.id,
-                senderName: me?.displayName || '',
-                senderUsername: me?.username || '',
-                senderEmoji: me?.emoji || '😊',
-                lastMessage: '📷',
-                lastMessageAt: newMessage.createdAt,
-                message: {
-                  id: newMessage.id,
-                  senderId: user.id,
-                  text: '',
-                  createdAt: newMessage.createdAt,
-                  imageUrls: [url],
-                },
-              });
-            }
+            // Peer notification (conversation row + preview on the
+            // recipient's messages tab) is published SERVER-SIDE by the
+            // Worker after POST /messages — it holds the Ably root key and
+            // can write to `user:<peer>:notifications`. The client token is
+            // scoped to `chat:*` + `user:<self>:*` only, so a client-side
+            // publish here just throws a 40160 capability error. Removed.
           } catch {}
 
           // Converge local state onto the canonical conversation id (Bug 3)
@@ -1182,24 +1165,11 @@ export default function ChatScreen() {
               const chatChan = realtime.channels.get(chatChannelName(convId));
               void chatChan.publish('msg', messageBody);
             }
-            if (participantId) {
-              const peerChan = realtime.channels.get(userNotificationsChannelName(participantId));
-              // Pull our own profile out of the auth store to enrich the
-              // notification payload — that way the recipient's bridge has
-              // all the fields it needs to render the conversation row
-              // without an extra `profiles` round-trip.
-              const me = useAuthStore.getState().user;
-              void peerChan.publish('new_message', {
-                conversationId: convId,
-                senderId: user.id,
-                senderName: me?.displayName || '',
-                senderUsername: me?.username || '',
-                senderEmoji: me?.emoji || '😊',
-                lastMessage: text || (uploadedUrls.length > 0 ? '📷' : ''),
-                lastMessageAt: newMessage.createdAt,
-                message: messageBody,
-              });
-            }
+            // Peer notification (messages-tab row + preview) is published
+            // SERVER-SIDE by the Worker after POST /messages using the Ably
+            // root key. The client token is scoped to `chat:*` + `user:<self>:*`
+            // only, so publishing to `user:<peer>:notifications` from here just
+            // throws a 40160 capability error. Removed — see messages.ts.
           }
         } catch {}
       }

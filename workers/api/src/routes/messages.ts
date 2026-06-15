@@ -114,6 +114,16 @@ register('POST', '/v1/conversations/:id/messages', async (req, env, ctx, params,
       WHERE conversation_id = ? AND user_id != ?`,
     [conversationId, authedUserId],
   );
+  // Sender display info so the recipient's messages-tab row renders with a
+  // name/emoji immediately — no extra `profiles` round-trip on their side.
+  // One indexed PK lookup; cheap. (Previously the sender's client supplied
+  // these via a client-side publish, which we removed because the client
+  // token can't publish to a peer's notifications channel.)
+  const sender = await queryOne<{ username: string; display_name: string; emoji: string }>(
+    env,
+    `SELECT username, display_name, emoji FROM profiles WHERE id = ?`,
+    [authedUserId],
+  );
   const preview = text.slice(0, 200);
   // Carry the FULL message (capped) alongside the badge preview. This is
   // the delivery backstop: a recipient whose chat screen ISN'T open (or who
@@ -132,6 +142,9 @@ register('POST', '/v1/conversations/:id/messages', async (req, env, ctx, params,
       {
         conversation_id: conversationId,
         sender_id: authedUserId,
+        sender_name: sender?.display_name || '',
+        sender_username: sender?.username || '',
+        sender_emoji: sender?.emoji || '😊',
         message_id: id,
         text: realtimeText,
         created_at: now,

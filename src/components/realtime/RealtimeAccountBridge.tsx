@@ -114,9 +114,9 @@ export function RealtimeAccountBridge(): null {
             const nextRow = {
               id: conversationId,
               participantId: senderId,
-              participantName: String(payload.senderName || ''),
-              participantUsername: String(payload.senderUsername || ''),
-              participantEmoji: String(payload.senderEmoji || '😊'),
+              participantName: String(payload.senderName || payload.sender_name || ''),
+              participantUsername: String(payload.senderUsername || payload.sender_username || ''),
+              participantEmoji: String(payload.senderEmoji || payload.sender_emoji || '😊'),
               lastMessage,
               lastMessageAt,
             };
