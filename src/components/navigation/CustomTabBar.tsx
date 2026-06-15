@@ -568,10 +568,21 @@ export const CustomTabBar = React.memo(function CustomTabBar({
 
   return (
     <View style={styles.wrapper} pointerEvents="box-none">
-      {/* Soft fade above the bar so content dissolves into glass */}
+      {/* Soft fade above the bar so content dissolves into glass.
+          The container now adds the Android system-nav inset to its bottom
+          margin so the floating pill clears the nav bar. That grew the
+          wrapper (and this absoluteFill gradient) by `insets.bottom`, which
+          pushed the gradient's dark stop DOWN into the inset gap below the
+          bar — so the dim behind the visible bar looked gone. Pull the
+          gradient's bottom edge back up by the same inset on Android so its
+          dark stop sits behind the bar exactly as before. iOS is unchanged
+          (the inset term is 0, leaving a plain absoluteFill). */}
       <LinearGradient
         colors={['transparent', isDark ? 'rgba(0,0,0,0.4)' : 'rgba(255,255,255,0.3)']}
-        style={StyleSheet.absoluteFill}
+        style={[
+          StyleSheet.absoluteFill,
+          { bottom: Platform.OS === 'android' ? insets.bottom : 0 },
+        ]}
         pointerEvents="none"
       />
 

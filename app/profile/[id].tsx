@@ -1013,8 +1013,16 @@ export default function UserProfileScreen() {
             proxyWidth={1080}
           />
         ) : null}
-        <LinearGradient colors={['transparent', 'rgba(0,0,0,0.55)']} locations={[0.4, 1]} style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 140 }} pointerEvents="none" />
-        <LinearGradient colors={['transparent', theme.colors.background.primary]} style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 48 }} pointerEvents="none" />
+        {/* Banner dissolves into the screen background using the SAME
+            transparent → bg → solid three-stop fade as the chat input bar
+            (see app/chat/[id].tsx). Replaces the old dark dim the user
+            disliked — theme-aware via the screen's background color. */}
+        <LinearGradient
+          colors={[theme.colors.background.primary + '00', theme.colors.background.primary + 'B3', theme.colors.background.primary]}
+          locations={[0, 0.45, 1]}
+          style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 140 }}
+          pointerEvents="none"
+        />
       </View>
       <View style={{ flexDirection: 'row', alignItems: 'center', alignSelf: 'stretch', marginTop: -140, paddingHorizontal: 8 }}>
         <View style={{ flex: 1 }}>
