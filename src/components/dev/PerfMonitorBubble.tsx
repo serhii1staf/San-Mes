@@ -23,7 +23,7 @@ import Animated, {
   runOnJS,
   withSpring,
 } from 'react-native-reanimated';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useSettingsStore } from '../../store/settingsStore';
@@ -244,16 +244,25 @@ function PerfMonitorBubbleInner() {
   return (
     <>
       <Animated.View pointerEvents="box-none" style={[styles.container, animStyle]}>
-        <GestureDetector gesture={composedGesture}>
-          <View style={[styles.bubble, { borderColor: tint, shadowColor: tint }]}>
-            <Text style={[styles.fps, { color: tint }]} numberOfLines={1}>
-              {snap.jsFps || 0}
-            </Text>
-            <Text style={styles.label} numberOfLines={1}>
-              {snap.uiFps || 0}ui
-            </Text>
-          </View>
-        </GestureDetector>
+        {/* GestureHandlerRootView is required around any <GestureDetector>.
+            The app root isn't wrapped in one (this codebase wraps gesture
+            components individually — see CustomTabBar and profile/edit), so
+            without this the bubble throws "GestureDetector must be used as a
+            descendant of GestureHandlerRootView" and the whole monitor gets
+            disabled by its error boundary. Sized to the bubble so it never
+            intercepts touches anywhere else on screen. */}
+        <GestureHandlerRootView style={styles.gestureRoot}>
+          <GestureDetector gesture={composedGesture}>
+            <View style={[styles.bubble, { borderColor: tint, shadowColor: tint }]}>
+              <Text style={[styles.fps, { color: tint }]} numberOfLines={1}>
+                {snap.jsFps || 0}
+              </Text>
+              <Text style={styles.label} numberOfLines={1}>
+                {snap.uiFps || 0}ui
+              </Text>
+            </View>
+          </GestureDetector>
+        </GestureHandlerRootView>
       </Animated.View>
 
       <Modal
@@ -278,6 +287,10 @@ const styles = StyleSheet.create({
     width: BUBBLE_SIZE,
     height: BUBBLE_SIZE,
     zIndex: 9999,
+  },
+  gestureRoot: {
+    width: BUBBLE_SIZE,
+    height: BUBBLE_SIZE,
   },
   bubble: {
     width: BUBBLE_SIZE,

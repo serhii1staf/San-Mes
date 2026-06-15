@@ -85,6 +85,39 @@ export interface PerfEvent {
   context?: PerfEventContext;
 }
 
+/**
+ * Per-route jank aggregate. Unlike the 64-entry event ring (which wraps and
+ * forgets), these counters accumulate for the whole session so the panel's
+ * "Hotspots" view can rank screens by how janky they actually were — even
+ * after hundreds of events have scrolled past. This is the answer to the
+ * question "WHERE do the FPS drops happen?".
+ */
+export interface RouteHotspot {
+  route: string;
+  /** Number of long-task stalls (>120 ms JS-thread blocks) seen on this route. */
+  longTaskCount: number;
+  /** Worst single long-task duration on this route, ms. */
+  worstLongMs: number;
+  /** Mean long-task duration on this route, ms (0 if none). */
+  avgLongMs: number;
+  /** Number of sub-30-fps samples (JS or UI thread) recorded on this route. */
+  jankCount: number;
+  /** Worst (minimum) FPS observed on this route. 60 if never dipped. */
+  worstFps: number;
+  /** Number of component/screen mounts recorded on this route. */
+  mountCount: number;
+  /** Mean mount duration, ms (0 if none). */
+  avgMountMs: number;
+  /** Worst single mount duration, ms. */
+  worstMountMs: number;
+  /** Number of image decode events recorded on this route. */
+  imgCount: number;
+  /** Composite severity score used for ranking (higher = jankier). */
+  score: number;
+  /** Date.now() of the most recent activity on this route. */
+  lastTs: number;
+}
+
 export interface PerfSnapshot {
   jsFps: number;
   uiFps: number;
@@ -97,8 +130,24 @@ export interface PerfSnapshot {
   currentRoute: string;
   /** Duration of the most recent long-task event, in ms (0 if none yet). */
   lastLongTaskMs: number;
+  /** Per-route jank ranking, worst-first. Drives the panel's Hotspots view. */
+  hotspots: RouteHotspot[];
   /** Date.now() at the moment this snapshot was built. Useful for the JSON snapshot copy. */
   capturedAt: number;
+}
+
+/** Mutable accumulator backing one RouteHotspot. */
+interface RouteStat {
+  longTaskCount: number;
+  worstLongMs: number;
+  sumLongMs: number;
+  jankCount: number;
+  worstFps: number;
+  mountCount: number;
+  sumMountMs: number;
+  worstMountMs: number;
+  imgCount: number;
+  lastTs: number;
 }
 
 type Listener = (snap: PerfSnapshot) => void;
@@ -130,6 +179,11 @@ class PerfMonitor {
   // Live in-flight image-decode counter. Surfaced in the snapshot as a gauge
   // so the user can correlate "5 images mid-decode" with the freeze frame.
   private _pendingDecodes = 0;
+
+  // Per-route jank accumulators. Survive ring-buffer wrap so the Hotspots
+  // view can rank screens over the whole session, not just the last 64
+  // events. Keyed by route label.
+  private _routeStats = new Map<string, RouteStat>();
 
   // After a long-task / stall, RAF (and the Reanimated frame callback) deliver
   // "catch-up" bursts where several queued frames fire back-to-back in <16 ms
@@ -199,6 +253,11 @@ class PerfMonitor {
         // thread resumes after a heavy commit.
         this._jsSuppressFpsUntil = now + PerfMonitor._SUPPRESS_MS;
         this._uiSuppressFpsUntil = now + PerfMonitor._SUPPRESS_MS;
+        const st = this._routeStat(this._currentRoute);
+        st.longTaskCount += 1;
+        st.sumLongMs += dur;
+        if (dur > st.worstLongMs) st.worstLongMs = dur;
+        st.lastTs = now;
         this._record({
           ts: now,
           type: 'slow',
@@ -257,12 +316,14 @@ class PerfMonitor {
         const fps = Math.min(60, rawFps);
         this._jsFps = fps;
         this._pushHistory(this._jsHistory, now, fps);
+        this._bumpRouteFps(fps);
         this._frameCount = 0;
         this._lastSampleTs = now;
         maxDtInWindow = 0;
         // Sustained jank below 30 fps still gets its own marker so the user
         // can distinguish a single hitch from a long stutter.
         if (this._jsHistory.length > 1 && fps < 30) {
+          this._routeStat(this._currentRoute).jankCount += 1;
           this._record({
             ts: now,
             type: 'slow',
@@ -302,7 +363,9 @@ class PerfMonitor {
     const clamped = Math.min(60, Math.max(0, fps));
     this._uiFps = clamped;
     this._pushHistory(this._uiHistory, now, clamped);
+    this._bumpRouteFps(clamped);
     if (this._uiHistory.length > 1 && clamped < 30) {
+      this._routeStat(this._currentRoute).jankCount += 1;
       this._record({
         ts: now,
         type: 'slow',
@@ -351,6 +414,11 @@ class PerfMonitor {
    */
   markScreenMount(screen: string, durationMs: number) {
     if (!useSettingsStore.getState().perfMonitorEnabled) return;
+    const st = this._routeStat(this._currentRoute);
+    st.mountCount += 1;
+    st.sumMountMs += durationMs;
+    if (durationMs > st.worstMountMs) st.worstMountMs = durationMs;
+    st.lastTs = Date.now();
     this._record({
       ts: Date.now(),
       type: 'mark',
@@ -417,6 +485,7 @@ class PerfMonitor {
     while (seen.length && now - seen[0] > IMG_THROTTLE_WINDOW_MS) seen.shift();
     if (seen.length >= IMG_THROTTLE_MAX_PER_WINDOW) return;
     seen.push(now);
+    this._routeStat(this._currentRoute).imgCount += 1;
     this._record({
       ts: now,
       type: 'mark',
@@ -508,6 +577,7 @@ class PerfMonitor {
       pendingDecodes: this._pendingDecodes,
       currentRoute: this._currentRoute,
       lastLongTaskMs: this._lastLongTaskMs,
+      hotspots: this.getHotspots(),
       capturedAt: Date.now(),
     };
   }
@@ -528,10 +598,82 @@ class PerfMonitor {
     this._events = new Array(RING_CAPACITY);
     this._eventHead = 0;
     this._eventCount = 0;
+    this._routeStats.clear();
     this._notify();
   }
 
+  /**
+   * Build the per-route jank ranking that drives the panel's Hotspots view.
+   * Cheap: iterates the (small) route map and sorts. Higher score = jankier.
+   *
+   * Score weights what users actually perceive as lag:
+   *  - long-task stalls hurt most (each one is a visible freeze),
+   *  - sub-30fps samples next,
+   *  - how deep the worst FPS dip went,
+   *  - slow mounts (screen takes ages to appear).
+   */
+  getHotspots(): RouteHotspot[] {
+    const out: RouteHotspot[] = [];
+    this._routeStats.forEach((st, route) => {
+      const avgLongMs = st.longTaskCount ? Math.round(st.sumLongMs / st.longTaskCount) : 0;
+      const avgMountMs = st.mountCount ? Math.round(st.sumMountMs / st.mountCount) : 0;
+      const fpsDip = st.worstFps < 60 ? (60 - st.worstFps) : 0;
+      const score =
+        st.longTaskCount * 4 +
+        st.jankCount * 2 +
+        st.worstLongMs / 80 +
+        fpsDip / 6 +
+        st.worstMountMs / 200;
+      out.push({
+        route,
+        longTaskCount: st.longTaskCount,
+        worstLongMs: st.worstLongMs,
+        avgLongMs,
+        jankCount: st.jankCount,
+        worstFps: st.worstFps,
+        mountCount: st.mountCount,
+        avgMountMs,
+        worstMountMs: st.worstMountMs,
+        imgCount: st.imgCount,
+        score: Math.round(score * 10) / 10,
+        lastTs: st.lastTs,
+      });
+    });
+    // Worst-first. Ties broken by most-recent activity so the screen the
+    // user is currently abusing floats up.
+    out.sort((a, b) => b.score - a.score || b.lastTs - a.lastTs);
+    return out;
+  }
+
   // --- internals ---
+
+  /** Lazily create / fetch the accumulator for a route. */
+  private _routeStat(route: string): RouteStat {
+    let st = this._routeStats.get(route);
+    if (!st) {
+      st = {
+        longTaskCount: 0,
+        worstLongMs: 0,
+        sumLongMs: 0,
+        jankCount: 0,
+        worstFps: 60,
+        mountCount: 0,
+        sumMountMs: 0,
+        worstMountMs: 0,
+        imgCount: 0,
+        lastTs: Date.now(),
+      };
+      this._routeStats.set(route, st);
+    }
+    return st;
+  }
+
+  /** Track the worst (minimum) FPS seen on the current route. */
+  private _bumpRouteFps(fps: number) {
+    const st = this._routeStat(this._currentRoute);
+    if (fps < st.worstFps) st.worstFps = fps;
+    st.lastTs = Date.now();
+  }
 
   private _record(ev: PerfEvent) {
     this._events[this._eventHead] = ev;

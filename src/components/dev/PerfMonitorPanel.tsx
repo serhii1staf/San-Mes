@@ -21,7 +21,7 @@ import * as Clipboard from 'expo-clipboard';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useTheme } from '../../theme';
-import { perfMonitor, type PerfEvent, type PerfEventKind, type PerfSnapshot } from '../../services/perfMonitor';
+import { perfMonitor, type PerfEvent, type PerfEventKind, type PerfSnapshot, type RouteHotspot } from '../../services/perfMonitor';
 import { useSettingsStore } from '../../store/settingsStore';
 import { useT } from '../../i18n/store';
 
@@ -91,6 +91,11 @@ export function PerfMonitorPanel({ onClose }: Props) {
   const toggleLong = (ts: number) =>
     setExpandedLong((prev) => ({ ...prev, [ts]: !prev[ts] }));
 
+  // Hotspot rows the user expanded for a detailed per-route breakdown.
+  const [expandedHotspots, setExpandedHotspots] = useState<Record<string, boolean>>({});
+  const toggleHotspot = (route: string) =>
+    setExpandedHotspots((prev) => ({ ...prev, [route]: !prev[route] }));
+
   useEffect(() => {
     let last = 0;
     const unsub = perfMonitor.subscribe((s) => {
@@ -152,6 +157,7 @@ export function PerfMonitorPanel({ onClose }: Props) {
         fps: { js: snap.jsFps, ui: snap.uiFps, jsP1Min: snap.jsP1Min, uiP1Min: snap.uiP1Min },
         pendingDecodes: snap.pendingDecodes,
         lastLongTaskMs: snap.lastLongTaskMs,
+        hotspots: snap.hotspots,
         recentEvents: snap.events,
       };
       await Clipboard.setStringAsync(JSON.stringify(payload, null, 2));
@@ -258,6 +264,54 @@ export function PerfMonitorPanel({ onClose }: Props) {
               {t('perf.current_route', 'Route')}: {snap.currentRoute}
             </Text>
           ) : null}
+        </View>
+
+        {/* Hotspots — the headline feature: a worst-first ranking of which
+            SCREENS are janky, so the user knows exactly where to optimise
+            instead of scrolling a raw event log. Each row tells the story
+            in one line (long-tasks, worst fps, slow mounts); tap to expand
+            the full breakdown. */}
+        <View style={[styles.section, { marginTop: 14 }]}>
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              paddingHorizontal: 4,
+              marginBottom: 8,
+            }}
+          >
+            <Text style={[styles.sectionTitle, { color: theme.colors.text.tertiary, marginBottom: 0 }]}>
+              {t('perf.hotspots', 'Hotspots — where it drops')}
+            </Text>
+            {snap.hotspots.length > 0 ? (
+              <TouchableOpacity onPress={() => perfMonitor.clearEvents()} hitSlop={8}>
+                <Text style={{ color: theme.colors.accent.primary, fontSize: 12, fontWeight: '600' }}>
+                  {t('perf.reset', 'Reset')}
+                </Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+          {snap.hotspots.length === 0 ? (
+            <View style={[styles.empty, { backgroundColor: theme.colors.background.secondary }]}>
+              <Text style={{ color: theme.colors.text.tertiary }}>
+                {t('perf.no_hotspots', 'No jank recorded yet. Scroll around the app and the worst screens will surface here.')}
+              </Text>
+            </View>
+          ) : (
+            snap.hotspots
+              .slice(0, 8)
+              .map((h, idx) => (
+                <HotspotRow
+                  key={h.route}
+                  hotspot={h}
+                  rank={idx + 1}
+                  isCurrent={h.route === snap.currentRoute}
+                  isExpanded={!!expandedHotspots[h.route]}
+                  onToggle={() => toggleHotspot(h.route)}
+                />
+              ))
+          )}
         </View>
 
         {/* Filter chips */}
@@ -475,6 +529,100 @@ export function PerfMonitorPanel({ onClose }: Props) {
           )}
         </View>
       </ScrollView>
+    </View>
+  );
+}
+
+/** Severity colour for a hotspot score. Tuned so a single visible freeze
+ *  (one long task ≈ score 4-7) already reads amber, and a screen with
+ *  repeated stalls reads red. */
+function severityColor(score: number): string {
+  if (score >= 12) return '#ef4444';
+  if (score >= 5) return '#f59e0b';
+  if (score > 0) return '#eab308';
+  return '#22c55e';
+}
+
+function HotspotRow({
+  hotspot,
+  rank,
+  isCurrent,
+  isExpanded,
+  onToggle,
+}: {
+  hotspot: RouteHotspot;
+  rank: number;
+  isCurrent: boolean;
+  isExpanded: boolean;
+  onToggle: () => void;
+}) {
+  const theme = useTheme();
+  const t = useT();
+  const color = severityColor(hotspot.score);
+  // One-line summary built from whichever signals actually fired, so the
+  // row stays terse on screens with only one kind of problem.
+  const bits: string[] = [];
+  if (hotspot.longTaskCount > 0) {
+    bits.push(`${hotspot.longTaskCount}× freeze (${hotspot.worstLongMs}ms)`);
+  }
+  if (hotspot.worstFps < 60) bits.push(`${hotspot.worstFps}fps min`);
+  if (hotspot.jankCount > 0) bits.push(`${hotspot.jankCount}× <30fps`);
+  if (hotspot.worstMountMs > 200) bits.push(`mount ${hotspot.worstMountMs}ms`);
+  const summary = bits.length ? bits.join(' · ') : t('perf.smooth', 'smooth');
+  return (
+    <View style={[styles.hotspotCard, { backgroundColor: theme.colors.background.secondary }]}>
+      <TouchableOpacity onPress={onToggle} style={styles.hotspotHeader} activeOpacity={0.7}>
+        {/* Severity rail */}
+        <View style={[styles.hotspotRail, { backgroundColor: color }]} />
+        <View style={{ flex: 1 }}>
+          <Text numberOfLines={1} style={{ color: theme.colors.text.primary, fontWeight: '700', fontSize: 13 }}>
+            {rank}. {hotspot.route}
+            {isCurrent ? '  ●' : ''}
+          </Text>
+          <Text numberOfLines={1} style={{ color: theme.colors.text.tertiary, fontSize: 11, marginTop: 2 }}>
+            {summary}
+          </Text>
+        </View>
+        <View style={[styles.scorePill, { backgroundColor: color + '22' }]}>
+          <Text style={{ color, fontWeight: '800', fontSize: 13, fontVariant: ['tabular-nums'] }}>
+            {hotspot.score}
+          </Text>
+        </View>
+        <Text style={{ color: theme.colors.text.tertiary, fontSize: 14, marginLeft: 6 }}>
+          {isExpanded ? '▾' : '▸'}
+        </Text>
+      </TouchableOpacity>
+      {isExpanded ? (
+        <View style={[styles.hotspotDetail, { borderColor: theme.colors.border.light }]}>
+          <HotspotStat label={t('perf.hs_long', 'Freezes (long tasks)')} value={`${hotspot.longTaskCount}`} />
+          <HotspotStat label={t('perf.hs_worst_long', 'Worst freeze')} value={`${hotspot.worstLongMs} ms`} danger={hotspot.worstLongMs > 300} />
+          <HotspotStat label={t('perf.hs_avg_long', 'Avg freeze')} value={`${hotspot.avgLongMs} ms`} />
+          <HotspotStat label={t('perf.hs_worst_fps', 'Worst FPS')} value={`${hotspot.worstFps}`} danger={hotspot.worstFps < 30} />
+          <HotspotStat label={t('perf.hs_jank', 'Sub-30fps samples')} value={`${hotspot.jankCount}`} />
+          <HotspotStat label={t('perf.hs_mounts', 'Mounts')} value={`${hotspot.mountCount}`} />
+          <HotspotStat label={t('perf.hs_worst_mount', 'Worst mount')} value={`${hotspot.worstMountMs} ms`} danger={hotspot.worstMountMs > 400} />
+          <HotspotStat label={t('perf.hs_imgs', 'Image decodes')} value={`${hotspot.imgCount}`} />
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function HotspotStat({ label, value, danger }: { label: string; value: string; danger?: boolean }) {
+  const theme = useTheme();
+  return (
+    <View style={styles.hotspotStatRow}>
+      <Text style={{ color: theme.colors.text.tertiary, fontSize: 12 }}>{label}</Text>
+      <Text
+        style={{
+          color: danger ? '#ef4444' : theme.colors.text.primary,
+          fontSize: 12,
+          fontWeight: '600',
+          fontVariant: ['tabular-nums'],
+        }}
+      >
+        {value}
+      </Text>
     </View>
   );
 }
@@ -730,5 +878,44 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     marginBottom: 8,
     borderLeftWidth: 3,
+  },
+  hotspotCard: {
+    borderRadius: 12,
+    marginBottom: 8,
+    overflow: 'hidden',
+  },
+  hotspotHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingRight: 10,
+  },
+  hotspotRail: {
+    width: 4,
+    alignSelf: 'stretch',
+    borderTopLeftRadius: 12,
+    borderBottomLeftRadius: 12,
+    marginRight: 10,
+  },
+  scorePill: {
+    minWidth: 34,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  hotspotDetail: {
+    paddingHorizontal: 14,
+    paddingBottom: 10,
+    paddingTop: 4,
+    marginLeft: 14,
+    borderLeftWidth: 1,
+  },
+  hotspotStatRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 3,
   },
 });
