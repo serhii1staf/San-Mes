@@ -223,6 +223,22 @@ export default function ChatScreen() {
   const insets = useSafeAreaInsets();
   const t = useT();
   const { id, participantId: paramParticipantId } = useLocalSearchParams<{ id: string; participantId?: string }>();
+  // ── Canonical conversation id (peers-on-different-channels fix) ────────
+  // The route `id` is EITHER a real conversation id (messages-list
+  // navigation, which also passes `participantId`) OR a peer USER id
+  // (profile navigation, which passes only `id`). We must resolve it to the
+  // canonical conversation id BEFORE subscribing to Ably so both peers
+  // converge on `chat:<convId>` from the first frame — otherwise A (who
+  // opened the chat from B's profile) subscribes to `chat:<B-userId>` while
+  // B (who opened from their messages list) subscribes to `chat:<convId>`,
+  // and live messages exchanged between two open screens never meet.
+  //
+  // `conversationId` defaults to the route id and updates once the
+  // idempotent create-or-get (`POST /v1/conversations`) returns. The whole
+  // message-data pipeline keys off it (selector, optimistic sends,
+  // persistence, realtime channel + publishes), while `participantId` (the
+  // OTHER user's id) stays separate for display + notification routing.
+  const [conversationId, setConversationId] = useState<string>(() => id || '');
   // Mount-time marker — captures how long the chat screen took to commit
   // its first render so the perf-monitor panel can attribute open-the-chat
   // freezes. Reads `Date.now()` once at first render via useRef so the
@@ -284,7 +300,7 @@ export default function ChatScreen() {
   // every unrelated chat's background sync re-rendered this entire screen
   // (including its 5–8 mounted bubbles). Subscribing to the slice for `id`
   // means a background sync to another chat becomes a no-op for this screen.
-  const myStoreMessages = useChatStore((s) => (id ? s.messages[id] : undefined));
+  const myStoreMessages = useChatStore((s) => (conversationId ? s.messages[conversationId] : undefined));
   const setMessages = useChatStore((s) => s.setMessages);
   const addMessage = useChatStore((s) => s.addMessage);
   const flatListRef = useRef<FlatList>(null);
@@ -309,19 +325,19 @@ export default function ChatScreen() {
   // already has content (no blank frame). Memoized per id so it's a single MMKV
   // read, not on every render.
   const seedMessages = useMemo<ChatMessage[]>(() => {
-    if (!id) return [];
+    if (!conversationId) return [];
     // One-shot read at chat-open time. We deliberately use getState() instead
     // of subscribing — the seed only matters for the first render frame, and
     // the live `myStoreMessages` selector below feeds subsequent updates.
-    const fromStore = useChatStore.getState().messages[id];
+    const fromStore = useChatStore.getState().messages[conversationId];
     if (fromStore && fromStore.length > 0) return fromStore as ChatMessage[];
     try {
-      const cached = kvGetJSONSync<ChatMessage[]>(`chat_messages:${id}`, []);
+      const cached = kvGetJSONSync<ChatMessage[]>(`chat_messages:${conversationId}`, []);
       if (cached.length > 0) return cached;
-      if (mockMessages[id]) return mockMessages[id] as ChatMessage[];
+      if (mockMessages[conversationId]) return mockMessages[conversationId] as ChatMessage[];
     } catch {}
     return [];
-  }, [id]);
+  }, [conversationId]);
 
   // Use the store value when present, else the synchronous seed — so the list is
   // never empty on the first frame if a cache exists.
@@ -331,13 +347,13 @@ export default function ChatScreen() {
   // Push the seed into the store once (after paint) so edits/sends work normally.
   const seededRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!id) return;
-    if (seededRef.current === id) return;
-    seededRef.current = id;
-    if ((useChatStore.getState().messages[id] || []).length === 0 && seedMessages.length > 0) {
-      setMessages(id, seedMessages as any);
+    if (!conversationId) return;
+    if (seededRef.current === conversationId) return;
+    seededRef.current = conversationId;
+    if ((useChatStore.getState().messages[conversationId] || []).length === 0 && seedMessages.length > 0) {
+      setMessages(conversationId, seedMessages as any);
     }
-  }, [id, seedMessages]);
+  }, [conversationId, seedMessages]);
 
   // Narrow the chat-settings subscription to only the two slices this chat
   // actually reads — global defaults and this chat's own overrides. The
@@ -462,18 +478,18 @@ export default function ChatScreen() {
   // Fallback for devices without MMKV: warm the AsyncStorage mirror, then hydrate
   // if the synchronous seed above found nothing.
   useEffect(() => {
-    if (!id) return;
-    if ((useChatStore.getState().messages[id] || []).length > 0) return;
-    const cacheKey = `chat_messages:${id}`;
+    if (!conversationId) return;
+    if ((useChatStore.getState().messages[conversationId] || []).length > 0) return;
+    const cacheKey = `chat_messages:${conversationId}`;
     kvWarm([cacheKey]).then(() => {
       const cached = kvGetJSONSync<ChatMessage[]>(cacheKey, []);
-      if (cached.length > 0 && (useChatStore.getState().messages[id] || []).length === 0) {
-        setMessages(id, cached as any);
-      } else if (cached.length === 0 && mockMessages[id] && (useChatStore.getState().messages[id] || []).length === 0) {
-        setMessages(id, mockMessages[id]);
+      if (cached.length > 0 && (useChatStore.getState().messages[conversationId] || []).length === 0) {
+        setMessages(conversationId, cached as any);
+      } else if (cached.length === 0 && mockMessages[conversationId] && (useChatStore.getState().messages[conversationId] || []).length === 0) {
+        setMessages(conversationId, mockMessages[conversationId]);
       }
     }).catch(() => {});
-  }, [id]);
+  }, [conversationId]);
 
   // Persist messages to KV cache whenever THIS chat's messages change.
   // `myStoreMessages` (above) already narrows the subscription to this chat,
@@ -500,13 +516,13 @@ export default function ChatScreen() {
       }
     });
     return () => handle.cancel();
-  }, [id]);
+  }, [conversationId]);
   useEffect(() => {
-    if (!id) return;
+    if (!conversationId) return;
     if (myMessages && myMessages.length > 0) {
-      kvSetJSON(`chat_messages:${id}`, myMessages);
+      kvSetJSON(`chat_messages:${conversationId}`, myMessages);
     }
-  }, [id, myMessages]);
+  }, [conversationId, myMessages]);
 
   const chatLocalName = specificSettings?.localName;
   const displayName = chatLocalName || conversation?.participantName || profileData?.display_name || entityConv?.participantName || t('chat.fallback_name');
@@ -583,6 +599,58 @@ export default function ChatScreen() {
     requestAnimationFrame(() => { try { flatListRef.current?.scrollToOffset({ offset: 0, animated: _animated }); } catch {} });
   }, []);
 
+  // ── Resolve the canonical conversation id up front ────────────────────
+  // Runs on mount (and if the route id changes). Decides whether the route
+  // `id` is already a conversation id or a peer user id, and in the latter
+  // case calls the idempotent create-or-get so our realtime subscription
+  // lands on `chat:<convId>` from the first frame — converging with a peer
+  // who opened the same chat from their messages list. We only fall back to
+  // the raw route id when offline (so the screen still works locally).
+  useEffect(() => {
+    if (!id) return;
+
+    // (a) Messages-list navigation passes an explicit `participantId` that
+    //     differs from the route id → the route id is already canonical.
+    if (paramParticipantId && paramParticipantId !== id) {
+      setConversationId((prev) => (prev === id ? prev : id));
+      return;
+    }
+    // (b) The route id matches a known conversation row → already canonical.
+    if (useEntityStore.getState().conversations.some((c) => c.id === id)) {
+      setConversationId((prev) => (prev === id ? prev : id));
+      return;
+    }
+    // (c) Otherwise the route id is a peer USER id (opened from a profile).
+    //     Resolve the canonical 1:1 conversation. Offline → keep the raw id
+    //     as a best-effort local fallback.
+    if (!useConnectivityStore.getState().isOnline) return;
+
+    let cancelled = false;
+    import('../../src/services/apiClient')
+      .then(({ apiPost }) =>
+        apiPost<{ conversation_id: string }>('/v1/conversations', { otherUserId: id }),
+      )
+      .then(({ data }) => {
+        const convId = data?.conversation_id;
+        if (cancelled || !convId || convId === id) return;
+        // Migrate any optimistic/seed messages parked under the user-id
+        // bucket into the canonical bucket so nothing is orphaned when the
+        // selector re-keys onto `convId`.
+        try {
+          const cs = useChatStore.getState();
+          const fromOld = cs.messages[id] || [];
+          if (fromOld.length > 0) {
+            const intoNew = cs.messages[convId] || [];
+            const seen = new Set(intoNew.map((m: any) => m.id));
+            cs.setMessages(convId, [...intoNew, ...fromOld.filter((m: any) => !seen.has(m.id))] as any);
+          }
+        } catch {}
+        setConversationId(convId);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [id, paramParticipantId]);
+
   // ── Realtime channel: incoming messages from the other participant ─────────
   //
   // Both sides of a chat use the same `id` route param when navigating to the
@@ -601,10 +669,10 @@ export default function ChatScreen() {
   //   - 'msg.edit'   → peer edited a message they sent earlier
   //   - 'msg.delete' → peer deleted a message
   useEffect(() => {
-    if (!id) return;
+    if (!conversationId) return;
     const realtime = getRealtime();
     if (!realtime) return; // Not authenticated yet, or no deviceKey — degrade silently.
-    const channel = realtime.channels.get(chatChannelName(id));
+    const channel = realtime.channels.get(chatChannelName(conversationId));
     const ownUserId = useAuthStore.getState().user?.id;
 
     const onNewMessage = (msg: { data?: any }) => {
@@ -616,14 +684,14 @@ export default function ChatScreen() {
       // Dedupe by id against the current store snapshot. Messages from the
       // peer are tagged with a stable client-side id by the publisher, so
       // a quick subscribe-after-publish race won't add the same row twice.
-      const existing = useChatStore.getState().messages[id] || [];
+      const existing = useChatStore.getState().messages[conversationId] || [];
       if (existing.some((m) => m.id === payload.id)) return;
       // Translate the wire payload into our ChatMessage shape. From THIS
       // device's perspective the sender is "peer", so we mark accordingly
       // so the bubble aligns left.
       const incoming: ChatMessage = {
         id: payload.id,
-        conversationId: id,
+        conversationId,
         senderId: 'peer',
         text: payload.text || '',
         createdAt: payload.createdAt || new Date().toISOString(),
@@ -635,7 +703,7 @@ export default function ChatScreen() {
         replyPixelIconId: payload.replyPixelIconId,
         imageUrls: Array.isArray(payload.imageUrls) ? payload.imageUrls : undefined,
       };
-      addMessage(id, incoming);
+      addMessage(conversationId, incoming);
     };
 
     // Edit — peer changed text / images of a message we already have.
@@ -644,13 +712,13 @@ export default function ChatScreen() {
     const onEdit = (msg: { data?: any }) => {
       const payload = msg?.data;
       if (!payload || typeof payload !== 'object' || !payload.id) return;
-      const current = useChatStore.getState().messages[id] || [];
+      const current = useChatStore.getState().messages[conversationId] || [];
       const next = current.map((m) =>
         m.id === payload.id
           ? { ...m, text: typeof payload.text === 'string' ? payload.text : m.text, imageUrls: Array.isArray(payload.imageUrls) ? payload.imageUrls : m.imageUrls }
           : m,
       );
-      setMessages(id, next as any);
+      setMessages(conversationId, next as any);
     };
 
     // Delete — peer removed a message. We just filter it out of the local
@@ -659,8 +727,8 @@ export default function ChatScreen() {
     const onDelete = (msg: { data?: any }) => {
       const payload = msg?.data;
       if (!payload || typeof payload !== 'object' || !payload.id) return;
-      const current = useChatStore.getState().messages[id] || [];
-      setMessages(id, current.filter((m) => m.id !== payload.id) as any);
+      const current = useChatStore.getState().messages[conversationId] || [];
+      setMessages(conversationId, current.filter((m) => m.id !== payload.id) as any);
     };
 
     void channel.subscribe('msg', onNewMessage);
@@ -671,7 +739,7 @@ export default function ChatScreen() {
       try { channel.unsubscribe('msg.edit', onEdit); } catch {}
       try { channel.unsubscribe('msg.delete', onDelete); } catch {}
     };
-  }, [id, addMessage, setMessages]);
+  }, [conversationId, addMessage, setMessages]);
 
   // ── Message search ──────────────────────────────────────────────────────────
   const openSearch = useCallback(() => {
@@ -778,7 +846,7 @@ export default function ChatScreen() {
     setReplyTo(null);
     const newMessage: ChatMessage = {
       id: 'm-' + Date.now(),
-      conversationId: id,
+      conversationId,
       senderId: 'current',
       text: '',
       createdAt: new Date().toISOString(),
@@ -795,7 +863,7 @@ export default function ChatScreen() {
       replyPixelIconId: currentReply ? chatSettings.replyPixelIcon : undefined,
       imageUrls: [url],
     };
-    addMessage(id, newMessage);
+    addMessage(conversationId, newMessage);
     scrollToEnd();
 
     // Persist to the DB (best-effort) using the same image marker scheme.
@@ -870,7 +938,7 @@ export default function ChatScreen() {
         }
       } catch {}
     })();
-  }, [id, replyTo, addMessage, scrollToEnd, participantId, t, reconcileConversation]);
+  }, [id, conversationId, replyTo, addMessage, scrollToEnd, participantId, t, reconcileConversation]);
 
   // Translation sheet state — receives source text on demand and animates
   // up. Reset to '' when closed so the next open re-fetches (the service
@@ -904,20 +972,20 @@ export default function ChatScreen() {
         { text: t('common.cancel'), style: 'cancel' },
         {
           text: t('common.delete'), style: 'destructive', onPress: () => {
-            if (!id) return;
+            if (!conversationId) return;
             // Read the latest snapshot from getState() rather than from the
             // closed-over selector — avoids the callback being recreated on
             // every store update (and rebuilding all bubbles' onLongPress).
-            const current = useChatStore.getState().messages[id] || [];
-            setMessages(id, current.filter((m) => m.id !== message.id) as any);
+            const current = useChatStore.getState().messages[conversationId] || [];
+            setMessages(conversationId, current.filter((m) => m.id !== message.id) as any);
             triggerHaptic('medium');
             // Sync delete to the peer in realtime — so when this user
             // deletes a message on their side, it disappears from the
             // peer's open chat too. Telegram-style "delete for both".
             try {
               const realtime = getRealtime();
-              if (realtime && id) {
-                const channel = realtime.channels.get(chatChannelName(id));
+              if (realtime && conversationId) {
+                const channel = realtime.channels.get(chatChannelName(conversationId));
                 void channel.publish('msg.delete', { id: message.id });
               }
             } catch {}
@@ -925,11 +993,11 @@ export default function ChatScreen() {
         },
       ]);
     }
-  }, [id, setMessages, startReply, t]);
+  }, [conversationId, setMessages, startReply, t]);
 
   const handleSend = async (rawText: string) => {
     const hasImages = pendingImages.length > 0;
-    if ((!rawText.trim() && !hasImages) || !id) return;
+    if ((!rawText.trim() && !hasImages) || !conversationId) return;
     triggerHaptic('medium');
     const text = rawText.trim();
 
@@ -939,11 +1007,11 @@ export default function ChatScreen() {
       const localOnes = pendingImages.filter((u) => !u.startsWith('http'));
       setEditing(null);
       setPendingImages([]);
-      setMessages(id, (useChatStore.getState().messages[id] || []).map((m) => (m.id === editing.id ? { ...m, text, imageUrls: finalImages } : m)) as any);
+      setMessages(conversationId, (useChatStore.getState().messages[conversationId] || []).map((m) => (m.id === editing.id ? { ...m, text, imageUrls: finalImages } : m)) as any);
       if (localOnes.length > 0) {
         const results = await Promise.all(pendingImages.map((u) => u.startsWith('http') ? Promise.resolve({ url: u, error: null }) : uploadChatImage(u)));
         const urls = results.map((r) => r.url).filter(Boolean) as string[];
-        setMessages(id, (useChatStore.getState().messages[id] || []).map((m) => (m.id === editing.id ? { ...m, imageUrls: urls.length ? urls : undefined } : m)) as any);
+        setMessages(conversationId, (useChatStore.getState().messages[conversationId] || []).map((m) => (m.id === editing.id ? { ...m, imageUrls: urls.length ? urls : undefined } : m)) as any);
         finalImages = urls.length ? urls : undefined;
       }
       // Sync the edit to the peer's open chat. The receiver's subscription
@@ -954,8 +1022,8 @@ export default function ChatScreen() {
       // stream WILL.
       try {
         const realtime = getRealtime();
-        if (realtime && id) {
-          const channel = realtime.channels.get(chatChannelName(id));
+        if (realtime && conversationId) {
+          const channel = realtime.channels.get(chatChannelName(conversationId));
           void channel.publish('msg.edit', {
             id: editing.id,
             text,
@@ -974,7 +1042,7 @@ export default function ChatScreen() {
 
     const newMessage: ChatMessage = {
       id: 'm-' + Date.now(),
-      conversationId: id,
+      conversationId,
       senderId: 'current',
       text,
       createdAt: new Date().toISOString(),
@@ -989,7 +1057,7 @@ export default function ChatScreen() {
       replyPixelIconId: currentReply ? chatSettings.replyPixelIcon : undefined,
       imageUrls: localImages.length > 0 ? localImages : undefined,
     };
-    addMessage(id, newMessage);
+    addMessage(conversationId, newMessage);
     scrollToEnd();
 
     // Upload images in the background, then swap local URIs for remote URLs.
@@ -1003,7 +1071,7 @@ export default function ChatScreen() {
         const results = await Promise.all(localImages.map((uri) => uploadChatImage(uri)));
         uploadedUrls = results.map((r) => r.url).filter(Boolean) as string[];
         if (uploadedUrls.length > 0) {
-          setMessages(id, (useChatStore.getState().messages[id] || []).map((m) =>
+          setMessages(conversationId, (useChatStore.getState().messages[conversationId] || []).map((m) =>
             m.id === newMessage.id ? { ...m, imageUrls: uploadedUrls } : m
           ) as any);
         }
