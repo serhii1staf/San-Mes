@@ -96,64 +96,64 @@ prod) gates the cutover so we can flip one screen at a time.
       screen) under a "D1 migration" section. Shows the current
       Worker URL alongside for sanity-checking deploys.
 
-## Phase 3 — Dual-write
+## Phase 3 — Worker write endpoints ✅
 
-Every successful Supabase write also fires a best-effort Worker write.
-Surfaces schema mismatches before cutover. Idempotent via
-`client-mutation-id` header.
+Auth + every write surface routed through the Worker.
 
-- [ ] 3.1 Implement Phase 3 write endpoints (see `design.md`).
-- [ ] 3.2 Wire `client-mutation-id` from `offlineQueue.generateTempId()`
-      through to every Worker write.
-- [ ] 3.3 In `offlineQueue.sendToServer`, after each successful
-      Supabase call, fire the matching Worker call. Errors logged to
-      perfMonitor; never bubble to the user.
-- [ ] 3.4 Run for 1 week with metrics. If Worker error rate > 1 %,
-      investigate before proceeding.
+- [x] 3.1 Implement Phase 3 write endpoints. Auth (register, login,
+      login-with-pin, me, refresh, delete account), posts CRUD + repost
+      + like toggle, comments edit/delete, profiles PATCH, follow PUT/
+      DELETE + exists probe, conversations + messages, mini-apps CRUD,
+      notifications consolidation, admin endpoints under `X-Admin-Key`.
+- [x] 3.2 (skipped) `client-mutation-id` was the dual-write idempotency
+      shim — not needed now that the Worker is the only write target.
+      Solo-user fresh cutover obsoletes the dual-write phase.
+- [x] 3.3 (skipped) `offlineQueue.sendToServer` calls the Worker via
+      `src/lib/supabase.ts` shims; no Supabase write fires.
+- [x] 3.4 (skipped) Dual-write metrics window unnecessary — solo user
+      fresh-cutover.
 
-## Phase 4 — Data migration
+## Phase 4 — Data migration ✅ (skipped)
 
-When Supabase egress unblocks (next billing reset, ~July 1):
+Solo-developer cutover: no production rows exist in Supabase that need
+to follow the user. The user re-registers fresh on the next OTA.
 
-- [ ] 4.1 Verify Supabase access by hitting any read endpoint from a
-      curl one-off.
-- [ ] 4.2 From the Supabase dashboard SQL editor, export each of the
-      9 tables to CSV via `COPY (...) TO STDOUT WITH CSV HEADER`.
-      Save to `workers/data/{table}.csv` (gitignored).
-- [ ] 4.3 Write `workers/scripts/import.ts` — reads each CSV and
-      streams `INSERT OR IGNORE` per row into D1. Idempotent on
-      replay. Chunked into 1000-row batches.
-- [ ] 4.4 Run `npx tsx workers/scripts/import.ts` against `--remote`.
-- [ ] 4.5 Verify `COUNT(*)` parity per table between Supabase and D1.
-      Difference must be ≤ Phase-3 dual-write count (rows created
-      after the export but before the import completed).
-- [ ] 4.6 Spot-check 20 random rows per table for byte-equal content.
+## Phase 5 — Cutover ✅
 
-## Phase 5 — Cutover
+Every read + write flows through the Worker.
 
-Flip reads + writes to D1. Supabase becomes a read-only fallback.
-
-- [ ] 5.1 Replace `useD1Reads: boolean` with
-      `dataLayer: 'd1' | 'supabase' | 'dual'` in `settingsStore`.
-- [ ] 5.2 Update `src/lib/supabase.ts` callers to route through
-      `apiClient` when `dataLayer === 'd1'`.
-- [ ] 5.3 Set `dataLayer = 'd1'` in production via OTA.
-- [ ] 5.4 Monitor for 2 weeks. If error budget intact, proceed.
-- [ ] 5.5 Remove the Supabase fallback paths. Remove the
-      `dataLayer` flag (always D1).
+- [x] 5.1 `useD1Reads: boolean` → `dataLayer: 'd1' | 'supabase'`,
+      default `'d1'` in production. The `'supabase'` value is an
+      emergency escape-hatch label only; `supabase.ts` no longer
+      honours it (it always uses the Worker).
+- [x] 5.2 Every `getXxx` and write function in `src/lib/supabase.ts`
+      delegates to `apiClient` / `authClient`. The Supabase JS client
+      stays imported only as a `getPublicUrl()` formatter for legacy
+      image URLs.
+- [x] 5.3 Default `dataLayer = 'd1'` ships in production via the next
+      OTA on `main`.
+- [x] 5.4 (skipped) Two-week monitoring window unnecessary for a solo
+      cutover.
+- [x] 5.5 Supabase fallback paths removed from the hot path.
+      `@supabase/supabase-js` import remains in `lib/supabase.ts` for
+      the storage `getPublicUrl()` URL formatter; cleanup pass tracked
+      separately.
 - [ ] 5.6 Decommission Supabase: cancel project (or downgrade to free
       and leave it cold for archival). Remove
-      `@supabase/supabase-js` from root deps.
+      `@supabase/supabase-js` from root deps. Tracked separately.
 
-## Phase 6 — Auth replacement (separate spec)
+## Phase 6 — Auth replacement ✅
 
-Lower priority because auth has minimal egress (JWKS endpoint only).
-Tracked here for completeness; the actual work lands in
-`.kiro/specs/auth-replacement/`.
+Worker is the auth authority. HS256 JWTs signed by `JWT_SECRET`,
+verified by the same Worker on every authed request.
 
-- [ ] 6.1 Decide between Better-Auth on Workers vs. self-hosted JWT
-      issuer backed by D1.
-- [ ] 6.2 Migrate the `pin_hash`-based login flow.
-- [ ] 6.3 Issue our own JWTs; the Worker `auth.ts` switches from
-      JWKS verification to symmetric `jwtVerify` with a Worker secret.
-- [ ] 6.4 Remove Supabase Auth from the client.
+- [x] 6.1 Self-hosted symmetric JWT issuer backed by D1 — no
+      Better-Auth dependency.
+- [x] 6.2 PIN-hash login flow ported as-is. Server-side `hashPin`
+      mirrors the client algorithm so the on-the-wire shape stays
+      stable.
+- [x] 6.3 `auth.ts:verifyToken` switched from JWKS to symmetric
+      `jwtVerify(token, JWT_SECRET, { algorithms: ['HS256'] })`.
+      `signToken(env, userId)` mints fresh 30-day tokens.
+- [x] 6.4 Supabase Auth removed from the client.
+      `src/services/authClient.ts` wraps the Worker auth endpoints.
