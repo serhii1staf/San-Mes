@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Pressable, StyleSheet, Platform, LayoutChangeEvent } from 'react-native';
 import { BottomTabBarProps } from '@react-navigation/bottom-tabs';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
@@ -371,6 +372,12 @@ export const CustomTabBar = React.memo(function CustomTabBar({
 }: BottomTabBarProps) {
   const theme = useTheme();
   const isDark = theme.isDark;
+  // Bottom safe-area inset = height of the Android system navigation bar
+  // (or the iOS home-indicator). Under edge-to-edge the app draws behind
+  // that bar, so without this the floating pill would sit partially BEHIND
+  // the system back/home/recents buttons. Adding the inset lifts the bar so
+  // it always floats ABOVE the system nav bar on every device.
+  const insets = useSafeAreaInsets();
 
   const [slotWidth, setSlotWidth] = useState(0);
   const hasMounted = useRef(false);
@@ -575,6 +582,8 @@ export const CustomTabBar = React.memo(function CustomTabBar({
             {
               borderColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.5)',
               shadowColor: isDark ? '#000' : 'rgba(0,0,0,0.15)',
+              // Float above the system nav bar (Android) / home indicator (iOS).
+              marginBottom: BAR_BOTTOM_MARGIN + insets.bottom,
             },
           ]}
           onLayout={onBarLayout}

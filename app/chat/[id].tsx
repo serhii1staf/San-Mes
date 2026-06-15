@@ -933,9 +933,21 @@ export default function ChatScreen() {
         );
         const convId = convData?.conversation_id || null;
         if (convId) {
-          await apiPost(`/v1/conversations/${encodeURIComponent(convId)}/messages`, {
-            text: `::img::${url}::`,
-          });
+          const { data: sentGifData } = await apiPost<{ id: string }>(
+            `/v1/conversations/${encodeURIComponent(convId)}/messages`,
+            { text: `::img::${url}::` },
+          );
+          // Reconcile optimistic id → server id so a later history fetch
+          // dedupes instead of duplicating the GIF (same fix as handleSend).
+          const serverGifId = sentGifData?.id || newMessage.id;
+          if (serverGifId !== newMessage.id) {
+            setMessages(
+              conversationId,
+              (useChatStore.getState().messages[conversationId] || []).map((m) =>
+                m.id === newMessage.id ? { ...m, id: serverGifId } : m,
+              ) as any,
+            );
+          }
           // Realtime publish — same pattern as handleSend. The peer sees
           // the GIF instantly via subscribe-on-mount. Publish on the
           // canonical conversation channel so a profile-initiated chat
@@ -945,7 +957,7 @@ export default function ChatScreen() {
             if (realtime && id) {
               const channel = realtime.channels.get(chatChannelName(convId));
               void channel.publish('msg', {
-                id: newMessage.id,
+                id: serverGifId,
                 senderId: user.id,
                 text: '',
                 createdAt: newMessage.createdAt,
@@ -1129,9 +1141,26 @@ export default function ChatScreen() {
         // Encode attached images into the stored text with a marker so it
         // round-trips without schema changes.
         const imageMarker = uploadedUrls.length > 0 ? `::img::${uploadedUrls.join('|')}::` : '';
-        await apiPost(`/v1/conversations/${encodeURIComponent(convId)}/messages`, {
-          text: imageMarker + text,
-        });
+        const { data: sentData } = await apiPost<{ id: string }>(
+          `/v1/conversations/${encodeURIComponent(convId)}/messages`,
+          { text: imageMarker + text },
+        );
+        // Reconcile the optimistic row's id with the server's canonical id.
+        // The optimistic message was added with a client id (`m-<ts>`), but
+        // the Worker stores it under a fresh uuid. Without this, a later
+        // history fetch (which carries the server uuid) fails to dedupe
+        // against the optimistic row and renders a SECOND copy — the chat
+        // message-duplication bug. We rewrite the local id to the server id
+        // here, and publish that same id so the peer dedupes too.
+        const serverMessageId = sentData?.id || newMessage.id;
+        if (serverMessageId !== newMessage.id) {
+          setMessages(
+            conversationId,
+            (useChatStore.getState().messages[conversationId] || []).map((m) =>
+              m.id === newMessage.id ? { ...m, id: serverMessageId } : m,
+            ) as any,
+          );
+        }
 
         // Publish to the realtime channel so the peer's chat screen picks
         // up this message instantly. The channel name is `chat:<id>` (the
@@ -1150,7 +1179,7 @@ export default function ChatScreen() {
           const realtime = getRealtime();
           if (realtime) {
             const messageBody = {
-              id: newMessage.id,
+              id: serverMessageId,
               senderId: user.id,
               text,
               createdAt: newMessage.createdAt,

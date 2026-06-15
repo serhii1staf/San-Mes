@@ -25,12 +25,25 @@ export const useChatStore = create<ChatStoreState>()((set) => ({
   setMessages: (conversationId, messages) =>
     set((state) => ({ messages: { ...state.messages, [conversationId]: messages } })),
   addMessage: (conversationId, message) =>
-    set((state) => ({
-      messages: {
-        ...state.messages,
-        [conversationId]: [...(state.messages[conversationId] || []), message],
-      },
-    })),
+    set((state) => {
+      const existing = state.messages[conversationId] || [];
+      // Dedup by id: never append a message whose id is already present.
+      // This is the universal safety net against the chat duplication bug —
+      // optimistic send, realtime echo, canonical-id reconcile re-keying and
+      // cache merges can all try to add the same logical message. The send
+      // path reconciles the optimistic client id (`m-<ts>`) to the server's
+      // uuid so the server copy and the optimistic copy share an id and
+      // collapse here instead of rendering twice.
+      if (message?.id && existing.some((m) => m.id === message.id)) {
+        return state;
+      }
+      return {
+        messages: {
+          ...state.messages,
+          [conversationId]: [...existing, message],
+        },
+      };
+    }),
   markAsRead: (conversationId) =>
     set((state) => ({
       conversations: state.conversations.map((c) =>
