@@ -473,7 +473,14 @@ class PerfMonitor {
     if (!uri) return;
     let host = uri;
     try {
-      host = new URL(uri).hostname.replace(/^www\./, '');
+      const u = new URL(uri);
+      // Normal remote images: group by hostname. Local/inline schemes
+      // (file:, data:, blob:, content:) have an empty hostname — surface
+      // the scheme instead of a blank label so the panel reads
+      // "file: 82ms" (a local gallery preview decoding) rather than an
+      // unexplained empty row. Local full-res decodes are the usual reason
+      // a chat-open frame dips, so making them legible matters.
+      host = u.hostname ? u.hostname.replace(/^www\./, '') : u.protocol.replace(/:$/, '');
     } catch {}
     const now = Date.now();
     let seen = this._imgHostThrottle.get(host);
