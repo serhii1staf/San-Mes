@@ -22,39 +22,27 @@ import { BlockedContentPlaceholder } from './BlockedContentPlaceholder';
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const IMAGE_HEIGHT = 280;
 
-// ─── Module-level "first frame" latch ───────────────────────────────────
-// Two roles, one latch:
-//   1. Lazy-hydrate the WHOLE card body. While `__firstFrameDone === false`,
-//      cards render only an empty placeholder View; one RAF later the latch
-//      flips and full card content (header, FormattedText, LinkPreview,
-//      hero CachedImage, repost embed, action bar) commits in a frame the
-//      user already perceives as the navigation transition. Initial-mount
-//      cost drops from a full subtree per card to a single empty View per
-//      card — the cumulative ~33ms native shadow-tree work that was
-//      pulling the UI thread to 36fps becomes ~3ms.
-//   2. Cross-card image-decode stagger. Once cards do hydrate, hero images
-//      on the first wave still render with `priority="low"` for that frame
-//      so iOS sequentializes their native decodes instead of fanning out
-//      in parallel. After the latch flips, subsequent cards observe the
-//      post-flip state directly (no re-render) and use `priority="high"`.
+// ─── Per-card lazy hydrate ──────────────────────────────────────────────
+// Each card defers its body ONE RAF after its OWN mount so any FlatList
+// commit that lands a freshly-virtualized card carries only an empty
+// placeholder, with the heavy subtree (header, FormattedText, LinkPreview,
+// hero CachedImage, repost embed, action bar) committing on the NEXT
+// frame.
 //
-// The first card to mount kicks off one RAF that flips the latch; every
-// card mounting after that initializes `primed` already-true and pays
-// zero deferral cost. Same shape as `ProfilePostCard.tsx`.
-let __firstFrameDone = false;
-let __firstFramePending: ((b: boolean) => void)[] = [];
-function __scheduleFirstFrameFlush() {
-  if (__firstFrameDone) return;
-  // Only the first card to mount kicks off the RAF. Subsequent cards just
-  // append themselves to the wait list, so we don't queue N RAFs.
-  if (__firstFramePending.length !== 1) return;
-  requestAnimationFrame(() => {
-    __firstFrameDone = true;
-    const list = __firstFramePending;
-    __firstFramePending = [];
-    for (const fn of list) fn(true);
-  });
-}
+// Why per-card (instead of a module-level "first frame done" latch): the
+// previous module-level latch flipped to `true` once the initial 2 cards
+// had finished their first paint, which meant every subsequent card —
+// including ones mounted DURING SCROLL as FlatList virtualization ran —
+// initialized with `primed = true` and committed its full body in a
+// single frame. With ~11 ms of native shadow-tree work per card body
+// (image decode + nested Text trees + action bar) a scroll batch landing
+// 2-3 cards on the same frame storms the UI thread, reproducing the
+// "lag on rapid taps and during scroll" users were reporting once the
+// feed had real content. Per-card RAF spreads each card's mount across
+// two frames regardless of where it lands in the session, so no
+// scroll-induced commit ever carries more than a handful of empty
+// placeholders + at most one full body. Same shape as
+// `ProfilePostCard.tsx` (already on per-card RAF).
 
 interface PostCardProps {
   post: Post;
@@ -88,17 +76,15 @@ export const PostCard = memo(function PostCard({ post, currentUserId, onLike, on
   const isBlockedReposter = useIsBlocked(post.isRepost ? post.authorId : null);
   const isBlockedAuthor = useIsBlocked(effectiveAuthorId);
 
-  // Cross-card stagger AND lazy-hydrate gate. While `primed === false`
-  // the card returns only a sized placeholder (see early return below);
-  // once primed, hero images render with the cross-card priority stagger
-  // described in the `__firstFrameDone` block at top of file.
-  const [primed, setPrimed] = useState(__firstFrameDone);
+  // Per-card lazy hydrate. Each card runs its OWN RAF after mounting so
+  // a FlatList scroll batch that lands 2-3 fresh cells in the same frame
+  // commits only empty placeholders on that frame, with each card's
+  // heavy subtree committing on the next frame. See the header comment
+  // for the full rationale.
+  const [primed, setPrimed] = useState(false);
   useEffect(() => {
-    if (__firstFrameDone) return;
-    __firstFramePending.push(setPrimed);
-    __scheduleFirstFrameFlush();
-    // No cleanup: the flush callback drains the array atomically; calling
-    // setPrimed on an unmounted component is a benign no-op in React 18+.
+    const handle = requestAnimationFrame(() => setPrimed(true));
+    return () => cancelAnimationFrame(handle);
   }, []);
   // Hero image priority — always `low`. iOS schedules `low`-priority decodes
   // serially on its image-decode queue rather than fanning them out in
@@ -107,8 +93,6 @@ export const PostCard = memo(function PostCard({ post, currentUserId, onLike, on
   // saturated the native UI thread). The visible-paint delay is sub-frame
   // — `expo-image`'s memory-disk cache plus the prefetch path mean cached
   // bytes still appear within one frame; only NEW decodes get serialized.
-  // Pinning to `low` always (not just during the first frame) means
-  // scroll-induced new card mounts also stagger.
   const heroPriority: 'high' | 'low' = 'low';
 
   const handleLike = () => { triggerHaptic('light'); onLike(post.id); };

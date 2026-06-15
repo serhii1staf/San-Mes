@@ -641,18 +641,20 @@ export default function FeedScreen() {
     setMenuPost(post);
   }, []);
 
+  // PostCard is wrapped in React.memo + carries its own per-card RAF
+  // gate, so we render it directly here. The previous `<View>{...}</View>`
+  // wrapper added a no-op shadow-node per cell that participated in the
+  // FlatList batch's reconciliation budget without rendering any pixels.
   const renderPost = useCallback(({ item }: { item: Post }) => (
-    <View>
-      <PostCard
-        post={item}
-        currentUserId={userId}
-        onComment={handleComment}
-        onLike={handleToggleLike}
-        onFollow={handleFollow}
-        onShare={handleShare}
-        onMenu={handleMenu}
-      />
-    </View>
+    <PostCard
+      post={item}
+      currentUserId={userId}
+      onComment={handleComment}
+      onLike={handleToggleLike}
+      onFollow={handleFollow}
+      onShare={handleShare}
+      onMenu={handleMenu}
+    />
   ), [userId, handleComment, handleToggleLike, handleFollow, handleShare, handleMenu]);
 
   const bgColor = theme.colors.background.primary;
