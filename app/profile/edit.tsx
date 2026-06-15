@@ -344,7 +344,7 @@ export default function EditProfileScreen() {
           style={StyleSheet.absoluteFill}
         />
       </View>
-      <View style={[styles.headerRow, { top: insets.top + 8 }]} pointerEvents="box-none">
+      <View style={[styles.headerRow, { top: 28 }]} pointerEvents="box-none">
         <Pressable onPress={handleClose} hitSlop={10} style={styles.headerPill}>
           <BlurView intensity={80} tint="dark" style={styles.headerPillInner}>
             <Feather name="x" size={18} color="#FFFFFF" />
