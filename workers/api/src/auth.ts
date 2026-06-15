@@ -1,49 +1,37 @@
-// JWT verification against the Supabase project's JWKS endpoint.
+// Worker-issued JWT verification + signing.
 //
-// The app sends `Authorization: Bearer <jwt>` on every authenticated
-// request. We pass the token through `jose.jwtVerify` against the
-// public JWKS (no shared secret needs to live in the Worker — we only
-// need the public key to validate the signature). Returns `null` on
-// any failure so endpoints can branch cleanly into anonymous mode.
+// Phase 6 of the D1 migration: the Worker is now the auth authority.
+// We sign HS256 JWTs with a Worker secret (`JWT_SECRET`) on every
+// register / login / refresh, and verify the same secret on every
+// authed request. The previous JWKS-against-Supabase path is dead —
+// nothing in the app talks to Supabase Auth anymore.
 //
-// JWKS is cached at module scope. Workers reuse module instances across
-// requests within a single isolate, so the second request inside the
-// same isolate avoids the network fetch entirely. We re-fetch every 24h
-// so a key rotation eventually heals on its own.
+// The verify call must NEVER throw. Endpoints branch on a `null`
+// return as "anonymous"; the central fetch handler simply omits an
+// `authedUserId` if the bearer token doesn't validate. That keeps
+// public reads (feed, profiles) serving even if the user's token has
+// rotted.
+//
+// Token format:
+//   header  { alg: 'HS256', typ: 'JWT' }
+//   payload { sub: <profile.id>, iss: 'san-mes-api', iat, exp = iat + 30d }
+// Signing key: 32-byte random hex provisioned via `wrangler secret put JWT_SECRET`.
 
-import { createRemoteJWKSet, jwtVerify } from 'jose';
+import { jwtVerify, SignJWT } from 'jose';
 import type { Env } from './db';
 
-interface CachedJwks {
-  jwks: ReturnType<typeof createRemoteJWKSet>;
-  fetchedAt: number;
-  issuer: string;
-}
+const ISSUER = 'san-mes-api';
+const TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
 
-const JWKS_TTL_MS = 24 * 60 * 60 * 1000; // 24h
-
-declare global {
-  // eslint-disable-next-line no-var
-  var __jwksCache: CachedJwks | undefined;
-}
-
-function getJwks(env: Env): CachedJwks {
-  const issuer = `https://${env.SUPABASE_PROJECT_REF}.supabase.co/auth/v1`;
-  const cached = globalThis.__jwksCache;
-  if (cached && cached.issuer === issuer && Date.now() - cached.fetchedAt < JWKS_TTL_MS) {
-    return cached;
+function getSecret(env: Env): Uint8Array {
+  const secret = env.JWT_SECRET;
+  if (!secret) {
+    // Surfaced as a 500 rather than a silent anonymous fall-through:
+    // a missing secret is a deploy-config bug, not a runtime input
+    // problem. Throwing here makes it loud.
+    throw new Error('JWT_SECRET is not configured');
   }
-  // Supabase exposes its JWKS at `/.well-known/jwks.json` under the project
-  // domain. `createRemoteJWKSet` does the actual fetch lazily on the first
-  // verification call, with built-in caching.
-  const jwksUrl = new URL(`https://${env.SUPABASE_PROJECT_REF}.supabase.co/auth/v1/.well-known/jwks.json`);
-  const fresh: CachedJwks = {
-    jwks: createRemoteJWKSet(jwksUrl, { cacheMaxAge: JWKS_TTL_MS }),
-    fetchedAt: Date.now(),
-    issuer,
-  };
-  globalThis.__jwksCache = fresh;
-  return fresh;
+  return new TextEncoder().encode(secret);
 }
 
 export interface VerifiedToken {
@@ -52,21 +40,25 @@ export interface VerifiedToken {
 }
 
 /**
- * Verify a Supabase-issued JWT. Returns the user id (sub claim) on
+ * Verify a Worker-issued JWT. Returns the user id (sub claim) on
  * success, or `null` on any failure (expired, malformed, wrong issuer,
- * signature mismatch). The function never throws.
+ * signature mismatch). Never throws — endpoints rely on a `null`
+ * return to mean "treat as anonymous".
  */
 export async function verifyToken(
   env: Env,
   token: string | null | undefined,
 ): Promise<VerifiedToken | null> {
   if (!token) return null;
+  // If JWT_SECRET isn't set we can't verify anything — treat as
+  // anonymous instead of throwing on every request. The fetch handler
+  // catches the throw from `getSecret`, but we'd rather skip the call
+  // entirely.
+  if (!env.JWT_SECRET) return null;
   try {
-    const { jwks, issuer } = getJwks(env);
-    const { payload } = await jwtVerify(token, jwks, {
-      issuer,
-      // Supabase JWTs use the `authenticated` audience for end users.
-      audience: 'authenticated',
+    const { payload } = await jwtVerify(token, getSecret(env), {
+      issuer: ISSUER,
+      algorithms: ['HS256'],
     });
     const sub = typeof payload.sub === 'string' ? payload.sub : null;
     if (!sub) return null;
@@ -74,6 +66,21 @@ export async function verifyToken(
   } catch {
     return null;
   }
+}
+
+/**
+ * Sign a fresh 30-day JWT for the given user id. Used by the
+ * register / login / refresh endpoints in `routes/auth.ts`.
+ */
+export async function signToken(env: Env, userId: string): Promise<string> {
+  const now = Math.floor(Date.now() / 1000);
+  return await new SignJWT({})
+    .setProtectedHeader({ alg: 'HS256', typ: 'JWT' })
+    .setIssuer(ISSUER)
+    .setSubject(userId)
+    .setIssuedAt(now)
+    .setExpirationTime(now + TOKEN_TTL_SECONDS)
+    .sign(getSecret(env));
 }
 
 /** Extract the bearer token from a request, or `null` if absent. */

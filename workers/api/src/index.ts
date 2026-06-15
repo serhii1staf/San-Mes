@@ -32,11 +32,17 @@ import { corsHeaders, fail } from './http';
 // request — that's guaranteed because they're at module top level.
 
 import './routes/health';
+import './routes/auth';
 import './routes/feed';
 import './routes/posts';
+import './routes/comments';
 import './routes/profiles';
+import './routes/follows';
 import './routes/conversations';
+import './routes/messages';
 import './routes/miniApps';
+import './routes/notifications';
+import './routes/admin';
 
 // ─── Worker fetch handler ──────────────────────────────────────────────────
 

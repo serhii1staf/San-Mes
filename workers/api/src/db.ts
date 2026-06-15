@@ -7,7 +7,12 @@
 
 export interface Env {
   DB: D1Database;
+  /** Public — safe to keep in `wrangler.toml` `[vars]`. */
   SUPABASE_PROJECT_REF: string;
+  /** Symmetric HMAC key — `wrangler secret put JWT_SECRET`. */
+  JWT_SECRET: string;
+  /** Shared secret for `/v1/admin/*` endpoints — `wrangler secret put ADMIN_KEY`. */
+  ADMIN_KEY: string;
 }
 
 export type Row = Record<string, unknown>;

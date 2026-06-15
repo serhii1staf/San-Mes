@@ -72,6 +72,11 @@ export function makeEnv(responses: StubResponses = {}) {
     env: {
       DB,
       SUPABASE_PROJECT_REF: 'ycwadqglcykcpucembjn',
+      // Test stub secrets — `verifyToken` returns `null` for any
+      // unsigned bearer, so the value here only needs to be a stable
+      // non-empty string so the type is satisfied.
+      JWT_SECRET: 'test-jwt-secret-do-not-use-in-prod',
+      ADMIN_KEY: 'test-admin-key',
     },
     captured,
   };

@@ -11,8 +11,9 @@
 
 import { fail, ok } from '../http';
 import { register } from '../router';
-import { normalizeProfile, query, queryOne } from '../db';
+import { exec, normalizeProfile, query, queryOne } from '../db';
 import { parseLimit, parseOffset, parseUuid } from '../util';
+import { readJson } from '../validate';
 
 // ── helpers ─────────────────────────────────────────────────────────────
 
@@ -366,6 +367,92 @@ register('GET', '/v1/profiles/:id/follow-counts', async (req, env, _ctx, params)
     followers: row?.followers ?? 0,
     following: row?.following ?? 0,
   });
+});
+
+// ── PATCH /v1/profiles/me ──────────────────────────────────────────────
+//
+// Authed only. Updates whichever subset of editable columns the body
+// carries. `username` is unique-checked separately so we can return
+// the canonical `username_taken` error string the client branches on.
+register('PATCH', '/v1/profiles/me', async (req, env, _ctx, _params, authedUserId) => {
+  if (!authedUserId) return fail(req, 'unauthorised', 401);
+  const body = await readJson<Record<string, unknown>>(req);
+  if (!body.ok) return fail(req, body.error, 400);
+  const v = body.value;
+
+  const sets: string[] = [];
+  const binds: unknown[] = [];
+
+  if (typeof v.display_name === 'string') {
+    sets.push('display_name = ?');
+    binds.push(v.display_name.slice(0, 64));
+  }
+  if (typeof v.emoji === 'string') {
+    sets.push('emoji = ?');
+    binds.push(v.emoji.slice(0, 16));
+  }
+  if (typeof v.bio === 'string') {
+    sets.push('bio = ?');
+    binds.push(v.bio.slice(0, 240));
+  }
+  if (typeof v.banner_url === 'string') {
+    sets.push('banner_url = ?');
+    binds.push(v.banner_url.slice(0, 4000));
+  } else if (v.banner_url === null) {
+    // Explicit clear — `null` overrides the existing banner.
+    sets.push('banner_url = ?');
+    binds.push(null);
+  }
+  if (Array.isArray(v.links) || v.links === null) {
+    sets.push('links = ?');
+    binds.push(v.links == null ? null : JSON.stringify(v.links));
+  }
+  if (typeof v.badge === 'string' || v.badge === null) {
+    sets.push('badge = ?');
+    binds.push(v.badge == null ? null : String(v.badge).slice(0, 32));
+  }
+  if (typeof v.is_verified === 'boolean') {
+    sets.push('is_verified = ?');
+    binds.push(v.is_verified ? 1 : 0);
+  }
+
+  // Username has its own uniqueness gate.
+  if (typeof v.username === 'string') {
+    const username = v.username.toLowerCase().slice(0, 32);
+    if (!/^[a-z0-9_]{2,32}$/.test(username)) return fail(req, 'invalid username', 400);
+    const taken = await queryOne<{ id: string }>(
+      env,
+      `SELECT id FROM profiles WHERE username = ? AND id != ? LIMIT 1`,
+      [username, authedUserId],
+    );
+    if (taken) return fail(req, 'username_taken', 400);
+    sets.push('username = ?');
+    binds.push(username);
+  }
+
+  if (sets.length === 0) {
+    // Nothing to update — return the current row.
+    const current = await queryOne<Record<string, unknown>>(
+      env,
+      `SELECT ${PROFILE_FULL_COLUMNS} FROM profiles WHERE id = ? LIMIT 1`,
+      [authedUserId],
+    );
+    return ok(req, normalizeProfile(current));
+  }
+
+  // Always touch updated_at so the syncService timestamp comparison
+  // reflects the change.
+  sets.push('updated_at = ?');
+  binds.push(new Date().toISOString());
+  binds.push(authedUserId);
+
+  await exec(env, `UPDATE profiles SET ${sets.join(', ')} WHERE id = ?`, binds);
+  const updated = await queryOne<Record<string, unknown>>(
+    env,
+    `SELECT ${PROFILE_FULL_COLUMNS} FROM profiles WHERE id = ? LIMIT 1`,
+    [authedUserId],
+  );
+  return ok(req, normalizeProfile(updated));
 });
 
 // ── GET /v1/profiles/:id ───────────────────────────────────────────────
