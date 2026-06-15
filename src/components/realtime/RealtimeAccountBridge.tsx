@@ -142,7 +142,9 @@ export function RealtimeAccountBridge(): null {
             //   2) Legacy client `new_message`: an embedded `message` object.
             //   3) Worker preview-only (pre-backstop): just `preview` + `ts`.
             // Build a ChatMessage from whichever is present, tagging the
-            // sender as 'peer' so the bubble aligns left.
+            // sender with the REAL author uuid (`senderId`, resolved above
+            // from the notif payload) so ownership renders correctly on any
+            // account — never the relative 'peer' sentinel.
             const rich = payload.message && payload.message.id ? payload.message : null;
             const ts = String(
               payload.created_at || payload.ts || rich?.createdAt || new Date().toISOString(),
@@ -182,7 +184,7 @@ export function RealtimeAccountBridge(): null {
               chatStore.addMessage(conversationId, {
                 id: stableId,
                 conversationId,
-                senderId: 'peer',
+                senderId: senderId || 'peer',
                 text,
                 createdAt: ts,
                 isRead: false,

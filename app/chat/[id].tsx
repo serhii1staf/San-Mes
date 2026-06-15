@@ -40,6 +40,33 @@ import { useSettingsStore } from '../../src/store/settingsStore';
 const REPLY_THRESHOLD = 60;
 const SCREEN_WIDTH = Dimensions.get('window').width;
 
+// ── Legacy relative-sender healing ────────────────────────────────────────
+// Older builds stored chat messages with a RELATIVE sentinel senderId:
+// 'current' (whoever was logged in when the message was cached) or 'peer'
+// (the other side). That made ownership ambiguous the moment the user
+// switched accounts on the same device — a message authored by account A
+// could render on account B's "own" side. We now persist the REAL author
+// uuid on every message and compute ownership at render time.
+//
+// This heals any legacy-tagged message read from cache. It is reliable
+// because the chat-message cache is ACCOUNT-SCOPED (keyed via accountKey):
+// within the active account's namespace, 'current' is unambiguously the
+// current user and 'peer' is the conversation's other participant. A message
+// whose senderId is already a real uuid is returned untouched.
+function healLegacySender(
+  m: ChatMessage,
+  currentUserId?: string,
+  participantId?: string,
+): ChatMessage {
+  if (m.senderId === 'current') {
+    return currentUserId ? { ...m, senderId: currentUserId } : m;
+  }
+  if (m.senderId === 'peer') {
+    return participantId ? { ...m, senderId: participantId } : m;
+  }
+  return m;
+}
+
 // Hoisted static atoms for the message bubble. Each visible bubble was
 // previously allocating ~10 fresh inline objects per render — for the
 // `initialNumToRender: 8` first batch that's ~80 throwaway objects on the
@@ -303,6 +330,14 @@ export default function ChatScreen() {
   const myStoreMessages = useChatStore((s) => (conversationId ? s.messages[conversationId] : undefined));
   const setMessages = useChatStore((s) => s.setMessages);
   const addMessage = useChatStore((s) => s.addMessage);
+  // The REAL uuid of the logged-in account. Message ownership (which side a
+  // bubble sits on, whether the action menu shows "edit/delete") is computed
+  // at RENDER time against this — never from a value baked into the message at
+  // receive time. This is what makes a single device with several accounts
+  // render the same conversation correctly after switching accounts: the
+  // messages keep their real `senderId` (the author's uuid) and only the
+  // comparison target (`currentUserId`) changes per account.
+  const currentUserId = useAuthStore((s) => s.user?.id);
   const flatListRef = useRef<FlatList>(null);
   const inputRef = useRef<ChatInputBarHandle>(null);
 
@@ -333,11 +368,11 @@ export default function ChatScreen() {
     if (fromStore && fromStore.length > 0) return fromStore as ChatMessage[];
     try {
       const cached = kvGetJSONSync<ChatMessage[]>(`chat_messages:${conversationId}`, []);
-      if (cached.length > 0) return cached;
+      if (cached.length > 0) return cached.map((m) => healLegacySender(m, currentUserId, participantId));
       if (mockMessages[conversationId]) return mockMessages[conversationId] as ChatMessage[];
     } catch {}
     return [];
-  }, [conversationId]);
+  }, [conversationId, currentUserId, participantId]);
 
   // Use the store value when present, else the synchronous seed — so the list is
   // never empty on the first frame if a cache exists.
@@ -484,7 +519,7 @@ export default function ChatScreen() {
     kvWarm([cacheKey]).then(() => {
       const cached = kvGetJSONSync<ChatMessage[]>(cacheKey, []);
       if (cached.length > 0 && (useChatStore.getState().messages[conversationId] || []).length === 0) {
-        setMessages(conversationId, cached as any);
+        setMessages(conversationId, cached.map((m) => healLegacySender(m, currentUserId, participantId)) as any);
       } else if (cached.length === 0 && mockMessages[conversationId] && (useChatStore.getState().messages[conversationId] || []).length === 0) {
         setMessages(conversationId, mockMessages[conversationId]);
       }
@@ -686,13 +721,15 @@ export default function ChatScreen() {
       // a quick subscribe-after-publish race won't add the same row twice.
       const existing = useChatStore.getState().messages[conversationId] || [];
       if (existing.some((m) => m.id === payload.id)) return;
-      // Translate the wire payload into our ChatMessage shape. From THIS
-      // device's perspective the sender is "peer", so we mark accordingly
-      // so the bubble aligns left.
+      // Translate the wire payload into our ChatMessage shape. We persist the
+      // REAL author uuid (`payload.senderId`, published as the sender's
+      // `user.id`) so ownership is computed correctly at render time on any
+      // account — never the relative 'peer' sentinel. An incoming message is
+      // by definition not ours, so a missing senderId still renders left.
       const incoming: ChatMessage = {
         id: payload.id,
         conversationId,
-        senderId: 'peer',
+        senderId: String(payload.senderId || ''),
         text: payload.text || '',
         createdAt: payload.createdAt || new Date().toISOString(),
         isRead: false,
@@ -847,13 +884,13 @@ export default function ChatScreen() {
     const newMessage: ChatMessage = {
       id: 'm-' + Date.now(),
       conversationId,
-      senderId: 'current',
+      senderId: currentUserId || 'current',
       text: '',
       createdAt: new Date().toISOString(),
       isRead: true,
       replyToId: currentReply?.id,
       replyToText: currentReply?.text || (currentReply?.imageUrls && currentReply.imageUrls.length > 0 ? t('chat.photo') : undefined),
-      replyToIsOwn: currentReply ? currentReply.senderId === 'current' : undefined,
+      replyToIsOwn: currentReply ? (currentReply.senderId === currentUserId || currentReply.senderId === 'current') : undefined,
       replyToImage: currentReply?.imageUrls?.[0],
       // Per-chat decorative pixel icon stamped onto reply messages.
       // Only set when this message is actually a reply — otherwise
@@ -1043,13 +1080,13 @@ export default function ChatScreen() {
     const newMessage: ChatMessage = {
       id: 'm-' + Date.now(),
       conversationId,
-      senderId: 'current',
+      senderId: currentUserId || 'current',
       text,
       createdAt: new Date().toISOString(),
       isRead: true,
       replyToId: currentReply?.id,
       replyToText: currentReply?.text || (currentReply?.imageUrls && currentReply.imageUrls.length > 0 ? (currentReply.imageUrls.length > 1 ? t('chat.photos_count', undefined, { n: currentReply.imageUrls.length }) : t('chat.photo')) : undefined),
-      replyToIsOwn: currentReply ? currentReply.senderId === 'current' : undefined,
+      replyToIsOwn: currentReply ? (currentReply.senderId === currentUserId || currentReply.senderId === 'current') : undefined,
       replyToImage: currentReply?.imageUrls?.[0],
       // See sendGif — same per-chat pixel-icon stamp on outgoing
       // replies. Stays out of non-reply messages so memoized
@@ -1162,14 +1199,17 @@ export default function ChatScreen() {
 
   const handleSwipeActive = useCallback((active: boolean) => setScrollEnabled(!active), []);
 
-  // Parse the ::img::url1|url2:: marker for messages coming from the DB
+  // Parse the ::img::url1|url2:: marker for messages coming from the DB, and
+  // heal any legacy relative senderId ('current'/'peer') to a real uuid so
+  // ownership compares correctly at render time.
   const parseMessage = useCallback((m: ChatMessage): ChatMessage => {
-    if (m.imageUrls || !m.text?.startsWith('::img::')) return m;
-    const end = m.text.indexOf('::', 7);
-    if (end === -1) return m;
-    const urls = m.text.slice(7, end).split('|').filter(Boolean);
-    return { ...m, imageUrls: urls.length ? urls : undefined, text: m.text.slice(end + 2) };
-  }, []);
+    const healed = healLegacySender(m, currentUserId, participantId);
+    if (healed.imageUrls || !healed.text?.startsWith('::img::')) return healed;
+    const end = healed.text.indexOf('::', 7);
+    if (end === -1) return healed;
+    const urls = healed.text.slice(7, end).split('|').filter(Boolean);
+    return { ...healed, imageUrls: urls.length ? urls : undefined, text: healed.text.slice(end + 2) };
+  }, [currentUserId, participantId]);
 
   const activeMatchIndex = searchMatches.length > 0 ? searchMatches[searchActiveIdx] : -1;
   const activeMatchId = activeMatchIndex >= 0 && activeMatchIndex < chatMessages.length ? chatMessages[activeMatchIndex]?.id : null;
@@ -1193,7 +1233,7 @@ export default function ChatScreen() {
     return (
       <MemoMessageBubble
         message={m}
-        isOwn={m.senderId === 'current'}
+        isOwn={m.senderId === currentUserId}
         fontSize={chatSettings.fontSize}
         bubbleRadius={chatSettings.bubbleRadius}
         fontFamily={chatSettings.fontFamily}
@@ -1205,7 +1245,7 @@ export default function ChatScreen() {
         onImagePress={openImageViewer}
       />
     );
-  }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, chatSettings.linkEmoji, startReply, handleSwipeActive, openImageViewer, parseMessage, activeMatchId, onMessageLongPress]);
+  }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, chatSettings.linkEmoji, startReply, handleSwipeActive, openImageViewer, parseMessage, activeMatchId, onMessageLongPress, currentUserId]);
 
   // Stable callback refs for FlatList — without these, every parent render
   // hands FlatList fresh function identities and breaks its row recycling
@@ -1219,7 +1259,7 @@ export default function ChatScreen() {
   }, []);
 
   const banner = editing || replyTo;
-  const menuIsOwn = actionMessage?.senderId === 'current';
+  const menuIsOwn = actionMessage ? (actionMessage.senderId === currentUserId || actionMessage.senderId === 'current') : false;
 
   return (
     <View style={{ flex: 1, backgroundColor: bgColor }}>

@@ -62,6 +62,11 @@ export interface Comment {
 export interface ChatMessage {
   id: string;
   conversationId: string;
+  /** The REAL uuid of the message author. MUST always be a user uuid — never
+   *  a relative sentinel like 'current' or 'peer'. Ownership ("is this mine",
+   *  which side the bubble sits on) is computed at RENDER time as
+   *  `senderId === currentUserId`, so a single device with multiple accounts
+   *  renders every conversation correctly after switching accounts. */
   senderId: string;
   text: string;
   createdAt: string;
