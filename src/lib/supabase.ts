@@ -137,29 +137,25 @@ export async function uploadPostImage(imageUri: string): Promise<{ url: string |
 
 /** Upload a banner image. Preserves GIF / WebP animation. */
 export async function uploadBanner(userId: string, imageUri: string): Promise<{ url: string | null; error: string | null }> {
+  // Migrated to Cloudflare R2 — Supabase Storage was decommissioned during
+  // the D1 migration, and the previous implementation was POSTing to a dead
+  // bucket which is why other users never saw a saved banner. The R2 helper
+  // streams the file through our Vercel function (no secrets in the bundle)
+  // and returns a public pub-*.r2.dev URL that any client can read for
+  // free — same path used by chat/post/avatar uploads.
   try {
     const lower = imageUri.toLowerCase();
     let ext: 'gif' | 'png' | 'webp' | 'jpg' = 'jpg';
-    let mimeType: string = 'image/jpeg';
-    if (lower.endsWith('.gif') || lower.includes('.gif?')) { ext = 'gif'; mimeType = 'image/gif'; }
-    else if (lower.endsWith('.png') || lower.includes('.png?')) { ext = 'png'; mimeType = 'image/png'; }
-    else if (lower.endsWith('.webp') || lower.includes('.webp?')) { ext = 'webp'; mimeType = 'image/webp'; }
-    const path = `banners/${userId}.${ext}`;
-    const formData = new FormData();
-    formData.append('', { uri: imageUri, name: `${userId}.${ext}`, type: mimeType } as any);
-    const uploadUrl = `${SUPABASE_URL}/storage/v1/object/avatars/${path}`;
-    const response = await fetch(uploadUrl, {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}`, 'x-upsert': 'true' },
-      body: formData,
-    });
-    if (!response.ok) {
-      const errText = await response.text();
-      return { url: null, error: `Upload failed: ${errText}` };
-    }
-    const { data } = supabase.storage.from('avatars').getPublicUrl(path);
-    const publicUrl = data.publicUrl + '?t=' + Date.now();
-    return { url: publicUrl, error: null };
+    if (lower.endsWith('.gif') || lower.includes('.gif?')) ext = 'gif';
+    else if (lower.endsWith('.png') || lower.includes('.png?')) ext = 'png';
+    else if (lower.endsWith('.webp') || lower.includes('.webp?')) ext = 'webp';
+    const { uploadToR2 } = await import('./r2');
+    const { url, error } = await uploadToR2(imageUri, `banners/${userId}.${ext}`);
+    if (!url) return { url: null, error: error || 'upload failed' };
+    // Cache-bust so a re-upload to the same path doesn't render the stale
+    // bitmap from the previous decode in this app session. Other clients
+    // get a fresh URL via the server, so this only matters locally.
+    return { url: `${url}?t=${Date.now()}`, error: null };
   } catch (e: any) {
     return { url: null, error: e?.message || 'Unknown error' };
   }
