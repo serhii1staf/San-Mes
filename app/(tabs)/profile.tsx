@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
-import { View, Pressable, ActivityIndicator, Dimensions, Image, Animated, Modal, Share, Alert, RefreshControl, ScrollView, InteractionManager } from 'react-native';
+import { View, Pressable, ActivityIndicator, Dimensions, Image, Animated, Modal, Share, Alert, RefreshControl, ScrollView, InteractionManager, Text as RNText } from 'react-native';
 import { Feather, FontAwesome5 } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -899,7 +899,25 @@ export default function ProfileScreen() {
             delayLongPress={300}
             style={{ flex: 1, alignItems: 'center', paddingVertical: 11, flexDirection: 'row', justifyContent: 'center', gap: 4 }}
           >
-            {tab.emoji ? (<Text variant="caption" weight="regular" style={{ fontSize: 13 }}>{tab.emoji}</Text>) : null}
+            {tab.emoji ? (
+              <RNText
+                allowFontScaling={false}
+                style={{
+                  // Emoji glyphs draw a few pixels above the text baseline; a
+                  // tight `<Text variant="caption">` (lineHeight ≈ font size)
+                  // clips the top of taller emoji like ✨ / ⚡. Use a plain
+                  // RNText with an explicit lineHeight ~25% taller than the
+                  // font size, and disable Android's extra `includeFontPadding`
+                  // so the glyph isn't pushed down into a clipped region.
+                  fontSize: 14,
+                  lineHeight: 18,
+                  includeFontPadding: false,
+                  textAlignVertical: 'center',
+                }}
+              >
+                {tab.emoji}
+              </RNText>
+            ) : null}
             <Text variant="caption" weight={activeTab === tab.key ? 'bold' : 'regular'} color={activeTab === tab.key ? theme.colors.text.primary : theme.colors.text.tertiary}>{tab.label}</Text>
           </Pressable>
         ))}</View>

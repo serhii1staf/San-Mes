@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
-import { View, Pressable, ActivityIndicator, Image, Dimensions, Modal, Animated, Share, Alert, ScrollView as RNScrollView, InteractionManager } from 'react-native';
+import { View, Pressable, ActivityIndicator, Image, Dimensions, Modal, Animated, Share, Alert, ScrollView as RNScrollView, InteractionManager, Text as RNText } from 'react-native';
 import { Feather, FontAwesome5 } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -1171,7 +1171,23 @@ export default function UserProfileScreen() {
               delayLongPress={300}
               style={{ flex: 1, alignItems: 'center', paddingVertical: 11, flexDirection: 'row', justifyContent: 'center', gap: 4 }}
             >
-              {tab.emoji ? (<Text variant="caption" weight="regular" style={{ fontSize: 13 }}>{tab.emoji}</Text>) : null}
+              {tab.emoji ? (
+                <RNText
+                  allowFontScaling={false}
+                  style={{
+                    // Same emoji-clipping fix as (tabs)/profile — an explicit
+                    // taller lineHeight + disabled Android font padding so
+                    // tall glyphs (✨ / ⚡ etc) don't lose their top edge
+                    // when rendered inside a tight Text wrapper.
+                    fontSize: 14,
+                    lineHeight: 18,
+                    includeFontPadding: false,
+                    textAlignVertical: 'center',
+                  }}
+                >
+                  {tab.emoji}
+                </RNText>
+              ) : null}
               <Text variant="caption" weight={activeTab === tab.key ? 'bold' : 'regular'} color={activeTab === tab.key ? theme.colors.text.primary : theme.colors.text.tertiary}>{tab.label}</Text>
             </Pressable>
           ))}
