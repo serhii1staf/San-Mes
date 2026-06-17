@@ -646,8 +646,6 @@ const en: Record<string, string> = {
   'settings.section.security': 'Security',
   'settings.section.developer': 'Developer',
   'settings.perf_monitor': 'Performance monitor',
-  'settings.entry.lab': 'Lab',
-  'settings.entry.lab.subtitle': 'Experimental features',
   'settings.profile': 'Profile',
   'settings.notifications': 'Notifications',
   'settings.data_storage': 'Data & Storage',
@@ -843,20 +841,6 @@ const en: Record<string, string> = {
   'mini_app_preview.none': 'No background',
   'mini_app_preview.demo_name': 'Demo',
   'mini_app_preview.demo_desc': 'Cover preview',
-
-  // ─── Settings → Lab (sandbox for new RN libraries) ─────────────────────
-  'settings.lab.title': 'Lab',
-  'settings.lab.subtitle': 'Experimental features',
-  'settings.lab.intro': "Try out new animations and effects. We'll keep what you like.",
-  'settings.lab.section.moti.title': 'Moti animations',
-  'settings.lab.section.moti.bounce': 'Tap to bounce',
-  'settings.lab.section.moti.fade_in': 'Fade & slide in',
-  'settings.lab.section.moti.skeleton': 'Skeleton shimmer',
-  'settings.lab.section.sheet.title': 'Bottom sheet (Gorhom)',
-  'settings.lab.section.sheet.open': 'Open bottom sheet',
-  'settings.lab.section.sheet.body': 'Snap points, gestures, and a backdrop — all on the UI thread.',
-  'settings.lab.section.glass.title': 'iOS 26 liquid glass',
-  'settings.lab.section.glass.fallback': 'Available on iOS 26+ after a new build',
 };
 
 export default en;

@@ -310,7 +310,6 @@ function RootLayout() {
               <Stack.Screen name="settings/device-key" />
               <Stack.Screen name="settings/privacy" />
               <Stack.Screen name="settings/admin" />
-              <Stack.Screen name="settings/lab" />
               <Stack.Screen name="settings/fonts" />
               <Stack.Screen
                 name="settings/fonts-size"
