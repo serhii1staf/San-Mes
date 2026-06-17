@@ -641,7 +641,7 @@ const ru: Record<string, string> = {
   'chat_settings.reset': 'Сбросить настройки',
   'chat_settings.reset_confirm_title': 'Сбросить настройки?',
   'chat_settings.reset_confirm_msg': 'Все настройки этого чата вернутся к стандартным.',
-  'chat_settings.scroll_button_title': 'Кнопка прокрутки вниз',
+  'chat_settings.scroll_button_title': 'Перейти к новым сообщениям',
   'chat_settings.scroll_button_subtitle': 'Появляется при прокрутке вверх',
 
   // ─── Mini-app screen (extra) ───────────────────────────────────────────

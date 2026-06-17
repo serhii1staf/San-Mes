@@ -1561,12 +1561,13 @@ export default function ChatScreen() {
         <Reanimated.View
           pointerEvents="box-none"
           style={[
-            // Offset chosen so the button sits just above the input bar
-            // (button is 36 px tall — `LIST_FOOTER_HEIGHT - 36` puts its
-            // top edge flush with where the input bar's top would be at
-            // rest, leaving a small visible gap that anchors it to the
-            // input visually).
-            { position: 'absolute', right: 16, bottom: LIST_FOOTER_HEIGHT - 36 },
+            // Offset chosen so the button sits noticeably above the input
+            // bar with a small visible gap (~28 px between bottom of button
+            // and top of input bar). `LIST_FOOTER_HEIGHT - 8` puts the
+            // button BOTTOM 8 px below the input bar's top, and the button
+            // is 36 px tall, so the top edge sits ~28 px above the input
+            // bar — easy to reach without crowding the bar itself.
+            { position: 'absolute', right: 16, bottom: LIST_FOOTER_HEIGHT - 8 },
             listShiftStyle,
           ]}
         >
