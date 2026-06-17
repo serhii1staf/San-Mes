@@ -23,6 +23,13 @@ export interface ChatSettings {
   // alongside the existing reply text/image preview. Picked from
   // the pixel-icons screen launched with `?purpose=chat-reply&chatId=…`.
   replyPixelIcon?: string;
+  // Telegram-style floating "scroll-to-bottom" affordance. Defaults
+  // to true. When the user has scrolled away from the newest message
+  // (inverted FlatList contentOffset.y > a small threshold) the chat
+  // screen renders a small button just above the input bar that
+  // scrolls the list back to offset 0 on tap. Per-chat so a power
+  // user can hide it on a noisy chat where they always read top-down.
+  scrollToBottomButton: boolean;
 }
 
 // Special key for global/default chat settings (applies to all chats without their own overrides)
@@ -52,7 +59,7 @@ interface ChatSettingsStore {
   isDeleted: (chatId: string) => boolean;
 }
 
-const DEFAULT_SETTINGS: ChatSettings = { fontSize: 15, fontFamily: 'system', bubbleRadius: 18 };
+const DEFAULT_SETTINGS: ChatSettings = { fontSize: 15, fontFamily: 'system', bubbleRadius: 18, scrollToBottomButton: true };
 
 // Exported for components that merge settings manually (e.g. with useMemo)
 export const DEFAULT_CHAT_SETTINGS = DEFAULT_SETTINGS;

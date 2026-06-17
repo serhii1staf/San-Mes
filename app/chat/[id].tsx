@@ -114,15 +114,34 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
   useEffect(() => {
     const handle = InteractionManager.runAfterInteractions(() => {
       const pr = PanResponder.create({
-        // Tighter activation gate to kill swipe-to-reply jitter on weak
-        // Android. The original `g.dx < -14 && |dx| > |dy|*2` already biased
-        // toward horizontal motion, but a finger drifting diagonally during
-        // a vertical scroll could still hand the responder over and produce
-        // a single-frame translateX twitch. Adding `|dy| < 8` makes the
-        // activation strictly horizontal — any meaningful vertical drift
-        // keeps the gesture in the FlatList.
+        // Activation gate — tuned for the reported jitter where the
+        // bubble snapped back-and-forth on its own during a swipe. Three
+        // pieces:
+        //   • `dx < -10`   — finger has moved at least 10 px LEFT.
+        //                    Stricter than the user-suggested -8 (which
+        //                    granted on micro-twitches) but looser than
+        //                    the legacy -14 (which felt sticky on quick
+        //                    swipes). 10 reliably activates a real swipe
+        //                    while ignoring stray touches.
+        //   • `|dx| > |dy| * 1.6` — horizontal-dominant requirement,
+        //                    slightly less strict than the legacy *2 so
+        //                    a not-quite-perfect drag still activates.
+        //   • `|dy| < 8`   — keeps the responder out of vertical scroll
+        //                    territory entirely. The previous combo of
+        //                    *2 and a missing dy cap let a finger
+        //                    drifting diagonally during a vertical scroll
+        //                    flicker the responder on/off, which the user
+        //                    perceived as the bubble vibrating.
         onMoveShouldSetPanResponder: (_, g) =>
-          g.dx < -14 && Math.abs(g.dx) > Math.abs(g.dy) * 2 && Math.abs(g.dy) < 8,
+          g.dx < -10 && Math.abs(g.dx) > Math.abs(g.dy) * 1.6 && Math.abs(g.dy) < 8,
+        // Allow other handlers (the FlatList scroll responder, a parent
+        // gesture) to take this back cleanly. Returning false here let
+        // the OS keep the bubble's responder active even after the user
+        // started a vertical scroll, producing a one-frame translateX
+        // twitch as the spring fought the FlatList's drag — the visible
+        // "snap back-and-forth" the user reported. With true the bubble
+        // gracefully yields and the spring runs from the last setValue.
+        onPanResponderTerminationRequest: () => true,
         onPanResponderGrant: () => { onSwipeActive(true); },
         onPanResponderMove: (_, g) => {
           // Round to whole pixels before writing to the (non-native-driver)
@@ -139,11 +158,27 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
           if (g.dx <= -REPLY_THRESHOLD) onReply(message);
           fired.current = false;
           onSwipeActive(false);
+          // Stop any in-flight animation on translateX BEFORE springing
+          // back. Without this an interrupted previous spring (or a
+          // racing `terminate` callback) could leave a half-resolved
+          // animation latched onto the value, and the new spring would
+          // then "blend" with it for one frame — the back-and-forth
+          // twitch the user reported. `stopAnimation` cleanly settles
+          // any pending animation so the spring starts from a known
+          // point. We keep `useNativeDriver: true` (single-shot, no
+          // gesture writes between here and the toValue:0 endpoint).
+          translateX.stopAnimation();
           Animated.spring(translateX, { toValue: 0, useNativeDriver: true, tension: 140, friction: 12 }).start();
         },
         onPanResponderTerminate: () => {
           fired.current = false;
           onSwipeActive(false);
+          // Same clean-state guarantee as `onPanResponderRelease` above.
+          // Termination races (responder taken by FlatList) used to fire
+          // a second spring while the release-spring was still running,
+          // which the user saw as the bubble jumping. Stopping the
+          // value first ensures only ONE spring is ever in flight.
+          translateX.stopAnimation();
           Animated.spring(translateX, { toValue: 0, useNativeDriver: true, tension: 140, friction: 12 }).start();
         },
       });
@@ -325,9 +360,7 @@ export default function ChatScreen() {
     },
     [openMenu],
   );
-  const [scrollEnabled, setScrollEnabled] = useState(true);
-  const [pendingImages, setPendingImages] = useState<string[]>([]);
-  const [uploading, setUploading] = useState(false);
+  const [pendingImages, setPendingImages] = useState<string[]>([]);  const [uploading, setUploading] = useState(false);
 
   // Defer the ChatBackgroundLayer mount past the navigation slide-in. When a
   // user has set a custom chat wallpaper, the layer mounts a CachedImage that
@@ -1260,7 +1293,18 @@ export default function ChatScreen() {
     } catch {}
   };
 
-  const handleSwipeActive = useCallback((active: boolean) => setScrollEnabled(!active), []);
+  const handleSwipeActive = useCallback((active: boolean) => {
+    // Ref-based scroll lock — replaces the old `setScrollEnabled` state
+    // toggle. The state-driven version was a contributor to the swipe
+    // jitter the user reported: every grant/release re-rendered this
+    // entire screen (it's the parent of the FlatList), the FlatList
+    // re-evaluated its `scrollEnabled` prop, and on weak Android that
+    // re-evaluation could briefly take the responder back from the
+    // bubble's PanResponder mid-gesture. `setNativeProps` writes the
+    // flag straight to the underlying ScrollView with zero React work,
+    // so the bubble keeps the responder for the whole gesture.
+    try { (flatListRef.current as any)?.setNativeProps?.({ scrollEnabled: !active }); } catch {}
+  }, []);
 
   // Parse the ::img::url1|url2:: marker for messages coming from the DB, and
   // heal any legacy relative senderId ('current'/'peer') to a real uuid so
@@ -1365,6 +1409,41 @@ export default function ChatScreen() {
     }, 120);
   }, []);
 
+  // ── Scroll-to-bottom button ────────────────────────────────────────────
+  // Telegram-style floating affordance that appears when the user has
+  // scrolled away from the newest message. The chat list is INVERTED, so
+  // newest = offset 0 and "scrolled up = away from newest" maps to
+  // `contentOffset.y > THRESHOLD`. Visibility is throttled state +
+  // native-driver opacity tween so the show/hide is free on the JS thread.
+  // Per-chat toggle in `chatSettings.scrollToBottomButton` (default true)
+  // gates rendering at the JSX level, so an opted-out user pays nothing.
+  const SCROLL_BTN_THRESHOLD = 120;
+  const [scrollBtnVisible, setScrollBtnVisible] = useState(false);
+  const scrollBtnOpacity = useRef(new Animated.Value(0)).current;
+  // Last-event throttle. RN's `scrollEventThrottle={32}` already caps the
+  // call rate at ~30 Hz on iOS; the JS-side guard here is belt-and-suspenders
+  // so a chatty Android scroll listener can't churn `setState` either.
+  const lastScrollEventAt = useRef(0);
+  const onChatScroll = useCallback((e: any) => {
+    const now = Date.now();
+    if (now - lastScrollEventAt.current < 32) return;
+    lastScrollEventAt.current = now;
+    const y = e?.nativeEvent?.contentOffset?.y ?? 0;
+    const next = y > SCROLL_BTN_THRESHOLD;
+    setScrollBtnVisible((prev) => (prev === next ? prev : next));
+  }, []);
+  useEffect(() => {
+    Animated.timing(scrollBtnOpacity, {
+      toValue: scrollBtnVisible ? 1 : 0,
+      duration: 160,
+      useNativeDriver: true,
+    }).start();
+  }, [scrollBtnVisible, scrollBtnOpacity]);
+  const onScrollBtnTap = useCallback(() => {
+    triggerHaptic('light');
+    try { flatListRef.current?.scrollToOffset({ offset: 0, animated: true }); } catch {}
+  }, []);
+
   const banner = editing || replyTo;
   const menuIsOwn = actionMessage ? (actionMessage.senderId === currentUserId || actionMessage.senderId === 'current') : false;
 
@@ -1393,20 +1472,23 @@ export default function ChatScreen() {
         ListHeaderComponent={<View style={{ height: LIST_FOOTER_HEIGHT }} />}
         ListFooterComponent={<View style={{ height: headerContentHeight + 8 }} />}
         showsVerticalScrollIndicator={false}
-        scrollEnabled={scrollEnabled}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
         removeClippedSubviews={true}
-        // Tuned for iPhone 12 / weak Android: ~5 bubbles fit the visible
-        // window above the input bar. Lower than the previous 8/6/7 — each
-        // bubble synchronously creates a `PanResponder` (5 closures) and an
-        // `Animated.Value`, plus a `LinkPreview` allocation, all on the same
-        // RAF as the navigation transition. Cutting 3 bubbles saves
-        // ~20–30 ms on the chat-open frame, which was the dominant cost
-        // behind `SLOW long task @ (tabs)/messages 164ms` users were seeing
-        // when tapping a conversation row.
-        initialNumToRender={5}
-        maxToRenderPerBatch={4}
+        // Tuned for iPhone 12 / weak Android: ~4 bubbles fit the visible
+        // window above the input bar (the 5th was usually clipped under
+        // the gradient anyway). Each bubble synchronously creates an
+        // `Animated.Value`, allocates a `LinkPreview` slot and schedules
+        // a deferred `PanResponder.create` — the more we mount on the
+        // first commit, the longer the navigation transition fights for
+        // the JS thread. Cutting the initial batch by one and the
+        // per-batch budget by one buys ~5–10 ms on weak Android 10
+        // (Telegram-grade target device). The PanResponder deferral
+        // (see `MessageBubble`) covers this initial batch too — the
+        // useEffect runs after the very first render, so first-batch
+        // bubbles also wait for `runAfterInteractions` before allocating.
+        initialNumToRender={4}
+        maxToRenderPerBatch={3}
         windowSize={5}
         // Larger update batching window — keeps cell mounting from competing
         // with scroll gestures on weak devices. Default is 50 ms; bumping to
@@ -1415,6 +1497,12 @@ export default function ChatScreen() {
         onScrollToIndexFailed={onScrollToIndexFailedCb}
         viewabilityConfig={viewabilityConfig}
         onViewableItemsChanged={onViewableItemsChanged}
+        // Scroll-to-bottom button visibility tracker. Throttled to ~30 Hz
+        // via `scrollEventThrottle={32}` plus a JS-side guard inside
+        // `onChatScroll`, and the handler only writes state when the
+        // visibility flag actually flips — so steady scrolling is free.
+        onScroll={onChatScroll}
+        scrollEventThrottle={32}
       />
       </Reanimated.View>
 
@@ -1439,6 +1527,65 @@ export default function ChatScreen() {
           style={StyleSheet.absoluteFill}
         />
       </View>
+
+      {/* Scroll-to-bottom button. Rendered ABOVE the gradient (so the
+          chevron is fully readable, not ghosted into the fade) but BELOW
+          the input bar in z-order. Anchored to the bottom of the screen
+          with a static offset (`LIST_FOOTER_HEIGHT + 8` keeps it just
+          above the input bar at rest), and the entire wrapper is a
+          Reanimated.View driven by `listShiftStyle` so it rides up with
+          the input bar when the keyboard rises — `listShiftY` already
+          tracks the live keyboard height (driven by
+          `useKeyboardHandler.onMove`), so reusing the same shared value
+          keeps the button perfectly in lockstep with the input bar
+          across both keyboard-up and interactive-dismiss frames.
+
+          Gated entirely on `chatSettings.scrollToBottomButton`: when off,
+          nothing mounts (no scroll listener cost, no opacity animator). */}
+      {chatSettings.scrollToBottomButton && (
+        <Reanimated.View
+          pointerEvents="box-none"
+          style={[
+            { position: 'absolute', right: 16, bottom: LIST_FOOTER_HEIGHT + 8 },
+            listShiftStyle,
+          ]}
+        >
+          <Animated.View
+            // Native-driver opacity fade. `pointerEvents` follows the
+            // visibility flag so the button is non-interactive while
+            // hidden — prevents a "hidden but tappable" footgun where a
+            // mis-targeted tap near the input bar fires `scrollToOffset`
+            // unexpectedly.
+            pointerEvents={scrollBtnVisible ? 'auto' : 'none'}
+            style={{ opacity: scrollBtnOpacity }}
+          >
+            <Pressable
+              onPress={onScrollBtnTap}
+              hitSlop={6}
+              style={{
+                width: 36,
+                height: 36,
+                borderRadius: 18,
+                backgroundColor: theme.colors.background.elevated,
+                borderWidth: 1,
+                borderColor: theme.colors.border.light,
+                alignItems: 'center',
+                justifyContent: 'center',
+                // Soft elevation so the button reads as floating chrome
+                // rather than blending into the fade beneath it. Same
+                // shadow recipe as the existing header pills.
+                shadowColor: '#000',
+                shadowOffset: { width: 0, height: 2 },
+                shadowOpacity: 0.15,
+                shadowRadius: 4,
+                elevation: 3,
+              }}
+            >
+              <Feather name="chevron-down" size={20} color={theme.colors.text.primary} />
+            </Pressable>
+          </Animated.View>
+        </Reanimated.View>
+      )}
 
       {/* Input bar sticks to the keyboard top; hidden while searching */}
       {!searchMode && (

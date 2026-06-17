@@ -28,6 +28,7 @@ import {
   Text as RNText,
   TextInput,
   Alert,
+  Switch,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -326,7 +327,37 @@ export default function ChatSettingsScreen() {
           </Pressable>
         </View>
 
-        {/* ── Card 3: reset (destructive) ─────────────────────────────── */}
+        {/* ── Card 3: behavior toggles ─────────────────────────────────── */}
+        {/* Per-chat behaviour switches. Currently just the floating
+            scroll-to-bottom affordance. Same merge chain as the other
+            settings (defaults < global < specific) so toggling on the
+            "all chats" row sets the app-wide default. */}
+        <View style={[styles.card, { backgroundColor: bgElevated, borderColor: borderLight, marginTop: 12 }]}>
+          <View style={[styles.row, { paddingVertical: 12 }]}>
+            <View style={{ flex: 1, paddingRight: 12 }}>
+              <RNText allowFontScaling={false} style={[styles.rowLabel, { color: textPrimary }]}>
+                {t('chat_settings.scroll_button_title')}
+              </RNText>
+              <RNText
+                allowFontScaling={false}
+                style={[styles.rowMeta, { color: textTertiary, marginTop: 2 }]}
+              >
+                {t('chat_settings.scroll_button_subtitle')}
+              </RNText>
+            </View>
+            <Switch
+              value={applied.scrollToBottomButton}
+              onValueChange={(v) => {
+                triggerHaptic('selection');
+                updateSettings(chatId, { scrollToBottomButton: v });
+              }}
+              trackColor={{ true: '#4CD964', false: borderLight }}
+              thumbColor="#FFFFFF"
+            />
+          </View>
+        </View>
+
+        {/* ── Card 4: reset (destructive) ─────────────────────────────── */}
         <View style={[styles.card, { backgroundColor: bgElevated, borderColor: borderLight, marginTop: 24 }]}>
           <Pressable onPress={onReset} style={styles.row}>
             <RNText allowFontScaling={false} style={[styles.rowLabel, { color: danger }]}>

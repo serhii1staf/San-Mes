@@ -621,6 +621,8 @@ const en: Record<string, string> = {
   'chat_settings.reset': 'Reset settings',
   'chat_settings.reset_confirm_title': 'Reset settings?',
   'chat_settings.reset_confirm_msg': 'All settings for this chat will revert to defaults.',
+  'chat_settings.scroll_button_title': 'Scroll-to-bottom button',
+  'chat_settings.scroll_button_subtitle': 'Appears when you scroll up',
 
   // ─── Mini-app screen (extra) ───────────────────────────────────────────
   'mini_app.collapse': 'Collapse',
