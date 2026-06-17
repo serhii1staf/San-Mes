@@ -658,6 +658,8 @@ const ru: Record<string, string> = {
   'settings.section.security': 'Безопасность',
   'settings.section.developer': 'Разработчик',
   'settings.perf_monitor': 'Монитор производительности',
+  'settings.entry.lab': 'Лаборатория',
+  'settings.entry.lab.subtitle': 'Тестовые фишки',
   'settings.profile': 'Профиль',
   'settings.notifications': 'Уведомления',
   'settings.data_storage': 'Данные и память',
@@ -853,6 +855,20 @@ const ru: Record<string, string> = {
   'mini_app_preview.none': 'Без фона',
   'mini_app_preview.demo_name': 'Demo',
   'mini_app_preview.demo_desc': 'Превью обложки',
+
+  // ─── Settings → Lab (песочница для новых RN-библиотек) ─────────────────
+  'settings.lab.title': 'Лаборатория',
+  'settings.lab.subtitle': 'Тестовые фишки',
+  'settings.lab.intro': 'Здесь можно попробовать новые анимации и эффекты. Если что-то понравится — оставим в проде.',
+  'settings.lab.section.moti.title': 'Анимации Moti',
+  'settings.lab.section.moti.bounce': 'Нажми, чтобы прыгнуть',
+  'settings.lab.section.moti.fade_in': 'Появление с проявкой',
+  'settings.lab.section.moti.skeleton': 'Скелетон с мерцанием',
+  'settings.lab.section.sheet.title': 'Нижняя панель Gorhom',
+  'settings.lab.section.sheet.open': 'Открыть панель',
+  'settings.lab.section.sheet.body': 'Точки привязки, жесты и фон — всё работает на UI-потоке.',
+  'settings.lab.section.glass.title': 'Жидкое стекло iOS 26',
+  'settings.lab.section.glass.fallback': 'Эффект доступен на iOS 26+ после нового билда',
 };
 
 export default ru;

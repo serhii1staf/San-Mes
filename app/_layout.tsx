@@ -21,6 +21,14 @@ import { setThrottleAccount } from '../src/services/syncThrottle';
 import { useT } from '../src/i18n/store';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+// `@gorhom/bottom-sheet` requires its `BottomSheetModalProvider` to be mounted
+// once at the root of the app — every `BottomSheetModal` opened anywhere in
+// the tree registers itself with the nearest provider so the lib can host
+// the sheet above the rest of the UI. We mount it INSIDE
+// `GestureHandlerRootView` (the lib's gestures rely on react-native-
+// gesture-handler being already initialised) and OUTSIDE the keyboard /
+// theme providers so it stays alive across theme flips.
+import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 import { PerfMonitorBubble } from '../src/components/dev/PerfMonitorBubble';
 import { perfMonitor, installPerfErrorHooks } from '../src/services/perfMonitor';
 import { DynamicOverlayHost } from '../src/components/dynamic-overlay/DynamicOverlayHost';
@@ -263,6 +271,7 @@ function RootLayout() {
 
   return (
     <GestureHandlerRootView style={styles.gestureRoot}>
+    <BottomSheetModalProvider>
     <KeyboardProvider>
     <ThemeProvider>
       <NavigationBarController />
@@ -301,6 +310,7 @@ function RootLayout() {
               <Stack.Screen name="settings/device-key" />
               <Stack.Screen name="settings/privacy" />
               <Stack.Screen name="settings/admin" />
+              <Stack.Screen name="settings/lab" />
               <Stack.Screen name="settings/fonts" />
               <Stack.Screen
                 name="settings/fonts-size"
@@ -394,6 +404,7 @@ function RootLayout() {
       </AuthNavigationGuard>
     </ThemeProvider>
     </KeyboardProvider>
+    </BottomSheetModalProvider>
     </GestureHandlerRootView>
   );
 }

@@ -333,6 +333,13 @@ export default function SettingsScreen() {
               />
             }
             isFirst
+          />
+          <SettingsRow
+            icon="cpu"
+            iconTint="purple"
+            label={t('settings.entry.lab')}
+            value={t('settings.entry.lab.subtitle')}
+            onPress={() => router.push('/settings/lab' as any)}
             isLast
           />
         </View>
