@@ -19,6 +19,7 @@ import { ProfilePostCard } from '../../src/components/profile/ProfilePostCard';
 import { UserProfilePostCard } from '../../src/components/ui/UserProfilePostCard';
 import { ProfileReplyCard, ProfileReply } from '../../src/components/profile/ProfileReplyCard';
 import { AdaptiveProfileText } from '../../src/components/profile/AdaptiveProfileText';
+import { EditProfileTabModal } from '../../src/components/profile/EditProfileTabModal';
 import { useProfileAppearanceStore } from '../../src/store/profileAppearanceStore';
 import { extractFirstUrl } from '../../src/services/linkPreview';
 import { kvGetJSONSync, kvSetJSON } from '../../src/services/kvStore';
@@ -743,15 +744,38 @@ export default function ProfileScreen() {
   // Tabs labels depend on the i18n `t` function. The result is content-
   // stable per locale; memoize so the ListHeader memo doesn't see a fresh
   // array on every render.
-  const tabs = useMemo<{ key: TabName; label: string }[]>(
-    () => [
-      { key: 'posts', label: t('profile.posts') },
-      { key: 'replies', label: t('profile.replies') },
-      { key: 'media', label: t('profile.media') },
-      { key: 'likes', label: t('profile.likes') },
-    ],
-    [t],
+  // Each entry now also carries `defaultLabel` (the unmodified i18n
+  // string). The displayed `label` merges any user customization from the
+  // settings store — `customLabel || defaultLabel`. The optional `emoji`
+  // is rendered as a small text node before the label.
+  const profileTabsCustom = useSettingsStore((s) => s.profileTabsCustom);
+  const tabs = useMemo<{ key: TabName; label: string; defaultLabel: string; emoji?: string }[]>(
+    () => {
+      const defaults: { key: TabName; defaultLabel: string }[] = [
+        { key: 'posts', defaultLabel: t('profile.posts') },
+        { key: 'replies', defaultLabel: t('profile.replies') },
+        { key: 'media', defaultLabel: t('profile.media') },
+        { key: 'likes', defaultLabel: t('profile.likes') },
+      ];
+      return defaults.map((d) => {
+        const c = profileTabsCustom[d.key];
+        return {
+          key: d.key,
+          defaultLabel: d.defaultLabel,
+          label: c?.label || d.defaultLabel,
+          emoji: c?.emoji,
+        };
+      });
+    },
+    [t, profileTabsCustom],
   );
+  // Long-press tab editor state. `editingTabKey` is the tab currently being
+  // customised; `null` means the modal is closed. Set + clear go through
+  // the store so the change persists across launches.
+  const [editingTabKey, setEditingTabKey] = useState<TabName | null>(null);
+  const setProfileTabCustom = useSettingsStore((s) => s.setProfileTabCustom);
+  const clearProfileTabCustom = useSettingsStore((s) => s.clearProfileTabCustom);
+  const editingTabEntry = editingTabKey ? tabs.find((tt) => tt.key === editingTabKey) : null;
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(`https://san-m-app.com/profile/${user.id}`)}`;
 
   // ─── ListHeaderComponent — memoized ────────────────────────────────────
@@ -862,7 +886,23 @@ export default function ProfileScreen() {
         </View>
       )}
       <View style={{ marginTop: 16, marginHorizontal: -16, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border.light }}>
-        <View style={{ flexDirection: 'row' }}>{tabs.map((tab) => (<Pressable key={tab.key} onPress={() => { triggerHaptic('selection'); setActiveTab(tab.key); }} style={{ flex: 1, alignItems: 'center', paddingVertical: 11 }}><Text variant="caption" weight={activeTab === tab.key ? 'bold' : 'regular'} color={activeTab === tab.key ? theme.colors.text.primary : theme.colors.text.tertiary}>{tab.label}</Text></Pressable>))}</View>
+        <View style={{ flexDirection: 'row' }}>{tabs.map((tab) => (
+          <Pressable
+            key={tab.key}
+            onPress={() => { triggerHaptic('selection'); setActiveTab(tab.key); }}
+            // Long-press opens the per-tab customization sheet. Own profile
+            // only — this whole screen IS the user's own profile, so no
+            // viewer check is needed here. Other-user profiles render
+            // through `app/profile/[id].tsx` where the long-press is
+            // gated on `isOwnProfile`.
+            onLongPress={() => { triggerHaptic('medium'); setEditingTabKey(tab.key); }}
+            delayLongPress={300}
+            style={{ flex: 1, alignItems: 'center', paddingVertical: 11, flexDirection: 'row', justifyContent: 'center', gap: 4 }}
+          >
+            {tab.emoji ? (<Text variant="caption" weight="regular" style={{ fontSize: 13 }}>{tab.emoji}</Text>) : null}
+            <Text variant="caption" weight={activeTab === tab.key ? 'bold' : 'regular'} color={activeTab === tab.key ? theme.colors.text.primary : theme.colors.text.tertiary}>{tab.label}</Text>
+          </Pressable>
+        ))}</View>
         <View style={{ position: 'absolute', bottom: 0, height: 2, backgroundColor: theme.colors.accent.primary, width: SCREEN_WIDTH / 4, left: tabs.findIndex(t => t.key === activeTab) * (SCREEN_WIDTH / 4) }} />
       </View>
       <View style={{ height: 12 }} />
@@ -1063,6 +1103,22 @@ export default function ProfileScreen() {
       <AccountSwitcher visible={showAccountSwitcher} onClose={() => setShowAccountSwitcher(false)} />
       <PostContextMenu visible={!!contextPost} post={contextPost} isOwnPost={true} onClose={closeContextMenu} onDelete={async (postId) => { if (user?.id) { await deletePost(postId, user.id); useFeedStore.getState().removePost(postId); loadMyPosts(); showToast(t('toast.post_deleted'), 'trash-2'); } }} />
       <FollowsListModal visible={!!followsModal} mode={followsModal || 'followers'} userId={user?.id || null} onClose={() => setFollowsModal(null)} />
+      {/* Long-press tab editor — own profile only. The modal seeds with the
+          tab's current customization and writes back via the settings
+          store so the choice survives relaunch. */}
+      <EditProfileTabModal
+        visible={!!editingTabEntry}
+        defaultLabel={editingTabEntry?.defaultLabel || ''}
+        initialLabel={editingTabEntry?.label !== editingTabEntry?.defaultLabel ? editingTabEntry?.label : undefined}
+        initialEmoji={editingTabEntry?.emoji}
+        onClose={() => setEditingTabKey(null)}
+        onApply={(value) => {
+          if (editingTabKey) setProfileTabCustom(editingTabKey, value);
+        }}
+        onReset={() => {
+          if (editingTabKey) clearProfileTabCustom(editingTabKey);
+        }}
+      />
     </View>
   );
 }

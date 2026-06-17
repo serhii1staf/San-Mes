@@ -64,6 +64,14 @@ const en: Record<string, string> = {
   'profile.repost_from': 'reposted from {name}',
   'profile.delete_post_title': 'Delete post?',
   'profile.delete_post_msg': 'This action cannot be undone',
+  // Long-press tab editor (own profile only). Title sits centered at the
+  // top of the bottom sheet; placeholder shows the default label so the
+  // user always sees what would render if they cleared the field.
+  'profile.tab_edit.title': 'Edit tab',
+  'profile.tab_edit.label_placeholder': 'Label',
+  'profile.tab_edit.emoji_button': 'Emoji',
+  'profile.tab_edit.reset': 'Reset to default',
+  'profile.tab_edit.apply': 'Apply',
 
   // ─── Splash ────────────────────────────────────────────────────────────
   'splash.greeting': 'Hi, {name}',

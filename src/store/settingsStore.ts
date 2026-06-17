@@ -46,6 +46,12 @@ interface SettingsState {
   weatherCityName: string | null;
   weatherLat: number | null;
   weatherLon: number | null;
+  // Long-press customization for the OWN-profile category tabs (Posts /
+  // Replies / Media / Likes). Keyed by tab key; missing key = use the
+  // default i18n label and no emoji prefix. Read by both `(tabs)/profile`
+  // and `profile/[id]` (the latter only when the displayed profile id
+  // matches the current user). Other-user profiles always render defaults.
+  profileTabsCustom: Record<string, { label?: string; emoji?: string }>;
   setHaptic: (enabled: boolean) => void;
   setInAppBrowser: (enabled: boolean) => void;
   setBrowserWidgetPosition: (position: 'top' | 'bottom') => void;
@@ -56,6 +62,11 @@ interface SettingsState {
   setMiniAppPreviewBg: (id: string | null) => void;
   setWeatherEnabled: (enabled: boolean) => void;
   setWeatherCity: (city: { name: string; lat: number; lon: number } | null) => void;
+  // Apply / clear a single tab's customization. `value` carries an optional
+  // `label` (empty string treated as cleared) and optional `emoji` prefix;
+  // `clearProfileTabCustom` removes the key entirely so the default returns.
+  setProfileTabCustom: (key: string, value: { label?: string; emoji?: string }) => void;
+  clearProfileTabCustom: (key: string) => void;
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -92,6 +103,9 @@ export const useSettingsStore = create<SettingsState>()(
       weatherCityName: null,
       weatherLat: null,
       weatherLon: null,
+      // No tab customizations until the user long-presses a tab and applies
+      // one. Empty record reads as "every tab uses its default i18n label".
+      profileTabsCustom: {},
       setHaptic: (hapticEnabled) => set({ hapticEnabled }),
       setInAppBrowser: (useInAppBrowser) => set({ useInAppBrowser }),
       setBrowserWidgetPosition: (browserWidgetPosition) => set({ browserWidgetPosition }),
@@ -109,6 +123,34 @@ export const useSettingsStore = create<SettingsState>()(
             ? { weatherCityName: city.name, weatherLat: city.lat, weatherLon: city.lon }
             : { weatherCityName: null, weatherLat: null, weatherLon: null }
         ),
+      // Tab-customization setters. Apply normalises the input: an empty
+      // label string AND no emoji collapses to a clear (no point storing
+      // an entry that has no effect). Anything else merges into the
+      // existing record so other tabs' customizations survive untouched.
+      setProfileTabCustom: (key, value) =>
+        set((s) => {
+          const label = value.label?.trim() || undefined;
+          const emoji = value.emoji || undefined;
+          if (!label && !emoji) {
+            // Treat as a clear — drop the key entirely.
+            const next = { ...s.profileTabsCustom };
+            delete next[key];
+            return { profileTabsCustom: next };
+          }
+          return {
+            profileTabsCustom: {
+              ...s.profileTabsCustom,
+              [key]: { label, emoji },
+            },
+          };
+        }),
+      clearProfileTabCustom: (key) =>
+        set((s) => {
+          if (!s.profileTabsCustom[key]) return s;
+          const next = { ...s.profileTabsCustom };
+          delete next[key];
+          return { profileTabsCustom: next };
+        }),
     }),
     {
       name: 'app-settings',

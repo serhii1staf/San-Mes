@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, Alert, Animated, PanResponder, Modal, Dimensions, Keyboard, InteractionManager, type ViewToken } from 'react-native';
+import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, Alert, Animated, Modal, Dimensions, Keyboard, InteractionManager, type ViewToken } from 'react-native';
 import { KeyboardStickyView, useReanimatedKeyboardAnimation, useKeyboardHandler } from 'react-native-keyboard-controller';
-import Reanimated, { useAnimatedStyle, interpolate, Extrapolation, useSharedValue } from 'react-native-reanimated';
+import Reanimated, { useAnimatedStyle, interpolate, Extrapolation, useSharedValue, withSpring, runOnJS } from 'react-native-reanimated';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
 import { Feather } from '@expo/vector-icons';
@@ -96,109 +97,119 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
   const theme = useTheme();
   const t = useT();
   const fontFamilyStyle = fontFamily === 'mono' ? 'monospace' : fontFamily === 'serif' ? 'serif' : undefined;
-  const translateX = useRef(new Animated.Value(0)).current;
-  const fired = useRef(false);
 
-  // Lazy-init the PanResponder past the navigation/scroll interaction.
+  // ── Swipe-to-reply: UI-thread gesture (RNGH + Reanimated) ──────────────
+  // Previous implementation was a JS-thread `PanResponder` writing into an RN
+  // `Animated.Value` (non-native-driver — gesture writes have to bridge per
+  // frame). On weak Android 10 the JS thread regularly missed frames during
+  // a swipe (FlatList scroll responder + image decode + selectors), and the
+  // bridged writes blended with the spring-back animation, producing the
+  // "snap back-and-forth" twitch the user reported.
   //
-  // On first chat open, the FlatList synchronously mounts ~5 MessageBubbles.
-  // Eagerly calling `PanResponder.create({...})` per bubble allocated 5
-  // closures × 5 bubbles = 25 closures on the same RAF as the navigation
-  // transition — the dominant remaining cause of the 60 → 30 FPS drop the
-  // user reported when opening a chat. Wiring the swipe gesture in past
-  // `runAfterInteractions` means the bubbles render dirt cheap during the
-  // transition; swipe-to-reply becomes available a frame after the user
-  // lifts their finger from the conversation row, which is well before the
-  // chat is interactive anyway.
-  const [panHandlers, setPanHandlers] = useState<any>(null);
-  useEffect(() => {
-    const handle = InteractionManager.runAfterInteractions(() => {
-      const pr = PanResponder.create({
-        // Activation gate — tuned for the reported jitter where the
-        // bubble snapped back-and-forth on its own during a swipe. Three
-        // pieces:
-        //   • `dx < -10`   — finger has moved at least 10 px LEFT.
-        //                    Stricter than the user-suggested -8 (which
-        //                    granted on micro-twitches) but looser than
-        //                    the legacy -14 (which felt sticky on quick
-        //                    swipes). 10 reliably activates a real swipe
-        //                    while ignoring stray touches.
-        //   • `|dx| > |dy| * 1.6` — horizontal-dominant requirement,
-        //                    slightly less strict than the legacy *2 so
-        //                    a not-quite-perfect drag still activates.
-        //   • `|dy| < 8`   — keeps the responder out of vertical scroll
-        //                    territory entirely. The previous combo of
-        //                    *2 and a missing dy cap let a finger
-        //                    drifting diagonally during a vertical scroll
-        //                    flicker the responder on/off, which the user
-        //                    perceived as the bubble vibrating.
-        onMoveShouldSetPanResponder: (_, g) =>
-          g.dx < -10 && Math.abs(g.dx) > Math.abs(g.dy) * 1.6 && Math.abs(g.dy) < 8,
-        // Allow other handlers (the FlatList scroll responder, a parent
-        // gesture) to take this back cleanly. Returning false here let
-        // the OS keep the bubble's responder active even after the user
-        // started a vertical scroll, producing a one-frame translateX
-        // twitch as the spring fought the FlatList's drag — the visible
-        // "snap back-and-forth" the user reported. With true the bubble
-        // gracefully yields and the spring runs from the last setValue.
-        onPanResponderTerminationRequest: () => true,
-        onPanResponderGrant: () => { onSwipeActive(true); },
-        onPanResponderMove: (_, g) => {
-          // Round to whole pixels before writing to the (non-native-driver)
-          // Animated.Value. Sub-pixel translateX writes are a known source
-          // of perceived twitch on Android — the system snaps fractional
-          // values inconsistently across frames, which the user reads as
-          // jitter. Whole-pixel writes match what the renderer can actually
-          // commit so the bubble glides instead of vibrating.
-          const dx = Math.round(Math.max(Math.min(g.dx, 0), -80));
-          translateX.setValue(dx);
-          if (!fired.current && dx <= -REPLY_THRESHOLD) { fired.current = true; triggerHaptic('light'); }
-        },
-        onPanResponderRelease: (_, g) => {
-          if (g.dx <= -REPLY_THRESHOLD) onReply(message);
-          fired.current = false;
-          onSwipeActive(false);
-          // Stop any in-flight animation on translateX BEFORE springing
-          // back. Without this an interrupted previous spring (or a
-          // racing `terminate` callback) could leave a half-resolved
-          // animation latched onto the value, and the new spring would
-          // then "blend" with it for one frame — the back-and-forth
-          // twitch the user reported. `stopAnimation` cleanly settles
-          // any pending animation so the spring starts from a known
-          // point. We keep `useNativeDriver: true` (single-shot, no
-          // gesture writes between here and the toValue:0 endpoint).
-          translateX.stopAnimation();
-          Animated.spring(translateX, { toValue: 0, useNativeDriver: true, tension: 140, friction: 12 }).start();
-        },
-        onPanResponderTerminate: () => {
-          fired.current = false;
-          onSwipeActive(false);
-          // Same clean-state guarantee as `onPanResponderRelease` above.
-          // Termination races (responder taken by FlatList) used to fire
-          // a second spring while the release-spring was still running,
-          // which the user saw as the bubble jumping. Stopping the
-          // value first ensures only ONE spring is ever in flight.
-          translateX.stopAnimation();
-          Animated.spring(translateX, { toValue: 0, useNativeDriver: true, tension: 140, friction: 12 }).start();
-        },
-      });
-      setPanHandlers(pr.panHandlers);
-    });
-    return () => handle.cancel();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // The new implementation runs ENTIRELY on the UI thread:
+  //   • `Gesture.Pan()` from RNGH dispatches gesture events on the UI thread.
+  //   • `useSharedValue` + `useAnimatedStyle` apply the transform without
+  //     ever crossing the bridge.
+  //   • `withSpring` on release is also UI-thread native.
+  //   • `runOnJS` is used ONCE per phase (start/end) to flip the parent's
+  //     scroll lock and to fire the haptic — never per frame.
+  // JS frame drops can no longer affect the swipe.
+  const translateXSV = useSharedValue(0);
+  // One-shot guard so the haptic fires the moment we cross REPLY_THRESHOLD,
+  // and exactly once per gesture. Reset back to false on release/cancel.
+  const gateFiredHapticSV = useSharedValue(false);
+  // Mirror of "is this gesture currently active?" — used by `onFinalize`
+  // to know whether to clean up state (it fires on EVERY pan termination,
+  // including ones where activation criteria were never met).
+  const swipeActiveSV = useSharedValue(false);
 
-  const replyIconOpacity = translateX.interpolate({ inputRange: [-REPLY_THRESHOLD, -24, 0], outputRange: [1, 0, 0], extrapolate: 'clamp' });
+  const pan = useMemo(
+    () =>
+      Gesture.Pan()
+        // Activation gate: only horizontal LEFT motion. `activeOffsetX`
+        // requires the finger to move ≥12 px LEFT before the pan
+        // activates; the +9999 cap means right-direction motion never
+        // activates this. `failOffsetY` makes any vertical motion ≥10 px
+        // (in either direction) FAIL the pan, handing the gesture back
+        // to the FlatList scroll responder. So vertical scrolls always
+        // win and horizontal swipes never fight them.
+        .activeOffsetX([-12, 9999])
+        .failOffsetY([-10, 10])
+        .onStart(() => {
+          'worklet';
+          swipeActiveSV.value = true;
+          // Notify parent ONCE on activate so it can disable FlatList
+          // scrolling while the swipe is in flight. Not per-frame.
+          runOnJS(onSwipeActive)(true);
+        })
+        .onUpdate((e) => {
+          'worklet';
+          // Clamp translateX to [-80, 0] — only swipe LEFT, capped at 80 px.
+          // Whole pixel for predictable rendering on Android.
+          const dx = Math.max(Math.min(Math.round(e.translationX), 0), -80);
+          translateXSV.value = dx;
+          // One-shot threshold haptic. Fired from the worklet via runOnJS
+          // exactly once per gesture; the gate flag prevents storms when
+          // the finger lingers near the threshold.
+          if (!gateFiredHapticSV.value && dx <= -REPLY_THRESHOLD) {
+            gateFiredHapticSV.value = true;
+            runOnJS(triggerHaptic)('light');
+          }
+        })
+        .onEnd((e) => {
+          'worklet';
+          // Trigger reply when the user RELEASED past the threshold —
+          // matches the pre-existing behaviour exactly.
+          if (e.translationX <= -REPLY_THRESHOLD) {
+            runOnJS(onReply)(message);
+          }
+        })
+        .onFinalize(() => {
+          'worklet';
+          // Always run on EVERY pan termination (success or failure). Spring
+          // back to 0 with a UI-thread native spring; reset the haptic gate
+          // and the active flag; notify parent ONCE on end.
+          translateXSV.value = withSpring(0, {
+            damping: 20,
+            stiffness: 220,
+            mass: 0.8,
+          });
+          gateFiredHapticSV.value = false;
+          if (swipeActiveSV.value) {
+            swipeActiveSV.value = false;
+            runOnJS(onSwipeActive)(false);
+          }
+        }),
+    // Stable across renders — message id doesn't change for a given bubble,
+    // and the callbacks are stabilised at the screen level via useCallback.
+    [message, onReply, onSwipeActive, translateXSV, gateFiredHapticSV, swipeActiveSV],
+  );
+
+  // UI-thread style for the bubble's translateX.
+  const bubbleAnimStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: translateXSV.value }],
+  }));
+  // Reply-icon opacity ramp from -24 → -REPLY_THRESHOLD (matches the legacy
+  // implementation's interpolation), evaluated entirely on the UI thread.
+  const replyIconAnimStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(
+      translateXSV.value,
+      [-REPLY_THRESHOLD, -24, 0],
+      [1, 0, 0],
+      Extrapolation.CLAMP,
+    ),
+  }));
 
   return (
     <View style={bubbleStyles.row}>
-      <Animated.View style={[bubbleStyles.swipeIcon, { opacity: replyIconOpacity }]}>
+      <Reanimated.View style={[bubbleStyles.swipeIcon, replyIconAnimStyle]}>
         <View style={[bubbleStyles.swipeIconCircle, { backgroundColor: theme.colors.accent.primary + '20' }]}>
           <Feather name="corner-up-left" size={16} color={theme.colors.accent.primary} />
         </View>
-      </Animated.View>
+      </Reanimated.View>
 
-      <Animated.View style={{ transform: [{ translateX }], alignSelf: isOwn ? 'flex-end' : 'flex-start', maxWidth: '78%', marginLeft: isOwn ? 0 : 16, marginRight: isOwn ? 16 : 0, marginBottom: 4 }} {...(panHandlers || {})}>
+      <GestureDetector gesture={pan}>
+        <Reanimated.View style={[bubbleAnimStyle, { alignSelf: isOwn ? 'flex-end' : 'flex-start', maxWidth: '78%', marginLeft: isOwn ? 0 : 16, marginRight: isOwn ? 16 : 0, marginBottom: 4 }]}>
         <Pressable onLongPress={() => { triggerHaptic('medium'); onLongPress(message); }} delayLongPress={300}>
           <View style={{
             paddingHorizontal: 14,
@@ -277,7 +288,8 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
             </Text>
           </View>
         </Pressable>
-      </Animated.View>
+        </Reanimated.View>
+      </GestureDetector>
     </View>
   );
 }
@@ -1300,9 +1312,12 @@ export default function ChatScreen() {
     // entire screen (it's the parent of the FlatList), the FlatList
     // re-evaluated its `scrollEnabled` prop, and on weak Android that
     // re-evaluation could briefly take the responder back from the
-    // bubble's PanResponder mid-gesture. `setNativeProps` writes the
+    // bubble's swipe gesture mid-stream. `setNativeProps` writes the
     // flag straight to the underlying ScrollView with zero React work,
-    // so the bubble keeps the responder for the whole gesture.
+    // so the bubble keeps the gesture for the whole interaction. Now
+    // that the swipe gesture itself runs on the UI thread (RNGH), this
+    // is also the only JS-thread work per swipe — fired ONCE on
+    // activate and ONCE on end, never per frame.
     try { (flatListRef.current as any)?.setNativeProps?.({ scrollEnabled: !active }); } catch {}
   }, []);
 
@@ -1477,16 +1492,15 @@ export default function ChatScreen() {
         removeClippedSubviews={true}
         // Tuned for iPhone 12 / weak Android: ~4 bubbles fit the visible
         // window above the input bar (the 5th was usually clipped under
-        // the gradient anyway). Each bubble synchronously creates an
-        // `Animated.Value`, allocates a `LinkPreview` slot and schedules
-        // a deferred `PanResponder.create` — the more we mount on the
-        // first commit, the longer the navigation transition fights for
-        // the JS thread. Cutting the initial batch by one and the
-        // per-batch budget by one buys ~5–10 ms on weak Android 10
-        // (Telegram-grade target device). The PanResponder deferral
-        // (see `MessageBubble`) covers this initial batch too — the
-        // useEffect runs after the very first render, so first-batch
-        // bubbles also wait for `runAfterInteractions` before allocating.
+        // the gradient anyway). Each bubble allocates a `Reanimated`
+        // shared value, a `LinkPreview` slot, and a `Gesture.Pan()`
+        // builder for swipe-to-reply — the more we mount on the first
+        // commit, the longer the navigation transition fights for the
+        // JS thread. Cutting the initial batch by one and the per-batch
+        // budget by one buys ~5–10 ms on weak Android 10 (Telegram-grade
+        // target device). The pan gesture itself runs ON THE UI THREAD
+        // (RNGH + Reanimated worklets), so once the bubbles are mounted
+        // they don't compete with subsequent JS work.
         initialNumToRender={4}
         maxToRenderPerBatch={3}
         windowSize={5}
@@ -1531,14 +1545,15 @@ export default function ChatScreen() {
       {/* Scroll-to-bottom button. Rendered ABOVE the gradient (so the
           chevron is fully readable, not ghosted into the fade) but BELOW
           the input bar in z-order. Anchored to the bottom of the screen
-          with a static offset (`LIST_FOOTER_HEIGHT + 8` keeps it just
-          above the input bar at rest), and the entire wrapper is a
-          Reanimated.View driven by `listShiftStyle` so it rides up with
-          the input bar when the keyboard rises — `listShiftY` already
-          tracks the live keyboard height (driven by
-          `useKeyboardHandler.onMove`), so reusing the same shared value
-          keeps the button perfectly in lockstep with the input bar
-          across both keyboard-up and interactive-dismiss frames.
+          with a static offset (`LIST_FOOTER_HEIGHT - 36` parks it just
+          barely above the input bar's top edge, so it visually anchors
+          to the input rather than floating in the chat area), and the
+          entire wrapper is a Reanimated.View driven by `listShiftStyle`
+          so it rides up with the input bar when the keyboard rises —
+          `listShiftY` already tracks the live keyboard height (driven
+          by `useKeyboardHandler.onMove`), so reusing the same shared
+          value keeps the button perfectly in lockstep with the input
+          bar across both keyboard-up and interactive-dismiss frames.
 
           Gated entirely on `chatSettings.scrollToBottomButton`: when off,
           nothing mounts (no scroll listener cost, no opacity animator). */}
@@ -1546,7 +1561,12 @@ export default function ChatScreen() {
         <Reanimated.View
           pointerEvents="box-none"
           style={[
-            { position: 'absolute', right: 16, bottom: LIST_FOOTER_HEIGHT + 8 },
+            // Offset chosen so the button sits just above the input bar
+            // (button is 36 px tall — `LIST_FOOTER_HEIGHT - 36` puts its
+            // top edge flush with where the input bar's top would be at
+            // rest, leaving a small visible gap that anchors it to the
+            // input visually).
+            { position: 'absolute', right: 16, bottom: LIST_FOOTER_HEIGHT - 36 },
             listShiftStyle,
           ]}
         >

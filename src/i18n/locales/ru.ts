@@ -67,6 +67,14 @@ const ru: Record<string, string> = {
   'profile.repost_from': 'репост от {name}',
   'profile.delete_post_title': 'Удалить пост?',
   'profile.delete_post_msg': 'Это действие нельзя отменить',
+  // Long-press tab editor (own profile only). Title sits centered at the
+  // top of the bottom sheet; placeholder shows the default label so the
+  // user always sees what would render if they cleared the field.
+  'profile.tab_edit.title': 'Изменить вкладку',
+  'profile.tab_edit.label_placeholder': 'Название',
+  'profile.tab_edit.emoji_button': 'Эмодзи',
+  'profile.tab_edit.reset': 'Сбросить',
+  'profile.tab_edit.apply': 'Применить',
 
   // ─── Splash ────────────────────────────────────────────────────────────
   'splash.greeting': 'Привет, {name}',

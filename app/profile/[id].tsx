@@ -29,6 +29,7 @@ import { UserProfilePostCard } from '../../src/components/ui/UserProfilePostCard
 import { FollowsListModal, FollowsListMode } from '../../src/components/profile/FollowsListModal';
 import { ProfileReplyCard, ProfileReply } from '../../src/components/profile/ProfileReplyCard';
 import { AdaptiveProfileText } from '../../src/components/profile/AdaptiveProfileText';
+import { EditProfileTabModal } from '../../src/components/profile/EditProfileTabModal';
 import { useProfileAppearanceStore } from '../../src/store/profileAppearanceStore';
 import { PanResponder } from 'react-native';
 import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
@@ -963,14 +964,39 @@ export default function UserProfileScreen() {
     if (typeof profileLinksRaw !== 'string') return profileLinksRaw as any;
     try { return JSON.parse(profileLinksRaw); } catch { return []; }
   }, [profileLinksRaw]);
-  const tabs = useMemo<{ key: TabName; label: string }[]>(
-    () => [
-      { key: 'posts', label: t('profile.posts') },
-      { key: 'replies', label: t('profile.replies') },
-      { key: 'media', label: t('profile.media') },
-      { key: 'likes', label: t('profile.likes') },
-    ],
-    [t],
+  // Long-press tab customization — own profile only. The dynamic profile
+  // route IS sometimes used to navigate to one's own profile, so we still
+  // read the customizations here, just gated on `isOwnProfile` below.
+  const profileTabsCustom = useSettingsStore((s) => s.profileTabsCustom);
+  const setProfileTabCustom = useSettingsStore((s) => s.setProfileTabCustom);
+  const clearProfileTabCustom = useSettingsStore((s) => s.clearProfileTabCustom);
+  const [editingTabKey, setEditingTabKey] = useState<TabName | null>(null);
+  const tabs = useMemo<{ key: TabName; label: string; defaultLabel: string; emoji?: string }[]>(
+    () => {
+      const defaults: { key: TabName; defaultLabel: string }[] = [
+        { key: 'posts', defaultLabel: t('profile.posts') },
+        { key: 'replies', defaultLabel: t('profile.replies') },
+        { key: 'media', defaultLabel: t('profile.media') },
+        { key: 'likes', defaultLabel: t('profile.likes') },
+      ];
+      // Only merge customization when THIS view is rendering the current
+      // user's own profile (the dynamic profile route is sometimes used
+      // for self-navigation too). Other-user profiles always render the
+      // unmodified i18n defaults — read-only by design, no edit affordance.
+      if (!isOwnProfile) {
+        return defaults.map((d) => ({ key: d.key, label: d.defaultLabel, defaultLabel: d.defaultLabel }));
+      }
+      return defaults.map((d) => {
+        const c = profileTabsCustom[d.key];
+        return {
+          key: d.key,
+          defaultLabel: d.defaultLabel,
+          label: c?.label || d.defaultLabel,
+          emoji: c?.emoji,
+        };
+      });
+    },
+    [t, profileTabsCustom, isOwnProfile],
   );
 
   // ─── ListHeaderComponent — memoized ────────────────────────────────────
@@ -1132,10 +1158,20 @@ export default function UserProfileScreen() {
       <View style={{ marginTop: 16, marginHorizontal: -16, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border.light }}>
         <View style={{ flexDirection: 'row' }}>
           {tabs.map((tab) => (
-            <Pressable key={tab.key} onPress={() => {
-              triggerHaptic('selection');
-              setActiveTab(tab.key);
-            }} style={{ flex: 1, alignItems: 'center', paddingVertical: 11 }}>
+            <Pressable
+              key={tab.key}
+              onPress={() => {
+                triggerHaptic('selection');
+                setActiveTab(tab.key);
+              }}
+              // Long-press editor — OWN profile only. Other-user profiles
+              // never receive the handler, so taps and long-presses on
+              // their tabs behave identically (read-only by design).
+              onLongPress={isOwnProfile ? () => { triggerHaptic('medium'); setEditingTabKey(tab.key); } : undefined}
+              delayLongPress={300}
+              style={{ flex: 1, alignItems: 'center', paddingVertical: 11, flexDirection: 'row', justifyContent: 'center', gap: 4 }}
+            >
+              {tab.emoji ? (<Text variant="caption" weight="regular" style={{ fontSize: 13 }}>{tab.emoji}</Text>) : null}
               <Text variant="caption" weight={activeTab === tab.key ? 'bold' : 'regular'} color={activeTab === tab.key ? theme.colors.text.primary : theme.colors.text.tertiary}>{tab.label}</Text>
             </Pressable>
           ))}
@@ -1399,6 +1435,28 @@ export default function UserProfileScreen() {
         </View>
       </Modal>
       <PostContextMenu visible={!!contextPost} post={contextPost} isOwnPost={isOwnProfile} onClose={closeContextMenu} onDelete={isOwnProfile ? async (postId) => { if (currentUser?.id) { await deletePost(postId, currentUser.id); } closeContextMenu(); } : undefined} />
+      {/* Long-press tab editor — own profile only. Mounted unconditionally
+          but only ever opened from the long-press handler, which itself
+          is gated on `isOwnProfile`. Cheap when idle (returns null until
+          opened), so leaving it mounted on other-user profiles is fine. */}
+      {isOwnProfile && (() => {
+        const editingTabEntry = editingTabKey ? tabs.find((tt) => tt.key === editingTabKey) : null;
+        return (
+          <EditProfileTabModal
+            visible={!!editingTabEntry}
+            defaultLabel={editingTabEntry?.defaultLabel || ''}
+            initialLabel={editingTabEntry && editingTabEntry.label !== editingTabEntry.defaultLabel ? editingTabEntry.label : undefined}
+            initialEmoji={editingTabEntry?.emoji}
+            onClose={() => setEditingTabKey(null)}
+            onApply={(value) => {
+              if (editingTabKey) setProfileTabCustom(editingTabKey, value);
+            }}
+            onReset={() => {
+              if (editingTabKey) clearProfileTabCustom(editingTabKey);
+            }}
+          />
+        );
+      })()}
     </View>
   );
 }
