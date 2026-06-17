@@ -114,10 +114,24 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
   useEffect(() => {
     const handle = InteractionManager.runAfterInteractions(() => {
       const pr = PanResponder.create({
-        onMoveShouldSetPanResponder: (_, g) => g.dx < -14 && Math.abs(g.dx) > Math.abs(g.dy) * 2,
+        // Tighter activation gate to kill swipe-to-reply jitter on weak
+        // Android. The original `g.dx < -14 && |dx| > |dy|*2` already biased
+        // toward horizontal motion, but a finger drifting diagonally during
+        // a vertical scroll could still hand the responder over and produce
+        // a single-frame translateX twitch. Adding `|dy| < 8` makes the
+        // activation strictly horizontal — any meaningful vertical drift
+        // keeps the gesture in the FlatList.
+        onMoveShouldSetPanResponder: (_, g) =>
+          g.dx < -14 && Math.abs(g.dx) > Math.abs(g.dy) * 2 && Math.abs(g.dy) < 8,
         onPanResponderGrant: () => { onSwipeActive(true); },
         onPanResponderMove: (_, g) => {
-          const dx = Math.max(Math.min(g.dx, 0), -80);
+          // Round to whole pixels before writing to the (non-native-driver)
+          // Animated.Value. Sub-pixel translateX writes are a known source
+          // of perceived twitch on Android — the system snaps fractional
+          // values inconsistently across frames, which the user reads as
+          // jitter. Whole-pixel writes match what the renderer can actually
+          // commit so the bubble glides instead of vibrating.
+          const dx = Math.round(Math.max(Math.min(g.dx, 0), -80));
           translateX.setValue(dx);
           if (!fired.current && dx <= -REPLY_THRESHOLD) { fired.current = true; triggerHaptic('light'); }
         },
@@ -400,9 +414,18 @@ export default function ChatScreen() {
     if (!conversationId) return;
     if (seededRef.current === conversationId) return;
     seededRef.current = conversationId;
-    if ((useChatStore.getState().messages[conversationId] || []).length === 0 && seedMessages.length > 0) {
-      setMessages(conversationId, seedMessages as any);
-    }
+    // Deferred past the open-chat transition because pushing the seed into
+    // the store synchronously triggers the chat-message selector and would
+    // re-render the FlatList on the same frame as the navigation slide-in.
+    // First-paint content is already provided by `seedMessages` (read
+    // directly into `chatMessages` above when the store is empty), so the
+    // store hydration can wait one tick without any visible delta.
+    const handle = InteractionManager.runAfterInteractions(() => {
+      if ((useChatStore.getState().messages[conversationId] || []).length === 0 && seedMessages.length > 0) {
+        setMessages(conversationId, seedMessages as any);
+      }
+    });
+    return () => handle.cancel();
   }, [conversationId, seedMessages]);
 
   // Narrow the chat-settings subscription to only the two slices this chat
@@ -423,10 +446,13 @@ export default function ChatScreen() {
   const headerGradientHeight = headerContentHeight + 28;
   const inputBarBottomPad = Math.max(insets.bottom, 12);
 
-  // Gradient backdrop fades out as keyboard opens (UI thread)
-  const backdropStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(progress.value, [0, 1], [1, 0], Extrapolation.CLAMP),
-  }));
+  // Gradient backdrop is now rendered as a STATIC absolute-positioned
+  // element pinned to the bottom of the screen (see the JSX further down)
+  // — it no longer rides up with the keyboard. Removing the
+  // keyboard-driven opacity animation here means the fade always reads as
+  // a fixed chrome element behind the input bar; previously it was
+  // wrapped in a `KeyboardStickyView` and faded out as the keyboard rose,
+  // which felt like the gradient was "sticking" to the input bar.
 
   // Input row bottom padding: safe-area when keyboard closed → small gap when open (UI thread)
   const inputRowStyle = useAnimatedStyle(() => ({
@@ -530,15 +556,26 @@ export default function ChatScreen() {
   useEffect(() => {
     if (!conversationId) return;
     if ((useChatStore.getState().messages[conversationId] || []).length > 0) return;
+    // Deferred past the open-chat transition because `kvWarm` (which
+    // touches the AsyncStorage MMKV mirror) plus the subsequent
+    // `kvGetJSONSync` + `setMessages` cascade was firing on the mount
+    // frame and re-rendering the FlatList while the navigation slide-in
+    // was still in flight. The synchronous `seedMessages` already covers
+    // first-paint when MMKV is available; this effect only matters on
+    // devices where MMKV is unavailable and we need the AsyncStorage
+    // fallback. One tick of latency is invisible there too.
     const cacheKey = `chat_messages:${conversationId}`;
-    kvWarm([cacheKey]).then(() => {
-      const cached = kvGetJSONSync<ChatMessage[]>(cacheKey, []);
-      if (cached.length > 0 && (useChatStore.getState().messages[conversationId] || []).length === 0) {
-        setMessages(conversationId, cached.map((m) => healLegacySender(m, currentUserId, participantId)) as any);
-      } else if (cached.length === 0 && mockMessages[conversationId] && (useChatStore.getState().messages[conversationId] || []).length === 0) {
-        setMessages(conversationId, mockMessages[conversationId]);
-      }
-    }).catch(() => {});
+    const handle = InteractionManager.runAfterInteractions(() => {
+      kvWarm([cacheKey]).then(() => {
+        const cached = kvGetJSONSync<ChatMessage[]>(cacheKey, []);
+        if (cached.length > 0 && (useChatStore.getState().messages[conversationId] || []).length === 0) {
+          setMessages(conversationId, cached.map((m) => healLegacySender(m, currentUserId, participantId)) as any);
+        } else if (cached.length === 0 && mockMessages[conversationId] && (useChatStore.getState().messages[conversationId] || []).length === 0) {
+          setMessages(conversationId, mockMessages[conversationId]);
+        }
+      }).catch(() => {});
+    });
+    return () => handle.cancel();
   }, [conversationId]);
 
   // Persist messages to KV cache whenever THIS chat's messages change.
@@ -683,19 +720,31 @@ export default function ChatScreen() {
       .then(({ data }) => {
         const convId = data?.conversation_id;
         if (cancelled || !convId || convId === id) return;
-        // Migrate any optimistic/seed messages parked under the user-id
-        // bucket into the canonical bucket so nothing is orphaned when the
-        // selector re-keys onto `convId`.
-        try {
-          const cs = useChatStore.getState();
-          const fromOld = cs.messages[id] || [];
-          if (fromOld.length > 0) {
-            const intoNew = cs.messages[convId] || [];
-            const seen = new Set(intoNew.map((m: any) => m.id));
-            cs.setMessages(convId, [...intoNew, ...fromOld.filter((m: any) => !seen.has(m.id))] as any);
-          }
-        } catch {}
-        setConversationId(convId);
+        // Deferred past the open-chat transition because the migration
+        // here writes through `cs.setMessages(convId, ...)` and
+        // `setConversationId(convId)`, both of which cascade re-renders
+        // through the chat-message selector and the channel-subscription
+        // effect's dep array. On weak Android the navigation slide-in
+        // can still be in flight when this `.then` fires, so dropping
+        // the work past `runAfterInteractions` keeps the open frame
+        // clean. Cancellation is double-checked inside since the
+        // unmount path may have run while we were waiting.
+        InteractionManager.runAfterInteractions(() => {
+          if (cancelled) return;
+          // Migrate any optimistic/seed messages parked under the user-id
+          // bucket into the canonical bucket so nothing is orphaned when the
+          // selector re-keys onto `convId`.
+          try {
+            const cs = useChatStore.getState();
+            const fromOld = cs.messages[id] || [];
+            if (fromOld.length > 0) {
+              const intoNew = cs.messages[convId] || [];
+              const seen = new Set(intoNew.map((m: any) => m.id));
+              cs.setMessages(convId, [...intoNew, ...fromOld.filter((m: any) => !seen.has(m.id))] as any);
+            }
+          } catch {}
+          setConversationId(convId);
+        });
       })
       .catch(() => {});
     return () => { cancelled = true; };
@@ -1251,8 +1300,23 @@ export default function ChatScreen() {
   // some RN versions) if either identity changes between renders.
   const [visibleIds, setVisibleIds] = useState<Set<string>>(() => new Set());
   const [viewabilityReady, setViewabilityReady] = useState(false);
+  // Deferred past the open-chat transition: FlatList fires its first
+  // viewability callback the instant the initial cells lay out, which
+  // landed on the same frame as the navigation slide-in and triggered an
+  // immediate re-render of all five mounted bubbles (state write to
+  // `visibleIds`). The 250 ms gate skips that first burst — the list is
+  // already rendering everything visible (initialNumToRender=5), so
+  // nothing is paused incorrectly during the gate.
+  const viewabilityArmedRef = useRef(false);
+  useEffect(() => {
+    const handle = setTimeout(() => { viewabilityArmedRef.current = true; }, 250);
+    return () => clearTimeout(handle);
+  }, []);
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 35 }).current;
   const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ViewToken[] }) => {
+    // Skip viewability-driven state writes until the open-chat transition
+    // has settled. See `viewabilityArmedRef` declaration above.
+    if (!viewabilityArmedRef.current) return;
     const next = new Set<string>();
     for (const v of viewableItems) {
       if (v.isViewable && v.item?.id) next.add(v.item.id as string);
@@ -1354,20 +1418,31 @@ export default function ChatScreen() {
       />
       </Reanimated.View>
 
+      {/* Static under-input gradient. Pinned to the bottom of the screen
+          and intentionally OUTSIDE `KeyboardStickyView` so it does NOT
+          ride up with the keyboard — when the user types, the input bar
+          animates above the keyboard while this fade stays anchored at
+          the screen bottom, reading as a fixed chrome element. Z-order
+          here matters: rendered after the FlatList wrapper (so it paints
+          over the message list) but before the `KeyboardStickyView`
+          below (so the input bar paints over it). Three-stop fade
+          mirrors the top-header gradient so messages scrolling past
+          ghost into the chrome rather than being hard-clipped. Static
+          height, no animation — it simply sits there. */}
+      <View
+        pointerEvents="none"
+        style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: LIST_FOOTER_HEIGHT }}
+      >
+        <LinearGradient
+          colors={[bgTransparent, bgColor + 'B3', bgColor]}
+          locations={[0, 0.45, 1]}
+          style={StyleSheet.absoluteFill}
+        />
+      </View>
+
       {/* Input bar sticks to the keyboard top; hidden while searching */}
       {!searchMode && (
       <KeyboardStickyView offset={stickyOffset} style={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}>
-        <Reanimated.View style={[StyleSheet.absoluteFill, backdropStyle]} pointerEvents="none">
-          {/* Three-stop fade so messages scrolling above the input bar
-              ghost into the chrome rather than getting hard-clipped by a
-              solid bg slab. Mirror of the top-header gradient. */}
-          <LinearGradient
-            colors={[bgTransparent, bgColor + 'B3', bgColor]}
-            locations={[0, 0.45, 1]}
-            style={StyleSheet.absoluteFill}
-          />
-        </Reanimated.View>
-
         {banner && (
           <View style={{ marginHorizontal: 12, marginTop: 6, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: theme.colors.background.elevated, borderRadius: 12, borderWidth: 1, borderColor: theme.colors.border.light, paddingHorizontal: 12, paddingVertical: 6 }}>
             <View style={{ width: 3, alignSelf: 'stretch', borderRadius: 2, backgroundColor: theme.colors.accent.primary }} />
