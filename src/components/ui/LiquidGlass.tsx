@@ -1,5 +1,5 @@
 import React from 'react';
-import { Platform, View, type ViewProps, type StyleProp, type ViewStyle } from 'react-native';
+import { Platform, View, StyleSheet, type ViewProps, type StyleProp, type ViewStyle } from 'react-native';
 import { useSettingsStore } from '../../store/settingsStore';
 
 // ── Native liquid glass (iOS 26+) — single integration point ───────────────
@@ -165,4 +165,45 @@ export function GlassSurface({ fallback, ...glassProps }: GlassSurfaceProps) {
   const active = useLiquidGlassActive();
   if (active) return <NativeGlassView {...glassProps} />;
   return <>{fallback}</>;
+}
+
+interface GlassBgProps {
+  borderRadius?: number;
+  glassStyle?: GlassStyle;
+  colorScheme?: 'auto' | 'light' | 'dark';
+}
+
+/**
+ * Absolute-fill liquid-glass BACKGROUND layer — the correct way to glass a
+ * button / pill / field.
+ *
+ * Usage: render `<GlassBg .../>` as the FIRST child of a SHAPED,
+ * overflow-hidden container (Pressable/View) that already defines size /
+ * padding / borderRadius, and put the real content (icons, text, TextInput)
+ * as SIBLINGS AFTER it. The content then lays out normally and sits ON TOP of
+ * the glass.
+ *
+ * Why not put content inside a GlassView? Two reasons learned the hard way:
+ *   1. Content placed inside a GlassView gets visually lensed/warped by the
+ *      glass (especially with `isInteractive`) — an icon appears to "stretch
+ *      inside" the button.
+ *   2. An absolute-fill GlassView holding the content collapses the parent's
+ *      intrinsic size (a name pill shrank to a bare circle because the text
+ *      lived inside the absolutely-positioned glass and no longer drove the
+ *      pill's width).
+ *
+ * Returns null when glass is off, so the container simply falls back to its
+ * own backgroundColor/border. Deliberately NOT interactive.
+ */
+export function GlassBg({ borderRadius, glassStyle = 'regular', colorScheme }: GlassBgProps) {
+  const active = useLiquidGlassActive();
+  if (!active) return null;
+  return (
+    <NativeGlassView
+      pointerEvents="none"
+      glassStyle={glassStyle}
+      colorScheme={colorScheme}
+      style={[StyleSheet.absoluteFill, borderRadius != null ? { borderRadius } : null]}
+    />
+  );
 }

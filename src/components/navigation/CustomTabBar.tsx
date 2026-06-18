@@ -284,10 +284,11 @@ function SlidingLens({
         // animStyle transform (translateX/Y, scale, width) as the fake-glass
         // path, so the existing pill-stretch animation drives a genuine glass
         // blob that stretches when switching tabs. `clear` keeps it light over
-        // the glass backdrop; `isInteractive` makes it react to touch.
+        // the glass backdrop. NOT interactive — `isInteractive` lensed/warped
+        // the content and is removed everywhere; the stretch/scale here is
+        // driven purely by the shared-value animStyle transform above.
         <NativeGlassView
           glassStyle="clear"
-          isInteractive
           colorScheme={isDark ? 'dark' : 'light'}
           style={[
             StyleSheet.absoluteFill,

@@ -5,7 +5,7 @@ import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../../theme';
 import { useT } from '../../i18n/store';
 import { perfMonitor } from '../../services/perfMonitor';
-import { useLiquidGlassActive, NativeGlassView } from '../ui/LiquidGlass';
+import { useLiquidGlassActive, GlassBg } from '../ui/LiquidGlass';
 
 // Enable LayoutAnimation on Android (no-op on iOS where it's always on).
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -114,37 +114,41 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
     // the row's bottom edge. Without this the row centers all children, which
     // visually shoves the photo/GIF/send buttons up alongside the text.
     <Reanimated.View style={[styles.row, inputRowStyle]}>
-      {/* Photo/image button → interactive glass capsule on iOS glass. */}
-      {glassActive ? (
-        <Pressable onPress={onPickImages} style={[styles.iconBtn, styles.glassClip]}>
-          <NativeGlassView glassStyle="regular" isInteractive style={styles.fillCenter}>
-            <Feather name="image" size={20} color={theme.colors.accent.primary} />
-          </NativeGlassView>
-        </Pressable>
-      ) : (
-        <Pressable onPress={onPickImages} style={[styles.iconBtn, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
-          <Feather name="image" size={20} color={theme.colors.accent.primary} />
-        </Pressable>
-      )}
-      {/* Input wrap → glass container (NOT interactive: it holds a TextInput and
-          must keep text fully legible). Same radius/padding/minHeight either way. */}
-      {glassActive ? (
-        <NativeGlassView glassStyle="regular" style={[styles.inputWrap, styles.glassClip]}>
-          {inputInner}
-        </NativeGlassView>
-      ) : (
-        <View style={[styles.inputWrap, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
-          {inputInner}
-        </View>
-      )}
-      {/* Send button → keep the solid accent affordance when it can send; when
-          it can't (empty) AND glass is active, render an interactive glass
-          capsule instead of the flat elevated fill. */}
+      {/* Photo/image button → glass background layer with the icon on top.
+          GlassBg returns null when glass is off, so the flat fill applies. */}
+      <Pressable
+        onPress={onPickImages}
+        style={[
+          styles.iconBtn,
+          glassActive
+            ? styles.glassClip
+            : { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light },
+        ]}
+      >
+        <GlassBg borderRadius={22} colorScheme={theme.isDark ? 'dark' : 'light'} />
+        <Feather name="image" size={20} color={theme.colors.accent.primary} />
+      </Pressable>
+      {/* Input wrap → glass background layer with the input content (TextInput +
+          GIF button) as siblings ON TOP, so the TextInput stays fully legible
+          and the wrap keeps its shape/padding/minHeight either way. */}
+      <View
+        style={[
+          styles.inputWrap,
+          glassActive
+            ? styles.glassClip
+            : { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light },
+        ]}
+      >
+        <GlassBg borderRadius={22} colorScheme={theme.isDark ? 'dark' : 'light'} />
+        {inputInner}
+      </View>
+      {/* Send button → keep the solid accent affordance when it can send (a
+          filled send button, no glass). When it can't (empty) AND glass is
+          active, render the glass background layer with the icon on top. */}
       {glassActive && !canSend ? (
         <Pressable onPress={handleSend} style={[styles.sendBtn, styles.glassClip]}>
-          <NativeGlassView glassStyle="regular" isInteractive style={styles.fillCenter}>
-            <Feather name={isEditing ? 'check' : 'send'} size={18} color={theme.colors.text.tertiary} />
-          </NativeGlassView>
+          <GlassBg borderRadius={22} colorScheme={theme.isDark ? 'dark' : 'light'} />
+          <Feather name={isEditing ? 'check' : 'send'} size={18} color={theme.colors.text.tertiary} />
         </Pressable>
       ) : (
         <Pressable onPress={handleSend} style={[styles.sendBtn, { backgroundColor: canSend ? theme.colors.accent.primary : theme.colors.background.elevated }]}>
@@ -164,10 +168,8 @@ const styles = StyleSheet.create({
   iconBtn: { width: 44, height: 44, borderRadius: 22, borderWidth: 1, alignItems: 'center', justifyContent: 'center', marginRight: 8 },
   inputWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 22, paddingHorizontal: 14, paddingVertical: 10, minHeight: 44, borderWidth: 1 },
   sendBtn: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', marginLeft: 8 },
-  // Clip the native glass to the capsule shape and drop the flat-path border
-  // (the glass supplies its own edge). Used on the iconBtn / inputWrap / sendBtn
-  // wrappers only when liquid glass is active.
+  // Clip the native glass background to the capsule shape and drop the
+  // flat-path border (the glass supplies its own edge). Used on the
+  // iconBtn / inputWrap / sendBtn wrappers only when liquid glass is active.
   glassClip: { overflow: 'hidden', borderWidth: 0 },
-  // Fills the 44×44 button wrapper and centers the icon inside the glass.
-  fillCenter: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
 });
