@@ -38,6 +38,7 @@ import { triggerHaptic } from '../../src/utils/haptics';
 import { useT } from '../../src/i18n/store';
 import { perfMonitor } from '../../src/services/perfMonitor';
 import { useSettingsStore } from '../../src/store/settingsStore';
+import { useLiquidGlassActive, NativeGlassView } from '../../src/components/ui/LiquidGlass';
 
 const REPLY_THRESHOLD = 60;
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -402,6 +403,10 @@ export default function ChatScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
+  // Native iOS-26 liquid glass for the chat chrome (header / search / scroll
+  // button). iOS-only and gated on the user toggle; false everywhere else, so
+  // all the fallback paths below render exactly as before. Read once, reused.
+  const glassActive = useLiquidGlassActive();
   const { id, participantId: paramParticipantId } = useLocalSearchParams<{ id: string; participantId?: string }>();
   // ── Canonical conversation id (peers-on-different-channels fix) ────────
   // The route `id` is EITHER a real conversation id (messages-list
@@ -1687,30 +1692,46 @@ export default function ChatScreen() {
             pointerEvents={scrollBtnVisible ? 'auto' : 'none'}
             style={{ opacity: scrollBtnOpacity }}
           >
-            <Pressable
-              onPress={onScrollBtnTap}
-              hitSlop={6}
-              style={{
-                width: 36,
-                height: 36,
-                borderRadius: 18,
-                backgroundColor: theme.colors.background.elevated,
-                borderWidth: 1,
-                borderColor: theme.colors.border.light,
-                alignItems: 'center',
-                justifyContent: 'center',
-                // Soft elevation so the button reads as floating chrome
-                // rather than blending into the fade beneath it. Same
-                // shadow recipe as the existing header pills.
-                shadowColor: '#000',
-                shadowOffset: { width: 0, height: 2 },
-                shadowOpacity: 0.15,
-                shadowRadius: 4,
-                elevation: 3,
-              }}
-            >
-              <Feather name="chevron-down" size={20} color={theme.colors.text.primary} />
-            </Pressable>
+            {glassActive ? (
+              // Glass capsule. The opacity fade lives on the WRAPPER
+              // Animated.View above, NOT on the GlassView itself — so we avoid
+              // the expo-glass-effect bug where opacity:0 on a GlassView node
+              // breaks the effect.
+              <Pressable
+                onPress={onScrollBtnTap}
+                hitSlop={6}
+                style={{ width: 36, height: 36, borderRadius: 18, overflow: 'hidden' }}
+              >
+                <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.glassFill}>
+                  <Feather name="chevron-down" size={20} color={theme.colors.text.primary} />
+                </NativeGlassView>
+              </Pressable>
+            ) : (
+              <Pressable
+                onPress={onScrollBtnTap}
+                hitSlop={6}
+                style={{
+                  width: 36,
+                  height: 36,
+                  borderRadius: 18,
+                  backgroundColor: theme.colors.background.elevated,
+                  borderWidth: 1,
+                  borderColor: theme.colors.border.light,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  // Soft elevation so the button reads as floating chrome
+                  // rather than blending into the fade beneath it. Same
+                  // shadow recipe as the existing header pills.
+                  shadowColor: '#000',
+                  shadowOffset: { width: 0, height: 2 },
+                  shadowOpacity: 0.15,
+                  shadowRadius: 4,
+                  elevation: 3,
+                }}
+              >
+                <Feather name="chevron-down" size={20} color={theme.colors.text.primary} />
+              </Pressable>
+            )}
           </Animated.View>
         </Reanimated.View>
       )}
@@ -1796,52 +1817,118 @@ export default function ChatScreen() {
         />
         {searchMode ? (
           <View style={[styles.headerContent, { paddingTop: insets.top }]} pointerEvents="auto">
-            <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 20, borderWidth: 1, borderColor: theme.colors.border.light, paddingHorizontal: 14, height: 40 }}>
-              <Feather name="search" size={16} color={theme.colors.text.tertiary} />
-              <TextInput
-                autoFocus
-                value={searchQuery}
-                onChangeText={setSearchQuery}
-                placeholder={t('chat.search_placeholder')}
-                placeholderTextColor={theme.colors.text.tertiary}
-                style={{ flex: 1, marginLeft: 8, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular }}
-              />
-              {searchQuery.length > 0 && (
-                <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 12, marginRight: 4 }}>
-                  {searchMatches.length > 0 ? `${searchActiveIdx + 1}/${searchMatches.length}` : '0'}
-                </Text>
-              )}
-            </View>
-            {searchMatches.length > 0 && (
-              <View style={{ flexDirection: 'row', marginLeft: 6 }}>
-                <Pressable onPress={goToPrevMatch} style={[styles.headerCircle, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
-                  <Feather name="chevron-up" size={18} color={theme.colors.text.primary} />
-                </Pressable>
-                <Pressable onPress={goToNextMatch} style={[styles.headerCircle, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light, marginLeft: 6 }]}>
-                  <Feather name="chevron-down" size={18} color={theme.colors.text.primary} />
-                </Pressable>
+            {glassActive ? (
+              <NativeGlassView glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} style={{ flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 20, paddingHorizontal: 14, height: 40, overflow: 'hidden' }}>
+                <Feather name="search" size={16} color={theme.colors.text.tertiary} />
+                <TextInput
+                  autoFocus
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                  placeholder={t('chat.search_placeholder')}
+                  placeholderTextColor={theme.colors.text.tertiary}
+                  style={{ flex: 1, marginLeft: 8, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular }}
+                />
+                {searchQuery.length > 0 && (
+                  <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 12, marginRight: 4 }}>
+                    {searchMatches.length > 0 ? `${searchActiveIdx + 1}/${searchMatches.length}` : '0'}
+                  </Text>
+                )}
+              </NativeGlassView>
+            ) : (
+              <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 20, borderWidth: 1, borderColor: theme.colors.border.light, paddingHorizontal: 14, height: 40 }}>
+                <Feather name="search" size={16} color={theme.colors.text.tertiary} />
+                <TextInput
+                  autoFocus
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                  placeholder={t('chat.search_placeholder')}
+                  placeholderTextColor={theme.colors.text.tertiary}
+                  style={{ flex: 1, marginLeft: 8, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular }}
+                />
+                {searchQuery.length > 0 && (
+                  <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 12, marginRight: 4 }}>
+                    {searchMatches.length > 0 ? `${searchActiveIdx + 1}/${searchMatches.length}` : '0'}
+                  </Text>
+                )}
               </View>
             )}
-            <Pressable onPress={closeSearch} style={[styles.headerCircle, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light, marginLeft: 6 }]}>
-              <Feather name="x" size={20} color={theme.colors.text.primary} />
-            </Pressable>
+            {searchMatches.length > 0 && (
+              <View style={{ flexDirection: 'row', marginLeft: 6 }}>
+                {glassActive ? (
+                  <Pressable onPress={goToPrevMatch} style={[styles.headerCircle, styles.glassClip]}>
+                    <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.glassFill}>
+                      <Feather name="chevron-up" size={18} color={theme.colors.text.primary} />
+                    </NativeGlassView>
+                  </Pressable>
+                ) : (
+                  <Pressable onPress={goToPrevMatch} style={[styles.headerCircle, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
+                    <Feather name="chevron-up" size={18} color={theme.colors.text.primary} />
+                  </Pressable>
+                )}
+                {glassActive ? (
+                  <Pressable onPress={goToNextMatch} style={[styles.headerCircle, styles.glassClip, { marginLeft: 6 }]}>
+                    <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.glassFill}>
+                      <Feather name="chevron-down" size={18} color={theme.colors.text.primary} />
+                    </NativeGlassView>
+                  </Pressable>
+                ) : (
+                  <Pressable onPress={goToNextMatch} style={[styles.headerCircle, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light, marginLeft: 6 }]}>
+                    <Feather name="chevron-down" size={18} color={theme.colors.text.primary} />
+                  </Pressable>
+                )}
+              </View>
+            )}
+            {glassActive ? (
+              <Pressable onPress={closeSearch} style={[styles.headerCircle, styles.glassClip, { marginLeft: 6 }]}>
+                <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.glassFill}>
+                  <Feather name="x" size={20} color={theme.colors.text.primary} />
+                </NativeGlassView>
+              </Pressable>
+            ) : (
+              <Pressable onPress={closeSearch} style={[styles.headerCircle, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light, marginLeft: 6 }]}>
+                <Feather name="x" size={20} color={theme.colors.text.primary} />
+              </Pressable>
+            )}
           </View>
         ) : (
           <View style={[styles.headerContent, { paddingTop: insets.top }]} pointerEvents="auto">
-            <Pressable onPress={() => router.back()} style={[styles.headerCircle, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
-              <Feather name="chevron-left" size={22} color={theme.colors.text.primary} />
-            </Pressable>
-            <View style={{ flex: 1, alignItems: 'center' }}>
-              <Pressable
-                onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId, fromChat: '1' } })}
-                onLongPress={openSearch}
-                delayLongPress={300}
-                style={[styles.headerPill, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}
-              >
-                <Text variant="caption" weight="semibold" numberOfLines={1} style={{ flexShrink: 1 }}>{displayName}</Text>
-                {displayVerified && <VerifiedBadge size={12} />}
-                {displayBadge && <UserBadge badge={displayBadge} size="sm" />}
+            {glassActive ? (
+              <Pressable onPress={() => router.back()} style={[styles.headerCircle, styles.glassClip]}>
+                <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.glassFill}>
+                  <Feather name="chevron-left" size={22} color={theme.colors.text.primary} />
+                </NativeGlassView>
               </Pressable>
+            ) : (
+              <Pressable onPress={() => router.back()} style={[styles.headerCircle, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
+                <Feather name="chevron-left" size={22} color={theme.colors.text.primary} />
+              </Pressable>
+            )}
+            <View style={{ flex: 1, alignItems: 'center' }}>
+              {glassActive ? (
+                <Pressable
+                  onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId, fromChat: '1' } })}
+                  onLongPress={openSearch}
+                  delayLongPress={300}
+                  style={[styles.headerPill, styles.glassClip]}
+                >
+                  <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={[styles.glassFill, { flexDirection: 'row', gap: 4, paddingHorizontal: 16 }]}>
+                    <Text variant="caption" weight="semibold" numberOfLines={1} style={{ flexShrink: 1 }}>{displayName}</Text>
+                    {displayVerified && <VerifiedBadge size={12} />}
+                    {displayBadge && <UserBadge badge={displayBadge} size="sm" />}
+                  </NativeGlassView>
+                </Pressable>
+              ) : (
+                <Pressable
+                  onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId, fromChat: '1' } })}
+                  onLongPress={openSearch}
+                  delayLongPress={300}
+                  style={[styles.headerPill, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}
+                >
+                  <Text variant="caption" weight="semibold" numberOfLines={1} style={{ flexShrink: 1 }}>{displayName}</Text>
+                  {displayVerified && <VerifiedBadge size={12} />}
+                  {displayBadge && <UserBadge badge={displayBadge} size="sm" />}
+                </Pressable>
+              )}
             </View>
             <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId, fromChat: '1' } })} style={[styles.headerCircle, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light, overflow: 'hidden' }]}>
               <Avatar emoji={displayEmoji} name={displayName} size="xs" />
@@ -1920,4 +2007,9 @@ const styles = StyleSheet.create({
   headerContent: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingBottom: 8, gap: 10 },
   headerCircle: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
   headerPill: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, height: 36, borderRadius: 18, borderWidth: 1, paddingHorizontal: 16 },
+  // Clip native glass to the rounded chrome shape and drop the flat-path
+  // border (the glass supplies its own edge). Applied to the Pressable wrapper.
+  glassClip: { overflow: 'hidden', borderWidth: 0 },
+  // Fills the chrome wrapper and centers its icon/content inside the glass.
+  glassFill: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
 });

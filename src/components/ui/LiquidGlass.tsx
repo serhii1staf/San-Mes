@@ -20,12 +20,14 @@ import { useSettingsStore } from '../../store/settingsStore';
 // older build made before we added the dependency), this degrades gracefully
 // instead of crashing — every capability check below resolves to false.
 let GlassViewComp: any = null;
+let GlassContainerComp: any = null;
 let _isLiquidGlassAvailable: (() => boolean) | null = null;
 let _isGlassEffectAPIAvailable: (() => boolean) | null = null;
 try {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const mod = require('expo-glass-effect');
   GlassViewComp = mod.GlassView ?? null;
+  GlassContainerComp = mod.GlassContainer ?? null;
   _isLiquidGlassAvailable = mod.isLiquidGlassAvailable ?? null;
   _isGlassEffectAPIAvailable = mod.isGlassEffectAPIAvailable ?? null;
 } catch {
@@ -107,6 +109,40 @@ export function NativeGlassView({
       {children}
     </GlassViewComp>
   );
+}
+
+interface GlassContainerViewProps {
+  /**
+   * Distance (in points) within which nested `GlassView`s merge/stretch toward
+   * each other — the "liquid" coalescing effect. Forwarded straight to
+   * expo-glass-effect's `GlassContainer`.
+   */
+  spacing?: number;
+  style?: StyleProp<ViewStyle>;
+  /** The non-glass UI rendered when liquid glass is OFF or unavailable. */
+  fallback?: React.ReactNode;
+  children?: React.ReactNode;
+}
+
+/**
+ * Gated wrapper over expo-glass-effect's `GlassContainer`. When liquid glass is
+ * active it renders a real `GlassContainer`, which makes any nested
+ * `NativeGlassView`s that come within `spacing` points merge and stretch toward
+ * one another (Apple's "liquid" coalescing). When inactive it renders the
+ * supplied `fallback`, or a plain `View` carrying the same `style` so layout is
+ * preserved. Nothing from expo-glass-effect is mounted in the fallback path.
+ */
+export function GlassContainerView({ spacing, style, fallback, children }: GlassContainerViewProps) {
+  const active = useLiquidGlassActive();
+  if (active && GlassContainerComp) {
+    return (
+      <GlassContainerComp spacing={spacing} style={style}>
+        {children}
+      </GlassContainerComp>
+    );
+  }
+  if (fallback !== undefined) return <>{fallback}</>;
+  return <View style={style}>{children}</View>;
 }
 
 interface GlassSurfaceProps extends NativeGlassViewProps {

@@ -938,7 +938,7 @@ export default function ProfileScreen() {
         <LinearGradient colors={[theme.colors.background.primary, theme.colors.background.primary, theme.colors.background.primary + '00']} locations={[0, 0.6, 1]} style={{ flex: 1 }} />
       </Animated.View>
       <View style={{ position: 'absolute', top: insets.top + 8, left: 16, right: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', zIndex: 100 }}>
-        <Animated.View style={{ transform: [{ translateX: buttonsTranslateX }] }}><Pressable onPress={() => { triggerHaptic('light'); setShowQR(true); }} style={{ borderRadius: 17, overflow: 'hidden' }}>{glassActive ? (<NativeGlassView glassStyle="regular" colorScheme="dark" style={{ width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' }}><FontAwesome5 name="qrcode" size={15} color="#FFFFFF" /></NativeGlassView>) : chromeReady ? (<BlurView intensity={80} tint="dark" style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center' }}><FontAwesome5 name="qrcode" size={15} color="#FFFFFF" /></BlurView>) : (<View style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.4)' }}><FontAwesome5 name="qrcode" size={15} color="#FFFFFF" /></View>)}</Pressable></Animated.View>
+        <Animated.View style={{ transform: [{ translateX: buttonsTranslateX }] }}><Pressable onPress={() => { triggerHaptic('light'); setShowQR(true); }} style={{ borderRadius: 17, overflow: 'hidden' }}>{glassActive ? (<NativeGlassView glassStyle="regular" colorScheme="dark" isInteractive style={{ width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' }}><FontAwesome5 name="qrcode" size={15} color="#FFFFFF" /></NativeGlassView>) : chromeReady ? (<BlurView intensity={80} tint="dark" style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center' }}><FontAwesome5 name="qrcode" size={15} color="#FFFFFF" /></BlurView>) : (<View style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.4)' }}><FontAwesome5 name="qrcode" size={15} color="#FFFFFF" /></View>)}</Pressable></Animated.View>
         {/* Compact follow stats live in the centre of the top bar in the
             redesigned layout — counters used to sit in a row under the
             avatar (Twitter-clone-style); pulling them up here clears the
@@ -953,7 +953,7 @@ export default function ProfileScreen() {
             style={{ borderRadius: 14, overflow: 'hidden' }}
           >
             {glassActive ? (
-              <NativeGlassView glassStyle="regular" colorScheme="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14 }}>
+              <NativeGlassView glassStyle="regular" colorScheme="dark" isInteractive style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14 }}>
                 <Text variant="caption" weight="bold" color="#FFFFFF" style={{ fontSize: 12 }}>{followCounts.following}</Text>
                 <Text variant="caption" color="rgba(255,255,255,0.85)" style={{ fontSize: 11 }}>{t('profile.following_short')}</Text>
               </NativeGlassView>
@@ -975,7 +975,7 @@ export default function ProfileScreen() {
             style={{ borderRadius: 14, overflow: 'hidden' }}
           >
             {glassActive ? (
-              <NativeGlassView glassStyle="regular" colorScheme="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14 }}>
+              <NativeGlassView glassStyle="regular" colorScheme="dark" isInteractive style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14 }}>
                 <Text variant="caption" weight="bold" color="#FFFFFF" style={{ fontSize: 12 }}>{followCounts.followers}</Text>
                 <Text variant="caption" color="rgba(255,255,255,0.85)" style={{ fontSize: 11 }}>{t('profile.followers_short')}</Text>
               </NativeGlassView>
@@ -992,7 +992,7 @@ export default function ProfileScreen() {
             )}
           </Pressable>
         </Animated.View>
-        <Animated.View style={{ transform: [{ translateX: settingsTranslateX }] }}><Pressable onPress={() => { triggerHaptic('light'); router.push('/settings'); }} style={{ borderRadius: 17, overflow: 'hidden' }}>{glassActive ? (<NativeGlassView glassStyle="regular" colorScheme="dark" style={{ width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' }}><Feather name="settings" size={16} color="#FFFFFF" /></NativeGlassView>) : chromeReady ? (<BlurView intensity={80} tint="dark" style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center' }}><Feather name="settings" size={16} color="#FFFFFF" /></BlurView>) : (<View style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.4)' }}><Feather name="settings" size={16} color="#FFFFFF" /></View>)}</Pressable></Animated.View>
+        <Animated.View style={{ transform: [{ translateX: settingsTranslateX }] }}><Pressable onPress={() => { triggerHaptic('light'); router.push('/settings'); }} style={{ borderRadius: 17, overflow: 'hidden' }}>{glassActive ? (<NativeGlassView glassStyle="regular" colorScheme="dark" isInteractive style={{ width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' }}><Feather name="settings" size={16} color="#FFFFFF" /></NativeGlassView>) : chromeReady ? (<BlurView intensity={80} tint="dark" style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center' }}><Feather name="settings" size={16} color="#FFFFFF" /></BlurView>) : (<View style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.4)' }}><Feather name="settings" size={16} color="#FFFFFF" /></View>)}</Pressable></Animated.View>
       </View>
       <Animated.FlatList
         ref={scrollViewRef}

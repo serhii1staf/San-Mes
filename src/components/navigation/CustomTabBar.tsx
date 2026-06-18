@@ -21,7 +21,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useTheme } from '../../theme';
 import { triggerHaptic } from '../../utils/haptics';
-import { GlassSurface, useLiquidGlassActive } from '../ui/LiquidGlass';
+import { GlassSurface, NativeGlassView, useLiquidGlassActive } from '../ui/LiquidGlass';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -279,15 +279,32 @@ function SlidingLens({
 
   return (
     <Animated.View style={[styles.pill, animStyle]} pointerEvents="none">
-      <View
-        style={[
-          StyleSheet.absoluteFill,
-          {
-            borderRadius: PILL_HEIGHT / 2,
-            backgroundColor: lensFill,
-          },
-        ]}
-      />
+      {glassActive ? (
+        // Real native liquid-glass selection capsule. It rides the SAME
+        // animStyle transform (translateX/Y, scale, width) as the fake-glass
+        // path, so the existing pill-stretch animation drives a genuine glass
+        // blob that stretches when switching tabs. `clear` keeps it light over
+        // the glass backdrop; `isInteractive` makes it react to touch.
+        <NativeGlassView
+          glassStyle="clear"
+          isInteractive
+          colorScheme={isDark ? 'dark' : 'light'}
+          style={[
+            StyleSheet.absoluteFill,
+            { borderRadius: PILL_HEIGHT / 2 },
+          ]}
+        />
+      ) : (
+        <View
+          style={[
+            StyleSheet.absoluteFill,
+            {
+              borderRadius: PILL_HEIGHT / 2,
+              backgroundColor: lensFill,
+            },
+          ]}
+        />
+      )}
 
       {/* The fake-glass decoration (top reflection crescent, bottom dim,
           hairline contour) only renders when we DON'T have real native glass.
