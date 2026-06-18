@@ -25,11 +25,21 @@ import { GlassSurface, NativeGlassView, useLiquidGlassActive } from '../ui/Liqui
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-const TAB_COUNT = 5;
+// The main capsule now holds ONLY 4 tabs (index, search, create, messages).
+// Profile lives in a SEPARATE detached capsule to the right, so all the
+// lens/gesture slot math below operates over 4 slots, not 5.
+const TAB_COUNT = 4;
+// Create is still the middle button of the 4-tab main bar (index 0,1,[2],3).
 const CREATE_INDEX = 2;
 const TAB_BUTTON_HEIGHT = 48;
 const TAB_ROW_PADDING_H = 6;
 const TAB_ROW_PADDING_V = 6;
+
+// Gap between the main capsule and the detached Profile capsule.
+const BAR_GAP = 10;
+// Width of the standalone Profile capsule. Rounded with BAR_BORDER_RADIUS so
+// it reads as a sibling of the main bar (capsule, not a perfect circle).
+const PROFILE_CAPSULE_WIDTH = 58;
 
 // Almost-zero inset so the lens fills most of its slot — bigger press surface,
 // more visual presence, and more area to refract/magnify whatever icon sits
@@ -417,6 +427,78 @@ function TopReflection({ isDark }: { isDark: boolean }) {
   );
 }
 
+// ─── Profile Capsule (detached, standalone glass button) ─────────────────────
+//
+// The Profile tab is no longer part of the main bar's tab row. It's a separate
+// rounded capsule floating to the RIGHT of the main bar with its own glass
+// backdrop, border and shadow. It is NOT part of the draggable-lens system —
+// it's a plain tappable button that navigates to the profile route and shows
+// an active state (accent-colored icon + subtle active fill) when focused.
+
+function ProfileCapsule({
+  isFocused,
+  onPress,
+  onLongPress,
+  isDark,
+  glassActive,
+  activeColor,
+  inactiveColor,
+  marginBottom,
+}: {
+  isFocused: boolean;
+  onPress: () => void;
+  onLongPress: () => void;
+  isDark: boolean;
+  glassActive: boolean;
+  activeColor: string;
+  inactiveColor: string;
+  marginBottom: number;
+}) {
+  const color = isFocused ? activeColor : inactiveColor;
+  // Subtle active background — only when focused, and only when we're NOT on
+  // real native glass (the genuine glass supplies its own selection feel, so
+  // a painted fill on top would look "combined" like the lens did).
+  const activeBg =
+    isFocused && !glassActive
+      ? isDark
+        ? 'rgba(255,255,255,0.10)'
+        : 'rgba(255,255,255,0.45)'
+      : 'transparent';
+
+  return (
+    <Pressable
+      onPress={onPress}
+      onLongPress={onLongPress}
+      accessibilityRole="button"
+      accessibilityLabel="Profile"
+      accessibilityState={{ selected: isFocused }}
+      style={[
+        styles.profileCapsule,
+        {
+          marginBottom,
+          borderColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.5)',
+          shadowColor: isDark ? '#000' : 'rgba(0,0,0,0.15)',
+        },
+      ]}
+    >
+      {/* Same glass stack as the main bar so both capsules match: native
+          liquid glass when enabled, BlurView/gradient fallback otherwise. */}
+      <GlassBackdrop isDark={isDark} />
+      {!glassActive && <TopReflection isDark={isDark} />}
+      {/* Active selection fill sits above the glass but below the icon. */}
+      {activeBg !== 'transparent' && (
+        <View
+          style={[StyleSheet.absoluteFill, { backgroundColor: activeBg }]}
+          pointerEvents="none"
+        />
+      )}
+      <View style={styles.profileInner}>
+        <Feather name="user" size={22} color={color} />
+      </View>
+    </Pressable>
+  );
+}
+
 // ─── Main Tab Bar ────────────────────────────────────────────────────────────
 
 export const CustomTabBar = React.memo(function CustomTabBar({
@@ -440,6 +522,37 @@ export const CustomTabBar = React.memo(function CustomTabBar({
   const bgColor = theme.colors.background.primary;
   const bgTransparent = bgColor + '00';
 
+  // ─── Split the routes: 4 main tabs vs the detached profile tab ───────────
+  //
+  // Profile is found by NAME (not a hardcoded index) so a future reorder of
+  // the <Tabs.Screen> declarations can't silently break this. `mainRoutes`
+  // are the 4 tabs rendered inside the main capsule, IN ORDER, and their
+  // array index IS their lens slot index (0..3). `profileRoute` is rendered
+  // in the standalone capsule on the right.
+  const { mainRoutes, profileRoute } = useMemo(() => {
+    const main: typeof state.routes = [];
+    let profile: (typeof state.routes)[number] | undefined;
+    for (const r of state.routes) {
+      if (r.name === 'profile') profile = r;
+      else main.push(r);
+    }
+    return { mainRoutes: main, profileRoute: profile };
+  }, [state.routes]);
+
+  // Currently-focused route (in the full routes array).
+  const focusedRoute = state.routes[state.index];
+  const isProfileFocused = focusedRoute?.name === 'profile';
+  // Active slot WITHIN the main bar (0..3), or -1 when profile is focused.
+  // All pill/lens positioning keys off this — never off state.index — so the
+  // slot math can never index out of the 4-slot range when profile is active.
+  const activeMainSlot = useMemo(
+    () =>
+      isProfileFocused
+        ? -1
+        : mainRoutes.findIndex((r) => r.key === focusedRoute?.key),
+    [mainRoutes, focusedRoute, isProfileFocused]
+  );
+
   const [slotWidth, setSlotWidth] = useState(0);
   const hasMounted = useRef(false);
 
@@ -449,16 +562,18 @@ export const CustomTabBar = React.memo(function CustomTabBar({
   const pillScale = useSharedValue(1);
   const pillStretchW = useSharedValue(0);
 
-  // SharedValue mirrors of JS state — safe to read inside worklets without TDZ surprises
-  const stateIndexSV = useSharedValue(state.index);
+  // SharedValue mirrors of JS state — safe to read inside worklets without TDZ surprises.
+  // `activeSlotSV` holds the active MAIN-bar slot (0..3) or -1 when profile is
+  // focused, so worklets never reference an out-of-range slot.
+  const activeSlotSV = useSharedValue(activeMainSlot);
   const slotWidthSV = useSharedValue(0);
-  const dragAnchorSlot = useSharedValue(state.index);
-  const releaseSlot = useSharedValue(state.index);
+  const dragAnchorSlot = useSharedValue(activeMainSlot < 0 ? 0 : activeMainSlot);
+  const releaseSlot = useSharedValue(activeMainSlot < 0 ? 0 : activeMainSlot);
 
   // Keep shared mirror in sync with React state
   useEffect(() => {
-    stateIndexSV.value = state.index;
-  }, [state.index, stateIndexSV]);
+    activeSlotSV.value = activeMainSlot;
+  }, [activeMainSlot, activeSlotSV]);
 
   useEffect(() => {
     slotWidthSV.value = slotWidth;
@@ -470,10 +585,21 @@ export const CustomTabBar = React.memo(function CustomTabBar({
     [slotWidth]
   );
 
-  // Initial position + react to tab changes
+  // Initial position + react to tab changes.
+  // Only the 4 main tabs drive the pill. When profile is focused
+  // (activeMainSlot === -1) we leave the pill where it is (it's hidden via
+  // `pillVisible` anyway) and DON'T try to position it at an out-of-range
+  // slot. Anchors are clamped to a valid slot so a subsequent drag starts sane.
   useEffect(() => {
     if (slotWidth === 0) return;
-    const target = slotToX(state.index);
+    const safeSlot = activeMainSlot < 0 ? 0 : activeMainSlot;
+    dragAnchorSlot.value = safeSlot;
+    releaseSlot.value = safeSlot;
+    if (activeMainSlot < 0) {
+      // Profile focused — pill is hidden; skip repositioning entirely.
+      return;
+    }
+    const target = slotToX(activeMainSlot);
     if (!hasMounted.current) {
       pillX.value = target;
       hasMounted.current = true;
@@ -483,10 +609,8 @@ export const CustomTabBar = React.memo(function CustomTabBar({
     pillY.value = withSpring(0, PILL_SPRING);
     pillStretchW.value = withSpring(0, PILL_SPRING);
     pillScale.value = withSpring(1, PRESS_SPRING);
-    dragAnchorSlot.value = state.index;
-    releaseSlot.value = state.index;
   }, [
-    state.index,
+    activeMainSlot,
     slotWidth,
     slotToX,
     pillX,
@@ -506,14 +630,15 @@ export const CustomTabBar = React.memo(function CustomTabBar({
     [slotWidth]
   );
 
-  // Squish on press — no expanding ring, just a clean compress.
+  // Squish on press — no expanding ring, just a clean compress. `slot` is the
+  // main-bar slot index (0..3); only squish when pressing the already-active tab.
   const onTabPressIn = useCallback(
-    (idx: number) => {
-      if (idx === state.index) {
+    (slot: number) => {
+      if (slot === activeMainSlot) {
         pillScale.value = withSpring(PRESS_SCALE, PRESS_SPRING);
       }
     },
-    [state.index, pillScale]
+    [activeMainSlot, pillScale]
   );
   const onTabPressOut = useCallback(() => {
     pillScale.value = withSpring(1, PRESS_SPRING);
@@ -534,10 +659,12 @@ export const CustomTabBar = React.memo(function CustomTabBar({
 
   // ─── JS-thread navigation triggered from the gesture (declared BEFORE pan
   //     so the worklet captures a defined function and not a TDZ binding). ─
+  //     `slotIdx` is a MAIN-bar slot (0..3) → maps into `mainRoutes`, which
+  //     never contains the profile route, so a drag can never land on profile.
   const navigateOnRelease = useCallback(
     (slotIdx: number) => {
       try {
-        const route = state.routes[slotIdx];
+        const route = mainRoutes[slotIdx];
         if (!route) return;
         const event = navigation.emit({
           type: 'tabPress',
@@ -551,7 +678,7 @@ export const CustomTabBar = React.memo(function CustomTabBar({
         // Defensive — never crash the gesture from a JS error
       }
     },
-    [state.routes, navigation]
+    [mainRoutes, navigation]
   );
 
   // ─── Build pan gesture — uses ONLY shared values inside worklets ───────
@@ -561,8 +688,12 @@ export const CustomTabBar = React.memo(function CustomTabBar({
       .onBegin(() => {
         'worklet';
         if (slotWidthSV.value <= 0) return;
-        dragAnchorSlot.value = stateIndexSV.value;
-        releaseSlot.value = stateIndexSV.value;
+        // Clamp the anchor to a valid slot — when profile is focused
+        // (activeSlotSV === -1) start the drag from slot 0 so anchor math
+        // stays in range. The pill is hidden in that case anyway.
+        const startSlot = activeSlotSV.value < 0 ? 0 : activeSlotSV.value;
+        dragAnchorSlot.value = startSlot;
+        releaseSlot.value = startSlot;
         pillScale.value = withSpring(PRESS_SCALE, PRESS_SPRING);
       })
       .onUpdate((e) => {
@@ -607,8 +738,10 @@ export const CustomTabBar = React.memo(function CustomTabBar({
         const targetX = TAB_ROW_PADDING_H + target * sw + PILL_INSET_X;
         pillX.value = withSpring(targetX, PILL_SPRING);
 
-        // Navigate only if the finger ended over a different tab — only on release
-        if (target !== stateIndexSV.value) {
+        // Navigate only if the finger ended over a DIFFERENT main slot. When
+        // profile is focused (activeSlotSV === -1) any 0..3 target differs, so
+        // a drag correctly pulls focus back into the main bar.
+        if (target !== activeSlotSV.value) {
           runOnJS(navigateOnRelease)(target);
         }
       });
@@ -620,12 +753,17 @@ export const CustomTabBar = React.memo(function CustomTabBar({
     dragAnchorSlot,
     releaseSlot,
     slotWidthSV,
-    stateIndexSV,
+    activeSlotSV,
     navigateOnRelease,
   ]);
 
-  const pillVisible = state.index !== CREATE_INDEX;
+  // Pill is shown only when an ACTUAL main tab is focused AND it isn't the
+  // create button. Hidden on create (no highlight for the plus button) and on
+  // profile (activeMainSlot === -1, profile lives in its own capsule).
+  const pillVisible = activeMainSlot >= 0 && activeMainSlot !== CREATE_INDEX;
   const pillBaseWidth = Math.max(0, slotWidth - 2 * PILL_INSET_X);
+  const barMarginBottom =
+    BAR_BOTTOM_MARGIN + (Platform.OS === 'android' ? insets.bottom : 0);
 
   return (
     <View style={styles.wrapper} pointerEvents="box-none">
@@ -645,18 +783,20 @@ export const CustomTabBar = React.memo(function CustomTabBar({
         pointerEvents="none"
       />
 
-      <GestureHandlerRootView style={styles.gestureRoot}>
+      {/* Split navigation row: main capsule (flex:1) + gap + detached profile
+          capsule. `box-none` lets taps fall through the gap between them. The
+          row carries the bottom margin / safe-area lift so BOTH capsules float
+          at the same level. */}
+      <GestureHandlerRootView
+        style={[styles.row, { marginBottom: barMarginBottom }]}
+        pointerEvents="box-none"
+      >
         <View
           style={[
             styles.container,
             {
               borderColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.5)',
               shadowColor: isDark ? '#000' : 'rgba(0,0,0,0.15)',
-              // Float above the system nav bar on Android (edge-to-edge draws
-              // behind it). iOS already positioned the bar correctly above the
-              // home indicator, so we add the inset on Android only — adding it
-              // on iOS pushed the bar up unnecessarily.
-              marginBottom: BAR_BOTTOM_MARGIN + (Platform.OS === 'android' ? insets.bottom : 0),
             },
           ]}
           onLayout={onBarLayout}
@@ -688,8 +828,14 @@ export const CustomTabBar = React.memo(function CustomTabBar({
 
           <GestureDetector gesture={pan}>
             <View style={styles.tabRow}>
-              {state.routes.map((route, index) => {
-                const isFocused = state.index === index;
+              {/* ONLY the 4 main routes (profile excluded). Array index === lens
+                  slot index (0..3), which is exactly what the gesture math and
+                  icon-magnify worklet expect. */}
+              {mainRoutes.map((route, index) => {
+                // Focused when the globally-focused route is THIS main route.
+                // (Compared by key, not by index, since mainRoutes is a subset
+                // of state.routes with different indices.)
+                const isFocused = focusedRoute?.key === route.key;
                 return (
                   <TabBarButton
                     key={route.key}
@@ -720,6 +866,25 @@ export const CustomTabBar = React.memo(function CustomTabBar({
             </View>
           </GestureDetector>
         </View>
+
+        {/* Gap between the two capsules */}
+        <View style={{ width: BAR_GAP }} pointerEvents="none" />
+
+        {/* Detached Profile capsule — only rendered if the profile route exists. */}
+        {profileRoute && (
+          <ProfileCapsule
+            isFocused={isProfileFocused}
+            onPress={() => handleTabPress(profileRoute, isProfileFocused)}
+            onLongPress={() =>
+              navigation.emit({ type: 'tabLongPress', target: profileRoute.key })
+            }
+            isDark={isDark}
+            glassActive={glassActive}
+            activeColor={theme.colors.accent.primary}
+            inactiveColor={theme.colors.text.tertiary}
+            marginBottom={0}
+          />
+        )}
       </GestureHandlerRootView>
     </View>
   );
@@ -734,13 +899,19 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
   },
-  gestureRoot: {},
+  // Horizontal split-nav row: main capsule (flex:1) + gap + profile capsule.
+  // Bottom-aligned so both capsules sit at the same baseline. Horizontal
+  // padding replaces the old per-capsule marginHorizontal.
+  row: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    paddingHorizontal: BAR_HORIZONTAL_MARGIN,
+  },
   bottomFade: { position: 'absolute', left: 0, right: 0, bottom: 0 },
   container: {
     position: 'relative',
+    flex: 1,
     flexDirection: 'row',
-    marginBottom: BAR_BOTTOM_MARGIN,
-    marginHorizontal: BAR_HORIZONTAL_MARGIN,
     borderRadius: BAR_BORDER_RADIUS,
     borderWidth: 0.5,
     overflow: 'hidden',
@@ -754,6 +925,27 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.20,
     shadowRadius: 18,
     elevation: 8,
+  },
+  // Standalone profile capsule — same height as the main bar's inner row
+  // (TAB_BUTTON_HEIGHT + 2*TAB_ROW_PADDING_V), same border/shadow/radius so it
+  // reads as a detached sibling floating beside the main bar.
+  profileCapsule: {
+    position: 'relative',
+    width: PROFILE_CAPSULE_WIDTH,
+    height: TAB_BUTTON_HEIGHT + 2 * TAB_ROW_PADDING_V,
+    borderRadius: BAR_BORDER_RADIUS,
+    borderWidth: 0.5,
+    overflow: 'hidden',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.20,
+    shadowRadius: 18,
+    elevation: 8,
+  },
+  profileInner: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 10,
   },
   tabRow: {
     flex: 1,
