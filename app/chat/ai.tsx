@@ -821,7 +821,8 @@ export default function AIChatScreen() {
           {/* Commands drawer — anchored ABOVE the input row, slides in via
               LayoutAnimation when toggled. Same pattern as Music chat. */}
           {commandsOpen ? (
-            <View style={{ marginBottom: 8, backgroundColor: theme.colors.background.elevated, borderRadius: 18, borderWidth: 1, borderColor: theme.colors.border.light, overflow: 'hidden' }}>
+            <View style={{ marginBottom: 8, borderRadius: 18, overflow: 'hidden', ...(glassActive ? null : { backgroundColor: theme.colors.background.elevated, borderWidth: 1, borderColor: theme.colors.border.light }) }}>
+              {glassActive ? <GlassBg borderRadius={18} colorScheme={theme.isDark ? 'dark' : 'light'} /> : null}
               {COMMANDS.map((c, i) => (
                 <Pressable
                   key={c.id}
@@ -860,11 +861,15 @@ export default function AIChatScreen() {
                   alignItems: 'center',
                   justifyContent: 'center',
                   borderRadius: 20,
-                  backgroundColor: theme.isDark ? 'rgba(40,40,40,0.95)' : 'rgba(245,245,245,0.95)',
-                  borderWidth: 1,
-                  borderColor: theme.colors.border.light,
+                  // Neutral button — when liquid glass is on, drop the flat
+                  // fill/border and clip so the GlassBg layer shows through;
+                  // otherwise the original flat capsule renders unchanged.
+                  ...(glassActive
+                    ? { overflow: 'hidden' }
+                    : { backgroundColor: theme.isDark ? 'rgba(40,40,40,0.95)' : 'rgba(245,245,245,0.95)', borderWidth: 1, borderColor: theme.colors.border.light }),
                 }}
               >
+                {glassActive ? <GlassBg borderRadius={20} colorScheme={theme.isDark ? 'dark' : 'light'} /> : null}
                 <Feather name="arrow-left" size={16} color={theme.colors.text.secondary} />
               </Pressable>
             ) : (
@@ -881,11 +886,18 @@ export default function AIChatScreen() {
                     // 20 = 50% of 40, so collapsed (40×40) is a perfect circle.
                     // Expanded (110×40) keeps the same 20px radius.
                     borderRadius: 20,
-                    backgroundColor: commandsOpen ? theme.colors.accent.primary : (theme.isDark ? 'rgba(40,40,40,0.95)' : 'rgba(245,245,245,0.95)'),
-                    borderWidth: 1,
-                    borderColor: theme.colors.border.light,
+                    // Active (commandsOpen) keeps the solid accent fill. When
+                    // idle AND liquid glass is on, drop the flat fill/border and
+                    // clip so the GlassBg layer below shows through; otherwise
+                    // the original flat capsule renders unchanged.
+                    ...(commandsOpen
+                      ? { backgroundColor: theme.colors.accent.primary, borderWidth: 1, borderColor: theme.colors.border.light }
+                      : glassActive
+                        ? { overflow: 'hidden' }
+                        : { backgroundColor: theme.isDark ? 'rgba(40,40,40,0.95)' : 'rgba(245,245,245,0.95)', borderWidth: 1, borderColor: theme.colors.border.light }),
                   }}
                 >
+                  {!commandsOpen && glassActive ? <GlassBg borderRadius={20} colorScheme={theme.isDark ? 'dark' : 'light'} /> : null}
                   <Feather name="command" size={16} color={commandsOpen ? '#FFFFFF' : theme.colors.accent.primary} />
                   <Animated.Text
                     numberOfLines={1}
@@ -903,7 +915,8 @@ export default function AIChatScreen() {
               </Animated.View>
             )}
 
-            <View style={{ flex: 1, flexDirection: 'row', alignItems: 'flex-end', backgroundColor: theme.isDark ? 'rgba(40,40,40,0.95)' : 'rgba(245,245,245,0.95)', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 6, borderWidth: 1, borderColor: theme.colors.border.light, minHeight: 40 }}>
+            <View style={{ flex: 1, flexDirection: 'row', alignItems: 'flex-end', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 6, minHeight: 40, ...(glassActive ? { overflow: 'hidden' } : { backgroundColor: theme.isDark ? 'rgba(40,40,40,0.95)' : 'rgba(245,245,245,0.95)', borderWidth: 1, borderColor: theme.colors.border.light }) }}>
+              {glassActive ? <GlassBg borderRadius={20} colorScheme={theme.isDark ? 'dark' : 'light'} /> : null}
               <TextInput
                 value={input}
                 onChangeText={setInput}

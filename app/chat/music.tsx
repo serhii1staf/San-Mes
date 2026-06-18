@@ -373,7 +373,8 @@ export default function MusicChatScreen() {
           {/* Commands drawer — anchored ABOVE the input row, slides in via
               LayoutAnimation when toggled. */}
           {commandsOpen ? (
-            <View style={{ marginBottom: 8, backgroundColor: theme.colors.background.elevated, borderRadius: 18, borderWidth: 1, borderColor: theme.colors.border.light, overflow: 'hidden' }}>
+            <View style={{ marginBottom: 8, borderRadius: 18, overflow: 'hidden', ...(glassActive ? null : { backgroundColor: theme.colors.background.elevated, borderWidth: 1, borderColor: theme.colors.border.light }) }}>
+              {glassActive ? <GlassBg borderRadius={18} colorScheme={theme.isDark ? 'dark' : 'light'} /> : null}
               {COMMANDS.map((c, i) => (
                 <Pressable
                   key={c.id}
@@ -416,11 +417,20 @@ export default function MusicChatScreen() {
                   // Expanded (110×40) keeps the same 20px radius for a smooth
                   // capsule.
                   borderRadius: 20,
-                  backgroundColor: commandsOpen ? theme.colors.accent.primary : (theme.isDark ? 'rgba(40,40,40,0.95)' : 'rgba(245,245,245,0.95)'),
-                  borderWidth: 1,
-                  borderColor: theme.colors.border.light,
+                  // Active (commandsOpen) keeps the solid accent fill. When
+                  // idle AND liquid glass is on, drop the flat fill/border and
+                  // clip so the GlassBg layer below shows through; otherwise
+                  // the original flat capsule renders unchanged.
+                  ...(commandsOpen
+                    ? { backgroundColor: theme.colors.accent.primary, borderWidth: 1, borderColor: theme.colors.border.light }
+                    : glassActive
+                      ? { overflow: 'hidden' }
+                      : { backgroundColor: theme.isDark ? 'rgba(40,40,40,0.95)' : 'rgba(245,245,245,0.95)', borderWidth: 1, borderColor: theme.colors.border.light }),
                 }}
               >
+                {/* Liquid-glass background layer (idle state only) — sits BEHIND
+                    the icon + label, which remain siblings on top. */}
+                {!commandsOpen && glassActive ? <GlassBg borderRadius={20} colorScheme={theme.isDark ? 'dark' : 'light'} /> : null}
                 {/* Both children participate in the flex row, so flex centring
                     naturally handles every animation frame — icon-only when
                     label width is 0, icon+gap+label when expanded. No more
@@ -441,7 +451,8 @@ export default function MusicChatScreen() {
               </Pressable>
             </Animated.View>
 
-            <View style={{ flex: 1, flexDirection: 'row', alignItems: 'flex-end', backgroundColor: theme.isDark ? 'rgba(40,40,40,0.95)' : 'rgba(245,245,245,0.95)', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 6, borderWidth: 1, borderColor: theme.colors.border.light, minHeight: 40 }}>
+            <View style={{ flex: 1, flexDirection: 'row', alignItems: 'flex-end', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 6, minHeight: 40, ...(glassActive ? { overflow: 'hidden' } : { backgroundColor: theme.isDark ? 'rgba(40,40,40,0.95)' : 'rgba(245,245,245,0.95)', borderWidth: 1, borderColor: theme.colors.border.light }) }}>
+              {glassActive ? <GlassBg borderRadius={20} colorScheme={theme.isDark ? 'dark' : 'light'} /> : null}
               <TextInput
                 value={input}
                 onChangeText={setInput}
