@@ -9,6 +9,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
+import { useLiquidGlassActive, GlassBg } from '../../src/components/ui/LiquidGlass';
 import { FormattedText } from '../../src/components/ui/FormattedText';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { EmojiPickerModal } from '../../src/components/ui/EmojiPickerModal';
@@ -314,6 +315,9 @@ export default function AIChatScreen() {
     const handle = InteractionManager.runAfterInteractions(() => setChromeReady(true));
     return () => handle.cancel();
   }, []);
+  // Native iOS-26 liquid glass for the floating back button. White icon over
+  // the gradient header, so colorScheme 'dark' matches the profile chrome.
+  const glassActive = useLiquidGlassActive();
 
   useEffect(() => {
     // Defer all the cold-start side-effects (chat history hydrate, remaining
@@ -736,7 +740,12 @@ export default function AIChatScreen() {
         <LinearGradient colors={[theme.colors.background.primary, theme.colors.background.primary, theme.colors.background.primary + '00']} locations={[0, 0.7, 1]} style={{ paddingTop: insets.top + 8, paddingBottom: 20, paddingHorizontal: 16 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
             <Pressable onPress={() => router.back()} style={{ borderRadius: 17, overflow: 'hidden' }}>
-              {chromeReady ? (
+              {glassActive ? (
+                <View style={{ width: 34, height: 34, borderRadius: 17, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' }}>
+                  <GlassBg borderRadius={17} colorScheme="dark" />
+                  <Feather name="chevron-left" size={18} color="#FFFFFF" />
+                </View>
+              ) : chromeReady ? (
                 <BlurView intensity={80} tint="dark" style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center' }}>
                   <Feather name="chevron-left" size={18} color="#FFFFFF" />
                 </BlurView>

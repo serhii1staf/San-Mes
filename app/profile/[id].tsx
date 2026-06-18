@@ -40,6 +40,7 @@ import { useBlockedUsersStore, useIsBlocked } from '../../src/store/blockedUsers
 import { parseBannerTransform, stripBannerTransform } from '../../src/utils/bannerTransform';
 import { useBannerBrightness } from '../../src/hooks/useBannerBrightness';
 import { kvGetJSONSync, kvSetJSON } from '../../src/services/kvStore';
+import { useLiquidGlassActive, GlassBg } from '../../src/components/ui/LiquidGlass';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const SCREEN_HEIGHT = Dimensions.get('window').height;
@@ -341,6 +342,10 @@ export default function UserProfileScreen() {
   // faint emoji / pixel-icon pattern on every visible post card. Stable
   // string so memoized cards only re-render when it actually changes.
   const postEmoji = useProfileAppearanceStore((s) => s.postEmoji);
+  // Native iOS-26 liquid glass for the floating header chrome (back / more
+  // buttons + follower/following pills). Active only when the toggle is on
+  // AND the device supports it; otherwise the BlurView fallback renders.
+  const glassActive = useLiquidGlassActive();
   const [isLoading, setIsLoading] = useState(true);
   const [followCounts, setFollowCounts] = useState({ followers: 0, following: 0 });
   const [activeTab, setActiveTab] = useState<TabName>('posts');
@@ -1229,7 +1234,12 @@ export default function UserProfileScreen() {
       <View style={{ position: 'absolute', top: insets.top + 8, left: 16, right: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', zIndex: 100 }}>
         <Animated.View style={{ transform: [{ translateX: buttonsTranslateX }] }}>
           <Pressable onPress={() => router.back()} style={{ borderRadius: 17, overflow: 'hidden' }}>
-            {chromeReady ? (
+            {glassActive ? (
+              <View style={{ width: 34, height: 34, borderRadius: 17, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' }}>
+                <GlassBg borderRadius={17} colorScheme="dark" />
+                <Feather name="chevron-left" size={18} color="#FFFFFF" />
+              </View>
+            ) : chromeReady ? (
               <BlurView intensity={80} tint="dark" style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center' }}>
                 <Feather name="chevron-left" size={18} color="#FFFFFF" />
               </BlurView>
@@ -1246,7 +1256,13 @@ export default function UserProfileScreen() {
             hitSlop={6}
             style={{ borderRadius: 14, overflow: 'hidden' }}
           >
-            {chromeReady ? (
+            {glassActive ? (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14, overflow: 'hidden' }}>
+                <GlassBg borderRadius={14} colorScheme="dark" />
+                <Text variant="caption" weight="bold" color="#FFFFFF" style={{ fontSize: 12 }}>{followCounts.following}</Text>
+                <Text variant="caption" color="rgba(255,255,255,0.85)" style={{ fontSize: 11 }}>{t('profile.following_short')}</Text>
+              </View>
+            ) : chromeReady ? (
               <BlurView intensity={80} tint="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6 }}>
                 <Text variant="caption" weight="bold" color="#FFFFFF" style={{ fontSize: 12 }}>{followCounts.following}</Text>
                 <Text variant="caption" color="rgba(255,255,255,0.85)" style={{ fontSize: 11 }}>{t('profile.following_short')}</Text>
@@ -1263,7 +1279,13 @@ export default function UserProfileScreen() {
             hitSlop={6}
             style={{ borderRadius: 14, overflow: 'hidden' }}
           >
-            {chromeReady ? (
+            {glassActive ? (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14, overflow: 'hidden' }}>
+                <GlassBg borderRadius={14} colorScheme="dark" />
+                <Text variant="caption" weight="bold" color="#FFFFFF" style={{ fontSize: 12 }}>{followCounts.followers}</Text>
+                <Text variant="caption" color="rgba(255,255,255,0.85)" style={{ fontSize: 11 }}>{t('profile.followers_short')}</Text>
+              </View>
+            ) : chromeReady ? (
               <BlurView intensity={80} tint="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6 }}>
                 <Text variant="caption" weight="bold" color="#FFFFFF" style={{ fontSize: 12 }}>{followCounts.followers}</Text>
                 <Text variant="caption" color="rgba(255,255,255,0.85)" style={{ fontSize: 11 }}>{t('profile.followers_short')}</Text>
@@ -1278,7 +1300,12 @@ export default function UserProfileScreen() {
         </Animated.View>
         <Animated.View style={{ transform: [{ translateX: menuTranslateX }] }}>
           <Pressable onPress={() => { triggerHaptic('light'); setShowMenu(true); }} style={{ borderRadius: 17, overflow: 'hidden' }}>
-            {chromeReady ? (
+            {glassActive ? (
+              <View style={{ width: 34, height: 34, borderRadius: 17, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' }}>
+                <GlassBg borderRadius={17} colorScheme="dark" />
+                <Feather name="more-horizontal" size={18} color="#FFFFFF" />
+              </View>
+            ) : chromeReady ? (
               <BlurView intensity={80} tint="dark" style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center' }}>
                 <Feather name="more-horizontal" size={18} color="#FFFFFF" />
               </BlurView>

@@ -33,6 +33,7 @@ import {
   serializeBannerTransform,
   stripBannerTransform,
 } from '../../src/utils/bannerTransform';
+import { useLiquidGlassActive, GlassBg } from '../../src/components/ui/LiquidGlass';
 
 const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -137,6 +138,10 @@ export default function EditProfileScreen() {
   const t = useT();
   const user = useAuthStore((s) => s.user);
   const updateProfile = useAuthStore((s) => s.updateProfile);
+  // Native iOS-26 liquid glass for the floating header pills (close / title /
+  // save). White icons + text sit over the banner, so we keep colorScheme
+  // 'dark' for contrast (same as the profile-header chrome exception).
+  const glassActive = useLiquidGlassActive();
   const displayUser = user || currentUser;
 
   const [name, setName] = useState(displayUser.displayName);
@@ -346,32 +351,62 @@ export default function EditProfileScreen() {
       </View>
       <View style={[styles.headerRow, { top: 28 }]} pointerEvents="box-none">
         <Pressable onPress={handleClose} hitSlop={10} style={styles.headerPill}>
-          <BlurView intensity={80} tint="dark" style={styles.headerPillInner}>
-            <Feather name="x" size={18} color="#FFFFFF" />
-          </BlurView>
+          {glassActive ? (
+            <View style={[styles.headerPillInner, { borderRadius: 18, overflow: 'hidden' }]}>
+              <GlassBg borderRadius={18} colorScheme="dark" />
+              <Feather name="x" size={18} color="#FFFFFF" />
+            </View>
+          ) : (
+            <BlurView intensity={80} tint="dark" style={styles.headerPillInner}>
+              <Feather name="x" size={18} color="#FFFFFF" />
+            </BlurView>
+          )}
         </Pressable>
         <View style={styles.headerTitleAbs} pointerEvents="box-none">
           <ShrinkingModalTitle>
             <View style={styles.headerTitlePill}>
-              <BlurView intensity={80} tint="dark" style={styles.headerTitleInner}>
-                <RNText
-                  style={styles.headerTitleText}
-                  allowFontScaling={false}
-                  numberOfLines={1}
-                  ellipsizeMode="tail"
-                >
-                  {t('edit_profile.title')}
-                </RNText>
-              </BlurView>
+              {glassActive ? (
+                <View style={[styles.headerTitleInner, { borderRadius: 18, overflow: 'hidden' }]}>
+                  <GlassBg borderRadius={18} colorScheme="dark" />
+                  <RNText
+                    style={styles.headerTitleText}
+                    allowFontScaling={false}
+                    numberOfLines={1}
+                    ellipsizeMode="tail"
+                  >
+                    {t('edit_profile.title')}
+                  </RNText>
+                </View>
+              ) : (
+                <BlurView intensity={80} tint="dark" style={styles.headerTitleInner}>
+                  <RNText
+                    style={styles.headerTitleText}
+                    allowFontScaling={false}
+                    numberOfLines={1}
+                    ellipsizeMode="tail"
+                  >
+                    {t('edit_profile.title')}
+                  </RNText>
+                </BlurView>
+              )}
             </View>
           </ShrinkingModalTitle>
         </View>
         <Pressable onPress={handleSave} disabled={isSaving} hitSlop={10} style={styles.headerPill}>
-          <BlurView intensity={80} tint="dark" style={[styles.headerPillInner, { paddingHorizontal: 14 }]}>
-            <RNText style={styles.headerSaveText} allowFontScaling={false}>
-              {isSaving ? '...' : t('common.save')}
-            </RNText>
-          </BlurView>
+          {glassActive ? (
+            <View style={[styles.headerPillInner, { paddingHorizontal: 14, borderRadius: 18, overflow: 'hidden' }]}>
+              <GlassBg borderRadius={18} colorScheme="dark" />
+              <RNText style={styles.headerSaveText} allowFontScaling={false}>
+                {isSaving ? '...' : t('common.save')}
+              </RNText>
+            </View>
+          ) : (
+            <BlurView intensity={80} tint="dark" style={[styles.headerPillInner, { paddingHorizontal: 14 }]}>
+              <RNText style={styles.headerSaveText} allowFontScaling={false}>
+                {isSaving ? '...' : t('common.save')}
+              </RNText>
+            </BlurView>
+          )}
         </Pressable>
       </View>
 
