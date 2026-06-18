@@ -37,9 +37,9 @@ const TAB_ROW_PADDING_V = 6;
 
 // Gap between the main capsule and the detached Profile capsule.
 const BAR_GAP = 10;
-// Width of the standalone Profile capsule. Rounded with BAR_BORDER_RADIUS so
-// it reads as a sibling of the main bar (capsule, not a perfect circle).
-const PROFILE_CAPSULE_WIDTH = 58;
+// Width of the standalone Profile capsule. A perfect circle (== bar inner
+// height) so it reads as a clean detached round button beside the main bar.
+const PROFILE_CAPSULE_WIDTH = 60;
 
 // Almost-zero inset so the lens fills most of its slot — bigger press surface,
 // more visual presence, and more area to refract/magnify whatever icon sits
@@ -476,7 +476,9 @@ function ProfileCapsule({
         styles.profileCapsule,
         {
           marginBottom,
-          borderColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.5)',
+          borderColor: glassActive
+            ? 'transparent'
+            : isDark ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.5)',
           shadowColor: isDark ? '#000' : 'rgba(0,0,0,0.15)',
         },
       ]}
@@ -795,7 +797,9 @@ export const CustomTabBar = React.memo(function CustomTabBar({
           style={[
             styles.container,
             {
-              borderColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.5)',
+              borderColor: glassActive
+                ? 'transparent'
+                : isDark ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.5)',
               shadowColor: isDark ? '#000' : 'rgba(0,0,0,0.15)',
             },
           ]}
@@ -933,7 +937,7 @@ const styles = StyleSheet.create({
     position: 'relative',
     width: PROFILE_CAPSULE_WIDTH,
     height: TAB_BUTTON_HEIGHT + 2 * TAB_ROW_PADDING_V,
-    borderRadius: BAR_BORDER_RADIUS,
+    borderRadius: (TAB_BUTTON_HEIGHT + 2 * TAB_ROW_PADDING_V) / 2,
     borderWidth: 0.5,
     overflow: 'hidden',
     shadowOffset: { width: 0, height: 6 },
