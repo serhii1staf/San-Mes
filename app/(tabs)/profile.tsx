@@ -1148,6 +1148,19 @@ export default function ProfileScreen() {
           })()}
           {/* Bottom actions — compact rounded container, centered */}
           <View style={{ alignItems: 'center', paddingBottom: insets.bottom + 20 }}>
+            {glassActive ? (
+              <NativeGlassView glassStyle="regular" colorScheme="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 28, paddingHorizontal: 24, paddingVertical: 12 }}>
+                <Pressable onPress={() => { const ep = userPosts.find(p => p.id === viewingImage!.postId); setViewingImage(null); useFeedStore.getState().setEditingPost({ id: viewingImage!.postId, content: ep?.content || '', imageUrl: ep?.imageUrl, imageUrls: ep?.imageUrls && ep.imageUrls.length > 0 ? ep.imageUrls : (ep?.imageUrl ? [ep.imageUrl] : undefined) }); router.push('/(tabs)/create'); }} style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: 'rgba(255,255,255,0.14)', alignItems: 'center', justifyContent: 'center' }}>
+                  <Feather name="edit-2" size={17} color="#FFFFFF" />
+                </Pressable>
+                <Pressable onPress={async () => { if (viewingImage) { const ep = userPosts.find(p => p.id === viewingImage.postId); const { shareImageUrl } = require('../../src/utils/sharePost'); await shareImageUrl(viewingImage.uri, ep?.content); } }} style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: 'rgba(255,255,255,0.14)', alignItems: 'center', justifyContent: 'center' }}>
+                  <Feather name="share" size={17} color="#FFFFFF" />
+                </Pressable>
+                <Pressable onPress={() => { if (viewingImage && user?.id) { Alert.alert(t('profile.delete_post_title'), t('profile.delete_post_msg'), [{ text: t('common.cancel'), style: 'cancel' }, { text: t('common.delete'), style: 'destructive', onPress: async () => { await deletePost(viewingImage.postId, user.id); setViewingImage(null); loadMyPosts(); } }]); } }} style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: 'rgba(255,60,50,0.22)', alignItems: 'center', justifyContent: 'center' }}>
+                  <Feather name="trash-2" size={17} color="#FF3B30" />
+                </Pressable>
+              </NativeGlassView>
+            ) : (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 28, paddingHorizontal: 24, paddingVertical: 12 }}>
               <Pressable onPress={() => { const ep = userPosts.find(p => p.id === viewingImage!.postId); setViewingImage(null); useFeedStore.getState().setEditingPost({ id: viewingImage!.postId, content: ep?.content || '', imageUrl: ep?.imageUrl, imageUrls: ep?.imageUrls && ep.imageUrls.length > 0 ? ep.imageUrls : (ep?.imageUrl ? [ep.imageUrl] : undefined) }); router.push('/(tabs)/create'); }} style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center' }}>
                 <Feather name="edit-2" size={17} color="#FFFFFF" />
@@ -1159,6 +1172,7 @@ export default function ProfileScreen() {
                 <Feather name="trash-2" size={17} color="#FF3B30" />
               </Pressable>
             </View>
+            )}
           </View>
         </View>
       </Modal>

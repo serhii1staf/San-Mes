@@ -427,6 +427,7 @@ const en: Record<string, string> = {
   // ─── Post context menu ─────────────────────────────────────────────────
   'post_context.repost': 'Repost',
   'post_context.copy': 'Copy',
+  'post_context.edit': 'Edit',
   'post_context.share': 'Share',
   'post_context.delete': 'Delete',
   'post_context.delete_title': 'Delete?',

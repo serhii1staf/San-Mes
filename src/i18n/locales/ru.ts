@@ -439,6 +439,7 @@ const ru: Record<string, string> = {
   // ─── Post context menu ─────────────────────────────────────────────────
   'post_context.repost': 'Репост',
   'post_context.copy': 'Скопировать',
+  'post_context.edit': 'Редактировать',
   'post_context.share': 'Поделиться',
   'post_context.delete': 'Удалить',
   'post_context.delete_title': 'Удалить?',

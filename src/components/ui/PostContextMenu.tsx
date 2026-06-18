@@ -5,11 +5,14 @@ import { Feather } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import { useTheme } from '../../theme';
 import { Text } from './Text';
+import { router } from 'expo-router';
+import { useFeedStore } from '../../store/feedStore';
 import { Avatar } from './Avatar';
 import { CachedImage } from './CachedImage';
 import { VerifiedBadge } from './VerifiedBadge';
 import { UserBadge } from './UserBadge';
 import { FormattedText } from './FormattedText';
+import { useLiquidGlassActive, GlassBg } from './LiquidGlass';
 import { showToast } from '../../store/toastStore';
 import { formatTimeAgo } from '../../utils/mockData';
 import { Post } from '../../types';
@@ -30,6 +33,7 @@ interface PostContextMenuProps {
 export function PostContextMenu({ visible, post, isOwnPost, onClose, onDelete }: PostContextMenuProps) {
   const theme = useTheme();
   const t = useT();
+  const glassActive = useLiquidGlassActive();
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
   const backdropAnim = useRef(new Animated.Value(0)).current;
   const dismissing = useRef(false);
@@ -120,6 +124,22 @@ export function PostContextMenu({ visible, post, isOwnPost, onClose, onDelete }:
     }
   };
 
+  // Edit — reuse the existing edit flow (feedStore.editingPost → create
+  // screen in edit mode). Reposts can't be edited (the body is the original's),
+  // so the action is hidden for them. Dismiss first, then navigate after the
+  // close animation so the create screen doesn't mount under the fading modal.
+  const handleEdit = () => {
+    if (!post) return;
+    useFeedStore.getState().setEditingPost({
+      id: post.id,
+      content: post.content || '',
+      imageUrl: post.imageUrl,
+      imageUrls: post.imageUrls && post.imageUrls.length > 0 ? post.imageUrls : (post.imageUrl ? [post.imageUrl] : undefined),
+    });
+    dismiss();
+    setTimeout(() => router.push('/(tabs)/create'), 300);
+  };
+
   // Tapping a link inside the preview must close THIS modal first. Otherwise
   // the modal (with its `<StatusBar hidden />` and full-screen backdrop) stays
   // mounted on the host screen while the in-app browser pushes on top. On
@@ -149,7 +169,8 @@ export function PostContextMenu({ visible, post, isOwnPost, onClose, onDelete }:
         <View style={{ flex: 1, justifyContent: 'flex-end' }} pointerEvents="box-none">
           <Animated.View style={{ transform: [{ translateY: slideAnim }] }}>
             {/* Post preview card */}
-            <View style={{ marginHorizontal: 16, marginBottom: 8, backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF', borderRadius: 24, padding: 12, borderWidth: 1, borderColor: theme.colors.border.light }}>
+            <View style={{ marginHorizontal: 16, marginBottom: 8, backgroundColor: glassActive ? 'transparent' : (theme.isDark ? theme.colors.background.elevated : '#FFFFFF'), borderRadius: 24, padding: 12, borderWidth: glassActive ? 0 : 1, borderColor: theme.colors.border.light, overflow: 'hidden' }}>
+              {glassActive ? <GlassBg borderRadius={24} glassStyle="regular" interactive={false} colorScheme={theme.isDark ? 'dark' : 'light'} tintColor={theme.isDark ? 'rgba(26,26,31,0.55)' : 'rgba(255,255,255,0.6)'} /> : null}
               {/* Repost indicator */}
               {post.isRepost && (
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 6 }}>
@@ -192,12 +213,14 @@ export function PostContextMenu({ visible, post, isOwnPost, onClose, onDelete }:
             </View>
 
             {/* Menu */}
-            <View style={{ marginHorizontal: 8, marginBottom: 16, backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF', borderRadius: 28, overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.12, shadowRadius: 16, elevation: 10 }}>
+            <View style={{ marginHorizontal: 8, marginBottom: 16, backgroundColor: glassActive ? 'transparent' : (theme.isDark ? theme.colors.background.elevated : '#FFFFFF'), borderRadius: 28, overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.12, shadowRadius: 16, elevation: 10 }}>
+              {glassActive ? <GlassBg borderRadius={28} glassStyle="regular" interactive={false} colorScheme={theme.isDark ? 'dark' : 'light'} tintColor={theme.isDark ? 'rgba(26,26,31,0.55)' : 'rgba(255,255,255,0.6)'} /> : null}
               <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 6 }}>
                 <View style={{ width: 40, height: 5, borderRadius: 3, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)' }} />
               </View>
               <MenuItem icon="copy" label={t('post_context.copy')} onPress={handleCopy} theme={theme} />
               <MenuItem icon="share-2" label={t('post_context.share')} onPress={handleShare} theme={theme} />
+              {isOwnPost && !post.isRepost && <MenuItem icon="edit-2" label={t('post_context.edit')} onPress={handleEdit} theme={theme} />}
               {isOwnPost && <MenuItem icon="trash-2" label={t('post_context.delete')} onPress={handleDelete} theme={theme} destructive />}
               <View style={{ height: 8 }} />
             </View>
