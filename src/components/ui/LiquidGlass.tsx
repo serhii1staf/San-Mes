@@ -171,6 +171,17 @@ interface GlassBgProps {
   borderRadius?: number;
   glassStyle?: GlassStyle;
   colorScheme?: 'auto' | 'light' | 'dark';
+  /**
+   * Whether the glass reacts to touch (Apple's liquid "stretch"/morph). Safe
+   * to enable here because GlassBg is a BACKGROUND layer — the real content is
+   * a sibling rendered ON TOP, so the interactive lensing animates the glass
+   * surface without ever warping the icons/text (which was the bug when
+   * content lived INSIDE an interactive GlassView). Default on for the liquid
+   * feel; pass false for purely static surfaces.
+   */
+  interactive?: boolean;
+  /** Optional tint to lift a too-dark glass surface. */
+  tintColor?: string;
 }
 
 /**
@@ -193,9 +204,9 @@ interface GlassBgProps {
  *      pill's width).
  *
  * Returns null when glass is off, so the container simply falls back to its
- * own backgroundColor/border. Deliberately NOT interactive.
+ * own backgroundColor/border.
  */
-export function GlassBg({ borderRadius, glassStyle = 'regular', colorScheme }: GlassBgProps) {
+export function GlassBg({ borderRadius, glassStyle = 'clear', colorScheme, interactive = true, tintColor }: GlassBgProps) {
   const active = useLiquidGlassActive();
   if (!active) return null;
   return (
@@ -203,6 +214,8 @@ export function GlassBg({ borderRadius, glassStyle = 'regular', colorScheme }: G
       pointerEvents="none"
       glassStyle={glassStyle}
       colorScheme={colorScheme}
+      isInteractive={interactive}
+      tintColor={tintColor}
       style={[StyleSheet.absoluteFill, borderRadius != null ? { borderRadius } : null]}
     />
   );
