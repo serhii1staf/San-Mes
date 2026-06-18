@@ -4,6 +4,7 @@ import { router } from 'expo-router';
 import { useTheme } from '../../theme';
 import { Text } from './Text';
 import { useSettingsStore } from '../../store/settingsStore';
+import { useLiquidGlassActive, NativeGlassView } from './LiquidGlass';
 import {
   getCurrentWeather,
   emojiForWeatherCode,
@@ -30,6 +31,9 @@ export function WeatherChip() {
   const cityName = useSettingsStore((s) => s.weatherCityName);
   const lat = useSettingsStore((s) => s.weatherLat);
   const lon = useSettingsStore((s) => s.weatherLon);
+  // Native iOS-26 liquid glass for the chip surface. iOS-only + opt-in;
+  // elsewhere the existing translucent fill renders unchanged.
+  const glassActive = useLiquidGlassActive();
 
   const [snap, setSnap] = useState<WeatherSnapshot | null>(null);
   const lastSig = useRef<string>('');
@@ -67,21 +71,43 @@ export function WeatherChip() {
         router.push('/settings/weather' as any);
       }}
       hitSlop={6}
+      style={glassActive ? { borderRadius: 14 } : undefined}
     >
-      <View
-        style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          paddingHorizontal: 10,
-          paddingVertical: 5,
-          borderRadius: 14,
-          backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)',
-        }}
-      >
-        <Text variant="caption" weight="medium" style={{ fontSize: 12 }}>
-          {label}
-        </Text>
-      </View>
+      {glassActive ? (
+        // Interactive liquid glass holding the weather label as a CHILD so the
+        // widget morphs outward on touch (matches the rest of the chrome).
+        <NativeGlassView
+          glassStyle="regular"
+          isInteractive
+          colorScheme={theme.isDark ? 'dark' : 'light'}
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            paddingHorizontal: 10,
+            paddingVertical: 5,
+            borderRadius: 14,
+          }}
+        >
+          <Text variant="caption" weight="medium" style={{ fontSize: 12 }}>
+            {label}
+          </Text>
+        </NativeGlassView>
+      ) : (
+        <View
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            paddingHorizontal: 10,
+            paddingVertical: 5,
+            borderRadius: 14,
+            backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)',
+          }}
+        >
+          <Text variant="caption" weight="medium" style={{ fontSize: 12 }}>
+            {label}
+          </Text>
+        </View>
+      )}
     </Pressable>
   );
 }

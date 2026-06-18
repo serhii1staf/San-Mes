@@ -8,6 +8,7 @@ import ContextMenu from 'react-native-context-menu-view';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { WeatherChip } from '../../src/components/ui/WeatherChip';
+import { useLiquidGlassActive, NativeGlassView } from '../../src/components/ui/LiquidGlass';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { UserBadge } from '../../src/components/ui/UserBadge';
 import { useChatStore, useEntityStore, useAuthStore } from '../../src/store';
@@ -50,6 +51,9 @@ const MESSAGES_ITEM_LAYOUT = (_data: ArrayLike<Conversation> | null | undefined,
 function MiniAppsRow() {
   const theme = useTheme();
   const t = useT();
+  // Native iOS-26 liquid glass for the "open" button. iOS-only + opt-in;
+  // everywhere else `glassActive` is false and the flat accent chip renders.
+  const glassActive = useLiquidGlassActive();
   // Field-level selectors so the row doesn't re-render on every loading flag.
   const apps = useMiniAppsStore((s) => s.apps);
   const loadApps = useMiniAppsStore((s) => s.loadApps);
@@ -69,8 +73,17 @@ function MiniAppsRow() {
             <Text variant="body" weight="medium">{app.name}</Text>
             {app.description ? <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>{app.description}</Text> : null}
           </View>
-          <Pressable onPress={() => router.push({ pathname: '/mini-app', params: { url: encodeURIComponent(app.url), name: app.name, emoji: app.emoji } })} style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, backgroundColor: theme.colors.accent.primary + '15' }}>
-            <Text variant="caption" weight="semibold" color={theme.colors.accent.primary} style={{ fontSize: 11 }}>{t('messages.miniapp.open')}</Text>
+          {/* "Open" button → interactive liquid glass holding the label as a
+              CHILD so it morphs outward on touch (no overflow clip, own
+              borderRadius). Falls back to the flat accent chip when glass off. */}
+          <Pressable onPress={() => router.push({ pathname: '/mini-app', params: { url: encodeURIComponent(app.url), name: app.name, emoji: app.emoji } })} style={glassActive ? { borderRadius: 14 } : { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, backgroundColor: theme.colors.accent.primary + '15' }}>
+            {glassActive ? (
+              <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} tintColor={theme.colors.accent.primary + '38'} style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, alignItems: 'center', justifyContent: 'center' }}>
+                <Text variant="caption" weight="semibold" color={theme.colors.accent.primary} style={{ fontSize: 11 }}>{t('messages.miniapp.open')}</Text>
+              </NativeGlassView>
+            ) : (
+              <Text variant="caption" weight="semibold" color={theme.colors.accent.primary} style={{ fontSize: 11 }}>{t('messages.miniapp.open')}</Text>
+            )}
           </Pressable>
         </Pressable>
       ))}
@@ -370,6 +383,8 @@ export default function MessagesScreen() {
   const entityConversations = useEntityStore((s) => s.conversations);
   const user = useAuthStore((s) => s.user);
   const [searchQuery, setSearchQuery] = useState('');
+  // Native iOS-26 liquid glass for the category tab chips. iOS-only + opt-in.
+  const glassActive = useLiquidGlassActive();
   const [activeTab, setActiveTab] = useState<ChatTab>('chats');
   const archived = useChatSettingsStore((s) => s.archived);
   const blocked = useChatSettingsStore((s) => s.blocked);
@@ -638,11 +653,37 @@ export default function MessagesScreen() {
           keyExtractor={(t) => t.key}
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={{ paddingHorizontal: theme.spacing.base, gap: 8 }}
-          renderItem={({ item: tab }) => (
-            <Pressable onPress={() => setActiveTab(tab.key as ChatTab)} style={{ paddingHorizontal: 14, paddingVertical: 6, borderRadius: 16, backgroundColor: activeTab === tab.key ? theme.colors.accent.primary + '20' : 'transparent' }}>
-              <Text variant="caption" weight={activeTab === tab.key ? 'bold' : 'regular'} color={activeTab === tab.key ? theme.colors.accent.primary : theme.colors.text.tertiary} style={{ fontSize: 12 }}>{tab.label}</Text>
-            </Pressable>
-          )}
+          renderItem={({ item: tab }) => {
+            const isActive = activeTab === tab.key;
+            const label = (
+              <Text variant="caption" weight={isActive ? 'bold' : 'regular'} color={isActive ? theme.colors.accent.primary : theme.colors.text.tertiary} style={{ fontSize: 12 }}>{tab.label}</Text>
+            );
+            // Interactive liquid glass capsule holding the label as a CHILD so
+            // it morphs outward on touch (gold-standard pattern). The ACTIVE
+            // chip gets a subtle accent tint so selection still reads clearly
+            // over the glass; inactive chips are clear glass. NO overflow clip,
+            // own borderRadius. Falls back to the flat accent fill when off.
+            if (glassActive) {
+              return (
+                <Pressable onPress={() => setActiveTab(tab.key as ChatTab)} style={{ borderRadius: 16 }}>
+                  <NativeGlassView
+                    glassStyle="regular"
+                    isInteractive
+                    colorScheme={theme.isDark ? 'dark' : 'light'}
+                    tintColor={isActive ? theme.colors.accent.primary + '38' : undefined}
+                    style={{ paddingHorizontal: 14, paddingVertical: 6, borderRadius: 16, alignItems: 'center', justifyContent: 'center' }}
+                  >
+                    {label}
+                  </NativeGlassView>
+                </Pressable>
+              );
+            }
+            return (
+              <Pressable onPress={() => setActiveTab(tab.key as ChatTab)} style={{ paddingHorizontal: 14, paddingVertical: 6, borderRadius: 16, backgroundColor: isActive ? theme.colors.accent.primary + '20' : 'transparent' }}>
+                {label}
+              </Pressable>
+            );
+          }}
         />
       </View>
 
