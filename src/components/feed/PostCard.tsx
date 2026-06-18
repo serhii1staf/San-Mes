@@ -1,7 +1,8 @@
-import React, { useState, useRef, useMemo, useEffect, memo } from 'react';
-import { View, Pressable, ViewStyle, Dimensions, ScrollView, NativeSyntheticEvent, NativeScrollEvent, Text as RNText } from 'react-native';
+import React, { useState, useRef, useMemo, useEffect, useCallback, memo } from 'react';
+import { View, Pressable, ViewStyle, ImageStyle, Dimensions, ScrollView, NativeSyntheticEvent, NativeScrollEvent, Text as RNText } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
+import { ImageLoadEventData } from 'expo-image';
 import { useTheme } from '../../theme';
 import { Text } from '../ui/Text';
 import { Avatar } from '../ui/Avatar';
@@ -19,8 +20,34 @@ import { useT } from '../../i18n/store';
 import { useIsBlocked } from '../../store/blockedUsersStore';
 import { BlockedContentPlaceholder } from './BlockedContentPlaceholder';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+// Kept for the repost-embed and spoiler paths, which stay a fixed height on
+// purpose (secondary / hidden content). The primary single-image and carousel
+// paths below are now aspect-ratio driven — see ASPECT constants.
 const IMAGE_HEIGHT = 280;
+
+// ─── Adaptive image sizing ──────────────────────────────────────────────
+// Feed images render at their NATURAL aspect ratio (no hard crop) instead of
+// a fixed height. `aspectRatio` + `cover` with the image's OWN ratio means
+// the box matches the bitmap exactly, so nothing is trimmed. We clamp the
+// ratio so a freakishly tall or wide photo can't blow out the layout:
+//   • MIN 0.6 → tallest allowed box (≈ portrait 3:4..2:3); taller photos get
+//     pinned and `cover` trims the overflow.
+//   • MAX 2.2 → widest allowed box (≈ panorama); wider photos get trimmed.
+// Card content width is the screen minus the feed's 16px horizontal padding
+// on each side (same value `ImageCarousel` already used for `imgWidth`).
+const CARD_CONTENT_WIDTH = SCREEN_WIDTH - 32;
+const MIN_ASPECT_RATIO = 0.6;
+const MAX_ASPECT_RATIO = 2.2;
+// Placeholder ratio used before onLoad lands so the row doesn't jump much.
+const PLACEHOLDER_ASPECT_RATIO = 4 / 5;
+// Hard height cap (~60% of screen) so even a clamped-portrait card never eats
+// the whole viewport. Beyond this we pin the height and let `cover` trim.
+const MAX_IMAGE_HEIGHT = Math.round(SCREEN_HEIGHT * 0.6);
+
+// Clamp a natural width/height ratio into the layout-safe band.
+const clampAspectRatio = (ratio: number) =>
+  Math.min(MAX_ASPECT_RATIO, Math.max(MIN_ASPECT_RATIO, ratio));
 
 // ─── Per-card lazy hydrate ──────────────────────────────────────────────
 // Each card defers its body ONE RAF after its OWN mount so any FlatList
@@ -107,6 +134,33 @@ export const PostCard = memo(function PostCard({ post, currentUserId, onLike, on
   );
   const hasImages = imageUrls.length > 0 && !post.isSpoilerImage;
   const hasSpoiler = post.isSpoilerImage && imageUrls.length > 0;
+
+  // Natural aspect ratio of the single hero image, learned from expo-image's
+  // onLoad (fires once per image — no per-frame cost). Null until the bitmap
+  // dimensions arrive, at which point the card resizes to fit the photo.
+  const [heroAspect, setHeroAspect] = useState<number | null>(null);
+  const handleHeroLoad = useCallback((e: ImageLoadEventData) => {
+    const w = e?.source?.width;
+    const h = e?.source?.height;
+    if (w && h && w > 0 && h > 0) setHeroAspect(w / h);
+  }, []);
+
+  // Resolve the single-image box style. `aspectRatio` + `cover` at the image's
+  // own (clamped) ratio = no crop. Only the two extreme cases trim: a photo
+  // taller than the clamp band, or one so tall that even the clamped box would
+  // exceed the height cap (then we pin to MAX_IMAGE_HEIGHT and let cover trim).
+  const heroImageStyle = useMemo<ImageStyle>(() => {
+    if (heroAspect == null) {
+      // Pre-load: portrait-ish placeholder so layout barely shifts on load.
+      return { width: '100%', aspectRatio: PLACEHOLDER_ASPECT_RATIO, marginBottom: 0 };
+    }
+    const clamped = clampAspectRatio(heroAspect);
+    const derivedHeight = CARD_CONTENT_WIDTH / clamped;
+    if (derivedHeight > MAX_IMAGE_HEIGHT) {
+      return { width: '100%', height: MAX_IMAGE_HEIGHT, marginBottom: 0 };
+    }
+    return { width: '100%', aspectRatio: clamped, marginBottom: 0 };
+  }, [heroAspect]);
 
   // Memoize the URL extraction so the regex only runs when the post text
   // actually changes. The IIFE below previously ran extractFirstUrl on every
@@ -233,14 +287,15 @@ export const PostCard = memo(function PostCard({ post, currentUserId, onLike, on
         </View>
       )}
 
-      {/* Image — fixed height, cover mode, rounded inside card */}
+      {/* Image — single hero renders at the photo's natural (clamped) aspect
+          ratio; multi-image carousel keeps one consistent height. */}
       {hasImages && !post.isRepost && (
         imageUrls.length === 1 ? (
           <Pressable onPress={() => { const now = Date.now(); if (now - lastTap.current < 300) handleDoubleTap(); lastTap.current = now; }}>
-            {/* Single hero image — `priority` follows the cross-card latch
-                (low during first frame of cold-open, high afterwards). See
-                `__firstFrameDone` block at top of file. */}
-            <CachedImage uri={imageUrls[0]} style={{ width: '100%', height: IMAGE_HEIGHT, marginBottom: 0 }} resizeMode="cover" priority={heroPriority} />
+            {/* Single hero image — sized to its own aspect ratio via onLoad so
+                tall/wide photos aren't cropped (clamped to a layout-safe band;
+                see ASPECT constants). `priority` follows `heroPriority`. */}
+            <CachedImage uri={imageUrls[0]} style={heroImageStyle} resizeMode="cover" priority={heroPriority} onLoad={handleHeroLoad} />
           </Pressable>
         ) : (
           <ImageCarousel imageUrls={imageUrls} onDoubleTap={handleDoubleTap} heroPriority={heroPriority} />
@@ -288,6 +343,21 @@ function ImageCarousel({ imageUrls, onDoubleTap, heroPriority }: { imageUrls: st
   const lastTapRef = useRef<number>(0);
   const imgWidth = SCREEN_WIDTH - 32;
 
+  // Mixed aspect ratios inside a horizontal pager look broken, so every slide
+  // shares ONE height. We derive that height from the FIRST image's natural
+  // (clamped) ratio — a portrait set gets a taller carousel, a landscape set a
+  // shorter one — capped at MAX_IMAGE_HEIGHT. Learned once via onLoad.
+  const [firstAspect, setFirstAspect] = useState<number | null>(null);
+  const handleFirstLoad = useCallback((e: ImageLoadEventData) => {
+    const w = e?.source?.width;
+    const h = e?.source?.height;
+    if (w && h && w > 0 && h > 0) setFirstAspect(w / h);
+  }, []);
+  const carouselHeight = useMemo(() => {
+    const ratio = firstAspect == null ? PLACEHOLDER_ASPECT_RATIO : clampAspectRatio(firstAspect);
+    return Math.min(MAX_IMAGE_HEIGHT, Math.round(imgWidth / ratio));
+  }, [firstAspect, imgWidth]);
+
   const handleScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
     const index = Math.round(e.nativeEvent.contentOffset.x / imgWidth);
     setActiveIndex(Math.max(0, Math.min(index, imageUrls.length - 1)));
@@ -305,8 +375,9 @@ function ImageCarousel({ imageUrls, onDoubleTap, heroPriority }: { imageUrls: st
                 queues them behind the first page's decode. The user sees
                 the first page render first, then off-screen pages stream
                 in as they're scrolled into view (or as the decoder gets
-                idle frames). */}
-            <CachedImage uri={url} style={{ width: imgWidth, height: IMAGE_HEIGHT }} resizeMode="cover" priority={i === 0 ? heroPriority : 'low'} />
+                idle frames). The first slide also reports its dimensions so
+                the shared carousel height matches the set's orientation. */}
+            <CachedImage uri={url} style={{ width: imgWidth, height: carouselHeight }} resizeMode="cover" priority={i === 0 ? heroPriority : 'low'} onLoad={i === 0 ? handleFirstLoad : undefined} />
           </Pressable>
         ))}
       </ScrollView>

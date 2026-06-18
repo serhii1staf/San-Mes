@@ -1,6 +1,6 @@
 import React, { memo, useState, useEffect, useRef } from 'react';
 import { ImageStyle, StyleProp, StyleSheet } from 'react-native';
-import { Image } from 'expo-image';
+import { Image, ImageLoadEventData, ImageErrorEventData } from 'expo-image';
 import { perfMonitor } from '../../services/perfMonitor';
 import { useSettingsStore } from '../../store/settingsStore';
 
@@ -110,6 +110,16 @@ interface CachedImageProps {
    * see. Leave undefined everywhere else (zero added cost — no ref/effect).
    */
   autoplay?: boolean;
+  /**
+   * Fired once when the underlying expo-image finishes loading, carrying the
+   * decoded source dimensions in `event.source.{width,height}`. Forwarded
+   * through after our perf-monitor instrumentation runs (see the wrapper in
+   * `onLoad` below). Callers use this to size a card to the image's natural
+   * aspect ratio. Typed explicitly so consumers get the dimension payload.
+   */
+  onLoad?: (event: ImageLoadEventData) => void;
+  /** Forwarded after our proxy-fallback + gauge-release runs. */
+  onError?: (event: ImageErrorEventData) => void;
   [key: string]: any;
 }
 
