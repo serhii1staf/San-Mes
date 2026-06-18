@@ -31,6 +31,7 @@ import { ProfileReplyCard, ProfileReply } from '../../src/components/profile/Pro
 import { AdaptiveProfileText } from '../../src/components/profile/AdaptiveProfileText';
 import { EditProfileTabModal } from '../../src/components/profile/EditProfileTabModal';
 import { useProfileAppearanceStore } from '../../src/store/profileAppearanceStore';
+import { useLiquidGlassActive, NativeGlassView } from '../../src/components/ui/LiquidGlass';
 import { PanResponder } from 'react-native';
 import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
 import { useT } from '../../src/i18n/store';
@@ -323,7 +324,8 @@ export default function UserProfileScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
-  // Mount-time marker — opens-someone-else's-profile lag is a primary user
+  // Native iOS-26 liquid glass for the profile category tabs. iOS-only + opt-in.
+  const glassActive = useLiquidGlassActive();
   // complaint; this attribution lets the panel show whether the freeze
   // came from the screen's first render or from downstream image fan-out.
   // Skipped at the call site when the monitor is off.
@@ -1160,44 +1162,62 @@ export default function UserProfileScreen() {
           )}
         </View>
       )}
-      <View style={{ marginTop: 16, marginHorizontal: -16, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border.light }}>
-        <View style={{ flexDirection: 'row' }}>
-          {tabs.map((tab) => (
-            <Pressable
-              key={tab.key}
-              onPress={() => {
-                triggerHaptic('selection');
-                setActiveTab(tab.key);
-              }}
-              // Long-press editor — OWN profile only. Other-user profiles
-              // never receive the handler, so taps and long-presses on
-              // their tabs behave identically (read-only by design).
-              onLongPress={isOwnProfile ? () => { triggerHaptic('medium'); setEditingTabKey(tab.key); } : undefined}
-              delayLongPress={300}
-              style={{ flex: 1, alignItems: 'center', paddingVertical: 11, flexDirection: 'row', justifyContent: 'center', gap: 4 }}
-            >
-              {tab.emoji ? (
-                <RNText
-                  allowFontScaling={false}
-                  style={{
-                    // Same emoji-clipping fix as (tabs)/profile — an explicit
-                    // taller lineHeight + disabled Android font padding so
-                    // tall glyphs (✨ / ⚡ etc) don't lose their top edge
-                    // when rendered inside a tight Text wrapper.
-                    fontSize: 14,
-                    lineHeight: 18,
-                    includeFontPadding: false,
-                    textAlignVertical: 'center',
-                  }}
-                >
-                  {tab.emoji}
-                </RNText>
-              ) : null}
-              <Text variant="caption" weight={activeTab === tab.key ? 'bold' : 'regular'} color={activeTab === tab.key ? theme.colors.text.primary : theme.colors.text.tertiary}>{tab.label}</Text>
-            </Pressable>
-          ))}
+      {/* Profile category tabs — bottom hairline + sliding accent underline
+          removed for a clean profile. Active tab reads as a rounded pill:
+          interactive liquid glass when enabled, else a soft accent fill. */}
+      <View style={{ marginTop: 16 }}>
+        <View style={{ flexDirection: 'row', paddingHorizontal: 4 }}>
+          {tabs.map((tab) => {
+            const isActive = activeTab === tab.key;
+            const content = (
+              <>
+                {tab.emoji ? (
+                  <RNText
+                    allowFontScaling={false}
+                    style={{
+                      fontSize: 14,
+                      lineHeight: 18,
+                      includeFontPadding: false,
+                      textAlignVertical: 'center',
+                    }}
+                  >
+                    {tab.emoji}
+                  </RNText>
+                ) : null}
+                <Text variant="caption" weight={isActive ? 'bold' : 'regular'} color={isActive ? theme.colors.text.primary : theme.colors.text.tertiary}>{tab.label}</Text>
+              </>
+            );
+            return (
+              <Pressable
+                key={tab.key}
+                onPress={() => {
+                  triggerHaptic('selection');
+                  setActiveTab(tab.key);
+                }}
+                // Long-press editor — OWN profile only.
+                onLongPress={isOwnProfile ? () => { triggerHaptic('medium'); setEditingTabKey(tab.key); } : undefined}
+                delayLongPress={300}
+                style={{ flex: 1, paddingHorizontal: 4 }}
+              >
+                {glassActive && isActive ? (
+                  <NativeGlassView
+                    glassStyle="regular"
+                    isInteractive
+                    colorScheme={theme.isDark ? 'dark' : 'light'}
+                    tintColor={theme.colors.accent.primary + '33'}
+                    style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 9, borderRadius: 16 }}
+                  >
+                    {content}
+                  </NativeGlassView>
+                ) : (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 9, borderRadius: 16, backgroundColor: isActive ? theme.colors.accent.primary + '1F' : 'transparent' }}>
+                    {content}
+                  </View>
+                )}
+              </Pressable>
+            );
+          })}
         </View>
-        <View style={{ position: 'absolute', bottom: 0, height: 2, backgroundColor: theme.colors.accent.primary, width: SCREEN_WIDTH / 4, left: tabs.findIndex(t => t.key === activeTab) * (SCREEN_WIDTH / 4) }} />
       </View>
       <View style={{ height: 12 }} />
     </>
@@ -1216,6 +1236,7 @@ export default function UserProfileScreen() {
     tabs,
     handleFollow,
     t,
+    glassActive,
   ]);
 
   return (

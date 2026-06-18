@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { View, FlatList, Pressable, ViewStyle, TextInput, StyleSheet, Text as RNText, Alert, Animated, Easing, InteractionManager } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { runOnJS } from 'react-native-reanimated';
 import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -92,6 +94,10 @@ function MiniAppsRow() {
 }
 
 type ChatTab = 'chats' | 'apps' | 'archive' | 'blocked' | 'deleted';
+
+// Left-to-right order of the category tabs — drives swipe-to-switch (a
+// horizontal pan on the list area advances/retreats through this list).
+const TAB_ORDER: ChatTab[] = ['chats', 'apps', 'archive', 'blocked', 'deleted'];
 
 // Synthetic conversation prefix used for user-level blocked users that
 // don't have an existing chat. Lets the Blocked tab list everyone the
@@ -588,6 +594,35 @@ export default function MessagesScreen() {
     backgroundColor: theme.colors.background.primary,
   };
 
+  // Swipe-to-switch between the category tabs. A horizontal pan on the content
+  // area moves to the adjacent tab. `activeTabRef` keeps the gesture's JS
+  // callback reading the latest tab without re-creating the gesture each
+  // render. The gesture is tuned to yield to vertical list scrolling
+  // (failOffsetY) and only claim clearly-horizontal swipes (activeOffsetX).
+  const activeTabRef = useRef(activeTab);
+  activeTabRef.current = activeTab;
+  const goAdjacentTab = useCallback((dir: 1 | -1) => {
+    const i = TAB_ORDER.indexOf(activeTabRef.current);
+    const next = i + dir;
+    if (next < 0 || next >= TAB_ORDER.length) return;
+    triggerHaptic('selection');
+    setActiveTab(TAB_ORDER[next]);
+  }, []);
+  const swipeGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .activeOffsetX([-20, 20])
+        .failOffsetY([-18, 18])
+        .onEnd((e) => {
+          'worklet';
+          // Require a decent horizontal throw so a lazy diagonal scroll never
+          // flips tabs. Swipe LEFT → next tab, swipe RIGHT → previous.
+          if (e.translationX <= -55) runOnJS(goAdjacentTab)(1);
+          else if (e.translationX >= 55) runOnJS(goAdjacentTab)(-1);
+        }),
+    [goAdjacentTab],
+  );
+
   const bgColor = theme.colors.background.primary;
   const bgTransparent = theme.colors.background.primary + '00';
   const headerContentHeight = insets.top + 48;
@@ -688,58 +723,63 @@ export default function MessagesScreen() {
       </View>
 
       {/* AI Chat (chats tab) + Mini-apps (apps tab) */}
-      {/* AI Chat + Music (chats tab) — only shown once opened, newest first */}
-      {activeTab === 'chats' && !searchQuery && specialChats}
-      {activeTab === 'apps' && <MiniAppsRow />}
+      {/* Swipe horizontally anywhere on the content area to switch tabs. */}
+      <GestureDetector gesture={swipeGesture}>
+        <View style={{ flex: 1 }}>
+          {/* AI Chat + Music (chats tab) — only shown once opened, newest first */}
+          {activeTab === 'chats' && !searchQuery && specialChats}
+          {activeTab === 'apps' && <MiniAppsRow />}
 
-      {filtered.length === 0 ? (
-        (activeTab === 'chats' && specialChats && !searchQuery) ? null : (
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingBottom: 100 }}>
-          <Feather name={activeTab === 'apps' ? 'grid' : activeTab === 'blocked' ? 'slash' : activeTab === 'deleted' ? 'trash-2' : activeTab === 'archive' ? 'archive' : 'message-circle'} size={48} color={theme.colors.text.tertiary} />
-          <Text
-            variant="body"
-            color={theme.colors.text.tertiary}
-            style={{ marginTop: theme.spacing.base, textAlign: 'center' }}
-          >
-            {activeTab === 'apps' ? t('messages.empty.apps') : activeTab === 'blocked' ? t('messages.empty.blocked') : activeTab === 'deleted' ? t('messages.empty.deleted') : activeTab === 'archive' ? t('messages.empty.archive') : t('messages.empty.chats')}
-          </Text>
-        </View>
-        )
-      ) : (
-        <FlatList
-          data={filtered}
-          keyExtractor={(item) => item.id}
-          renderItem={({ item, index }) => <ConversationItem item={item} index={index} tab={activeTab} />}
-          ItemSeparatorComponent={() => (
-            <View style={{ height: 0.5, backgroundColor: theme.colors.border.light, marginLeft: 68 }} />
+          {filtered.length === 0 ? (
+            (activeTab === 'chats' && specialChats && !searchQuery) ? null : (
+            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingBottom: 100 }}>
+              <Feather name={activeTab === 'apps' ? 'grid' : activeTab === 'blocked' ? 'slash' : activeTab === 'deleted' ? 'trash-2' : activeTab === 'archive' ? 'archive' : 'message-circle'} size={48} color={theme.colors.text.tertiary} />
+              <Text
+                variant="body"
+                color={theme.colors.text.tertiary}
+                style={{ marginTop: theme.spacing.base, textAlign: 'center' }}
+              >
+                {activeTab === 'apps' ? t('messages.empty.apps') : activeTab === 'blocked' ? t('messages.empty.blocked') : activeTab === 'deleted' ? t('messages.empty.deleted') : activeTab === 'archive' ? t('messages.empty.archive') : t('messages.empty.chats')}
+              </Text>
+            </View>
+            )
+          ) : (
+            <FlatList
+              data={filtered}
+              keyExtractor={(item) => item.id}
+              renderItem={({ item, index }) => <ConversationItem item={item} index={index} tab={activeTab} />}
+              ItemSeparatorComponent={() => (
+                <View style={{ height: 0.5, backgroundColor: theme.colors.border.light, marginLeft: 68 }} />
+              )}
+              contentContainerStyle={{ paddingBottom: 100 }}
+              showsVerticalScrollIndicator={false}
+              removeClippedSubviews={true}
+              // Tightened on weak devices: ContextMenu (the native wrapper
+              // around each row) creates a UIContextMenuInteraction per view
+              // on iOS, which is the dominant cost when this list mounts. 12
+              // rows × ~12 ms = the 178 ms long task users were seeing on
+              // the first open of (tabs)/messages. Even at 6 rows the burst
+              // landed as a 127 ms task right after navigation. Going to
+              // 4 rows means the visible viewport (≈ 5 rows on most phones)
+              // still feels populated on first paint, and the 5th+ row
+              // batches in over the next two RAF ticks instead of all at
+              // once on the navigation transition frame.
+              initialNumToRender={4}
+              maxToRenderPerBatch={3}
+              windowSize={5}
+              updateCellsBatchingPeriod={100}
+              // Fixed row geometry: Avatar size="md" is 44 px tall + 10 px
+              // top + 10 px bottom padding = 64 px per row; the 0.5 px
+              // separator is rendered as a sibling. Providing getItemLayout
+              // lets FlatList skip the per-row onLayout measurement pass on
+              // the cold-mount frame, shaving the residual mount cost left
+              // after the ContextMenu lazy-mount fix and helping
+              // scroll-to-index work without an intermediate measurement.
+              getItemLayout={MESSAGES_ITEM_LAYOUT}
+            />
           )}
-          contentContainerStyle={{ paddingBottom: 100 }}
-          showsVerticalScrollIndicator={false}
-          removeClippedSubviews={true}
-          // Tightened on weak devices: ContextMenu (the native wrapper
-          // around each row) creates a UIContextMenuInteraction per view
-          // on iOS, which is the dominant cost when this list mounts. 12
-          // rows × ~12 ms = the 178 ms long task users were seeing on
-          // the first open of (tabs)/messages. Even at 6 rows the burst
-          // landed as a 127 ms task right after navigation. Going to
-          // 4 rows means the visible viewport (≈ 5 rows on most phones)
-          // still feels populated on first paint, and the 5th+ row
-          // batches in over the next two RAF ticks instead of all at
-          // once on the navigation transition frame.
-          initialNumToRender={4}
-          maxToRenderPerBatch={3}
-          windowSize={5}
-          updateCellsBatchingPeriod={100}
-          // Fixed row geometry: Avatar size="md" is 44 px tall + 10 px
-          // top + 10 px bottom padding = 64 px per row; the 0.5 px
-          // separator is rendered as a sibling. Providing getItemLayout
-          // lets FlatList skip the per-row onLayout measurement pass on
-          // the cold-mount frame, shaving the residual mount cost left
-          // after the ContextMenu lazy-mount fix and helping
-          // scroll-to-index work without an intermediate measurement.
-          getItemLayout={MESSAGES_ITEM_LAYOUT}
-        />
-      )}
+        </View>
+      </GestureDetector>
 
       {/* FAB + popup menu — Apple-style: scale-and-fade out of the FAB itself
           (origin = bottom-right of the FAB). Single Animated value drives both

@@ -889,47 +889,67 @@ export default function ProfileScreen() {
           )}
         </View>
       )}
-      <View style={{ marginTop: 16, marginHorizontal: -16, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border.light }}>
-        <View style={{ flexDirection: 'row' }}>{tabs.map((tab) => (
-          <Pressable
-            key={tab.key}
-            onPress={() => { triggerHaptic('selection'); setActiveTab(tab.key); }}
-            // Long-press opens the per-tab customization sheet. Own profile
-            // only — this whole screen IS the user's own profile, so no
-            // viewer check is needed here. Other-user profiles render
-            // through `app/profile/[id].tsx` where the long-press is
-            // gated on `isOwnProfile`.
-            onLongPress={() => { triggerHaptic('medium'); setEditingTabKey(tab.key); }}
-            delayLongPress={300}
-            style={{ flex: 1, alignItems: 'center', paddingVertical: 11, flexDirection: 'row', justifyContent: 'center', gap: 4 }}
-          >
-            {tab.emoji ? (
-              <RNText
-                allowFontScaling={false}
-                style={{
-                  // Emoji glyphs draw a few pixels above the text baseline; a
-                  // tight `<Text variant="caption">` (lineHeight ≈ font size)
-                  // clips the top of taller emoji like ✨ / ⚡. Use a plain
-                  // RNText with an explicit lineHeight ~25% taller than the
-                  // font size, and disable Android's extra `includeFontPadding`
-                  // so the glyph isn't pushed down into a clipped region.
-                  fontSize: 14,
-                  lineHeight: 18,
-                  includeFontPadding: false,
-                  textAlignVertical: 'center',
-                }}
-              >
-                {tab.emoji}
-              </RNText>
-            ) : null}
-            <Text variant="caption" weight={activeTab === tab.key ? 'bold' : 'regular'} color={activeTab === tab.key ? theme.colors.text.primary : theme.colors.text.tertiary}>{tab.label}</Text>
-          </Pressable>
-        ))}</View>
-        <View style={{ position: 'absolute', bottom: 0, height: 2, backgroundColor: theme.colors.accent.primary, width: SCREEN_WIDTH / 4, left: tabs.findIndex(t => t.key === activeTab) * (SCREEN_WIDTH / 4) }} />
+      {/* Profile category tabs — the old full-width bottom hairline + the
+          sliding accent underline are removed for a cleaner "open" profile.
+          The active tab now reads as a rounded pill: interactive liquid glass
+          when enabled, otherwise a soft accent-tinted rounded fill. */}
+      <View style={{ marginTop: 16 }}>
+        <View style={{ flexDirection: 'row', paddingHorizontal: 4 }}>{tabs.map((tab) => {
+          const isActive = activeTab === tab.key;
+          const content = (
+            <>
+              {tab.emoji ? (
+                <RNText
+                  allowFontScaling={false}
+                  style={{
+                    // Emoji glyphs draw a few pixels above the text baseline; a
+                    // tight `<Text variant="caption">` (lineHeight ≈ font size)
+                    // clips the top of taller emoji like ✨ / ⚡. Plain RNText
+                    // with explicit lineHeight + no includeFontPadding fixes it.
+                    fontSize: 14,
+                    lineHeight: 18,
+                    includeFontPadding: false,
+                    textAlignVertical: 'center',
+                  }}
+                >
+                  {tab.emoji}
+                </RNText>
+              ) : null}
+              <Text variant="caption" weight={isActive ? 'bold' : 'regular'} color={isActive ? theme.colors.text.primary : theme.colors.text.tertiary}>{tab.label}</Text>
+            </>
+          );
+          return (
+            <Pressable
+              key={tab.key}
+              onPress={() => { triggerHaptic('selection'); setActiveTab(tab.key); }}
+              // Long-press opens the per-tab customization sheet. Own profile
+              // only — this whole screen IS the user's own profile.
+              onLongPress={() => { triggerHaptic('medium'); setEditingTabKey(tab.key); }}
+              delayLongPress={300}
+              style={{ flex: 1, paddingHorizontal: 4 }}
+            >
+              {glassActive && isActive ? (
+                <NativeGlassView
+                  glassStyle="regular"
+                  isInteractive
+                  colorScheme={theme.isDark ? 'dark' : 'light'}
+                  tintColor={theme.colors.accent.primary + '33'}
+                  style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 9, borderRadius: 16 }}
+                >
+                  {content}
+                </NativeGlassView>
+              ) : (
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 9, borderRadius: 16, backgroundColor: isActive ? theme.colors.accent.primary + '1F' : 'transparent' }}>
+                  {content}
+                </View>
+              )}
+            </Pressable>
+          );
+        })}</View>
       </View>
       <View style={{ height: 12 }} />
     </>
-  ), [theme, user, bannerUrl, bannerTransform, chromeReady, bannerIsLight, activeTab, userLinks, tabs]);
+  ), [theme, user, bannerUrl, bannerTransform, chromeReady, bannerIsLight, activeTab, userLinks, tabs, glassActive]);
 
 
   return (
