@@ -224,7 +224,7 @@ export function PostContextMenu({ visible, post, isOwnPost, onClose, onDelete }:
               </View>
               <MenuItem icon="copy" label={t('post_context.copy')} onPress={handleCopy} theme={theme} />
               <MenuItem icon="share-2" label={t('post_context.share')} onPress={handleShare} theme={theme} />
-              {isOwnPost && <MenuItem icon="edit-2" label={t('post_context.edit')} onPress={handleEdit} theme={theme} />}
+              {isOwnPost && !post.isRepost && <MenuItem icon="edit-2" label={t('post_context.edit')} onPress={handleEdit} theme={theme} />}
               {isOwnPost && <MenuItem icon="trash-2" label={t('post_context.delete')} onPress={handleDelete} theme={theme} destructive />}
               <View style={{ height: 8 }} />
             </View>

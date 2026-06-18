@@ -308,11 +308,14 @@ function UserProfilePostCardBase({
               {content}
             </FormattedText>
           ) : null}
-          {/* Link preview when the post has no image (Telegram-style, instant from cache) */}
+          {/* Link preview when the post has no image (Telegram-style, instant from cache).
+              Non-interactive View so the OUTER card Pressable owns long-press
+              uniformly — fixes link-only posts where the menu opened only over
+              the preview's exact bounds. */}
           {link ? (
-            <Pressable onLongPress={enrichLongPress} delayLongPress={400} style={styles.linkWrap}>
+            <View style={styles.linkWrap} pointerEvents="none">
               <LinkPreview url={link} static />
-            </Pressable>
+            </View>
           ) : null}
           <View style={styles.metaRow}>
             <View style={styles.metaItem}>

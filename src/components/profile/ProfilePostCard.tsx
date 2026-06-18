@@ -277,9 +277,15 @@ function ProfilePostCardBase({ post, authorName, authorEmoji, authorVerified, au
           )}
           {content ? <FormattedText style={styles.bodyText} color={theme.colors.text.secondary}>{content}</FormattedText> : null}
           {link ? (
-            <Pressable onLongPress={() => { triggerHaptic('medium'); onLongPress(post); }} delayLongPress={400} style={styles.linkWrap}>
+            // Plain non-interactive View (NOT a nested Pressable): the OUTER
+            // card Pressable then owns long-press uniformly across the whole
+            // card. The previous inner Pressable only caught long-press over
+            // the preview's exact bounds, so on link-only posts the menu
+            // opened "only in certain spots / not first try". `pointerEvents
+            // none` guarantees the preview never steals the touch.
+            <View style={styles.linkWrap} pointerEvents="none">
               <LinkPreview url={link} static />
-            </Pressable>
+            </View>
           ) : null}
           <View style={styles.metaRow}>
             <View style={styles.metaItem}><Feather name="heart" size={12} color={theme.colors.text.tertiary} /><Text variant="caption" color={theme.colors.text.tertiary} style={styles.metaText}>{post.likesCount}</Text></View>
