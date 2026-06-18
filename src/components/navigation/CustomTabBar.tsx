@@ -455,6 +455,10 @@ function ProfileCapsule({
   marginBottom: number;
 }) {
   const color = isFocused ? activeColor : inactiveColor;
+  // Press-squish — mirrors the main bar's pill press feel so the detached
+  // profile button has the same tactile response. UI-thread shared value.
+  const pressScale = useSharedValue(1);
+  const pressStyle = useAnimatedStyle(() => ({ transform: [{ scale: pressScale.value }] }));
   // Subtle active background — only when focused, and only when we're NOT on
   // real native glass (the genuine glass supplies its own selection feel, so
   // a painted fill on top would look "combined" like the lens did).
@@ -466,12 +470,7 @@ function ProfileCapsule({
       : 'transparent';
 
   return (
-    <Pressable
-      onPress={onPress}
-      onLongPress={onLongPress}
-      accessibilityRole="button"
-      accessibilityLabel="Profile"
-      accessibilityState={{ selected: isFocused }}
+    <Animated.View
       style={[
         styles.profileCapsule,
         {
@@ -481,23 +480,33 @@ function ProfileCapsule({
             : isDark ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.5)',
           shadowColor: isDark ? '#000' : 'rgba(0,0,0,0.15)',
         },
+        pressStyle,
       ]}
     >
-      {/* Same glass stack as the main bar so both capsules match: native
-          liquid glass when enabled, BlurView/gradient fallback otherwise. */}
-      <GlassBackdrop isDark={isDark} />
-      {!glassActive && <TopReflection isDark={isDark} />}
-      {/* Active selection fill sits above the glass but below the icon. */}
-      {activeBg !== 'transparent' && (
-        <View
-          style={[StyleSheet.absoluteFill, { backgroundColor: activeBg }]}
-          pointerEvents="none"
-        />
-      )}
-      <View style={styles.profileInner}>
+      <Pressable
+        onPress={onPress}
+        onLongPress={onLongPress}
+        onPressIn={() => { pressScale.value = withSpring(PRESS_SCALE, PRESS_SPRING); }}
+        onPressOut={() => { pressScale.value = withSpring(1, PRESS_SPRING); }}
+        accessibilityRole="button"
+        accessibilityLabel="Profile"
+        accessibilityState={{ selected: isFocused }}
+        style={styles.profileInner}
+      >
+        {/* Same glass stack as the main bar so both capsules match: native
+            liquid glass when enabled, BlurView/gradient fallback otherwise. */}
+        <GlassBackdrop isDark={isDark} />
+        {!glassActive && <TopReflection isDark={isDark} />}
+        {/* Active selection fill sits above the glass but below the icon. */}
+        {activeBg !== 'transparent' && (
+          <View
+            style={[StyleSheet.absoluteFill, { backgroundColor: activeBg }]}
+            pointerEvents="none"
+          />
+        )}
         <Feather name="user" size={22} color={color} />
-      </View>
-    </Pressable>
+      </Pressable>
+    </Animated.View>
   );
 }
 
