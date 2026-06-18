@@ -140,40 +140,39 @@ function CustomSplash() {
   // whole user object, so unrelated profile updates don't re-trigger the
   // mount animation.
   const displayName = useAuthStore((s) => s.user?.displayName);
-  const logoAnim = useRef(new Animated.Value(-40)).current;
-  const textAnim = useRef(new Animated.Value(40)).current;
   const opacityAnim = useRef(new Animated.Value(0)).current;
+  const scaleAnim = useRef(new Animated.Value(0.92)).current;
+  const textAnim = useRef(new Animated.Value(8)).current;
 
   useEffect(() => {
     Animated.parallel([
-      Animated.timing(logoAnim, { toValue: 0, duration: 500, useNativeDriver: true }),
-      Animated.timing(textAnim, { toValue: 0, duration: 500, useNativeDriver: true }),
-      Animated.timing(opacityAnim, { toValue: 1, duration: 400, useNativeDriver: true }),
+      Animated.timing(opacityAnim, { toValue: 1, duration: 360, useNativeDriver: true }),
+      Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: true, tension: 60, friction: 9 }),
+      Animated.timing(textAnim, { toValue: 0, duration: 420, useNativeDriver: true }),
     ]).start();
   }, []);
 
   // IMPORTANT: this screen must visually match the NATIVE splash (app.json:
-  // expo-splash-screen → backgroundColor "#141414", icon.png). The native iOS
-  // launch screen is mandatory and always shows briefly while the JS engine
-  // boots; if this JS splash used the THEME background (white in light mode)
-  // the user saw a jarring dark→light flash between the two. Pinning this to
-  // the same dark #141414 + light text makes the native→JS hand-off seamless
-  // regardless of the active theme.
+  // expo-splash-screen → backgroundColor "#141414", icon.png CENTERED). The
+  // native iOS launch screen is mandatory and always shows briefly while the
+  // JS engine boots — it CANNOT be removed. To make the native→JS hand-off
+  // invisible we mirror it exactly: same dark #141414 bg AND the same
+  // centered-logo layout (the previous side-by-side "icon + San" layout made
+  // the two screens look different, which read as a jarring "double splash").
+  // The logo stays put; "San" just fades up underneath it.
   return (
     <View style={[styles.loadingContainer, { backgroundColor: '#141414' }]}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 32, maxWidth: '90%' }}>
-        <Animated.View style={{ transform: [{ translateX: logoAnim }], opacity: opacityAnim }}>
-          <RNImage source={require('../assets/icon.png')} style={{ width: 44, height: 44, borderRadius: 12 }} />
-        </Animated.View>
-        <Animated.View style={{ transform: [{ translateX: textAnim }], opacity: opacityAnim, flexShrink: 1 }}>
-          <RNText style={{ fontSize: 28, fontWeight: '700', color: '#FFFFFF' }}>San</RNText>
+      <Animated.View style={{ alignItems: 'center', opacity: opacityAnim, transform: [{ scale: scaleAnim }] }}>
+        <RNImage source={require('../assets/icon.png')} style={{ width: 96, height: 96, borderRadius: 22 }} />
+        <Animated.View style={{ alignItems: 'center', opacity: opacityAnim, transform: [{ translateY: textAnim }], marginTop: 18 }}>
+          <RNText style={{ fontSize: 26, fontWeight: '700', color: '#FFFFFF' }}>San</RNText>
           {displayName && (
-            <RNText numberOfLines={1} style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)', marginTop: 2 }}>
+            <RNText numberOfLines={1} style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)', marginTop: 3, paddingHorizontal: 32, maxWidth: '90%' }}>
               {t('splash.greeting', undefined, { name: displayName })}
             </RNText>
           )}
         </Animated.View>
-      </View>
+      </Animated.View>
     </View>
   );
 }
