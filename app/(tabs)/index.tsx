@@ -738,6 +738,14 @@ export default function FeedScreen() {
         initialNumToRender={2}
         maxToRenderPerBatch={1}
         windowSize={3}
+        // Post cards now size to their image's aspect ratio, so an image
+        // finishing its decode WHILE you scroll changes that card's height.
+        // Without anchoring, every such resize above the viewport shifted the
+        // content offset → the "feed jerks / scrolls on its own" the user hit.
+        // maintainVisibleContentPosition pins the currently-visible item so
+        // height changes above it are compensated by an offset adjustment
+        // instead of a visible jump.
+        maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
         refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={theme.colors.accent.primary} progressViewOffset={headerContentHeight} />}
       />
 

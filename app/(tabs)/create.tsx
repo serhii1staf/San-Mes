@@ -644,8 +644,8 @@ export default function CreateScreen() {
               >
                 {imageUris.map((uri, index) => (
                   <View key={index} style={{ position: 'relative' }}>
-                    <Image
-                      source={{ uri }}
+                    <CachedImage
+                      uri={uri}
                       style={{
                         width: imageUris.length === 1 ? 200 : 140,
                         height: imageUris.length === 1 ? 200 : 140,
@@ -653,6 +653,7 @@ export default function CreateScreen() {
                         backgroundColor: theme.colors.background.secondary,
                       }}
                       resizeMode="cover"
+                      proxyWidth={imageUris.length === 1 ? 200 : 140}
                     />
                     <Pressable
                       onPress={() => removeImage(index)}

@@ -1113,9 +1113,17 @@ export default function ProfileScreen() {
                 })()}
               </View>
               {/* Close */}
-              <Pressable onPress={() => setViewingImage(null)} style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' }}>
-                <Feather name="x" size={20} color="#FFFFFF" />
-              </Pressable>
+              {glassActive ? (
+                <Pressable onPress={() => setViewingImage(null)} style={{ borderRadius: 18 }}>
+                  <NativeGlassView glassStyle="regular" isInteractive colorScheme="dark" style={{ width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' }}>
+                    <Feather name="x" size={20} color="#FFFFFF" />
+                  </NativeGlassView>
+                </Pressable>
+              ) : (
+                <Pressable onPress={() => setViewingImage(null)} style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' }}>
+                  <Feather name="x" size={20} color="#FFFFFF" />
+                </Pressable>
+              )}
             </View>
           </LinearGradient>
           {/* Image — full width, zoomable + horizontal scroll for multi-image */}
