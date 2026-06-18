@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, ScrollView, Pressable, StyleSheet, Platform, Modal, KeyboardAvoidingView, Text as RNText, Dimensions } from 'react-native';
+import { View, ScrollView, Pressable, StyleSheet, Platform, Modal, KeyboardAvoidingView, Text as RNText, Dimensions, Switch } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -155,6 +155,13 @@ export default function EditProfileScreen() {
   const [linkUrl, setLinkUrl] = useState('');
   const [linkType, setLinkType] = useState('website');
   const [isSaving, setIsSaving] = useState(false);
+  // Owner-controlled screenshot lock — travels with the account. When ON,
+  // anyone VIEWING this profile / chatting with this user gets capture
+  // protection (Android: blocked outright; iOS: recording blocked + the
+  // 🙈 shield flashes on a still screenshot).
+  const [screenshotsDisabled, setScreenshotsDisabled] = useState<boolean>(
+    !!(user as any)?.screenshots_disabled,
+  );
   // Banner: separate the underlying image URL from the position/zoom
   // transform. The user.bannerUrl string may already carry an
   // `#x=&y=&s=` hash from a prior save — split it on mount so the
@@ -252,6 +259,7 @@ export default function EditProfileScreen() {
         emoji: selectedEmoji,
         links,
         bannerUrl: localBannerUrl,
+        screenshots_disabled: screenshotsDisabled,
       });
 
       if (user?.id) {
@@ -276,6 +284,7 @@ export default function EditProfileScreen() {
           emoji: selectedEmoji,
           banner_url: persistedUrl || undefined,
           links: links.length > 0 ? links : [],
+          screenshots_disabled: screenshotsDisabled,
         });
 
         if (persistedUrl && persistedUrl !== localBannerUrl) {
@@ -568,6 +577,28 @@ export default function EditProfileScreen() {
               </Text>
             </Pressable>
           )}
+        </View>
+
+        {/* Privacy — owner-controlled screenshot lock. Per-account: the flag
+            is saved on the profile row and read by anyone viewing this
+            account, so no per-second polling. */}
+        <View style={[styles.linksSection, { backgroundColor: bgElevated, borderColor, marginTop: 16 }]}>
+          <View style={styles.privacyRow}>
+            <View style={styles.privacyTextWrap}>
+              <Text variant="body" weight="semibold">
+                {t('settings.screenshots_disabled', 'Disable screenshots')}
+              </Text>
+              <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginTop: 2 }}>
+                {t('settings.screenshots_disabled_desc', 'Stop others from screenshotting or recording your profile and chats')}
+              </Text>
+            </View>
+            <Switch
+              value={screenshotsDisabled}
+              onValueChange={setScreenshotsDisabled}
+              trackColor={{ false: borderColor, true: accent }}
+              thumbColor="#FFFFFF"
+            />
+          </View>
         </View>
       </ScrollView>
 
@@ -1180,6 +1211,13 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingVertical: 10,
   },
+  privacyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 14,
+  },
+  privacyTextWrap: { flex: 1 },
   emojiPreviewWrap: {
     alignSelf: 'center',
     width: 64,

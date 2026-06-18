@@ -38,6 +38,8 @@ export interface User {
   bannerUrl?: string;
   badge?: string;
   is_verified?: boolean;
+  /** Owner-controlled flag: when true, viewers can't screenshot/record this account's profile & chats. */
+  screenshots_disabled?: boolean;
 }
 
 interface AuthStoreState {
@@ -124,6 +126,7 @@ export const useAuthStore = create<AuthStoreState>()(
               badge: profile.badge || undefined,
               is_verified: !!profile.is_verified,
               bannerUrl: profile.banner_url || undefined,
+              screenshots_disabled: !!(profile as any).screenshots_disabled,
               links: (profile.links || undefined) as any,
               // Preserve the in-memory PIN if the user already entered
               // one this session — the Worker doesn't send it back.

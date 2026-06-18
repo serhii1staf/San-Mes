@@ -39,6 +39,8 @@ import { useT } from '../../src/i18n/store';
 import { perfMonitor } from '../../src/services/perfMonitor';
 import { useSettingsStore } from '../../src/store/settingsStore';
 import { useLiquidGlassActive, NativeGlassView, GlassBg } from '../../src/components/ui/LiquidGlass';
+import { useScreenCaptureGuard } from '../../src/hooks/useScreenCaptureGuard';
+import { ScreenshotShield } from '../../src/components/ui/ScreenshotShield';
 
 const REPLY_THRESHOLD = 60;
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -698,6 +700,19 @@ export default function ChatScreen() {
     return () => handle.cancel();
   }, [participantId, conversation, cachedProfile]);
 
+  // Per-account screenshot lock for the CHAT PARTNER. The flag rides along on
+  // the partner's profile (cached entity store or the fetched profileData), so
+  // there's no polling — we read it once with the profile. When the partner
+  // turned screenshots off, protect this chat (Android blocks capture incl.
+  // over the long-press message menu; iOS blocks recording + flashes 🙈).
+  const partnerScreenshotsOff = !!(
+    (cachedProfile as any)?.screenshots_disabled ?? (profileData as any)?.screenshots_disabled
+  );
+  const { screenshotDetected } = useScreenCaptureGuard(
+    partnerScreenshotsOff,
+    `chat-${participantId || conversationId}`,
+  );
+
   // Fallback for devices without MMKV: warm the AsyncStorage mirror, then hydrate
   // if the synchronous seed above found nothing.
   useEffect(() => {
@@ -750,8 +765,7 @@ export default function ChatScreen() {
       }
     });
     return () => handle.cancel();
-  }, [conversationId]);
-  useEffect(() => {
+  }, [conversationId]);  useEffect(() => {
     if (!conversationId) return;
     if (myMessages && myMessages.length > 0) {
       kvSetJSON(`chat_messages:${conversationId}`, myMessages);
@@ -2017,6 +2031,7 @@ export default function ChatScreen() {
           )}
         </View>
       </Modal>
+      <ScreenshotShield visible={screenshotDetected} />
     </View>
   );
 }

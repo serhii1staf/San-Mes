@@ -31,6 +31,8 @@ import { ProfileReplyCard, ProfileReply } from '../../src/components/profile/Pro
 import { AdaptiveProfileText } from '../../src/components/profile/AdaptiveProfileText';
 import { EditProfileTabModal } from '../../src/components/profile/EditProfileTabModal';
 import { useProfileAppearanceStore } from '../../src/store/profileAppearanceStore';
+import { useScreenCaptureGuard } from '../../src/hooks/useScreenCaptureGuard';
+import { ScreenshotShield } from '../../src/components/ui/ScreenshotShield';
 import { PanResponder } from 'react-native';
 import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
 import { useT } from '../../src/i18n/store';
@@ -335,6 +337,12 @@ export default function UserProfileScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [perfEnabled]);
   const { id, fromChat } = useLocalSearchParams<{ id: string; fromChat?: string }>();
+  // Screen-capture protection: if the VIEWED account turned screenshots off,
+  // block capture while their profile is on screen. Per-account flag, read from
+  // the already-fetched profile in the entity store (no polling). Android fully
+  // blocks; iOS blocks recording and shows the 🙈 shield on a screenshot.
+  const screenshotsOff = useEntityStore((s) => !!(s.profiles?.[id || ''] as any)?.screenshots_disabled);
+  const { screenshotDetected } = useScreenCaptureGuard(screenshotsOff, 'profile-' + (id || ''));
   // Field selector — destructuring the whole store re-rendered this screen on
   // every unrelated auth-state change (badge sync, token refresh, etc.).
   const currentUser = useAuthStore((s) => s.user);
@@ -1411,6 +1419,7 @@ export default function UserProfileScreen() {
       )}
 
       <ProfileMenuModal visible={showMenu} profile={displayProfile} onClose={handleCloseMenu} />
+      <ScreenshotShield visible={screenshotDetected} />
       <FollowsListModal visible={!!followsModal} mode={followsModal || 'followers'} userId={displayProfile?.id || null} onClose={() => setFollowsModal(null)} />
 
       {/* Fullscreen Image Viewer */}

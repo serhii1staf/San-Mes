@@ -44,6 +44,8 @@ import { useSettingsStore } from '../../src/store/settingsStore';
 import { useLiquidGlassActive, NativeGlassView } from '../../src/components/ui/LiquidGlass';
 import { parseBannerTransform, stripBannerTransform } from '../../src/utils/bannerTransform';
 import { useBannerBrightness } from '../../src/hooks/useBannerBrightness';
+import { useScreenCaptureGuard } from '../../src/hooks/useScreenCaptureGuard';
+import { ScreenshotShield } from '../../src/components/ui/ScreenshotShield';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const MY_POSTS_CACHE_KEY = '@san:my_posts';
@@ -117,6 +119,11 @@ export default function ProfileScreen() {
   // the profile screen on every unrelated profile field change (badge sync, etc.)
   const user = useAuthStore((s) => s.user);
   const updateProfile = useAuthStore((s) => s.updateProfile);
+  // Own-account screenshot lock — when the owner turned it on, protect their
+  // own profile view too (so the setting is consistent everywhere the account
+  // appears). Android blocks capture outright; iOS flashes the 🙈 shield.
+  const ownScreenshotsOff = !!(user as any)?.screenshots_disabled;
+  const { screenshotDetected } = useScreenCaptureGuard(ownScreenshotsOff, 'own-profile');
   // Individual selectors avoid re-rendering this screen on every unrelated
   // change to the feed store (e.g., feed list updates, refresh flag flips).
   const userPosts = useFeedStore((s) => s.profilePosts);
@@ -1207,6 +1214,7 @@ export default function ProfileScreen() {
           if (editingTabKey) clearProfileTabCustom(editingTabKey);
         }}
       />
+      <ScreenshotShield visible={screenshotDetected} />
     </View>
   );
 }

@@ -504,6 +504,7 @@ export default function SettingsScreen() {
         />
       </View>
 
+      {/* App icon picker — lazy-loaded because it imports expo-image-manipulator
           (a native module) at import time. Mounting it before the navigation
           transition completes was the source of the long task on this screen.
           The component flips in one frame after `runAfterInteractions`. */}
