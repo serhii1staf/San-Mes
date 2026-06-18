@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { View, Pressable, ActivityIndicator, Share } from 'react-native';
+import { View, Pressable, ActivityIndicator, Share, Linking } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { Feather } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -68,7 +68,12 @@ export default function MiniAppScreen() {
     setIsLoading(false);
   };
 
-  // Decode URL properly — handle double encoding and trim whitespace
+  // Decode URL properly — handle double encoding and trim whitespace, then
+  // FORCE https. Mini-app URLs are user-supplied (a creator types them in), so
+  // we treat the input as untrusted: an `http://` URL is upgraded to https
+  // (no cleartext / downgrade), and anything without a scheme gets https://.
+  // Non-web schemes can't reach here as the initial load — the WebView's
+  // originWhitelist + onShouldStartLoadWithRequest below enforce https-only.
   const decodedUrl = (() => {
     let raw = (url || '').trim();
     // Decode until no more encoding
@@ -80,10 +85,35 @@ export default function MiniAppScreen() {
       } catch { break; }
     }
     raw = raw.trim();
-    if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
-    if (raw.includes('.')) return `https://${raw}`;
+    if (/^https:\/\//i.test(raw)) return raw;
+    if (/^http:\/\//i.test(raw)) return 'https://' + raw.slice(raw.indexOf('://') + 3);
     return `https://${raw}`;
   })();
+
+  // ── WebView navigation guard ──────────────────────────────────────────────
+  // Mini-apps render UNTRUSTED third-party web content, so we lock down which
+  // requests are allowed to load inside the WebView:
+  //   • https / blob / about  → load in-webview (normal mini-app traffic).
+  //   • http                  → REFUSED (no cleartext downgrade / MITM).
+  //   • file: / javascript: / data:  → REFUSED. These are the classic local-
+  //     file-exfiltration & universal-XSS vectors (see OWASP MASTG-TEST-0252
+  //     and the react-native-webview Android UXSS advisory).
+  //   • any other scheme (tel:, mailto:, sms:, app deep links, itms-apps:, …)
+  //     → handed to the OS via Linking, NOT loaded in the webview — same as
+  //     Telegram opening external links in the system browser. This also stops
+  //     a hostile mini-app from silently driving our own app's deep links.
+  const onShouldStartLoadWithRequest = (req: { url: string }) => {
+    const u = (req?.url || '');
+    const lower = u.toLowerCase();
+    if (u === 'about:blank' || lower.startsWith('about:')) return true;
+    if (lower.startsWith('https://')) return true;
+    if (lower.startsWith('blob:')) return true;
+    if (lower.startsWith('http://')) return false;
+    if (lower.startsWith('file:') || lower.startsWith('javascript:') || lower.startsWith('data:')) return false;
+    // External / app schemes — let the OS decide, never load in-webview.
+    Linking.openURL(u).catch(() => {});
+    return false;
+  };
 
   const displayName = name || 'App';
   const appEmoji = emoji || '📱';
@@ -168,6 +198,7 @@ export default function MiniAppScreen() {
         onNavigationStateChange={(navState) => setCurrentUrl(navState.url)}
         onError={stopLoading}
         onHttpError={stopLoading}
+        onShouldStartLoadWithRequest={onShouldStartLoadWithRequest}
         renderError={(_errorDomain, _errorCode, errorDesc) => (
           <View style={{ flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center', padding: 32 }}>
             <Text style={{ fontSize: 16, color: '#FFFFFF', fontWeight: '600', marginBottom: 8 }}>{t('mini_app.load_failed')}</Text>
@@ -185,16 +216,32 @@ export default function MiniAppScreen() {
         allowsInlineMediaPlayback
         mediaPlaybackRequiresUserAction={false}
         allowsFullscreenVideo
-        sharedCookiesEnabled={true}
-        thirdPartyCookiesEnabled={true}
+        // ── Security hardening (mini-apps render UNTRUSTED third-party web) ──
+        // Do NOT share the host app's cookie jar / native cookie store with a
+        // third-party page — that would leak our authenticated session cookies
+        // to arbitrary mini-app origins. The webview keeps its OWN isolated
+        // cookie store, so mini-apps still work, just sandboxed from the app.
+        sharedCookiesEnabled={false}
+        thirdPartyCookiesEnabled={false}
         cacheEnabled={true}
-        javaScriptCanOpenWindowsAutomatically={true}
-        mixedContentMode="always"
-        originWhitelist={['*']}
+        // No unsolicited popups / new windows from untrusted JS.
+        javaScriptCanOpenWindowsAutomatically={false}
         setSupportMultipleWindows={false}
-        allowFileAccess={true}
-        allowUniversalAccessFromFileURLs={true}
-        geolocationEnabled={true}
+        // Block ALL cleartext/mixed content (no http resources on an https
+        // page) — defends against MITM injection.
+        mixedContentMode="never"
+        // Only https navigations load in-webview; everything else is handled by
+        // onShouldStartLoadWithRequest above.
+        originWhitelist={['https://*']}
+        // Local-file access is the classic exfiltration / universal-XSS vector
+        // (OWASP MASTG-TEST-0252). A remote https mini-app never needs it, so
+        // every file:// capability is OFF.
+        allowFileAccess={false}
+        allowFileAccessFromFileURLs={false}
+        allowUniversalAccessFromFileURLs={false}
+        // Geolocation requires an Info.plist usage string we don't ship and
+        // would hand precise location to untrusted pages — keep it OFF.
+        geolocationEnabled={false}
         startInLoadingState={false}
         injectedJavaScript={`
           // Enable viewport meta for proper scaling

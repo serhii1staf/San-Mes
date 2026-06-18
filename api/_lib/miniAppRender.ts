@@ -37,6 +37,18 @@ export function escapeHtml(s: string): string {
     .replace(/'/g, '&#39;');
 }
 
+// Safe serialization of a string into an inline <script> context: JSON-encode
+// it, then neutralize the sequences that could break OUT of the script element
+// (`</script>`, `<!--`, U+2028/U+2029). Used for the deep-link / store URL that
+// get embedded as JS string literals in the landing page.
+function jsonForScript(value: string): string {
+  return JSON.stringify(value || '')
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+}
+
 async function workerGet(path: string, admin = false): Promise<any> {
   const headers: Record<string, string> = { Accept: 'application/json' };
   if (admin) headers['X-Admin-Key'] = ADMIN_KEY;
@@ -135,7 +147,7 @@ export function renderMiniAppPage(opts: RenderOpts): string {
 <body>
   <div class="card">
     <div class="cover"></div>
-    <div class="avatar-wrap"><div class="avatar">${emoji || '🧩'}</div></div>
+    <div class="avatar-wrap"><div class="avatar">${escapeHtml(emoji || '🧩')}</div></div>
     <div class="body">
       <div class="name">${escapeHtml(heading)}</div>
       ${subline ? `<div class="sub">${escapeHtml(subline)}</div>` : ''}
@@ -149,8 +161,8 @@ export function renderMiniAppPage(opts: RenderOpts): string {
   </div>
   <script>
     (function(){
-      var deep=${JSON.stringify(deepLink)};
-      var store=${JSON.stringify(APP_STORE_LINK)};
+      var deep=${jsonForScript(deepLink)};
+      var store=${jsonForScript(APP_STORE_LINK)};
       function openApp(){
         var fired=false;
         function cancel(){ fired=true; }

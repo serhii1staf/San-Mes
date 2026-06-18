@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, Pressable, ActivityIndicator, ViewStyle } from 'react-native';
+import { View, Pressable, ActivityIndicator, ViewStyle, Linking } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { Feather } from '@expo/vector-icons';
 import { router, useLocalSearchParams, useNavigation } from 'expo-router';
@@ -75,6 +75,27 @@ export default function BrowserScreen() {
     }
   })();
 
+  // Navigation guard — pages opened here come from posts/chats and are
+  // untrusted. Block the local-file / script-injection schemes outright and
+  // hand non-web schemes (tel:, mailto:, app deep links, …) to the OS instead
+  // of loading them in-webview. http/https/blob/about/data load normally (this
+  // is a general-purpose browser, unlike the https-only mini-app sandbox).
+  const onShouldStartLoadWithRequest = (req: { url: string }) => {
+    const lower = (req?.url || '').toLowerCase();
+    if (lower.startsWith('file:') || lower.startsWith('javascript:')) return false;
+    if (
+      lower.startsWith('http://') ||
+      lower.startsWith('https://') ||
+      lower.startsWith('blob:') ||
+      lower.startsWith('about:') ||
+      lower.startsWith('data:')
+    ) {
+      return true;
+    }
+    Linking.openURL(req.url).catch(() => {});
+    return false;
+  };
+
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
       {/* Header bar */}
@@ -144,6 +165,13 @@ export default function BrowserScreen() {
         allowsBackForwardNavigationGestures
         javaScriptEnabled
         domStorageEnabled
+        onShouldStartLoadWithRequest={onShouldStartLoadWithRequest}
+        // Defense-in-depth: never grant local-file access to remote pages
+        // (OWASP MASTG local-file-inclusion / universal-XSS vector).
+        allowFileAccess={false}
+        allowFileAccessFromFileURLs={false}
+        allowUniversalAccessFromFileURLs={false}
+        mixedContentMode="never"
       />
     </View>
   );
