@@ -199,9 +199,15 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
     () =>
       Gesture.LongPress()
         .minDuration(300)
-        // Do NOT cancel the long press when the finger travels far — the whole
-        // point is to let the user drag down to the buttons while still held.
-        .maxDistance(9999)
+        // `maxDistance` only gates ACTIVATION (RNGH cancels the long press only
+        // if the finger travels past this BEFORE the 300 ms fires). Once
+        // activated, the finger may drag freely down onto the action rows — that
+        // post-activation travel is never restricted. So we keep a SMALL value:
+        // a real vertical scroll (which moves far inside 300 ms) cancels the
+        // long press and stays a scroll, while a still-hold with minor finger
+        // jitter still opens the menu. A huge value here would let a slow
+        // scroll-and-hold accidentally pop the menu.
+        .maxDistance(20)
         .onStart(() => {
           'worklet';
           dragActive.value = true;
