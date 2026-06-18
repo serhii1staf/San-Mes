@@ -492,7 +492,18 @@ export default function SettingsScreen() {
         </Text>
       </ScrollView>
 
-      {/* AppIconModal is rendered lazily — it pulls in expo-alternate-app-icons
+      {/* Bottom fade — mirrors the top header fade so the settings list
+          dissolves into the background at the bottom edge instead of cutting
+          off against a hard line. Pinned absolute over the bottom of the
+          ScrollView; box-none so it never blocks taps on the last rows. */}
+      <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: insets.bottom + 48 }} pointerEvents="none">
+        <LinearGradient
+          colors={[bgTransparent, bgColor + 'B3', bgColor]}
+          locations={[0, 0.45, 1]}
+          style={StyleSheet.absoluteFill}
+        />
+      </View>
+
           (a native module) at import time. Mounting it before the navigation
           transition completes was the source of the long task on this screen.
           The component flips in one frame after `runAfterInteractions`. */}

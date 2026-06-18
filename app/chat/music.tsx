@@ -366,9 +366,22 @@ export default function MusicChatScreen() {
         }
       />
 
-      {/* Input bar */}
+      {/* Static under-input fade — pinned to the screen bottom and kept
+          OUTSIDE the KeyboardStickyView so it does NOT ride up with the
+          keyboard. Mirrors the user-chat under-input gradient: the solid
+          input container is gone, so track cards scroll UNDER the input and
+          dissolve into the background instead of hitting a hard bar edge. */}
+      <LinearGradient
+        colors={[theme.colors.background.primary + '00', theme.colors.background.primary + 'B3', theme.colors.background.primary]}
+        locations={[0, 0.45, 1]}
+        pointerEvents="none"
+        style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: INPUT_BAR + insets.bottom + 56 }}
+      />
+
+      {/* Input bar — no solid backgroundColor: the fade above supplies the
+          darkening so the input floats over content like the user chat. */}
       <KeyboardStickyView offset={{ closed: 0, opened: 0 }} style={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}>
-        <Reanimated.View style={[{ paddingHorizontal: 16, paddingTop: 8, backgroundColor: theme.colors.background.primary }, inputPadStyle]}>
+        <Reanimated.View style={[{ paddingHorizontal: 16, paddingTop: 8 }, inputPadStyle]}>
           {/* Commands drawer — anchored ABOVE the input row, slides in via
               LayoutAnimation when toggled. */}
           {commandsOpen ? (

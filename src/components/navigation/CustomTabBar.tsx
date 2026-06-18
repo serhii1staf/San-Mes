@@ -840,11 +840,19 @@ export const CustomTabBar = React.memo(function CustomTabBar({
                 : isDark ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.5)',
               shadowColor: isDark ? '#000' : 'rgba(0,0,0,0.15)',
             },
+            // When real native glass is active, DON'T hard-clip the bar with
+            // overflow:hidden. The parent clip chops the glass's own specular
+            // rim into a sharp aliased edge — that's the "light contour / not
+            // properly rounded" the user sees. Instead let the glass round
+            // ITSELF via the `radius` prop below (same fix that cleaned up the
+            // detached Profile capsule edges).
+            glassActive ? { overflow: 'visible' } : null,
           ]}
           onLayout={onBarLayout}
         >
-          {/* Glass layers */}
-          <GlassBackdrop isDark={isDark} />
+          {/* Glass layers — pass BAR_BORDER_RADIUS so the native glass rounds
+              itself instead of relying on the parent's (now-removed) clip. */}
+          <GlassBackdrop isDark={isDark} radius={BAR_BORDER_RADIUS} />
           {/* The extra reflection gradient only helps the FAKE glass read as
               curved. On real native glass it just dulls the genuine highlight,
               so we skip it entirely. */}
