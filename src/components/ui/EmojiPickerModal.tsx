@@ -2,6 +2,7 @@ import React, { useRef, useEffect } from 'react';
 import { View, Pressable, Modal, Animated, Dimensions, ScrollView, Text as RNText } from 'react-native';
 import { useTheme } from '../../theme';
 import { Text } from './Text';
+import { useLiquidGlassActive, GlassBg } from './LiquidGlass';
 import { useT } from '../../i18n/store';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -24,6 +25,8 @@ interface EmojiPickerModalProps {
 export function EmojiPickerModal({ visible, onClose, onSelect }: EmojiPickerModalProps) {
   const theme = useTheme();
   const t = useT();
+  // Native iOS-26 liquid glass for the sheet surface. iOS-only + opt-in.
+  const glassActive = useLiquidGlassActive();
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
   const backdropAnim = useRef(new Animated.Value(0)).current;
 
@@ -58,7 +61,19 @@ export function EmojiPickerModal({ visible, onClose, onSelect }: EmojiPickerModa
         </Animated.View>
         <View style={{ flex: 1, justifyContent: 'flex-end' }} pointerEvents="box-none">
           <Animated.View style={{ transform: [{ translateY: slideAnim }] }}>
-            <View style={{ marginHorizontal: 8, marginBottom: 16, maxHeight: SCREEN_HEIGHT * 0.6, backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF', borderRadius: 28, overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.12, shadowRadius: 16, elevation: 10 }}>
+            <View style={{ marginHorizontal: 8, marginBottom: 16, maxHeight: SCREEN_HEIGHT * 0.6, backgroundColor: glassActive ? 'transparent' : (theme.isDark ? theme.colors.background.elevated : '#FFFFFF'), borderRadius: 28, overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.12, shadowRadius: 16, elevation: 10 }}>
+              {/* Liquid-glass sheet surface (static, non-interactive) behind the
+                  content. Tinted so it reads as frosted over the dimmed modal
+                  backdrop instead of nearly-clear `regular` glass. */}
+              {glassActive ? (
+                <GlassBg
+                  borderRadius={28}
+                  glassStyle="regular"
+                  interactive={false}
+                  colorScheme={theme.isDark ? 'dark' : 'light'}
+                  tintColor={theme.isDark ? 'rgba(26,26,31,0.6)' : 'rgba(255,255,255,0.6)'}
+                />
+              ) : null}
               <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 6 }}>
                 <View style={{ width: 40, height: 5, borderRadius: 3, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)' }} />
               </View>

@@ -97,6 +97,8 @@ const bubbleStyles = StyleSheet.create({
 function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, linkEmoji, highlighted, isVisible, onReply, onLongPress, onSwipeActive, onImagePress, dragActive, dragFingerY, hoveredAction, actionZones, onFireDragAction }: { message: ChatMessage; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string; linkEmoji?: string; highlighted?: boolean; isVisible?: boolean; onReply: (m: ChatMessage) => void; onLongPress: (m: ChatMessage) => void; onSwipeActive: (active: boolean) => void; onImagePress: (images: string[], index: number) => void; dragActive: SharedValue<boolean>; dragFingerY: SharedValue<number>; hoveredAction: SharedValue<string>; actionZones: SharedValue<ActionZone[]>; onFireDragAction: (m: ChatMessage, action: string) => void }) {
   const theme = useTheme();
   const t = useT();
+  // Native iOS-26 liquid glass for the swipe-to-reply pill. iOS-only + opt-in.
+  const glassActive = useLiquidGlassActive();
   const fontFamilyStyle = fontFamily === 'mono' ? 'monospace' : fontFamily === 'serif' ? 'serif' : undefined;
 
   // ── Swipe-to-reply: UI-thread gesture (RNGH + Reanimated) ──────────────
@@ -278,9 +280,15 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
   return (
     <View style={bubbleStyles.row}>
       <Reanimated.View style={[bubbleStyles.swipeIcon, replyIconAnimStyle]}>
-        <View style={[bubbleStyles.swipeIconCircle, { backgroundColor: theme.colors.accent.primary + '20' }]}>
-          <Feather name="corner-up-left" size={16} color={theme.colors.accent.primary} />
-        </View>
+        {glassActive ? (
+          <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} tintColor={theme.colors.accent.primary + '40'} style={bubbleStyles.swipeIconCircle}>
+            <Feather name="corner-up-left" size={16} color={theme.colors.accent.primary} />
+          </NativeGlassView>
+        ) : (
+          <View style={[bubbleStyles.swipeIconCircle, { backgroundColor: theme.colors.accent.primary + '20' }]}>
+            <Feather name="corner-up-left" size={16} color={theme.colors.accent.primary} />
+          </View>
+        )}
       </Reanimated.View>
 
       <GestureDetector gesture={composedGesture}>

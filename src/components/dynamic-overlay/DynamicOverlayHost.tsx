@@ -149,6 +149,11 @@ function GlassBackdrop({ isDark, radius }: { isDark: boolean; radius: number }) 
     <GlassSurface
       style={[StyleSheet.absoluteFill, { borderRadius: radius }]}
       glassStyle="regular"
+      // Plain `regular` glass is nearly clear over the feed, which read as
+      // "fully transparent" to the user. A moderate tint gives the surface a
+      // frosted presence (like the previous chrome-material BlurView) while
+      // keeping the genuine glass refraction/highlight.
+      tintColor={isDark ? 'rgba(26,26,31,0.55)' : 'rgba(255,255,255,0.55)'}
       colorScheme={isDark ? 'dark' : 'light'}
       fallback={Platform.OS === 'ios' ? iosFallback : androidFallback}
     />
@@ -253,6 +258,7 @@ function DashboardTile({
         <GlassSurface
           style={StyleSheet.absoluteFill}
           glassStyle="regular"
+          tintColor={isDark ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.4)'}
           colorScheme={isDark ? 'dark' : 'light'}
           fallback={
             Platform.OS === 'ios' ? (

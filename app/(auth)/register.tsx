@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
+import { useLiquidGlassActive, NativeGlassView } from '../../src/components/ui/LiquidGlass';
 import { EmojiPickerModal } from '../../src/components/ui/EmojiPickerModal';
 import { useAuthStore } from '../../src/store';
 import { registerUser } from '../../src/lib/supabase';
@@ -225,6 +226,8 @@ export default function RegisterScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
+  // Native iOS-26 liquid glass for the step CTAs. iOS-only + opt-in.
+  const glassActive = useLiquidGlassActive();
   const [step, setStep] = useState(0);
   const [emoji, setEmoji] = useState('');
   const [name, setName] = useState('');
@@ -416,53 +419,81 @@ export default function RegisterScreen() {
       <View style={{ paddingHorizontal: 32, paddingBottom: insets.bottom + 16 }}>
         {step > 0 ? (
           <View style={{ flexDirection: 'row', gap: 12, alignItems: 'center' }}>
-            <Pressable
-              onPress={() => { setStep(step - 1); setError(''); }}
-              style={{
-                paddingVertical: 16,
-                paddingHorizontal: 24,
-                borderRadius: 16,
-                backgroundColor: theme.colors.background.elevated,
-                borderWidth: 1,
-                borderColor: theme.colors.border.light,
-                alignItems: 'center',
-              }}
-            >
-              <Text variant="body" weight="semibold" color={theme.colors.text.primary}>{t('common.back')}</Text>
-            </Pressable>
-            <Pressable
-              onPress={handleNext}
-              disabled={!canContinue()}
-              style={{
-                flex: 1,
-                paddingVertical: 16,
-                borderRadius: 16,
-                backgroundColor: canContinue() ? theme.colors.accent.primary : theme.colors.border.light,
-                alignItems: 'center',
-              }}
-            >
-              <Text variant="body" weight="semibold" color={canContinue() ? '#FFFFFF' : theme.colors.text.tertiary}>
-                {step === 3 ? t('common.done') : t('common.continue')}
-              </Text>
-            </Pressable>
+            {glassActive ? (
+              <Pressable onPress={() => { setStep(step - 1); setError(''); }} style={{ borderRadius: 16 }}>
+                <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={{ paddingVertical: 16, paddingHorizontal: 24, borderRadius: 16, alignItems: 'center' }}>
+                  <Text variant="body" weight="semibold" color={theme.colors.text.primary}>{t('common.back')}</Text>
+                </NativeGlassView>
+              </Pressable>
+            ) : (
+              <Pressable
+                onPress={() => { setStep(step - 1); setError(''); }}
+                style={{
+                  paddingVertical: 16,
+                  paddingHorizontal: 24,
+                  borderRadius: 16,
+                  backgroundColor: theme.colors.background.elevated,
+                  borderWidth: 1,
+                  borderColor: theme.colors.border.light,
+                  alignItems: 'center',
+                }}
+              >
+                <Text variant="body" weight="semibold" color={theme.colors.text.primary}>{t('common.back')}</Text>
+              </Pressable>
+            )}
+            {glassActive ? (
+              <Pressable onPress={handleNext} disabled={!canContinue()} style={{ flex: 1, borderRadius: 16 }}>
+                <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} tintColor={canContinue() ? theme.colors.accent.primary : undefined} style={{ paddingVertical: 16, borderRadius: 16, alignItems: 'center' }}>
+                  <Text variant="body" weight="semibold" color={canContinue() ? '#FFFFFF' : theme.colors.text.tertiary}>
+                    {step === 3 ? t('common.done') : t('common.continue')}
+                  </Text>
+                </NativeGlassView>
+              </Pressable>
+            ) : (
+              <Pressable
+                onPress={handleNext}
+                disabled={!canContinue()}
+                style={{
+                  flex: 1,
+                  paddingVertical: 16,
+                  borderRadius: 16,
+                  backgroundColor: canContinue() ? theme.colors.accent.primary : theme.colors.border.light,
+                  alignItems: 'center',
+                }}
+              >
+                <Text variant="body" weight="semibold" color={canContinue() ? '#FFFFFF' : theme.colors.text.tertiary}>
+                  {step === 3 ? t('common.done') : t('common.continue')}
+                </Text>
+              </Pressable>
+            )}
           </View>
         ) : (
           <>
-            <Pressable
-              onPress={handleNext}
-              disabled={!canContinue()}
-              style={{
-                paddingVertical: 16,
-                borderRadius: 16,
-                backgroundColor: canContinue() ? theme.colors.accent.primary : theme.colors.border.light,
-                alignItems: 'center',
-                marginBottom: 12,
-              }}
-            >
-              <Text variant="body" weight="semibold" color={canContinue() ? '#FFFFFF' : theme.colors.text.tertiary}>
-                {t('common.continue')}
-              </Text>
-            </Pressable>
+            {glassActive ? (
+              <Pressable onPress={handleNext} disabled={!canContinue()} style={{ borderRadius: 16, marginBottom: 12 }}>
+                <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} tintColor={canContinue() ? theme.colors.accent.primary : undefined} style={{ paddingVertical: 16, borderRadius: 16, alignItems: 'center' }}>
+                  <Text variant="body" weight="semibold" color={canContinue() ? '#FFFFFF' : theme.colors.text.tertiary}>
+                    {t('common.continue')}
+                  </Text>
+                </NativeGlassView>
+              </Pressable>
+            ) : (
+              <Pressable
+                onPress={handleNext}
+                disabled={!canContinue()}
+                style={{
+                  paddingVertical: 16,
+                  borderRadius: 16,
+                  backgroundColor: canContinue() ? theme.colors.accent.primary : theme.colors.border.light,
+                  alignItems: 'center',
+                  marginBottom: 12,
+                }}
+              >
+                <Text variant="body" weight="semibold" color={canContinue() ? '#FFFFFF' : theme.colors.text.tertiary}>
+                  {t('common.continue')}
+                </Text>
+              </Pressable>
+            )}
             <Pressable onPress={() => router.push('/(auth)/login')} style={{ alignItems: 'center', paddingVertical: 8 }}>
               <Text variant="body" color={theme.colors.text.secondary}>
                 {t('auth.have_account')}{' '}

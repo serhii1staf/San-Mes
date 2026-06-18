@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
+import { useLiquidGlassActive, NativeGlassView } from '../../src/components/ui/LiquidGlass';
 import { useAuthStore } from '../../src/store';
 import { loginUser } from '../../src/lib/supabase';
 import { useT } from '../../src/i18n/store';
@@ -13,6 +14,8 @@ export default function LoginScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
+  // Native iOS-26 liquid glass for the login CTA. iOS-only + opt-in.
+  const glassActive = useLiquidGlassActive();
   const [deviceKey, setDeviceKey] = useState('');
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
@@ -173,25 +176,47 @@ export default function LoginScreen() {
       ) : null}
 
       {/* Login button */}
-      <Pressable
-        onPress={handleLogin}
-        disabled={!canLogin || isLoading}
-        style={{
-          paddingVertical: 16,
-          borderRadius: 16,
-          backgroundColor: canLogin ? theme.colors.accent.primary : theme.colors.border.light,
-          alignItems: 'center',
-          marginBottom: 16,
-        }}
-      >
-        {isLoading ? (
-          <ActivityIndicator color="#FFFFFF" />
-        ) : (
-          <Text variant="body" weight="semibold" color={canLogin ? '#FFFFFF' : theme.colors.text.tertiary}>
-            {t('auth.signin')}
-          </Text>
-        )}
-      </Pressable>
+      {glassActive ? (
+        <Pressable onPress={handleLogin} disabled={!canLogin || isLoading} style={{ borderRadius: 16, marginBottom: 16 }}>
+          <NativeGlassView
+            glassStyle="regular"
+            isInteractive
+            colorScheme={theme.isDark ? 'dark' : 'light'}
+            // Tint with accent only when actionable, so a disabled button still
+            // reads as inert (clear glass) rather than a live CTA.
+            tintColor={canLogin ? theme.colors.accent.primary : undefined}
+            style={{ paddingVertical: 16, borderRadius: 16, alignItems: 'center' }}
+          >
+            {isLoading ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <Text variant="body" weight="semibold" color={canLogin ? '#FFFFFF' : theme.colors.text.tertiary}>
+                {t('auth.signin')}
+              </Text>
+            )}
+          </NativeGlassView>
+        </Pressable>
+      ) : (
+        <Pressable
+          onPress={handleLogin}
+          disabled={!canLogin || isLoading}
+          style={{
+            paddingVertical: 16,
+            borderRadius: 16,
+            backgroundColor: canLogin ? theme.colors.accent.primary : theme.colors.border.light,
+            alignItems: 'center',
+            marginBottom: 16,
+          }}
+        >
+          {isLoading ? (
+            <ActivityIndicator color="#FFFFFF" />
+          ) : (
+            <Text variant="body" weight="semibold" color={canLogin ? '#FFFFFF' : theme.colors.text.tertiary}>
+              {t('auth.signin')}
+            </Text>
+          )}
+        </Pressable>
+      )}
 
       {/* Register link */}
       <Pressable
