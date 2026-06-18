@@ -79,6 +79,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useTheme } from '../../theme';
 import { useT } from '../../i18n/store';
+import { GlassSurface, useLiquidGlassActive } from '../ui/LiquidGlass';
 import { useAuthStore } from '../../store/authStore';
 import { useSettingsStore } from '../../store/settingsStore';
 import { useNotificationsBadge } from '../../store/notificationsBadgeStore';
@@ -124,16 +125,17 @@ const SCALE_KICK_EXPAND = 1.03;
 // ─── Glass material — single BlurView per surface, no stacking ─────────────
 
 function GlassBackdrop({ isDark, radius }: { isDark: boolean; radius: number }) {
-  if (Platform.OS === 'ios') {
-    return (
-      <BlurView
-        intensity={isDark ? 70 : 80}
-        tint={isDark ? 'systemChromeMaterialDark' : 'systemChromeMaterialLight'}
-        style={[StyleSheet.absoluteFill, { borderRadius: radius }]}
-      />
-    );
-  }
-  return (
+  // Native iOS-26 liquid glass when the user enabled it; otherwise the
+  // existing BlurView (iOS) / gradient (Android) fallback — byte-identical to
+  // the previous behaviour so nothing changes when glass is off.
+  const iosFallback = (
+    <BlurView
+      intensity={isDark ? 70 : 80}
+      tint={isDark ? 'systemChromeMaterialDark' : 'systemChromeMaterialLight'}
+      style={[StyleSheet.absoluteFill, { borderRadius: radius }]}
+    />
+  );
+  const androidFallback = (
     <LinearGradient
       colors={
         isDark
@@ -141,6 +143,14 @@ function GlassBackdrop({ isDark, radius }: { isDark: boolean; radius: number }) 
           : ['rgba(255,255,255,0.7)', 'rgba(255,255,255,0.82)']
       }
       style={[StyleSheet.absoluteFill, { borderRadius: radius }]}
+    />
+  );
+  return (
+    <GlassSurface
+      style={[StyleSheet.absoluteFill, { borderRadius: radius }]}
+      glassStyle="regular"
+      colorScheme={isDark ? 'dark' : 'light'}
+      fallback={Platform.OS === 'ios' ? iosFallback : androidFallback}
     />
   );
 }
@@ -240,24 +250,31 @@ function DashboardTile({
   return (
     <Pressable onPress={onPress} style={styles.tile}>
       <View style={[StyleSheet.absoluteFill, { borderRadius: 16, overflow: 'hidden' }]}>
-        {Platform.OS === 'ios' ? (
-          <BlurView
-            intensity={isDark ? 40 : 60}
-            tint={isDark ? 'systemThinMaterialDark' : 'systemThinMaterialLight'}
-            style={StyleSheet.absoluteFill}
-          />
-        ) : (
-          <View
-            style={[
-              StyleSheet.absoluteFill,
-              {
-                backgroundColor: isDark
-                  ? 'rgba(255,255,255,0.06)'
-                  : 'rgba(255,255,255,0.45)',
-              },
-            ]}
-          />
-        )}
+        <GlassSurface
+          style={StyleSheet.absoluteFill}
+          glassStyle="regular"
+          colorScheme={isDark ? 'dark' : 'light'}
+          fallback={
+            Platform.OS === 'ios' ? (
+              <BlurView
+                intensity={isDark ? 40 : 60}
+                tint={isDark ? 'systemThinMaterialDark' : 'systemThinMaterialLight'}
+                style={StyleSheet.absoluteFill}
+              />
+            ) : (
+              <View
+                style={[
+                  StyleSheet.absoluteFill,
+                  {
+                    backgroundColor: isDark
+                      ? 'rgba(255,255,255,0.06)'
+                      : 'rgba(255,255,255,0.45)',
+                  },
+                ]}
+              />
+            )
+          }
+        />
         <View
           style={[
             StyleSheet.absoluteFillObject,
@@ -291,6 +308,9 @@ function DynamicOverlayHostInner() {
   const theme = useTheme();
   const isDark = theme.isDark;
   const t = useT();
+  // Real native glass active? Drop the painted top-reflection gradient over it
+  // (it dulls the genuine specular highlight), exactly like the tab bar.
+  const glassActive = useLiquidGlassActive();
 
   const visible = useDynamicOverlayStore((s) => s.visible);
   const expanded = useDynamicOverlayStore((s) => s.expanded);
@@ -648,7 +668,7 @@ function DynamicOverlayHostInner() {
           ]}
         >
         <GlassBackdrop isDark={isDark} radius={EXPANDED_RADIUS} />
-        <TopReflection isDark={isDark} radius={EXPANDED_RADIUS} />
+        {!glassActive && <TopReflection isDark={isDark} radius={EXPANDED_RADIUS} />}
 
         {/* Pill content row */}
         <Animated.View style={[styles.pillRow, pillRowStyle]}>

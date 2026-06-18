@@ -8,7 +8,7 @@ import ContextMenu from 'react-native-context-menu-view';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { WeatherChip } from '../../src/components/ui/WeatherChip';
-import { useLiquidGlassActive, NativeGlassView } from '../../src/components/ui/LiquidGlass';
+import { useLiquidGlassActive, NativeGlassView, GlassBg } from '../../src/components/ui/LiquidGlass';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { UserBadge } from '../../src/components/ui/UserBadge';
 import { useChatStore, useEntityStore, useAuthStore } from '../../src/store';
@@ -770,56 +770,39 @@ export default function MessagesScreen() {
 function FabWithMenu() {
   const theme = useTheme();
   const t = useT();
+  // Native iOS-26 liquid glass for the FAB + its menu. iOS-only + opt-in.
+  const glassActive = useLiquidGlassActive();
   const [open, setOpen] = useState(false);
   const anim = useRef(new Animated.Value(0)).current; // 0 = closed, 1 = open
 
   useEffect(() => {
-    // Open: bouncy spring (~6 % overshoot, iOS rubbery rest).
-    // Close: stiffer spring so it doesn't oscillate after dismiss.
-    Animated.spring(anim, {
+    // Plain appear/disappear — a simple opacity (+ subtle scale) fade, per the
+    // user's request to drop the rubbery "grow out of the FAB" spring. Quick
+    // timing, native-driven so it stays smooth even while navigating away.
+    Animated.timing(anim, {
       toValue: open ? 1 : 0,
+      duration: open ? 160 : 130,
       useNativeDriver: true,
-      tension: open ? 110 : 130,
-      friction: open ? 10 : 14,
-      restDisplacementThreshold: 0.005,
-      restSpeedThreshold: 0.005,
     }).start();
   }, [open]);
 
   const toggle = useCallback(() => { triggerHaptic('light'); setOpen((v) => !v); }, []);
   const navigate = useCallback((action: () => void) => {
     setOpen(false);
-    // Defer the route push until React has a chance to commit the closed
-    // state and the close-spring has flushed at least its first native
-    // frame. Without this, the new screen's mount work blocks the JS
-    // thread mid-animation and the user sees a stutter at the tail of
-    // the close. InteractionManager runs the callback after current
-    // interactions/animations are done, so the menu finishes closing
-    // cleanly before navigation kicks off.
+    // Defer the route push until React commits the closed state and the fade
+    // has flushed its first native frame, so the new screen's mount work never
+    // blocks the JS thread mid-animation.
     InteractionManager.runAfterInteractions(action);
   }, []);
 
-  // Single source of truth for both transforms — interpolated for each
-  // animated property. This way the close tween is exactly the inverse of the
-  // open spring, no double-anim glue.
+  // Simple appear: fade + a barely-there scale/translate so it doesn't pop in
+  // harshly. No transform-origin gymnastics.
   const menuOpacity = anim;
-  // Asymmetric scale = rubbery "stretching out of the FAB" feel. The Y axis
-  // travels further (0.35 → 1) than the X axis (0.7 → 1), so during the
-  // first frames the menu reads as a tall narrow blob unfurling from the
-  // FAB rather than a generic square zooming in. Spring overshoot above 1
-  // (~6 %) gives the iOS rubber-band rest.
-  const menuScaleY = anim.interpolate({ inputRange: [0, 1], outputRange: [0.35, 1] });
-  const menuScaleX = anim.interpolate({ inputRange: [0, 1], outputRange: [0.7, 1] });
-  // Translation pulls the menu UP from the FAB position so it appears to
-  // "grow out" of the button instead of dropping in from above.
-  const menuTranslateY = anim.interpolate({ inputRange: [0, 1], outputRange: [40, 0] });
-  // Backdrop fades a touch slower so it doesn't snap.
+  const menuScale = anim.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1] });
+  const menuTranslateY = anim.interpolate({ inputRange: [0, 1], outputRange: [8, 0] });
   const backdropOpacity = anim.interpolate({ inputRange: [0, 1], outputRange: [0, 1] });
   // FAB icon rotates 45° to morph "edit"→"x" without swapping the icon mid-frame.
   const fabIconRotate = anim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '45deg'] });
-  // FAB itself gives a tiny squish on open (visual hand-off to the menu) —
-  // 1 → 0.92 → 1 across the spring travel makes the tap feel tactile.
-  const fabScale = anim.interpolate({ inputRange: [0, 0.5, 1], outputRange: [1, 0.92, 1] });
 
   const menuBg = theme.isDark ? theme.colors.background.elevated : '#FFFFFF';
   const borderColor = theme.colors.border.light;
@@ -837,10 +820,10 @@ function FabWithMenu() {
         <Pressable style={{ flex: 1 }} onPress={() => setOpen(false)} />
       </Animated.View>
 
-      {/* Menu — always mounted; opacity + transform animate it in/out. The
-          translate-scale-translate stack moves the transform origin into the
-          bottom-right corner (where the FAB sits) so the menu visibly grows
-          out of the button. */}
+      {/* Menu — always mounted; opacity + a subtle scale/translate fade it
+          in/out. When glass is on, the solid card background is replaced by a
+          GlassBg layer (content renders on top); border/solid fill drop so the
+          glass supplies the surface. */}
       <Animated.View
         pointerEvents={open ? 'auto' : 'none'}
         style={{
@@ -850,12 +833,9 @@ function FabWithMenu() {
           opacity: menuOpacity,
           transform: [
             { translateY: menuTranslateY },
-            { translateX: 110 }, { translateY: 110 },
-            { scaleX: menuScaleX },
-            { scaleY: menuScaleY },
-            { translateX: -110 }, { translateY: -110 },
+            { scale: menuScale },
           ],
-          backgroundColor: menuBg,
+          backgroundColor: glassActive ? 'transparent' : menuBg,
           borderRadius: 18,
           overflow: 'hidden',
           shadowColor: '#000',
@@ -863,12 +843,15 @@ function FabWithMenu() {
           shadowOpacity: 0.18,
           shadowRadius: 20,
           elevation: 14,
-          borderWidth: 0.5,
+          borderWidth: glassActive ? 0 : 0.5,
           borderColor,
           zIndex: 201,
           minWidth: 220,
         }}
       >
+        {/* Glass surface behind the menu rows (static, non-interactive so it
+            doesn't morph as the finger moves between items). */}
+        {glassActive ? <GlassBg borderRadius={18} glassStyle="regular" interactive={false} colorScheme={theme.isDark ? 'dark' : 'light'} /> : null}
         <FabMenuItem icon="grid" label={t('messages.fab.mini_apps')} tint={accent} onPress={() => navigate(() => router.push('/settings/mini-apps' as any))} />
         <FabSeparator color={borderColor} />
         <FabMenuItem icon="cpu" label={t('messages.fab.ai')} tint={accent} onPress={() => navigate(() => router.push('/chat/ai' as any))} />
@@ -878,6 +861,9 @@ function FabWithMenu() {
         <FabMenuItem icon="settings" label={t('messages.fab.chat_settings')} tint={secondary} onPress={() => navigate(() => router.push({ pathname: '/settings/chat-settings', params: { id: GLOBAL_CHAT_SETTINGS_KEY } } as any))} />
       </Animated.View>
 
+      {/* FAB → interactive liquid glass with a strong accent tint so it keeps
+          its accent identity while morphing on touch. Falls back to the solid
+          accent circle when glass is off. */}
       <Pressable
         onPress={toggle}
         style={{
@@ -887,7 +873,7 @@ function FabWithMenu() {
           width: 56,
           height: 56,
           borderRadius: 28,
-          backgroundColor: accent,
+          backgroundColor: glassActive ? 'transparent' : accent,
           alignItems: 'center',
           justifyContent: 'center',
           elevation: 6,
@@ -898,7 +884,10 @@ function FabWithMenu() {
           zIndex: 202,
         }}
       >
-        <Animated.View style={{ transform: [{ rotate: fabIconRotate }, { scale: fabScale }] }}>
+        {glassActive ? (
+          <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} tintColor={accent} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 28 }} />
+        ) : null}
+        <Animated.View style={{ transform: [{ rotate: fabIconRotate }] }}>
           <Feather name="edit" size={22} color="#FFFFFF" />
         </Animated.View>
       </Pressable>

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Pressable, StyleSheet, Platform, LayoutChangeEvent } from 'react-native';
 import { BottomTabBarProps } from '@react-navigation/bottom-tabs';
+import { useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -75,6 +76,16 @@ const ICON_MAGNIFY_MAX = 0.18;
 
 const PILL_SPRING = { damping: 18, stiffness: 280, mass: 0.8 };
 const PRESS_SPRING = { damping: 20, stiffness: 350, mass: 0.6 };
+
+// Module-scoped cache of the last measured slot width. The tab bar can remount
+// when returning from a root-stack screen pushed OVER the tabs (e.g. Profile →
+// Settings → back). A fresh mount resets slotWidth to 0, and because the
+// sliding lens is gated on `slotWidth > 0`, the lens silently vanished until
+// some later navigation forced a re-layout that re-measured the bar — exactly
+// the "lens disappears after Settings → back, reappears after opening another
+// screen" bug the user reported. Seeding state from this cache means a remount
+// starts with a valid width, so the lens renders immediately and never blanks.
+let lastSlotWidth = 0;
 
 const ICON_NAMES: Record<string, keyof typeof Feather.glyphMap> = {
   index: 'home',
@@ -592,7 +603,7 @@ export const CustomTabBar = React.memo(function CustomTabBar({
     [mainRoutes, focusedRoute, isProfileFocused]
   );
 
-  const [slotWidth, setSlotWidth] = useState(0);
+  const [slotWidth, setSlotWidth] = useState(lastSlotWidth);
   const hasMounted = useRef(false);
 
   // Animated state — all on UI thread
@@ -664,9 +675,28 @@ export const CustomTabBar = React.memo(function CustomTabBar({
     (e: LayoutChangeEvent) => {
       const w = e.nativeEvent.layout.width;
       const sw = (w - 2 * TAB_ROW_PADDING_H) / TAB_COUNT;
+      if (sw > 0) lastSlotWidth = sw; // cache for the next (re)mount
       if (Math.abs(sw - slotWidth) > 0.5) setSlotWidth(sw);
     },
     [slotWidth]
+  );
+
+  // Re-assert the lens position whenever the TABS group regains focus — e.g.
+  // after a root-stack screen pushed over the tabs (Settings, Comments, a
+  // profile, etc.) is popped. react-native-screens freezes the backgrounded
+  // tabs; on unfreeze the positioning `useEffect` below doesn't necessarily
+  // re-run (its deps may not have changed), which left the lens stale/hidden
+  // until an unrelated navigation nudged it. This guarantees it snaps back.
+  useFocusEffect(
+    useCallback(() => {
+      if (slotWidth > 0 && activeMainSlot >= 0) {
+        pillX.value = withSpring(slotToX(activeMainSlot), PILL_SPRING);
+        pillY.value = withSpring(0, PILL_SPRING);
+        pillStretchW.value = withSpring(0, PILL_SPRING);
+        pillScale.value = withSpring(1, PRESS_SPRING);
+      }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [slotWidth, activeMainSlot, slotToX])
   );
 
   // Squish on press — no expanding ring, just a clean compress. `slot` is the
