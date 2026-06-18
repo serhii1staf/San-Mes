@@ -135,7 +135,6 @@ function ThemedShell({ children }: { children: React.ReactNode }) {
 }
 
 function CustomSplash() {
-  const theme = useTheme();
   const t = useT();
   // Splash only needs the display name — subscribe to that field, not the
   // whole user object, so unrelated profile updates don't re-trigger the
@@ -153,16 +152,23 @@ function CustomSplash() {
     ]).start();
   }, []);
 
+  // IMPORTANT: this screen must visually match the NATIVE splash (app.json:
+  // expo-splash-screen → backgroundColor "#141414", icon.png). The native iOS
+  // launch screen is mandatory and always shows briefly while the JS engine
+  // boots; if this JS splash used the THEME background (white in light mode)
+  // the user saw a jarring dark→light flash between the two. Pinning this to
+  // the same dark #141414 + light text makes the native→JS hand-off seamless
+  // regardless of the active theme.
   return (
-    <View style={[styles.loadingContainer, { backgroundColor: theme.colors.background.primary }]}>
+    <View style={[styles.loadingContainer, { backgroundColor: '#141414' }]}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 32, maxWidth: '90%' }}>
         <Animated.View style={{ transform: [{ translateX: logoAnim }], opacity: opacityAnim }}>
           <RNImage source={require('../assets/icon.png')} style={{ width: 44, height: 44, borderRadius: 12 }} />
         </Animated.View>
         <Animated.View style={{ transform: [{ translateX: textAnim }], opacity: opacityAnim, flexShrink: 1 }}>
-          <RNText style={{ fontSize: 28, fontWeight: '700', color: theme.colors.text.primary }}>San</RNText>
+          <RNText style={{ fontSize: 28, fontWeight: '700', color: '#FFFFFF' }}>San</RNText>
           {displayName && (
-            <RNText numberOfLines={1} style={{ fontSize: 13, color: theme.colors.text.tertiary, marginTop: 2 }}>
+            <RNText numberOfLines={1} style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)', marginTop: 2 }}>
               {t('splash.greeting', undefined, { name: displayName })}
             </RNText>
           )}
