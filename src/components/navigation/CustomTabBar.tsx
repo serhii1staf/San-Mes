@@ -146,13 +146,21 @@ const TabBarButton = React.memo(function TabBarButton({
   const iconName = ICON_NAMES[routeName] || 'circle';
   const isCreate = routeName === 'create';
 
+  // Per-button press-squish — independent of the sliding lens. The lens only
+  // exists on the ACTIVE tab, so the old lens-only squish "disappeared" when no
+  // main tab was active (e.g. while the Profile capsule is focused). A local
+  // scale on every button guarantees consistent press feedback always.
+  const pressScale = useSharedValue(1);
+  const handlePressIn = () => { pressScale.value = withSpring(0.86, PRESS_SPRING); onPressIn?.(); };
+  const handlePressOut = () => { pressScale.value = withSpring(1, PRESS_SPRING); onPressOut?.(); };
+
   // Center x of THIS button's icon in the same coordinate space as `pillX`
   // (which is "x of the pill's left edge inside the bar container").
   const buttonCenterX = TAB_ROW_PADDING_H + (index + 0.5) * slotWidth;
 
   const iconAnimStyle = useAnimatedStyle(() => {
     'worklet';
-    if (isCreate) return { transform: [{ scale: 1 }] };
+    if (isCreate) return { transform: [{ scale: pressScale.value }] };
     // Effective lens center — accounts for stretch (the lens grows wider
     // during a drag, so its center shifts).
     const lensWidth = pillBaseWidth + pillStretchW.value;
@@ -167,7 +175,8 @@ const TabBarButton = React.memo(function TabBarButton({
       [ICON_MAGNIFY_MAX, 0],
       Extrapolation.CLAMP,
     );
-    return { transform: [{ scale: 1 + magnify }] };
+    // Combine magnify with the press-squish.
+    return { transform: [{ scale: (1 + magnify) * pressScale.value }] };
   }, [buttonCenterX, pillBaseWidth, slotWidth, isCreate]);
 
   if (isCreate) {
@@ -175,14 +184,18 @@ const TabBarButton = React.memo(function TabBarButton({
       <Pressable
         onPress={onPress}
         onLongPress={onLongPress}
+        onPressIn={handlePressIn}
+        onPressOut={handlePressOut}
         style={styles.tabButton}
         accessibilityRole="button"
         accessibilityLabel={label}
         accessibilityState={{ selected: isFocused }}
       >
-        <View style={[styles.createCircle, { backgroundColor: accentSecondary }]}>
-          <Feather name="plus" size={22} color="#FFFFFF" />
-        </View>
+        <Animated.View style={iconAnimStyle}>
+          <View style={[styles.createCircle, { backgroundColor: accentSecondary }]}>
+            <Feather name="plus" size={22} color="#FFFFFF" />
+          </View>
+        </Animated.View>
       </Pressable>
     );
   }
@@ -193,8 +206,8 @@ const TabBarButton = React.memo(function TabBarButton({
     <Pressable
       onPress={onPress}
       onLongPress={onLongPress}
-      onPressIn={onPressIn}
-      onPressOut={onPressOut}
+      onPressIn={handlePressIn}
+      onPressOut={handlePressOut}
       style={styles.tabButton}
       accessibilityRole="button"
       accessibilityLabel={label}
