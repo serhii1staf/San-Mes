@@ -375,11 +375,17 @@ function SlidingLens({
 
 // ─── Glass Backdrop & Reflection ─────────────────────────────────────────────
 
-function GlassBackdrop({ isDark, interactive }: { isDark: boolean; interactive?: boolean }) {
+function GlassBackdrop({ isDark, interactive, radius }: { isDark: boolean; interactive?: boolean; radius?: number }) {
   // Native iOS-26 liquid glass when the user has it enabled and the device
   // supports it; otherwise the existing BlurView (iOS) / gradient (Android).
   // The GlassView fully replaces the backdrop — when the toggle is off it is
   // never mounted, so there's zero residual cost.
+  //
+  // `radius` makes the glass round ITSELF. This matters for the Profile capsule:
+  // it renders with `overflow: 'visible'` (so the interactive morph isn't
+  // clipped), which means the parent no longer rounds the glass — without an
+  // explicit borderRadius here the native glass would show as a SQUARE.
+  const roundStyle = radius != null ? { borderRadius: radius } : null;
   const iosFallback = (
     <BlurView
       // System material tints render the real iOS Liquid-Glass look —
@@ -390,7 +396,7 @@ function GlassBackdrop({ isDark, interactive }: { isDark: boolean; interactive?:
       // available without iOS 26 private APIs.
       intensity={isDark ? 70 : 80}
       tint={isDark ? 'systemChromeMaterialDark' : 'systemChromeMaterialLight'}
-      style={StyleSheet.absoluteFill}
+      style={[StyleSheet.absoluteFill, roundStyle, radius != null ? { overflow: 'hidden' } : null]}
     />
   );
   const androidFallback = (
@@ -400,12 +406,12 @@ function GlassBackdrop({ isDark, interactive }: { isDark: boolean; interactive?:
           ? ['rgba(20,20,25,0.75)', 'rgba(30,30,35,0.85)']
           : ['rgba(255,255,255,0.6)', 'rgba(255,255,255,0.75)']
       }
-      style={StyleSheet.absoluteFill}
+      style={[StyleSheet.absoluteFill, roundStyle]}
     />
   );
   return (
     <GlassSurface
-      style={StyleSheet.absoluteFill}
+      style={[StyleSheet.absoluteFill, roundStyle]}
       glassStyle="regular"
       // Only the detached Profile capsule passes `interactive` — it makes the
       // genuine liquid glass morph OUTWARD on touch. The main bar never passes
@@ -505,7 +511,7 @@ function ProfileCapsule({
             liquid glass when enabled, BlurView/gradient fallback otherwise.
             `interactive` makes the genuine glass morph OUTWARD on touch — only
             the detached Profile capsule opts in (the main bar never does). */}
-        <GlassBackdrop isDark={isDark} interactive />
+        <GlassBackdrop isDark={isDark} interactive radius={(TAB_BUTTON_HEIGHT + 2 * TAB_ROW_PADDING_V) / 2} />
         {!glassActive && <TopReflection isDark={isDark} />}
         {/* Active selection fill sits above the glass but below the icon. */}
         {activeBg !== 'transparent' && (

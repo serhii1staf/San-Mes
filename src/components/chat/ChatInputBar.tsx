@@ -137,7 +137,7 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
           editing — TextInput rule) and NO overflow so the shape/padding/minHeight
           stay identical to the flat path. */}
       {glassActive ? (
-        <NativeGlassView glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.inputWrapGlass}>
+        <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.inputWrapGlass}>
           {inputInner}
         </NativeGlassView>
       ) : (
