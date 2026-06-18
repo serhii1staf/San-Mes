@@ -79,7 +79,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useTheme } from '../../theme';
 import { useT } from '../../i18n/store';
-import { GlassSurface, useLiquidGlassActive } from '../ui/LiquidGlass';
 import { useAuthStore } from '../../store/authStore';
 import { useSettingsStore } from '../../store/settingsStore';
 import { useNotificationsBadge } from '../../store/notificationsBadgeStore';
@@ -125,37 +124,29 @@ const SCALE_KICK_EXPAND = 1.03;
 // ─── Glass material — single BlurView per surface, no stacking ─────────────
 
 function GlassBackdrop({ isDark, radius }: { isDark: boolean; radius: number }) {
-  // Native iOS-26 liquid glass when the user enabled it; otherwise the
-  // existing BlurView (iOS) / gradient (Android) fallback — byte-identical to
-  // the previous behaviour so nothing changes when glass is off.
-  const iosFallback = (
-    <BlurView
-      intensity={isDark ? 70 : 80}
-      tint={isDark ? 'systemChromeMaterialDark' : 'systemChromeMaterialLight'}
-      style={[StyleSheet.absoluteFill, { borderRadius: radius }]}
-    />
-  );
-  const androidFallback = (
+  // NOTE: we deliberately use the BlurView chrome-material here rather than the
+  // native `expo-glass-effect` GlassView. The native liquid-glass surface does
+  // NOT render a visible material in this floating root overlay (it composited
+  // as fully transparent on device), so the widget looked like it had no glass
+  // at all. `systemChromeMaterial` is itself a genuine frosted-glass material
+  // and renders reliably here — that's the visible "glass" the user expects.
+  if (Platform.OS === 'ios') {
+    return (
+      <BlurView
+        intensity={isDark ? 75 : 85}
+        tint={isDark ? 'systemChromeMaterialDark' : 'systemChromeMaterialLight'}
+        style={[StyleSheet.absoluteFill, { borderRadius: radius }]}
+      />
+    );
+  }
+  return (
     <LinearGradient
       colors={
         isDark
-          ? ['rgba(20,20,25,0.78)', 'rgba(30,30,35,0.88)']
-          : ['rgba(255,255,255,0.7)', 'rgba(255,255,255,0.82)']
+          ? ['rgba(20,20,25,0.82)', 'rgba(30,30,35,0.9)']
+          : ['rgba(255,255,255,0.75)', 'rgba(255,255,255,0.85)']
       }
       style={[StyleSheet.absoluteFill, { borderRadius: radius }]}
-    />
-  );
-  return (
-    <GlassSurface
-      style={[StyleSheet.absoluteFill, { borderRadius: radius }]}
-      glassStyle="regular"
-      // Plain `regular` glass is nearly clear over the feed, which read as
-      // "fully transparent" to the user. A moderate tint gives the surface a
-      // frosted presence (like the previous chrome-material BlurView) while
-      // keeping the genuine glass refraction/highlight.
-      tintColor={isDark ? 'rgba(26,26,31,0.55)' : 'rgba(255,255,255,0.55)'}
-      colorScheme={isDark ? 'dark' : 'light'}
-      fallback={Platform.OS === 'ios' ? iosFallback : androidFallback}
     />
   );
 }
@@ -255,32 +246,24 @@ function DashboardTile({
   return (
     <Pressable onPress={onPress} style={styles.tile}>
       <View style={[StyleSheet.absoluteFill, { borderRadius: 16, overflow: 'hidden' }]}>
-        <GlassSurface
-          style={StyleSheet.absoluteFill}
-          glassStyle="regular"
-          tintColor={isDark ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.4)'}
-          colorScheme={isDark ? 'dark' : 'light'}
-          fallback={
-            Platform.OS === 'ios' ? (
-              <BlurView
-                intensity={isDark ? 40 : 60}
-                tint={isDark ? 'systemThinMaterialDark' : 'systemThinMaterialLight'}
-                style={StyleSheet.absoluteFill}
-              />
-            ) : (
-              <View
-                style={[
-                  StyleSheet.absoluteFill,
-                  {
-                    backgroundColor: isDark
-                      ? 'rgba(255,255,255,0.06)'
-                      : 'rgba(255,255,255,0.45)',
-                  },
-                ]}
-              />
-            )
-          }
-        />
+        {Platform.OS === 'ios' ? (
+          <BlurView
+            intensity={isDark ? 44 : 64}
+            tint={isDark ? 'systemThinMaterialDark' : 'systemThinMaterialLight'}
+            style={StyleSheet.absoluteFill}
+          />
+        ) : (
+          <View
+            style={[
+              StyleSheet.absoluteFill,
+              {
+                backgroundColor: isDark
+                  ? 'rgba(255,255,255,0.06)'
+                  : 'rgba(255,255,255,0.45)',
+              },
+            ]}
+          />
+        )}
         <View
           style={[
             StyleSheet.absoluteFillObject,
@@ -314,9 +297,6 @@ function DynamicOverlayHostInner() {
   const theme = useTheme();
   const isDark = theme.isDark;
   const t = useT();
-  // Real native glass active? Drop the painted top-reflection gradient over it
-  // (it dulls the genuine specular highlight), exactly like the tab bar.
-  const glassActive = useLiquidGlassActive();
 
   const visible = useDynamicOverlayStore((s) => s.visible);
   const expanded = useDynamicOverlayStore((s) => s.expanded);
@@ -674,7 +654,7 @@ function DynamicOverlayHostInner() {
           ]}
         >
         <GlassBackdrop isDark={isDark} radius={EXPANDED_RADIUS} />
-        {!glassActive && <TopReflection isDark={isDark} radius={EXPANDED_RADIUS} />}
+        <TopReflection isDark={isDark} radius={EXPANDED_RADIUS} />
 
         {/* Pill content row */}
         <Animated.View style={[styles.pillRow, pillRowStyle]}>
