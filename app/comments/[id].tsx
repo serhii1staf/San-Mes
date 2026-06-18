@@ -736,7 +736,21 @@ export default function CommentsScreen() {
           </Reanimated.View>
         )}
 
-        {/* Input area — sticks to keyboard (smooth, no lag) */}
+        {/* Static under-input fade — pinned to the screen bottom and kept
+            OUTSIDE the KeyboardStickyView so it does NOT ride up with the
+            keyboard. Mirrors the user/music/ai chats: the solid composer
+            container is gone, so comments scroll UNDER the input and dissolve
+            into the background instead of hitting a hard bar edge. */}
+        <LinearGradient
+          colors={[bgTransparent, bgColor + 'B3', bgColor]}
+          locations={[0, 0.45, 1]}
+          pointerEvents="none"
+          style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: insets.bottom + 120 }}
+        />
+
+        {/* Input area — sticks to keyboard (smooth, no lag). The input row has
+            no solid backgroundColor: the fade above supplies the darkening so
+            the composer floats over content like the other chats. */}
         <KeyboardStickyView offset={stickyOffset} style={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}>
           {editing ? (
             <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 6, backgroundColor: bgColor }}>
@@ -766,7 +780,7 @@ export default function CommentsScreen() {
               </Pressable>
             </View>
           ) : null}
-          <Reanimated.View style={[{ flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 16, paddingTop: 8, backgroundColor: bgColor }, inputPadStyle]}>
+          <Reanimated.View style={[{ flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 16, paddingTop: 8 }, inputPadStyle]}>
             {/* Input wrap → interactive liquid glass holding the TextInput +
                 GIF button as CHILDREN (matches ChatInputBar). NO visible border
                 (the glass supplies the edge) and NO overflow clip. The non-glass

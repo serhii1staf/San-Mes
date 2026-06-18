@@ -8,7 +8,6 @@ import { Feather } from '@expo/vector-icons';
 import {
   Gesture,
   GestureDetector,
-  GestureHandlerRootView,
 } from 'react-native-gesture-handler';
 import Animated, {
   useSharedValue,
@@ -826,8 +825,18 @@ export const CustomTabBar = React.memo(function CustomTabBar({
       {/* Split navigation row: main capsule (flex:1) + gap + detached profile
           capsule. `box-none` lets taps fall through the gap between them. The
           row carries the bottom margin / safe-area lift so BOTH capsules float
-          at the same level. */}
-      <GestureHandlerRootView
+          at the same level.
+
+          NOTE: this used to be a nested `GestureHandlerRootView`. The app
+          already mounts ONE root `GestureHandlerRootView` at the very top
+          (app/_layout.tsx). A SECOND, nested root is an RNGH anti-pattern:
+          when a screen is pushed over the tabs on the root Stack (e.g.
+          Profile → Settings) and then popped, the nested root can fail to
+          re-attach its gesture handlers, so the lens pan/press effect went
+          dead after returning from Settings. Using a plain View here lets the
+          single app-root provider own the handlers across navigation, which
+          fixes the "press/drag effect disappears after Settings → back" bug. */}
+      <View
         style={[styles.row, { marginBottom: barMarginBottom }]}
         pointerEvents="box-none"
       >
@@ -935,7 +944,7 @@ export const CustomTabBar = React.memo(function CustomTabBar({
             marginBottom={0}
           />
         )}
-      </GestureHandlerRootView>
+      </View>
     </View>
   );
 });
