@@ -21,7 +21,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useTheme } from '../../theme';
 import { triggerHaptic } from '../../utils/haptics';
-import { GlassSurface } from '../ui/LiquidGlass';
+import { GlassSurface, useLiquidGlassActive } from '../ui/LiquidGlass';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -232,6 +232,7 @@ function SlidingLens({
   baseWidth,
   visible,
   isDark,
+  glassActive,
 }: {
   pillX: SharedValue<number>;
   pillY: SharedValue<number>;
@@ -240,6 +241,7 @@ function SlidingLens({
   baseWidth: number;
   visible: boolean;
   isDark: boolean;
+  glassActive: boolean;
 }) {
   const animStyle = useAnimatedStyle(() => ({
     transform: [
@@ -255,8 +257,19 @@ function SlidingLens({
   // own blurred tint without going opaque. iOS dark mode is darker than
   // Android dark mode (the systemChromeMaterial bar already absorbs a lot
   // of light), so we lift the alpha a touch on iOS dark.
-  const lensFill =
-    Platform.OS === 'ios'
+  //
+  // When the REAL native glass backdrop is active we deliberately go much
+  // subtler: a faint selection capsule over genuine liquid glass — no heavy
+  // white fill, no stacked gradients, no contour. Real glass already supplies
+  // the highlight + refraction, so piling our fake-glass layers on top is what
+  // made the bar read as "combined with my own nav". The stretch / magnify
+  // animation (driven by animStyle above) is untouched — only the painted
+  // decoration changes.
+  const lensFill = glassActive
+    ? isDark
+      ? 'rgba(255,255,255,0.12)'
+      : 'rgba(255,255,255,0.28)'
+    : Platform.OS === 'ios'
       ? isDark
         ? 'rgba(255,255,255,0.20)'
         : 'rgba(255,255,255,0.55)'
@@ -276,50 +289,58 @@ function SlidingLens({
         ]}
       />
 
-      {/* Top reflection — the bright crescent that sells the curved-glass
-          look. A linear gradient is enough; an arc would require SVG and
-          we deliberately avoid that for perf. */}
-      <LinearGradient
-        colors={
-          isDark
-            ? ['rgba(255,255,255,0.25)', 'rgba(255,255,255,0)']
-            : ['rgba(255,255,255,0.7)', 'rgba(255,255,255,0)']
-        }
-        style={[
-          StyleSheet.absoluteFill,
-          { borderRadius: PILL_HEIGHT / 2, height: '55%' },
-        ]}
-        pointerEvents="none"
-      />
+      {/* The fake-glass decoration (top reflection crescent, bottom dim,
+          hairline contour) only renders when we DON'T have real native glass.
+          On real glass it would fight the genuine highlights and is exactly
+          what made the bar look "combined". */}
+      {!glassActive && (
+        <>
+          {/* Top reflection — the bright crescent that sells the curved-glass
+              look. A linear gradient is enough; an arc would require SVG and
+              we deliberately avoid that for perf. */}
+          <LinearGradient
+            colors={
+              isDark
+                ? ['rgba(255,255,255,0.25)', 'rgba(255,255,255,0)']
+                : ['rgba(255,255,255,0.7)', 'rgba(255,255,255,0)']
+            }
+            style={[
+              StyleSheet.absoluteFill,
+              { borderRadius: PILL_HEIGHT / 2, height: '55%' },
+            ]}
+            pointerEvents="none"
+          />
 
-      {/* Bottom dim — the thin shadow under the lens edge. Together with
-          the top highlight this is what reads as "rounded" rather than "flat". */}
-      <View
-        style={{
-          position: 'absolute',
-          left: 0,
-          right: 0,
-          bottom: 0,
-          height: '40%',
-          borderBottomLeftRadius: PILL_HEIGHT / 2,
-          borderBottomRightRadius: PILL_HEIGHT / 2,
-          backgroundColor: isDark ? 'rgba(0,0,0,0.12)' : 'rgba(0,0,0,0.04)',
-        }}
-        pointerEvents="none"
-      />
+          {/* Bottom dim — the thin shadow under the lens edge. Together with
+              the top highlight this is what reads as "rounded" rather than "flat". */}
+          <View
+            style={{
+              position: 'absolute',
+              left: 0,
+              right: 0,
+              bottom: 0,
+              height: '40%',
+              borderBottomLeftRadius: PILL_HEIGHT / 2,
+              borderBottomRightRadius: PILL_HEIGHT / 2,
+              backgroundColor: isDark ? 'rgba(0,0,0,0.12)' : 'rgba(0,0,0,0.04)',
+            }}
+            pointerEvents="none"
+          />
 
-      {/* Hairline border — Apple's glass surfaces always have a faint
-          contour. Drawn on top of all layers so it isn't washed out by
-          the blur or the gradients. */}
-      <View
-        style={{
-          ...StyleSheet.absoluteFillObject,
-          borderRadius: PILL_HEIGHT / 2,
-          borderWidth: StyleSheet.hairlineWidth,
-          borderColor: isDark ? 'rgba(255,255,255,0.22)' : 'rgba(255,255,255,0.9)',
-        }}
-        pointerEvents="none"
-      />
+          {/* Hairline border — Apple's glass surfaces always have a faint
+              contour. Drawn on top of all layers so it isn't washed out by
+              the blur or the gradients. */}
+          <View
+            style={{
+              ...StyleSheet.absoluteFillObject,
+              borderRadius: PILL_HEIGHT / 2,
+              borderWidth: StyleSheet.hairlineWidth,
+              borderColor: isDark ? 'rgba(255,255,255,0.22)' : 'rgba(255,255,255,0.9)',
+            }}
+            pointerEvents="none"
+          />
+        </>
+      )}
     </Animated.View>
   );
 }
@@ -386,6 +407,10 @@ export const CustomTabBar = React.memo(function CustomTabBar({
 }: BottomTabBarProps) {
   const theme = useTheme();
   const isDark = theme.isDark;
+  // Real native liquid glass on the bar? Drives whether we drop our fake-glass
+  // overlay layers (top reflection, lens decoration) so the genuine glass
+  // isn't muddied by them.
+  const glassActive = useLiquidGlassActive();
   // Bottom safe-area inset = height of the Android system navigation bar
   // (or the iOS home-indicator). Under edge-to-edge the app draws behind
   // that bar, so without this the floating pill would sit partially BEHIND
@@ -620,7 +645,10 @@ export const CustomTabBar = React.memo(function CustomTabBar({
         >
           {/* Glass layers */}
           <GlassBackdrop isDark={isDark} />
-          <TopReflection isDark={isDark} />
+          {/* The extra reflection gradient only helps the FAKE glass read as
+              curved. On real native glass it just dulls the genuine highlight,
+              so we skip it entirely. */}
+          {!glassActive && <TopReflection isDark={isDark} />}
 
           {/* Lens sits between the backdrop and the tab row so the icons
               render on top. The lens itself no longer carries its own
@@ -636,6 +664,7 @@ export const CustomTabBar = React.memo(function CustomTabBar({
               baseWidth={pillBaseWidth}
               visible={pillVisible}
               isDark={isDark}
+              glassActive={glassActive}
             />
           )}
 

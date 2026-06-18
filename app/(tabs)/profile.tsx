@@ -952,7 +952,12 @@ export default function ProfileScreen() {
             hitSlop={6}
             style={{ borderRadius: 14, overflow: 'hidden' }}
           >
-            {chromeReady ? (
+            {glassActive ? (
+              <NativeGlassView glassStyle="regular" colorScheme="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14 }}>
+                <Text variant="caption" weight="bold" color="#FFFFFF" style={{ fontSize: 12 }}>{followCounts.following}</Text>
+                <Text variant="caption" color="rgba(255,255,255,0.85)" style={{ fontSize: 11 }}>{t('profile.following_short')}</Text>
+              </NativeGlassView>
+            ) : chromeReady ? (
               <BlurView intensity={80} tint="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6 }}>
                 <Text variant="caption" weight="bold" color="#FFFFFF" style={{ fontSize: 12 }}>{followCounts.following}</Text>
                 <Text variant="caption" color="rgba(255,255,255,0.85)" style={{ fontSize: 11 }}>{t('profile.following_short')}</Text>
@@ -969,7 +974,12 @@ export default function ProfileScreen() {
             hitSlop={6}
             style={{ borderRadius: 14, overflow: 'hidden' }}
           >
-            {chromeReady ? (
+            {glassActive ? (
+              <NativeGlassView glassStyle="regular" colorScheme="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14 }}>
+                <Text variant="caption" weight="bold" color="#FFFFFF" style={{ fontSize: 12 }}>{followCounts.followers}</Text>
+                <Text variant="caption" color="rgba(255,255,255,0.85)" style={{ fontSize: 11 }}>{t('profile.followers_short')}</Text>
+              </NativeGlassView>
+            ) : chromeReady ? (
               <BlurView intensity={80} tint="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6 }}>
                 <Text variant="caption" weight="bold" color="#FFFFFF" style={{ fontSize: 12 }}>{followCounts.followers}</Text>
                 <Text variant="caption" color="rgba(255,255,255,0.85)" style={{ fontSize: 11 }}>{t('profile.followers_short')}</Text>
