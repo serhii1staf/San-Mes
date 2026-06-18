@@ -52,6 +52,12 @@ interface SettingsState {
   // and `profile/[id]` (the latter only when the displayed profile id
   // matches the current user). Other-user profiles always render defaults.
   profileTabsCustom: Record<string, { label?: string; emoji?: string }>;
+  // Native iOS-26 liquid glass (expo-glass-effect). Only has any effect on
+  // iOS 26+ devices where the effect is actually available — everywhere else
+  // it's a no-op and the settings toggle is hidden. Default ON so capable
+  // devices get the look out of the box; flipping it OFF fully unmounts every
+  // GlassView (no residual layer).
+  liquidGlassEnabled: boolean;
   setHaptic: (enabled: boolean) => void;
   setInAppBrowser: (enabled: boolean) => void;
   setBrowserWidgetPosition: (position: 'top' | 'bottom') => void;
@@ -67,6 +73,7 @@ interface SettingsState {
   // `clearProfileTabCustom` removes the key entirely so the default returns.
   setProfileTabCustom: (key: string, value: { label?: string; emoji?: string }) => void;
   clearProfileTabCustom: (key: string) => void;
+  setLiquidGlassEnabled: (enabled: boolean) => void;
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -106,6 +113,9 @@ export const useSettingsStore = create<SettingsState>()(
       // No tab customizations until the user long-presses a tab and applies
       // one. Empty record reads as "every tab uses its default i18n label".
       profileTabsCustom: {},
+      // Liquid glass ON by default — only visible/active on iOS 26+ where the
+      // effect is available; a no-op everywhere else.
+      liquidGlassEnabled: true,
       setHaptic: (hapticEnabled) => set({ hapticEnabled }),
       setInAppBrowser: (useInAppBrowser) => set({ useInAppBrowser }),
       setBrowserWidgetPosition: (browserWidgetPosition) => set({ browserWidgetPosition }),
@@ -151,6 +161,7 @@ export const useSettingsStore = create<SettingsState>()(
           delete next[key];
           return { profileTabsCustom: next };
         }),
+      setLiquidGlassEnabled: (liquidGlassEnabled) => set({ liquidGlassEnabled }),
     }),
     {
       name: 'app-settings',

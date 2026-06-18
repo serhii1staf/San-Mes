@@ -173,6 +173,7 @@ const ru: Record<string, string> = {
   'weather_settings.search_placeholder': 'Введите название города',
   'weather_settings.hint': 'Данные предоставлены Open-Meteo. Город можно сменить в любой момент.',
   'settings.weather': 'Погода',
+  'settings.liquid_glass': 'Жидкое стекло',
 
   // ─── Translation sheet ────────────────────────────────────────────────
   'translation.title': 'Перевод',

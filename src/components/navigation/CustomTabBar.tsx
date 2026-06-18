@@ -21,6 +21,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useTheme } from '../../theme';
 import { triggerHaptic } from '../../utils/haptics';
+import { GlassSurface } from '../ui/LiquidGlass';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -326,22 +327,24 @@ function SlidingLens({
 // ─── Glass Backdrop & Reflection ─────────────────────────────────────────────
 
 function GlassBackdrop({ isDark }: { isDark: boolean }) {
-  if (Platform.OS === 'ios') {
-    return (
-      <BlurView
-        // System material tints render the real iOS Liquid-Glass look —
-        // they're processed by UIVisualEffectView and include the proper
-        // saturation boost + slight vibrancy that flat dark/light tints lack.
-        // `systemChromeMaterial` is the stock Apple chrome (tab bars,
-        // navigation bars) — the closest thing to "real" floating glass
-        // available without iOS 26 private APIs.
-        intensity={isDark ? 70 : 80}
-        tint={isDark ? 'systemChromeMaterialDark' : 'systemChromeMaterialLight'}
-        style={StyleSheet.absoluteFill}
-      />
-    );
-  }
-  return (
+  // Native iOS-26 liquid glass when the user has it enabled and the device
+  // supports it; otherwise the existing BlurView (iOS) / gradient (Android).
+  // The GlassView fully replaces the backdrop — when the toggle is off it is
+  // never mounted, so there's zero residual cost.
+  const iosFallback = (
+    <BlurView
+      // System material tints render the real iOS Liquid-Glass look —
+      // they're processed by UIVisualEffectView and include the proper
+      // saturation boost + slight vibrancy that flat dark/light tints lack.
+      // `systemChromeMaterial` is the stock Apple chrome (tab bars,
+      // navigation bars) — the closest thing to "real" floating glass
+      // available without iOS 26 private APIs.
+      intensity={isDark ? 70 : 80}
+      tint={isDark ? 'systemChromeMaterialDark' : 'systemChromeMaterialLight'}
+      style={StyleSheet.absoluteFill}
+    />
+  );
+  const androidFallback = (
     <LinearGradient
       colors={
         isDark
@@ -349,6 +352,14 @@ function GlassBackdrop({ isDark }: { isDark: boolean }) {
           : ['rgba(255,255,255,0.6)', 'rgba(255,255,255,0.75)']
       }
       style={StyleSheet.absoluteFill}
+    />
+  );
+  return (
+    <GlassSurface
+      style={StyleSheet.absoluteFill}
+      glassStyle="regular"
+      colorScheme={isDark ? 'dark' : 'light'}
+      fallback={Platform.OS === 'ios' ? iosFallback : androidFallback}
     />
   );
 }

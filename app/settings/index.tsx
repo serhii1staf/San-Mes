@@ -8,6 +8,7 @@ import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
 import { useAuthStore } from '../../src/store';
 import { useSettingsStore } from '../../src/store/settingsStore';
+import { isNativeGlassCapable } from '../../src/components/ui/LiquidGlass';
 import { useT } from '../../src/i18n/store';
 
 // Per-row tint pairs (icon color + soft tile bg) — picked to be readable in
@@ -108,6 +109,12 @@ export default function SettingsScreen() {
   const setHaptic = useSettingsStore((s) => s.setHaptic);
   const setInAppBrowser = useSettingsStore((s) => s.setInAppBrowser);
   const setPerfMonitorEnabled = useSettingsStore((s) => s.setPerfMonitorEnabled);
+  const liquidGlassEnabled = useSettingsStore((s) => s.liquidGlassEnabled);
+  const setLiquidGlassEnabled = useSettingsStore((s) => s.setLiquidGlassEnabled);
+  // The liquid-glass toggle is only meaningful on iOS 26+ devices where the
+  // effect can actually render. Hide it everywhere else — a toggle that does
+  // nothing is worse than no toggle. Computed once (capability is static).
+  const glassCapable = isNativeGlassCapable();
   const [iconModalVisible, setIconModalVisible] = useState(false);
   // App version + AppIconModal are deferred past the navigation transition.
   // - `expo-alternate-app-icons` (imported inside AppIconModal) is a native
@@ -392,8 +399,25 @@ export default function SettingsScreen() {
             iconTint="orange"
             label={t('settings.weather')}
             onPress={() => router.push('/settings/weather' as any)}
-            isLast
+            isLast={!glassCapable}
           />
+          {glassCapable && (
+            <SettingsRow
+              icon="aperture"
+              iconTint="cyan"
+              label={t('settings.liquid_glass', 'Жидкое стекло')}
+              showChevron={false}
+              rightElement={
+                <Switch
+                  value={liquidGlassEnabled}
+                  onValueChange={setLiquidGlassEnabled}
+                  trackColor={{ true: '#4CD964', false: theme.colors.border.light }}
+                  thumbColor="#FFFFFF"
+                />
+              }
+              isLast
+            />
+          )}
         </View>
 
         {/* Security */}

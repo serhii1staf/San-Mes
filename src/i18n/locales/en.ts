@@ -170,6 +170,7 @@ const en: Record<string, string> = {
   'weather_settings.search_placeholder': 'Type a city name',
   'weather_settings.hint': 'Data provided by Open-Meteo. You can change the city anytime.',
   'settings.weather': 'Weather',
+  'settings.liquid_glass': 'Liquid Glass',
 
   // ─── Translation sheet ─────────────────────────────────────────────────
   'translation.title': 'Translation',

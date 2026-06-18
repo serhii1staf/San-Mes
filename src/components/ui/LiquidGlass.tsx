@@ -1,0 +1,132 @@
+import React from 'react';
+import { Platform, View, type ViewProps, type StyleProp, type ViewStyle } from 'react-native';
+import { useSettingsStore } from '../../store/settingsStore';
+
+// ── Native liquid glass (iOS 26+) — single integration point ───────────────
+//
+// `expo-glass-effect` renders Apple's real UIVisualEffectView liquid glass on
+// iOS 26+. On every other platform/OS version its components fall back to a
+// plain View, so the package is safe to import everywhere — but we still gate
+// ALL usage behind a runtime capability check so we never mount a degenerate
+// glass view where the effect can't actually render.
+//
+// IMPORTANT (the "fully disappears when off" guarantee): every consumer renders
+// the native GlassView ONLY when `useLiquidGlassActive()` is true. When the
+// user flips the settings toggle off, that hook returns false, the GlassView
+// unmounts entirely, and the provided `fallback` renders instead. Nothing from
+// expo-glass-effect remains in the tree — no residual layer, no GPU cost.
+
+// Guarded require: if the native module isn't in the current binary (e.g. an
+// older build made before we added the dependency), this degrades gracefully
+// instead of crashing — every capability check below resolves to false.
+let GlassViewComp: any = null;
+let _isLiquidGlassAvailable: (() => boolean) | null = null;
+let _isGlassEffectAPIAvailable: (() => boolean) | null = null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const mod = require('expo-glass-effect');
+  GlassViewComp = mod.GlassView ?? null;
+  _isLiquidGlassAvailable = mod.isLiquidGlassAvailable ?? null;
+  _isGlassEffectAPIAvailable = mod.isGlassEffectAPIAvailable ?? null;
+} catch {
+  // Module absent — stays in fallback mode forever this session.
+}
+
+// Real liquid glass requires: iOS, the JS component present, the Liquid Glass
+// design compiled into the app (`isLiquidGlassAvailable`), AND the runtime API
+// actually present on this OS build (`isGlassEffectAPIAvailable` guards against
+// iOS 26 betas that ship without the API and would otherwise crash). Computed
+// once at module load — these values are stable for an app session.
+const NATIVE_GLASS_CAPABLE: boolean = (() => {
+  if (Platform.OS !== 'ios' || !GlassViewComp) return false;
+  try {
+    return !!_isLiquidGlassAvailable?.() && !!_isGlassEffectAPIAvailable?.();
+  } catch {
+    return false;
+  }
+})();
+
+/**
+ * Whether this device CAN render native liquid glass at all (iOS 26+ with the
+ * API compiled in). Use to decide whether to even SHOW the settings toggle —
+ * there's no point offering it on Android / older iOS where it's a no-op.
+ */
+export function isNativeGlassCapable(): boolean {
+  return NATIVE_GLASS_CAPABLE;
+}
+
+/**
+ * True when the device can render native glass AND the user has it enabled in
+ * settings. Subscribes to the toggle so consumers re-render (mount/unmount the
+ * GlassView) the instant the user flips it.
+ */
+export function useLiquidGlassActive(): boolean {
+  const enabled = useSettingsStore((s) => s.liquidGlassEnabled);
+  return NATIVE_GLASS_CAPABLE && enabled;
+}
+
+export type GlassStyle = 'clear' | 'regular' | 'none';
+
+interface NativeGlassViewProps extends ViewProps {
+  style?: StyleProp<ViewStyle>;
+  glassStyle?: GlassStyle;
+  tintColor?: string;
+  isInteractive?: boolean;
+  /** Override the system appearance to match the app's own theme toggle. */
+  colorScheme?: 'auto' | 'light' | 'dark';
+  children?: React.ReactNode;
+}
+
+/**
+ * Thin typed wrapper over expo-glass-effect's `GlassView`. Render this ONLY
+ * after checking `useLiquidGlassActive()` — it assumes the native effect is
+ * available. Renders a plain View if (somehow) the module is missing, so it
+ * can never crash. `children` render inside the glass surface.
+ */
+export function NativeGlassView({
+  glassStyle = 'regular',
+  tintColor,
+  isInteractive,
+  colorScheme,
+  style,
+  children,
+  ...rest
+}: NativeGlassViewProps) {
+  if (!GlassViewComp) {
+    return <View style={style} {...rest}>{children}</View>;
+  }
+  return (
+    <GlassViewComp
+      style={style}
+      glassEffectStyle={glassStyle}
+      tintColor={tintColor}
+      isInteractive={isInteractive}
+      colorScheme={colorScheme}
+      {...rest}
+    >
+      {children}
+    </GlassViewComp>
+  );
+}
+
+interface GlassSurfaceProps extends NativeGlassViewProps {
+  /**
+   * The non-glass UI rendered when liquid glass is OFF or unavailable. Pass
+   * your existing BlurView / gradient / plain View here. Used for surfaces
+   * that have NO inner children (e.g. a full-bleed backdrop). For surfaces
+   * with children inside the glass (buttons), check `useLiquidGlassActive()`
+   * inline instead.
+   */
+  fallback: React.ReactNode;
+}
+
+/**
+ * No-children surface: renders a native `GlassView` when liquid glass is
+ * active, otherwise the supplied `fallback`. When inactive, NOTHING from
+ * expo-glass-effect is mounted — the effect fully disappears.
+ */
+export function GlassSurface({ fallback, ...glassProps }: GlassSurfaceProps) {
+  const active = useLiquidGlassActive();
+  if (active) return <NativeGlassView {...glassProps} />;
+  return <>{fallback}</>;
+}
