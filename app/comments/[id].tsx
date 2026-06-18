@@ -8,6 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../../src/theme';
+import { useLiquidGlassActive, NativeGlassView } from '../../src/components/ui/LiquidGlass';
 import { Text, Avatar } from '../../src/components/ui';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { UserBadge } from '../../src/components/ui/UserBadge';
@@ -211,6 +212,10 @@ export default function CommentsScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
+  // Native iOS-26 liquid glass for the composer chrome. iOS-only and only when
+  // the user enabled it — everywhere else this is false and the existing flat
+  // bordered capsule renders unchanged (Android always hits the fallback).
+  const glassActive = useLiquidGlassActive();
   // Mount-time marker — surfaces in the perf-monitor panel as
   // `MOUNT comments/[id] <ms>` so freezes when opening comments have
   // an actionable starting point. Skipped when the monitor is off.
@@ -762,30 +767,69 @@ export default function CommentsScreen() {
             </View>
           ) : null}
           <Reanimated.View style={[{ flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 16, paddingTop: 8, backgroundColor: bgColor }, inputPadStyle]}>
-            <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 22, paddingHorizontal: 16, paddingVertical: 10, borderWidth: 1, borderColor: theme.colors.border.light, minHeight: 44 }}>
-              <TextInput
-                ref={inputRef}
-                value={text}
-                onChangeText={setText}
-                placeholder={t('comments.placeholder')}
-                placeholderTextColor={theme.colors.text.tertiary}
-                style={{ flex: 1, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular, maxHeight: 100, paddingTop: 0, paddingBottom: 0, minHeight: 22, lineHeight: 20, alignSelf: 'center' }}
-                multiline
-                textAlignVertical="center"
-                onContentSizeChange={() => { LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); }}
-                // Captures keyboard-to-first-frame latency for the
-                // comments composer. Free when the perf monitor is off
-                // (singleton early-returns on the disabled flag).
-                onFocus={() => perfMonitor.markInputFocus('comments')}
-              />
-              {/* GIF button inside the input, right side */}
-              <Pressable onPress={() => setGifPickerVisible(true)} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 2, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8, backgroundColor: theme.colors.accent.primary + '18' }}>
-                <RNText style={{ fontSize: 11, fontWeight: '800', color: theme.colors.accent.primary }}>GIF</RNText>
+            {/* Input wrap → interactive liquid glass holding the TextInput +
+                GIF button as CHILDREN (matches ChatInputBar). NO visible border
+                (the glass supplies the edge) and NO overflow clip. The non-glass
+                fallback keeps its existing bordered capsule byte-for-byte. */}
+            {glassActive ? (
+              <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={{ flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 22, paddingHorizontal: 16, paddingVertical: 10, minHeight: 44 }}>
+                <TextInput
+                  ref={inputRef}
+                  value={text}
+                  onChangeText={setText}
+                  placeholder={t('comments.placeholder')}
+                  placeholderTextColor={theme.colors.text.tertiary}
+                  style={{ flex: 1, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular, maxHeight: 100, paddingTop: 0, paddingBottom: 0, minHeight: 22, lineHeight: 20, alignSelf: 'center' }}
+                  multiline
+                  textAlignVertical="center"
+                  onContentSizeChange={() => { LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); }}
+                  // Captures keyboard-to-first-frame latency for the
+                  // comments composer. Free when the perf monitor is off
+                  // (singleton early-returns on the disabled flag).
+                  onFocus={() => perfMonitor.markInputFocus('comments')}
+                />
+                {/* GIF button inside the input, right side */}
+                <Pressable onPress={() => setGifPickerVisible(true)} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 2, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8, backgroundColor: theme.colors.accent.primary + '18' }}>
+                  <RNText style={{ fontSize: 11, fontWeight: '800', color: theme.colors.accent.primary }}>GIF</RNText>
+                </Pressable>
+              </NativeGlassView>
+            ) : (
+              <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 22, paddingHorizontal: 16, paddingVertical: 10, borderWidth: 1, borderColor: theme.colors.border.light, minHeight: 44 }}>
+                <TextInput
+                  ref={inputRef}
+                  value={text}
+                  onChangeText={setText}
+                  placeholder={t('comments.placeholder')}
+                  placeholderTextColor={theme.colors.text.tertiary}
+                  style={{ flex: 1, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular, maxHeight: 100, paddingTop: 0, paddingBottom: 0, minHeight: 22, lineHeight: 20, alignSelf: 'center' }}
+                  multiline
+                  textAlignVertical="center"
+                  onContentSizeChange={() => { LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); }}
+                  // Captures keyboard-to-first-frame latency for the
+                  // comments composer. Free when the perf monitor is off
+                  // (singleton early-returns on the disabled flag).
+                  onFocus={() => perfMonitor.markInputFocus('comments')}
+                />
+                {/* GIF button inside the input, right side */}
+                <Pressable onPress={() => setGifPickerVisible(true)} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 2, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8, backgroundColor: theme.colors.accent.primary + '18' }}>
+                  <RNText style={{ fontSize: 11, fontWeight: '800', color: theme.colors.accent.primary }}>GIF</RNText>
+                </Pressable>
+              </View>
+            )}
+            {/* Send button → keep the solid accent affordance when it can send.
+                When it can't (empty) AND glass is active, render interactive
+                glass holding the icon as a CHILD (mirrors ChatInputBar). */}
+            {glassActive && !text.trim() ? (
+              <Pressable onPress={handleSend} disabled={isSending} style={{ marginLeft: 10, borderRadius: 20 }}>
+                <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={{ width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' }}>
+                  <Feather name={editing ? 'check' : 'send'} size={16} color={theme.colors.text.tertiary} />
+                </NativeGlassView>
               </Pressable>
-            </View>
-            <Pressable onPress={handleSend} disabled={!text.trim() || isSending} style={{ marginLeft: 10, width: 40, height: 40, borderRadius: 20, backgroundColor: text.trim() ? theme.colors.accent.primary : theme.colors.background.elevated, alignItems: 'center', justifyContent: 'center' }}>
-              <Feather name={editing ? 'check' : 'send'} size={16} color={text.trim() ? '#FFFFFF' : theme.colors.text.tertiary} />
-            </Pressable>
+            ) : (
+              <Pressable onPress={handleSend} disabled={!text.trim() || isSending} style={{ marginLeft: 10, width: 40, height: 40, borderRadius: 20, backgroundColor: text.trim() ? theme.colors.accent.primary : theme.colors.background.elevated, alignItems: 'center', justifyContent: 'center' }}>
+                <Feather name={editing ? 'check' : 'send'} size={16} color={text.trim() ? '#FFFFFF' : theme.colors.text.tertiary} />
+              </Pressable>
+            )}
           </Reanimated.View>
         </KeyboardStickyView>
 

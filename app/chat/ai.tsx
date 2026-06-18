@@ -941,7 +941,11 @@ export default function AIChatScreen() {
             )}
 
             {glassActive ? (
-              <NativeGlassView glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} style={{ flex: 1, flexDirection: 'row', alignItems: 'flex-end', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 6, minHeight: 40 }}>
+              // Input wrap → interactive liquid glass holding the TextInput +
+              // send button as CHILDREN, matching ChatInputBar. NO visible
+              // border (the glass supplies the edge) and NO overflow clip so
+              // the glass can morph outward on touch.
+              <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={{ flex: 1, flexDirection: 'row', alignItems: 'flex-end', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 6, minHeight: 40 }}>
                 <TextInput
                   value={input}
                   onChangeText={setInput}
