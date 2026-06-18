@@ -90,7 +90,10 @@ function AuthNavigationGuard({ children }: { children: React.ReactNode }) {
   const [isLoggingOut, setIsLoggingOut] = useState(false);
 
   useEffect(() => {
-    const timer = setTimeout(() => setShowSplash(false), 800);
+    // Minimum time the branded JS splash stays up. Trimmed 800 → 450 ms so the
+    // app reaches the feed faster after the native launch screen hands off —
+    // the user perceived the combined native+JS splash as too long.
+    const timer = setTimeout(() => setShowSplash(false), 450);
     return () => clearTimeout(timer);
   }, []);
 

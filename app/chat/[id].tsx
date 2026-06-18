@@ -1701,9 +1701,9 @@ export default function ChatScreen() {
               <Pressable
                 onPress={onScrollBtnTap}
                 hitSlop={6}
-                style={{ width: 36, height: 36, borderRadius: 18, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' }}
+                style={{ width: 36, height: 36, borderRadius: 18, overflow: 'hidden', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: theme.colors.border.light }}
               >
-                <GlassBg borderRadius={18} colorScheme={theme.isDark ? 'dark' : 'light'} />
+                <GlassBg borderRadius={18} glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} />
                 <Feather name="chevron-down" size={20} color={theme.colors.text.primary} />
               </Pressable>
             ) : (
