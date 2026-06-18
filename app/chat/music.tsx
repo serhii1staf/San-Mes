@@ -9,7 +9,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
-import { useLiquidGlassActive, GlassBg } from '../../src/components/ui/LiquidGlass';
+import { useLiquidGlassActive, NativeGlassView, GlassBg } from '../../src/components/ui/LiquidGlass';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { TrackResultCard } from '../../src/components/ui/TrackResultCard';
 import { AuthorInfoModal } from '../../src/components/ui/AuthorInfoModal';
@@ -307,12 +307,11 @@ export default function MusicChatScreen() {
       <View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100 }}>
         <LinearGradient colors={[theme.colors.background.primary, theme.colors.background.primary, theme.colors.background.primary + '00']} locations={[0, 0.7, 1]} style={{ paddingTop: insets.top + 8, paddingBottom: 20, paddingHorizontal: 16 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-            <Pressable onPress={() => router.back()} style={{ borderRadius: 17, overflow: 'hidden' }}>
+            <Pressable onPress={() => router.back()} style={glassActive ? { borderRadius: 17 } : { borderRadius: 17, overflow: 'hidden' }}>
               {glassActive ? (
-                <View style={{ width: 34, height: 34, borderRadius: 17, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' }}>
-                  <GlassBg borderRadius={17} colorScheme="dark" />
+                <NativeGlassView glassStyle="regular" isInteractive colorScheme="dark" style={{ width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' }}>
                   <Feather name="chevron-left" size={18} color="#FFFFFF" />
-                </View>
+                </NativeGlassView>
               ) : chromeReady ? (
                 <BlurView intensity={80} tint="dark" style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center' }}>
                   <Feather name="chevron-left" size={18} color="#FFFFFF" />
@@ -419,56 +418,93 @@ export default function MusicChatScreen() {
                   borderRadius: 20,
                   // Active (commandsOpen) keeps the solid accent fill. When
                   // idle AND liquid glass is on, drop the flat fill/border and
-                  // clip so the GlassBg layer below shows through; otherwise
-                  // the original flat capsule renders unchanged.
+                  // the clip so the interactive glass child can morph outward;
+                  // otherwise the original flat capsule renders unchanged.
                   ...(commandsOpen
                     ? { backgroundColor: theme.colors.accent.primary, borderWidth: 1, borderColor: theme.colors.border.light }
                     : glassActive
-                      ? { overflow: 'hidden' }
+                      ? null
                       : { backgroundColor: theme.isDark ? 'rgba(40,40,40,0.95)' : 'rgba(245,245,245,0.95)', borderWidth: 1, borderColor: theme.colors.border.light }),
                 }}
               >
-                {/* Liquid-glass background layer (idle state only) — sits BEHIND
-                    the icon + label, which remain siblings on top. */}
-                {!commandsOpen && glassActive ? <GlassBg borderRadius={20} colorScheme={theme.isDark ? 'dark' : 'light'} /> : null}
-                {/* Both children participate in the flex row, so flex centring
-                    naturally handles every animation frame — icon-only when
-                    label width is 0, icon+gap+label when expanded. No more
-                    absolute-positioning math, no drift on either end. */}
-                <Feather name="command" size={16} color={commandsOpen ? '#FFFFFF' : theme.colors.accent.primary} />
-                <Animated.Text
-                  numberOfLines={1}
-                  allowFontScaling={false}
-                  style={{
-                    width: commandLabelW,
-                    marginLeft: commandLabelML,
-                    opacity: commandLabelOpacity,
-                    fontSize: 12,
-                    fontWeight: '600',
-                    color: commandsOpen ? '#FFFFFF' : theme.colors.accent.primary,
-                  }}
-                >{t('music_chat.commands_label')}</Animated.Text>
+                {!commandsOpen && glassActive ? (
+                  // Idle state → interactive liquid glass holding the icon +
+                  // label as CHILDREN so the glass morphs outward on touch.
+                  <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={{ width: '100%', height: '100%', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderRadius: 20 }}>
+                    <Feather name="command" size={16} color={theme.colors.accent.primary} />
+                    <Animated.Text
+                      numberOfLines={1}
+                      allowFontScaling={false}
+                      style={{
+                        width: commandLabelW,
+                        marginLeft: commandLabelML,
+                        opacity: commandLabelOpacity,
+                        fontSize: 12,
+                        fontWeight: '600',
+                        color: theme.colors.accent.primary,
+                      }}
+                    >{t('music_chat.commands_label')}</Animated.Text>
+                  </NativeGlassView>
+                ) : (
+                  <>
+                    {/* Both children participate in the flex row, so flex centring
+                        naturally handles every animation frame — icon-only when
+                        label width is 0, icon+gap+label when expanded. */}
+                    <Feather name="command" size={16} color={commandsOpen ? '#FFFFFF' : theme.colors.accent.primary} />
+                    <Animated.Text
+                      numberOfLines={1}
+                      allowFontScaling={false}
+                      style={{
+                        width: commandLabelW,
+                        marginLeft: commandLabelML,
+                        opacity: commandLabelOpacity,
+                        fontSize: 12,
+                        fontWeight: '600',
+                        color: commandsOpen ? '#FFFFFF' : theme.colors.accent.primary,
+                      }}
+                    >{t('music_chat.commands_label')}</Animated.Text>
+                  </>
+                )}
               </Pressable>
             </Animated.View>
 
-            <View style={{ flex: 1, flexDirection: 'row', alignItems: 'flex-end', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 6, minHeight: 40, ...(glassActive ? { overflow: 'hidden' } : { backgroundColor: theme.isDark ? 'rgba(40,40,40,0.95)' : 'rgba(245,245,245,0.95)', borderWidth: 1, borderColor: theme.colors.border.light }) }}>
-              {glassActive ? <GlassBg borderRadius={20} colorScheme={theme.isDark ? 'dark' : 'light'} /> : null}
-              <TextInput
-                value={input}
-                onChangeText={setInput}
-                placeholder={t('music_chat.input_placeholder')}
-                placeholderTextColor={theme.colors.text.tertiary}
-                multiline
-                textAlignVertical="center"
-                style={{ flex: 1, fontSize: 14, color: theme.colors.text.primary, maxHeight: 100, paddingTop: 0, paddingBottom: 0, minHeight: 22, lineHeight: 20, alignSelf: 'center' }}
-                onSubmitEditing={handleSend}
-                returnKeyType="search"
-                onContentSizeChange={() => { LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); }}
-              />
-              <Pressable onPress={handleSend} disabled={!input.trim() || isSearching} style={{ alignSelf: 'flex-end', width: 28, height: 28, borderRadius: 14, backgroundColor: input.trim() ? theme.colors.accent.primary : 'transparent', alignItems: 'center', justifyContent: 'center', marginLeft: 8, marginBottom: 1 }}>
-                <Feather name="search" size={13} color={input.trim() ? '#FFFFFF' : theme.colors.text.tertiary} />
-              </Pressable>
-            </View>
+            {glassActive ? (
+              <NativeGlassView glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} style={{ flex: 1, flexDirection: 'row', alignItems: 'flex-end', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 6, minHeight: 40 }}>
+                <TextInput
+                  value={input}
+                  onChangeText={setInput}
+                  placeholder={t('music_chat.input_placeholder')}
+                  placeholderTextColor={theme.colors.text.tertiary}
+                  multiline
+                  textAlignVertical="center"
+                  style={{ flex: 1, fontSize: 14, color: theme.colors.text.primary, maxHeight: 100, paddingTop: 0, paddingBottom: 0, minHeight: 22, lineHeight: 20, alignSelf: 'center' }}
+                  onSubmitEditing={handleSend}
+                  returnKeyType="search"
+                  onContentSizeChange={() => { LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); }}
+                />
+                <Pressable onPress={handleSend} disabled={!input.trim() || isSearching} style={{ alignSelf: 'flex-end', width: 28, height: 28, borderRadius: 14, backgroundColor: input.trim() ? theme.colors.accent.primary : 'transparent', alignItems: 'center', justifyContent: 'center', marginLeft: 8, marginBottom: 1 }}>
+                  <Feather name="search" size={13} color={input.trim() ? '#FFFFFF' : theme.colors.text.tertiary} />
+                </Pressable>
+              </NativeGlassView>
+            ) : (
+              <View style={{ flex: 1, flexDirection: 'row', alignItems: 'flex-end', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 6, minHeight: 40, backgroundColor: theme.isDark ? 'rgba(40,40,40,0.95)' : 'rgba(245,245,245,0.95)', borderWidth: 1, borderColor: theme.colors.border.light }}>
+                <TextInput
+                  value={input}
+                  onChangeText={setInput}
+                  placeholder={t('music_chat.input_placeholder')}
+                  placeholderTextColor={theme.colors.text.tertiary}
+                  multiline
+                  textAlignVertical="center"
+                  style={{ flex: 1, fontSize: 14, color: theme.colors.text.primary, maxHeight: 100, paddingTop: 0, paddingBottom: 0, minHeight: 22, lineHeight: 20, alignSelf: 'center' }}
+                  onSubmitEditing={handleSend}
+                  returnKeyType="search"
+                  onContentSizeChange={() => { LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); }}
+                />
+                <Pressable onPress={handleSend} disabled={!input.trim() || isSearching} style={{ alignSelf: 'flex-end', width: 28, height: 28, borderRadius: 14, backgroundColor: input.trim() ? theme.colors.accent.primary : 'transparent', alignItems: 'center', justifyContent: 'center', marginLeft: 8, marginBottom: 1 }}>
+                  <Feather name="search" size={13} color={input.trim() ? '#FFFFFF' : theme.colors.text.tertiary} />
+                </Pressable>
+              </View>
+            )}
           </View>
         </Reanimated.View>
       </KeyboardStickyView>

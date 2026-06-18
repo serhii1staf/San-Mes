@@ -32,7 +32,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import * as ImagePicker from 'expo-image-picker';
 import { useTheme } from '../../src/theme';
 import { ShrinkingModalTitle } from '../../src/components/ui';
-import { useLiquidGlassActive, GlassBg } from '../../src/components/ui/LiquidGlass';
+import { useLiquidGlassActive, NativeGlassView, GlassBg } from '../../src/components/ui/LiquidGlass';
 import { ChatPreviewBubbles } from '../../src/components/ui/ChatPreviewBubbles';
 import { buildPresetGradientUri } from '../../src/components/ui/ChatBackgroundLayer';
 import {
@@ -133,12 +133,11 @@ export default function ChatBackgroundScreen() {
 
       {/* ── Floating header pills ───────────────────────────────────── */}
       <View style={[styles.headerRow, { top: 28 }]} pointerEvents="box-none">
-        <Pressable onPress={onCancel} hitSlop={10} style={styles.headerPill}>
+        <Pressable onPress={onCancel} hitSlop={10} style={glassActive ? [styles.headerPill, { overflow: 'visible' }] : styles.headerPill}>
           {glassActive ? (
-            <View style={[styles.headerPillInner, { borderRadius: 18, overflow: 'hidden' }]}>
-              <GlassBg borderRadius={18} colorScheme="dark" />
+            <NativeGlassView glassStyle="regular" isInteractive colorScheme="dark" style={[styles.headerPillInner, { borderRadius: 18 }]}>
               <Feather name="x" size={18} color="#FFFFFF" />
-            </View>
+            </NativeGlassView>
           ) : (
             <BlurView intensity={80} tint="dark" style={styles.headerPillInner}>
               <Feather name="x" size={18} color="#FFFFFF" />
@@ -165,14 +164,13 @@ export default function ChatBackgroundScreen() {
             </View>
           </ShrinkingModalTitle>
         </View>
-        <Pressable onPress={onApply} hitSlop={10} style={styles.headerPill}>
+        <Pressable onPress={onApply} hitSlop={10} style={glassActive ? [styles.headerPill, { overflow: 'visible' }] : styles.headerPill}>
           {glassActive ? (
-            <View style={[styles.headerPillInner, { paddingHorizontal: 14, borderRadius: 18, overflow: 'hidden' }]}>
-              <GlassBg borderRadius={18} colorScheme="dark" />
+            <NativeGlassView glassStyle="regular" isInteractive colorScheme="dark" style={[styles.headerPillInner, { paddingHorizontal: 14, borderRadius: 18 }]}>
               <RNText style={styles.headerApplyText} allowFontScaling={false}>
                 {t('common.apply')}
               </RNText>
-            </View>
+            </NativeGlassView>
           ) : (
             <BlurView intensity={80} tint="dark" style={[styles.headerPillInner, { paddingHorizontal: 14 }]}>
               <RNText style={styles.headerApplyText} allowFontScaling={false}>

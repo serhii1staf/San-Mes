@@ -5,7 +5,7 @@ import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../../theme';
 import { useT } from '../../i18n/store';
 import { perfMonitor } from '../../services/perfMonitor';
-import { useLiquidGlassActive, GlassBg } from '../ui/LiquidGlass';
+import { useLiquidGlassActive, NativeGlassView } from '../ui/LiquidGlass';
 
 // Enable LayoutAnimation on Android (no-op on iOS where it's always on).
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -114,41 +114,45 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
     // the row's bottom edge. Without this the row centers all children, which
     // visually shoves the photo/GIF/send buttons up alongside the text.
     <Reanimated.View style={[styles.row, inputRowStyle]}>
-      {/* Photo/image button → glass background layer with the icon on top.
-          GlassBg returns null when glass is off, so the flat fill applies. */}
+      {/* Photo/image button → interactive liquid glass holding the icon as a
+          CHILD so the glass morphs outward on touch. NO overflow clipping. */}
       <Pressable
         onPress={onPickImages}
-        style={[
-          styles.iconBtn,
+        style={
           glassActive
-            ? styles.glassClip
-            : { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light },
-        ]}
+            ? { borderRadius: 22, marginRight: 8 }
+            : [styles.iconBtn, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]
+        }
       >
-        <GlassBg borderRadius={22} colorScheme={theme.isDark ? 'dark' : 'light'} />
-        <Feather name="image" size={20} color={theme.colors.accent.primary} />
+        {glassActive ? (
+          <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.btnGlass}>
+            <Feather name="image" size={20} color={theme.colors.accent.primary} />
+          </NativeGlassView>
+        ) : (
+          <Feather name="image" size={20} color={theme.colors.accent.primary} />
+        )}
       </Pressable>
-      {/* Input wrap → glass background layer with the input content (TextInput +
-          GIF button) as siblings ON TOP, so the TextInput stays fully legible
-          and the wrap keeps its shape/padding/minHeight either way. */}
-      <View
-        style={[
-          styles.inputWrap,
-          glassActive
-            ? styles.glassClip
-            : { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light },
-        ]}
-      >
-        <GlassBg borderRadius={22} colorScheme={theme.isDark ? 'dark' : 'light'} />
-        {inputInner}
-      </View>
+      {/* Input wrap → liquid glass holding the input content (TextInput + GIF
+          button) as CHILDREN. NON-interactive (interactive morph fights text
+          editing — TextInput rule) and NO overflow so the shape/padding/minHeight
+          stay identical to the flat path. */}
+      {glassActive ? (
+        <NativeGlassView glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.inputWrapGlass}>
+          {inputInner}
+        </NativeGlassView>
+      ) : (
+        <View style={[styles.inputWrap, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
+          {inputInner}
+        </View>
+      )}
       {/* Send button → keep the solid accent affordance when it can send (a
           filled send button, no glass). When it can't (empty) AND glass is
-          active, render the glass background layer with the icon on top. */}
+          active, render interactive glass holding the icon as a CHILD. */}
       {glassActive && !canSend ? (
-        <Pressable onPress={handleSend} style={[styles.sendBtn, styles.glassClip]}>
-          <GlassBg borderRadius={22} colorScheme={theme.isDark ? 'dark' : 'light'} />
-          <Feather name={isEditing ? 'check' : 'send'} size={18} color={theme.colors.text.tertiary} />
+        <Pressable onPress={handleSend} style={{ borderRadius: 22, marginLeft: 8 }}>
+          <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.btnGlass}>
+            <Feather name={isEditing ? 'check' : 'send'} size={18} color={theme.colors.text.tertiary} />
+          </NativeGlassView>
         </Pressable>
       ) : (
         <Pressable onPress={handleSend} style={[styles.sendBtn, { backgroundColor: canSend ? theme.colors.accent.primary : theme.colors.background.elevated }]}>
@@ -168,8 +172,12 @@ const styles = StyleSheet.create({
   iconBtn: { width: 44, height: 44, borderRadius: 22, borderWidth: 1, alignItems: 'center', justifyContent: 'center', marginRight: 8 },
   inputWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 22, paddingHorizontal: 14, paddingVertical: 10, minHeight: 44, borderWidth: 1 },
   sendBtn: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', marginLeft: 8 },
-  // Clip the native glass background to the capsule shape and drop the
-  // flat-path border (the glass supplies its own edge). Used on the
-  // iconBtn / inputWrap / sendBtn wrappers only when liquid glass is active.
-  glassClip: { overflow: 'hidden', borderWidth: 0 },
+  // Interactive-glass shape variants — same geometry as the flat capsules but
+  // NO border and NO overflow clipping, so the liquid glass can morph OUTWARD
+  // over content on touch. The icon/content lives INSIDE the glass as children.
+  // `btnGlass` is shared by the photo and (empty-state) send buttons.
+  btnGlass: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
+  // Input-wrap glass: same shape as `inputWrap` minus the border. NON-interactive
+  // (the TextInput lives inside; interactive morph would fight text editing).
+  inputWrapGlass: { flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 22, paddingHorizontal: 14, paddingVertical: 10, minHeight: 44 },
 });

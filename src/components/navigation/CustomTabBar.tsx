@@ -375,7 +375,7 @@ function SlidingLens({
 
 // ─── Glass Backdrop & Reflection ─────────────────────────────────────────────
 
-function GlassBackdrop({ isDark }: { isDark: boolean }) {
+function GlassBackdrop({ isDark, interactive }: { isDark: boolean; interactive?: boolean }) {
   // Native iOS-26 liquid glass when the user has it enabled and the device
   // supports it; otherwise the existing BlurView (iOS) / gradient (Android).
   // The GlassView fully replaces the backdrop — when the toggle is off it is
@@ -407,6 +407,11 @@ function GlassBackdrop({ isDark }: { isDark: boolean }) {
     <GlassSurface
       style={StyleSheet.absoluteFill}
       glassStyle="regular"
+      // Only the detached Profile capsule passes `interactive` — it makes the
+      // genuine liquid glass morph OUTWARD on touch. The main bar never passes
+      // it (its lens/gesture system owns the touch feel). When glass is OFF,
+      // GlassSurface renders the fallback and this flag is ignored.
+      isInteractive={interactive}
       colorScheme={isDark ? 'dark' : 'light'}
       fallback={Platform.OS === 'ios' ? iosFallback : androidFallback}
     />
@@ -480,6 +485,9 @@ function ProfileCapsule({
             : isDark ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.5)',
           shadowColor: isDark ? '#000' : 'rgba(0,0,0,0.15)',
         },
+        // When real glass is active, DON'T clip the capsule — clipping would
+        // kill the outward liquid morph of the interactive glass below.
+        glassActive ? { overflow: 'visible' } : null,
         pressStyle,
       ]}
     >
@@ -494,8 +502,10 @@ function ProfileCapsule({
         style={styles.profileInner}
       >
         {/* Same glass stack as the main bar so both capsules match: native
-            liquid glass when enabled, BlurView/gradient fallback otherwise. */}
-        <GlassBackdrop isDark={isDark} />
+            liquid glass when enabled, BlurView/gradient fallback otherwise.
+            `interactive` makes the genuine glass morph OUTWARD on touch — only
+            the detached Profile capsule opts in (the main bar never does). */}
+        <GlassBackdrop isDark={isDark} interactive />
         {!glassActive && <TopReflection isDark={isDark} />}
         {/* Active selection fill sits above the glass but below the icon. */}
         {activeBg !== 'transparent' && (

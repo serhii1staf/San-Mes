@@ -6,7 +6,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
 import { Text } from '../src/components/ui';
-import { useLiquidGlassActive, GlassBg } from '../src/components/ui/LiquidGlass';
+import { useLiquidGlassActive, NativeGlassView } from '../src/components/ui/LiquidGlass';
 import { SlideUpSheet } from '../src/components/ui/SlideUpSheet';
 import { useBrowserStore } from '../src/store/browserStore';
 import { useMiniAppsStore } from '../src/store/miniAppsStore';
@@ -215,13 +215,12 @@ export default function MiniAppScreen() {
           zIndex 60 keeps them ABOVE the loading overlay (zIndex 40) so they
           stay tappable even while a page is loading or hung offline. */}
       <View style={{ position: 'absolute', top: insets.top + 8, left: 16, right: 16, zIndex: 60, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Pressable onPress={handleMinimize} style={{ borderRadius: 14, overflow: 'hidden' }}>
+        <Pressable onPress={handleMinimize} style={glassActive ? { borderRadius: 14 } : { borderRadius: 14, overflow: 'hidden' }}>
           {glassActive ? (
-            <View style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, overflow: 'hidden' }}>
-              <GlassBg borderRadius={14} colorScheme="dark" />
+            <NativeGlassView glassStyle="regular" isInteractive colorScheme="dark" style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, borderRadius: 14 }}>
               <Feather name="chevron-down" size={12} color="#FFFFFF" />
               <Text style={{ fontSize: 10, color: '#FFFFFF', fontWeight: '500' }}>{t('mini_app.collapse')}</Text>
-            </View>
+            </NativeGlassView>
           ) : (
             <BlurView intensity={80} tint="dark" style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10 }}>
               <Feather name="chevron-down" size={12} color="#FFFFFF" />
@@ -229,10 +228,13 @@ export default function MiniAppScreen() {
             </BlurView>
           )}
         </Pressable>
-        <View style={{ borderRadius: 14, overflow: 'hidden' }}>
+        <View style={glassActive ? { borderRadius: 14 } : { borderRadius: 14, overflow: 'hidden' }}>
           {glassActive ? (
-            <View style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 12, overflow: 'hidden' }}>
-              <GlassBg borderRadius={14} colorScheme="dark" />
+            // Multi-button toolbar container — glass holds the buttons as
+            // CHILDREN. NON-interactive on purpose: the share/report/close
+            // Pressables are the real tap targets, so we don't add an
+            // interactive morph that could fight their touch handling.
+            <NativeGlassView glassStyle="regular" colorScheme="dark" style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 12, borderRadius: 14 }}>
               {canShare ? (
                 <Pressable onPress={handleShare} hitSlop={6}>
                   <Feather name="share" size={13} color="#FFFFFF" />
@@ -244,7 +246,7 @@ export default function MiniAppScreen() {
               <Pressable onPress={handleClose} hitSlop={6}>
                 <Feather name="x" size={14} color="#FFFFFF" />
               </Pressable>
-            </View>
+            </NativeGlassView>
           ) : (
             <BlurView intensity={80} tint="dark" style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 12 }}>
               {canShare ? (

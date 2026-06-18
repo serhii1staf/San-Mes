@@ -38,7 +38,7 @@ import { triggerHaptic } from '../../src/utils/haptics';
 import { useT } from '../../src/i18n/store';
 import { perfMonitor } from '../../src/services/perfMonitor';
 import { useSettingsStore } from '../../src/store/settingsStore';
-import { useLiquidGlassActive, GlassBg } from '../../src/components/ui/LiquidGlass';
+import { useLiquidGlassActive, NativeGlassView } from '../../src/components/ui/LiquidGlass';
 
 const REPLY_THRESHOLD = 60;
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -1693,18 +1693,25 @@ export default function ChatScreen() {
             style={{ opacity: scrollBtnOpacity }}
           >
             {glassActive ? (
-              // Glass capsule. The opacity fade lives on the WRAPPER
+              // Interactive glass capsule. The opacity fade lives on the WRAPPER
               // Animated.View above, NOT on the GlassView itself — so we avoid
               // the expo-glass-effect bug where opacity:0 on a GlassView node
-              // breaks the effect. GlassBg is an absolute-fill background layer
-              // with the chevron as a sibling ON TOP (never inside the glass).
+              // breaks the effect. The chevron is a CHILD of the glass so the
+              // liquid surface morphs outward on touch. Keeps its border; no
+              // overflow clipping (clipping would kill the outward morph).
               <Pressable
                 onPress={onScrollBtnTap}
                 hitSlop={6}
-                style={{ width: 36, height: 36, borderRadius: 18, overflow: 'hidden', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: theme.colors.border.light }}
+                style={{ borderRadius: 18 }}
               >
-                <GlassBg borderRadius={18} glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} />
-                <Feather name="chevron-down" size={20} color={theme.colors.text.primary} />
+                <NativeGlassView
+                  glassStyle="regular"
+                  isInteractive
+                  colorScheme={theme.isDark ? 'dark' : 'light'}
+                  style={{ width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: theme.colors.border.light }}
+                >
+                  <Feather name="chevron-down" size={20} color={theme.colors.text.primary} />
+                </NativeGlassView>
               </Pressable>
             ) : (
               <Pressable
@@ -1818,8 +1825,7 @@ export default function ChatScreen() {
         {searchMode ? (
           <View style={[styles.headerContent, { paddingTop: insets.top }]} pointerEvents="auto">
             {glassActive ? (
-              <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 20, paddingHorizontal: 14, height: 40, overflow: 'hidden' }}>
-                <GlassBg borderRadius={20} colorScheme={theme.isDark ? 'dark' : 'light'} />
+              <NativeGlassView glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} style={{ flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 20, paddingHorizontal: 14, height: 40 }}>
                 <Feather name="search" size={16} color={theme.colors.text.tertiary} />
                 <TextInput
                   autoFocus
@@ -1834,7 +1840,7 @@ export default function ChatScreen() {
                     {searchMatches.length > 0 ? `${searchActiveIdx + 1}/${searchMatches.length}` : '0'}
                   </Text>
                 )}
-              </View>
+              </NativeGlassView>
             ) : (
               <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 20, borderWidth: 1, borderColor: theme.colors.border.light, paddingHorizontal: 14, height: 40 }}>
                 <Feather name="search" size={16} color={theme.colors.text.tertiary} />
@@ -1856,9 +1862,10 @@ export default function ChatScreen() {
             {searchMatches.length > 0 && (
               <View style={{ flexDirection: 'row', marginLeft: 6 }}>
                 {glassActive ? (
-                  <Pressable onPress={goToPrevMatch} style={[styles.headerCircle, styles.glassClip]}>
-                    <GlassBg borderRadius={18} colorScheme={theme.isDark ? 'dark' : 'light'} />
-                    <Feather name="chevron-up" size={18} color={theme.colors.text.primary} />
+                  <Pressable onPress={goToPrevMatch} style={{ borderRadius: 18 }}>
+                    <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.headerCircleGlass}>
+                      <Feather name="chevron-up" size={18} color={theme.colors.text.primary} />
+                    </NativeGlassView>
                   </Pressable>
                 ) : (
                   <Pressable onPress={goToPrevMatch} style={[styles.headerCircle, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
@@ -1866,9 +1873,10 @@ export default function ChatScreen() {
                   </Pressable>
                 )}
                 {glassActive ? (
-                  <Pressable onPress={goToNextMatch} style={[styles.headerCircle, styles.glassClip, { marginLeft: 6 }]}>
-                    <GlassBg borderRadius={18} colorScheme={theme.isDark ? 'dark' : 'light'} />
-                    <Feather name="chevron-down" size={18} color={theme.colors.text.primary} />
+                  <Pressable onPress={goToNextMatch} style={{ borderRadius: 18, marginLeft: 6 }}>
+                    <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.headerCircleGlass}>
+                      <Feather name="chevron-down" size={18} color={theme.colors.text.primary} />
+                    </NativeGlassView>
                   </Pressable>
                 ) : (
                   <Pressable onPress={goToNextMatch} style={[styles.headerCircle, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light, marginLeft: 6 }]}>
@@ -1878,9 +1886,10 @@ export default function ChatScreen() {
               </View>
             )}
             {glassActive ? (
-              <Pressable onPress={closeSearch} style={[styles.headerCircle, styles.glassClip, { marginLeft: 6 }]}>
-                <GlassBg borderRadius={18} colorScheme={theme.isDark ? 'dark' : 'light'} />
-                <Feather name="x" size={20} color={theme.colors.text.primary} />
+              <Pressable onPress={closeSearch} style={{ borderRadius: 18, marginLeft: 6 }}>
+                <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.headerCircleGlass}>
+                  <Feather name="x" size={20} color={theme.colors.text.primary} />
+                </NativeGlassView>
               </Pressable>
             ) : (
               <Pressable onPress={closeSearch} style={[styles.headerCircle, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light, marginLeft: 6 }]}>
@@ -1891,9 +1900,10 @@ export default function ChatScreen() {
         ) : (
           <View style={[styles.headerContent, { paddingTop: insets.top }]} pointerEvents="auto">
             {glassActive ? (
-              <Pressable onPress={() => router.back()} style={[styles.headerCircle, styles.glassClip]}>
-                <GlassBg borderRadius={18} colorScheme={theme.isDark ? 'dark' : 'light'} />
-                <Feather name="chevron-left" size={22} color={theme.colors.text.primary} />
+              <Pressable onPress={() => router.back()} style={{ borderRadius: 18 }}>
+                <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.headerCircleGlass}>
+                  <Feather name="chevron-left" size={22} color={theme.colors.text.primary} />
+                </NativeGlassView>
               </Pressable>
             ) : (
               <Pressable onPress={() => router.back()} style={[styles.headerCircle, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
@@ -1906,15 +1916,16 @@ export default function ChatScreen() {
                   onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId, fromChat: '1' } })}
                   onLongPress={openSearch}
                   delayLongPress={300}
-                  style={[styles.headerPill, styles.glassClip]}
+                  style={{ borderRadius: 18 }}
                 >
-                  {/* GlassBg is an absolute-fill background; the name Text +
-                      badges are SIBLINGS ON TOP so the pill sizes to the name
-                      text (not collapsed into a bare circle). */}
-                  <GlassBg borderRadius={18} colorScheme={theme.isDark ? 'dark' : 'light'} />
-                  <Text variant="caption" weight="semibold" numberOfLines={1} style={{ flexShrink: 1 }}>{displayName}</Text>
-                  {displayVerified && <VerifiedBadge size={12} />}
-                  {displayBadge && <UserBadge badge={displayBadge} size="sm" />}
+                  {/* The name Text + badges are CHILDREN of the interactive
+                      glass; with no fixed width the children drive the pill's
+                      width and the liquid surface morphs outward on touch. */}
+                  <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.headerPillGlass}>
+                    <Text variant="caption" weight="semibold" numberOfLines={1} style={{ flexShrink: 1 }}>{displayName}</Text>
+                    {displayVerified && <VerifiedBadge size={12} />}
+                    {displayBadge && <UserBadge badge={displayBadge} size="sm" />}
+                  </NativeGlassView>
                 </Pressable>
               ) : (
                 <Pressable
@@ -2006,8 +2017,9 @@ const styles = StyleSheet.create({
   headerContent: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingBottom: 8, gap: 10 },
   headerCircle: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
   headerPill: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, height: 36, borderRadius: 18, borderWidth: 1, paddingHorizontal: 16 },
-  // Clip native glass to the rounded chrome shape and drop the flat-path
-  // border (the glass supplies its own edge). Applied to the Pressable wrapper;
-  // GlassBg fills it as a background and the icon/content sits on top.
-  glassClip: { overflow: 'hidden', borderWidth: 0 },
+  // Interactive-glass shape variants: same geometry as the flat chrome but with
+  // NO border and NO overflow clipping, so the liquid glass can morph OUTWARD
+  // over content on touch. The icon/content lives INSIDE the glass as children.
+  headerCircleGlass: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  headerPillGlass: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, height: 36, borderRadius: 18, paddingHorizontal: 16 },
 });

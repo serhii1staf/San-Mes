@@ -40,7 +40,7 @@ import Animated, {
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { useTheme } from '../../src/theme';
 import { ShrinkingModalTitle } from '../../src/components/ui';
-import { useLiquidGlassActive, GlassBg } from '../../src/components/ui/LiquidGlass';
+import { useLiquidGlassActive, NativeGlassView, GlassBg } from '../../src/components/ui/LiquidGlass';
 import { CachedImage } from '../../src/components/ui/CachedImage';
 import {
   useThemeStore,
@@ -238,12 +238,11 @@ export default function FontsSizeScreen() {
 
       {/* ── Floating header pills ───────────────────────────────────── */}
       <View style={[styles.headerRow, { top: 28 }]} pointerEvents="box-none">
-        <Pressable onPress={handleCancel} hitSlop={10} style={styles.headerPill}>
+        <Pressable onPress={handleCancel} hitSlop={10} style={glassActive ? [styles.headerPill, { overflow: 'visible' }] : styles.headerPill}>
           {glassActive ? (
-            <View style={[styles.headerPillInner, { borderRadius: 18, overflow: 'hidden' }]}>
-              <GlassBg borderRadius={18} colorScheme="dark" />
+            <NativeGlassView glassStyle="regular" isInteractive colorScheme="dark" style={[styles.headerPillInner, { borderRadius: 18 }]}>
               <Feather name="x" size={18} color="#FFFFFF" />
-            </View>
+            </NativeGlassView>
           ) : (
             <BlurView intensity={80} tint="dark" style={styles.headerPillInner}>
               <Feather name="x" size={18} color="#FFFFFF" />
@@ -280,14 +279,13 @@ export default function FontsSizeScreen() {
             </View>
           </ShrinkingModalTitle>
         </View>
-        <Pressable onPress={handleApply} hitSlop={10} style={styles.headerPill}>
+        <Pressable onPress={handleApply} hitSlop={10} style={glassActive ? [styles.headerPill, { overflow: 'visible' }] : styles.headerPill}>
           {glassActive ? (
-            <View style={[styles.headerPillInner, { paddingHorizontal: 14, borderRadius: 18, overflow: 'hidden' }]}>
-              <GlassBg borderRadius={18} colorScheme="dark" />
+            <NativeGlassView glassStyle="regular" isInteractive colorScheme="dark" style={[styles.headerPillInner, { paddingHorizontal: 14, borderRadius: 18 }]}>
               <RNText style={styles.headerApplyText} allowFontScaling={false}>
                 {t('common.apply')}
               </RNText>
-            </View>
+            </NativeGlassView>
           ) : (
             <BlurView intensity={80} tint="dark" style={[styles.headerPillInner, { paddingHorizontal: 14 }]}>
               <RNText style={styles.headerApplyText} allowFontScaling={false}>
