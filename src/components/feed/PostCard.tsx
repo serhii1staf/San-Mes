@@ -152,14 +152,14 @@ export const PostCard = memo(function PostCard({ post, currentUserId, onLike, on
   const heroImageStyle = useMemo<ImageStyle>(() => {
     if (heroAspect == null) {
       // Pre-load: portrait-ish placeholder so layout barely shifts on load.
-      return { width: '100%', aspectRatio: PLACEHOLDER_ASPECT_RATIO, marginBottom: 0 };
+      return { width: '100%', aspectRatio: PLACEHOLDER_ASPECT_RATIO, borderRadius: 18 };
     }
     const clamped = clampAspectRatio(heroAspect);
     const derivedHeight = CARD_CONTENT_WIDTH / clamped;
     if (derivedHeight > MAX_IMAGE_HEIGHT) {
-      return { width: '100%', height: MAX_IMAGE_HEIGHT, marginBottom: 0 };
+      return { width: '100%', height: MAX_IMAGE_HEIGHT, borderRadius: 18 };
     }
-    return { width: '100%', aspectRatio: clamped, marginBottom: 0 };
+    return { width: '100%', aspectRatio: clamped, borderRadius: 18 };
   }, [heroAspect]);
 
   // Memoize the URL extraction so the regex only runs when the post text
@@ -291,7 +291,9 @@ export const PostCard = memo(function PostCard({ post, currentUserId, onLike, on
           ratio; multi-image carousel keeps one consistent height. */}
       {hasImages && !post.isRepost && (
         imageUrls.length === 1 ? (
-          <Pressable onPress={() => { const now = Date.now(); if (now - lastTap.current < 300) handleDoubleTap(); lastTap.current = now; }}>
+          // Inset + rounded so the photo "floats" inside the card with
+          // breathing room on every side instead of bleeding to the edges.
+          <Pressable onPress={() => { const now = Date.now(); if (now - lastTap.current < 300) handleDoubleTap(); lastTap.current = now; }} style={{ paddingHorizontal: 12, paddingBottom: 12 }}>
             {/* Single hero image — sized to its own aspect ratio via onLoad so
                 tall/wide photos aren't cropped (clamped to a layout-safe band;
                 see ASPECT constants). `priority` follows `heroPriority`. */}
@@ -339,9 +341,15 @@ export const PostCard = memo(function PostCard({ post, currentUserId, onLike, on
 
 // Image carousel for multiple images
 function ImageCarousel({ imageUrls, onDoubleTap, heroPriority }: { imageUrls: string[]; onDoubleTap: () => void; heroPriority: 'high' | 'low' }) {
+  const theme = useTheme();
   const [activeIndex, setActiveIndex] = useState(0);
   const lastTapRef = useRef<number>(0);
   const imgWidth = SCREEN_WIDTH - 32;
+  // Each slide pages at full width, but the photo inside is inset on both
+  // sides and rounded so it floats with breathing room (matches the single
+  // hero). Paging math still uses the full `imgWidth`.
+  const SLIDE_INSET = 12;
+  const slideImgWidth = imgWidth - SLIDE_INSET * 2;
 
   // Mixed aspect ratios inside a horizontal pager look broken, so every slide
   // shares ONE height. We derive that height from the FIRST image's natural
@@ -355,8 +363,8 @@ function ImageCarousel({ imageUrls, onDoubleTap, heroPriority }: { imageUrls: st
   }, []);
   const carouselHeight = useMemo(() => {
     const ratio = firstAspect == null ? PLACEHOLDER_ASPECT_RATIO : clampAspectRatio(firstAspect);
-    return Math.min(MAX_IMAGE_HEIGHT, Math.round(imgWidth / ratio));
-  }, [firstAspect, imgWidth]);
+    return Math.min(MAX_IMAGE_HEIGHT, Math.round(slideImgWidth / ratio));
+  }, [firstAspect, slideImgWidth]);
 
   const handleScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
     const index = Math.round(e.nativeEvent.contentOffset.x / imgWidth);
@@ -366,25 +374,23 @@ function ImageCarousel({ imageUrls, onDoubleTap, heroPriority }: { imageUrls: st
   const handlePress = () => { const now = Date.now(); if (now - lastTapRef.current < 300) onDoubleTap(); lastTapRef.current = now; };
 
   return (
-    <View>
+    <View style={{ paddingBottom: 12 }}>
       <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false} onScroll={handleScroll} scrollEventThrottle={16}>
         {imageUrls.map((url, i) => (
-          <Pressable key={i} onPress={handlePress}>
+          <Pressable key={i} onPress={handlePress} style={{ width: imgWidth, alignItems: 'center' }}>
             {/* Within-card stagger: only the visible (first) image takes
                 `heroPriority`; off-screen carousel pages are `low` so iOS
-                queues them behind the first page's decode. The user sees
-                the first page render first, then off-screen pages stream
-                in as they're scrolled into view (or as the decoder gets
-                idle frames). The first slide also reports its dimensions so
-                the shared carousel height matches the set's orientation. */}
-            <CachedImage uri={url} style={{ width: imgWidth, height: carouselHeight }} resizeMode="cover" priority={i === 0 ? heroPriority : 'low'} onLoad={i === 0 ? handleFirstLoad : undefined} />
+                queues them behind the first page's decode. The first slide
+                also reports its dimensions so the shared carousel height
+                matches the set's orientation. */}
+            <CachedImage uri={url} style={{ width: slideImgWidth, height: carouselHeight, borderRadius: 18 }} resizeMode="cover" priority={i === 0 ? heroPriority : 'low'} onLoad={i === 0 ? handleFirstLoad : undefined} />
           </Pressable>
         ))}
       </ScrollView>
       {imageUrls.length > 1 && (
-        <View style={{ flexDirection: 'row', justifyContent: 'center', marginTop: 6, gap: 4 }}>
+        <View style={{ flexDirection: 'row', justifyContent: 'center', marginTop: 8, gap: 4 }}>
           {imageUrls.map((_, i) => (
-            <View key={i} style={{ width: i === activeIndex ? 7 : 5, height: 5, borderRadius: 3, backgroundColor: i === activeIndex ? '#FFFFFF' : 'rgba(255,255,255,0.3)' }} />
+            <View key={i} style={{ width: i === activeIndex ? 7 : 5, height: 5, borderRadius: 3, backgroundColor: i === activeIndex ? theme.colors.accent.primary : (theme.isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.2)') }} />
           ))}
         </View>
       )}
