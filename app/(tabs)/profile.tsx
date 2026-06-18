@@ -41,7 +41,7 @@ import { shouldSync, resetThrottle } from '../../src/services/syncThrottle';
 import { useT } from '../../src/i18n/store';
 import { perfMonitor } from '../../src/services/perfMonitor';
 import { useSettingsStore } from '../../src/store/settingsStore';
-import { useLiquidGlassActive, GlassBg, NativeGlassView } from '../../src/components/ui/LiquidGlass';
+import { useLiquidGlassActive, NativeGlassView } from '../../src/components/ui/LiquidGlass';
 import { parseBannerTransform, stripBannerTransform } from '../../src/utils/bannerTransform';
 import { useBannerBrightness } from '../../src/hooks/useBannerBrightness';
 
@@ -950,14 +950,18 @@ export default function ProfileScreen() {
           <Pressable
             onPress={() => { triggerHaptic('selection'); setFollowsModal('following'); }}
             hitSlop={6}
-            style={{ borderRadius: 14, overflow: 'hidden' }}
+            // Interactive morph: keep only the hit-shape borderRadius. NO overflow
+            // when glass is active so the liquid stretch can spill past the pill.
+            // Fallback path keeps overflow:'hidden' so the BlurView/View stays clipped.
+            style={{ borderRadius: 14, overflow: glassActive ? undefined : 'hidden' }}
           >
             {glassActive ? (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14, overflow: 'hidden' }}>
-                <GlassBg borderRadius={14} colorScheme="dark" />
+              // The interactive glass IS the pill: row/gap/padding/radius live here,
+              // the two Text nodes are its children so the text drives the width.
+              <NativeGlassView glassStyle="regular" isInteractive colorScheme="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14 }}>
                 <Text variant="caption" weight="bold" color="#FFFFFF" style={{ fontSize: 12 }}>{followCounts.following}</Text>
                 <Text variant="caption" color="rgba(255,255,255,0.85)" style={{ fontSize: 11 }}>{t('profile.following_short')}</Text>
-              </View>
+              </NativeGlassView>
             ) : chromeReady ? (
               <BlurView intensity={80} tint="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6 }}>
                 <Text variant="caption" weight="bold" color="#FFFFFF" style={{ fontSize: 12 }}>{followCounts.following}</Text>
@@ -973,14 +977,18 @@ export default function ProfileScreen() {
           <Pressable
             onPress={() => { triggerHaptic('selection'); setFollowsModal('followers'); }}
             hitSlop={6}
-            style={{ borderRadius: 14, overflow: 'hidden' }}
+            // Interactive morph: keep only the hit-shape borderRadius. NO overflow
+            // when glass is active so the liquid stretch can spill past the pill.
+            // Fallback path keeps overflow:'hidden' so the BlurView/View stays clipped.
+            style={{ borderRadius: 14, overflow: glassActive ? undefined : 'hidden' }}
           >
             {glassActive ? (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14, overflow: 'hidden' }}>
-                <GlassBg borderRadius={14} colorScheme="dark" />
+              // The interactive glass IS the pill: row/gap/padding/radius live here,
+              // the two Text nodes are its children so the text drives the width.
+              <NativeGlassView glassStyle="regular" isInteractive colorScheme="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14 }}>
                 <Text variant="caption" weight="bold" color="#FFFFFF" style={{ fontSize: 12 }}>{followCounts.followers}</Text>
                 <Text variant="caption" color="rgba(255,255,255,0.85)" style={{ fontSize: 11 }}>{t('profile.followers_short')}</Text>
-              </View>
+              </NativeGlassView>
             ) : chromeReady ? (
               <BlurView intensity={80} tint="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6 }}>
                 <Text variant="caption" weight="bold" color="#FFFFFF" style={{ fontSize: 12 }}>{followCounts.followers}</Text>

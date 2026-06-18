@@ -33,7 +33,7 @@ import {
   serializeBannerTransform,
   stripBannerTransform,
 } from '../../src/utils/bannerTransform';
-import { useLiquidGlassActive, GlassBg } from '../../src/components/ui/LiquidGlass';
+import { useLiquidGlassActive, NativeGlassView } from '../../src/components/ui/LiquidGlass';
 
 const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -350,12 +350,13 @@ export default function EditProfileScreen() {
         />
       </View>
       <View style={[styles.headerRow, { top: 28 }]} pointerEvents="box-none">
-        <Pressable onPress={handleClose} hitSlop={10} style={styles.headerPill}>
+        <Pressable onPress={handleClose} hitSlop={10} style={[styles.headerPill, glassActive ? { overflow: 'visible' } : null]}>
           {glassActive ? (
-            <View style={[styles.headerPillInner, { borderRadius: 18, overflow: 'hidden' }]}>
-              <GlassBg borderRadius={18} colorScheme="dark" />
+            // Interactive morphing glass IS the close button; icon is its child.
+            // No overflow so the liquid stretch isn't clipped on touch.
+            <NativeGlassView glassStyle="regular" isInteractive colorScheme="dark" style={[styles.headerPillInner, { borderRadius: 18 }]}>
               <Feather name="x" size={18} color="#FFFFFF" />
-            </View>
+            </NativeGlassView>
           ) : (
             <BlurView intensity={80} tint="dark" style={styles.headerPillInner}>
               <Feather name="x" size={18} color="#FFFFFF" />
@@ -364,10 +365,12 @@ export default function EditProfileScreen() {
         </Pressable>
         <View style={styles.headerTitleAbs} pointerEvents="box-none">
           <ShrinkingModalTitle>
-            <View style={styles.headerTitlePill}>
+            <View style={[styles.headerTitlePill, glassActive ? { overflow: 'visible' } : null]}>
               {glassActive ? (
-                <View style={[styles.headerTitleInner, { borderRadius: 18, overflow: 'hidden' }]}>
-                  <GlassBg borderRadius={18} colorScheme="dark" />
+                // Display-only title pill (not tappable) — glass with the label
+                // inside, but NOT interactive: nothing here receives touch, so an
+                // interactive morph would only waste GPU.
+                <NativeGlassView glassStyle="regular" colorScheme="dark" style={[styles.headerTitleInner, { borderRadius: 18 }]}>
                   <RNText
                     style={styles.headerTitleText}
                     allowFontScaling={false}
@@ -376,7 +379,7 @@ export default function EditProfileScreen() {
                   >
                     {t('edit_profile.title')}
                   </RNText>
-                </View>
+                </NativeGlassView>
               ) : (
                 <BlurView intensity={80} tint="dark" style={styles.headerTitleInner}>
                   <RNText
@@ -392,14 +395,13 @@ export default function EditProfileScreen() {
             </View>
           </ShrinkingModalTitle>
         </View>
-        <Pressable onPress={handleSave} disabled={isSaving} hitSlop={10} style={styles.headerPill}>
+        <Pressable onPress={handleSave} disabled={isSaving} hitSlop={10} style={[styles.headerPill, glassActive ? { overflow: 'visible' } : null]}>
           {glassActive ? (
-            <View style={[styles.headerPillInner, { paddingHorizontal: 14, borderRadius: 18, overflow: 'hidden' }]}>
-              <GlassBg borderRadius={18} colorScheme="dark" />
+            <NativeGlassView glassStyle="regular" isInteractive colorScheme="dark" style={[styles.headerPillInner, { paddingHorizontal: 14, borderRadius: 18 }]}>
               <RNText style={styles.headerSaveText} allowFontScaling={false}>
                 {isSaving ? '...' : t('common.save')}
               </RNText>
-            </View>
+            </NativeGlassView>
           ) : (
             <BlurView intensity={80} tint="dark" style={[styles.headerPillInner, { paddingHorizontal: 14 }]}>
               <RNText style={styles.headerSaveText} allowFontScaling={false}>

@@ -40,7 +40,7 @@ import { useBlockedUsersStore, useIsBlocked } from '../../src/store/blockedUsers
 import { parseBannerTransform, stripBannerTransform } from '../../src/utils/bannerTransform';
 import { useBannerBrightness } from '../../src/hooks/useBannerBrightness';
 import { kvGetJSONSync, kvSetJSON } from '../../src/services/kvStore';
-import { useLiquidGlassActive, GlassBg } from '../../src/components/ui/LiquidGlass';
+import { useLiquidGlassActive, NativeGlassView } from '../../src/components/ui/LiquidGlass';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const SCREEN_HEIGHT = Dimensions.get('window').height;
@@ -1233,12 +1233,13 @@ export default function UserProfileScreen() {
           is also when the floating "follow" badge takes over. */}
       <View style={{ position: 'absolute', top: insets.top + 8, left: 16, right: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', zIndex: 100 }}>
         <Animated.View style={{ transform: [{ translateX: buttonsTranslateX }] }}>
-          <Pressable onPress={() => router.back()} style={{ borderRadius: 17, overflow: 'hidden' }}>
+          <Pressable onPress={() => router.back()} style={{ borderRadius: 17, overflow: glassActive ? undefined : 'hidden' }}>
             {glassActive ? (
-              <View style={{ width: 34, height: 34, borderRadius: 17, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' }}>
-                <GlassBg borderRadius={17} colorScheme="dark" />
+              // Interactive morphing glass IS the button; icon is its child. No
+              // overflow so the liquid stretch isn't clipped on touch.
+              <NativeGlassView glassStyle="regular" isInteractive colorScheme="dark" style={{ width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' }}>
                 <Feather name="chevron-left" size={18} color="#FFFFFF" />
-              </View>
+              </NativeGlassView>
             ) : chromeReady ? (
               <BlurView intensity={80} tint="dark" style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center' }}>
                 <Feather name="chevron-left" size={18} color="#FFFFFF" />
@@ -1254,14 +1255,13 @@ export default function UserProfileScreen() {
           <Pressable
             onPress={() => { triggerHaptic('selection'); setFollowsModal('following'); }}
             hitSlop={6}
-            style={{ borderRadius: 14, overflow: 'hidden' }}
+            style={{ borderRadius: 14, overflow: glassActive ? undefined : 'hidden' }}
           >
             {glassActive ? (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14, overflow: 'hidden' }}>
-                <GlassBg borderRadius={14} colorScheme="dark" />
+              <NativeGlassView glassStyle="regular" isInteractive colorScheme="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14 }}>
                 <Text variant="caption" weight="bold" color="#FFFFFF" style={{ fontSize: 12 }}>{followCounts.following}</Text>
                 <Text variant="caption" color="rgba(255,255,255,0.85)" style={{ fontSize: 11 }}>{t('profile.following_short')}</Text>
-              </View>
+              </NativeGlassView>
             ) : chromeReady ? (
               <BlurView intensity={80} tint="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6 }}>
                 <Text variant="caption" weight="bold" color="#FFFFFF" style={{ fontSize: 12 }}>{followCounts.following}</Text>
@@ -1277,14 +1277,13 @@ export default function UserProfileScreen() {
           <Pressable
             onPress={() => { triggerHaptic('selection'); setFollowsModal('followers'); }}
             hitSlop={6}
-            style={{ borderRadius: 14, overflow: 'hidden' }}
+            style={{ borderRadius: 14, overflow: glassActive ? undefined : 'hidden' }}
           >
             {glassActive ? (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14, overflow: 'hidden' }}>
-                <GlassBg borderRadius={14} colorScheme="dark" />
+              <NativeGlassView glassStyle="regular" isInteractive colorScheme="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14 }}>
                 <Text variant="caption" weight="bold" color="#FFFFFF" style={{ fontSize: 12 }}>{followCounts.followers}</Text>
                 <Text variant="caption" color="rgba(255,255,255,0.85)" style={{ fontSize: 11 }}>{t('profile.followers_short')}</Text>
-              </View>
+              </NativeGlassView>
             ) : chromeReady ? (
               <BlurView intensity={80} tint="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6 }}>
                 <Text variant="caption" weight="bold" color="#FFFFFF" style={{ fontSize: 12 }}>{followCounts.followers}</Text>
@@ -1299,12 +1298,11 @@ export default function UserProfileScreen() {
           </Pressable>
         </Animated.View>
         <Animated.View style={{ transform: [{ translateX: menuTranslateX }] }}>
-          <Pressable onPress={() => { triggerHaptic('light'); setShowMenu(true); }} style={{ borderRadius: 17, overflow: 'hidden' }}>
+          <Pressable onPress={() => { triggerHaptic('light'); setShowMenu(true); }} style={{ borderRadius: 17, overflow: glassActive ? undefined : 'hidden' }}>
             {glassActive ? (
-              <View style={{ width: 34, height: 34, borderRadius: 17, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' }}>
-                <GlassBg borderRadius={17} colorScheme="dark" />
+              <NativeGlassView glassStyle="regular" isInteractive colorScheme="dark" style={{ width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' }}>
                 <Feather name="more-horizontal" size={18} color="#FFFFFF" />
-              </View>
+              </NativeGlassView>
             ) : chromeReady ? (
               <BlurView intensity={80} tint="dark" style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center' }}>
                 <Feather name="more-horizontal" size={18} color="#FFFFFF" />
