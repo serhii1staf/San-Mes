@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, Alert, Animated, Modal, Dimensions, Keyboard, InteractionManager, type ViewToken } from 'react-native';
 import { KeyboardStickyView, useReanimatedKeyboardAnimation, useKeyboardHandler } from 'react-native-keyboard-controller';
-import Reanimated, { useAnimatedStyle, interpolate, Extrapolation, useSharedValue, withSpring, runOnJS } from 'react-native-reanimated';
+import Reanimated, { useAnimatedStyle, interpolate, Extrapolation, useSharedValue, withSpring, runOnJS, type SharedValue } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
@@ -18,7 +18,7 @@ import { LinkPreview } from '../../src/components/ui/LinkPreview';
 import { extractFirstUrl } from '../../src/services/linkPreview';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { UserBadge } from '../../src/components/ui/UserBadge';
-import { MessageContextMenu, MessageAction } from '../../src/components/ui/MessageContextMenu';
+import { MessageContextMenu, MessageAction, type ActionZone, type MessageContextMenuHandle } from '../../src/components/ui/MessageContextMenu';
 import { TranslationSheet } from '../../src/components/ui/TranslationSheet';
 import { ChatInputBar, ChatInputBarHandle } from '../../src/components/chat/ChatInputBar';
 import { GiphyPicker } from '../../src/components/ui/GiphyPicker';
@@ -93,7 +93,7 @@ const bubbleStyles = StyleSheet.create({
   timestamp: { marginTop: 3, alignSelf: 'flex-end', fontSize: 10 },
 });
 
-function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, linkEmoji, highlighted, isVisible, onReply, onLongPress, onSwipeActive, onImagePress }: { message: ChatMessage; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string; linkEmoji?: string; highlighted?: boolean; isVisible?: boolean; onReply: (m: ChatMessage) => void; onLongPress: (m: ChatMessage) => void; onSwipeActive: (active: boolean) => void; onImagePress: (images: string[], index: number) => void }) {
+function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, linkEmoji, highlighted, isVisible, onReply, onLongPress, onSwipeActive, onImagePress, dragActive, dragFingerY, hoveredAction, actionZones, onFireDragAction }: { message: ChatMessage; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string; linkEmoji?: string; highlighted?: boolean; isVisible?: boolean; onReply: (m: ChatMessage) => void; onLongPress: (m: ChatMessage) => void; onSwipeActive: (active: boolean) => void; onImagePress: (images: string[], index: number) => void; dragActive: SharedValue<boolean>; dragFingerY: SharedValue<number>; hoveredAction: SharedValue<string>; actionZones: SharedValue<ActionZone[]>; onFireDragAction: (m: ChatMessage, action: string) => void }) {
   const theme = useTheme();
   const t = useT();
   const fontFamilyStyle = fontFamily === 'mono' ? 'monospace' : fontFamily === 'serif' ? 'serif' : undefined;
@@ -185,6 +185,74 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
     [message, onReply, onSwipeActive, translateXSV, gateFiredHapticSV, swipeActiveSV],
   );
 
+  // ── Press-drag-release: UI-thread LongPress + drag-to-select ───────────
+  // Replaces the old JS-thread `Pressable onLongPress`. Holding the bubble for
+  // 300 ms opens the context menu (same as before). The LARGE maxDistance means
+  // dragging the still-held finger DOWN onto the action rows never cancels the
+  // long press — instead `onTouchesMove` tracks the finger's absolute Y on the
+  // UI thread and writes which registered row it's over into `hoveredAction`
+  // (the menu reads that shared value to paint the highlight). Releasing over a
+  // row fires that action; releasing over nothing leaves the menu open so the
+  // existing tap-to-select still works. `runOnJS` is used at most once per
+  // phase (open on start, optional gated haptic on hover-change, fire on end).
+  const longPress = useMemo(
+    () =>
+      Gesture.LongPress()
+        .minDuration(300)
+        // Do NOT cancel the long press when the finger travels far — the whole
+        // point is to let the user drag down to the buttons while still held.
+        .maxDistance(9999)
+        .onStart(() => {
+          'worklet';
+          dragActive.value = true;
+          dragFingerY.value = -1;
+          hoveredAction.value = '';
+          // Open the menu + medium haptic — exactly once, on activation.
+          runOnJS(triggerHaptic)('medium');
+          runOnJS(onLongPress)(message);
+        })
+        .onTouchesMove((e) => {
+          'worklet';
+          if (!dragActive.value) return;
+          const touch = e.allTouches[0];
+          if (!touch) return;
+          const y = touch.absoluteY;
+          dragFingerY.value = y;
+          // Resolve which registered action row the finger is currently over.
+          const zones = actionZones.value;
+          let found = '';
+          for (let i = 0; i < zones.length; i++) {
+            if (y >= zones[i].top && y <= zones[i].bottom) { found = zones[i].id; break; }
+          }
+          // Fire a light haptic only when the hovered row CHANGES — gated by the
+          // equality check so it can never storm while the finger lingers.
+          if (found !== hoveredAction.value) {
+            hoveredAction.value = found;
+            if (found !== '') runOnJS(triggerHaptic)('light');
+          }
+        })
+        .onEnd(() => {
+          'worklet';
+          // Release over a highlighted row → fire its action (once).
+          const action = hoveredAction.value;
+          if (action !== '') runOnJS(onFireDragAction)(message, action);
+        })
+        .onFinalize(() => {
+          'worklet';
+          // Always clean up, on success OR cancel.
+          dragActive.value = false;
+          dragFingerY.value = -1;
+          hoveredAction.value = '';
+        }),
+    [message, onLongPress, onFireDragAction, dragActive, dragFingerY, hoveredAction, actionZones],
+  );
+
+  // Compose with the swipe pan via Race: whichever activates FIRST wins and
+  // cancels the other. A clear horizontal swipe (≥12 px left) activates the pan
+  // → reply, unchanged. A still-hold (300 ms) activates the long press → menu.
+  // They can never both be active, so the drag-select can't fight the swipe.
+  const composedGesture = useMemo(() => Gesture.Race(pan, longPress), [pan, longPress]);
+
   // UI-thread style for the bubble's translateX.
   const bubbleAnimStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: translateXSV.value }],
@@ -208,9 +276,14 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
         </View>
       </Reanimated.View>
 
-      <GestureDetector gesture={pan}>
+      <GestureDetector gesture={composedGesture}>
         <Reanimated.View style={[bubbleAnimStyle, { alignSelf: isOwn ? 'flex-end' : 'flex-start', maxWidth: '78%', marginLeft: isOwn ? 0 : 16, marginRight: isOwn ? 16 : 0, marginBottom: 4 }]}>
-        <Pressable onLongPress={() => { triggerHaptic('medium'); onLongPress(message); }} delayLongPress={300}>
+        {/* Long-press + drag-select is handled by `composedGesture` on the
+            GestureDetector above (UI thread). This wrapper used to be a
+            `Pressable onLongPress`; it's now a plain View so the gesture owns
+            the hold. A quick tap still falls through to inner Pressables
+            (image → viewer), and the menu's own buttons keep tap-to-select. */}
+        <View>
           <View style={{
             paddingHorizontal: 14,
             paddingVertical: 10,
@@ -247,7 +320,7 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
             {message.imageUrls && message.imageUrls.length > 0 ? (
               <View style={[bubbleStyles.imagesRow, { marginBottom: message.text ? 6 : 0 }]}>
                 {message.imageUrls.map((uri, idx) => (
-                  <Pressable key={idx} onPress={() => onImagePress(message.imageUrls!, idx)} onLongPress={() => { triggerHaptic('medium'); onLongPress(message); }} delayLongPress={300}>
+                  <Pressable key={idx} onPress={() => onImagePress(message.imageUrls!, idx)}>
                     <CachedImage
                       uri={uri}
                       style={message.imageUrls!.length === 1 ? bubbleStyles.imageSingle : bubbleStyles.imageMulti}
@@ -272,22 +345,20 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
             {(() => {
               const link = (!message.imageUrls || message.imageUrls.length === 0) ? extractFirstUrl(message.text) : null;
               return link ? (
-                <Pressable onLongPress={() => { triggerHaptic('medium'); onLongPress(message); }} delayLongPress={300} style={bubbleStyles.linkPreviewWrap}>
+                <View style={bubbleStyles.linkPreviewWrap}>
                   <LinkPreview
                     url={link}
                     textColor={isOwn ? '#FFFFFF' : undefined}
                     emoji={linkEmoji}
-                    onLongPress={() => { triggerHaptic('medium'); onLongPress(message); }}
-                    delayLongPress={300}
                   />
-                </Pressable>
+                </View>
               ) : null;
             })()}
             <Text variant="caption" color={isOwn ? 'rgba(255,255,255,0.6)' : theme.colors.text.tertiary} style={bubbleStyles.timestamp}>
               {formatMessageTime(message.createdAt)}
             </Text>
           </View>
-        </Pressable>
+        </View>
         </Reanimated.View>
       </GestureDetector>
     </View>
@@ -372,6 +443,18 @@ export default function ChatScreen() {
     },
     [openMenu],
   );
+
+  // ── Press-drag-release coordination (all UI-thread) ────────────────────
+  // Created once and shared with BOTH the message bubbles' LongPress gesture
+  // (writes finger Y + hovered row) and the MessageContextMenu (writes the
+  // measured row hit-zones, reads hovered row to highlight). Stable identities,
+  // so passing them through memoized bubbles never breaks memoization.
+  const dragActiveSV = useSharedValue(false);
+  const dragFingerYSV = useSharedValue(-1);
+  const hoveredActionSV = useSharedValue('');
+  const actionZonesSV = useSharedValue<ActionZone[]>([]);
+  // Imperative handle to replay the menu's slide-down when a drag fires an action.
+  const menuRef = useRef<MessageContextMenuHandle>(null);
   const [pendingImages, setPendingImages] = useState<string[]>([]);  const [uploading, setUploading] = useState(false);
 
   // Defer the ChatBackgroundLayer mount past the navigation slide-in. When a
@@ -1136,6 +1219,19 @@ export default function ChatScreen() {
     }
   }, [conversationId, setMessages, startReply, t]);
 
+  // Fired (once) when the user RELEASES a press-drag over a highlighted action
+  // row. Routes through the SAME path as tap-to-select (`handleMenuAction`),
+  // replaying the menu's slide-down dismiss first so it doesn't snap away.
+  const fireDragAction = useCallback((message: ChatMessage, action: string) => {
+    const run = () => handleMenuAction(action as MessageAction, message);
+    if (menuRef.current) {
+      menuRef.current.dismiss(run); // dismiss() also calls onClose → closeMenu
+    } else {
+      run();
+      closeMenu();
+    }
+  }, [handleMenuAction, closeMenu]);
+
   const handleSend = async (rawText: string) => {
     const hasImages = pendingImages.length > 0;
     if ((!rawText.trim() && !hasImages) || !conversationId) return;
@@ -1409,9 +1505,14 @@ export default function ChatScreen() {
         onLongPress={onMessageLongPress}
         onSwipeActive={handleSwipeActive}
         onImagePress={openImageViewer}
+        dragActive={dragActiveSV}
+        dragFingerY={dragFingerYSV}
+        hoveredAction={hoveredActionSV}
+        actionZones={actionZonesSV}
+        onFireDragAction={fireDragAction}
       />
     );
-  }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, chatSettings.linkEmoji, startReply, handleSwipeActive, openImageViewer, parseMessage, activeMatchId, onMessageLongPress, currentUserId, visibleIds, viewabilityReady]);
+  }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, chatSettings.linkEmoji, startReply, handleSwipeActive, openImageViewer, parseMessage, activeMatchId, onMessageLongPress, currentUserId, visibleIds, viewabilityReady, dragActiveSV, dragFingerYSV, hoveredActionSV, actionZonesSV, fireDragAction]);
 
   // Stable callback refs for FlatList — without these, every parent render
   // hands FlatList fresh function identities and breaks its row recycling
@@ -1749,6 +1850,7 @@ export default function ChatScreen() {
       {!!actionMessage && (
         <View pointerEvents="box-none" style={[StyleSheet.absoluteFill, { zIndex: 1000 }]}>
           <MessageContextMenu
+            ref={menuRef}
             visible={!!actionMessage}
             message={actionMessage}
             isOwn={menuIsOwn}
@@ -1756,6 +1858,9 @@ export default function ChatScreen() {
             bubbleTextColor={menuIsOwn ? '#FFFFFF' : theme.colors.text.primary}
             bubbleRadius={chatSettings.bubbleRadius}
             linkEmoji={chatSettings.linkEmoji}
+            dragActive={dragActiveSV}
+            hoveredAction={hoveredActionSV}
+            actionZones={actionZonesSV}
             onClose={closeMenu}
             onAction={handleMenuAction}
           />

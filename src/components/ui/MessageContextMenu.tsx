@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useCallback, forwardRef, useImperativeHandle } from 'react';
 import { View, Pressable, Animated, Dimensions, ScrollView, StyleSheet } from 'react-native';
+import Reanimated, { useAnimatedStyle, type SharedValue } from 'react-native-reanimated';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme';
@@ -20,6 +21,18 @@ const LONG_TEXT_THRESHOLD = 220;
 
 export type MessageAction = 'reply' | 'copy' | 'edit' | 'delete' | 'translate';
 
+// Absolute window-space hit-zone for one action row. The bubble's LongPress
+// gesture (UI thread) reads this registry to decide which row the finger is
+// currently over during a press-drag-release.
+export type ActionZone = { id: MessageAction; top: number; bottom: number };
+
+// Imperative handle so the chat screen can replay the existing slide-down
+// dismiss animation when an action is fired by RELEASING the drag (instead of
+// snapping the menu away).
+export interface MessageContextMenuHandle {
+  dismiss: (cb?: () => void) => void;
+}
+
 interface MessageContextMenuProps {
   visible: boolean;
   message: ChatMessage | null;
@@ -34,6 +47,56 @@ interface MessageContextMenuProps {
   linkEmoji?: string;
   onClose: () => void;
   onAction: (action: MessageAction, message: ChatMessage) => void;
+  // ── Press-drag-release coordination (all UI-thread) ──────────────────
+  // Shared values owned by the chat screen and shared with the message
+  // bubble's LongPress gesture. The menu only WRITES `actionZones` (once the
+  // slide-up settles) and READS `hoveredAction` (to render the highlight).
+  // `dragActive` is reset on unmount so a stale value can't linger.
+  dragActive?: SharedValue<boolean>;
+  hoveredAction?: SharedValue<string>;
+  actionZones?: SharedValue<ActionZone[]>;
+}
+
+// One action row. Split into its own component so the highlight can be driven
+// by `useAnimatedStyle` (UI thread) per-row without re-rendering the whole
+// menu. The outer Reanimated.View paints the hover tint; the inner Pressable
+// keeps the existing tap-to-select behaviour and is the node we measure.
+function ActionRow({
+  item,
+  theme,
+  hoveredAction,
+  onPress,
+  registerRef,
+  index,
+}: {
+  item: { action: MessageAction; icon: string; label: string; destructive?: boolean };
+  theme: ReturnType<typeof useTheme>;
+  hoveredAction?: SharedValue<string>;
+  onPress: () => void;
+  registerRef: (index: number, node: any) => void;
+  index: number;
+}) {
+  const color = item.destructive ? '#FF3B30' : theme.colors.text.primary;
+  const iconBg = item.destructive ? '#FF3B3010' : (theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)');
+  const hoverBg = item.destructive ? '#FF3B3022' : (theme.isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)');
+  // UI-thread highlight: row tints when the finger is over it during a drag.
+  const rowAnimStyle = useAnimatedStyle(() => ({
+    backgroundColor: hoveredAction && hoveredAction.value === item.action ? hoverBg : 'transparent',
+  }));
+  return (
+    <Reanimated.View style={rowAnimStyle}>
+      <Pressable
+        ref={(node) => registerRef(index, node)}
+        onPress={onPress}
+        style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 20 }}
+      >
+        <View style={{ width: 34, height: 34, borderRadius: 10, backgroundColor: iconBg, alignItems: 'center', justifyContent: 'center' }}>
+          <Feather name={item.icon as any} size={17} color={color} />
+        </View>
+        <Text variant="body" color={color} style={{ marginLeft: 14 }}>{item.label}</Text>
+      </Pressable>
+    </Reanimated.View>
+  );
 }
 
 // Long-press message menu.
@@ -53,13 +116,20 @@ interface MessageContextMenuProps {
 //     View so they shrink-wrap to their content.
 //   - Action sheet underneath ALWAYS stays fully on screen — that's what the
 //     45% cap guarantees.
-export function MessageContextMenu({ visible, message, isOwn, linkEmoji, onClose, onAction }: MessageContextMenuProps) {
+export const MessageContextMenu = forwardRef<MessageContextMenuHandle, MessageContextMenuProps>(function MessageContextMenu({ visible, message, isOwn, linkEmoji, onClose, onAction, dragActive, hoveredAction, actionZones }, ref) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
   const backdropAnim = useRef(new Animated.Value(0)).current;
   const isClosing = useRef(false);
+  // Host-view refs for each action row, keyed by index, used to measure their
+  // absolute window rects once the slide-up settles.
+  const rowRefs = useRef<any[]>([]);
+  const registerRef = useCallback((index: number, node: any) => { rowRefs.current[index] = node; }, []);
+  // Latest measure fn, read by the animation-completion callback. Kept in a ref
+  // so the open effect doesn't need `items` (declared below) in its deps.
+  const measureZonesRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     if (visible) {
@@ -69,9 +139,25 @@ export function MessageContextMenu({ visible, message, isOwn, linkEmoji, onClose
       Animated.parallel([
         Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 50, friction: 9 }),
         Animated.timing(backdropAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
-      ]).start();
+      ]).start(() => {
+        // Publish the action rows' absolute hit-zones for the drag gesture only
+        // AFTER the slide settles — measureInWindow includes the (now-zero)
+        // translateY transform, so measuring mid-animation would be wrong.
+        measureZonesRef.current();
+      });
     }
   }, [visible]);
+
+  // Reset shared coordination state when the menu unmounts so a stale hover /
+  // active flag / zone list can never leak into the next open.
+  useEffect(() => {
+    return () => {
+      if (actionZones) actionZones.value = [];
+      if (hoveredAction) hoveredAction.value = '';
+      if (dragActive) dragActive.value = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const dismiss = (cb?: () => void) => {
     if (isClosing.current) return;
@@ -84,6 +170,11 @@ export function MessageContextMenu({ visible, message, isOwn, linkEmoji, onClose
       if (cb) setTimeout(cb, 20);
     });
   };
+
+  // Expose the slide-down dismiss so the chat screen can replay it when an
+  // action is fired by RELEASING a drag over a row (press-drag-release path),
+  // matching the tap path which already animates out before acting.
+  useImperativeHandle(ref, () => ({ dismiss }), []);
 
   // Build the action list and return EARLY for the no-data case BEFORE any
   // additional hooks; keeping `useMemo` after the early-return would violate
@@ -109,6 +200,33 @@ export function MessageContextMenu({ visible, message, isOwn, linkEmoji, onClose
     if (isOwn) list.push({ action: 'delete', icon: 'trash-2', label: t('chat.menu.delete'), destructive: true });
     return list;
   }, [message, isOwn, t]);
+
+  // Measure every action row's absolute window rect and publish the hit-zones
+  // for the bubble's LongPress gesture to read. Async measureInWindow callbacks
+  // are collected by index and written in one shot once all have resolved.
+  const measureZones = useCallback(() => {
+    if (!actionZones) return;
+    const count = items.length;
+    if (count === 0) { actionZones.value = []; return; }
+    const collected: (ActionZone | undefined)[] = new Array(count);
+    let remaining = count;
+    const flush = () => {
+      remaining -= 1;
+      if (remaining <= 0) {
+        actionZones.value = collected.filter(Boolean) as ActionZone[];
+      }
+    };
+    items.forEach((item, idx) => {
+      const node = rowRefs.current[idx];
+      if (!node || typeof node.measureInWindow !== 'function') { flush(); return; }
+      node.measureInWindow((x: number, y: number, w: number, h: number) => {
+        collected[idx] = { id: item.action, top: y, bottom: y + h };
+        flush();
+      });
+    });
+  }, [items, actionZones]);
+  // Keep the completion callback pointing at the latest measure fn.
+  measureZonesRef.current = measureZones;
 
   if (!visible || !message) return null;
 
@@ -209,25 +327,30 @@ export function MessageContextMenu({ visible, message, isOwn, linkEmoji, onClose
           </View>
 
           {/* Action sheet */}
-          <View style={{ marginHorizontal: 8, backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF', borderRadius: 28, overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.12, shadowRadius: 16, elevation: 10 }}>
+          <View
+            style={{ marginHorizontal: 8, backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF', borderRadius: 28, overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.12, shadowRadius: 16, elevation: 10 }}
+            // Re-measure hit-zones whenever the sheet's layout changes (content
+            // height differs per message). Cheap and keeps zones accurate.
+            onLayout={() => { requestAnimationFrame(() => measureZonesRef.current()); }}
+          >
             <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 6 }}>
               <View style={{ width: 40, height: 5, borderRadius: 3, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)' }} />
             </View>
-            {items.map((item) => {
-              const color = item.destructive ? '#FF3B30' : theme.colors.text.primary;
-              return (
-                <Pressable key={item.action} onPress={() => dismiss(() => onAction(item.action, message))} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 20 }}>
-                  <View style={{ width: 34, height: 34, borderRadius: 10, backgroundColor: item.destructive ? '#FF3B3010' : (theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)'), alignItems: 'center', justifyContent: 'center' }}>
-                    <Feather name={item.icon as any} size={17} color={color} />
-                  </View>
-                  <Text variant="body" color={color} style={{ marginLeft: 14 }}>{item.label}</Text>
-                </Pressable>
-              );
-            })}
+            {items.map((item, idx) => (
+              <ActionRow
+                key={item.action}
+                item={item}
+                index={idx}
+                theme={theme}
+                hoveredAction={hoveredAction}
+                registerRef={registerRef}
+                onPress={() => dismiss(() => onAction(item.action, message))}
+              />
+            ))}
             <View style={{ height: 8 }} />
           </View>
         </Animated.View>
       </View>
     </View>
   );
-}
+});
