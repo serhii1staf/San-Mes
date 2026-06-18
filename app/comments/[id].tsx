@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View, FlatList, TextInput, Pressable, Platform, ActivityIndicator, StyleSheet, Text as RNText, Modal, Alert, LayoutAnimation, UIManager, InteractionManager } from 'react-native';
+import { View, FlatList, TextInput, Pressable, Platform, ActivityIndicator, StyleSheet, Text as RNText, Modal, Alert, LayoutAnimation, UIManager, InteractionManager, ScrollView, Dimensions } from 'react-native';
 import { KeyboardStickyView, useReanimatedKeyboardAnimation, useKeyboardHandler } from 'react-native-keyboard-controller';
 import Reanimated, { useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 import * as Clipboard from 'expo-clipboard';
@@ -33,6 +33,8 @@ import { useSettingsStore } from '../../src/store/settingsStore';
 import { useBrowserStore } from '../../src/store/browserStore';
 import { useIsBlocked } from '../../src/store/blockedUsersStore';
 import { BlockedContentPlaceholder } from '../../src/components/feed/BlockedContentPlaceholder';
+
+const SCREEN_WIDTH = Dimensions.get('window').width;
 
 const REPORT_CATS: { key: string; labelKey: string }[] = [
   { key: 'spam', labelKey: 'report.cat.spam' },
@@ -118,9 +120,10 @@ type CommentRowProps = {
   item: any;
   onLongPress: (c: any) => void;
   onReply: (c: any) => void;
+  onImagePress: (uri: string) => void;
 };
 
-const CommentRow = React.memo(function CommentRow({ item, onLongPress, onReply }: CommentRowProps) {
+const CommentRow = React.memo(function CommentRow({ item, onLongPress, onReply, onImagePress }: CommentRowProps) {
   const theme = useTheme();
   const t = useT();
   // Block-aware short circuit: comments authored by a blocked user are
@@ -185,7 +188,7 @@ const CommentRow = React.memo(function CommentRow({ item, onLongPress, onReply }
         ) : null}
         {gif ? null : <FormattedText style={{ marginTop: 3, fontSize: 14 }}>{parsed.body}</FormattedText>}
         {gif ? (
-          <Pressable onLongPress={() => onLongPress(item)} delayLongPress={300} style={{ marginTop: 6 }}>
+          <Pressable onPress={() => onImagePress(gif)} onLongPress={() => onLongPress(item)} delayLongPress={300} style={{ marginTop: 6 }}>
             <CachedImage uri={gif} style={{ width: 160, height: 160, borderRadius: 14, backgroundColor: theme.colors.background.secondary }} resizeMode="cover" />
           </Pressable>
         ) : link ? (
@@ -205,9 +208,9 @@ const CommentRow = React.memo(function CommentRow({ item, onLongPress, onReply }
   prev.item.content === next.item.content &&
   prev.item.created_at === next.item.created_at &&
   prev.onLongPress === next.onLongPress &&
-  prev.onReply === next.onReply,
+  prev.onReply === next.onReply &&
+  prev.onImagePress === next.onImagePress,
 );
-
 export default function CommentsScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
@@ -314,6 +317,10 @@ export default function CommentsScreen() {
   const [replyTo, setReplyTo] = useState<any>(null); // comment we are replying to
   const [editing, setEditing] = useState<any>(null); // comment being edited
   const [gifPickerVisible, setGifPickerVisible] = useState(false);
+  // Fullscreen image viewer — `images`/`index` are set for multi-image posts so
+  // the viewer opens a horizontal pager on the tapped image; single images and
+  // comment GIFs just carry `uri`. Mirrors the profile-screen viewer.
+  const [viewingImage, setViewingImage] = useState<{ uri: string; images?: string[]; index?: number } | null>(null);
   const inputRef = useRef<TextInput>(null);
   const listRef = useRef<FlatList>(null);
 
@@ -603,11 +610,14 @@ export default function CommentsScreen() {
   const closeCommentMenu = closeMenu;
 
   // Stable callbacks for the FlatList — see CommentRow for why this matters.
+  const openImageViewer = useCallback((uri: string) => {
+    setViewingImage({ uri });
+  }, []);
   const renderComment = useCallback(
     ({ item }: { item: any }) => (
-      <CommentRow item={item} onLongPress={openCommentMenu} onReply={startReply} />
+      <CommentRow item={item} onLongPress={openCommentMenu} onReply={startReply} onImagePress={openImageViewer} />
     ),
-    [openCommentMenu, startReply],
+    [openCommentMenu, startReply, openImageViewer],
   );
   const keyExtractor = useCallback((item: any) => item.id, []);
 
@@ -680,7 +690,11 @@ export default function CommentsScreen() {
                 {!repostInfo.isRepost && (() => {
                   const imgs = parseImageUrls(postData.image_url);
                   if (imgs.length === 0) return null;
-                  if (imgs.length === 1) return <CachedImage uri={imgs[0]} style={{ width: '100%', height: 200, borderRadius: 12, marginBottom: 8 }} resizeMode="cover" />;
+                  if (imgs.length === 1) return (
+                    <Pressable onPress={() => setViewingImage({ uri: imgs[0], images: imgs, index: 0 })}>
+                      <CachedImage uri={imgs[0]} style={{ width: '100%', height: 200, borderRadius: 12, marginBottom: 8 }} resizeMode="cover" />
+                    </Pressable>
+                  );
                   return (
                     <FlatList
                       data={imgs}
@@ -688,7 +702,11 @@ export default function CommentsScreen() {
                       keyExtractor={(u, i) => u + i}
                       showsHorizontalScrollIndicator={false}
                       style={{ marginBottom: 8 }}
-                      renderItem={({ item }) => <CachedImage uri={item} style={{ width: 200, height: 200, borderRadius: 12, marginRight: 8 }} resizeMode="cover" />}
+                      renderItem={({ item, index }) => (
+                        <Pressable onPress={() => setViewingImage({ uri: item, images: imgs, index })}>
+                          <CachedImage uri={item} style={{ width: 200, height: 200, borderRadius: 12, marginRight: 8 }} resizeMode="cover" />
+                        </Pressable>
+                      )}
                     />
                   );
                 })()}
@@ -705,7 +723,11 @@ export default function CommentsScreen() {
                         {origProfile?.username ? <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 11, flexShrink: 0 }}>@{origProfile.username}</Text> : null}
                       </View>
                       {repostOriginal.content ? <FormattedText style={{ fontSize: 13 }} color={theme.colors.text.secondary}>{repostOriginal.content}</FormattedText> : null}
-                      {origImages.length === 1 && <CachedImage uri={origImages[0]} style={{ width: '100%', height: 160, borderRadius: 10, marginTop: 6 }} resizeMode="cover" />}
+                      {origImages.length === 1 && (
+                        <Pressable onPress={() => setViewingImage({ uri: origImages[0], images: origImages, index: 0 })}>
+                          <CachedImage uri={origImages[0]} style={{ width: '100%', height: 160, borderRadius: 10, marginTop: 6 }} resizeMode="cover" />
+                        </Pressable>
+                      )}
                       {origImages.length > 1 && (
                         <FlatList
                           data={origImages}
@@ -713,7 +735,11 @@ export default function CommentsScreen() {
                           keyExtractor={(u, i) => u + i}
                           showsHorizontalScrollIndicator={false}
                           style={{ marginTop: 6 }}
-                          renderItem={({ item }) => <CachedImage uri={item} style={{ width: 150, height: 150, borderRadius: 10, marginRight: 6 }} resizeMode="cover" />}
+                          renderItem={({ item, index }) => (
+                            <Pressable onPress={() => setViewingImage({ uri: item, images: origImages, index })}>
+                              <CachedImage uri={item} style={{ width: 150, height: 150, borderRadius: 10, marginRight: 6 }} resizeMode="cover" />
+                            </Pressable>
+                          )}
                         />
                       )}
                     </View>
@@ -881,6 +907,54 @@ export default function CommentsScreen() {
 
         {/* GIF picker (GIPHY) */}
         <GiphyPicker visible={gifPickerVisible} onClose={() => setGifPickerVisible(false)} onSelect={sendGifComment} />
+
+        {/* Fullscreen Image Viewer — mirrors the profile-screen viewer. Black
+            backdrop, glass-aware close button top-right, contain-fit image, and
+            a horizontal pager for multi-image posts starting on the tapped one.
+            Tapping the backdrop (or any letterboxed area) closes it. */}
+        <Modal visible={!!viewingImage} transparent animationType="fade" onRequestClose={() => setViewingImage(null)} statusBarTranslucent>
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.95)' }}>
+            {/* Image — full width, contain-fit. Multi-image posts get a paged
+                horizontal scroll starting at the tapped index. */}
+            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+              {viewingImage && (
+                viewingImage.images && viewingImage.images.length > 1 ? (
+                  <ScrollView
+                    horizontal
+                    pagingEnabled
+                    showsHorizontalScrollIndicator={false}
+                    style={{ flex: 1 }}
+                    contentOffset={{ x: (viewingImage.index || 0) * SCREEN_WIDTH, y: 0 }}
+                  >
+                    {viewingImage.images.map((imgUri, idx) => (
+                      <Pressable key={idx} onPress={() => setViewingImage(null)} style={{ width: SCREEN_WIDTH, height: '100%', justifyContent: 'center', alignItems: 'center' }}>
+                        <CachedImage uri={imgUri} style={{ width: SCREEN_WIDTH, height: SCREEN_WIDTH }} resizeMode="contain" />
+                      </Pressable>
+                    ))}
+                  </ScrollView>
+                ) : (
+                  <Pressable onPress={() => setViewingImage(null)} style={{ flex: 1, width: '100%', justifyContent: 'center', alignItems: 'center' }}>
+                    <CachedImage uri={viewingImage.uri} style={{ width: SCREEN_WIDTH, height: SCREEN_WIDTH }} resizeMode="contain" />
+                  </Pressable>
+                )
+              )}
+            </View>
+            {/* Close (X) — top-right, respects safe-area insets. Liquid glass when active. */}
+            <View style={{ position: 'absolute', top: insets.top + 12, right: 16, zIndex: 10 }}>
+              {glassActive ? (
+                <Pressable onPress={() => setViewingImage(null)} style={{ borderRadius: 18 }}>
+                  <NativeGlassView glassStyle="regular" isInteractive colorScheme="dark" style={{ width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' }}>
+                    <Feather name="x" size={20} color="#FFFFFF" />
+                  </NativeGlassView>
+                </Pressable>
+              ) : (
+                <Pressable onPress={() => setViewingImage(null)} style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' }}>
+                  <Feather name="x" size={20} color="#FFFFFF" />
+                </Pressable>
+              )}
+            </View>
+          </View>
+        </Modal>
     </View>
   );
 }
