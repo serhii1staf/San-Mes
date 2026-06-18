@@ -6,6 +6,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
 import { Text } from '../src/components/ui';
+import { useLiquidGlassActive, GlassBg } from '../src/components/ui/LiquidGlass';
 import { SlideUpSheet } from '../src/components/ui/SlideUpSheet';
 import { useBrowserStore } from '../src/store/browserStore';
 import { useMiniAppsStore } from '../src/store/miniAppsStore';
@@ -42,6 +43,7 @@ export default function MiniAppScreen() {
   const insets = useSafeAreaInsets();
   const theme = useTheme();
   const t = useT();
+  const glassActive = useLiquidGlassActive();
   const { url, name, emoji, id } = useLocalSearchParams<{ url: string; name: string; emoji: string; id?: string }>();
   const webViewRef = useRef<WebView>(null);
   const [currentUrl, setCurrentUrl] = useState('');
@@ -214,25 +216,50 @@ export default function MiniAppScreen() {
           stay tappable even while a page is loading or hung offline. */}
       <View style={{ position: 'absolute', top: insets.top + 8, left: 16, right: 16, zIndex: 60, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
         <Pressable onPress={handleMinimize} style={{ borderRadius: 14, overflow: 'hidden' }}>
-          <BlurView intensity={80} tint="dark" style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10 }}>
-            <Feather name="chevron-down" size={12} color="#FFFFFF" />
-            <Text style={{ fontSize: 10, color: '#FFFFFF', fontWeight: '500' }}>{t('mini_app.collapse')}</Text>
-          </BlurView>
+          {glassActive ? (
+            <View style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, overflow: 'hidden' }}>
+              <GlassBg borderRadius={14} colorScheme="dark" />
+              <Feather name="chevron-down" size={12} color="#FFFFFF" />
+              <Text style={{ fontSize: 10, color: '#FFFFFF', fontWeight: '500' }}>{t('mini_app.collapse')}</Text>
+            </View>
+          ) : (
+            <BlurView intensity={80} tint="dark" style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10 }}>
+              <Feather name="chevron-down" size={12} color="#FFFFFF" />
+              <Text style={{ fontSize: 10, color: '#FFFFFF', fontWeight: '500' }}>{t('mini_app.collapse')}</Text>
+            </BlurView>
+          )}
         </Pressable>
         <View style={{ borderRadius: 14, overflow: 'hidden' }}>
-          <BlurView intensity={80} tint="dark" style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 12 }}>
-            {canShare ? (
-              <Pressable onPress={handleShare} hitSlop={6}>
-                <Feather name="share" size={13} color="#FFFFFF" />
+          {glassActive ? (
+            <View style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 12, overflow: 'hidden' }}>
+              <GlassBg borderRadius={14} colorScheme="dark" />
+              {canShare ? (
+                <Pressable onPress={handleShare} hitSlop={6}>
+                  <Feather name="share" size={13} color="#FFFFFF" />
+                </Pressable>
+              ) : null}
+              <Pressable onPress={() => { triggerHaptic('light'); setReportOpen(true); }} hitSlop={6}>
+                <Feather name="flag" size={13} color="#FFFFFF" />
               </Pressable>
-            ) : null}
-            <Pressable onPress={() => { triggerHaptic('light'); setReportOpen(true); }} hitSlop={6}>
-              <Feather name="flag" size={13} color="#FFFFFF" />
-            </Pressable>
-            <Pressable onPress={handleClose} hitSlop={6}>
-              <Feather name="x" size={14} color="#FFFFFF" />
-            </Pressable>
-          </BlurView>
+              <Pressable onPress={handleClose} hitSlop={6}>
+                <Feather name="x" size={14} color="#FFFFFF" />
+              </Pressable>
+            </View>
+          ) : (
+            <BlurView intensity={80} tint="dark" style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 12 }}>
+              {canShare ? (
+                <Pressable onPress={handleShare} hitSlop={6}>
+                  <Feather name="share" size={13} color="#FFFFFF" />
+                </Pressable>
+              ) : null}
+              <Pressable onPress={() => { triggerHaptic('light'); setReportOpen(true); }} hitSlop={6}>
+                <Feather name="flag" size={13} color="#FFFFFF" />
+              </Pressable>
+              <Pressable onPress={handleClose} hitSlop={6}>
+                <Feather name="x" size={14} color="#FFFFFF" />
+              </Pressable>
+            </BlurView>
+          )}
         </View>
       </View>
 

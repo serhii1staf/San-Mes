@@ -32,6 +32,7 @@ import Animated, {
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { useTheme } from '../../src/theme';
 import { ShrinkingModalTitle } from '../../src/components/ui';
+import { useLiquidGlassActive, GlassBg } from '../../src/components/ui/LiquidGlass';
 import { ChatPreviewBubbles } from '../../src/components/ui/ChatPreviewBubbles';
 import {
   useChatSettingsStore,
@@ -52,6 +53,7 @@ export default function ChatTextSizeScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
+  const glassActive = useLiquidGlassActive();
   const { id } = useLocalSearchParams<{ id: string }>();
   const chatId = id || GLOBAL_CHAT_SETTINGS_KEY;
 
@@ -116,27 +118,52 @@ export default function ChatTextSizeScreen() {
       {/* ── Floating header pills ───────────────────────────────────── */}
       <View style={[styles.headerRow, { top: 28 }]} pointerEvents="box-none">
         <Pressable onPress={onCancel} hitSlop={10} style={styles.headerPill}>
-          <BlurView intensity={80} tint="dark" style={styles.headerPillInner}>
-            <Feather name="x" size={18} color="#FFFFFF" />
-          </BlurView>
+          {glassActive ? (
+            <View style={[styles.headerPillInner, { borderRadius: 18, overflow: 'hidden' }]}>
+              <GlassBg borderRadius={18} colorScheme="dark" />
+              <Feather name="x" size={18} color="#FFFFFF" />
+            </View>
+          ) : (
+            <BlurView intensity={80} tint="dark" style={styles.headerPillInner}>
+              <Feather name="x" size={18} color="#FFFFFF" />
+            </BlurView>
+          )}
         </Pressable>
         <View style={styles.headerTitleAbs} pointerEvents="box-none">
           <ShrinkingModalTitle>
             <View style={styles.headerTitlePill}>
-              <BlurView intensity={80} tint="dark" style={styles.headerTitleInner}>
-                <RNText style={styles.headerTitleText} allowFontScaling={false} numberOfLines={1} ellipsizeMode="tail">
-                  {t('chat_settings.font_size')}
-                </RNText>
-              </BlurView>
+              {glassActive ? (
+                <View style={[styles.headerTitleInner, { borderRadius: 18, overflow: 'hidden' }]}>
+                  <GlassBg borderRadius={18} colorScheme="dark" />
+                  <RNText style={styles.headerTitleText} allowFontScaling={false} numberOfLines={1} ellipsizeMode="tail">
+                    {t('chat_settings.font_size')}
+                  </RNText>
+                </View>
+              ) : (
+                <BlurView intensity={80} tint="dark" style={styles.headerTitleInner}>
+                  <RNText style={styles.headerTitleText} allowFontScaling={false} numberOfLines={1} ellipsizeMode="tail">
+                    {t('chat_settings.font_size')}
+                  </RNText>
+                </BlurView>
+              )}
             </View>
           </ShrinkingModalTitle>
         </View>
         <Pressable onPress={onApply} hitSlop={10} style={styles.headerPill}>
-          <BlurView intensity={80} tint="dark" style={[styles.headerPillInner, { paddingHorizontal: 14 }]}>
-            <RNText style={styles.headerApplyText} allowFontScaling={false}>
-              {t('common.apply')}
-            </RNText>
-          </BlurView>
+          {glassActive ? (
+            <View style={[styles.headerPillInner, { paddingHorizontal: 14, borderRadius: 18, overflow: 'hidden' }]}>
+              <GlassBg borderRadius={18} colorScheme="dark" />
+              <RNText style={styles.headerApplyText} allowFontScaling={false}>
+                {t('common.apply')}
+              </RNText>
+            </View>
+          ) : (
+            <BlurView intensity={80} tint="dark" style={[styles.headerPillInner, { paddingHorizontal: 14 }]}>
+              <RNText style={styles.headerApplyText} allowFontScaling={false}>
+                {t('common.apply')}
+              </RNText>
+            </BlurView>
+          )}
         </Pressable>
       </View>
 

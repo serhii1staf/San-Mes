@@ -40,6 +40,7 @@ import Animated, {
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { useTheme } from '../../src/theme';
 import { ShrinkingModalTitle } from '../../src/components/ui';
+import { useLiquidGlassActive, GlassBg } from '../../src/components/ui/LiquidGlass';
 import { CachedImage } from '../../src/components/ui/CachedImage';
 import {
   useThemeStore,
@@ -65,6 +66,7 @@ export default function FontsSizeScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
+  const glassActive = useLiquidGlassActive();
   const currentSize = useThemeStore((s) => s.fontSize);
   const setFontSize = useThemeStore((s) => s.setFontSize);
   const wallpaper = useChatSettingsStore(
@@ -237,32 +239,62 @@ export default function FontsSizeScreen() {
       {/* ── Floating header pills ───────────────────────────────────── */}
       <View style={[styles.headerRow, { top: 28 }]} pointerEvents="box-none">
         <Pressable onPress={handleCancel} hitSlop={10} style={styles.headerPill}>
-          <BlurView intensity={80} tint="dark" style={styles.headerPillInner}>
-            <Feather name="x" size={18} color="#FFFFFF" />
-          </BlurView>
+          {glassActive ? (
+            <View style={[styles.headerPillInner, { borderRadius: 18, overflow: 'hidden' }]}>
+              <GlassBg borderRadius={18} colorScheme="dark" />
+              <Feather name="x" size={18} color="#FFFFFF" />
+            </View>
+          ) : (
+            <BlurView intensity={80} tint="dark" style={styles.headerPillInner}>
+              <Feather name="x" size={18} color="#FFFFFF" />
+            </BlurView>
+          )}
         </Pressable>
         <View style={styles.headerTitleAbs} pointerEvents="box-none">
           <ShrinkingModalTitle>
             <View style={styles.headerTitlePill}>
-              <BlurView intensity={80} tint="dark" style={styles.headerTitleInner}>
-                <RNText
-                  style={styles.headerTitleText}
-                  allowFontScaling={false}
-                  numberOfLines={1}
-                  ellipsizeMode="tail"
-                >
-                  {t('fonts.size_title')}
-                </RNText>
-              </BlurView>
+              {glassActive ? (
+                <View style={[styles.headerTitleInner, { borderRadius: 18, overflow: 'hidden' }]}>
+                  <GlassBg borderRadius={18} colorScheme="dark" />
+                  <RNText
+                    style={styles.headerTitleText}
+                    allowFontScaling={false}
+                    numberOfLines={1}
+                    ellipsizeMode="tail"
+                  >
+                    {t('fonts.size_title')}
+                  </RNText>
+                </View>
+              ) : (
+                <BlurView intensity={80} tint="dark" style={styles.headerTitleInner}>
+                  <RNText
+                    style={styles.headerTitleText}
+                    allowFontScaling={false}
+                    numberOfLines={1}
+                    ellipsizeMode="tail"
+                  >
+                    {t('fonts.size_title')}
+                  </RNText>
+                </BlurView>
+              )}
             </View>
           </ShrinkingModalTitle>
         </View>
         <Pressable onPress={handleApply} hitSlop={10} style={styles.headerPill}>
-          <BlurView intensity={80} tint="dark" style={[styles.headerPillInner, { paddingHorizontal: 14 }]}>
-            <RNText style={styles.headerApplyText} allowFontScaling={false}>
-              {t('common.apply')}
-            </RNText>
-          </BlurView>
+          {glassActive ? (
+            <View style={[styles.headerPillInner, { paddingHorizontal: 14, borderRadius: 18, overflow: 'hidden' }]}>
+              <GlassBg borderRadius={18} colorScheme="dark" />
+              <RNText style={styles.headerApplyText} allowFontScaling={false}>
+                {t('common.apply')}
+              </RNText>
+            </View>
+          ) : (
+            <BlurView intensity={80} tint="dark" style={[styles.headerPillInner, { paddingHorizontal: 14 }]}>
+              <RNText style={styles.headerApplyText} allowFontScaling={false}>
+                {t('common.apply')}
+              </RNText>
+            </BlurView>
+          )}
         </Pressable>
       </View>
 

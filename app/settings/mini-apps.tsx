@@ -7,6 +7,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
+import { useLiquidGlassActive, GlassBg } from '../../src/components/ui/LiquidGlass';
 import { useMiniAppsStore, MiniApp } from '../../src/store/miniAppsStore';
 import { useAuthStore } from '../../src/store';
 import { showToast } from '../../src/store/toastStore';
@@ -18,6 +19,7 @@ export default function MiniAppsScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
+  const glassActive = useLiquidGlassActive();
   // Field-level selectors — destructuring re-rendered this screen on every
   // unrelated auth-store change (token refresh, badge sync) and on every
   // unrelated mini-apps mutation.
@@ -135,15 +137,29 @@ export default function MiniAppsScreen() {
         <LinearGradient colors={[bgColor, bgColor, bgTransparent]} locations={[0, 0.55, 1]} style={StyleSheet.absoluteFill} />
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: insets.top + 8, paddingBottom: 8 }} pointerEvents="auto">
           <Pressable onPress={() => router.back()} style={{ borderRadius: 17, overflow: 'hidden' }}>
-            <BlurView intensity={80} tint="dark" style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center' }}>
-              <Feather name="chevron-left" size={18} color="#FFFFFF" />
-            </BlurView>
+            {glassActive ? (
+              <View style={{ width: 34, height: 34, borderRadius: 17, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' }}>
+                <GlassBg borderRadius={17} colorScheme="dark" />
+                <Feather name="chevron-left" size={18} color="#FFFFFF" />
+              </View>
+            ) : (
+              <BlurView intensity={80} tint="dark" style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center' }}>
+                <Feather name="chevron-left" size={18} color="#FFFFFF" />
+              </BlurView>
+            )}
           </Pressable>
           <Text variant="body" weight="bold">{t('mini_apps.title')}</Text>
           <Pressable onPress={() => { if (showCreate) resetForm(); else setShowCreate(true); }} style={{ borderRadius: 17, overflow: 'hidden' }}>
-            <BlurView intensity={80} tint="dark" style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center' }}>
-              <Feather name={showCreate ? 'x' : 'plus'} size={18} color="#FFFFFF" />
-            </BlurView>
+            {glassActive ? (
+              <View style={{ width: 34, height: 34, borderRadius: 17, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' }}>
+                <GlassBg borderRadius={17} colorScheme="dark" />
+                <Feather name={showCreate ? 'x' : 'plus'} size={18} color="#FFFFFF" />
+              </View>
+            ) : (
+              <BlurView intensity={80} tint="dark" style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center' }}>
+                <Feather name={showCreate ? 'x' : 'plus'} size={18} color="#FFFFFF" />
+              </BlurView>
+            )}
           </Pressable>
         </View>
       </View>
