@@ -31,7 +31,6 @@ import { ProfileReplyCard, ProfileReply } from '../../src/components/profile/Pro
 import { AdaptiveProfileText } from '../../src/components/profile/AdaptiveProfileText';
 import { EditProfileTabModal } from '../../src/components/profile/EditProfileTabModal';
 import { useProfileAppearanceStore } from '../../src/store/profileAppearanceStore';
-import { useLiquidGlassActive, NativeGlassView } from '../../src/components/ui/LiquidGlass';
 import { PanResponder } from 'react-native';
 import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
 import { useT } from '../../src/i18n/store';
@@ -324,8 +323,7 @@ export default function UserProfileScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
-  // Native iOS-26 liquid glass for the profile category tabs. iOS-only + opt-in.
-  const glassActive = useLiquidGlassActive();
+  // Mount-time marker — opens-someone-else's-profile lag is a primary user
   // complaint; this attribution lets the panel show whether the freeze
   // came from the screen's first render or from downstream image fan-out.
   // Skipped at the call site when the monitor is off.
