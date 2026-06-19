@@ -2,7 +2,6 @@ import React, { memo, useState, useImperativeHandle, forwardRef, useCallback, us
 import { View, TextInput, Pressable, Platform, StyleSheet, Text, LayoutAnimation, UIManager } from 'react-native';
 import Reanimated from 'react-native-reanimated';
 import { Feather } from '@expo/vector-icons';
-import * as Clipboard from 'expo-clipboard';
 import { useTheme } from '../../theme';
 import { useT } from '../../i18n/store';
 import { perfMonitor } from '../../services/perfMonitor';
@@ -60,20 +59,6 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
   // glass is far cheaper than the BlurView-per-child attempt that was reverted.
   const glassActive = useLiquidGlassActive();
   const [text, setText] = useState('');
-  // When the system clipboard holds an image we reveal a visible "paste image"
-  // chip above the input — RN's TextInput has no image `onPaste`, so the OS
-  // paste menu only pastes text. This chip is the discoverable way to drop a
-  // copied image into the composer. Re-checked every time the input focuses.
-  const [canPasteImage, setCanPasteImage] = useState(false);
-
-  const checkClipboardImage = useCallback(() => {
-    Clipboard.hasImageAsync().then(setCanPasteImage).catch(() => {});
-  }, []);
-
-  const handlePasteImage = useCallback(() => {
-    setCanPasteImage(false);
-    onPasteImage?.();
-  }, [onPasteImage]);
 
   // ── Native paste wrapper (expo-paste-input) — crash-safe lazy load ──────
   // The native view `ExpoPasteInput` only exists in builds that bundled the
@@ -147,7 +132,7 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
       // Captures keyboard-to-first-frame latency for the chat input —
       // the perf-monitor singleton early-returns when disabled, so this
       // is essentially free in production for users with the bubble off.
-      onFocus={() => { perfMonitor.markInputFocus('chat'); checkClipboardImage(); }}
+      onFocus={() => { perfMonitor.markInputFocus('chat'); }}
     />
   );
   const inputInner = (
@@ -176,17 +161,7 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
     // input, the wrap stretches UPWARD while the side buttons stay anchored to
     // the row's bottom edge. Without this the row centers all children, which
     // visually shoves the photo/GIF/send buttons up alongside the text.
-    <>
-      {canPasteImage ? (
-        <Pressable
-          onPress={handlePasteImage}
-          style={{ flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', gap: 6, marginHorizontal: 12, marginBottom: 2, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16, backgroundColor: theme.colors.accent.primary + '1F' }}
-        >
-          <Feather name="clipboard" size={14} color={theme.colors.accent.primary} />
-          <Text style={{ fontSize: 13, fontWeight: '600', color: theme.colors.accent.primary }}>{t('chat.paste_image')}</Text>
-        </Pressable>
-      ) : null}
-      <Reanimated.View style={[styles.row, inputRowStyle]}>
+    <Reanimated.View style={[styles.row, inputRowStyle]}>
       {/* Photo/image button → interactive liquid glass holding the icon as a
           CHILD so the glass morphs outward on touch. NO overflow clipping. */}
       <Pressable
@@ -235,7 +210,6 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
         </Pressable>
       )}
     </Reanimated.View>
-    </>
   );
 }));
 
