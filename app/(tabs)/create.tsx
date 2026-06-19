@@ -631,6 +631,9 @@ export default function CreateScreen() {
               placeholder={t('create.placeholder')}
               placeholderTextColor={theme.colors.text.tertiary}
               multiline
+              autoCorrect={false}
+              autoComplete="off"
+              spellCheck={false}
               style={{
                 fontSize: theme.typography.sizes.base,
                 fontFamily: theme.fontFamily.regular,

@@ -365,6 +365,7 @@ const ru: Record<string, string> = {
   'chat.menu.reply': 'Ответить',
   'chat.menu.copy': 'Копировать',
   'chat.menu.copy_image': 'Копировать изображение',
+  'chat.paste_image': 'Вставить изображение',
   'chat.menu.edit': 'Редактировать',
   'chat.menu.delete': 'Удалить',
   'chat.menu.translate': 'Перевести',

@@ -826,6 +826,9 @@ export default function CommentsScreen() {
                   placeholderTextColor={theme.colors.text.tertiary}
                   style={{ flex: 1, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular, maxHeight: 100, paddingTop: 0, paddingBottom: 0, minHeight: 22, lineHeight: 20, alignSelf: 'center' }}
                   multiline
+                  autoCorrect={false}
+                  autoComplete="off"
+                  spellCheck={false}
                   textAlignVertical="center"
                   onContentSizeChange={() => { LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); }}
                   // Captures keyboard-to-first-frame latency for the
@@ -848,6 +851,9 @@ export default function CommentsScreen() {
                   placeholderTextColor={theme.colors.text.tertiary}
                   style={{ flex: 1, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular, maxHeight: 100, paddingTop: 0, paddingBottom: 0, minHeight: 22, lineHeight: 20, alignSelf: 'center' }}
                   multiline
+                  autoCorrect={false}
+                  autoComplete="off"
+                  spellCheck={false}
                   textAlignVertical="center"
                   onContentSizeChange={() => { LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); }}
                   // Captures keyboard-to-first-frame latency for the

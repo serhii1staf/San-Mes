@@ -363,6 +363,7 @@ const en: Record<string, string> = {
   'chat.menu.reply': 'Reply',
   'chat.menu.copy': 'Copy',
   'chat.menu.copy_image': 'Copy image',
+  'chat.paste_image': 'Paste image',
   'chat.menu.edit': 'Edit',
   'chat.menu.delete': 'Delete',
 
