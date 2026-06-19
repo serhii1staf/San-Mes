@@ -1,4 +1,4 @@
-import React, { memo, useState, useImperativeHandle, forwardRef, useCallback, useRef } from 'react';
+import React, { memo, useState, useImperativeHandle, forwardRef, useCallback, useRef, useEffect } from 'react';
 import { View, TextInput, Pressable, Platform, StyleSheet, Text, LayoutAnimation, UIManager } from 'react-native';
 import Reanimated from 'react-native-reanimated';
 import { Feather } from '@expo/vector-icons';
@@ -40,12 +40,16 @@ interface ChatInputBarProps {
   onSend: (text: string) => void;
   onPickImages: () => void;
   onPasteImage?: () => void;
+  // Native paste (expo-paste-input): fires with the local file:// URIs of
+  // images/stickers/GIFs the user pasted via the OS paste menu or keyboard.
+  // Only wired on builds that include the native module (see lazy load below).
+  onPasteImages?: (uris: string[]) => void;
   onOpenGif: () => void;
   inputRowStyle: any; // Reanimated animated style (paddingBottom)
 }
 
 export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProps>(function ChatInputBar(
-  { isEditing, hasPendingImages, onSend, onPickImages, onPasteImage, onOpenGif, inputRowStyle },
+  { isEditing, hasPendingImages, onSend, onPickImages, onPasteImage, onPasteImages, onOpenGif, inputRowStyle },
   ref,
 ) {
   const theme = useTheme();
@@ -70,6 +74,31 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
     setCanPasteImage(false);
     onPasteImage?.();
   }, [onPasteImage]);
+
+  // ── Native paste wrapper (expo-paste-input) — crash-safe lazy load ──────
+  // The native view `ExpoPasteInput` only exists in builds that bundled the
+  // module. On OLDER binaries receiving this JS via OTA, importing the module
+  // would throw at `requireNativeView` time — so we load it dynamically inside
+  // an effect and swallow the rejection. When present, we wrap the TextInput so
+  // the OS paste menu / keyboard can drop images, stickers and GIFs straight in.
+  const [PasteWrapper, setPasteWrapper] = useState<React.ComponentType<any> | null>(null);
+  useEffect(() => {
+    let mounted = true;
+    import('expo-paste-input')
+      .then((m) => {
+        const W = (m as any)?.TextInputWrapper;
+        if (mounted && W) setPasteWrapper(() => W);
+      })
+      .catch(() => {});
+    return () => { mounted = false; };
+  }, []);
+
+  const handleNativePaste = useCallback((payload: any) => {
+    if (payload?.type === 'images' && Array.isArray(payload.uris) && payload.uris.length > 0) {
+      onPasteImages?.(payload.uris);
+    }
+    // 'text' is already inserted by the TextInput; 'unsupported' is ignored.
+  }, [onPasteImages]);
 
   useImperativeHandle(ref, () => ({
     setText: (t: string) => setText(t),
@@ -100,27 +129,40 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
 
   // Input contents shared by the glass and non-glass paths so we never
   // duplicate the stateful TextInput (which owns the live text value).
+  const textInputEl = (
+    <TextInput
+      value={text}
+      onChangeText={setText}
+      placeholder={t('chat.input_placeholder')}
+      placeholderTextColor={theme.colors.text.tertiary}
+      style={{ flex: 1, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular, maxHeight: 100, paddingTop: 0, paddingBottom: 0, minHeight: 22, lineHeight: 20 }}
+      multiline
+      textAlignVertical="center"
+      // Autocorrect / autocomplete / spellcheck OFF — the user found the
+      // keyboard's auto-replacement disruptive while chatting.
+      autoCorrect={false}
+      autoComplete="off"
+      spellCheck={false}
+      onContentSizeChange={handleContentSizeChange}
+      // Captures keyboard-to-first-frame latency for the chat input —
+      // the perf-monitor singleton early-returns when disabled, so this
+      // is essentially free in production for users with the bubble off.
+      onFocus={() => { perfMonitor.markInputFocus('chat'); checkClipboardImage(); }}
+    />
+  );
   const inputInner = (
     <>
-      <TextInput
-        value={text}
-        onChangeText={setText}
-        placeholder={t('chat.input_placeholder')}
-        placeholderTextColor={theme.colors.text.tertiary}
-        style={{ flex: 1, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular, maxHeight: 100, paddingTop: 0, paddingBottom: 0, minHeight: 22, lineHeight: 20 }}
-        multiline
-        textAlignVertical="center"
-        // Autocorrect / autocomplete / spellcheck OFF — the user found the
-        // keyboard's auto-replacement disruptive while chatting.
-        autoCorrect={false}
-        autoComplete="off"
-        spellCheck={false}
-        onContentSizeChange={handleContentSizeChange}
-        // Captures keyboard-to-first-frame latency for the chat input —
-        // the perf-monitor singleton early-returns when disabled, so this
-        // is essentially free in production for users with the bubble off.
-        onFocus={() => { perfMonitor.markInputFocus('chat'); checkClipboardImage(); }}
-      />
+      {/* Wrap the TextInput in the native paste handler when the module is
+          present (new builds). `flex: 1` keeps it filling the row exactly like
+          the bare TextInput did. On older binaries PasteWrapper stays null and
+          we render the plain TextInput — identical layout, no crash. */}
+      {PasteWrapper ? (
+        <PasteWrapper style={{ flex: 1 }} onPaste={handleNativePaste}>
+          {textInputEl}
+        </PasteWrapper>
+      ) : (
+        textInputEl
+      )}
       {/* GIF button inside the input, right side. alignSelf:flex-end so it
           stays at the bottom row of the input wrap when text wraps. */}
       <Pressable onPress={onOpenGif} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 4, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8, backgroundColor: theme.colors.accent.primary + '18' }}>

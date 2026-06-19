@@ -1120,6 +1120,27 @@ export default function ChatScreen() {
     }
   }, [t]);
 
+  // Add already-resolved local image URIs (from the native paste handler) to
+  // the composer. Resizes non-GIFs the same way pickImages does. Capped at 6.
+  const addPastedImages = useCallback(async (uris: string[]) => {
+    if (!uris?.length) return;
+    try {
+      const { manipulateAsync, SaveFormat } = await import('expo-image-manipulator');
+      const processed = await Promise.all(uris.slice(0, 6).map(async (u) => {
+        const isGif = (u.split('?')[0].split('.').pop() || '').toLowerCase() === 'gif';
+        if (isGif) return u;
+        try {
+          const r = await manipulateAsync(u, [{ resize: { width: 1280 } }], { compress: 0.8, format: SaveFormat.JPEG });
+          return r.uri;
+        } catch { return u; }
+      }));
+      triggerHaptic('light');
+      setPendingImages((prev) => [...prev, ...processed].slice(0, 6));
+    } catch {
+      showToast(t('toast.error_generic'), 'alert-circle');
+    }
+  }, [t]);
+
   const openImageViewer = useCallback((images: string[], index: number) => {
     setViewerImages({ images, index });
   }, []);
@@ -1915,6 +1936,7 @@ export default function ChatScreen() {
           onSend={handleSend}
           onPickImages={pickImages}
           onPasteImage={pasteImageFromClipboard}
+          onPasteImages={addPastedImages}
           onOpenGif={() => setGifPickerVisible(true)}
           inputRowStyle={inputRowStyle}
         />

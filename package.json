@@ -43,6 +43,7 @@
     "expo-linking": "~8.0.12",
     "expo-media-library": "~18.2.1",
     "expo-navigation-bar": "~5.0.10",
+    "expo-paste-input": "^0.2.2",
     "expo-router": "~6.0.24",
     "expo-screen-capture": "~8.0.9",
     "expo-sharing": "~14.0.8",
