@@ -1050,32 +1050,30 @@ export default function UserProfileScreen() {
             proxyWidth={1080}
           />
         ) : null}
-        {/* Bottom edge of the banner melts into the content below. On iOS we
-            use a real frosted blur strip (FadingBlurHeader) pinned to the
-            banner's bottom: direction 'up' keeps the frost strongest at the
-            very bottom edge and dissolves it upward into the clear banner, so
-            it naturally takes on the banner image's colours, with a subtle
-            theme-background blend so it merges into the profile content. On
-            Android / older binaries (no native masked-view) we keep the plain
-            three-stop gradient fade instead — a continuous blur there is too
-            expensive on weak devices. Exactly one of the two ever renders. */}
+        {/* Smooth fade so the banner ALWAYS dissolves fully into the app
+            background — no hard edge. Rendered on BOTH platforms as the base
+            layer (this is what reaches the solid bg colour at the very bottom
+            and meets the content seamlessly). */}
+        <LinearGradient
+          colors={[theme.colors.background.primary + '00', theme.colors.background.primary + 'B3', theme.colors.background.primary]}
+          locations={[0, 0.45, 1]}
+          style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 150 }}
+          pointerEvents="none"
+        />
+        {/* iOS: frosted glass layered ON TOP of the gradient. Because the
+            gradient already lands on the solid app bg at the very bottom, the
+            blur there is blurring plain bg and meets the content seamlessly —
+            the frost only reads higher up over the banner image, so the banner
+            melts into the content with no hard line. */}
         {Platform.OS === 'ios' && isFadingBlurAvailable() ? (
           <FadingBlurHeader
             isDark={theme.isDark}
             direction="up"
             pin="bottom"
-            height={120}
-            fadeStart={0.5}
-            blendColor={theme.colors.background.primary + '80'}
+            height={150}
+            fadeStart={0.4}
           />
-        ) : (
-          <LinearGradient
-            colors={[theme.colors.background.primary + '00', theme.colors.background.primary + 'B3', theme.colors.background.primary]}
-            locations={[0, 0.45, 1]}
-            style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 140 }}
-            pointerEvents="none"
-          />
-        )}
+        ) : null}
       </View>
       <View style={{ flexDirection: 'row', alignItems: 'center', alignSelf: 'stretch', marginTop: -140, paddingHorizontal: 8 }}>
         <View style={{ flex: 1 }}>
