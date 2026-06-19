@@ -35,6 +35,7 @@ import { mockMessages, mockConversations, formatMessageTime } from '../../src/ut
 import { showToast } from '../../src/store/toastStore';
 import { ChatMessage } from '../../src/types';
 import { triggerHaptic } from '../../src/utils/haptics';
+import { sanitizeUserText } from '../../src/utils/sanitizeText';
 import { useT } from '../../src/i18n/store';
 import { perfMonitor } from '../../src/services/perfMonitor';
 import { useSettingsStore } from '../../src/store/settingsStore';
@@ -1272,7 +1273,9 @@ export default function ChatScreen() {
     const hasImages = pendingImages.length > 0;
     if ((!rawText.trim() && !hasImages) || !conversationId) return;
     triggerHaptic('medium');
-    const text = rawText.trim();
+    // Strip dangerous invisible / control / bidi-override chars; keep
+    // decorative Unicode + emoji. sanitizeUserText also trims.
+    const text = sanitizeUserText(rawText);
 
     if (editing) {
       // Re-upload any newly added local images (those that aren't already remote URLs)

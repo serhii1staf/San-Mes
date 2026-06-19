@@ -6,6 +6,7 @@ import { Text } from '../ui/Text';
 import { useTheme } from '../../theme';
 import { useT } from '../../i18n/store';
 import { triggerHaptic } from '../../utils/haptics';
+import { sanitizeUserText } from '../../utils/sanitizeText';
 
 // ─── EditProfileTabModal ────────────────────────────────────────────────
 // Long-press editor for a single own-profile category tab (Posts /
@@ -69,7 +70,7 @@ export function EditProfileTabModal({
 
   const handleApply = () => {
     triggerHaptic('light');
-    const trimmed = label.trim();
+    const trimmed = sanitizeUserText(label, { singleLine: true, maxLength: 16 });
     onApply({ label: trimmed || undefined, emoji: emoji || undefined });
     onClose();
   };

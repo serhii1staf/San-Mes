@@ -25,6 +25,7 @@ import { kvGetJSONSync, kvSetJSON } from '../../src/services/kvStore';
 import { useAuthStore, useConnectivityStore } from '../../src/store';
 import { getComments, createComment, updateComment, deleteComment, isRepost, parseImageUrls } from '../../src/lib/supabase';
 import { triggerHaptic } from '../../src/utils/haptics';
+import { sanitizeUserText } from '../../src/utils/sanitizeText';
 import { playSendSound } from '../../src/utils/sounds';
 import { showToast } from '../../src/store/toastStore';
 import { useT } from '../../src/i18n/store';
@@ -509,7 +510,9 @@ export default function CommentsScreen() {
   const handleSend = async () => {
     if (!text.trim() || !user?.id || !postId) return;
     playSendSound();
-    const body = text.trim();
+    // Strip dangerous invisible / control / bidi-override chars; keep
+    // decorative Unicode + emoji. sanitizeUserText also trims.
+    const body = sanitizeUserText(text);
 
     // Edit mode: update the existing comment, preserving any reply-quote prefix.
     if (editing) {

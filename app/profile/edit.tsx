@@ -25,6 +25,7 @@ import { updateProfile as updateSupabaseProfile, uploadBanner, loadProfileMeta }
 import { currentUser } from '../../src/utils/mockData';
 import { useT } from '../../src/i18n/store';
 import { validateName, validateBio } from '../../src/services/moderation';
+import { sanitizeUserText } from '../../src/utils/sanitizeText';
 import { showToast } from '../../src/store/toastStore';
 import {
   BannerTransform,
@@ -246,6 +247,12 @@ export default function EditProfileScreen() {
     }
     setIsSaving(true);
     try {
+      // Strip dangerous invisible / control / bidi-override characters before
+      // persisting (decorative Unicode + emoji are preserved). Single-line for
+      // name/username, multi-line for bio.
+      const cleanName = sanitizeUserText(name, { singleLine: true, maxLength: 50 });
+      const cleanUsername = sanitizeUserText(username, { singleLine: true, maxLength: 30 });
+      const cleanBio = sanitizeUserText(bio, { maxLength: 150 });
       // Local optimistic update — apply the transform onto the local
       // URI immediately so the redesigned profile screen picks it up
       // without waiting for the network round-trip below.
@@ -253,9 +260,9 @@ export default function EditProfileScreen() {
         ? serializeBannerTransform(bannerUri, bannerTransform)
         : undefined;
       updateProfile({
-        displayName: name,
-        username,
-        bio,
+        displayName: cleanName,
+        username: cleanUsername,
+        bio: cleanBio,
         emoji: selectedEmoji,
         links,
         bannerUrl: localBannerUrl,
@@ -279,8 +286,8 @@ export default function EditProfileScreen() {
           : undefined;
 
         await updateSupabaseProfile(user.id, {
-          display_name: name,
-          bio,
+          display_name: cleanName,
+          bio: cleanBio,
           emoji: selectedEmoji,
           banner_url: persistedUrl || undefined,
           links: links.length > 0 ? links : [],

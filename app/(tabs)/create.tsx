@@ -14,6 +14,7 @@ import { useFeedStore } from '../../src/store/feedStore';
 import { useConnectivityStore } from '../../src/store';
 import { createRepost, createPost, uploadPostImage, joinImageUrls } from '../../src/lib/supabase';
 import { queueMutation, generateTempId } from '../../src/services/offlineQueue';
+import { sanitizeUserText } from '../../src/utils/sanitizeText';
 import { useEntityStore } from '../../src/services/entityStore';
 import { accountKey } from '../../src/services/cacheService';
 import { FormatHelpModal } from '../../src/components/ui/FormatHelpModal';
@@ -247,6 +248,11 @@ export default function CreateScreen() {
       // Soft warnings deliberately ignored — neutral platform.
     }
 
+    // Strip dangerous invisible / control / bidi-override characters from the
+    // post body before persisting. Decorative Unicode + emoji are preserved;
+    // this only neutralises hidden-text smuggling, RTL spoofing and Zalgo.
+    const safePostText = sanitizeUserText(content, { maxLength: MAX_CHARS });
+
     setIsPosting(true);
     try {
       // Handle repost — now supports images
@@ -271,7 +277,7 @@ export default function CreateScreen() {
           }
         }
 
-        const { post, error } = await createRepost(user.id, repostData.id, content.trim() || undefined, repostImageUrl);
+        const { post, error } = await createRepost(user.id, repostData.id, safePostText.trim() || undefined, repostImageUrl);
         if (error) {
           Alert.alert(t('create.alert.error_title'), error);
           setIsPosting(false);
@@ -295,7 +301,7 @@ export default function CreateScreen() {
             authorName: user.displayName || '',
             authorUsername: user.username || '',
             authorEmoji: user.emoji || '😊',
-            content: content.trim() || '',
+            content: safePostText.trim() || '',
             imageUrl: repostImages[0] || undefined,
             imageUrls: repostImages.length > 0 ? repostImages : undefined,
             likesCount: 0,
@@ -337,7 +343,7 @@ export default function CreateScreen() {
 
       // ===== EDITING MODE: update existing post =====
       if (editingPostId) {
-        const postContent = content.trim() || '';
+        const postContent = safePostText.trim() || '';
 
         try {
           let imageUrl: string | undefined;
@@ -424,7 +430,7 @@ export default function CreateScreen() {
       // ===== CREATE MODE: create new post =====
       const { isOnline } = useConnectivityStore.getState();
       const tempId = generateTempId();
-      const postContent = content.trim() || '';
+      const postContent = safePostText.trim() || '';
 
       if (isOnline) {
         // Online: try direct API call with image upload
