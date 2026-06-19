@@ -804,7 +804,7 @@ export default function ProfileScreen() {
   // every state flip. Tab-switch flash (the user's "data reloads" report)
   // came from `setPostsReady(false)` clearing `data` for ~16 ms during
   // tab taps; that gate was removed above.
-  const listHeader = useMemo(() => (
+  const bannerHeader = useMemo(() => (
     <>
       <View style={{ height: 300, marginHorizontal: -16, marginTop: -12, backgroundColor: theme.colors.accent.primary + '20', overflow: 'hidden' }}>
         {bannerUrl && chromeReady ? (
@@ -890,6 +890,15 @@ export default function ProfileScreen() {
           </LinkedText>
         </View>
       ) : null}
+    </>
+  ), [theme, user, bannerUrl, bannerTransform, chromeReady, bannerIsLight, userLinks]);
+
+  // Tabs row is split out of the banner header so switching tabs only
+  // reconciles this lightweight subtree — the heavy banner (CachedImage,
+  // BannerFloatingLinks) keeps a stable element ref and is never re-rendered
+  // on tab switch. This is the perf fix: no banner reload, no FPS drop.
+  const tabsRow = useMemo(() => (
+    <>
       {/* Profile category tabs — the old full-width bottom hairline + the
           sliding accent underline are removed for a cleaner "open" profile.
           The active tab now reads as a rounded pill: interactive liquid glass
@@ -916,7 +925,7 @@ export default function ProfileScreen() {
                   {tab.emoji}
                 </RNText>
               ) : null}
-              <Text variant="caption" weight={isActive ? 'bold' : 'regular'} color={isActive ? theme.colors.text.primary : theme.colors.text.tertiary}>{tab.label}</Text>
+              <Text variant="caption" weight={isActive ? 'bold' : 'regular'} color={isActive ? theme.colors.text.primary : theme.colors.text.tertiary} numberOfLines={1} style={{ flexShrink: 1 }}>{tab.label}</Text>
             </>
           );
           return (
@@ -935,12 +944,12 @@ export default function ProfileScreen() {
                   isInteractive
                   colorScheme={theme.isDark ? 'dark' : 'light'}
                   tintColor={theme.colors.accent.primary + '33'}
-                  style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 9, borderRadius: 16 }}
+                  style={{ alignSelf: 'stretch', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 9, paddingHorizontal: 8, borderRadius: 16, overflow: 'hidden' }}
                 >
                   {content}
                 </NativeGlassView>
               ) : (
-                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 9, borderRadius: 16, backgroundColor: isActive ? theme.colors.accent.primary + '1F' : 'transparent' }}>
+                <View style={{ alignSelf: 'stretch', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 9, paddingHorizontal: 8, borderRadius: 16, overflow: 'hidden', backgroundColor: isActive ? theme.colors.accent.primary + '1F' : 'transparent' }}>
                   {content}
                 </View>
               )}
@@ -950,7 +959,13 @@ export default function ProfileScreen() {
       </View>
       <View style={{ height: 12 }} />
     </>
-  ), [theme, user, bannerUrl, bannerTransform, chromeReady, bannerIsLight, activeTab, userLinks, tabs, glassActive]);
+  ), [theme, activeTab, tabs, glassActive]);
+
+  // Compose: only `tabsRow` changes reference on tab switch, so React keeps
+  // the `bannerHeader` subtree mounted untouched.
+  const listHeader = useMemo(() => (
+    <>{bannerHeader}{tabsRow}</>
+  ), [bannerHeader, tabsRow]);
 
 
   return (

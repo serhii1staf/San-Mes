@@ -132,7 +132,7 @@ export function EditProfileTabModal({
             onChangeText={setLabel}
             placeholder={defaultLabel}
             placeholderTextColor={theme.colors.text.tertiary}
-            maxLength={24}
+            maxLength={16}
             style={{
               flex: 1,
               height: 44,

@@ -53,7 +53,7 @@ const BRAND: Record<string, { name: string; color: string; isBrand: boolean }> =
   website: { name: 'globe', color: '#7FB4FF', isBrand: false },
 };
 
-const CHIP = 40; // chip diameter
+const CHIP = 30; // chip diameter
 
 export interface BannerLink { type: string; url: string }
 
@@ -112,8 +112,8 @@ function FloatingChip({ p }: { p: Placement }) {
         }}
       >
         {icon.isBrand
-          ? <FontAwesome5 name={icon.name as any} size={17} color={icon.color} brand />
-          : <Feather name={icon.name as any} size={18} color={icon.color} />}
+          ? <FontAwesome5 name={icon.name as any} size={13} color={icon.color} brand />
+          : <Feather name={icon.name as any} size={14} color={icon.color} />}
       </Pressable>
     </Animated.View>
   );

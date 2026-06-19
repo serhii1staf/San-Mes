@@ -1029,7 +1029,7 @@ export default function UserProfileScreen() {
   //   60 fps budget. useMemo with an explicit dep list short-circuits
   //   the walk at the header root for state flips unrelated to the
   //   header itself.
-  const listHeader = useMemo(() => {
+  const bannerHeader = useMemo(() => {
     if (!displayProfile) return null;
     return (
     <>
@@ -1159,6 +1159,15 @@ export default function UserProfileScreen() {
           </LinkedText>
         </View>
       ) : null}
+    </>
+    );
+  }, [theme, displayProfile, bannerUrl, bannerTransform, chromeReady, bannerIsLight, isOwnProfile, isFollowingState, fromChat, handleFollow, t, userLinks]);
+
+  // Tabs row split out so switching tabs only reconciles this light subtree —
+  // the heavy banner (CachedImage + BannerFloatingLinks) keeps a stable element
+  // ref and never re-renders on tab switch. Perf fix: no banner reload, no FPS drop.
+  const tabsRow = useMemo(() => (
+    <>
       {/* Profile category tabs — bottom hairline + sliding accent underline
           removed for a clean profile. Active tab reads as a rounded pill:
           interactive liquid glass when enabled, else a soft accent fill. */}
@@ -1181,7 +1190,7 @@ export default function UserProfileScreen() {
                     {tab.emoji}
                   </RNText>
                 ) : null}
-                <Text variant="caption" weight={isActive ? 'bold' : 'regular'} color={isActive ? theme.colors.text.primary : theme.colors.text.tertiary}>{tab.label}</Text>
+                <Text variant="caption" weight={isActive ? 'bold' : 'regular'} color={isActive ? theme.colors.text.primary : theme.colors.text.tertiary} numberOfLines={1} style={{ flexShrink: 1 }}>{tab.label}</Text>
               </>
             );
             return (
@@ -1202,12 +1211,12 @@ export default function UserProfileScreen() {
                     isInteractive
                     colorScheme={theme.isDark ? 'dark' : 'light'}
                     tintColor={theme.colors.accent.primary + '33'}
-                    style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 9, borderRadius: 16 }}
+                    style={{ alignSelf: 'stretch', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 9, paddingHorizontal: 8, borderRadius: 16, overflow: 'hidden' }}
                   >
                     {content}
                   </NativeGlassView>
                 ) : (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 9, borderRadius: 16, backgroundColor: isActive ? theme.colors.accent.primary + '1F' : 'transparent' }}>
+                  <View style={{ alignSelf: 'stretch', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 9, paddingHorizontal: 8, borderRadius: 16, overflow: 'hidden', backgroundColor: isActive ? theme.colors.accent.primary + '1F' : 'transparent' }}>
                     {content}
                   </View>
                 )}
@@ -1218,24 +1227,14 @@ export default function UserProfileScreen() {
       </View>
       <View style={{ height: 12 }} />
     </>
-    );
-  }, [
-    theme,
-    displayProfile,
-    bannerUrl,
-    bannerTransform,
-    chromeReady,
-    bannerIsLight,
-    isOwnProfile,
-    isFollowingState,
-    fromChat,
-    activeTab,
-    userLinks,
-    tabs,
-    handleFollow,
-    t,
-    glassActive,
-  ]);
+  ), [theme, activeTab, tabs, glassActive, isOwnProfile]);
+
+  // Compose: only `tabsRow` changes reference on tab switch, so the
+  // `bannerHeader` subtree stays mounted untouched (no banner reload).
+  const listHeader = useMemo(() => {
+    if (!bannerHeader) return null;
+    return <>{bannerHeader}{tabsRow}</>;
+  }, [bannerHeader, tabsRow]);
 
   // Loading / not-found guards — placed AFTER every hook so hook count is
   // identical on every render (see the rules-of-hooks note above).
