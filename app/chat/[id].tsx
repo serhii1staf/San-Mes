@@ -12,6 +12,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { CachedImage } from '../../src/components/ui/CachedImage';
+import { proxiedImageUrl } from '../../src/components/ui/CachedImage';
 import { ModalStatusBar } from '../../src/components/ui/ModalStatusBar';
 import { FormattedText } from '../../src/components/ui/FormattedText';
 import { LinkPreview } from '../../src/components/ui/LinkPreview';
@@ -1232,19 +1233,32 @@ export default function ChatScreen() {
       Clipboard.setStringAsync(message.text);
       showToast(t('toast.copied'), 'check');
     } else if (action === 'copyImage') {
-      // Copy the (first) photo to the system clipboard as a PNG so it can be
-      // pasted into any other app. expo-image-manipulator fetches the remote
-      // URL and re-encodes to base64; Clipboard.setImageAsync takes that.
-      // Guarded so a decode/clipboard failure just toasts instead of crashing.
-      const url = message.imageUrls?.[0];
-      if (url) {
+      // Copy the (first) photo to the system clipboard so it can be pasted into
+      // any other app. Images are served via the weserv proxy (WebP) and cached
+      // by expo-image under the PROXIED url — so we resolve that, prefer the
+      // already-downloaded local cache file, then re-encode to a clipboard-safe
+      // JPEG. Resized + compressed so the base64 payload stays small enough for
+      // the Android clipboard. Fully guarded — failures just toast.
+      const raw = message.imageUrls?.[0];
+      if (raw) {
         (async () => {
           try {
+            const isGif = (raw.split('?')[0].split('.').pop() || '').toLowerCase() === 'gif';
+            const proxied = isGif ? raw : proxiedImageUrl(raw, 1080);
+            let srcUri = proxied;
+            // Prefer the local cache file expo-image already downloaded.
+            try {
+              const { Image: ExpoImage } = await import('expo-image');
+              const cached = await ExpoImage.getCachePathAsync(proxied);
+              if (cached) srcUri = cached.startsWith('file') ? cached : 'file://' + cached;
+            } catch {}
             const { manipulateAsync, SaveFormat } = await import('expo-image-manipulator');
-            const out = await manipulateAsync(url, [], { base64: true, compress: 1, format: SaveFormat.PNG });
+            const out = await manipulateAsync(srcUri, [{ resize: { width: 1080 } }], { base64: true, compress: 0.85, format: SaveFormat.JPEG });
             if (out.base64) {
               await Clipboard.setImageAsync(out.base64);
               showToast(t('toast.image_copied'), 'check');
+            } else {
+              showToast(t('toast.error_generic'), 'alert-circle');
             }
           } catch {
             showToast(t('toast.error_generic'), 'alert-circle');
