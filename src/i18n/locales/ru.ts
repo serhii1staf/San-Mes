@@ -209,6 +209,9 @@ const ru: Record<string, string> = {
 
   // ─── Toasts ────────────────────────────────────────────────────────────
   'toast.copied': 'Скопировано',
+  'toast.image_copied': 'Изображение скопировано',
+  'toast.error_generic': 'Не удалось выполнить действие',
+  'toast.no_clipboard_image': 'В буфере обмена нет изображения',
   'toast.link_copied': 'Ссылка скопирована',
   'toast.report_sent': 'Жалоба отправлена',
   'toast.post_deleted': 'Пост удалён',
@@ -361,6 +364,7 @@ const ru: Record<string, string> = {
   'chat.delete_message_title': 'Удалить сообщение?',
   'chat.menu.reply': 'Ответить',
   'chat.menu.copy': 'Копировать',
+  'chat.menu.copy_image': 'Копировать изображение',
   'chat.menu.edit': 'Редактировать',
   'chat.menu.delete': 'Удалить',
   'chat.menu.translate': 'Перевести',

@@ -38,12 +38,13 @@ interface ChatInputBarProps {
   hasPendingImages: boolean;
   onSend: (text: string) => void;
   onPickImages: () => void;
+  onPasteImage?: () => void;
   onOpenGif: () => void;
   inputRowStyle: any; // Reanimated animated style (paddingBottom)
 }
 
 export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProps>(function ChatInputBar(
-  { isEditing, hasPendingImages, onSend, onPickImages, onOpenGif, inputRowStyle },
+  { isEditing, hasPendingImages, onSend, onPickImages, onPasteImage, onOpenGif, inputRowStyle },
   ref,
 ) {
   const theme = useTheme();
@@ -118,6 +119,8 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
           CHILD so the glass morphs outward on touch. NO overflow clipping. */}
       <Pressable
         onPress={onPickImages}
+        onLongPress={onPasteImage}
+        delayLongPress={300}
         style={
           glassActive
             ? { borderRadius: 22, marginRight: 8 }

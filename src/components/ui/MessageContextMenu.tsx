@@ -19,7 +19,7 @@ const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = Dimensions.get('window');
 const PREVIEW_MAX_HEIGHT = SCREEN_HEIGHT * 0.45;
 const LONG_TEXT_THRESHOLD = 220;
 
-export type MessageAction = 'reply' | 'copy' | 'edit' | 'delete' | 'translate';
+export type MessageAction = 'reply' | 'copy' | 'copyImage' | 'edit' | 'delete' | 'translate';
 
 // Absolute window-space hit-zone for one action row. The bubble's LongPress
 // gesture (UI thread) reads this registry to decide which row the finger is
@@ -185,6 +185,11 @@ export const MessageContextMenu = forwardRef<MessageContextMenuHandle, MessageCo
       { action: 'reply', icon: 'corner-up-left', label: t('chat.menu.reply') },
     ];
     if (message.text) list.push({ action: 'copy', icon: 'copy', label: t('chat.menu.copy') });
+    // Copy image to the system clipboard so it can be pasted into any app
+    // (Telegram-style). Available whenever the message carries photos.
+    if (message.imageUrls && message.imageUrls.length > 0) {
+      list.push({ action: 'copyImage', icon: 'image', label: t('chat.menu.copy_image') });
+    }
     // Translate is available for any text message — own or foreign. Tap →
     // closes this overlay, opens the translation sheet (handled in chat).
     if (message.text && message.text.trim().length > 0) {

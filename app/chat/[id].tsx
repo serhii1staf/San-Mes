@@ -1098,6 +1098,27 @@ export default function ChatScreen() {
     setPendingImages((prev) => [...prev, ...processed].slice(0, 6));
   }, []);
 
+  // Paste an image from the system clipboard into the composer (Telegram-style:
+  // copy a photo anywhere → long-press the attach button here → it's pasted in,
+  // ready to send). Re-encodes the clipboard data URI to a local JPEG file so
+  // the existing upload path works. Fully guarded — failures just toast.
+  const pasteImageFromClipboard = useCallback(async () => {
+    try {
+      const has = await Clipboard.hasImageAsync();
+      if (!has) { showToast(t('toast.no_clipboard_image'), 'image'); return; }
+      const img = await Clipboard.getImageAsync({ format: 'png' });
+      if (!img?.data) return;
+      const { manipulateAsync, SaveFormat } = await import('expo-image-manipulator');
+      const out = await manipulateAsync(img.data, [{ resize: { width: 1280 } }], { compress: 0.8, format: SaveFormat.JPEG });
+      if (out.uri) {
+        triggerHaptic('light');
+        setPendingImages((prev) => [...prev, out.uri].slice(0, 6));
+      }
+    } catch {
+      showToast(t('toast.error_generic'), 'alert-circle');
+    }
+  }, [t]);
+
   const openImageViewer = useCallback((images: string[], index: number) => {
     setViewerImages({ images, index });
   }, []);
@@ -1210,6 +1231,26 @@ export default function ChatScreen() {
     if (action === 'copy') {
       Clipboard.setStringAsync(message.text);
       showToast(t('toast.copied'), 'check');
+    } else if (action === 'copyImage') {
+      // Copy the (first) photo to the system clipboard as a PNG so it can be
+      // pasted into any other app. expo-image-manipulator fetches the remote
+      // URL and re-encodes to base64; Clipboard.setImageAsync takes that.
+      // Guarded so a decode/clipboard failure just toasts instead of crashing.
+      const url = message.imageUrls?.[0];
+      if (url) {
+        (async () => {
+          try {
+            const { manipulateAsync, SaveFormat } = await import('expo-image-manipulator');
+            const out = await manipulateAsync(url, [], { base64: true, compress: 1, format: SaveFormat.PNG });
+            if (out.base64) {
+              await Clipboard.setImageAsync(out.base64);
+              showToast(t('toast.image_copied'), 'check');
+            }
+          } catch {
+            showToast(t('toast.error_generic'), 'alert-circle');
+          }
+        })();
+      }
     } else if (action === 'reply') {
       startReply(message);
     } else if (action === 'translate') {
@@ -1859,6 +1900,7 @@ export default function ChatScreen() {
           hasPendingImages={pendingImages.length > 0}
           onSend={handleSend}
           onPickImages={pickImages}
+          onPasteImage={pasteImageFromClipboard}
           onOpenGif={() => setGifPickerVisible(true)}
           inputRowStyle={inputRowStyle}
         />

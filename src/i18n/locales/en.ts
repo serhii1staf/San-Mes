@@ -207,6 +207,9 @@ const en: Record<string, string> = {
 
   // ─── Toasts ────────────────────────────────────────────────────────────
   'toast.copied': 'Copied',
+  'toast.image_copied': 'Image copied',
+  'toast.error_generic': 'Could not complete the action',
+  'toast.no_clipboard_image': 'No image in the clipboard',
   'toast.link_copied': 'Link copied',
   'toast.report_sent': 'Report sent',
   'toast.post_deleted': 'Post deleted',
@@ -359,6 +362,7 @@ const en: Record<string, string> = {
   'chat.delete_message_title': 'Delete message?',
   'chat.menu.reply': 'Reply',
   'chat.menu.copy': 'Copy',
+  'chat.menu.copy_image': 'Copy image',
   'chat.menu.edit': 'Edit',
   'chat.menu.delete': 'Delete',
 
