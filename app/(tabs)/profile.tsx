@@ -828,8 +828,8 @@ export default function ProfileScreen() {
             layer (this is what reaches the solid bg colour at the very bottom
             and meets the content seamlessly). */}
         <LinearGradient
-          colors={[theme.colors.background.primary + '00', theme.colors.background.primary + 'B3', theme.colors.background.primary]}
-          locations={[0, 0.45, 1]}
+          colors={[theme.colors.background.primary + '00', theme.colors.background.primary + 'B3', theme.colors.background.primary, theme.colors.background.primary]}
+          locations={[0, 0.38, 0.6, 1]}
           style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 150 }}
           pointerEvents="none"
         />
