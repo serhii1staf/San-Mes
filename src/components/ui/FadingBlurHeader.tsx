@@ -42,17 +42,26 @@ interface FadingBlurHeaderProps {
   /** Where the blur is fully faded out (0..1 of the strip height). */
   fadeStart?: number;
   intensity?: number;
+  /** Explicit strip height. When omitted the blur fills its parent. Use a
+   *  short height so the blur hugs the title row and doesn't bleed down into
+   *  the feed — also cheaper (less area to recomposite). */
+  height?: number;
 }
 
 /**
- * Absolute-fill frosted blur with a soft alpha fade. Render as a sibling layer
- * inside an already-sized, absolutely-positioned header/footer container, ABOVE
- * any base gradient and BELOW the bar's text/icons. Returns null (renders
- * nothing) when the native masked-view module isn't in the build — the caller's
- * gradient then carries the look on its own.
+ * Absolute-fill (or fixed-height) frosted blur with a soft alpha fade. Render
+ * as a sibling layer inside an already-positioned header/footer container,
+ * ABOVE any base gradient and BELOW the bar's text/icons.
+ *
+ * iOS ONLY: the blur is a native UIVisualEffectView (GPU-composited, cheap even
+ * while content scrolls under it). On Android we deliberately render NOTHING and
+ * let the caller's plain gradient carry the look — a continuously-resampling
+ * blur there (Dimezis) is too expensive on weak devices, which is exactly what
+ * we must avoid. Also returns null when the native masked-view module is absent
+ * (older binaries), so it can never crash.
  */
-export function FadingBlurHeader({ isDark, direction = 'down', fadeStart = 0.55, intensity }: FadingBlurHeaderProps) {
-  if (!MaskedView) return null;
+export function FadingBlurHeader({ isDark, direction = 'down', fadeStart = 0.55, intensity, height }: FadingBlurHeaderProps) {
+  if (!MaskedView || Platform.OS !== 'ios') return null;
 
   // Opaque (black) keeps the blur; transparent removes it. `down` keeps the top
   // and fades the bottom; `up` is the mirror for a footer.
@@ -65,9 +74,13 @@ export function FadingBlurHeader({ isDark, direction = 'down', fadeStart = 0.55,
       ? ([0, fadeStart, 1] as const)
       : ([0, 1 - fadeStart, 1] as const);
 
+  const containerStyle = height != null
+    ? { position: 'absolute' as const, top: 0, left: 0, right: 0, height }
+    : StyleSheet.absoluteFill;
+
   return (
     <MaskedView
-      style={StyleSheet.absoluteFill}
+      style={containerStyle}
       pointerEvents="none"
       maskElement={
         <LinearGradient
@@ -78,16 +91,8 @@ export function FadingBlurHeader({ isDark, direction = 'down', fadeStart = 0.55,
       }
     >
       <BlurView
-        intensity={intensity ?? (isDark ? 60 : 75)}
-        tint={
-          Platform.OS === 'ios'
-            ? (isDark ? 'systemChromeMaterialDark' : 'systemChromeMaterialLight')
-            : (isDark ? 'dark' : 'light')
-        }
-        // Android's default BlurView is a near-no-op overlay; the Dimezis
-        // backend actually samples + blurs the content behind it. iOS uses the
-        // native UIVisualEffectView and ignores this prop.
-        experimentalBlurMethod={Platform.OS === 'android' ? 'dimezisBlurView' : undefined}
+        intensity={intensity ?? (isDark ? 55 : 70)}
+        tint={isDark ? 'systemChromeMaterialDark' : 'systemChromeMaterialLight'}
         style={StyleSheet.absoluteFill}
       />
     </MaskedView>
