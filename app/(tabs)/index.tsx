@@ -666,7 +666,7 @@ export default function FeedScreen() {
     return (
       <View style={{ flex: 1, backgroundColor: bgColor }}>
         <View style={[styles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">
-          <LinearGradient colors={[bgColor, bgColor, bgTransparent]} locations={[0, 0.6, 1]} style={StyleSheet.absoluteFill} />
+          <LinearGradient colors={[bgColor, bgColor + '80', bgTransparent]} locations={[0, 0.45, 1]} style={StyleSheet.absoluteFill} />
           <View style={[styles.headerContent, { paddingTop: insets.top }]}>
             <Pressable onLongPress={onTitleLongPress} delayLongPress={350} hitSlop={6} style={styles.titleRow}>
               {homeHeaderIcon ? <PixelIcon id={homeHeaderIcon} size={26} /> : null}
@@ -688,7 +688,7 @@ export default function FeedScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: bgColor }}>
       <View style={[styles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">
-        <LinearGradient colors={[bgColor, bgColor, bgTransparent]} locations={[0, 0.55, 1]} style={StyleSheet.absoluteFill} />
+        <LinearGradient colors={[bgColor, bgColor + '80', bgTransparent]} locations={[0, 0.45, 1]} style={StyleSheet.absoluteFill} />
         <View style={[styles.headerContent, { paddingTop: insets.top }]} pointerEvents="auto">
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <Pressable onLongPress={onTitleLongPress} delayLongPress={350} hitSlop={6} style={styles.titleRow}>

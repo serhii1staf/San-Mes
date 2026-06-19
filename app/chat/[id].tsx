@@ -96,7 +96,7 @@ const bubbleStyles = StyleSheet.create({
   timestamp: { marginTop: 3, alignSelf: 'flex-end', fontSize: 10 },
 });
 
-function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, linkEmoji, highlighted, isVisible, onReply, onLongPress, onSwipeActive, onImagePress, dragActive, dragFingerY, hoveredAction, actionZones, onFireDragAction }: { message: ChatMessage; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string; linkEmoji?: string; highlighted?: boolean; isVisible?: boolean; onReply: (m: ChatMessage) => void; onLongPress: (m: ChatMessage) => void; onSwipeActive: (active: boolean) => void; onImagePress: (images: string[], index: number) => void; dragActive: SharedValue<boolean>; dragFingerY: SharedValue<number>; hoveredAction: SharedValue<string>; actionZones: SharedValue<ActionZone[]>; onFireDragAction: (m: ChatMessage, action: string) => void }) {
+function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, linkEmoji, highlighted, isVisible, onReply, onReplyJump, onLongPress, onSwipeActive, onImagePress, dragActive, dragFingerY, hoveredAction, actionZones, onFireDragAction }: { message: ChatMessage; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string; linkEmoji?: string; highlighted?: boolean; isVisible?: boolean; onReply: (m: ChatMessage) => void; onReplyJump?: (messageId?: string) => void; onLongPress: (m: ChatMessage) => void; onSwipeActive: (active: boolean) => void; onImagePress: (images: string[], index: number) => void; dragActive: SharedValue<boolean>; dragFingerY: SharedValue<number>; hoveredAction: SharedValue<string>; actionZones: SharedValue<ActionZone[]>; onFireDragAction: (m: ChatMessage, action: string) => void }) {
   const theme = useTheme();
   const t = useT();
   // Native iOS-26 liquid glass for the swipe-to-reply pill. iOS-only + opt-in.
@@ -312,7 +312,10 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
             borderColor: highlighted ? theme.colors.accent.primary : 'transparent',
           }}>
             {message.replyToText || message.replyToImage || message.replyPixelIconId ? (
-              <View style={[bubbleStyles.replyBlock, { borderLeftColor: isOwn ? 'rgba(255,255,255,0.7)' : theme.colors.accent.primary }]}>
+              <Pressable
+                onPress={() => onReplyJump?.(message.replyToId)}
+                style={[bubbleStyles.replyBlock, { borderLeftColor: isOwn ? 'rgba(255,255,255,0.7)' : theme.colors.accent.primary }]}
+              >
                 {message.replyToImage ? (
                   <CachedImage uri={message.replyToImage} style={bubbleStyles.replyAvatar} resizeMode="cover" />
                 ) : null}
@@ -332,7 +335,7 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
                     {message.replyToText || (message.replyToImage ? t('chat.photo') : '')}
                   </Text>
                 </View>
-              </View>
+              </Pressable>
             ) : null}
             {message.imageUrls && message.imageUrls.length > 0 ? (
               <View style={[bubbleStyles.imagesRow, { marginBottom: message.text ? 6 : 0 }]}>
@@ -1475,6 +1478,25 @@ export default function ChatScreen() {
     return arr;
   }, [chatMessages]);
 
+  // Tap-a-reply-to-jump: scroll to the message a reply is quoting and flash it.
+  // `replyToId` is stored on every reply message (see sendText/sendGif). The
+  // FlatList data IS `invertedMessages`, so the found index maps 1:1 to the row.
+  const [jumpHighlightId, setJumpHighlightId] = useState<string | null>(null);
+  const jumpTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scrollToMessageId = useCallback((messageId?: string) => {
+    if (!messageId) return;
+    const idx = invertedMessages.findIndex((mm) => mm.id === messageId);
+    if (idx < 0) return; // original not loaded in the current window
+    try {
+      flatListRef.current?.scrollToIndex({ index: idx, animated: true, viewPosition: 0.5 });
+    } catch {}
+    triggerHaptic('selection');
+    setJumpHighlightId(messageId);
+    if (jumpTimerRef.current) clearTimeout(jumpTimerRef.current);
+    jumpTimerRef.current = setTimeout(() => setJumpHighlightId(null), 1600);
+  }, [invertedMessages]);
+  useEffect(() => () => { if (jumpTimerRef.current) clearTimeout(jumpTimerRef.current); }, []);
+
   // Guard against the freeze caused by rapid long-presses / taps while a menu is
   // opening or closing — see `useContextMenuGuard` (declared above with the
   // other hooks) for the time-lock + requestAnimationFrame defer.
@@ -1532,9 +1554,10 @@ export default function ChatScreen() {
         bubbleRadius={chatSettings.bubbleRadius}
         fontFamily={chatSettings.fontFamily}
         linkEmoji={chatSettings.linkEmoji}
-        highlighted={item.id === activeMatchId}
+        highlighted={item.id === activeMatchId || item.id === jumpHighlightId}
         isVisible={!viewabilityReady || visibleIds.has(item.id)}
         onReply={startReply}
+        onReplyJump={scrollToMessageId}
         onLongPress={onMessageLongPress}
         onSwipeActive={handleSwipeActive}
         onImagePress={openImageViewer}
@@ -1545,7 +1568,7 @@ export default function ChatScreen() {
         onFireDragAction={fireDragAction}
       />
     );
-  }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, chatSettings.linkEmoji, startReply, handleSwipeActive, openImageViewer, parseMessage, activeMatchId, onMessageLongPress, currentUserId, visibleIds, viewabilityReady, dragActiveSV, dragFingerYSV, hoveredActionSV, actionZonesSV, fireDragAction]);
+  }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, chatSettings.linkEmoji, startReply, scrollToMessageId, handleSwipeActive, openImageViewer, parseMessage, activeMatchId, jumpHighlightId, onMessageLongPress, currentUserId, visibleIds, viewabilityReady, dragActiveSV, dragFingerYSV, hoveredActionSV, actionZonesSV, fireDragAction]);
 
   // Stable callback refs for FlatList — without these, every parent render
   // hands FlatList fresh function identities and breaks its row recycling
@@ -1715,25 +1738,31 @@ export default function ChatScreen() {
             style={{ opacity: scrollBtnOpacity }}
           >
             {glassActive ? (
-              // Interactive glass capsule. The opacity fade lives on the WRAPPER
-              // Animated.View above, NOT on the GlassView itself — so we avoid
-              // the expo-glass-effect bug where opacity:0 on a GlassView node
-              // breaks the effect. The chevron is a CHILD of the glass so the
-              // liquid surface morphs outward on touch. Keeps its border; no
-              // overflow clipping (clipping would kill the outward morph).
+              // Glass capsule via the GlassBg BACKGROUND pattern (the documented
+              // correct way to glass a button). The previous version put the
+              // chevron INSIDE an interactive GlassView, which rendered fully
+              // transparent in this absolutely-positioned overlay (same class of
+              // bug as the Dynamic Island). Now the glass is an absolute-fill
+              // sibling BEHIND the chevron, clipped to the circle, with a faint
+              // tint so it always reads as a button even where the backdrop is
+              // the plain fade. The opacity fade stays on the wrapper above.
               <Pressable
                 onPress={onScrollBtnTap}
                 hitSlop={6}
-                style={{ borderRadius: 18 }}
+                style={{
+                  width: 36,
+                  height: 36,
+                  borderRadius: 18,
+                  overflow: 'hidden',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  borderWidth: 1,
+                  borderColor: theme.colors.border.light,
+                  backgroundColor: theme.isDark ? 'rgba(40,40,45,0.45)' : 'rgba(255,255,255,0.45)',
+                }}
               >
-                <NativeGlassView
-                  glassStyle="regular"
-                  isInteractive
-                  colorScheme={theme.isDark ? 'dark' : 'light'}
-                  style={{ width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: theme.colors.border.light }}
-                >
-                  <Feather name="chevron-down" size={20} color={theme.colors.text.primary} />
-                </NativeGlassView>
+                <GlassBg borderRadius={18} glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} interactive={false} />
+                <Feather name="chevron-down" size={20} color={theme.colors.text.primary} />
               </Pressable>
             ) : (
               <Pressable
