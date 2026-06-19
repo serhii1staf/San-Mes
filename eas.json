@@ -17,6 +17,7 @@
     },
     "preview": {
       "distribution": "internal",
+      "channel": "production",
       "android": {
         "buildType": "apk",
         "credentialsSource": "remote"
