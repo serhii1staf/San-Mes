@@ -62,6 +62,7 @@
         }
       ],
       "./plugins/withFmtPatch",
+      "./plugins/withAndroidLintDisable",
       "@bacons/apple-targets",
       [
         "expo-alternate-app-icons",
