@@ -1,5 +1,5 @@
 import React from 'react';
-import { StyleSheet, Platform } from 'react-native';
+import { View, StyleSheet, Platform } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 
@@ -46,6 +46,11 @@ interface FadingBlurHeaderProps {
    *  short height so the blur hugs the title row and doesn't bleed down into
    *  the feed — also cheaper (less area to recomposite). */
   height?: number;
+  /** Background-coloured tint laid OVER the blur (and under the mask) so the
+   *  frost blends into the app background instead of reading as a milky white
+   *  slab. Pass the theme background colour WITH an alpha suffix, e.g.
+   *  `theme.colors.background.primary + '66'`. */
+  blendColor?: string;
 }
 
 /**
@@ -60,7 +65,7 @@ interface FadingBlurHeaderProps {
  * we must avoid. Also returns null when the native masked-view module is absent
  * (older binaries), so it can never crash.
  */
-export function FadingBlurHeader({ isDark, direction = 'down', fadeStart = 0.55, intensity, height }: FadingBlurHeaderProps) {
+export function FadingBlurHeader({ isDark, direction = 'down', fadeStart = 0.55, intensity, height, blendColor }: FadingBlurHeaderProps) {
   if (!MaskedView || Platform.OS !== 'ios') return null;
 
   // Opaque (black) keeps the blur; transparent removes it. `down` keeps the top
@@ -91,10 +96,16 @@ export function FadingBlurHeader({ isDark, direction = 'down', fadeStart = 0.55,
       }
     >
       <BlurView
-        intensity={intensity ?? (isDark ? 55 : 70)}
+        intensity={intensity ?? (isDark ? 45 : 55)}
         tint={isDark ? 'systemChromeMaterialDark' : 'systemChromeMaterialLight'}
         style={StyleSheet.absoluteFill}
       />
+      {/* Background-coloured tint so the frost blends into the app bg instead
+          of looking like a white "milk" slab. Sits over the blur, still inside
+          the mask so it fades out with the blur. */}
+      {blendColor ? (
+        <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: blendColor }]} />
+      ) : null}
     </MaskedView>
   );
 }
