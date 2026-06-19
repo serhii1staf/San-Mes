@@ -20,6 +20,7 @@
     "@expo/vector-icons": "^15.0.3",
     "@gorhom/bottom-sheet": "^5.2.14",
     "@react-native-async-storage/async-storage": "2.2.0",
+    "@react-native-masked-view/masked-view": "0.3.2",
     "@sentry/react-native": "~7.2.0",
     "@supabase/supabase-js": "^2.106.2",
     "ably": "^2.22.1",

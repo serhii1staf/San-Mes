@@ -27,6 +27,7 @@ import { useT } from '../../src/i18n/store';
 import { perfMonitor } from '../../src/services/perfMonitor';
 import { useSettingsStore } from '../../src/store/settingsStore';
 import { PixelIcon } from '../../src/components/pixel-icons/PixelIcon';
+import { FadingBlurHeader } from '../../src/components/ui/FadingBlurHeader';
 
 const FEED_CACHE_KEY = '@san:feed_posts';
 const FEED_LIMIT = 20;
@@ -667,6 +668,7 @@ export default function FeedScreen() {
       <View style={{ flex: 1, backgroundColor: bgColor }}>
         <View style={[styles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">
           <LinearGradient colors={[bgColor, bgColor + '80', bgTransparent]} locations={[0, 0.45, 1]} style={StyleSheet.absoluteFill} />
+          <FadingBlurHeader isDark={theme.isDark} direction="down" />
           <View style={[styles.headerContent, { paddingTop: insets.top }]}>
             <Pressable onLongPress={onTitleLongPress} delayLongPress={350} hitSlop={6} style={styles.titleRow}>
               {homeHeaderIcon ? <PixelIcon id={homeHeaderIcon} size={26} /> : null}
@@ -689,6 +691,7 @@ export default function FeedScreen() {
     <View style={{ flex: 1, backgroundColor: bgColor }}>
       <View style={[styles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">
         <LinearGradient colors={[bgColor, bgColor + '80', bgTransparent]} locations={[0, 0.45, 1]} style={StyleSheet.absoluteFill} />
+        <FadingBlurHeader isDark={theme.isDark} direction="down" />
         <View style={[styles.headerContent, { paddingTop: insets.top }]} pointerEvents="auto">
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <Pressable onLongPress={onTitleLongPress} delayLongPress={350} hitSlop={6} style={styles.titleRow}>
