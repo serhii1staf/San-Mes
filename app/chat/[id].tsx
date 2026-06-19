@@ -98,6 +98,44 @@ const bubbleStyles = StyleSheet.create({
   timestamp: { marginTop: 3, alignSelf: 'flex-end', fontSize: 10 },
 });
 
+// Max bounds for a single sent photo. The container is sized to the image's
+// natural aspect ratio (capped to these bounds) so the WHOLE image is visible
+// in the bubble — no crop — instead of being squeezed into a fixed square.
+const CHAT_IMG_MAX_W = Math.min(Math.round(SCREEN_WIDTH * 0.66), 270);
+const CHAT_IMG_MAX_H = 340;
+
+// Single-image bubble that fits its container to the photo's aspect ratio.
+// Starts at a neutral square placeholder, then snaps to the real dimensions
+// once expo-image reports the decoded source size (onLoad). Own tiny state →
+// the memoized MessageBubble around it is untouched.
+function SingleChatImage({ uri, isVisible, onPress }: { uri: string; isVisible?: boolean; onPress: () => void }) {
+  const theme = useTheme();
+  const [size, setSize] = useState<{ w: number; h: number }>({ w: 220, h: 220 });
+  const handleLoad = useCallback((e: any) => {
+    const s = e?.source;
+    if (!s?.width || !s?.height) return;
+    const ar = s.width / s.height;
+    let w = CHAT_IMG_MAX_W;
+    let h = Math.round(w / ar);
+    if (h > CHAT_IMG_MAX_H) { h = CHAT_IMG_MAX_H; w = Math.round(h * ar); }
+    setSize({ w, h });
+  }, []);
+  return (
+    <Pressable onPress={onPress}>
+      <CachedImage
+        uri={uri}
+        style={{ width: size.w, height: size.h, borderRadius: 12, backgroundColor: theme.colors.background.tertiary }}
+        // Container now matches the image aspect ratio, so "cover" shows the
+        // full image with no cropping and no letterboxing.
+        resizeMode="cover"
+        priority="low"
+        autoplay={isVisible}
+        onLoad={handleLoad}
+      />
+    </Pressable>
+  );
+}
+
 function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, linkEmoji, highlighted, isVisible, onReply, onReplyJump, onLongPress, onSwipeActive, onImagePress, dragActive, dragFingerY, hoveredAction, actionZones, onFireDragAction }: { message: ChatMessage; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string; linkEmoji?: string; highlighted?: boolean; isVisible?: boolean; onReply: (m: ChatMessage) => void; onReplyJump?: (messageId?: string) => void; onLongPress: (m: ChatMessage) => void; onSwipeActive: (active: boolean) => void; onImagePress: (images: string[], index: number) => void; dragActive: SharedValue<boolean>; dragFingerY: SharedValue<number>; hoveredAction: SharedValue<string>; actionZones: SharedValue<ActionZone[]>; onFireDragAction: (m: ChatMessage, action: string) => void }) {
   const theme = useTheme();
   const t = useT();
@@ -341,24 +379,31 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
             ) : null}
             {message.imageUrls && message.imageUrls.length > 0 ? (
               <View style={[bubbleStyles.imagesRow, { marginBottom: message.text ? 6 : 0 }]}>
-                {message.imageUrls.map((uri, idx) => (
-                  <Pressable key={idx} onPress={() => onImagePress(message.imageUrls!, idx)}>
-                    <CachedImage
-                      uri={uri}
-                      style={message.imageUrls!.length === 1 ? bubbleStyles.imageSingle : bubbleStyles.imageMulti}
-                      resizeMode="cover"
-                      // Decode at low priority so a heavy GIF/photo never
-                      // competes with the chat-open transition or scroll
-                      // frames on weak devices.
-                      priority="low"
-                      // Pause GIF animation while this bubble is scrolled
-                      // off-screen — no UI-thread frame decoding for content
-                      // the user can't see. `isVisible` undefined (anywhere
-                      // that doesn't track viewability) leaves autoplay on.
-                      autoplay={isVisible}
-                    />
-                  </Pressable>
-                ))}
+                {message.imageUrls.length === 1 ? (
+                  <SingleChatImage
+                    uri={message.imageUrls[0]}
+                    isVisible={isVisible}
+                    onPress={() => onImagePress(message.imageUrls!, 0)}
+                  />
+                ) : (
+                  message.imageUrls.map((uri, idx) => (
+                    <Pressable key={idx} onPress={() => onImagePress(message.imageUrls!, idx)}>
+                      <CachedImage
+                        uri={uri}
+                        style={bubbleStyles.imageMulti}
+                        resizeMode="cover"
+                        // Decode at low priority so a heavy GIF/photo never
+                        // competes with the chat-open transition or scroll
+                        // frames on weak devices.
+                        priority="low"
+                        // Pause GIF animation while this bubble is scrolled
+                        // off-screen — no UI-thread frame decoding for content
+                        // the user can't see.
+                        autoplay={isVisible}
+                      />
+                    </Pressable>
+                  ))
+                )}
               </View>
             ) : null}
             {message.text ? (
