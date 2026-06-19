@@ -942,21 +942,16 @@ export default function UserProfileScreen() {
   const bannerUrlForBrightness = stripBannerTransform(displayProfile?.banner_url) || undefined;
   const { isLight: bannerIsLight } = useBannerBrightness(bannerUrlForBrightness);
 
-  if (isLoading && !displayProfile) {
-    return <View style={{ flex: 1, backgroundColor: theme.colors.background.primary, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator size="large" color={theme.colors.accent.primary} /></View>;
-  }
-
-  if (!displayProfile) {
-    return (
-      <View style={{ flex: 1, backgroundColor: theme.colors.background.primary, alignItems: 'center', justifyContent: 'center' }}>
-        <Text variant="body" color={theme.colors.text.tertiary}>{t('profile.user_not_found')}</Text>
-        <Pressable onPress={() => router.back()} style={{ marginTop: 16 }}><Text variant="body" color={theme.colors.accent.primary}>{t('common.back')}</Text></Pressable>
-      </View>
-    );
-  }
-
-  const isOwnProfile = currentUser?.id === displayProfile.id;
-  const bannerUrlRaw = displayProfile.banner_url as string | null | undefined;
+  // ⚠️ Rules-of-hooks: do NOT early-return here. Many hooks below (bannerTransform,
+  // userLinks, settings selectors, editingTabKey, tabs, listHeader useMemo) must run
+  // on EVERY render. Returning early while the profile is still loading made later
+  // renders call MORE hooks than the loading render → "Rendered more hooks than
+  // during the previous render" → a hard Hermes EXC_BAD_ACCESS crash (seen opening
+  // an uncached profile from search). The loading / not-found guards are relocated
+  // to just before the main return, AFTER all hooks. Every displayProfile deref
+  // between here and there is null-safe.
+  const isOwnProfile = currentUser?.id === displayProfile?.id;
+  const bannerUrlRaw = displayProfile?.banner_url as string | null | undefined;
   // Banner URL is stored with an optional `#x=&y=&s=` hash carrying the
   // user-chosen position + zoom (see src/utils/bannerTransform.ts). The
   // hash must be stripped before the value goes through the image
@@ -971,7 +966,7 @@ export default function UserProfileScreen() {
   // string can be ~50–500 chars depending on how many social URLs the user
   // saved; parsing it 60×/sec while the profile re-renders during scroll
   // is wasted work. Keyed on the raw string so a profile-edit invalidates.
-  const profileLinksRaw = displayProfile.links;
+  const profileLinksRaw = displayProfile?.links;
   const userLinks = useMemo<{ type: string; url: string }[]>(() => {
     if (!profileLinksRaw) return [];
     if (typeof profileLinksRaw !== 'string') return profileLinksRaw as any;
@@ -1033,7 +1028,9 @@ export default function UserProfileScreen() {
   //   60 fps budget. useMemo with an explicit dep list short-circuits
   //   the walk at the header root for state flips unrelated to the
   //   header itself.
-  const listHeader = useMemo(() => (
+  const listHeader = useMemo(() => {
+    if (!displayProfile) return null;
+    return (
     <>
       <View style={{ height: 300, marginHorizontal: -16, marginTop: -12, backgroundColor: theme.colors.accent.primary + '20', overflow: 'hidden' }}>
         {bannerUrl && chromeReady ? (
@@ -1227,7 +1224,8 @@ export default function UserProfileScreen() {
       </View>
       <View style={{ height: 12 }} />
     </>
-  ), [
+    );
+  }, [
     theme,
     displayProfile,
     bannerUrl,
@@ -1244,6 +1242,21 @@ export default function UserProfileScreen() {
     t,
     glassActive,
   ]);
+
+  // Loading / not-found guards — placed AFTER every hook so hook count is
+  // identical on every render (see the rules-of-hooks note above).
+  if (isLoading && !displayProfile) {
+    return <View style={{ flex: 1, backgroundColor: theme.colors.background.primary, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator size="large" color={theme.colors.accent.primary} /></View>;
+  }
+
+  if (!displayProfile) {
+    return (
+      <View style={{ flex: 1, backgroundColor: theme.colors.background.primary, alignItems: 'center', justifyContent: 'center' }}>
+        <Text variant="body" color={theme.colors.text.tertiary}>{t('profile.user_not_found')}</Text>
+        <Pressable onPress={() => router.back()} style={{ marginTop: 16 }}><Text variant="body" color={theme.colors.accent.primary}>{t('common.back')}</Text></Pressable>
+      </View>
+    );
+  }
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
