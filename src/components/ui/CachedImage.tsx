@@ -69,12 +69,22 @@ export function proxiedImageUrl(uri: string, displayWidth?: number): string {
  * Routed through the proxy at a feed-card-friendly width so we warm the *small*
  * versions, not the originals — keeps the egress saving consistent with the
  * actual displayed size.
+ *
+ * `displayWidth` lets a caller warm the EXACT width its target screen will
+ * request, so the warmed bytes share an expo-image cache key with the real
+ * mount (a warm at 600 that gets displayed at 270 produces a different proxy
+ * URL and therefore a guaranteed cache MISS — wasted egress + a cold fetch on
+ * open). Defaults to the feed-card width (600) so existing callers (feed
+ * heroes, profile banner, link-preview thumbs) are byte-for-byte unchanged.
  */
-export function prefetchImages(uris: (string | null | undefined)[]): void {
+export function prefetchImages(
+  uris: (string | null | undefined)[],
+  displayWidth: number = 600,
+): void {
   const list = uris
     .filter((u): u is string => !!u && u.startsWith('http'))
     .slice(0, 30)
-    .map((u) => proxiedImageUrl(u, 600));
+    .map((u) => proxiedImageUrl(u, displayWidth));
   if (list.length === 0) return;
   try { Image.prefetch(list, { cachePolicy: 'memory-disk' }); } catch {}
 }

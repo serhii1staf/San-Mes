@@ -128,6 +128,17 @@ function SingleChatImage({ uri, isVisible, onPress }: { uri: string; isVisible?:
         // Container now matches the image aspect ratio, so "cover" shows the
         // full image with no cropping and no letterboxing.
         resizeMode="cover"
+        // Pin the proxy width to the bubble's MAX display width instead of
+        // letting it track `size.w`. The container animates from the initial
+        // 220 px square to the photo's real width (≤ CHAT_IMG_MAX_W) once
+        // onLoad reports the source dimensions — if the proxy width tracked
+        // that, expo-image would fetch+decode TWICE (once at w≈440 for the
+        // 220 px placeholder, again at w≈540 for the final size). Pinning to
+        // CHAT_IMG_MAX_W yields ONE stable proxy URL for the whole lifecycle,
+        // which also matches the width `messagesPrefetch` warms, so the disk
+        // cache actually hits on open. Visual is identical (cover at the same
+        // final size, equal-or-sharper bytes).
+        proxyWidth={CHAT_IMG_MAX_W}
         priority="low"
         autoplay={isVisible}
         onLoad={handleLoad}
@@ -810,7 +821,7 @@ export default function ChatScreen() {
       }
       if (uris.length) {
         import('../../src/components/ui/CachedImage')
-          .then(({ prefetchImages }) => prefetchImages(uris))
+          .then(({ prefetchImages }) => prefetchImages(uris, CHAT_IMG_MAX_W))
           .catch(() => {});
       }
     });

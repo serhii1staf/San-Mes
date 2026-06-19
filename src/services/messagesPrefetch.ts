@@ -31,6 +31,17 @@ import { kvGetJSONSync } from './kvStore';
 import { prefetchImages } from '../components/ui/CachedImage';
 import { extractFirstUrl, getCachedPreviewSync } from './linkPreview';
 import type { ChatMessage } from '../types';
+import { Dimensions } from 'react-native';
+
+// Width (in DP) the chat screen renders a SINGLE-image bubble at — must stay
+// in sync with `CHAT_IMG_MAX_W` in `app/chat/[id].tsx`. We warm the proxy at
+// this exact width so the prefetched bytes share an expo-image cache key with
+// the real `SingleChatImage` mount. Warming at the old generic feed width
+// (600 → w=1200 after DPR) produced a DIFFERENT proxy URL than the chat
+// requested (270 → w=540), so every "warmed" photo still cold-fetched on chat
+// open — the prefetch was paying egress for bytes the chat never used. Single
+// photos are the dominant case behind the 172 ms cold IMG decode on chat open.
+const CHAT_THUMB_WIDTH = Math.min(Math.round(Dimensions.get('window').width * 0.66), 270);
 
 interface PrefetchOpts {
   /** Conversation IDs ordered most-recently-active first. Capped at 8. */
@@ -128,10 +139,10 @@ export async function prefetchRecentChatMedia(opts: PrefetchOpts): Promise<void>
   }
 
   if (collected.length === 0) return;
-  // Single batched call into expo-image's prefetcher. The function already
-  // routes through the weserv proxy and is fire-and-forget.
+  // Single batched call into expo-image's prefetcher. Warm at the chat's
+  // single-photo display width so the cache key matches the real mount.
   try {
-    prefetchImages(collected);
+    prefetchImages(collected, CHAT_THUMB_WIDTH);
   } catch {
     // ignore — prefetch is best-effort
   }

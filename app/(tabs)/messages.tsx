@@ -628,6 +628,26 @@ export default function MessagesScreen() {
   const headerContentHeight = insets.top + 48;
   const headerGradientHeight = headerContentHeight + 28;
 
+  // Stable FlatList callbacks. Both `renderItem` and `ItemSeparatorComponent`
+  // were previously inline arrows, so every MessagesScreen re-render (search
+  // typing, tab switch, store push) handed FlatList fresh function identities.
+  // For `ItemSeparatorComponent` that's the costly one: React treats a new
+  // function identity as a NEW component type and unmounts+remounts EVERY
+  // separator in the list on each re-render. Hoisting both to stable
+  // identities confines re-renders to the rows whose data actually changed
+  // (the memoized ConversationItem already bails out on equal props).
+  const separatorColor = theme.colors.border.light;
+  const renderConversationItem = useCallback(
+    ({ item, index }: { item: Conversation; index: number }) => (
+      <ConversationItem item={item} index={index} tab={activeTab} />
+    ),
+    [activeTab],
+  );
+  const renderSeparator = useCallback(
+    () => <View style={{ height: 0.5, backgroundColor: separatorColor, marginLeft: 68 }} />,
+    [separatorColor],
+  );
+
   return (
     <View style={containerStyle}>
       {/* Gradient fade header */}
@@ -747,10 +767,8 @@ export default function MessagesScreen() {
             <FlatList
               data={filtered}
               keyExtractor={(item) => item.id}
-              renderItem={({ item, index }) => <ConversationItem item={item} index={index} tab={activeTab} />}
-              ItemSeparatorComponent={() => (
-                <View style={{ height: 0.5, backgroundColor: theme.colors.border.light, marginLeft: 68 }} />
-              )}
+              renderItem={renderConversationItem}
+              ItemSeparatorComponent={renderSeparator}
               contentContainerStyle={{ paddingBottom: 100 }}
               showsVerticalScrollIndicator={false}
               removeClippedSubviews={true}
