@@ -46,6 +46,11 @@ interface FadingBlurHeaderProps {
    *  short height so the blur hugs the title row and doesn't bleed down into
    *  the feed — also cheaper (less area to recomposite). */
   height?: number;
+  /** Which edge the fixed-height strip pins to. Defaults to 'top' (page
+   *  header). Use 'bottom' to hug the bottom edge of the parent — e.g. a
+   *  profile banner whose lower edge should melt into the content below.
+   *  Only meaningful together with `height`. */
+  pin?: 'top' | 'bottom';
   /** Background-coloured tint laid OVER the blur (and under the mask) so the
    *  frost blends into the app background instead of reading as a milky white
    *  slab. Pass the theme background colour WITH an alpha suffix, e.g.
@@ -65,7 +70,7 @@ interface FadingBlurHeaderProps {
  * we must avoid. Also returns null when the native masked-view module is absent
  * (older binaries), so it can never crash.
  */
-export function FadingBlurHeader({ isDark, direction = 'down', fadeStart = 0.55, intensity, height, blendColor }: FadingBlurHeaderProps) {
+export function FadingBlurHeader({ isDark, direction = 'down', fadeStart = 0.55, intensity, height, pin = 'top', blendColor }: FadingBlurHeaderProps) {
   if (!MaskedView || Platform.OS !== 'ios') return null;
 
   // Opaque (black) keeps the blur; transparent removes it. `down` keeps the top
@@ -80,7 +85,9 @@ export function FadingBlurHeader({ isDark, direction = 'down', fadeStart = 0.55,
       : ([0, 1 - fadeStart, 1] as const);
 
   const containerStyle = height != null
-    ? { position: 'absolute' as const, top: 0, left: 0, right: 0, height }
+    ? (pin === 'bottom'
+        ? { position: 'absolute' as const, bottom: 0, left: 0, right: 0, height }
+        : { position: 'absolute' as const, top: 0, left: 0, right: 0, height })
     : StyleSheet.absoluteFill;
 
   return (

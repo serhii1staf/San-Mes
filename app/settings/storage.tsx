@@ -4,17 +4,20 @@ import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
+import Svg, { Circle, G } from 'react-native-svg';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { kvAllEntries, kvDeleteRawKeys } from '../../src/services/kvStore';
 import { t as tStatic, useT } from '../../src/i18n/store';
 
-// Storage screen — instead of a Telegram-style donut chart we render an
-// "orbit" of category emojis around a soft accent halo. Each emoji's size
-// scales with how much of the on-device cache that category occupies, and
-// the whole orbit rotates slowly so the screen feels alive without
-// distracting the user from the data.
+// Storage screen — the on-device cache is visualised as a clean, segmented
+// progress ring: each category contributes one rounded arc sized to its share
+// of the cache and tinted with the category colour, with the total size sitting
+// in the middle. It replaces the old spinning-emoji "orbit" (which read as
+// dated / Telegram-ish and burned a continuous animation). The ring fills once
+// on mount with a subtle native-driver reveal — no infinite spin, no per-frame
+// JS — so it stays cheap even on weak Android devices.
 //
 // Sources of cache size:
 //   - MMKV (every kvAllEntries() row, bucketed by key prefix below).
@@ -69,103 +72,96 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} ${tStatic('storage.unit.gb')}`;
 }
 
-// ─── Orbit visual ──────────────────────────────────────────────────────────
-// A circular halo + a ring of category emojis that gently orbits around it.
-// One Animated.Value drives rotation; emoji positions are computed from
-// fixed angles (offset by the rotation) so the layout stays stable. All
-// transforms run on the native driver — no JS thread cost while the user
-// is reading.
+// ─── Storage ring ──────────────────────────────────────────────────────────
+// A segmented donut: one rounded arc per non-empty category, sized to its
+// share of `total` and coloured with the category colour, drawn over a faint
+// track. The total cache size + a small caption sit in the centre.
 //
-// We deliberately AVOID rendering animated emoji size changes (would force
-// layout work each frame). Instead each emoji gets its size baked in once
-// from the bucket totals. Rotation is the only continuous animation.
+// Performance: the geometry is computed once from `buckets`/`total` (no
+// per-frame work). The only motion is a one-time entrance — opacity + a small
+// scale — driven by a single Animated.Value on the NATIVE driver, so the SVG
+// never re-renders during the reveal and there's nothing running afterwards.
 
-interface OrbitProps {
+interface RingProps {
   buckets: CategoryUsage[];
   total: number;
   totalLabel: string;
+  caption: string;
   size: number;
-  haloColor: string;
-  haloAccent: string;
+  trackColor: string;
   centerTextColor: string;
   centerSubColor: string;
-  caption: string;
 }
 
-const ORBIT_DIAMETER_RATIO = 0.78; // orbit ring diameter relative to outer container
-const EMOJI_BASE = 22;             // px font-size for the smallest visible emoji
-const EMOJI_RANGE = 22;             // additional px gained at 100% category share
+const STROKE_WIDTH = 16;
 
-function Orbit({ buckets, total, totalLabel, size, haloColor, haloAccent, centerTextColor, centerSubColor, caption }: OrbitProps) {
-  const rot = useRef(new Animated.Value(0)).current;
+function StorageRing({ buckets, total, totalLabel, caption, size, trackColor, centerTextColor, centerSubColor }: RingProps) {
+  const appear = useRef(new Animated.Value(0)).current;
   useEffect(() => {
-    // Slow continuous rotation (~30 s per full revolution). Native driver
-    // keeps it free even on Android E-cores.
-    Animated.loop(
-      Animated.timing(rot, { toValue: 1, duration: 30000, easing: Easing.linear, useNativeDriver: true }),
-    ).start();
-    return () => { rot.stopAnimation(); };
-  }, [rot]);
+    // One-time reveal. Native driver → no JS thread cost, no SVG re-render.
+    Animated.timing(appear, {
+      toValue: 1,
+      duration: 620,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+    return () => { appear.stopAnimation(); };
+  }, [appear]);
 
-  const orbitRadius = (size * ORBIT_DIAMETER_RATIO) / 2;
+  const radius = (size - STROKE_WIDTH) / 2;
   const cx = size / 2;
   const cy = size / 2;
+  const circ = 2 * Math.PI * radius;
 
-  // Emojis positioned at fixed angles around the circle. We rotate the
-  // whole containing View — cheaper than animating each child's transform.
-  const visibleBuckets = buckets.filter((b) => b.bytes > 0);
-  const fallback = visibleBuckets.length === 0 ? buckets : visibleBuckets;
-  const N = fallback.length;
-  const placements = fallback.map((b, i) => {
-    const angle = (i / N) * 2 * Math.PI - Math.PI / 2; // start at top
-    const x = cx + orbitRadius * Math.cos(angle);
-    const y = cy + orbitRadius * Math.sin(angle);
-    const share = total > 0 ? b.bytes / total : 1 / N;
-    const fontSize = Math.round(EMOJI_BASE + EMOJI_RANGE * Math.sqrt(share));
-    return { b, x, y, fontSize };
+  // Visible categories only — empty buckets contribute no arc. The gap between
+  // segments is sized to the stroke width so the round caps never overlap.
+  const visible = buckets.filter((b) => b.bytes > 0);
+  const gapPx = visible.length > 1 ? STROKE_WIDTH : 0;
+  const totalGap = gapPx * visible.length;
+  const drawable = Math.max(circ - totalGap, 1);
+
+  let cursor = 0; // px travelled along the circumference
+  const segments = visible.map((b) => {
+    const frac = total > 0 ? b.bytes / total : 0;
+    const len = Math.max(frac * drawable, 1);
+    const seg = { id: b.def.id, color: b.def.color, len, offset: cursor };
+    cursor += len + gapPx;
+    return seg;
   });
 
-  const spin = rot.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
+  const opacity = appear;
+  const scale = appear.interpolate({ inputRange: [0, 1], outputRange: [0.94, 1] });
 
   return (
-    <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
-      {/* Soft halo behind the orbit — two concentric circles for depth. */}
-      <View style={{ position: 'absolute', width: size * 0.96, height: size * 0.96, borderRadius: size * 0.48, backgroundColor: haloColor }} />
-      <View style={{ position: 'absolute', width: size * 0.72, height: size * 0.72, borderRadius: size * 0.36, backgroundColor: haloAccent }} />
+    <Animated.View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center', opacity, transform: [{ scale }] }}>
+      <Svg width={size} height={size}>
+        {/* Faint full-circle track underneath the coloured segments. */}
+        <Circle cx={cx} cy={cy} r={radius} stroke={trackColor} strokeWidth={STROKE_WIDTH} fill="none" />
+        {/* Rotate so segments start at the top (12 o'clock) and run clockwise. */}
+        <G rotation={-90} originX={cx} originY={cy}>
+          {segments.map((s) => (
+            <Circle
+              key={s.id}
+              cx={cx}
+              cy={cy}
+              r={radius}
+              stroke={s.color}
+              strokeWidth={STROKE_WIDTH}
+              strokeLinecap="round"
+              fill="none"
+              strokeDasharray={`${s.len} ${circ - s.len}`}
+              strokeDashoffset={-s.offset}
+            />
+          ))}
+        </G>
+      </Svg>
 
-      {/* Rotating layer — emojis are children that ride along with the spin. */}
-      <Animated.View style={{ width: size, height: size, position: 'absolute', transform: [{ rotate: spin }] }}>
-        {placements.map(({ b, x, y, fontSize }) => (
-          <View
-            key={b.def.id}
-            style={{
-              position: 'absolute',
-              left: x - fontSize,
-              top: y - fontSize,
-              width: fontSize * 2,
-              height: fontSize * 2,
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            {/* Counter-rotate the emoji so it stays upright while the orbit spins. */}
-            <Animated.Text
-              allowFontScaling={false}
-              style={{
-                fontSize,
-                transform: [{ rotate: rot.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '-360deg'] }) }],
-              }}
-            >{b.def.emoji}</Animated.Text>
-          </View>
-        ))}
-      </Animated.View>
-
-      {/* Center label — total + a small caption underneath. */}
-      <View style={{ position: 'absolute', alignItems: 'center', justifyContent: 'center', paddingTop: 4 }} pointerEvents="none">
-        <Text variant="subheading" weight="bold" color={centerTextColor} style={{ fontSize: 24, lineHeight: 30 }}>{totalLabel}</Text>
-        <Text variant="caption" color={centerSubColor} style={{ fontSize: 11, marginTop: 2 }}>{caption}</Text>
+      {/* Centre label — total size + a small caption underneath. */}
+      <View style={{ position: 'absolute', alignItems: 'center', justifyContent: 'center' }} pointerEvents="none">
+        <Text variant="subheading" weight="bold" color={centerTextColor} style={{ fontSize: 26, lineHeight: 32 }}>{totalLabel}</Text>
+        <Text variant="caption" color={centerSubColor} style={{ fontSize: 11, marginTop: 2, letterSpacing: 0.3 }}>{caption}</Text>
       </View>
-    </View>
+    </Animated.View>
   );
 }
 
@@ -234,17 +230,18 @@ export default function StorageScreen() {
   const containerStyle: ViewStyle = { flex: 1, backgroundColor: theme.colors.background.primary };
   const cardBg = theme.colors.background.elevated;
   const totalLabel = total > 0 ? formatBytes(total).replace(/\s+/g, ' ') : `0 ${t('storage.unit.kb')}`;
+  const ringTrack = theme.isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.06)';
 
   return (
     <View style={containerStyle}>
-      {/* Sticky header — standard gradient fade matching the home/notifications
-          screens so the back-button + title never scroll away. Using
-          LinearGradient + pointerEvents="box-none" means the scroll content
-          reads through anywhere except on the interactive buttons. */}
+      {/* Sticky header — centred title with the back chevron pinned to the
+          left so the title stays truly centred (matches settings/index.tsx).
+          LinearGradient + pointerEvents="box-none" lets the scroll content
+          read through everywhere except on the back button. */}
       <View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10, height: insets.top + 56 }} pointerEvents="box-none">
         <LinearGradient colors={[theme.colors.background.primary, theme.colors.background.primary, theme.colors.background.primary + '00']} locations={[0, 0.7, 1]} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} />
-        <View style={{ flexDirection: 'row', alignItems: 'center', paddingTop: insets.top + 8, paddingHorizontal: 24, gap: 12 }} pointerEvents="auto">
-          <Pressable onPress={() => router.back()} hitSlop={8}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingTop: insets.top + 8, paddingHorizontal: 24, height: insets.top + 48 }} pointerEvents="box-none">
+          <Pressable onPress={() => router.back()} hitSlop={8} style={{ position: 'absolute', left: 24, top: insets.top + 8 }}>
             <Feather name="chevron-left" size={24} color={theme.colors.text.primary} />
           </Pressable>
           <Text variant="body" weight="bold" style={{ fontSize: 17 }}>{t('storage.title')}</Text>
@@ -255,20 +252,19 @@ export default function StorageScreen() {
         contentContainerStyle={{ paddingTop: insets.top + 64, paddingBottom: insets.bottom + 32 }}
         showsVerticalScrollIndicator={false}
       >
-        {/* Orbit visual + caption */}
-        <View style={{ alignItems: 'center', paddingTop: 8, paddingBottom: 24 }}>
-          <Orbit
+        {/* Segmented ring visual + caption */}
+        <View style={{ alignItems: 'center', paddingTop: 12, paddingBottom: 24 }}>
+          <StorageRing
             buckets={buckets}
             total={total}
             totalLabel={totalLabel}
-            size={232}
-            haloColor={theme.colors.accent.primary + '14'}
-            haloAccent={theme.colors.accent.primary + '22'}
+            caption={t('storage.local_cache')}
+            size={216}
+            trackColor={ringTrack}
             centerTextColor={theme.colors.text.primary}
             centerSubColor={theme.colors.text.tertiary}
-            caption={t('storage.local_cache')}
           />
-          <Text variant="subheading" weight="bold" style={{ fontSize: 22, marginTop: 18 }}>{t('storage.usage_title')}</Text>
+          <Text variant="subheading" weight="bold" style={{ fontSize: 22, marginTop: 22 }}>{t('storage.usage_title')}</Text>
           <Text variant="caption" color={theme.colors.text.tertiary} align="center" style={{ paddingHorizontal: 32, marginTop: 6, fontSize: 13, lineHeight: 18 }}>
             {t('storage.usage_caption', undefined, { bytes: formatBytes(total) })}
           </Text>

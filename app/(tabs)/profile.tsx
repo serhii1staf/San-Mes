@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
-import { View, Pressable, ActivityIndicator, Dimensions, Image, Animated, Modal, Share, Alert, RefreshControl, ScrollView, InteractionManager, Text as RNText } from 'react-native';
+import { View, Pressable, ActivityIndicator, Dimensions, Image, Animated, Modal, Share, Alert, RefreshControl, ScrollView, InteractionManager, Platform, Text as RNText } from 'react-native';
 import { Feather, FontAwesome5 } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -46,6 +46,7 @@ import { parseBannerTransform, stripBannerTransform } from '../../src/utils/bann
 import { useBannerBrightness } from '../../src/hooks/useBannerBrightness';
 import { useScreenCaptureGuard } from '../../src/hooks/useScreenCaptureGuard';
 import { ScreenshotShield } from '../../src/components/ui/ScreenshotShield';
+import { FadingBlurHeader, isFadingBlurAvailable } from '../../src/components/ui/FadingBlurHeader';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const MY_POSTS_CACHE_KEY = '@san:my_posts';
@@ -822,15 +823,32 @@ export default function ProfileScreen() {
             proxyWidth={1080}
           />
         ) : null}
-        {/* Banner dissolves into the screen background — smooth transparent→bg
-            three-stop fade, same as the chat input bar. No blur layer (a
-            BlurView here read as a hard-edged box with no soft top). */}
-        <LinearGradient
-          colors={[theme.colors.background.primary + '00', theme.colors.background.primary + 'B3', theme.colors.background.primary]}
-          locations={[0, 0.45, 1]}
-          style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 140 }}
-          pointerEvents="none"
-        />
+        {/* Bottom edge of the banner melts into the content below. On iOS we
+            use a real frosted blur strip (FadingBlurHeader) pinned to the
+            banner's bottom: direction 'up' keeps the frost strongest at the
+            very bottom edge and dissolves it upward into the clear banner, so
+            it naturally takes on the banner image's colours, with a subtle
+            theme-background blend so it merges into the profile content. On
+            Android / older binaries (no native masked-view) we keep the plain
+            three-stop gradient fade instead — a continuous blur there is too
+            expensive on weak devices. Exactly one of the two ever renders. */}
+        {Platform.OS === 'ios' && isFadingBlurAvailable() ? (
+          <FadingBlurHeader
+            isDark={theme.isDark}
+            direction="up"
+            pin="bottom"
+            height={120}
+            fadeStart={0.5}
+            blendColor={theme.colors.background.primary + '80'}
+          />
+        ) : (
+          <LinearGradient
+            colors={[theme.colors.background.primary + '00', theme.colors.background.primary + 'B3', theme.colors.background.primary]}
+            locations={[0, 0.45, 1]}
+            style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 140 }}
+            pointerEvents="none"
+          />
+        )}
       </View>
       <View style={{ flexDirection: 'row', alignItems: 'center', alignSelf: 'stretch', marginTop: -140, paddingHorizontal: 8 }}>
         <View style={{ flex: 1 }}>
