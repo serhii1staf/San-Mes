@@ -670,7 +670,7 @@ export default function FeedScreen() {
           {!isFadingBlurAvailable() && (
             <LinearGradient colors={[bgColor, bgColor + '80', bgTransparent]} locations={[0, 0.45, 1]} style={StyleSheet.absoluteFill} />
           )}
-          <FadingBlurHeader isDark={theme.isDark} direction="down" height={headerContentHeight} fadeStart={0.4} blendColor={bgColor + '4D'} />
+          <FadingBlurHeader isDark={theme.isDark} direction="down" height={insets.top + 38} fadeStart={0.5} blendColor={bgColor + '8C'} />
           <View style={[styles.headerContent, { paddingTop: insets.top }]}>
             <Pressable onLongPress={onTitleLongPress} delayLongPress={350} hitSlop={6} style={styles.titleRow}>
               {homeHeaderIcon ? <PixelIcon id={homeHeaderIcon} size={26} /> : null}
@@ -695,7 +695,7 @@ export default function FeedScreen() {
         {!isFadingBlurAvailable() && (
           <LinearGradient colors={[bgColor, bgColor + '80', bgTransparent]} locations={[0, 0.45, 1]} style={StyleSheet.absoluteFill} />
         )}
-        <FadingBlurHeader isDark={theme.isDark} direction="down" height={headerContentHeight} fadeStart={0.4} blendColor={bgColor + '4D'} />
+        <FadingBlurHeader isDark={theme.isDark} direction="down" height={insets.top + 38} fadeStart={0.5} blendColor={bgColor + '8C'} />
         <View style={[styles.headerContent, { paddingTop: insets.top }]} pointerEvents="auto">
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <Pressable onLongPress={onTitleLongPress} delayLongPress={350} hitSlop={6} style={styles.titleRow}>
