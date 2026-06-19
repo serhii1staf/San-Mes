@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
-import { View, Pressable, ActivityIndicator, Dimensions, Image, Animated, Modal, Share, Alert, RefreshControl, ScrollView, InteractionManager, Platform, Text as RNText } from 'react-native';
+import { View, Pressable, ActivityIndicator, Dimensions, Image, Animated, Modal, Share, Alert, RefreshControl, ScrollView, InteractionManager, Text as RNText } from 'react-native';
 import { Feather, FontAwesome5 } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -46,7 +46,7 @@ import { parseBannerTransform, stripBannerTransform } from '../../src/utils/bann
 import { useBannerBrightness } from '../../src/hooks/useBannerBrightness';
 import { useScreenCaptureGuard } from '../../src/hooks/useScreenCaptureGuard';
 import { ScreenshotShield } from '../../src/components/ui/ScreenshotShield';
-import { FadingBlurHeader, isFadingBlurAvailable } from '../../src/components/ui/FadingBlurHeader';
+import { BannerFloatingLinks } from '../../src/components/profile/BannerFloatingLinks';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const MY_POSTS_CACHE_KEY = '@san:my_posts';
@@ -823,30 +823,15 @@ export default function ProfileScreen() {
             proxyWidth={1080}
           />
         ) : null}
-        {/* Smooth fade so the banner ALWAYS dissolves fully into the app
-            background — no hard edge. Rendered on BOTH platforms as the base
-            layer (this is what reaches the solid bg colour at the very bottom
-            and meets the content seamlessly). */}
+        {/* Banner bottom fades into the app background (clean original look). */}
         <LinearGradient
-          colors={[theme.colors.background.primary + '00', theme.colors.background.primary + 'B3', theme.colors.background.primary, theme.colors.background.primary]}
-          locations={[0, 0.38, 0.6, 1]}
-          style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 150 }}
+          colors={[theme.colors.background.primary + '00', theme.colors.background.primary + 'B3', theme.colors.background.primary]}
+          locations={[0, 0.45, 1]}
+          style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 140 }}
           pointerEvents="none"
         />
-        {/* iOS: frosted glass layered ON TOP of the gradient. Because the
-            gradient already lands on the solid app bg at the very bottom, the
-            blur there is blurring plain bg and meets the content seamlessly —
-            the frost only reads higher up over the banner image, so the banner
-            melts into the content with no hard line. */}
-        {Platform.OS === 'ios' && isFadingBlurAvailable() ? (
-          <FadingBlurHeader
-            isDark={theme.isDark}
-            direction="up"
-            pin="bottom"
-            height={150}
-            fadeStart={0.4}
-          />
-        ) : null}
+        {/* Social links scattered across the banner — random spot each open + gentle drift. */}
+        <BannerFloatingLinks links={userLinks} bannerHeight={300} />
       </View>
       <View style={{ flexDirection: 'row', alignItems: 'center', alignSelf: 'stretch', marginTop: -140, paddingHorizontal: 8 }}>
         <View style={{ flex: 1 }}>
@@ -893,25 +878,18 @@ export default function ProfileScreen() {
           {user.badge && <UserBadge badge={user.badge} size="sm" />}
         </View>
       </View>
-      {(user.bio || userLinks.length > 0) && (
+      {user.bio ? (
         <View style={{ marginTop: 12, alignItems: 'center', paddingHorizontal: 8 }}>
-          {user.bio ? (
-            <LinkedText
-              style={{
-                textAlign: 'center',
-                color: theme.colors.text.secondary,
-              }}
-            >
-              {user.bio}
-            </LinkedText>
-          ) : null}
-          {userLinks.length > 0 && (
-            <View style={{ flexDirection: 'row', marginTop: user.bio ? 10 : 0, gap: 8, justifyContent: 'center' }}>
-              {userLinks.map((link, idx) => <SocialLinkIcon key={idx} type={link.type} url={link.url} />)}
-            </View>
-          )}
+          <LinkedText
+            style={{
+              textAlign: 'center',
+              color: theme.colors.text.secondary,
+            }}
+          >
+            {user.bio}
+          </LinkedText>
         </View>
-      )}
+      ) : null}
       {/* Profile category tabs — the old full-width bottom hairline + the
           sliding accent underline are removed for a cleaner "open" profile.
           The active tab now reads as a rounded pill: interactive liquid glass
