@@ -234,7 +234,7 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
       {emojiOpen || gifOpen ? (
         // A panel is open → this slot returns the user to the keyboard.
         <Pressable onPress={onToggleEmoji} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 4, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8, backgroundColor: theme.colors.accent.primary + '18' }}>
-          <AnimatedKeyboardIcon size={18} color={theme.colors.accent.primary} />
+          <AnimatedKeyboardIcon size={22} color={theme.colors.accent.primary} />
         </Pressable>
       ) : (
         <Pressable onPress={onOpenGif} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 4, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8, backgroundColor: theme.colors.accent.primary + '18' }}>
