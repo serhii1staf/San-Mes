@@ -81,22 +81,20 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
   // it to re-open the keyboard when leaving the emoji panel.
   const textInputRef = useRef<TextInput>(null);
 
-  // Swallow progress 0→1 (UI thread). Only animated when glass is active — the
-  // fusion is a glass-only effect; flat capsules stay static & separate.
+  // Swallow progress 0→1 (UI thread). Runs on BOTH glass and flat now — on
+  // glass the surfaces liquid-merge; on flat the photo capsule slides under the
+  // opaque field (lower zIndex) so the field simply covers it. Either way the
+  // expansion + the top-left emoji button behave identically.
   const sw = useSharedValue(0);
   const expandedRef = useRef(false);
   // JS mirror of the expanded flag — drives the emoji button's `pointerEvents`
   // so the (fully transparent) button can't intercept taps while collapsed.
-  // Flips only on a real 1↔multi-line transition, never per keystroke.
   const [fieldExpanded, setFieldExpanded] = useState(false);
-  const glassRef = useRef(glassActive);
-  glassRef.current = glassActive;
   const setExpanded = useCallback((next: boolean) => {
-    if (!glassRef.current) return; // swallow/merge is glass-only
     if (next === expandedRef.current) return;
     expandedRef.current = next;
     setFieldExpanded(next);
-    // Soft spring → "liquid" feel as the glass surfaces fuse/part.
+    // Soft spring → "liquid" feel as the field expands/collapses.
     sw.value = withSpring(next ? 1 : 0, { damping: 17, stiffness: 120, mass: 0.8, overshootClamping: false });
   }, [sw]);
 
@@ -245,14 +243,16 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
           </NativeGlassView>
         </GlassContainerView>
       ) : (
-        // FLAT (no glass): separate static capsules — no swallow, rock-solid.
+        // FLAT (no glass): same swallow geometry, but the photo capsule slides
+        // UNDER the opaque field (lower zIndex) so the field "covers" it — no
+        // liquid merge, but the expansion + emoji button work identically.
         <>
-          <View style={[styles.iconBtn, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
-            <Pressable onPress={onPickImages} onLongPress={onPasteImage} delayLongPress={300} hitSlop={8} style={styles.center}>
+          <Reanimated.View style={[styles.photoWrap, styles.photoWrapFlat, photoWrapStyle]}>
+            <Pressable onPress={onPickImages} onLongPress={onPasteImage} delayLongPress={300} style={[styles.photoBtn, styles.iconBtnFlat, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
               {photoIcon}
             </Pressable>
-          </View>
-          <View style={[styles.inputWrap, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
+          </Reanimated.View>
+          <View style={[styles.inputWrap, styles.inputWrapFlatZ, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
             {fieldContent}
             {emojiOverlay}
           </View>
@@ -280,12 +280,16 @@ const styles = StyleSheet.create({
   // them. Send button stays OUTSIDE so it never merges.
   glassGroup: { flex: 1, flexDirection: 'row', alignItems: 'flex-end' },
   photoWrap: { alignSelf: 'flex-end', zIndex: 2 },
+  // Flat path: photo sits UNDER the opaque field so the field covers it on overlap.
+  photoWrapFlat: { zIndex: 0 },
   photoBtn: { width: PHOTO_SLOT, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
+  iconBtnFlat: { borderWidth: 1 },
+  inputWrapFlatZ: { zIndex: 1 },
   capsuleFill: { width: '100%', height: '100%', borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
   center: { width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center' },
   iconBtn: { width: PHOTO_SLOT, height: 44, borderRadius: 22, borderWidth: 1, alignSelf: 'flex-end', marginRight: GAP },
   fieldContent: { flex: 1, flexDirection: 'row', alignItems: 'center' },
-  emojiBtnWrap: { position: 'absolute', left: 8, top: 8, zIndex: 3 },
+  emojiBtnWrap: { position: 'absolute', left: 8, top: 3, zIndex: 3 },
   emojiBtn: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
   inputWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 22, paddingRight: 14, paddingVertical: 10, minHeight: 44, borderWidth: 1 },
   sendBtn: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', marginLeft: 8 },

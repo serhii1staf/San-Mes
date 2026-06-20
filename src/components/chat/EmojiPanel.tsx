@@ -133,7 +133,7 @@ function EmojiPanelComponent({ height, onSelect, theme }: EmojiPanelProps) {
     >
       {glassActive ? (
         <GlassBg
-          borderRadius={18}
+          borderRadius={24}
           glassStyle="regular"
           interactive={false}
           colorScheme={theme.isDark ? 'dark' : 'light'}
@@ -156,8 +156,7 @@ function EmojiPanelComponent({ height, onSelect, theme }: EmojiPanelProps) {
 
 const styles = StyleSheet.create({
   container: {
-    borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
+    borderRadius: 24,
     overflow: 'hidden',
   },
   listContent: { paddingVertical: 10, paddingHorizontal: 12 },

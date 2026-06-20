@@ -2070,8 +2070,8 @@ export default function ChatScreen() {
           pointerEvents="box-none"
           style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: emojiPanelHeight }}
         >
-          <View style={{ flex: 1, paddingTop: EMOJI_GAP }}>
-            <EmojiPanel height={emojiPanelHeight - EMOJI_GAP} onSelect={onPickEmoji} theme={theme} />
+          <View style={{ flex: 1, paddingTop: EMOJI_GAP, paddingHorizontal: 8, paddingBottom: insets.bottom > 0 ? insets.bottom : 10 }}>
+            <EmojiPanel height={emojiPanelHeight - EMOJI_GAP - (insets.bottom > 0 ? insets.bottom : 10)} onSelect={onPickEmoji} theme={theme} />
           </View>
         </View>
       )}
