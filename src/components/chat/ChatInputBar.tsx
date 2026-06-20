@@ -94,13 +94,11 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
 
   const photoMarginRight = swallow.interpolate({ inputRange: [0, 1], outputRange: [GAP, -PHOTO_SLOT] });
   const fieldPadLeft = swallow.interpolate({ inputRange: [0, 1], outputRange: [BASE_PAD_LEFT, BASE_PAD_LEFT + SWALLOW_DX] });
-  // Cross-fade: the glass capsule (with its own icon, and the touch-morph) stays
-  // fully visible while the field slides in to meet it, then fades over the last
-  // ~40% — at which point the plain "embedded" icon has faded in over the field.
-  // This keeps the liquid-glass stretch on tap AND avoids the "border vanishes
-  // before the field arrives" look.
-  const capsuleOpacity = swallow.interpolate({ inputRange: [0, 0.6, 1], outputRange: [1, 1, 0] });
-  const embeddedIconOpacity = swallow.interpolate({ inputRange: [0, 0.6, 1], outputRange: [0, 0, 1] });
+  // Linear cross-fade synced with the motion: the glass capsule (with the
+  // touch-morph) fades out exactly as the embedded icon fades in, both tracking
+  // the swallow progress — no "holds then pops" delay.
+  const capsuleOpacity = swallow.interpolate({ inputRange: [0, 1], outputRange: [1, 0] });
+  const embeddedIconOpacity = swallow.interpolate({ inputRange: [0, 1], outputRange: [0, 1] });
 
   // ── Native paste wrapper (expo-paste-input) — crash-safe lazy load ──────
   // The native view `ExpoPasteInput` only exists in builds that bundled the
@@ -157,17 +155,23 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
     const h = Math.round(e.nativeEvent.contentSize.height);
     if (h === lastHeightRef.current) return;
     lastHeightRef.current = h;
-    // Smooth height growth — exactly like the AI/Music chat composers. The
-    // horizontal swallow is animated separately via the `swallow` value, so
-    // this only needs to ease the per-line height change.
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     // Hysteresis so the state can't flip-flop on the 1↔2 line boundary:
     // expand only once clearly on a 2nd line (>34), collapse only once clearly
     // back near a single line (<28). Single line ≈ 22px, two lines ≈ 42px.
     let next = expandedRef.current;
     if (!next && h > 34) next = true;
     else if (next && h < 28) next = false;
-    if (next !== expandedRef.current) {
+    const toggling = next !== expandedRef.current;
+    // Smooth the height change with LayoutAnimation ONLY when we are NOT
+    // toggling expand/collapse. During a toggle the horizontal swallow runs on
+    // its own Animated value; letting LayoutAnimation ALSO animate the
+    // resulting width/height change at the same time is exactly what made the
+    // field jitter up/down/left/right. Keeping the two animation systems from
+    // overlapping is the root-cause fix.
+    if (!toggling) {
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    }
+    if (toggling) {
       expandedRef.current = next;
       setExpanded(next);
     }
