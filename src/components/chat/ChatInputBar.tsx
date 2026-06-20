@@ -5,33 +5,37 @@ import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../../theme';
 import { useT } from '../../i18n/store';
 import { perfMonitor } from '../../services/perfMonitor';
-import { useLiquidGlassActive, NativeGlassView } from '../ui/LiquidGlass';
+import { useLiquidGlassActive, NativeGlassView, GlassContainerView } from '../ui/LiquidGlass';
 
 // Geometry of the photo/attach button slot. When the field expands (multiline)
 // it slides LEFT over this slot so the growing input swallows the button.
 const PHOTO_SLOT = 44;
 const GAP = 8;
 const BASE_PAD_LEFT = 14;
-// The field's left edge travels this far to reach the button's left edge.
-const SWALLOW_DX = PHOTO_SLOT + GAP; // 52
+const SWALLOW_DX = PHOTO_SLOT + GAP; // 52 — how far the field's left edge travels
 const EXPAND_PAD_LEFT = BASE_PAD_LEFT + SWALLOW_DX; // 66
+// Distance (pt) within which the two glass surfaces start to liquid-merge.
+// Smaller than GAP so the collapsed (8pt-apart) capsules stay separate, while
+// the expanded overlap (≈0) clearly fuses them.
+const GLASS_MERGE_SPACING = 4;
 
 // ── Isolated chat input bar ───────────────────────────────────────────────
 //
 // Performance: owns the text-input state LOCALLY so typing re-renders only this
 // bar, never the parent screen or the message FlatList.
 //
-// Animation architecture (this is the important part): EVERYTHING animates on
-// the UI thread via Reanimated. The earlier jitter came from mixing RN
-// `Animated` (JS-thread layout writes) with RN `LayoutAnimation` — two systems
-// fighting over the same layout pass. Here:
-//   • The "swallow" (photo button sliding under the field) animates `marginRight`
-//     + the field's `paddingLeft` from ONE shared value via `useAnimatedStyle`.
-//     Reanimated commits these layout props on the UI thread, and because the
-//     margin and padding move in lock-step the text column stays pinned (no
-//     re-wrap, no feedback loop).
-//   • Height grows instantly (no LayoutAnimation) — so nothing competes with the
-//     swallow animation. One animation system only ⇒ no jitter.
+// The "swallow": when the field grows to a 2nd line it slides LEFT over the
+// photo button. The horizontal motion is one Reanimated shared value driving
+// `marginRight` (photo) + `paddingLeft` (field content) in lock-step on the UI
+// thread, so the text column stays pinned (no re-wrap) and nothing fights the
+// (instant) height change — no jitter.
+//
+// The MERGE: when liquid glass is on, the photo + field glass surfaces live in
+// a native `GlassContainer`, so as they overlap they FUSE into one glass shape
+// (Apple's Liquid Glass union) — no separate capsule, no opacity fade (opacity
+// on a GlassView is a documented no-render bug, which was the "delay" before).
+// On non-glass devices the swallow is disabled — the capsules stay separate and
+// static, which is rock-solid.
 
 export interface ChatInputBarHandle {
   setText: (text: string) => void;
@@ -60,20 +64,18 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
   const glassActive = useLiquidGlassActive();
   const [text, setText] = useState('');
 
-  // Swallow progress 0→1, animated entirely on the UI thread.
+  // Swallow progress 0→1 (UI thread). Only animated when glass is active — the
+  // fusion is a glass-only effect; flat capsules stay static & separate.
   const sw = useSharedValue(0);
-  // Capsule visibility 1→0, driven SEPARATELY with a fast timing so the photo
-  // capsule disappears/reappears immediately on toggle (no perceived delay),
-  // independent of the slower 240ms slide. Front-loaded in BOTH directions
-  // because each toggle kicks its own fast withTiming.
-  const cap = useSharedValue(1);
   const expandedRef = useRef(false);
+  const glassRef = useRef(glassActive);
+  glassRef.current = glassActive;
   const setExpanded = useCallback((next: boolean) => {
+    if (!glassRef.current) return; // swallow/merge is glass-only
     if (next === expandedRef.current) return;
     expandedRef.current = next;
     sw.value = withTiming(next ? 1 : 0, { duration: 240, easing: Easing.inOut(Easing.quad) });
-    cap.value = withTiming(next ? 0 : 1, { duration: 130, easing: Easing.out(Easing.quad) });
-  }, [sw, cap]);
+  }, [sw]);
 
   // ── Native paste wrapper (expo-paste-input) — crash-safe lazy load ──────
   const [PasteWrapper, setPasteWrapper] = useState<React.ComponentType<any> | null>(null);
@@ -108,8 +110,8 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
     onSend(val);
   }, [text, onSend]);
 
-  // Detect 1↔multi-line with hysteresis (expand >34px, collapse <28px) so it
-  // can't flip-flop on the boundary. Height itself snaps (no LayoutAnimation).
+  // Detect 1↔multi-line with hysteresis (expand >34px, collapse <28px). Height
+  // itself snaps (no LayoutAnimation) so nothing competes with the swallow.
   const lastHeightRef = useRef(0);
   const handleContentSizeChange = useCallback((e: { nativeEvent: { contentSize: { height: number } } }) => {
     const h = Math.round(e.nativeEvent.contentSize.height);
@@ -119,15 +121,12 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
     else if (expandedRef.current && h < 28) setExpanded(false);
   }, [setExpanded]);
 
-  // UI-thread animated styles.
   const photoWrapStyle = useAnimatedStyle(() => ({
     marginRight: interpolate(sw.value, [0, 1], [GAP, -PHOTO_SLOT]),
   }));
   const fieldPadStyle = useAnimatedStyle(() => ({
     paddingLeft: interpolate(sw.value, [0, 1], [BASE_PAD_LEFT, EXPAND_PAD_LEFT]),
   }));
-  const capsuleStyle = useAnimatedStyle(() => ({ opacity: cap.value }));
-  const embeddedIconStyle = useAnimatedStyle(() => ({ opacity: interpolate(cap.value, [0, 1], [1, 0]) }));
 
   const textInputEl = (
     <TextInput
@@ -163,40 +162,37 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
     </Reanimated.View>
   );
 
+  const photoIcon = <Feather name="image" size={20} color={theme.colors.accent.primary} />;
+
   return (
     <Reanimated.View style={[styles.row, inputRowStyle]}>
-      {/* Photo/attach button — slides under the field as it expands (animated
-          marginRight). zIndex keeps the icon above the field. */}
-      <Reanimated.View style={[styles.photoWrap, photoWrapStyle]}>
-        <Pressable onPress={onPickImages} onLongPress={onPasteImage} delayLongPress={300} style={styles.photoBtn}>
-          {/* Collapsed capsule (interactive glass with touch-morph, or flat) —
-              cross-fades out as the field swallows it. */}
-          <Reanimated.View style={[StyleSheet.absoluteFill, styles.center, capsuleStyle]}>
-            {glassActive ? (
-              <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.capsuleFill}>
-                <Feather name="image" size={20} color={theme.colors.accent.primary} />
-              </NativeGlassView>
-            ) : (
-              <View style={[styles.capsuleFill, { borderWidth: 1, backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
-                <Feather name="image" size={20} color={theme.colors.accent.primary} />
-              </View>
-            )}
-          </Reanimated.View>
-          {/* Embedded icon — fades in over the field once swallowed. */}
-          <Reanimated.View pointerEvents="none" style={embeddedIconStyle}>
-            <Feather name="image" size={20} color={theme.colors.accent.primary} />
-          </Reanimated.View>
-        </Pressable>
-      </Reanimated.View>
-      {/* Input field. */}
       {glassActive ? (
-        <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.inputWrapGlass}>
-          {fieldContent}
-        </NativeGlassView>
+        // GLASS: photo + field glass live in a GlassContainer so they FUSE as
+        // the field slides over the button (liquid union). No opacity anywhere.
+        <GlassContainerView spacing={GLASS_MERGE_SPACING} style={styles.glassGroup}>
+          <Reanimated.View style={[styles.photoWrap, photoWrapStyle]}>
+            <Pressable onPress={onPickImages} onLongPress={onPasteImage} delayLongPress={300} style={styles.photoBtn}>
+              <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.capsuleFill}>
+                {photoIcon}
+              </NativeGlassView>
+            </Pressable>
+          </Reanimated.View>
+          <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.inputWrapGlass}>
+            {fieldContent}
+          </NativeGlassView>
+        </GlassContainerView>
       ) : (
-        <View style={[styles.inputWrap, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
-          {fieldContent}
-        </View>
+        // FLAT (no glass): separate static capsules — no swallow, rock-solid.
+        <>
+          <View style={[styles.iconBtn, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
+            <Pressable onPress={onPickImages} onLongPress={onPasteImage} delayLongPress={300} hitSlop={8} style={styles.center}>
+              {photoIcon}
+            </Pressable>
+          </View>
+          <View style={[styles.inputWrap, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
+            {fieldContent}
+          </View>
+        </>
       )}
       {/* Send button. */}
       {glassActive && !canSend ? (
@@ -216,13 +212,17 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
 
 const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 12, paddingTop: 8 },
+  // Glass group holds the photo + field glass so the GlassContainer can fuse
+  // them. Send button stays OUTSIDE so it never merges.
+  glassGroup: { flex: 1, flexDirection: 'row', alignItems: 'flex-end' },
   photoWrap: { alignSelf: 'flex-end', zIndex: 2 },
   photoBtn: { width: PHOTO_SLOT, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
-  center: { alignItems: 'center', justifyContent: 'center' },
   capsuleFill: { width: '100%', height: '100%', borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
+  center: { width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center' },
+  iconBtn: { width: PHOTO_SLOT, height: 44, borderRadius: 22, borderWidth: 1, alignSelf: 'flex-end', marginRight: GAP },
   fieldContent: { flex: 1, flexDirection: 'row', alignItems: 'center' },
-  inputWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 22, paddingRight: 14, paddingVertical: 10, minHeight: 44, borderWidth: 1, zIndex: 1 },
+  inputWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 22, paddingRight: 14, paddingVertical: 10, minHeight: 44, borderWidth: 1 },
   sendBtn: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', marginLeft: 8 },
   btnGlass: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
-  inputWrapGlass: { flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 22, paddingRight: 14, paddingVertical: 10, minHeight: 44, zIndex: 1 },
+  inputWrapGlass: { flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 22, paddingRight: 14, paddingVertical: 10, minHeight: 44 },
 });
