@@ -488,6 +488,8 @@ const en: Record<string, string> = {
   // ─── GIF picker ────────────────────────────────────────────────────────
   'giphy.search_placeholder': 'Search GIFs...',
   'giphy.empty': 'No results',
+  'media.tab.gif': 'GIF',
+  'media.tab.emoji': 'Emoji',
 
   // ─── Mini-app screen ───────────────────────────────────────────────────
   'mini_app.report_about': 'Report mini-app "{name}"',

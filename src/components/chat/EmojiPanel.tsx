@@ -94,9 +94,12 @@ export interface EmojiPanelProps {
    *  clears the home indicator while the panel itself bleeds to the screen
    *  bottom edge. */
   bottomInset?: number;
+  /** When embedded inside the shared MediaPanel surface, render without the
+   *  own rounded background / glass (the parent provides the surface). */
+  bare?: boolean;
 }
 
-function EmojiPanelComponent({ height, onSelect, theme, bottomInset = 0 }: EmojiPanelProps) {
+function EmojiPanelComponent({ height, onSelect, theme, bottomInset = 0, bare = false }: EmojiPanelProps) {
   const t = useT();
   const glassActive = useLiquidGlassActive();
 
@@ -135,15 +138,19 @@ function EmojiPanelComponent({ height, onSelect, theme, bottomInset = 0 }: Emoji
 
   return (
     <View
-      style={[
-        styles.container,
-        {
-          height,
-          backgroundColor: glassActive ? 'transparent' : theme.colors.background.elevated,
-        },
-      ]}
+      style={
+        bare
+          ? styles.bareContainer
+          : [
+              styles.container,
+              {
+                height,
+                backgroundColor: glassActive ? 'transparent' : theme.colors.background.elevated,
+              },
+            ]
+      }
     >
-      {glassActive ? (
+      {!bare && glassActive ? (
         <GlassBg
           borderRadius={28}
           glassStyle="regular"
@@ -176,6 +183,7 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 28,
     overflow: 'hidden',
   },
+  bareContainer: { flex: 1 },
   list: { flex: 1 },
   listContent: { paddingVertical: 10, paddingHorizontal: 14 },
   category: { marginBottom: 14 },

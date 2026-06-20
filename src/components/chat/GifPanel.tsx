@@ -31,9 +31,11 @@ export interface GifPanelProps {
   theme: any;
   /** Bottom safe-area inset — added as list content padding. */
   bottomInset?: number;
+  /** Embedded in the shared MediaPanel surface → no own bg/rounding. */
+  bare?: boolean;
 }
 
-function GifPanelComponent({ height, onSelect, theme, bottomInset = 0 }: GifPanelProps) {
+function GifPanelComponent({ height, onSelect, theme, bottomInset = 0, bare = false }: GifPanelProps) {
   const t = useT();
   const glassActive = useLiquidGlassActive();
   const [gifs, setGifs] = useState<GiphyItem[]>(() => getCachedTrending() || []);
@@ -93,15 +95,19 @@ function GifPanelComponent({ height, onSelect, theme, bottomInset = 0 }: GifPane
 
   return (
     <View
-      style={[
-        styles.container,
-        {
-          height,
-          backgroundColor: glassActive ? 'transparent' : theme.colors.background.elevated,
-        },
-      ]}
+      style={
+        bare
+          ? styles.bareContainer
+          : [
+              styles.container,
+              {
+                height,
+                backgroundColor: glassActive ? 'transparent' : theme.colors.background.elevated,
+              },
+            ]
+      }
     >
-      {glassActive ? (
+      {!bare && glassActive ? (
         <GlassBg
           borderRadius={28}
           glassStyle="regular"
@@ -155,6 +161,7 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 28,
     overflow: 'hidden',
   },
+  bareContainer: { flex: 1 },
   list: { flex: 1 },
   listContent: { paddingTop: 10, paddingHorizontal: H_PAD },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 40 },

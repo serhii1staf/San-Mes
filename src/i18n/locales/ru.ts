@@ -500,6 +500,8 @@ const ru: Record<string, string> = {
   // ─── GIF picker ────────────────────────────────────────────────────────
   'giphy.search_placeholder': 'Поиск GIF...',
   'giphy.empty': 'Ничего не найдено',
+  'media.tab.gif': 'GIF',
+  'media.tab.emoji': 'Эмодзи',
 
   // ─── Mini-app screen ───────────────────────────────────────────────────
   'mini_app.report_about': 'Жалоба на мини-приложение «{name}»',

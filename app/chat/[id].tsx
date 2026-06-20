@@ -22,8 +22,7 @@ import { UserBadge } from '../../src/components/ui/UserBadge';
 import { MessageContextMenu, MessageAction, type ActionZone, type MessageContextMenuHandle } from '../../src/components/ui/MessageContextMenu';
 import { TranslationSheet } from '../../src/components/ui/TranslationSheet';
 import { ChatInputBar, ChatInputBarHandle } from '../../src/components/chat/ChatInputBar';
-import { EmojiPanel } from '../../src/components/chat/EmojiPanel';
-import { GifPanel } from '../../src/components/chat/GifPanel';
+import { MediaPanel } from '../../src/components/chat/MediaPanel';
 import { EmojiDeleteBurst, EmojiBurstHandle } from '../../src/components/chat/EmojiDeleteBurst';
 import { getRealtime, chatChannelName } from '../../src/services/realtime/ably';
 import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
@@ -39,6 +38,7 @@ import { showToast } from '../../src/store/toastStore';
 import { ChatMessage } from '../../src/types';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { sanitizeUserText } from '../../src/utils/sanitizeText';
+import { getRecentEmoji, pushRecentEmoji } from '../../src/services/recentEmoji';
 import { useT } from '../../src/i18n/store';
 import { perfMonitor } from '../../src/services/perfMonitor';
 import { useSettingsStore } from '../../src/store/settingsStore';
@@ -610,8 +610,11 @@ export default function ChatScreen() {
   // lifted while the keyboard rises BACK after a panel closes, so the bar never
   // drops to the bottom and snaps up. The panel height tracks the last real
   // keyboard height (captured below). Both panels share the SAME lift mechanism.
-  const [emojiOpen, setEmojiOpen] = useState(false);
-  const [gifOpen, setGifOpen] = useState(false);
+  const [panelTab, setPanelTab] = useState<'emoji' | 'gif' | null>(null);
+  // Derived booleans so all existing references keep working unchanged.
+  const emojiOpen = panelTab === 'emoji';
+  const gifOpen = panelTab === 'gif';
+  const [recentEmoji, setRecentEmoji] = useState<string[]>(() => getRecentEmoji());
   const [keepLifted, setKeepLifted] = useState(false);
   const [emojiPanelHeight, setEmojiPanelHeight] = useState(300);
   const [searchMode, setSearchMode] = useState(false);
@@ -853,7 +856,6 @@ export default function ChatScreen() {
   useEffect(() => {
     liftSV.value = emojiOpen || gifOpen || keepLifted ? 1 : 0;
   }, [emojiOpen, gifOpen, keepLifted, liftSV]);
-
   // While returning to the keyboard, hold the bar lifted until the keyboard
   // has actually risen — then release the lift with no jump (at that point the
   // sticky view is fully keyboard-driven). Safety timeout in case the show
@@ -882,8 +884,7 @@ export default function ChatScreen() {
     liftSV.value = 1;
     setEmojiPanelHeight(h);
     setKeepLifted(false);
-    setGifOpen(false);
-    setEmojiOpen(true);
+    setPanelTab('emoji');
     // Defer the dismiss one frame so the lifted state is COMMITTED before the
     // keyboard starts descending.
     requestAnimationFrame(() => Keyboard.dismiss());
@@ -896,10 +897,15 @@ export default function ChatScreen() {
     liftSV.value = 1;
     setEmojiPanelHeight(h);
     setKeepLifted(false);
-    setEmojiOpen(false);
-    setGifOpen(true);
+    setPanelTab('gif');
     requestAnimationFrame(() => Keyboard.dismiss());
   }, [emojiPanelSV, liftSV]);
+
+  // Switch tab WITHOUT touching the keyboard/lift — the panel is already open
+  // and the keyboard is already down, so this is a pure horizontal slide.
+  const switchPanel = useCallback((tab: 'emoji' | 'gif') => {
+    setPanelTab(tab);
+  }, []);
 
   // Return to the keyboard: hide the panel, keep the bar lifted, and focus the
   // field so the keyboard rises back into the same space.
@@ -907,23 +913,23 @@ export default function ChatScreen() {
     // Keep the lift armed synchronously so the bar doesn't drop for a frame
     // between hiding the panel and the keyboard rising back.
     liftSV.value = 1;
-    setEmojiOpen(false);
-    setGifOpen(false);
+    setPanelTab(null);
     setKeepLifted(true);
     inputRef.current?.focus();
   }, [liftSV]);
 
   // Insert a picked emoji into the composer; panel stays open for multi-pick.
+  // Also record it in the recently-used list (shown at the top of the panel).
   const onPickEmoji = useCallback((e: string) => {
     inputRef.current?.insert(e);
+    setRecentEmoji(pushRecentEmoji(e));
   }, []);
 
   // Entering search mode tears down the input bar, so drop any panel state to
   // keep the lift offsets sane.
   useEffect(() => {
     if (searchMode && (emojiOpen || gifOpen || keepLifted)) {
-      setEmojiOpen(false);
-      setGifOpen(false);
+      setPanelTab(null);
       setKeepLifted(false);
     }
   }, [searchMode, emojiOpen, gifOpen, keepLifted]);
@@ -1494,7 +1500,7 @@ export default function ChatScreen() {
   // input bar settle back down (GIFs are one-and-done, not multi-pick).
   const onPickGif = useCallback((url: string) => {
     sendGif(url);
-    setGifOpen(false);
+    setPanelTab(null);
     setKeepLifted(false);
     liftSV.value = 0;
   }, [sendGif, liftSV]);
@@ -2249,44 +2255,28 @@ export default function ChatScreen() {
       </Reanimated.View>
       )}
 
-      {/* Inline emoji panel — bottom-anchored in the space the keyboard
-          vacated. Mounted while open so the keyboard's slide-down REVEALS it
-          (it sits beneath the descending keyboard). Height ≈ last real keyboard
-          height; the top `EMOJI_GAP` padding leaves a visible gap between the
-          panel and the lifted input bar. Rendered AFTER the input bar so it
-          paints ON TOP and reliably receives the scroll gesture. It only
-          covers the bottom `panelHeight` band, while the lifted input bar sits
-          above it — so they never visually overlap. */}
-      {!searchMode && emojiOpen && (
+      {/* Inline media panel — bottom-anchored in the space the keyboard
+          vacated. One surface hosting BOTH the emoji grid and the GIF grid on
+          a horizontal slide track, a shared recently-used-emoji row at the top,
+          and a Telegram-style bottom GIF/Эмодзи switcher. Mounted while open so
+          the keyboard's slide-down REVEALS it; rendered AFTER the input bar so
+          it paints on top and receives scroll/touch. */}
+      {!searchMode && panelTab && (
         <View
           pointerEvents="box-none"
           style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: emojiPanelHeight }}
         >
           <View style={{ flex: 1, paddingTop: EMOJI_GAP }}>
-            <EmojiPanel
+            <MediaPanel
               height={emojiPanelHeight - EMOJI_GAP}
-              onSelect={onPickEmoji}
+              tab={panelTab}
+              onTabChange={switchPanel}
+              onSelectEmoji={onPickEmoji}
+              onSelectGif={onPickGif}
+              recentEmoji={recentEmoji}
               theme={theme}
               bottomInset={insets.bottom}
-            />
-          </View>
-        </View>
-      )}
-
-      {/* Inline GIF panel — identical docking to the emoji panel above (same
-          lift mechanism, same full-bleed top-rounded surface), just a grid of
-          trending GIF thumbnails instead of emoji. */}
-      {!searchMode && gifOpen && (
-        <View
-          pointerEvents="box-none"
-          style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: emojiPanelHeight }}
-        >
-          <View style={{ flex: 1, paddingTop: EMOJI_GAP }}>
-            <GifPanel
-              height={emojiPanelHeight - EMOJI_GAP}
-              onSelect={onPickGif}
-              theme={theme}
-              bottomInset={insets.bottom}
+              labels={{ gif: t('media.tab.gif'), emoji: t('media.tab.emoji') }}
             />
           </View>
         </View>
