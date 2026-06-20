@@ -88,6 +88,8 @@ export interface EmojiPanelProps {
   height: number;
   /** Fired when an emoji cell is tapped. Panel stays open for multi-pick. */
   onSelect: (emoji: string) => void;
+  /** Fired when an emoji cell is LONG-pressed — opens the preview popup. */
+  onLongPress?: (emoji: string) => void;
   /** Active theme object (passed in to avoid an extra context read on mount). */
   theme: any;
   /** Bottom safe-area inset — added as list content padding so the last row
@@ -99,7 +101,7 @@ export interface EmojiPanelProps {
   bare?: boolean;
 }
 
-function EmojiPanelComponent({ height, onSelect, theme, bottomInset = 0, bare = false }: EmojiPanelProps) {
+function EmojiPanelComponent({ height, onSelect, onLongPress, theme, bottomInset = 0, bare = false }: EmojiPanelProps) {
   const t = useT();
   const glassActive = useLiquidGlassActive();
 
@@ -114,6 +116,8 @@ function EmojiPanelComponent({ height, onSelect, theme, bottomInset = 0, bare = 
             <Pressable
               key={e + i}
               onPress={() => onSelect(e)}
+              onLongPress={onLongPress ? () => onLongPress(e) : undefined}
+              delayLongPress={280}
               hitSlop={2}
               style={styles.cell}
             >
@@ -125,7 +129,7 @@ function EmojiPanelComponent({ height, onSelect, theme, bottomInset = 0, bare = 
         </View>
       </View>
     ),
-    [onSelect, t, theme],
+    [onSelect, onLongPress, t, theme],
   );
 
   // Content padding: base + the bottom safe-area inset so the final emoji row

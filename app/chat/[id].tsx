@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, useSyncExternalStore } from 'react';
 import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, Alert, Animated, Modal, Dimensions, Keyboard, InteractionManager, type ViewToken } from 'react-native';
 import { useReanimatedKeyboardAnimation, useKeyboardHandler } from 'react-native-keyboard-controller';
-import Reanimated, { useAnimatedStyle, interpolate, Extrapolation, useSharedValue, withSpring, runOnJS, useAnimatedRef, measure, type SharedValue } from 'react-native-reanimated';
+import Reanimated, { useAnimatedStyle, interpolate, Extrapolation, useSharedValue, withSpring, withTiming, withSequence, withDelay, runOnJS, useAnimatedRef, measure, type SharedValue } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
@@ -161,6 +161,29 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
   // Native iOS-26 liquid glass for the swipe-to-reply pill. iOS-only + opt-in.
   const glassActive = useLiquidGlassActive();
   const fontFamilyStyle = fontFamily === 'mono' ? 'monospace' : fontFamily === 'serif' ? 'serif' : undefined;
+
+  // ── Reply-jump highlight: GLOW, not a border ───────────────────────────
+  // A border (the old `borderWidth: 2`) grows the bubble ~4 px on all sides,
+  // which reads as the message "enlarging" when a reply-jump lands on it. We
+  // instead fade an absolutely-positioned sibling halo in/out — it sits behind
+  // the bubble (negative inset, so ZERO layout impact: the bubble never moves
+  // or resizes). iOS gets a soft colored shadow glow; Android (no colored
+  // shadows) gets an accent-tinted ring/halo. The opacity is driven entirely on
+  // the UI thread (native) over the ~1600 ms highlight window the parent owns.
+  const glowSV = useSharedValue(0);
+  useEffect(() => {
+    if (highlighted) {
+      // Fade in, hold, fade out — a single self-contained pulse that fits
+      // inside the parent's 1600 ms highlight window.
+      glowSV.value = withSequence(
+        withTiming(1, { duration: 240 }),
+        withDelay(900, withTiming(0, { duration: 440 })),
+      );
+    } else {
+      glowSV.value = withTiming(0, { duration: 200 });
+    }
+  }, [highlighted, glowSV]);
+  const glowStyle = useAnimatedStyle(() => ({ opacity: glowSV.value }));
 
   // ── Swipe-to-reply: UI-thread gesture (RNGH + Reanimated) ──────────────
   // Previous implementation was a JS-thread `PanResponder` writing into an RN
@@ -366,6 +389,29 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
             the hold. A quick tap still falls through to inner Pressables
             (image → viewer), and the menu's own buttons keep tap-to-select. */}
         <View>
+          {/* Reply-jump glow — absolute sibling BEHIND the bubble. Negative
+              inset + position:absolute means it adds zero layout, so the bubble
+              never moves/resizes when highlighted. */}
+          <Reanimated.View
+            pointerEvents="none"
+            style={[
+              glowStyle,
+              {
+                position: 'absolute',
+                top: -3, left: -3, right: -3, bottom: -3,
+                borderRadius: bubbleRadius + 3,
+                borderBottomRightRadius: (isOwn ? 4 : bubbleRadius) + 3,
+                borderBottomLeftRadius: (isOwn ? bubbleRadius : 4) + 3,
+                backgroundColor: theme.colors.accent.primary + (theme.isDark ? '40' : '33'),
+                // iOS soft colored glow (Android ignores colored shadows; the
+                // tinted halo above carries the effect there instead).
+                shadowColor: theme.colors.accent.primary,
+                shadowOffset: { width: 0, height: 0 },
+                shadowOpacity: 0.9,
+                shadowRadius: 10,
+              },
+            ]}
+          />
           <View style={{
             paddingHorizontal: 14,
             paddingVertical: 10,
@@ -373,8 +419,6 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
             backgroundColor: isOwn ? theme.colors.accent.primary : theme.colors.background.tertiary,
             borderBottomRightRadius: isOwn ? 4 : bubbleRadius,
             borderBottomLeftRadius: isOwn ? bubbleRadius : 4,
-            borderWidth: highlighted ? 2 : 0,
-            borderColor: highlighted ? theme.colors.accent.primary : 'transparent',
           }}>
             {message.replyToText || message.replyToImage || message.replyPixelIconId ? (
               <Pressable
@@ -927,6 +971,37 @@ export default function ChatScreen() {
     inputRef.current?.insert(e);
     setRecentEmoji(pushRecentEmoji(e));
   }, []);
+
+  // ── Recents hydration (emoji + GIF) ───────────────────────────────────────
+  // `recentEmoji`/`recentGif` are seeded ONCE via the useState initializers
+  // (`getRecentEmoji()`/`getRecentGif()`), which read synchronously. In the
+  // AsyncStorage-fallback path (MMKV native module unavailable) those keys are
+  // never warmed into the in-memory mirror — `kvWarm` is called for
+  // `chat_messages:*` but NOT for the recents — so that first sync read misses
+  // persisted data and recents never reappear after an app restart. Warm the
+  // two keys once on mount, then re-read so the lists hydrate. (No-op when MMKV
+  // is available — the initializer read already had the data.)
+  useEffect(() => {
+    let cancelled = false;
+    kvWarm(['recent_emoji', 'recent_gif'])
+      .then(() => {
+        if (cancelled) return;
+        setRecentEmoji(getRecentEmoji());
+        setRecentGif(getRecentGif());
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  // Whenever the media panel opens, refresh the recents from storage so the
+  // grid always reflects the latest persisted MRU (e.g. GIFs sent earlier this
+  // session, or items that hydrated after the initial mount read). Additive —
+  // does not touch the lift/slide/switch mechanics.
+  useEffect(() => {
+    if (!panelTab) return;
+    setRecentEmoji(getRecentEmoji());
+    setRecentGif(getRecentGif());
+  }, [panelTab]);
 
   // Entering search mode tears down the input bar, so drop any panel state to
   // keep the lift offsets sane.
@@ -1787,6 +1862,36 @@ export default function ChatScreen() {
     } catch {}
   };
 
+  // ── Media-panel long-press actions (Task B) ───────────────────────────────
+  // Additive callbacks wired down through MediaPanel → Emoji/Gif panels. A
+  // normal tap keeps its existing behavior (insert emoji / send GIF); a
+  // long-press opens a small preview popup whose buttons call these.
+  //
+  // Send an emoji as its own chat message (reuses the full send pipeline,
+  // including reply context). Distinct from onPickEmoji, which only inserts
+  // into the composer for multi-pick.
+  const onSendEmojiMessage = useCallback((emoji: string) => {
+    if (!emoji) return;
+    void handleSend(emoji);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Copy a single emoji to the system clipboard.
+  const onCopyEmoji = useCallback((emoji: string) => {
+    if (!emoji) return;
+    Clipboard.setStringAsync(emoji);
+    showToast(t('toast.copied'), 'check');
+  }, [t]);
+
+  // Copy a GIF. The GIF lives as a remote URL (we never re-host it), so the
+  // cheap, reliable action is to copy that URL string — pasteable into any
+  // chat/app that resolves GIPHY links.
+  const onCopyGif = useCallback((item: GiphyItem) => {
+    if (!item?.sendUrl) return;
+    Clipboard.setStringAsync(item.sendUrl);
+    showToast(t('toast.copied'), 'check');
+  }, [t]);
+
   const handleSwipeActive = useCallback((active: boolean) => {
     // Ref-based scroll lock — replaces the old `setScrollEnabled` state
     // toggle. The state-driven version was a contributor to the swipe
@@ -2282,7 +2387,11 @@ export default function ChatScreen() {
               recentGifs={recentGif}
               theme={theme}
               bottomInset={insets.bottom}
-              labels={{ gif: t('media.tab.gif'), emoji: t('media.tab.emoji') }}
+              labels={{ gif: t('media.tab.gif'), emoji: t('media.tab.emoji'), copy: t('media.action.copy'), send: t('media.action.send') }}
+              onSendEmoji={onSendEmojiMessage}
+              onCopyEmoji={onCopyEmoji}
+              onSendGif={onPickGif}
+              onCopyGif={onCopyGif}
             />
           </View>
         </View>

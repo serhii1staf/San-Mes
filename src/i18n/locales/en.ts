@@ -490,6 +490,8 @@ const en: Record<string, string> = {
   'giphy.empty': 'No results',
   'media.tab.gif': 'GIF',
   'media.tab.emoji': 'Emoji',
+  'media.action.copy': 'Copy',
+  'media.action.send': 'Send',
 
   // ─── Mini-app screen ───────────────────────────────────────────────────
   'mini_app.report_about': 'Report mini-app "{name}"',

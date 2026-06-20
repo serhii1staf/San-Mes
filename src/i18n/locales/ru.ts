@@ -502,6 +502,8 @@ const ru: Record<string, string> = {
   'giphy.empty': 'Ничего не найдено',
   'media.tab.gif': 'GIF',
   'media.tab.emoji': 'Эмодзи',
+  'media.action.copy': 'Копировать',
+  'media.action.send': 'Отправить',
 
   // ─── Mini-app screen ───────────────────────────────────────────────────
   'mini_app.report_about': 'Жалоба на мини-приложение «{name}»',

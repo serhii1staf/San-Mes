@@ -28,6 +28,8 @@ export interface GifPanelProps {
   /** Fired when a GIF cell is tapped — passes the full item so the caller can
    *  both send it (sendUrl) and record it in the recent list. */
   onSelect: (item: GiphyItem) => void;
+  /** Fired when a GIF cell is LONG-pressed — opens the preview popup. */
+  onLongPress?: (item: GiphyItem) => void;
   /** Active theme object (passed in to avoid an extra context read on mount). */
   theme: any;
   /** Bottom safe-area inset — added as list content padding. */
@@ -38,7 +40,7 @@ export interface GifPanelProps {
   recentGifs?: GiphyItem[];
 }
 
-function GifPanelComponent({ height, onSelect, theme, bottomInset = 0, bare = false, recentGifs }: GifPanelProps) {
+function GifPanelComponent({ height, onSelect, onLongPress, theme, bottomInset = 0, bare = false, recentGifs }: GifPanelProps) {
   const t = useT();
   const glassActive = useLiquidGlassActive();
   const [gifs, setGifs] = useState<GiphyItem[]>(() => getCachedTrending() || []);
@@ -88,12 +90,14 @@ function GifPanelComponent({ height, onSelect, theme, bottomInset = 0, bare = fa
     ({ item }: { item: GiphyItem }) => (
       <Pressable
         onPress={() => onSelect(item)}
+        onLongPress={onLongPress ? () => onLongPress(item) : undefined}
+        delayLongPress={280}
         style={{ width: CELL_W, height: CELL_W, borderRadius: 10, overflow: 'hidden', marginBottom: CELL_GAP, backgroundColor: theme.colors.background.secondary }}
       >
         <CachedImage uri={item.previewUrl} style={{ width: '100%', height: '100%' }} resizeMode="cover" priority="low" />
       </Pressable>
     ),
-    [onSelect, theme],
+    [onSelect, onLongPress, theme],
   );
 
   // Recently-used GIFs first, then trending (deduped by id).
