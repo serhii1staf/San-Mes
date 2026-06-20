@@ -1,6 +1,6 @@
 import React, { memo, useState, useImperativeHandle, forwardRef, useCallback, useRef, useEffect } from 'react';
 import { View, TextInput, Pressable, StyleSheet, Text } from 'react-native';
-import Reanimated, { useSharedValue, useAnimatedStyle, withTiming, Easing, interpolate } from 'react-native-reanimated';
+import Reanimated, { useSharedValue, useAnimatedStyle, withSpring, interpolate } from 'react-native-reanimated';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../../theme';
 import { useT } from '../../i18n/store';
@@ -74,7 +74,8 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
     if (!glassRef.current) return; // swallow/merge is glass-only
     if (next === expandedRef.current) return;
     expandedRef.current = next;
-    sw.value = withTiming(next ? 1 : 0, { duration: 240, easing: Easing.inOut(Easing.quad) });
+    // Soft spring → "liquid" feel as the glass surfaces fuse/part.
+    sw.value = withSpring(next ? 1 : 0, { damping: 17, stiffness: 120, mass: 0.8, overshootClamping: false });
   }, [sw]);
 
   // ── Native paste wrapper (expo-paste-input) — crash-safe lazy load ──────
