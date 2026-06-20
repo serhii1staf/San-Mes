@@ -731,25 +731,41 @@ export default function CommentsScreen() {
   const openEmoji = useCallback(() => {
     const h = lastKbHeightRef.current > 0 ? lastKbHeightRef.current : 300;
     emojiPanelSV.value = h;
-    const kbUp = Math.abs(keyboardHeight.value) > 1;
-    if (kbUp) liftSV.value = 1;
-    else liftSV.value = withTiming(1, { duration: 300, easing: Easing.out(Easing.cubic) });
     setEmojiPanelHeight(h);
     setKeepLifted(false);
+    // Mount the panel off-screen first (liftSV still 0 → parked below screen),
+    // then start the lift after the mount/layout commits — see chat composer.
     setPanelTab('emoji');
-    requestAnimationFrame(() => Keyboard.dismiss());
+    const kbUp = Math.abs(keyboardHeight.value) > 1;
+    if (kbUp) {
+      liftSV.value = 1;
+      requestAnimationFrame(() => Keyboard.dismiss());
+    } else {
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          liftSV.value = withTiming(1, { duration: 300, easing: Easing.out(Easing.cubic) });
+        }),
+      );
+    }
   }, [emojiPanelSV, liftSV, keyboardHeight]);
 
   const openGif = useCallback(() => {
     const h = lastKbHeightRef.current > 0 ? lastKbHeightRef.current : 300;
     emojiPanelSV.value = h;
-    const kbUp = Math.abs(keyboardHeight.value) > 1;
-    if (kbUp) liftSV.value = 1;
-    else liftSV.value = withTiming(1, { duration: 300, easing: Easing.out(Easing.cubic) });
     setEmojiPanelHeight(h);
     setKeepLifted(false);
     setPanelTab('gif');
-    requestAnimationFrame(() => Keyboard.dismiss());
+    const kbUp = Math.abs(keyboardHeight.value) > 1;
+    if (kbUp) {
+      liftSV.value = 1;
+      requestAnimationFrame(() => Keyboard.dismiss());
+    } else {
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          liftSV.value = withTiming(1, { duration: 300, easing: Easing.out(Easing.cubic) });
+        }),
+      );
+    }
   }, [emojiPanelSV, liftSV, keyboardHeight]);
 
   const switchPanel = useCallback((tab: 'emoji' | 'gif') => {
@@ -775,6 +791,21 @@ export default function CommentsScreen() {
     else if (emojiOpen) switchPanel('gif');
     else openGif();
   }, [emojiOpen, gifOpen, closeEmojiToKeyboard, switchPanel, openGif]);
+
+  // Tapping the field while a media panel is open must RETURN to the keyboard,
+  // not leave the panel armed. We hold the lift, unmount the panel, and keep
+  // it lifted until the keyboard actually shows (keepLifted) — otherwise the
+  // panel stayed tracked and re-appeared the next time the keyboard was
+  // dismissed (the "GIF re-opens when I tap outside" bug). Mirrors the chat
+  // composer's onFocus → closeEmojiToKeyboard behaviour.
+  const handleInputFocus = useCallback(() => {
+    perfMonitor.markInputFocus('comments');
+    if (emojiOpen || gifOpen) {
+      liftSV.value = 1;
+      setPanelTab(null);
+      setKeepLifted(true);
+    }
+  }, [emojiOpen, gifOpen, liftSV]);
 
   // Insert emoji into the composer; panel stays open for multi-pick.
   const onPickEmoji = useCallback((e: string) => {
@@ -1042,7 +1073,7 @@ export default function CommentsScreen() {
                   // Captures keyboard-to-first-frame latency for the
                   // comments composer. Free when the perf monitor is off
                   // (singleton early-returns on the disabled flag).
-                  onFocus={() => perfMonitor.markInputFocus('comments')}
+                  onFocus={handleInputFocus}
                 />
                 {/* Emoji + GIF buttons inside the input, right side */}
                 <Pressable onPress={onEmojiBtn} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 2, padding: 3 }}>
@@ -1070,7 +1101,7 @@ export default function CommentsScreen() {
                   // Captures keyboard-to-first-frame latency for the
                   // comments composer. Free when the perf monitor is off
                   // (singleton early-returns on the disabled flag).
-                  onFocus={() => perfMonitor.markInputFocus('comments')}
+                  onFocus={handleInputFocus}
                 />
                 {/* Emoji + GIF buttons inside the input, right side */}
                 <Pressable onPress={onEmojiBtn} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 2, padding: 3 }}>

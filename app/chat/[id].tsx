@@ -1127,46 +1127,51 @@ export default function ChatScreen() {
   const openEmoji = useCallback(() => {
     const h = lastKbHeightRef.current > 0 ? lastKbHeightRef.current : 300;
     emojiPanelSV.value = h;
-    // CRITICAL (keyboard UP): arm the lift mirror SYNCHRONOUSLY, before the
-    // keyboard starts to descend. The spacer height = liftSV * panelH *
-    // (1 - progress), so it must already be 1 the instant `progress` begins
-    // falling from 1→0 — that way the spacer grows frame-for-frame as the
-    // keyboard slides down and the bar never moves. If we left this to the
-    // `useEffect` mirror (async), there was a window where liftSV was still 0
-    // during the descent, so the bar followed the keyboard DOWN and then
-    // snapped back UP when the effect ran — the "jump up then settle" bug.
-    //
-    // When the keyboard is already DOWN, nothing animates the reveal for us, so
-    // setting liftSV = 1 instantly makes the bar + panel POP in abruptly.
-    // Animate the lift ourselves in that case for a smooth rise.
-    const kbUp = Math.abs(keyboardHeight.value) > 1;
-    if (kbUp) {
-      liftSV.value = 1;
-    } else {
-      liftSV.value = withTiming(1, { duration: 300, easing: Easing.out(Easing.cubic) });
-    }
     setEmojiPanelHeight(h);
     setKeepLifted(false);
+    // Mount the panel NOW. While liftSV is still 0 it is parked fully below the
+    // screen (panelSlideStyle translateY = +panelH), so the heavy emoji/GIF
+    // grid mounts + lays out OFF-SCREEN — the user sees nothing move yet.
     setPanelTab('emoji');
-    // Defer the dismiss one frame so the lifted state is COMMITTED before the
-    // keyboard starts descending.
-    requestAnimationFrame(() => Keyboard.dismiss());
+    const kbUp = Math.abs(keyboardHeight.value) > 1;
+    if (kbUp) {
+      // CRITICAL (keyboard UP): arm the lift mirror SYNCHRONOUSLY so the
+      // keyboard's descent REVEALS the panel with zero bar movement (the spacer
+      // grows frame-for-frame as `progress` falls 1→0). No translate animation.
+      liftSV.value = 1;
+      requestAnimationFrame(() => Keyboard.dismiss());
+    } else {
+      // Keyboard already DOWN: nothing animates the reveal for us. Wait two
+      // frames so the panel mount + first layout pass have committed, THEN run
+      // the lift on the UI thread. Deferring past the mount keeps the rise a
+      // pure compositor transform — no concurrent JS/layout work stalling it
+      // (the "freezes then jerks up" jank on weak Android).
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          liftSV.value = withTiming(1, { duration: 300, easing: Easing.out(Easing.cubic) });
+        }),
+      );
+    }
   }, [emojiPanelSV, liftSV, keyboardHeight]);
 
   // Open the GIF panel — twin of openEmoji. Mutually exclusive with emoji.
   const openGif = useCallback(() => {
     const h = lastKbHeightRef.current > 0 ? lastKbHeightRef.current : 300;
     emojiPanelSV.value = h;
-    const kbUp = Math.abs(keyboardHeight.value) > 1;
-    if (kbUp) {
-      liftSV.value = 1;
-    } else {
-      liftSV.value = withTiming(1, { duration: 300, easing: Easing.out(Easing.cubic) });
-    }
     setEmojiPanelHeight(h);
     setKeepLifted(false);
     setPanelTab('gif');
-    requestAnimationFrame(() => Keyboard.dismiss());
+    const kbUp = Math.abs(keyboardHeight.value) > 1;
+    if (kbUp) {
+      liftSV.value = 1;
+      requestAnimationFrame(() => Keyboard.dismiss());
+    } else {
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          liftSV.value = withTiming(1, { duration: 300, easing: Easing.out(Easing.cubic) });
+        }),
+      );
+    }
   }, [emojiPanelSV, liftSV, keyboardHeight]);
 
   // Switch tab WITHOUT touching the keyboard/lift — the panel is already open
