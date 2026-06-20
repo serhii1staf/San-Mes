@@ -1105,10 +1105,10 @@ export default function CommentsScreen() {
                   onFocus={handleInputFocus}
                 />
                 {/* Emoji + GIF buttons inside the input, right side */}
-                <Pressable onPress={onEmojiBtn} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 2, padding: 3 }}>
+                <Pressable onPress={onEmojiBtn} hitSlop={8} style={{ alignSelf: 'center', marginLeft: 6, height: 30, alignItems: 'center', justifyContent: 'center' }}>
                   <AnimatedEmojiIcon size={20} color={emojiOpen ? theme.colors.accent.primary : theme.colors.text.tertiary} />
                 </Pressable>
-                <Pressable onPress={onGifBtn} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 2, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8, backgroundColor: (gifOpen ? theme.colors.accent.primary + '30' : theme.colors.accent.primary + '18') }}>
+                <Pressable onPress={onGifBtn} hitSlop={8} style={{ alignSelf: 'center', marginLeft: 6, height: 30, paddingHorizontal: 8, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: (gifOpen ? theme.colors.accent.primary + '30' : theme.colors.accent.primary + '18') }}>
                   <AnimatedGifIcon color={theme.colors.accent.primary} fontSize={11} />
                 </Pressable>
               </NativeGlassView>
@@ -1133,10 +1133,10 @@ export default function CommentsScreen() {
                   onFocus={handleInputFocus}
                 />
                 {/* Emoji + GIF buttons inside the input, right side */}
-                <Pressable onPress={onEmojiBtn} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 2, padding: 3 }}>
+                <Pressable onPress={onEmojiBtn} hitSlop={8} style={{ alignSelf: 'center', marginLeft: 6, height: 30, alignItems: 'center', justifyContent: 'center' }}>
                   <AnimatedEmojiIcon size={20} color={emojiOpen ? theme.colors.accent.primary : theme.colors.text.tertiary} />
                 </Pressable>
-                <Pressable onPress={onGifBtn} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 2, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8, backgroundColor: (gifOpen ? theme.colors.accent.primary + '30' : theme.colors.accent.primary + '18') }}>
+                <Pressable onPress={onGifBtn} hitSlop={8} style={{ alignSelf: 'center', marginLeft: 6, height: 30, paddingHorizontal: 8, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: (gifOpen ? theme.colors.accent.primary + '30' : theme.colors.accent.primary + '18') }}>
                   <AnimatedGifIcon color={theme.colors.accent.primary} fontSize={11} />
                 </Pressable>
               </View>

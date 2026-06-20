@@ -159,8 +159,8 @@ function GifPanelComponent({ height, onSelect, onLongPress, theme, bottomInset =
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="always"
           removeClippedSubviews
-          initialNumToRender={16}
-          maxToRenderPerBatch={8}
+          initialNumToRender={9}
+          maxToRenderPerBatch={6}
           windowSize={5}
           onEndReachedThreshold={0.6}
           onEndReached={handleEndReached}
