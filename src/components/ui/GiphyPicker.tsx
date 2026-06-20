@@ -16,9 +16,13 @@ const GRID_PAD = 10;
 const CELL_GAP = 6;
 const SHEET_W = SCREEN_WIDTH - SHEET_MARGIN * 2;
 const CELL_W = Math.floor((SHEET_W - GRID_PAD * 2 - CELL_GAP * (NUM_COLS - 1)) / NUM_COLS);
-// Resting card height (keyboard down). A touch shorter than before and
-// anchored to the bottom so the panel sits a bit LOWER on screen.
-const RESTING_HEIGHT = Math.round(SCREEN_HEIGHT * 0.56);
+// FIXED card height. Deliberately short enough that even when the card lifts by
+// the full keyboard height it never runs past the top safe-area — so we DON'T
+// have to change the height when the keyboard opens. Keeping the height static
+// is what removes the "lift lags the keyboard" delay: the only thing that
+// animates on focus is a single native-driver translateY, perfectly synced to
+// the keyboard's own animation.
+const CARD_HEIGHT = Math.round(SCREEN_HEIGHT * 0.48);
 
 interface GiphyPickerProps {
   visible: boolean;
@@ -26,16 +30,15 @@ interface GiphyPickerProps {
   onSelect: (url: string) => void;
 }
 
-// GIF picker — floating bottom card with a spring slide-up, a 0.4 black
-// backdrop, and a slide-down on close.
+// GIF picker — floating bottom card with a spring slide-up, a black backdrop,
+// and a slide-down on close.
 //
-// Keyboard-aware: focusing the search field LIFTS the whole card so its bottom
-// edge sits exactly on top of the keyboard (nothing is covered and the chat
-// behind never shows through), and the search bar — which lives at the BOTTOM
-// of the card — ends up as a clean input row directly above the keyboard. The
-// GIF grid scrolls above it. The lift is a native-driver translateY combined
-// with the open/close slide, and the card height shrinks to the space above
-// the keyboard so it never overflows the top.
+// Keyboard-aware: focusing the search field LIFTS the whole card (native
+// translateY, synced to the keyboard animation) so its bottom edge sits exactly
+// on top of the keyboard. The search row lives at the BOTTOM of the card, so
+// once lifted it reads as a clean input directly above the keyboard; the GIF
+// grid scrolls above it. The card height is fixed, so nothing re-lays-out on
+// focus (no lift delay) and the grid stays scrollable the whole time.
 export function GiphyPicker({ visible, onClose, onSelect }: GiphyPickerProps) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
@@ -46,10 +49,6 @@ export function GiphyPicker({ visible, onClose, onSelect }: GiphyPickerProps) {
   const kbTranslate = useRef(new Animated.Value(0)).current;
   const isClosing = useRef(false);
   const [mounted, setMounted] = useState(false);
-  // Keyboard state drives the card height so the lifted card fits above the
-  // keyboard without running off the top of the screen.
-  const [kbOpen, setKbOpen] = useState(false);
-  const [kbHeight, setKbHeight] = useState(0);
 
   const [query, setQuery] = useState('');
   const [gifs, setGifs] = useState<GiphyItem[]>([]);
@@ -90,8 +89,6 @@ export function GiphyPicker({ visible, onClose, onSelect }: GiphyPickerProps) {
       slideAnim.setValue(SCREEN_HEIGHT);
       backdropAnim.setValue(0);
       kbTranslate.setValue(0);
-      setKbOpen(false);
-      setKbHeight(0);
       Animated.parallel([
         Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 50, friction: 9 }),
         Animated.timing(backdropAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
@@ -104,8 +101,10 @@ export function GiphyPicker({ visible, onClose, onSelect }: GiphyPickerProps) {
   // Keyboard lift. Works inside a RN Modal via the core Keyboard events
   // (react-native-keyboard-controller does not track keyboards hosted in a
   // separate Modal window, so we drive the animation ourselves). iOS gets the
-  // `will*` events (fire before the keyboard finishes → animation matches the
-  // keyboard exactly); Android only emits `did*`.
+  // `will*` events (fire WITH the keyboard, before it finishes → the lift is
+  // perfectly in sync, no delay); Android only emits `did*`. We animate ONLY a
+  // native-driver translateY — no setState — so there's no React re-render in
+  // the hot path.
   useEffect(() => {
     if (!visible) return;
     const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
@@ -113,10 +112,7 @@ export function GiphyPicker({ visible, onClose, onSelect }: GiphyPickerProps) {
     const onShow = (e: any) => {
       const h = e?.endCoordinates?.height ?? 0;
       if (h <= 0) return;
-      setKbHeight(h);
-      setKbOpen(true);
-      // Lift so the card's resting bottom (restingBottom) ends up at the
-      // keyboard's top edge (h).
+      // Lift so the card's resting bottom ends up at the keyboard's top edge.
       const lift = Math.max(0, h - restingBottom);
       Animated.timing(kbTranslate, {
         toValue: -lift,
@@ -125,7 +121,6 @@ export function GiphyPicker({ visible, onClose, onSelect }: GiphyPickerProps) {
       }).start();
     };
     const onHide = (e: any) => {
-      setKbOpen(false);
       Animated.timing(kbTranslate, {
         toValue: 0,
         duration: e?.duration || 220,
@@ -150,7 +145,6 @@ export function GiphyPicker({ visible, onClose, onSelect }: GiphyPickerProps) {
     // Dismiss the keyboard FIRST so the underlying input bar settles back down.
     Keyboard.dismiss();
     kbTranslate.setValue(0);
-    setKbOpen(false);
     Animated.parallel([
       Animated.timing(slideAnim, { toValue: SCREEN_HEIGHT, duration: 250, useNativeDriver: true }),
       Animated.timing(backdropAnim, { toValue: 0, duration: 250, useNativeDriver: true }),
@@ -177,23 +171,17 @@ export function GiphyPicker({ visible, onClose, onSelect }: GiphyPickerProps) {
 
   if (!visible && !mounted) return null;
 
-  // Card height: when the keyboard is up, shrink to the gap between the
-  // keyboard top and the safe-area top so the lifted card never runs off
-  // screen; otherwise the resting height.
-  const cardHeight = kbOpen
-    ? Math.max(260, SCREEN_HEIGHT - kbHeight - insets.top - 16)
-    : RESTING_HEIGHT;
-
   return (
     <Modal visible={visible || mounted} transparent animationType="none" onRequestClose={dismiss} statusBarTranslucent>
       <ModalStatusBar />
-      {/* Backdrop — same 0.4 black dim as the feed menu */}
-      <Animated.View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)', opacity: backdropAnim }}>
+      {/* Backdrop — darker (0.55) so the chat behind, which still reacts to the
+          keyboard on its own, isn't visibly shifting through a faint dim. */}
+      <Animated.View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.55)', opacity: backdropAnim }}>
         <Pressable style={{ flex: 1 }} onPress={dismiss} />
       </Animated.View>
 
       {/* Floating card (does not touch edges). translateY combines the
-          open/close slide with the keyboard lift. */}
+          open/close slide with the keyboard lift. Fixed height. */}
       <Animated.View
         pointerEvents="box-none"
         style={{
@@ -201,7 +189,7 @@ export function GiphyPicker({ visible, onClose, onSelect }: GiphyPickerProps) {
           left: SHEET_MARGIN,
           right: SHEET_MARGIN,
           bottom: restingBottom,
-          height: cardHeight,
+          height: CARD_HEIGHT,
           opacity: backdropAnim,
           transform: [{ translateY: Animated.add(slideAnim, kbTranslate) }],
         }}
@@ -226,13 +214,14 @@ export function GiphyPicker({ visible, onClose, onSelect }: GiphyPickerProps) {
               contentContainerStyle={{ paddingHorizontal: GRID_PAD, paddingTop: 4, paddingBottom: 12 }}
               columnWrapperStyle={{ gap: CELL_GAP, marginBottom: CELL_GAP }}
               showsVerticalScrollIndicator={false}
-              keyboardShouldPersistTaps="handled"
-              keyboardDismissMode="on-drag"
+              // Always let touches through to the list so scrolling works even
+              // while the search field is focused / keyboard is up.
+              keyboardShouldPersistTaps="always"
+              // Don't dismiss the keyboard on drag — that was eating the first
+              // scroll gesture and making the grid feel unscrollable when the
+              // keyboard was open.
+              keyboardDismissMode="none"
               removeClippedSubviews
-              // Tightened from 12/12/7. With numColumns=3 each "row" is 3
-              // GIF cells, so initialNumToRender=9 = 3 fully-rendered rows
-              // (≈ visible-window height); maxToRenderPerBatch=3 streams
-              // one row per batch instead of 4 rows in one go.
               initialNumToRender={9}
               maxToRenderPerBatch={3}
               windowSize={5}
@@ -257,33 +246,29 @@ export function GiphyPicker({ visible, onClose, onSelect }: GiphyPickerProps) {
             />
           )}
 
-          {/* Search row — pinned to the BOTTOM of the card. When the keyboard
-              opens and the card lifts, this row sits as a clean input directly
-              above the keyboard. The clear-x and a close-panel x live on the
-              right. */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', marginHorizontal: GRID_PAD, marginTop: 4, marginBottom: 10, backgroundColor: theme.colors.background.secondary, borderRadius: 20, paddingHorizontal: 14, height: 42 }}>
-            <Feather name="search" size={16} color={theme.colors.text.tertiary} />
+          {/* Search row — pinned to the BOTTOM of the card. BARE input (no
+              pill container): just a search glyph, the field, the GIPHY mark,
+              and the clear / close x's on the right. A hairline separates it
+              from the grid above. */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: GRID_PAD + 4, paddingTop: 8, paddingBottom: 10, borderTopWidth: 0.5, borderTopColor: theme.colors.border.light }}>
+            <Feather name="search" size={17} color={theme.colors.text.tertiary} />
             <TextInput
               value={query}
               onChangeText={setQuery}
               placeholder={t('giphy.search_placeholder')}
               placeholderTextColor={theme.colors.text.tertiary}
-              style={{ flex: 1, marginLeft: 8, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular }}
+              style={{ flex: 1, marginLeft: 10, fontSize: 16, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular, paddingVertical: 6 }}
               autoCorrect={false}
               returnKeyType="search"
             />
-            <View style={{ marginLeft: 8 }}>
-              <Text variant="caption" weight="bold" color={theme.colors.accent.primary} style={{ fontSize: 11 }}>GIPHY</Text>
-            </View>
-            {/* Clear the query (only when there's text). */}
+            <Text variant="caption" weight="bold" color={theme.colors.accent.primary} style={{ fontSize: 11, marginLeft: 8 }}>GIPHY</Text>
             {query.length > 0 && (
-              <Pressable onPress={() => setQuery('')} hitSlop={8} style={{ marginLeft: 10 }}>
-                <Feather name="x" size={16} color={theme.colors.text.tertiary} />
+              <Pressable onPress={() => setQuery('')} hitSlop={8} style={{ marginLeft: 12 }}>
+                <Feather name="x" size={17} color={theme.colors.text.tertiary} />
               </Pressable>
             )}
-            {/* Close the whole panel. */}
-            <Pressable onPress={dismiss} hitSlop={8} style={{ marginLeft: 10, width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}>
-              <Feather name="x" size={15} color={theme.colors.text.secondary} />
+            <Pressable onPress={dismiss} hitSlop={8} style={{ marginLeft: 12, width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}>
+              <Feather name="x" size={16} color={theme.colors.text.secondary} />
             </Pressable>
           </View>
         </View>

@@ -113,7 +113,7 @@ function StorageRing({ buckets, total, totalLabel, caption, size, trackColor, ce
     // One-time reveal. Native driver → no JS thread cost, no SVG re-render.
     Animated.timing(appear, {
       toValue: 1,
-      duration: 620,
+      duration: 420,
       easing: Easing.out(Easing.cubic),
       useNativeDriver: true,
     }).start();
@@ -340,7 +340,6 @@ export default function StorageScreen() {
         {/* Category list */}
         <View style={{ marginHorizontal: 16, backgroundColor: cardBg, borderRadius: 18, paddingVertical: 4 }}>
           {buckets.map((b, i) => {
-            const pct = total > 0 ? Math.round((b.bytes / total) * 1000) / 10 : 0;
             const checked = selectedIds.has(b.def.id);
             const dimmed = b.bytes <= 0;
             return (
@@ -348,25 +347,22 @@ export default function StorageScreen() {
                 key={b.def.id}
                 onPress={() => !dimmed && toggle(b.def.id)}
                 disabled={dimmed}
-                style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 13, borderTopWidth: i === 0 ? 0 : 0.5, borderTopColor: theme.colors.border.light, opacity: dimmed ? 0.45 : 1 }}
+                style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, paddingVertical: 15, borderTopWidth: i === 0 ? 0 : 0.5, borderTopColor: theme.colors.border.light, opacity: dimmed ? 0.4 : 1 }}
               >
+                {/* Minimal selection dot — filled with the category colour when
+                    selected, a thin ring when not. No emoji, no checkmark. */}
                 <View
                   style={{
-                    width: 22,
-                    height: 22,
-                    borderRadius: 11,
-                    backgroundColor: b.def.color,
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    marginRight: 12,
-                    opacity: checked ? 1 : 0.35,
+                    width: 12,
+                    height: 12,
+                    borderRadius: 6,
+                    marginRight: 14,
+                    backgroundColor: checked ? b.def.color : 'transparent',
+                    borderWidth: checked ? 0 : 1.5,
+                    borderColor: b.def.color,
                   }}
-                >
-                  {checked && <Feather name="check" size={13} color="#FFFFFF" />}
-                </View>
-                <Text style={{ fontSize: 16, marginRight: 8 }} allowFontScaling={false}>{b.def.emoji}</Text>
-                <Text variant="body" weight="semibold" style={{ fontSize: 15 }}>{t(b.def.label)}</Text>
-                <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginLeft: 6, fontSize: 13 }}>{pct}%</Text>
+                />
+                <Text variant="body" weight="medium" style={{ fontSize: 15 }}>{t(b.def.label)}</Text>
                 <View style={{ flex: 1 }} />
                 <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 13 }}>{formatBytes(b.bytes)}</Text>
               </Pressable>
