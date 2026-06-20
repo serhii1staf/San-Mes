@@ -145,9 +145,11 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
       onChangeText={setText}
       placeholder={t('chat.input_placeholder')}
       placeholderTextColor={theme.colors.text.tertiary}
-      style={{ flex: 1, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular, maxHeight: 100, paddingTop: 0, paddingBottom: 0, minHeight: 22, lineHeight: 20 }}
+      style={{ flex: 1, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular, maxHeight: 100, paddingTop: 0, paddingBottom: 0, minHeight: 22, lineHeight: 20, alignSelf: 'stretch' }}
       multiline
-      textAlignVertical="center"
+      // Top-aligned so multiline text fills from the top-left and grows
+      // downward (instead of staying vertically centered / bottom-anchored).
+      textAlignVertical="top"
       // Autocorrect / autocomplete / spellcheck OFF — the user found the
       // keyboard's auto-replacement disruptive while chatting.
       autoCorrect={false}
@@ -198,14 +200,22 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
         onPress={onPickImages}
         onLongPress={onPasteImage}
         delayLongPress={300}
-        style={[
-          styles.photoBtn,
-          expanded
-            ? { marginRight: -PHOTO_SLOT, backgroundColor: 'transparent', borderColor: 'transparent' }
-            : { marginRight: 8, backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light },
-        ]}
+        style={[styles.photoBtn, { marginRight: expanded ? -PHOTO_SLOT : 8 }]}
       >
-        <Feather name="image" size={20} color={theme.colors.accent.primary} />
+        {expanded ? (
+          // Embedded inside the grown field — just the icon, no capsule.
+          <Feather name="image" size={20} color={theme.colors.accent.primary} />
+        ) : glassActive ? (
+          // Collapsed + glass: liquid-glass capsule (icon as child).
+          <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.photoFill}>
+            <Feather name="image" size={20} color={theme.colors.accent.primary} />
+          </NativeGlassView>
+        ) : (
+          // Collapsed, no glass: flat bordered capsule.
+          <View style={[styles.photoFill, { borderWidth: 1, backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
+            <Feather name="image" size={20} color={theme.colors.accent.primary} />
+          </View>
+        )}
       </Pressable>
       {/* Input container: TextInput + GIF. NON-interactive-editing-friendly
           glass when enabled, flat capsule otherwise. */}
@@ -242,8 +252,10 @@ const styles = StyleSheet.create({
   // sees only the input bubble grow, not the buttons jump.
   row: { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 12, paddingTop: 8 },
   // Photo/attach button. zIndex:2 so when the field slides under it (expanded)
-  // the icon stays painted on top of the field background.
-  photoBtn: { width: PHOTO_SLOT, height: 44, borderRadius: 22, borderWidth: 1, alignItems: 'center', justifyContent: 'center', alignSelf: 'flex-end', zIndex: 2 },
+  // the icon stays painted on top of the field background. Sizing only — the
+  // capsule background lives on the inner fill so it can fade in/out cleanly.
+  photoBtn: { width: PHOTO_SLOT, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', alignSelf: 'flex-end', zIndex: 2 },
+  photoFill: { width: '100%', height: '100%', borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
   inputWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 22, paddingLeft: 14, paddingRight: 14, paddingVertical: 10, minHeight: 44, borderWidth: 1, zIndex: 1 },
   sendBtn: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', marginLeft: 8 },
   // Interactive-glass shape variants — same geometry as the flat capsules but
