@@ -62,12 +62,18 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
 
   // Swallow progress 0→1, animated entirely on the UI thread.
   const sw = useSharedValue(0);
+  // Capsule visibility 1→0, driven SEPARATELY with a fast timing so the photo
+  // capsule disappears/reappears immediately on toggle (no perceived delay),
+  // independent of the slower 240ms slide. Front-loaded in BOTH directions
+  // because each toggle kicks its own fast withTiming.
+  const cap = useSharedValue(1);
   const expandedRef = useRef(false);
   const setExpanded = useCallback((next: boolean) => {
     if (next === expandedRef.current) return;
     expandedRef.current = next;
     sw.value = withTiming(next ? 1 : 0, { duration: 240, easing: Easing.inOut(Easing.quad) });
-  }, [sw]);
+    cap.value = withTiming(next ? 0 : 1, { duration: 130, easing: Easing.out(Easing.quad) });
+  }, [sw, cap]);
 
   // ── Native paste wrapper (expo-paste-input) — crash-safe lazy load ──────
   const [PasteWrapper, setPasteWrapper] = useState<React.ComponentType<any> | null>(null);
@@ -120,8 +126,8 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
   const fieldPadStyle = useAnimatedStyle(() => ({
     paddingLeft: interpolate(sw.value, [0, 1], [BASE_PAD_LEFT, EXPAND_PAD_LEFT]),
   }));
-  const capsuleStyle = useAnimatedStyle(() => ({ opacity: interpolate(sw.value, [0, 1], [1, 0]) }));
-  const embeddedIconStyle = useAnimatedStyle(() => ({ opacity: interpolate(sw.value, [0, 1], [0, 1]) }));
+  const capsuleStyle = useAnimatedStyle(() => ({ opacity: cap.value }));
+  const embeddedIconStyle = useAnimatedStyle(() => ({ opacity: interpolate(cap.value, [0, 1], [1, 0]) }));
 
   const textInputEl = (
     <TextInput
