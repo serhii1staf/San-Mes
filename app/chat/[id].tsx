@@ -1200,6 +1200,25 @@ export default function ChatScreen() {
     setKeepLifted(false);
   }, []);
 
+  // Tap-to-dismiss for the media panel that does NOT block scrolling. A Tap
+  // gesture is recognised only when the finger stays put — the instant it
+  // moves (a scroll), the tap FAILS and the FlatList scroll wins. Enabled only
+  // while a panel is open, so normal chat gestures are untouched otherwise.
+  // This lets the list scroll freely with the panel open (Telegram-style) and
+  // a plain tap on the messages still dismisses the panel.
+  const panelDismissTap = useMemo(
+    () =>
+      Gesture.Tap()
+        .enabled(!!panelTab)
+        .maxDuration(250)
+        .maxDistance(10)
+        .onEnd((_e, success) => {
+          'worklet';
+          if (success) runOnJS(dismissPanel)();
+        }),
+    [panelTab, dismissPanel],
+  );
+
   // Insert a picked emoji into the composer; panel stays open for multi-pick.
   // Also record it in the recently-used list (shown at the top of the panel).
   const onPickEmoji = useCallback((e: string) => {
@@ -2555,6 +2574,7 @@ export default function ChatScreen() {
           rises every message rides up with it (last message stays visible
           above the input bar) without triggering FlatList layout. */}
       <Reanimated.View style={[StyleSheet.absoluteFill, listShiftStyle]} pointerEvents="box-none">
+      <GestureDetector gesture={panelDismissTap}>
       <FlatList
         ref={flatListRef}
         data={windowedMessages}
@@ -2603,6 +2623,7 @@ export default function ChatScreen() {
         onScroll={onChatScroll}
         scrollEventThrottle={32}
       />
+      </GestureDetector>
       </Reanimated.View>
 
       {/* Static under-input gradient. Pinned to the bottom of the screen
@@ -2720,18 +2741,6 @@ export default function ChatScreen() {
             )}
           </Animated.View>
         </Reanimated.View>
-      )}
-
-      {/* Tap-catcher — while a media panel is open, a tap on the message-list
-          region (everything above the panel + bar) dismisses the panel, just
-          like a tap outside dismisses the keyboard. Rendered BEFORE the input
-          bar + panel so those paint on top and keep receiving their own taps;
-          the header (rendered later) also stays tappable. Transparent. */}
-      {!searchMode && panelTab && (
-        <Pressable
-          onPress={dismissPanel}
-          style={StyleSheet.absoluteFill}
-        />
       )}
 
       {/* Input bar — manually keyboard-stuck via `barWrapStyle` (translateY =

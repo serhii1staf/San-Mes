@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { View, FlatList, TextInput, Pressable, Platform, ActivityIndicator, StyleSheet, Text as RNText, Modal, Alert, LayoutAnimation, UIManager, InteractionManager, ScrollView, Dimensions, Keyboard } from 'react-native';
 import { useReanimatedKeyboardAnimation, useKeyboardHandler } from 'react-native-keyboard-controller';
 import Reanimated, { useAnimatedStyle, useSharedValue, withTiming, runOnJS, Easing } from 'react-native-reanimated';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import * as Clipboard from 'expo-clipboard';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -787,6 +788,22 @@ export default function CommentsScreen() {
     setKeepLifted(false);
   }, []);
 
+  // Tap-to-dismiss that yields to scrolling — a Tap fails the moment the finger
+  // moves, so the comment list scrolls freely with the panel open; a plain tap
+  // on the list dismisses the panel. Enabled only while a panel is open.
+  const panelDismissTap = useMemo(
+    () =>
+      Gesture.Tap()
+        .enabled(!!panelTab)
+        .maxDuration(250)
+        .maxDistance(10)
+        .onEnd((_e, success) => {
+          'worklet';
+          if (success) runOnJS(dismissPanel)();
+        }),
+    [panelTab, dismissPanel],
+  );
+
   // Composer button taps: open the panel, switch tabs if the other is open, or
   // return to the keyboard if this tab is already open.
   const onEmojiBtn = useCallback(() => {
@@ -892,6 +909,7 @@ export default function CommentsScreen() {
           // UI-thread transform — no FlatList relayout when the keyboard
           // animates, and the last comment stays above the sticky input.
           <Reanimated.View style={[{ flex: 1 }, listShiftStyle]} pointerEvents="box-none">
+          <GestureDetector gesture={panelDismissTap}>
           <FlatList
             ref={listRef}
             data={comments}
@@ -1006,6 +1024,7 @@ export default function CommentsScreen() {
               </View>
             }
           />
+          </GestureDetector>
           </Reanimated.View>
         )}
 
@@ -1020,17 +1039,6 @@ export default function CommentsScreen() {
           pointerEvents="none"
           style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: insets.bottom + 120 }}
         />
-
-        {/* Tap-catcher — dismiss the open media panel when the comment list is
-            tapped, like a tap outside dismisses the keyboard. Starts below the
-            header so the back button stays tappable; the input bar + panel
-            render after this so they keep their own taps. */}
-        {panelTab && (
-          <Pressable
-            onPress={dismissPanel}
-            style={{ position: 'absolute', top: headerContentHeight, left: 0, right: 0, bottom: 0 }}
-          />
-        )}
 
         {/* Input area — manually keyboard-stuck via `barWrapStyle`
             (translateY = -max(keyboardHeight, panelHeight)) so the emoji/GIF
