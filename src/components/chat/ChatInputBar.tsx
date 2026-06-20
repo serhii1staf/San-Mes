@@ -1,34 +1,37 @@
 import React, { memo, useState, useImperativeHandle, forwardRef, useCallback, useRef, useEffect } from 'react';
-import { View, TextInput, Pressable, Platform, StyleSheet, Text, LayoutAnimation, UIManager } from 'react-native';
-import Reanimated from 'react-native-reanimated';
+import { View, TextInput, Pressable, StyleSheet, Text } from 'react-native';
+import Reanimated, { useSharedValue, useAnimatedStyle, withTiming, Easing, interpolate } from 'react-native-reanimated';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../../theme';
 import { useT } from '../../i18n/store';
 import { perfMonitor } from '../../services/perfMonitor';
 import { useLiquidGlassActive, NativeGlassView } from '../ui/LiquidGlass';
 
-// Enable LayoutAnimation on Android (no-op on iOS where it's always on).
-if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
-  UIManager.setLayoutAnimationEnabledExperimental(true);
-}
+// Geometry of the photo/attach button slot. When the field expands (multiline)
+// it slides LEFT over this slot so the growing input swallows the button.
+const PHOTO_SLOT = 44;
+const GAP = 8;
+const BASE_PAD_LEFT = 14;
+// The field's left edge travels this far to reach the button's left edge.
+const SWALLOW_DX = PHOTO_SLOT + GAP; // 52
+const EXPAND_PAD_LEFT = BASE_PAD_LEFT + SWALLOW_DX; // 66
 
-// Isolated chat input bar.
+// ── Isolated chat input bar ───────────────────────────────────────────────
 //
-// Performance: this component owns the text-input state LOCALLY. Typing therefore
-// re-renders only this small bar — never the parent ChatScreen or the message
-// FlatList. That removes the keystroke lag that came from re-reconciling the whole
-// message tree on every character.
+// Performance: owns the text-input state LOCALLY so typing re-renders only this
+// bar, never the parent screen or the message FlatList.
 //
-// The parent drives "edit/reply prefill" and "clear" imperatively via the ref so
-// it still never needs to hold the live text value.
-//
-// Layout: three SEPARATE rounded capsules — attach button | input field | send —
-// each pinned to the bottom edge so the field grows UPWARD on multiline while the
-// buttons stay put. The field only ever animates its HEIGHT (a single
-// LayoutAnimation pass per line change, exactly like the AI / Music composers).
-// We deliberately do NOT animate any horizontal layout (no "swallow" effect):
-// mixing a JS-driven layout animation with the height LayoutAnimation made the
-// whole bar jitter, so it was removed in favour of rock-solid smoothness.
+// Animation architecture (this is the important part): EVERYTHING animates on
+// the UI thread via Reanimated. The earlier jitter came from mixing RN
+// `Animated` (JS-thread layout writes) with RN `LayoutAnimation` — two systems
+// fighting over the same layout pass. Here:
+//   • The "swallow" (photo button sliding under the field) animates `marginRight`
+//     + the field's `paddingLeft` from ONE shared value via `useAnimatedStyle`.
+//     Reanimated commits these layout props on the UI thread, and because the
+//     margin and padding move in lock-step the text column stays pinned (no
+//     re-wrap, no feedback loop).
+//   • Height grows instantly (no LayoutAnimation) — so nothing competes with the
+//     swallow animation. One animation system only ⇒ no jitter.
 
 export interface ChatInputBarHandle {
   setText: (text: string) => void;
@@ -42,9 +45,7 @@ interface ChatInputBarProps {
   onSend: (text: string) => void;
   onPickImages: () => void;
   onPasteImage?: () => void;
-  // Native paste (expo-paste-input): fires with the local file:// URIs of
-  // images/stickers/GIFs the user pasted via the OS paste menu or keyboard.
-  // Only wired on builds that include the native module (see lazy load below).
+  // Native paste (expo-paste-input): local file:// URIs of pasted media.
   onPasteImages?: (uris: string[]) => void;
   onOpenGif: () => void;
   inputRowStyle: any; // Reanimated animated style (paddingBottom)
@@ -56,18 +57,19 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
 ) {
   const theme = useTheme();
   const t = useT();
-  // Native iOS-26 liquid glass for the input chrome. iOS-only and only when the
-  // user enabled it — everywhere else this is false and the flat capsules render
-  // unchanged (Android always hits the cheap fallback).
   const glassActive = useLiquidGlassActive();
   const [text, setText] = useState('');
 
+  // Swallow progress 0→1, animated entirely on the UI thread.
+  const sw = useSharedValue(0);
+  const expandedRef = useRef(false);
+  const setExpanded = useCallback((next: boolean) => {
+    if (next === expandedRef.current) return;
+    expandedRef.current = next;
+    sw.value = withTiming(next ? 1 : 0, { duration: 240, easing: Easing.inOut(Easing.quad) });
+  }, [sw]);
+
   // ── Native paste wrapper (expo-paste-input) — crash-safe lazy load ──────
-  // The native view `ExpoPasteInput` only exists in builds that bundled the
-  // module. On OLDER binaries receiving this JS via OTA, importing the module
-  // would throw at `requireNativeView` time — so we load it dynamically inside
-  // an effect and swallow the rejection. When present, we wrap the TextInput so
-  // the OS paste menu / keyboard can drop images, stickers and GIFs straight in.
   const [PasteWrapper, setPasteWrapper] = useState<React.ComponentType<any> | null>(null);
   useEffect(() => {
     let mounted = true;
@@ -84,35 +86,43 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
     if (payload?.type === 'images' && Array.isArray(payload.uris) && payload.uris.length > 0) {
       onPasteImages?.(payload.uris);
     }
-    // 'text' is already inserted by the TextInput; 'unsupported' is ignored.
   }, [onPasteImages]);
 
   useImperativeHandle(ref, () => ({
-    setText: (t: string) => setText(t),
-    clear: () => { setText(''); lastHeightRef.current = 0; },
+    setText: (val: string) => { setText(val); if (!val) setExpanded(false); },
+    clear: () => { setText(''); lastHeightRef.current = 0; setExpanded(false); },
     getText: () => text,
-  }), [text]);
+  }), [text, setExpanded]);
 
   const canSend = text.trim().length > 0 || hasPendingImages;
 
   const handleSend = useCallback(() => {
-    const t = text;
+    const val = text;
     setText('');
-    onSend(t);
+    onSend(val);
   }, [text, onSend]);
 
-  // Animate height changes when the multiline TextInput grows/shrinks so the
-  // field resizes smoothly instead of snapping line-by-line. Guard on the last
-  // reported height so typing within a single line never triggers a layout pass.
+  // Detect 1↔multi-line with hysteresis (expand >34px, collapse <28px) so it
+  // can't flip-flop on the boundary. Height itself snaps (no LayoutAnimation).
   const lastHeightRef = useRef(0);
   const handleContentSizeChange = useCallback((e: { nativeEvent: { contentSize: { height: number } } }) => {
     const h = Math.round(e.nativeEvent.contentSize.height);
     if (h === lastHeightRef.current) return;
     lastHeightRef.current = h;
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-  }, []);
+    if (!expandedRef.current && h > 34) setExpanded(true);
+    else if (expandedRef.current && h < 28) setExpanded(false);
+  }, [setExpanded]);
 
-  // The stateful TextInput (owns the live text value), shared by both paths.
+  // UI-thread animated styles.
+  const photoWrapStyle = useAnimatedStyle(() => ({
+    marginRight: interpolate(sw.value, [0, 1], [GAP, -PHOTO_SLOT]),
+  }));
+  const fieldPadStyle = useAnimatedStyle(() => ({
+    paddingLeft: interpolate(sw.value, [0, 1], [BASE_PAD_LEFT, EXPAND_PAD_LEFT]),
+  }));
+  const capsuleStyle = useAnimatedStyle(() => ({ opacity: interpolate(sw.value, [0, 1], [1, 0]) }));
+  const embeddedIconStyle = useAnimatedStyle(() => ({ opacity: interpolate(sw.value, [0, 1], [0, 1]) }));
+
   const textInputEl = (
     <TextInput
       value={text}
@@ -121,10 +131,7 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
       placeholderTextColor={theme.colors.text.tertiary}
       style={{ flex: 1, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular, maxHeight: 100, paddingTop: 0, paddingBottom: 0, minHeight: 22, lineHeight: 20, alignSelf: 'stretch' }}
       multiline
-      // Top-aligned so multiline text fills from the top-left and grows downward.
       textAlignVertical="top"
-      // Autocorrect / autocomplete / spellcheck OFF — the user found the
-      // keyboard's auto-replacement disruptive while chatting.
       autoCorrect={false}
       autoComplete="off"
       spellCheck={false}
@@ -133,8 +140,10 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
     />
   );
 
-  const inputInner = (
-    <>
+  // Field content (TextInput + GIF) with the animated left padding that keeps
+  // the text pinned while the field swallows the button.
+  const fieldContent = (
+    <Reanimated.View style={[styles.fieldContent, fieldPadStyle]}>
       {PasteWrapper ? (
         <PasteWrapper style={{ flex: 1 }} onPaste={handleNativePaste}>
           {textInputEl}
@@ -142,40 +151,45 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
       ) : (
         textInputEl
       )}
-      {/* GIF button inside the field, right side, pinned to the bottom row. */}
       <Pressable onPress={onOpenGif} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 4, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8, backgroundColor: theme.colors.accent.primary + '18' }}>
         <Text style={{ fontSize: 11, fontWeight: '800', color: theme.colors.accent.primary }}>GIF</Text>
       </Pressable>
-    </>
+    </Reanimated.View>
   );
 
   return (
     <Reanimated.View style={[styles.row, inputRowStyle]}>
-      {/* Attach/photo button — a separate capsule with a gap, like the send
-          button. Interactive liquid glass (touch stretch-morph) when enabled,
-          flat bordered capsule otherwise. Long-press pastes a clipboard image. */}
-      <Pressable
-        onPress={onPickImages}
-        onLongPress={onPasteImage}
-        delayLongPress={300}
-        style={glassActive ? { borderRadius: 22, marginRight: 8, alignSelf: 'flex-end' } : [styles.iconBtn, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}
-      >
-        {glassActive ? (
-          <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.btnGlass}>
+      {/* Photo/attach button — slides under the field as it expands (animated
+          marginRight). zIndex keeps the icon above the field. */}
+      <Reanimated.View style={[styles.photoWrap, photoWrapStyle]}>
+        <Pressable onPress={onPickImages} onLongPress={onPasteImage} delayLongPress={300} style={styles.photoBtn}>
+          {/* Collapsed capsule (interactive glass with touch-morph, or flat) —
+              cross-fades out as the field swallows it. */}
+          <Reanimated.View style={[StyleSheet.absoluteFill, styles.center, capsuleStyle]}>
+            {glassActive ? (
+              <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.capsuleFill}>
+                <Feather name="image" size={20} color={theme.colors.accent.primary} />
+              </NativeGlassView>
+            ) : (
+              <View style={[styles.capsuleFill, { borderWidth: 1, backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
+                <Feather name="image" size={20} color={theme.colors.accent.primary} />
+              </View>
+            )}
+          </Reanimated.View>
+          {/* Embedded icon — fades in over the field once swallowed. */}
+          <Reanimated.View pointerEvents="none" style={embeddedIconStyle}>
             <Feather name="image" size={20} color={theme.colors.accent.primary} />
-          </NativeGlassView>
-        ) : (
-          <Feather name="image" size={20} color={theme.colors.accent.primary} />
-        )}
-      </Pressable>
+          </Reanimated.View>
+        </Pressable>
+      </Reanimated.View>
       {/* Input field. */}
       {glassActive ? (
         <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.inputWrapGlass}>
-          {inputInner}
+          {fieldContent}
         </NativeGlassView>
       ) : (
         <View style={[styles.inputWrap, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
-          {inputInner}
+          {fieldContent}
         </View>
       )}
       {/* Send button. */}
@@ -195,14 +209,14 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
 }));
 
 const styles = StyleSheet.create({
-  // Children pinned to the bottom edge so the field grows UPWARD while the
-  // buttons stay anchored to the row's bottom (the keyboard top).
   row: { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 12, paddingTop: 8 },
-  iconBtn: { width: 44, height: 44, borderRadius: 22, borderWidth: 1, alignItems: 'center', justifyContent: 'center', marginRight: 8, alignSelf: 'flex-end' },
-  inputWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 22, paddingHorizontal: 14, paddingVertical: 10, minHeight: 44, borderWidth: 1 },
+  photoWrap: { alignSelf: 'flex-end', zIndex: 2 },
+  photoBtn: { width: PHOTO_SLOT, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
+  center: { alignItems: 'center', justifyContent: 'center' },
+  capsuleFill: { width: '100%', height: '100%', borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
+  fieldContent: { flex: 1, flexDirection: 'row', alignItems: 'center' },
+  inputWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 22, paddingRight: 14, paddingVertical: 10, minHeight: 44, borderWidth: 1, zIndex: 1 },
   sendBtn: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', marginLeft: 8 },
-  // Interactive-glass shape — same geometry as the flat capsules but no border
-  // and no overflow clipping, so the liquid glass can morph outward on touch.
   btnGlass: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
-  inputWrapGlass: { flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 22, paddingHorizontal: 14, paddingVertical: 10, minHeight: 44 },
+  inputWrapGlass: { flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 22, paddingRight: 14, paddingVertical: 10, minHeight: 44, zIndex: 1 },
 });
