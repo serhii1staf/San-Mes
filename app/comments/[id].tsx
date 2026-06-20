@@ -1106,15 +1106,15 @@ export default function CommentsScreen() {
                   onFocus={handleInputFocus}
                 />
                 {/* Emoji + GIF buttons inside the input, right side */}
-                <Pressable onPress={onEmojiBtn} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 2, height: 30, alignItems: 'center', justifyContent: 'center' }}>
+                <Pressable onPress={onEmojiBtn} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 2, height: 24, alignItems: 'center', justifyContent: 'center' }}>
                   <AnimatedEmojiIcon size={20} color={emojiOpen ? theme.colors.accent.primary : theme.colors.text.tertiary} />
                 </Pressable>
                 {panelTab ? (
-                  <Pressable onPress={closeEmojiToKeyboard} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 2, height: 30, paddingHorizontal: 8, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.accent.primary + '18' }}>
-                    <AnimatedKeyboardIcon size={20} color={theme.colors.accent.primary} />
+                  <Pressable onPress={closeEmojiToKeyboard} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 2, height: 24, paddingHorizontal: 8, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.accent.primary + '18' }}>
+                    <AnimatedKeyboardIcon size={18} color={theme.colors.accent.primary} />
                   </Pressable>
                 ) : (
-                  <Pressable onPress={openGif} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 2, height: 30, paddingHorizontal: 8, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.accent.primary + '18' }}>
+                  <Pressable onPress={openGif} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 2, height: 24, paddingHorizontal: 8, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.accent.primary + '18' }}>
                     <AnimatedGifIcon color={theme.colors.accent.primary} fontSize={11} />
                   </Pressable>
                 )}
@@ -1140,15 +1140,15 @@ export default function CommentsScreen() {
                   onFocus={handleInputFocus}
                 />
                 {/* Emoji + GIF buttons inside the input, right side */}
-                <Pressable onPress={onEmojiBtn} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 2, height: 30, alignItems: 'center', justifyContent: 'center' }}>
+                <Pressable onPress={onEmojiBtn} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 2, height: 24, alignItems: 'center', justifyContent: 'center' }}>
                   <AnimatedEmojiIcon size={20} color={emojiOpen ? theme.colors.accent.primary : theme.colors.text.tertiary} />
                 </Pressable>
                 {panelTab ? (
-                  <Pressable onPress={closeEmojiToKeyboard} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 2, height: 30, paddingHorizontal: 8, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.accent.primary + '18' }}>
-                    <AnimatedKeyboardIcon size={20} color={theme.colors.accent.primary} />
+                  <Pressable onPress={closeEmojiToKeyboard} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 2, height: 24, paddingHorizontal: 8, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.accent.primary + '18' }}>
+                    <AnimatedKeyboardIcon size={18} color={theme.colors.accent.primary} />
                   </Pressable>
                 ) : (
-                  <Pressable onPress={openGif} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 2, height: 30, paddingHorizontal: 8, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.accent.primary + '18' }}>
+                  <Pressable onPress={openGif} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 2, height: 24, paddingHorizontal: 8, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.accent.primary + '18' }}>
                     <AnimatedGifIcon color={theme.colors.accent.primary} fontSize={11} />
                   </Pressable>
                 )}

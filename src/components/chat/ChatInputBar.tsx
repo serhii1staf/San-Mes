@@ -234,12 +234,14 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
         textInputEl
       )}
       {emojiOpen || gifOpen ? (
-        // A panel is open → this slot returns the user to the keyboard.
-        <Pressable onPress={onToggleEmoji} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 4, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8, backgroundColor: theme.colors.accent.primary + '18' }}>
-          <AnimatedKeyboardIcon size={22} color={theme.colors.accent.primary} />
+        // A panel is open → this slot returns the user to the keyboard. Fixed
+        // height matches the GIF state so swapping GIF↔keyboard never resizes
+        // the field (no "text shifts up" jump).
+        <Pressable onPress={onToggleEmoji} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 4, height: 24, paddingHorizontal: 7, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.accent.primary + '18' }}>
+          <AnimatedKeyboardIcon size={18} color={theme.colors.accent.primary} />
         </Pressable>
       ) : (
-        <Pressable onPress={onOpenGif} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 4, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8, backgroundColor: theme.colors.accent.primary + '18' }}>
+        <Pressable onPress={onOpenGif} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 4, height: 24, paddingHorizontal: 7, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.accent.primary + '18' }}>
           <AnimatedGifIcon color={theme.colors.accent.primary} fontSize={11} />
         </Pressable>
       )}
