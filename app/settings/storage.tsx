@@ -8,8 +8,7 @@ import Svg, { Circle, G } from 'react-native-svg';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
 import { triggerHaptic } from '../../src/utils/haptics';
-import { kvAllEntries, kvDeleteRawKeys, kvGetJSONSync, kvGetStringRawSync } from '../../src/services/kvStore';
-import { measureImageCacheBytes, clearImageCache } from '../../src/services/imageCacheStore';
+import { kvAllEntries, kvDeleteRawKeys } from '../../src/services/kvStore';
 import { t as tStatic, useT } from '../../src/i18n/store';
 
 // Storage screen — the on-device cache is visualised as a clean, segmented
@@ -22,13 +21,9 @@ import { t as tStatic, useT } from '../../src/i18n/store';
 //
 // Sources of cache size:
 //   - MMKV (every kvAllEntries() row, bucketed by key prefix below).
-//   - The expo-image on-disk image cache, measured separately via
-//     `measureImageCacheBytes()` (expo-image getCachePathAsync to locate the
-//     directory + expo-file-system Directory.size to sum it) and surfaced as
-//     the "Images / Media" category. This is the cache that actually grows to
-//     Telegram-like sizes; the JSON above is only a few hundred KB. When the
-//     measurement is unavailable on the running native binary we HIDE that
-//     category rather than show a wrong number.
+//   - We do NOT include the expo-image disk cache here because expo-image
+//     doesn't expose its on-disk size publicly; that cache is reset whenever
+//     the user clears app data via iOS Settings or reinstalls the app.
 
 interface Category {
   id: string;
@@ -48,13 +43,6 @@ const CATEGORY_DEFS: Category[] = [
   { id: 'notifications', label: 'storage.cat.notifications', color: '#F08A3E', emoji: '🔔', match: (k) => /notifications|notif/.test(k) },
   { id: 'misc',          label: 'storage.cat.misc',          color: '#7A8190', emoji: '✨', match: () => true },
 ];
-
-// The Images/Media category is NOT backed by MMKV keys — it's the expo-image
-// on-disk cache, measured asynchronously. Defined separately so it never
-// participates in the key-bucketing above; it's appended to the bucket list
-// only once a real byte count is available.
-const IMAGES_CATEGORY_ID = 'images';
-const IMAGES_CATEGORY: Category = { id: IMAGES_CATEGORY_ID, label: 'storage.cat.images', color: '#34C7A0', emoji: '🖼️', match: () => false };
 
 interface CategoryUsage {
   def: Category;
@@ -182,39 +170,9 @@ export default function StorageScreen() {
   const insets = useSafeAreaInsets();
   const t = useT();
   const [entries, setEntries] = useState<Array<{ key: string; bytes: number }>>([]);
-  // On-disk image cache size in bytes. `null` = unavailable / not yet measured
-  // (the Images/Media category is hidden in that case so we never show a wrong
-  // number). A real number (including 0) means the measurement succeeded.
-  const [imageBytes, setImageBytes] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [isClearing, setIsClearing] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set([...CATEGORY_DEFS.map((c) => c.id), IMAGES_CATEGORY_ID]));
-
-  // Gather a few raw image URLs the app is likely to have cached, so the
-  // image-cache measurement can dynamically discover expo-image's on-disk
-  // directory via getCachePathAsync. Cheap synchronous MMKV reads; all
-  // failures fall through to the known-directory fallback inside the helper.
-  const gatherImageCandidates = useCallback((): string[] => {
-    const out: string[] = [];
-    try {
-      const feed = kvGetJSONSync<any[]>('@san:feed_posts', []);
-      for (const p of feed.slice(0, 8)) {
-        const u = p?.imageUrl || (Array.isArray(p?.imageUrls) ? p.imageUrls[0] : undefined);
-        if (typeof u === 'string' && u.startsWith('http')) out.push(u);
-      }
-    } catch {}
-    try {
-      // `@san:all_profiles` is a global (un-namespaced) key stored raw in MMKV.
-      const raw = kvGetStringRawSync('@san:all_profiles');
-      if (raw) {
-        const profiles = JSON.parse(raw) as any[];
-        for (const pr of profiles.slice(0, 8)) {
-          if (typeof pr?.banner_url === 'string' && pr.banner_url.startsWith('http')) out.push(pr.banner_url);
-        }
-      }
-    } catch {}
-    return out;
-  }, []);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set(CATEGORY_DEFS.map((c) => c.id)));
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -226,28 +184,11 @@ export default function StorageScreen() {
     } finally {
       setLoading(false);
     }
-    // Measure the on-disk image cache out of band — it can take a beat on a
-    // large cache (native directory walk), so it must never block the JSON
-    // breakdown from rendering. Guarded end-to-end; `null` keeps the category
-    // hidden.
-    try {
-      const bytes = await measureImageCacheBytes(gatherImageCandidates());
-      setImageBytes(bytes);
-    } catch {
-      setImageBytes(null);
-    }
-  }, [gatherImageCandidates]);
+  }, []);
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  const kvBuckets = useMemo(() => bucketEntries(entries), [entries]);
-  // Append the Images/Media bucket only when a real measurement exists, so an
-  // unavailable measurement (older binary / no cache dir) hides the category
-  // entirely instead of rendering a misleading 0.
-  const buckets = useMemo<CategoryUsage[]>(() => {
-    if (imageBytes == null) return kvBuckets;
-    return [...kvBuckets, { def: IMAGES_CATEGORY, bytes: imageBytes, keys: [] }];
-  }, [kvBuckets, imageBytes]);
+  const buckets = useMemo(() => bucketEntries(entries), [entries]);
   const total = useMemo(() => buckets.reduce((sum, b) => sum + b.bytes, 0), [buckets]);
   const selectedBuckets = useMemo(() => buckets.filter((b) => selectedIds.has(b.def.id)), [buckets, selectedIds]);
   const selectedTotal = useMemo(() => selectedBuckets.reduce((sum, b) => sum + b.bytes, 0), [selectedBuckets]);
@@ -274,16 +215,8 @@ export default function StorageScreen() {
             setIsClearing(true);
             try {
               const keysToDelete: string[] = [];
-              let clearImages = false;
-              for (const b of selectedBuckets) {
-                if (b.def.id === IMAGES_CATEGORY_ID) clearImages = true;
-                else keysToDelete.push(...b.keys);
-              }
-              if (keysToDelete.length > 0) kvDeleteRawKeys(keysToDelete);
-              // The Images/Media category has no MMKV keys — clear it through
-              // expo-image's disk-cache API instead. Guarded; a no-op on a
-              // binary that lacks the API.
-              if (clearImages) await clearImageCache();
+              for (const b of selectedBuckets) keysToDelete.push(...b.keys);
+              kvDeleteRawKeys(keysToDelete);
               await refresh();
             } finally {
               setIsClearing(false);
