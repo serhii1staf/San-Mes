@@ -20,9 +20,6 @@ const GAP = 8;
 const SWALLOW_DX = PHOTO_SLOT + GAP; // 52
 const BASE_PAD_LEFT = 14;
 
-// Glass capsule that can fade its opacity (for the photo button morph).
-const AnimatedGlass = Animated.createAnimatedComponent(NativeGlassView);
-
 // Isolated chat input bar.
 //
 // Performance: this component owns the text-input state LOCALLY. Typing therefore
@@ -97,8 +94,13 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
 
   const photoMarginRight = swallow.interpolate({ inputRange: [0, 1], outputRange: [GAP, -PHOTO_SLOT] });
   const fieldPadLeft = swallow.interpolate({ inputRange: [0, 1], outputRange: [BASE_PAD_LEFT, BASE_PAD_LEFT + SWALLOW_DX] });
-  // Capsule fades out as it merges into the field; the icon stays fully opaque.
-  const capsuleOpacity = swallow.interpolate({ inputRange: [0, 0.6, 1], outputRange: [1, 0, 0] });
+  // Cross-fade: the glass capsule (with its own icon, and the touch-morph) stays
+  // fully visible while the field slides in to meet it, then fades over the last
+  // ~40% — at which point the plain "embedded" icon has faded in over the field.
+  // This keeps the liquid-glass stretch on tap AND avoids the "border vanishes
+  // before the field arrives" look.
+  const capsuleOpacity = swallow.interpolate({ inputRange: [0, 0.6, 1], outputRange: [1, 1, 0] });
+  const embeddedIconOpacity = swallow.interpolate({ inputRange: [0, 0.6, 1], outputRange: [0, 0, 1] });
 
   // ── Native paste wrapper (expo-paste-input) — crash-safe lazy load ──────
   // The native view `ExpoPasteInput` only exists in builds that bundled the
@@ -234,12 +236,25 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
           sitting inside the grown field. zIndex keeps the icon above the field. */}
       <Animated.View style={{ marginRight: photoMarginRight, alignSelf: 'flex-end', zIndex: 2 }}>
         <Pressable onPress={onPickImages} onLongPress={onPasteImage} delayLongPress={300} style={styles.photoBtn}>
-          {glassActive ? (
-            <AnimatedGlass glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} pointerEvents="none" style={[styles.photoCapsule, { opacity: capsuleOpacity }]} />
-          ) : (
-            <Animated.View pointerEvents="none" style={[styles.photoCapsule, { opacity: capsuleOpacity, borderWidth: 1, backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]} />
-          )}
-          <Feather name="image" size={20} color={theme.colors.accent.primary} />
+          {/* Collapsed capsule — interactive liquid glass (keeps the touch
+              stretch-morph) with the icon as its child. Cross-fades out as the
+              field swallows it. */}
+          <Animated.View style={[StyleSheet.absoluteFill, styles.center, { opacity: capsuleOpacity }]}>
+            {glassActive ? (
+              <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.photoCapsuleFill}>
+                <Feather name="image" size={20} color={theme.colors.accent.primary} />
+              </NativeGlassView>
+            ) : (
+              <View style={[styles.photoCapsuleFill, { borderWidth: 1, backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
+                <Feather name="image" size={20} color={theme.colors.accent.primary} />
+              </View>
+            )}
+          </Animated.View>
+          {/* Embedded icon — fades IN once the field has swallowed the button,
+              so the icon reads as sitting inside the grown field. */}
+          <Animated.View pointerEvents="none" style={{ opacity: embeddedIconOpacity }}>
+            <Feather name="image" size={20} color={theme.colors.accent.primary} />
+          </Animated.View>
         </Pressable>
       </Animated.View>
       {/* Input container: glass when enabled, flat capsule otherwise. paddingLeft
@@ -280,7 +295,8 @@ const styles = StyleSheet.create({
   // layer (photoCapsule) so it can fade out independently as the field swallows
   // it; the icon is centered on top.
   photoBtn: { width: PHOTO_SLOT, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
-  photoCapsule: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 22 },
+  center: { alignItems: 'center', justifyContent: 'center' },
+  photoCapsuleFill: { width: '100%', height: '100%', borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
   inputWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 22, paddingRight: 14, paddingVertical: 10, minHeight: 44, borderWidth: 1, zIndex: 1 },
   sendBtn: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', marginLeft: 8 },
   // Interactive-glass shape variants — same geometry as the flat capsules but
