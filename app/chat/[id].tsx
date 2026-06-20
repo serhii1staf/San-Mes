@@ -746,11 +746,25 @@ export default function ChatScreen() {
   // it occupied above the keyboard — the keyboard dismiss interpolates from
   // (-kbHeight + opened) to (-panelHeight), so it doesn't move. The visible gap
   // between bar and panel is created inside the panel's own top padding.
-  const lifted = emojiOpen || keepLifted;
+  // The emoji panel keeps the input bar lifted via an animated SPACER rendered
+  // below the bar inside the KeyboardStickyView (see `emojiSpacerStyle` + JSX),
+  // NOT via the sticky offset — the spacer compensates the keyboard descent
+  // frame-for-frame so the bar never moves. So the sticky offset only carries
+  // the browser-band compensation now.
   const stickyOffset = useMemo(
-    () => ({ closed: lifted ? -emojiPanelHeight : 0, opened: stickyOpenedOffset }),
-    [stickyOpenedOffset, lifted, emojiPanelHeight],
+    () => ({ closed: 0, opened: stickyOpenedOffset }),
+    [stickyOpenedOffset],
   );
+
+  // Spacer height = panelHeight × (1 − keyboardProgress) while lifted. As the
+  // keyboard slides DOWN (progress 1→0) the spacer grows 0→panelHeight, exactly
+  // replacing the vanishing keyboard-driven translate — so the bar's distance
+  // from the screen bottom stays constant (= keyboard height ≈ panel height)
+  // and it doesn't jump. At rest (keyboard down, panel open) the spacer is the
+  // full panel height, holding the bar right above the panel.
+  const emojiSpacerStyle = useAnimatedStyle(() => ({
+    height: liftSV.value * emojiPanelSV.value * (1 - progress.value),
+  }));
 
   // Shift the entire message list upward by exactly the keyboard height when
   // it rises. We drive the translation from `useKeyboardHandler.onMove`
@@ -2150,6 +2164,9 @@ export default function ChatScreen() {
           onOpenEmoji={openEmoji}
           onToggleEmoji={closeEmojiToKeyboard}
         />
+        {/* Animated spacer that holds the input bar above the emoji panel as the
+            keyboard descends (and on the way back), with zero jump. */}
+        <Reanimated.View style={emojiSpacerStyle} />
       </KeyboardStickyView>
       )}
 
