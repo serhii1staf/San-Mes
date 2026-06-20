@@ -137,6 +137,15 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
   );
   const inputInner = (
     <>
+      {/* Attach/photo button — now lives INSIDE the input container on the
+          left, so the single rounded wrap visually surrounds it (one unified
+          composer instead of a detached button + field). `alignSelf:flex-end`
+          pins it to the bottom edge so it stays put while the field grows
+          upward. Plain icon (no nested glass — interactive glass renders its
+          children transparent). Long-press still pastes a clipboard image. */}
+      <Pressable onPress={onPickImages} onLongPress={onPasteImage} delayLongPress={300} hitSlop={8} style={{ alignSelf: 'flex-end', marginRight: 8, marginBottom: 1, padding: 2 }}>
+        <Feather name="image" size={22} color={theme.colors.accent.primary} />
+      </Pressable>
       {/* Wrap the TextInput in the native paste handler when the module is
           present (new builds). `flex: 1` keeps it filling the row exactly like
           the bare TextInput did. On older binaries PasteWrapper stays null and
@@ -157,35 +166,14 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
   );
 
   return (
-    // alignItems: 'flex-end' is the key — when the TextInput grows on multiline
-    // input, the wrap stretches UPWARD while the side buttons stay anchored to
-    // the row's bottom edge. Without this the row centers all children, which
-    // visually shoves the photo/GIF/send buttons up alongside the text.
+    // alignItems: 'flex-end' — the unified input wrap grows UPWARD on multiline
+    // while the send button stays pinned to the row's bottom edge. The attach
+    // and GIF buttons now live INSIDE the wrap (also flex-end), so the rounded
+    // container surrounds them and they hold their position as the field grows.
     <Reanimated.View style={[styles.row, inputRowStyle]}>
-      {/* Photo/image button → interactive liquid glass holding the icon as a
-          CHILD so the glass morphs outward on touch. NO overflow clipping. */}
-      <Pressable
-        onPress={onPickImages}
-        onLongPress={onPasteImage}
-        delayLongPress={300}
-        style={
-          glassActive
-            ? { borderRadius: 22, marginRight: 8 }
-            : [styles.iconBtn, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]
-        }
-      >
-        {glassActive ? (
-          <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.btnGlass}>
-            <Feather name="image" size={20} color={theme.colors.accent.primary} />
-          </NativeGlassView>
-        ) : (
-          <Feather name="image" size={20} color={theme.colors.accent.primary} />
-        )}
-      </Pressable>
-      {/* Input wrap → liquid glass holding the input content (TextInput + GIF
-          button) as CHILDREN. NON-interactive (interactive morph fights text
-          editing — TextInput rule) and NO overflow so the shape/padding/minHeight
-          stay identical to the flat path. */}
+      {/* Unified input container: attach icon + TextInput + GIF as children.
+          NON-interactive glass (interactive morph fights text editing) and no
+          overflow so the shape/padding/minHeight match the flat path. */}
       {glassActive ? (
         <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.inputWrapGlass}>
           {inputInner}
@@ -219,8 +207,7 @@ const styles = StyleSheet.create({
   // pinned to the bottom (which is the keyboard top), so visually the user
   // sees only the input bubble grow, not the buttons jump.
   row: { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 12, paddingTop: 8 },
-  iconBtn: { width: 44, height: 44, borderRadius: 22, borderWidth: 1, alignItems: 'center', justifyContent: 'center', marginRight: 8 },
-  inputWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 22, paddingHorizontal: 14, paddingVertical: 10, minHeight: 44, borderWidth: 1 },
+  inputWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 22, paddingLeft: 10, paddingRight: 14, paddingVertical: 10, minHeight: 44, borderWidth: 1 },
   sendBtn: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', marginLeft: 8 },
   // Interactive-glass shape variants — same geometry as the flat capsules but
   // NO border and NO overflow clipping, so the liquid glass can morph OUTWARD
@@ -229,5 +216,5 @@ const styles = StyleSheet.create({
   btnGlass: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
   // Input-wrap glass: same shape as `inputWrap` minus the border. NON-interactive
   // (the TextInput lives inside; interactive morph would fight text editing).
-  inputWrapGlass: { flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 22, paddingHorizontal: 14, paddingVertical: 10, minHeight: 44 },
+  inputWrapGlass: { flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 22, paddingLeft: 10, paddingRight: 14, paddingVertical: 10, minHeight: 44 },
 });
