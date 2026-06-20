@@ -834,7 +834,11 @@ export default function ChatScreen() {
     setEmojiPanelHeight(h);
     setKeepLifted(false);
     setEmojiOpen(true);
-    Keyboard.dismiss();
+    // Defer the dismiss one frame so the lifted sticky-offset is COMMITTED
+    // before the keyboard starts descending. Dismissing in the same tick left
+    // a frame where the offset was still 0 while the keyboard moved, which the
+    // user saw as the bar darting up and settling. One rAF removes that race.
+    requestAnimationFrame(() => Keyboard.dismiss());
   }, [emojiPanelSV]);
 
   // Return to the keyboard: hide the panel, keep the bar lifted, and focus the
