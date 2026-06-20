@@ -50,6 +50,18 @@ import { ScreenshotShield } from '../../src/components/ui/ScreenshotShield';
 
 const REPLY_THRESHOLD = 60;
 const SCREEN_WIDTH = Dimensions.get('window').width;
+const SCREEN_HEIGHT = Dimensions.get('window').height;
+
+// ── Telegram-style windowed message loading ───────────────────────────────
+// Very long conversations must NOT mount/parse their whole history on open.
+// We render only the most-recent `INITIAL_WINDOW` messages and grow the
+// window by `WINDOW_CHUNK` as the user scrolls toward the top (which, on an
+// INVERTED list, is `onEndReached`). `SEED_CAP` bounds the synchronous
+// first-paint parse — the full history is still hydrated into the store off
+// the critical path so scroll-up and reply-jump to old messages keep working.
+const INITIAL_WINDOW = 40;
+const WINDOW_CHUNK = 40;
+const SEED_CAP = 60;
 
 // ── Legacy relative-sender healing ────────────────────────────────────────
 // Older builds stored chat messages with a RELATIVE sentinel senderId:
@@ -90,7 +102,13 @@ const bubbleStyles = StyleSheet.create({
   swipeIconCircle: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
   bubbleBase: { paddingHorizontal: 14, paddingVertical: 10 },
   replyBlock: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingLeft: 8, borderLeftWidth: 2, marginBottom: 6 },
-  replyTextWrap: { flex: 1 },
+  // `flexShrink:1 + minWidth:0` (NOT `flex:1`) so the reply preview contributes
+  // its INTRINSIC width to the bubble's column: a short message replying to a
+  // long one expands the bubble to fit the preview (capped by the bubble's 78%
+  // maxWidth), and the one-line reply texts ellipsize at that max width instead
+  // of being cut to the narrow message-content width. `minWidth:0` lets the
+  // child shrink below its content size so the ellipsis kicks in cleanly.
+  replyTextWrap: { flexShrink: 1, minWidth: 0 },
   replyAvatar: { width: 30, height: 30, borderRadius: 6 },
   replyPixel: { borderRadius: 6 },
   replyHeading: { fontSize: 11 },
@@ -539,6 +557,12 @@ type VisibilityTracker = {
   // screenful of animated GIFs decoding every frame DURING a scroll/fling is
   // what tanked UI fps on weak devices.
   setScrolling: (b: boolean) => void;
+  // Register/unregister a row as containing an animated image (GIF). The
+  // scroll-pause gate ONLY affects registered rows, so toggling `scrolling`
+  // re-renders just the GIF bubbles — text/photo bubbles keep a stable
+  // `isVisible` snapshot and `useSyncExternalStore` bails them out (no
+  // re-render), which is what removes the scroll-start hitch.
+  setHasGif: (id: string, hasGif: boolean) => void;
 };
 
 // Thin wrapper that subscribes ONLY this row to the visibility tracker, so a
@@ -556,6 +580,25 @@ type VisibilityBubbleProps = Omit<React.ComponentProps<typeof MemoMessageBubble>
 const VisibilityBubble = React.memo(function VisibilityBubble({ tracker, ...rest }: VisibilityBubbleProps) {
   const id = rest.message.id;
   const isVisible = useSyncExternalStore(tracker.subscribe, () => tracker.isVisible(id));
+  // Does this row contain an animated image (GIF)? Only such rows need to
+  // react to the scroll-pause gate, so we register them with the tracker. A
+  // text/photo bubble registers `false` and is therefore never re-rendered
+  // when scrolling toggles (its `isVisible` snapshot is unaffected) — this is
+  // what keeps scroll-start hitch-free on content-heavy chats.
+  const hasGif = useMemo(() => {
+    const urls = rest.message.imageUrls;
+    if (!urls || urls.length === 0) return false;
+    return urls.some((u) => {
+      const low = u.toLowerCase();
+      const q = low.indexOf('?');
+      const path = q >= 0 ? low.slice(0, q) : low;
+      return path.endsWith('.gif') || low.indexOf('giphy') !== -1;
+    });
+  }, [rest.message.imageUrls]);
+  useEffect(() => {
+    tracker.setHasGif(id, hasGif);
+    return () => tracker.setHasGif(id, false);
+  }, [id, hasGif, tracker]);
   return <MemoMessageBubble isVisible={isVisible} {...rest} />;
 });
 
@@ -694,6 +737,10 @@ export default function ChatScreen() {
   const currentUserId = useAuthStore((s) => s.user?.id);
   const flatListRef = useRef<FlatList>(null);
   const inputRef = useRef<ChatInputBarHandle>(null);
+  // Retry counter shared by every programmatic scroll-to-index path (reply
+  // jump + search jump). `onScrollToIndexFailed` backs off with an increasing
+  // delay using this, and each jump resets it to 0 before issuing the scroll.
+  const jumpAttemptRef = useRef(0);
 
   const { progress, height: keyboardHeight } = useReanimatedKeyboardAnimation();
 
@@ -737,7 +784,16 @@ export default function ChatScreen() {
     if (fromStore && fromStore.length > 0) return fromStore as ChatMessage[];
     try {
       const cached = kvGetJSONSync<ChatMessage[]>(`chat_messages:${conversationId}`, []);
-      if (cached.length > 0) return cached.map((m) => healLegacySender(m, currentUserId, participantId));
+      if (cached.length > 0) {
+        // First-paint parse bound: heal only the most-recent `SEED_CAP`
+        // messages (the cache is oldest→newest, so the tail is newest). The
+        // FULL history is hydrated into the store off the critical path (see
+        // the deferred effect below), so scroll-up and reply-jump to older
+        // messages still work — we just don't parse/hold all of it on the
+        // open-the-chat frame.
+        const tail = cached.length > SEED_CAP ? cached.slice(cached.length - SEED_CAP) : cached;
+        return tail.map((m) => healLegacySender(m, currentUserId, participantId));
+      }
       if (mockMessages[conversationId]) return mockMessages[conversationId] as ChatMessage[];
     } catch {}
     return [];
@@ -761,12 +817,24 @@ export default function ChatScreen() {
     // directly into `chatMessages` above when the store is empty), so the
     // store hydration can wait one tick without any visible delta.
     const handle = InteractionManager.runAfterInteractions(() => {
-      if ((useChatStore.getState().messages[conversationId] || []).length === 0 && seedMessages.length > 0) {
-        setMessages(conversationId, seedMessages as any);
+      if ((useChatStore.getState().messages[conversationId] || []).length === 0) {
+        // Hydrate the FULL history into the store off the critical path. The
+        // first-paint `seedMessages` was capped to `SEED_CAP`; here we read the
+        // whole cache so scroll-up and reply-jump to old messages have the
+        // complete data to work with. Rendering stays bounded by `visibleCount`
+        // (windowing), so a full store does NOT mean a full render.
+        try {
+          const full = kvGetJSONSync<ChatMessage[]>(`chat_messages:${conversationId}`, []);
+          if (full.length > 0) {
+            setMessages(conversationId, full.map((m) => healLegacySender(m, currentUserId, participantId)) as any);
+            return;
+          }
+        } catch {}
+        if (seedMessages.length > 0) setMessages(conversationId, seedMessages as any);
       }
     });
     return () => handle.cancel();
-  }, [conversationId, seedMessages]);
+  }, [conversationId, seedMessages, currentUserId, participantId, setMessages]);
 
   // Narrow the chat-settings subscription to only the two slices this chat
   // actually reads — global defaults and this chat's own overrides. The
@@ -1363,9 +1431,15 @@ export default function ChatScreen() {
   const scrollToIndex = useCallback((index: number) => {
     if (index < 0 || index >= chatMessages.length) return;
     const invIndex = chatMessages.length - 1 - index;
-    try {
-      flatListRef.current?.scrollToIndex({ index: invIndex, animated: true, viewPosition: 0.5 });
-    } catch {}
+    // A search match can live in an OLD message beyond the current render
+    // window — grow the window to include it before scrolling, and defer the
+    // scroll a frame so the grown window commits first. Far/unmeasured rows
+    // are then handled by the `onScrollToIndexFailed` backoff loop.
+    setVisibleCount((c) => (invIndex >= c ? Math.min(invIndex + 10, chatMessages.length) : c));
+    jumpAttemptRef.current = 0;
+    requestAnimationFrame(() => {
+      try { flatListRef.current?.scrollToIndex({ index: invIndex, animated: true, viewPosition: 0.5 }); } catch {}
+    });
   }, [chatMessages.length]);
 
   // Recompute matches when the query changes; jump to the most recent match
@@ -1657,7 +1731,24 @@ export default function ChatScreen() {
             // removing the row so it visually erupts from where the message was.
             const rect = deleteRectsRef.current.get(message.id);
             if (rect) {
-              burstRef.current?.burst(rect.x, rect.y, rect.w, rect.h);
+              // Clamp the spawn rect to the visible viewport so the burst is
+              // ALWAYS on screen. A VERY LONG message has a tall bubble whose
+              // measured window rect can start above the screen (negative y)
+              // and/or extend far below it — feeding that raw rect spawned the
+              // particles off-screen (the bug). We take the visible vertical
+              // slice of the bubble, cap its height so the particle spread
+              // stays tight, and center the spawn band inside that slice; width
+              // is clamped to the screen. This only changes WHERE the burst
+              // originates — EmojiDeleteBurst's pooled, native-driver perf
+              // model is untouched.
+              const top = Math.max(rect.y, 0);
+              const bottom = Math.min(rect.y + rect.h, SCREEN_HEIGHT);
+              const visibleH = Math.max(bottom - top, 24);
+              const spawnH = Math.min(visibleH, 200);
+              const spawnY = top + (visibleH - spawnH) / 2;
+              const spawnX = Math.max(Math.min(rect.x, SCREEN_WIDTH - 24), 0);
+              const spawnW = Math.min(rect.w, SCREEN_WIDTH);
+              burstRef.current?.burst(spawnX, spawnY, spawnW, spawnH);
               deleteRectsRef.current.delete(message.id);
             }
             // Read the latest snapshot from getState() rather than from the
@@ -1958,6 +2049,29 @@ export default function ChatScreen() {
     return arr;
   }, [chatMessages]);
 
+  // ── Windowed render cap (Telegram-style) ──────────────────────────────
+  // `invertedMessages` is the FULL conversation (newest→oldest). We only feed
+  // the most-recent `visibleCount` of it to the FlatList, and grow the window
+  // by `WINDOW_CHUNK` as the user scrolls toward the top (`onEndReached` on an
+  // inverted list). Because the slice is taken from the FRONT (newest), the
+  // newest message, optimistic sends and realtime appends always stay in the
+  // window, so "scroll to bottom" / new-message behaviour is unchanged.
+  const [visibleCount, setVisibleCount] = useState(INITIAL_WINDOW);
+  const windowedMessages = useMemo(
+    () => (invertedMessages.length > visibleCount ? invertedMessages.slice(0, visibleCount) : invertedMessages),
+    [invertedMessages, visibleCount],
+  );
+  // Grow the window when the user reaches the top (oldest) of the inverted
+  // list. Guarded against growing past the array length so it settles once the
+  // whole history is mounted.
+  const onEndReached = useCallback(() => {
+    setVisibleCount((c) => {
+      const total = invertedMessages.length;
+      if (c >= total) return c;
+      return Math.min(c + WINDOW_CHUNK, total);
+    });
+  }, [invertedMessages.length]);
+
   // Tap-a-reply-to-jump: scroll to the message a reply is quoting and flash it.
   // `replyToId` is stored on every reply message (see sendText/sendGif). The
   // FlatList data IS `invertedMessages`, so the found index maps 1:1 to the row.
@@ -1966,14 +2080,23 @@ export default function ChatScreen() {
   const scrollToMessageId = useCallback((messageId?: string) => {
     if (!messageId) return;
     const idx = invertedMessages.findIndex((mm) => mm.id === messageId);
-    if (idx < 0) return; // original not loaded in the current window
-    try {
-      flatListRef.current?.scrollToIndex({ index: idx, animated: true, viewPosition: 0.5 });
-    } catch {}
+    if (idx < 0) return; // original genuinely not in this conversation
+    // Reply-jump to an OLD message: if the target sits beyond the current
+    // render window, grow the window to include it (+ a small buffer) BEFORE
+    // scrolling so the row actually exists in the FlatList data.
+    setVisibleCount((c) => (idx >= c ? Math.min(idx + 10, invertedMessages.length) : c));
     triggerHaptic('selection');
     setJumpHighlightId(messageId);
     if (jumpTimerRef.current) clearTimeout(jumpTimerRef.current);
     jumpTimerRef.current = setTimeout(() => setJumpHighlightId(null), 1600);
+    // Reset the retry counter and defer the scroll one frame so a freshly
+    // grown window can commit before we ask the list to scroll to the
+    // (possibly newly-added) index. If the target row still isn't measured,
+    // `onScrollToIndexFailed` takes over with the backoff retry loop.
+    jumpAttemptRef.current = 0;
+    requestAnimationFrame(() => {
+      try { flatListRef.current?.scrollToIndex({ index: idx, animated: true, viewPosition: 0.5 }); } catch {}
+    });
   }, [invertedMessages]);
   useEffect(() => () => { if (jumpTimerRef.current) clearTimeout(jumpTimerRef.current); }, []);
 
@@ -1999,14 +2122,24 @@ export default function ChatScreen() {
     let visibleSet = new Set<string>();
     let ready = false;
     let scrolling = false;
+    // Ids of rows that contain an animated image (GIF). Only these rows are
+    // affected by the scroll-pause gate.
+    const gifIds = new Set<string>();
     const listeners = new Set<() => void>();
     visTrackerRef.current = {
       subscribe(l) { listeners.add(l); return () => { listeners.delete(l); }; },
-      // A row's media animates only when it's on-screen AND the list is not
-      // actively scrolling. The `!scrolling` gate pauses every GIF for the
-      // duration of a scroll/fling so the UI thread isn't decoding frames it
-      // can't show smoothly anyway, then resumes the instant scrolling stops.
-      isVisible(itemId) { return (!ready || visibleSet.has(itemId)) && !scrolling; },
+      // A row's media animates only when it's on-screen. The scroll-pause gate
+      // (`scrolling`) is applied ONLY to rows that actually hold a GIF — a
+      // text/photo row's snapshot never changes when scrolling toggles, so
+      // `useSyncExternalStore` bails it out and it isn't re-rendered. This is
+      // what removed the scroll-START hitch: previously the gate was global, so
+      // every mounted bubble re-rendered the instant a scroll began.
+      isVisible(itemId) {
+        const onScreen = !ready || visibleSet.has(itemId);
+        if (!onScreen) return false;
+        if (scrolling && gifIds.has(itemId)) return false;
+        return true;
+      },
       update(next) {
         // Skip the listener fan-out when the viewable set is unchanged —
         // mirrors the old `setVisibleIds` dedupe so tiny scroll jitter is free.
@@ -2022,7 +2155,15 @@ export default function ChatScreen() {
       setScrolling(b) {
         if (b === scrolling) return;
         scrolling = b;
+        // No animated rows mounted → toggling `scrolling` changes no row's
+        // snapshot, so skip the fan-out entirely (zero work, zero re-render).
+        // This is the common case (text/photo chats) and is what makes scroll
+        // start hitch-free.
+        if (gifIds.size === 0) return;
         listeners.forEach((fn) => fn());
+      },
+      setHasGif(itemId, hasGif) {
+        if (hasGif) gifIds.add(itemId); else gifIds.delete(itemId);
       },
     };
   }
@@ -2083,10 +2224,20 @@ export default function ChatScreen() {
   // never need to change.
   const chatKeyExtractor = useCallback((item: ChatMessage) => item.id, []);
   const onScrollToIndexFailedCb = useCallback((info: { index: number; averageItemLength: number; highestMeasuredFrameIndex: number }) => {
+    // Far/unmeasured target (no getItemLayout + variable heights): grow the
+    // render window to include the target, then retry with an INCREASING delay
+    // so the rows between the current position and the target get a chance to
+    // mount/measure on each pass. Capped so a genuinely unreachable index can't
+    // loop forever. Each failed `scrollToIndex` re-invokes this callback, which
+    // is what drives the loop forward until the row lands.
+    const attempt = jumpAttemptRef.current++;
+    if (attempt > 12) return;
+    setVisibleCount((c) => (info.index >= c ? Math.min(info.index + 10, invertedMessages.length) : c));
+    const delay = 80 + attempt * 80;
     setTimeout(() => {
       try { flatListRef.current?.scrollToIndex({ index: info.index, animated: true, viewPosition: 0.5 }); } catch {}
-    }, 120);
-  }, []);
+    }, delay);
+  }, [invertedMessages.length]);
 
   // ── Scroll-to-bottom button ────────────────────────────────────────────
   // Telegram-style floating affordance that appears when the user has
@@ -2153,7 +2304,7 @@ export default function ChatScreen() {
       <Reanimated.View style={[StyleSheet.absoluteFill, listShiftStyle]} pointerEvents="box-none">
       <FlatList
         ref={flatListRef}
-        data={invertedMessages}
+        data={windowedMessages}
         style={StyleSheet.absoluteFill}
         keyExtractor={chatKeyExtractor}
         renderItem={renderItem}
@@ -2186,6 +2337,12 @@ export default function ChatScreen() {
         onScrollToIndexFailed={onScrollToIndexFailedCb}
         viewabilityConfig={viewabilityConfig}
         onViewableItemsChanged={onViewableItemsChanged}
+        // Windowed loading: when the user reaches the top (oldest) of the
+        // INVERTED list, grow the render window by a chunk. Threshold is in
+        // viewport-lengths from the end, so loading starts slightly before the
+        // user hits the very top — no visible "pop".
+        onEndReached={onEndReached}
+        onEndReachedThreshold={0.5}
         // Scroll-to-bottom button visibility tracker. Throttled to ~30 Hz
         // via `scrollEventThrottle={32}` plus a JS-side guard inside
         // `onChatScroll`, and the handler only writes state when the
