@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, Alert, Animated, Modal, Dimensions, Keyboard, InteractionManager, type ViewToken } from 'react-native';
 import { KeyboardStickyView, useReanimatedKeyboardAnimation, useKeyboardHandler } from 'react-native-keyboard-controller';
-import Reanimated, { useAnimatedStyle, interpolate, Extrapolation, useSharedValue, withSpring, runOnJS, type SharedValue } from 'react-native-reanimated';
+import Reanimated, { useAnimatedStyle, interpolate, Extrapolation, useSharedValue, withSpring, runOnJS, useAnimatedRef, measure, type SharedValue } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
@@ -22,6 +22,7 @@ import { UserBadge } from '../../src/components/ui/UserBadge';
 import { MessageContextMenu, MessageAction, type ActionZone, type MessageContextMenuHandle } from '../../src/components/ui/MessageContextMenu';
 import { TranslationSheet } from '../../src/components/ui/TranslationSheet';
 import { ChatInputBar, ChatInputBarHandle } from '../../src/components/chat/ChatInputBar';
+import { EmojiDeleteBurst, EmojiBurstHandle } from '../../src/components/chat/EmojiDeleteBurst';
 import { GiphyPicker } from '../../src/components/ui/GiphyPicker';
 import { getRealtime, chatChannelName } from '../../src/services/realtime/ably';
 import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
@@ -147,9 +148,13 @@ function SingleChatImage({ uri, isVisible, onPress }: { uri: string; isVisible?:
   );
 }
 
-function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, linkEmoji, highlighted, isVisible, onReply, onReplyJump, onLongPress, onSwipeActive, onImagePress, dragActive, dragFingerY, hoveredAction, actionZones, onFireDragAction }: { message: ChatMessage; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string; linkEmoji?: string; highlighted?: boolean; isVisible?: boolean; onReply: (m: ChatMessage) => void; onReplyJump?: (messageId?: string) => void; onLongPress: (m: ChatMessage) => void; onSwipeActive: (active: boolean) => void; onImagePress: (images: string[], index: number) => void; dragActive: SharedValue<boolean>; dragFingerY: SharedValue<number>; hoveredAction: SharedValue<string>; actionZones: SharedValue<ActionZone[]>; onFireDragAction: (m: ChatMessage, action: string) => void }) {
+function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, linkEmoji, highlighted, isVisible, onReply, onReplyJump, onLongPress, onMeasured, onSwipeActive, onImagePress, dragActive, dragFingerY, hoveredAction, actionZones, onFireDragAction }: { message: ChatMessage; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string; linkEmoji?: string; highlighted?: boolean; isVisible?: boolean; onReply: (m: ChatMessage) => void; onReplyJump?: (messageId?: string) => void; onLongPress: (m: ChatMessage) => void; onMeasured?: (id: string, x: number, y: number, w: number, h: number) => void; onSwipeActive: (active: boolean) => void; onImagePress: (images: string[], index: number) => void; dragActive: SharedValue<boolean>; dragFingerY: SharedValue<number>; hoveredAction: SharedValue<string>; actionZones: SharedValue<ActionZone[]>; onFireDragAction: (m: ChatMessage, action: string) => void }) {
   const theme = useTheme();
   const t = useT();
+  // Animated ref so the LongPress gesture can measure this bubble's window rect
+  // on the UI thread — used to spawn the emoji "dissolve" burst at the right
+  // spot when the message is deleted.
+  const bubbleRef = useAnimatedRef<Reanimated.View>();
   // Native iOS-26 liquid glass for the swipe-to-reply pill. iOS-only + opt-in.
   const glassActive = useLiquidGlassActive();
   const fontFamilyStyle = fontFamily === 'mono' ? 'monospace' : fontFamily === 'serif' ? 'serif' : undefined;
@@ -269,6 +274,12 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
           dragActive.value = true;
           dragFingerY.value = -1;
           hoveredAction.value = '';
+          // Measure this bubble's window rect on the UI thread so a later
+          // delete can spawn the emoji burst exactly here. Cheap, fires once.
+          if (onMeasured) {
+            const m = measure(bubbleRef);
+            if (m) runOnJS(onMeasured)(message.id, m.pageX, m.pageY, m.width, m.height);
+          }
           // Open the menu + medium haptic — exactly once, on activation.
           runOnJS(triggerHaptic)('medium');
           runOnJS(onLongPress)(message);
@@ -306,7 +317,7 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
           dragFingerY.value = -1;
           hoveredAction.value = '';
         }),
-    [message, onLongPress, onFireDragAction, dragActive, dragFingerY, hoveredAction, actionZones],
+    [message, onLongPress, onMeasured, bubbleRef, onFireDragAction, dragActive, dragFingerY, hoveredAction, actionZones],
   );
 
   // Compose with the swipe pan via Race: whichever activates FIRST wins and
@@ -345,7 +356,7 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
       </Reanimated.View>
 
       <GestureDetector gesture={composedGesture}>
-        <Reanimated.View style={[bubbleAnimStyle, { alignSelf: isOwn ? 'flex-end' : 'flex-start', maxWidth: '78%', marginLeft: isOwn ? 0 : 16, marginRight: isOwn ? 16 : 0, marginBottom: 4 }]}>
+        <Reanimated.View ref={bubbleRef} style={[bubbleAnimStyle, { alignSelf: isOwn ? 'flex-end' : 'flex-start', maxWidth: '78%', marginLeft: isOwn ? 0 : 16, marginRight: isOwn ? 16 : 0, marginBottom: 4 }]}>
         {/* Long-press + drag-select is handled by `composedGesture` on the
             GestureDetector above (UI thread). This wrapper used to be a
             `Pressable onLongPress`; it's now a plain View so the gesture owns
@@ -537,6 +548,19 @@ export default function ChatScreen() {
   const actionZonesSV = useSharedValue<ActionZone[]>([]);
   // Imperative handle to replay the menu's slide-down when a drag fires an action.
   const menuRef = useRef<MessageContextMenuHandle>(null);
+  // Emoji "dissolve" burst overlay + the per-message window rect captured on
+  // long-press (so a delete can spawn the burst exactly where the bubble was).
+  const burstRef = useRef<EmojiBurstHandle>(null);
+  const deleteRectsRef = useRef<Map<string, { x: number; y: number; w: number; h: number }>>(new Map());
+  const stashBubbleRect = useCallback((id: string, x: number, y: number, w: number, h: number) => {
+    const map = deleteRectsRef.current;
+    map.set(id, { x, y, w, h });
+    // Bound the map — only the most-recently long-pressed bubbles matter.
+    if (map.size > 12) {
+      const firstKey = map.keys().next().value;
+      if (firstKey !== undefined) map.delete(firstKey);
+    }
+  }, []);
   const [pendingImages, setPendingImages] = useState<string[]>([]);  const [uploading, setUploading] = useState(false);
 
   // Defer the ChatBackgroundLayer mount past the navigation slide-in. When a
@@ -1366,6 +1390,14 @@ export default function ChatScreen() {
         {
           text: t('common.delete'), style: 'destructive', onPress: () => {
             if (!conversationId) return;
+            // Emoji "dissolve" burst at the bubble's last-measured position
+            // (captured on the long-press that opened this menu). Fire BEFORE
+            // removing the row so it visually erupts from where the message was.
+            const rect = deleteRectsRef.current.get(message.id);
+            if (rect) {
+              burstRef.current?.burst(rect.x, rect.y, rect.w, rect.h);
+              deleteRectsRef.current.delete(message.id);
+            }
             // Read the latest snapshot from getState() rather than from the
             // closed-over selector — avoids the callback being recreated on
             // every store update (and rebuilding all bubbles' onLongPress).
@@ -1694,6 +1726,7 @@ export default function ChatScreen() {
         onReply={startReply}
         onReplyJump={scrollToMessageId}
         onLongPress={onMessageLongPress}
+        onMeasured={stashBubbleRect}
         onSwipeActive={handleSwipeActive}
         onImagePress={openImageViewer}
         dragActive={dragActiveSV}
@@ -2198,6 +2231,9 @@ export default function ChatScreen() {
         </View>
       </Modal>
       <ScreenshotShield visible={screenshotDetected} />
+      {/* Emoji "dissolve" burst overlay — renders nothing until a delete fires.
+          pointerEvents none, native-driver particles. */}
+      <EmojiDeleteBurst ref={burstRef} />
     </View>
   );
 }
