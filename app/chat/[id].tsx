@@ -63,6 +63,25 @@ const INITIAL_WINDOW = 40;
 const WINDOW_CHUNK = 40;
 const SEED_CAP = 60;
 
+// How many of the most-recent messages the chat-open warm prefetches. Bounded
+// low (the first screen is only a handful of bubbles) so opening a chat never
+// front-loads a burst of image fetches onto the navigation frame. The rest
+// stream in lazily on scroll. Was 20 — too many, and a measurable contributor
+// to the open-the-chat decode burst.
+const WARM_RECENT = 6;
+
+// Detect an animated GIF by URL. Mirrors the `hasGif` test used by the
+// visibility tracker so the warm path and the off-screen-pause path agree on
+// what counts as a "heavy animated decode". Animated GIFs are excluded from the
+// chat-open warm (they should only ever decode when actually visible).
+function isAnimatedImageUrl(u: string): boolean {
+  if (!u) return false;
+  const low = u.toLowerCase();
+  const q = low.indexOf('?');
+  const path = q >= 0 ? low.slice(0, q) : low;
+  return path.endsWith('.gif') || low.indexOf('giphy') !== -1;
+}
+
 // ── Legacy relative-sender healing ────────────────────────────────────────
 // Older builds stored chat messages with a RELATIVE sentinel senderId:
 // 'current' (whoever was logged in when the message was cached) or 'peer'
@@ -115,6 +134,12 @@ const bubbleStyles = StyleSheet.create({
   replyBody: { fontSize: 11 },
   imagesRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4 },
   imageSingle: { width: 200, height: 200, borderRadius: 12 },
+  // Placeholder box shown for a single-image bubble until `imagesReady` flips
+  // (just after the open transition). Sized to `SingleChatImage`'s OWN initial
+  // square (220×220) so when the real image mounts it occupies the exact same
+  // box — the list never jumps. Once loaded, `SingleChatImage` snaps to the
+  // photo's aspect ratio exactly as before.
+  imageSinglePlaceholder: { width: 220, height: 220, borderRadius: 12 },
   imageMulti: { width: 120, height: 120, borderRadius: 12 },
   linkPreviewWrap: { marginTop: 6, width: 280, maxWidth: '100%' },
   timestamp: { marginTop: 3, alignSelf: 'flex-end', fontSize: 10 },
@@ -169,7 +194,7 @@ function SingleChatImage({ uri, isVisible, onPress }: { uri: string; isVisible?:
   );
 }
 
-function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, linkEmoji, highlighted, isVisible, onReply, onReplyJump, onLongPress, onMeasured, onSwipeActive, onImagePress, dragActive, dragFingerY, hoveredAction, actionZones, onFireDragAction }: { message: ChatMessage; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string; linkEmoji?: string; highlighted?: boolean; isVisible?: boolean; onReply: (m: ChatMessage) => void; onReplyJump?: (messageId?: string) => void; onLongPress: (m: ChatMessage) => void; onMeasured?: (id: string, x: number, y: number, w: number, h: number) => void; onSwipeActive: (active: boolean) => void; onImagePress: (images: string[], index: number) => void; dragActive: SharedValue<boolean>; dragFingerY: SharedValue<number>; hoveredAction: SharedValue<string>; actionZones: SharedValue<ActionZone[]>; onFireDragAction: (m: ChatMessage, action: string) => void }) {
+function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, linkEmoji, highlighted, isVisible, imagesReady, onReply, onReplyJump, onLongPress, onMeasured, onSwipeActive, onImagePress, dragActive, dragFingerY, hoveredAction, actionZones, onFireDragAction }: { message: ChatMessage; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string; linkEmoji?: string; highlighted?: boolean; isVisible?: boolean; imagesReady?: boolean; onReply: (m: ChatMessage) => void; onReplyJump?: (messageId?: string) => void; onLongPress: (m: ChatMessage) => void; onMeasured?: (id: string, x: number, y: number, w: number, h: number) => void; onSwipeActive: (active: boolean) => void; onImagePress: (images: string[], index: number) => void; dragActive: SharedValue<boolean>; dragFingerY: SharedValue<number>; hoveredAction: SharedValue<string>; actionZones: SharedValue<ActionZone[]>; onFireDragAction: (m: ChatMessage, action: string) => void }) {
   const theme = useTheme();
   const t = useT();
   // Animated ref so the LongPress gesture can measure this bubble's window rect
@@ -467,27 +492,47 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
             {message.imageUrls && message.imageUrls.length > 0 ? (
               <View style={[bubbleStyles.imagesRow, { marginBottom: message.text ? 6 : 0 }]}>
                 {message.imageUrls.length === 1 ? (
-                  <SingleChatImage
-                    uri={message.imageUrls[0]}
-                    isVisible={isVisible}
-                    onPress={() => onImagePress(message.imageUrls!, 0)}
-                  />
+                  // Telegram-style deferred decode: until `imagesReady` flips
+                  // (one beat AFTER the open transition), render a correctly-
+                  // sized placeholder box instead of the real image, so the
+                  // navigation frame mounts only text/layout — never a burst of
+                  // synchronous image decodes. The placeholder matches
+                  // `SingleChatImage`'s initial square so the list doesn't jump
+                  // when the real image swaps in.
+                  imagesReady ? (
+                    <SingleChatImage
+                      uri={message.imageUrls[0]}
+                      isVisible={isVisible}
+                      onPress={() => onImagePress(message.imageUrls!, 0)}
+                    />
+                  ) : (
+                    <Pressable onPress={() => onImagePress(message.imageUrls!, 0)}>
+                      <View style={[bubbleStyles.imageSinglePlaceholder, { backgroundColor: theme.colors.background.tertiary }]} />
+                    </Pressable>
+                  )
                 ) : (
                   message.imageUrls.map((uri, idx) => (
                     <Pressable key={idx} onPress={() => onImagePress(message.imageUrls!, idx)}>
-                      <CachedImage
-                        uri={uri}
-                        style={bubbleStyles.imageMulti}
-                        resizeMode="cover"
-                        // Decode at low priority so a heavy GIF/photo never
-                        // competes with the chat-open transition or scroll
-                        // frames on weak devices.
-                        priority="low"
-                        // Pause GIF animation while this bubble is scrolled
-                        // off-screen — no UI-thread frame decoding for content
-                        // the user can't see.
-                        autoplay={isVisible}
-                      />
+                      {imagesReady ? (
+                        <CachedImage
+                          uri={uri}
+                          style={bubbleStyles.imageMulti}
+                          resizeMode="cover"
+                          // Decode at low priority so a heavy GIF/photo never
+                          // competes with the chat-open transition or scroll
+                          // frames on weak devices.
+                          priority="low"
+                          // Pause GIF animation while this bubble is scrolled
+                          // off-screen — no UI-thread frame decoding for content
+                          // the user can't see.
+                          autoplay={isVisible}
+                        />
+                      ) : (
+                        // Same-sized placeholder until the open transition
+                        // settles — keeps the multi-image grid layout identical
+                        // while deferring the decode storm off the nav frame.
+                        <View style={[bubbleStyles.imageMulti, { backgroundColor: theme.colors.background.tertiary }]} />
+                      )}
                     </Pressable>
                   ))
                 )}
@@ -542,7 +587,8 @@ const MemoMessageBubble = React.memo(MessageBubble, (prev, next) => {
     prev.fontFamily === next.fontFamily &&
     prev.linkEmoji === next.linkEmoji &&
     prev.highlighted === next.highlighted &&
-    prev.isVisible === next.isVisible
+    prev.isVisible === next.isVisible &&
+    prev.imagesReady === next.imagesReady
   );
 });
 
@@ -696,6 +742,25 @@ export default function ChatScreen() {
     const handle = InteractionManager.runAfterInteractions(() => setChromeReady(true));
     return () => handle.cancel();
   }, []);
+
+  // ── Telegram-style deferred image decode (open-frame protection) ───────
+  // On open, message bubbles render TEXT + correctly-sized placeholder boxes
+  // only — no `CachedImage`, so the navigation transition frame never fires a
+  // burst of concurrent image decodes (the i.ytimg / r2.dev / giphy / file
+  // cluster the perf snapshot caught landing right after `NAV chat/[id]`).
+  // Once the open transition has settled we flip `imagesReady`, and the
+  // mounted bubbles swap their placeholders for the real images a beat later —
+  // off the critical frame. The extra RAF after `runAfterInteractions`
+  // guarantees the first text-only layout has committed before we mount the
+  // decode-heavy images, so the work can never share the transition frame.
+  const [imagesReady, setImagesReady] = useState(false);
+  useEffect(() => {
+    let raf = 0;
+    const handle = InteractionManager.runAfterInteractions(() => {
+      raf = requestAnimationFrame(() => setImagesReady(true));
+    });
+    return () => { handle.cancel(); if (raf) cancelAnimationFrame(raf); };
+  }, []);
   const [viewerImages, setViewerImages] = useState<{ images: string[]; index: number } | null>(null);
   // ── Inline emoji / GIF panels ─────────────────────────────────────────────
   // `emojiOpen` / `gifOpen` drive the two docked panels (mutually exclusive),
@@ -804,37 +869,85 @@ export default function ChatScreen() {
   const storeChat = (myStoreMessages || []) as ChatMessage[];
   const chatMessages = storeChat.length > 0 ? storeChat : seedMessages;
 
-  // Push the seed into the store once (after paint) so edits/sends work normally.
+  // ── Lazy full-history hydration ────────────────────────────────────────
+  // The open path deliberately holds only the bounded `SEED_CAP` tail (see
+  // `seedMessages`) so a very long chat never parses + heals + reverses its
+  // ENTIRE history on the navigation frame (the ~571 ms long task). The full
+  // history is pulled from cache ON DEMAND the first time the user actually
+  // needs it: scrolling toward the top (`onEndReached`), a reply-jump or
+  // search-jump that targets a message older than the loaded window, or the
+  // first mutation that must be persisted safely. Once hydrated it stays
+  // hydrated for the session.
+  //
+  // `historyHydratedRef` records the conversation whose full history is in the
+  // store. `seededArrayRef` records the exact bounded-seed array we pushed, so
+  // the persistence effect can tell "untouched seed" (already on disk — skip)
+  // from "store diverged" (a real change — hydrate the full array so the
+  // mirror can't truncate the older history still on disk).
+  const historyHydratedRef = useRef<string | null>(null);
+  const seededArrayRef = useRef<ChatMessage[] | null>(null);
+  const hydrateFullHistory = useCallback((): ChatMessage[] | null => {
+    if (!conversationId) return null;
+    if (historyHydratedRef.current === conversationId) return null;
+    let full: ChatMessage[];
+    try {
+      full = kvGetJSONSync<ChatMessage[]>(`chat_messages:${conversationId}`, []);
+    } catch {
+      return null;
+    }
+    historyHydratedRef.current = conversationId;
+    if (full.length === 0) return null;
+    const healed = full.map((m) => healLegacySender(m, currentUserId, participantId));
+    // Merge any in-store messages the cache doesn't have yet (optimistic
+    // sends / realtime appends / edits that happened since open) so hydration
+    // never DROPS them: existing ids are overwritten in place (keep the latest
+    // edit), unknown ids are appended (they're always newer → correct order on
+    // an oldest→newest array).
+    const store = useChatStore.getState().messages[conversationId] || [];
+    if (store.length > 0) {
+      const idx = new Map(healed.map((m, i) => [m.id, i] as const));
+      for (const sm of store as ChatMessage[]) {
+        const at = idx.get(sm.id);
+        if (at === undefined) { healed.push(sm); idx.set(sm.id, healed.length - 1); }
+        else { healed[at] = sm; }
+      }
+    }
+    setMessages(conversationId, healed as any);
+    return healed;
+  }, [conversationId, currentUserId, participantId, setMessages]);
+  // Always-current ref so handlers living in long-lived subscription effects
+  // (e.g. the Ably `msg.delete` listener) can invoke the latest hydrator
+  // without being added to those effects' dep arrays (which would churn the
+  // channel subscription).
+  const hydrateFullHistoryRef = useRef(hydrateFullHistory);
+  hydrateFullHistoryRef.current = hydrateFullHistory;
+
+  // Push the bounded SEED into the store once (after paint) so edits/sends
+  // work normally. We deliberately seed ONLY the `SEED_CAP` tail here — NOT
+  // the full history — so opening a long chat never parses/heals/holds the
+  // whole conversation on (or just after) the navigation frame. The full
+  // history is hydrated lazily on demand (scroll-up / reply-jump / search /
+  // first persist) via `hydrateFullHistory`. First-paint content is already
+  // provided by `seedMessages` (read directly into `chatMessages` above when
+  // the store is empty), so this store push is invisible.
   const seededRef = useRef<string | null>(null);
   useEffect(() => {
     if (!conversationId) return;
     if (seededRef.current === conversationId) return;
     seededRef.current = conversationId;
-    // Deferred past the open-chat transition because pushing the seed into
-    // the store synchronously triggers the chat-message selector and would
-    // re-render the FlatList on the same frame as the navigation slide-in.
-    // First-paint content is already provided by `seedMessages` (read
-    // directly into `chatMessages` above when the store is empty), so the
-    // store hydration can wait one tick without any visible delta.
     const handle = InteractionManager.runAfterInteractions(() => {
       if ((useChatStore.getState().messages[conversationId] || []).length === 0) {
-        // Hydrate the FULL history into the store off the critical path. The
-        // first-paint `seedMessages` was capped to `SEED_CAP`; here we read the
-        // whole cache so scroll-up and reply-jump to old messages have the
-        // complete data to work with. Rendering stays bounded by `visibleCount`
-        // (windowing), so a full store does NOT mean a full render.
-        try {
-          const full = kvGetJSONSync<ChatMessage[]>(`chat_messages:${conversationId}`, []);
-          if (full.length > 0) {
-            setMessages(conversationId, full.map((m) => healLegacySender(m, currentUserId, participantId)) as any);
-            return;
-          }
-        } catch {}
-        if (seedMessages.length > 0) setMessages(conversationId, seedMessages as any);
+        if (seedMessages.length > 0) {
+          // Remember the exact seed array reference so the persistence effect
+          // can distinguish "untouched seed" (skip — already on disk) from a
+          // genuine divergence that must trigger a safe full-history mirror.
+          seededArrayRef.current = seedMessages;
+          setMessages(conversationId, seedMessages as any);
+        }
       }
     });
     return () => handle.cancel();
-  }, [conversationId, seedMessages, currentUserId, participantId, setMessages]);
+  }, [conversationId, seedMessages, setMessages]);
 
   // Narrow the chat-settings subscription to only the two slices this chat
   // actually reads — global defaults and this chat's own overrides. The
@@ -1138,7 +1251,13 @@ export default function ChatScreen() {
       kvWarm([cacheKey]).then(() => {
         const cached = kvGetJSONSync<ChatMessage[]>(cacheKey, []);
         if (cached.length > 0 && (useChatStore.getState().messages[conversationId] || []).length === 0) {
-          setMessages(conversationId, cached.map((m) => healLegacySender(m, currentUserId, participantId)) as any);
+          // Seed only the bounded `SEED_CAP` tail (newest), mirroring the
+          // synchronous `seedMessages` path — the full history loads lazily on
+          // demand. Record the seed reference for the persistence guard.
+          const tail = cached.length > SEED_CAP ? cached.slice(cached.length - SEED_CAP) : cached;
+          const healedTail = tail.map((m) => healLegacySender(m, currentUserId, participantId));
+          seededArrayRef.current = healedTail;
+          setMessages(conversationId, healedTail as any);
         } else if (cached.length === 0 && mockMessages[conversationId] && (useChatStore.getState().messages[conversationId] || []).length === 0) {
           setMessages(conversationId, mockMessages[conversationId]);
         }
@@ -1157,27 +1276,69 @@ export default function ChatScreen() {
   // navigation transition: the dynamic `import('CachedImage')` + Image.prefetch
   // dispatch was landing on the same frame as the FlatList's initial bubble
   // mount and was a measurable contributor to the open-the-chat fps drop.
+  //
+  // Two deliberate bounds keep this off the open-frame critical path:
+  //   • Only the few MOST-RECENT messages (`WARM_RECENT`) are warmed. The old
+  //     `slice(-20)` front-loaded up to 20 fetches the instant the chat
+  //     opened; the user only ever sees the last handful first, so warming 6
+  //     covers the first screen and the rest stream in lazily on scroll.
+  //   • Animated GIFs are EXCLUDED. GIFs are the heaviest decodes and warming
+  //     them (even disk-only) wastes the budget on content that should only
+  //     ever decode when actually visible. They load on render via the normal
+  //     `autoplay={isVisible}` path.
+  //   • Warm policy is `'disk'` (network round-trip only, NO decode) so the
+  //     warm never kicks off an off-screen decode storm — the decode happens
+  //     lazily when a visible bubble mounts the real `CachedImage`.
   useEffect(() => {
     if (!myMessages || myMessages.length === 0) return;
     const handle = InteractionManager.runAfterInteractions(() => {
-      const recent = myMessages.slice(-20);
+      const recent = myMessages.slice(-WARM_RECENT);
       const uris: string[] = [];
       for (const m of recent) {
-        if ((m as any).imageUrls) for (const u of (m as any).imageUrls) uris.push(u);
+        if ((m as any).imageUrls) for (const u of (m as any).imageUrls) {
+          if (isAnimatedImageUrl(u)) continue; // skip GIFs — decode on render
+          uris.push(u);
+        }
       }
       if (uris.length) {
         import('../../src/components/ui/CachedImage')
-          .then(({ prefetchImages }) => prefetchImages(uris, CHAT_IMG_MAX_W))
+          .then(({ prefetchImages }) => prefetchImages(uris, CHAT_IMG_MAX_W, 'disk'))
           .catch(() => {});
       }
     });
     return () => handle.cancel();
-  }, [conversationId]);  useEffect(() => {
+  }, [conversationId]);
+
+  // Persist messages to KV cache whenever THIS chat's messages change.
+  // CRITICAL: the store now holds only the bounded SEED on open (full history
+  // loads lazily), so a naive `kvSetJSON(store)` would TRUNCATE the older
+  // history still on disk. Guarded:
+  //   • Full history hydrated → the store IS the complete authoritative array
+  //     → safe to mirror wholesale.
+  //   • Store is still the untouched seed we pushed (reference-equal) → those
+  //     messages are already on disk → nothing to persist.
+  //   • Store diverged from the seed (a send / edit / delete) → hydrate the
+  //     full history FIRST (it MERGES the divergent store in), so the resulting
+  //     store change re-runs this effect on the hydrated branch and mirrors the
+  //     COMPLETE array. Deferred so it never blocks the input frame. With no
+  //     cached history (brand-new chat) the store is the whole truth → write it.
+  useEffect(() => {
     if (!conversationId) return;
-    if (myMessages && myMessages.length > 0) {
+    if (!myMessages || myMessages.length === 0) return;
+    if (historyHydratedRef.current === conversationId) {
       kvSetJSON(`chat_messages:${conversationId}`, myMessages);
+      return;
     }
-  }, [conversationId, myMessages]);
+    if (myMessages === seededArrayRef.current) return; // untouched seed — already on disk
+    const handle = InteractionManager.runAfterInteractions(() => {
+      if (historyHydratedRef.current === conversationId) return;
+      const merged = hydrateFullHistory();
+      if (!merged) {
+        kvSetJSON(`chat_messages:${conversationId}`, useChatStore.getState().messages[conversationId] || myMessages);
+      }
+    });
+    return () => handle.cancel();
+  }, [conversationId, myMessages, hydrateFullHistory]);
 
   const chatLocalName = specificSettings?.localName;
   const displayName = chatLocalName || conversation?.participantName || profileData?.display_name || entityConv?.participantName || t('chat.fallback_name');
@@ -1396,6 +1557,11 @@ export default function ChatScreen() {
     const onDelete = (msg: { data?: any }) => {
       const payload = msg?.data;
       if (!payload || typeof payload !== 'object' || !payload.id) return;
+      // Ensure the FULL history is in the store before removing, so the delete
+      // can't be "resurrected" when the lazy hydrate-merge later runs (the
+      // merge overlays the store onto the cached full array by id — a message
+      // only deleted from the bounded seed would otherwise survive in cache).
+      hydrateFullHistoryRef.current();
       const current = useChatStore.getState().messages[conversationId] || [];
       setMessages(conversationId, current.filter((m) => m.id !== payload.id) as any);
     };
@@ -1413,8 +1579,15 @@ export default function ChatScreen() {
   // ── Message search ──────────────────────────────────────────────────────────
   const openSearch = useCallback(() => {
     triggerHaptic('light');
+    // Search must cover the WHOLE conversation, not just the loaded seed
+    // window — hydrate the full history (once) when the user opens search.
+    // Deferred so opening the search bar stays snappy; the match recompute
+    // re-runs when `chatMessages` grows.
+    if (historyHydratedRef.current !== conversationId) {
+      InteractionManager.runAfterInteractions(() => { hydrateFullHistory(); });
+    }
     setSearchMode(true);
-  }, []);
+  }, [conversationId, hydrateFullHistory]);
 
   const closeSearch = useCallback(() => {
     // Dismiss the keyboard first so the bottom input bar doesn't get stuck at the
@@ -1754,6 +1927,10 @@ export default function ChatScreen() {
             // Read the latest snapshot from getState() rather than from the
             // closed-over selector — avoids the callback being recreated on
             // every store update (and rebuilding all bubbles' onLongPress).
+            // Ensure the FULL history is loaded first so the delete persists
+            // correctly (the lazy hydrate-merge would otherwise resurrect a
+            // message removed only from the bounded seed window).
+            hydrateFullHistoryRef.current();
             const current = useChatStore.getState().messages[conversationId] || [];
             setMessages(conversationId, current.filter((m) => m.id !== message.id) as any);
             triggerHaptic('medium');
@@ -2063,14 +2240,23 @@ export default function ChatScreen() {
   );
   // Grow the window when the user reaches the top (oldest) of the inverted
   // list. Guarded against growing past the array length so it settles once the
-  // whole history is mounted.
+  // whole history is mounted. When the window already covers everything that's
+  // LOADED but the full history hasn't been hydrated yet (open path holds only
+  // the bounded seed), pull the full history from cache now — then grow the
+  // window into the newly-available older messages.
   const onEndReached = useCallback(() => {
-    setVisibleCount((c) => {
-      const total = invertedMessages.length;
-      if (c >= total) return c;
-      return Math.min(c + WINDOW_CHUNK, total);
-    });
-  }, [invertedMessages.length]);
+    const total = invertedMessages.length;
+    if (visibleCount < total) {
+      setVisibleCount((c) => Math.min(c + WINDOW_CHUNK, total));
+      return;
+    }
+    if (historyHydratedRef.current !== conversationId) {
+      const healed = hydrateFullHistory();
+      if (healed && healed.length > total) {
+        setVisibleCount((c) => Math.min(c + WINDOW_CHUNK, healed.length));
+      }
+    }
+  }, [invertedMessages.length, visibleCount, conversationId, hydrateFullHistory]);
 
   // Tap-a-reply-to-jump: scroll to the message a reply is quoting and flash it.
   // `replyToId` is stored on every reply message (see sendText/sendGif). The
@@ -2079,12 +2265,27 @@ export default function ChatScreen() {
   const jumpTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollToMessageId = useCallback((messageId?: string) => {
     if (!messageId) return;
-    const idx = invertedMessages.findIndex((mm) => mm.id === messageId);
-    if (idx < 0) return; // original genuinely not in this conversation
+    let idx = invertedMessages.findIndex((mm) => mm.id === messageId);
+    let total = invertedMessages.length;
+    if (idx < 0) {
+      // Reply target is older than the currently-loaded window/seed. Lazily
+      // hydrate the FULL history from cache (the open path holds only the
+      // bounded seed), then map the target into the freshly-inverted index
+      // space (store is oldest→newest; the inverted list reverses it).
+      const healed = historyHydratedRef.current === conversationId ? null : hydrateFullHistory();
+      if (healed && healed.length > 0) {
+        const fwdIdx = healed.findIndex((mm) => mm.id === messageId);
+        if (fwdIdx < 0) return;
+        total = healed.length;
+        idx = total - 1 - fwdIdx;
+      } else {
+        return; // genuinely not in this conversation
+      }
+    }
     // Reply-jump to an OLD message: if the target sits beyond the current
     // render window, grow the window to include it (+ a small buffer) BEFORE
     // scrolling so the row actually exists in the FlatList data.
-    setVisibleCount((c) => (idx >= c ? Math.min(idx + 10, invertedMessages.length) : c));
+    setVisibleCount((c) => (idx >= c ? Math.min(idx + 10, total) : c));
     triggerHaptic('selection');
     setJumpHighlightId(messageId);
     if (jumpTimerRef.current) clearTimeout(jumpTimerRef.current);
@@ -2097,7 +2298,7 @@ export default function ChatScreen() {
     requestAnimationFrame(() => {
       try { flatListRef.current?.scrollToIndex({ index: idx, animated: true, viewPosition: 0.5 }); } catch {}
     });
-  }, [invertedMessages]);
+  }, [invertedMessages, conversationId, hydrateFullHistory]);
   useEffect(() => () => { if (jumpTimerRef.current) clearTimeout(jumpTimerRef.current); }, []);
 
   // Guard against the freeze caused by rapid long-presses / taps while a menu is
@@ -2203,6 +2404,7 @@ export default function ChatScreen() {
         fontFamily={chatSettings.fontFamily}
         linkEmoji={chatSettings.linkEmoji}
         highlighted={item.id === activeMatchId || item.id === jumpHighlightId}
+        imagesReady={imagesReady}
         onReply={startReply}
         onReplyJump={scrollToMessageId}
         onLongPress={onMessageLongPress}
@@ -2216,7 +2418,7 @@ export default function ChatScreen() {
         onFireDragAction={fireDragAction}
       />
     );
-  }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, chatSettings.linkEmoji, startReply, scrollToMessageId, handleSwipeActive, openImageViewer, parseMessage, activeMatchId, jumpHighlightId, onMessageLongPress, currentUserId, dragActiveSV, dragFingerYSV, hoveredActionSV, actionZonesSV, fireDragAction, visTracker]);
+  }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, chatSettings.linkEmoji, startReply, scrollToMessageId, handleSwipeActive, openImageViewer, parseMessage, activeMatchId, jumpHighlightId, onMessageLongPress, currentUserId, dragActiveSV, dragFingerYSV, hoveredActionSV, actionZonesSV, fireDragAction, visTracker, imagesReady]);
 
   // Stable callback refs for FlatList — without these, every parent render
   // hands FlatList fresh function identities and breaks its row recycling

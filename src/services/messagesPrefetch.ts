@@ -141,8 +141,17 @@ export async function prefetchRecentChatMedia(opts: PrefetchOpts): Promise<void>
   if (collected.length === 0) return;
   // Single batched call into expo-image's prefetcher. Warm at the chat's
   // single-photo display width so the cache key matches the real mount.
+  //
+  // `'disk'` cache policy: warm the NETWORK round-trip ONLY (bytes land on
+  // disk) WITHOUT decoding into the memory bitmap cache. Decoding every
+  // top-8-conversation thumb (incl. animated GIFs) on the messages tab was a
+  // pure off-screen cost — those bitmaps may never be looked at, and GIF
+  // decodes are the heaviest. With `'disk'` the decode happens lazily only
+  // when a VISIBLE image actually mounts in a chat; the expensive part is
+  // deferred to the moment it's needed while we still save the slow cold
+  // weserv → origin → resize round-trip ahead of time.
   try {
-    prefetchImages(collected, CHAT_THUMB_WIDTH);
+    prefetchImages(collected, CHAT_THUMB_WIDTH, 'disk');
   } catch {
     // ignore — prefetch is best-effort
   }

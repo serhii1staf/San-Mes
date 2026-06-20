@@ -76,17 +76,30 @@ export function proxiedImageUrl(uri: string, displayWidth?: number): string {
  * URL and therefore a guaranteed cache MISS — wasted egress + a cold fetch on
  * open). Defaults to the feed-card width (600) so existing callers (feed
  * heroes, profile banner, link-preview thumbs) are byte-for-byte unchanged.
+ *
+ * `cachePolicy` controls HOW much work the warm does:
+ *   - `'memory-disk'` (default) — download AND DECODE into the in-memory
+ *     bitmap cache. Instant on render, but the decode is expensive (esp. for
+ *     animated GIFs) and front-loads CPU/memory the moment we warm. Kept as
+ *     the default so every existing caller behaves byte-for-byte as before.
+ *   - `'disk'` — download to disk ONLY, no decode. Saves just the network
+ *     round-trip; the (cheap-once-cached) decode then happens lazily when a
+ *     VISIBLE image actually mounts. This is what the chat-open and
+ *     messages-tab warm paths use so warming never triggers a decode storm
+ *     off-screen. `'disk'` is a supported `Image.prefetch` cache policy in
+ *     expo-image SDK 54 (see `ImagePrefetchOptions.cachePolicy`).
  */
 export function prefetchImages(
   uris: (string | null | undefined)[],
   displayWidth: number = 600,
+  cachePolicy: 'disk' | 'memory-disk' | 'memory' = 'memory-disk',
 ): void {
   const list = uris
     .filter((u): u is string => !!u && u.startsWith('http'))
     .slice(0, 30)
     .map((u) => proxiedImageUrl(u, displayWidth));
   if (list.length === 0) return;
-  try { Image.prefetch(list, { cachePolicy: 'memory-disk' }); } catch {}
+  try { Image.prefetch(list, { cachePolicy }); } catch {}
 }
 
 /**
