@@ -1,4 +1,4 @@
-import React, { memo, useCallback } from 'react';
+import React, { memo, useCallback, useMemo } from 'react';
 import { View, Pressable, FlatList, Text as RNText, StyleSheet } from 'react-native';
 import { useT } from '../../i18n/store';
 import { useLiquidGlassActive, GlassBg } from '../ui/LiquidGlass';
@@ -90,9 +90,13 @@ export interface EmojiPanelProps {
   onSelect: (emoji: string) => void;
   /** Active theme object (passed in to avoid an extra context read on mount). */
   theme: any;
+  /** Bottom safe-area inset — added as list content padding so the last row
+   *  clears the home indicator while the panel itself bleeds to the screen
+   *  bottom edge. */
+  bottomInset?: number;
 }
 
-function EmojiPanelComponent({ height, onSelect, theme }: EmojiPanelProps) {
+function EmojiPanelComponent({ height, onSelect, theme, bottomInset = 0 }: EmojiPanelProps) {
   const t = useT();
   const glassActive = useLiquidGlassActive();
 
@@ -121,6 +125,14 @@ function EmojiPanelComponent({ height, onSelect, theme }: EmojiPanelProps) {
     [onSelect, t, theme],
   );
 
+  // Content padding: base + the bottom safe-area inset so the final emoji row
+  // sits above the home indicator even though the panel extends to the very
+  // bottom edge of the screen.
+  const contentStyle = useMemo(
+    () => [styles.listContent, { paddingBottom: 10 + bottomInset }],
+    [bottomInset],
+  );
+
   return (
     <View
       style={[
@@ -146,7 +158,7 @@ function EmojiPanelComponent({ height, onSelect, theme }: EmojiPanelProps) {
         renderItem={renderCategory}
         style={styles.list}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.listContent}
+        contentContainerStyle={contentStyle}
         keyboardShouldPersistTaps="always"
         initialNumToRender={3}
         windowSize={5}
@@ -157,11 +169,15 @@ function EmojiPanelComponent({ height, onSelect, theme }: EmojiPanelProps) {
 
 const styles = StyleSheet.create({
   container: {
-    borderRadius: 28,
+    // Round only the TOP corners — the panel bleeds to the screen's side and
+    // bottom edges, so bottom corners are flush (no triangular gaps showing
+    // the chat behind them).
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
     overflow: 'hidden',
   },
   list: { flex: 1 },
-  listContent: { paddingVertical: 10, paddingHorizontal: 12 },
+  listContent: { paddingVertical: 10, paddingHorizontal: 14 },
   category: { marginBottom: 14 },
   catTitle: {
     fontSize: 11,
