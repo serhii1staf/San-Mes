@@ -12,6 +12,11 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
 
+// Width of the photo/attach button slot. When the field expands (multiline),
+// the field slides LEFT over this slot (negative margin) so the growing input
+// visually swallows the still-in-place button.
+const PHOTO_SLOT = 44;
+
 // Isolated chat input bar.
 //
 // Performance: this component owns the text-input state LOCALLY. Typing therefore
@@ -59,6 +64,11 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
   // glass is far cheaper than the BlurView-per-child attempt that was reverted.
   const glassActive = useLiquidGlassActive();
   const [text, setText] = useState('');
+  // Whether the field has grown past a single line. Drives the "field expands
+  // left and swallows the photo button" layout. Tracked via a ref too so the
+  // (stable) content-size callback can read the latest value without deps.
+  const [expanded, setExpanded] = useState(false);
+  const expandedRef = useRef(false);
 
   // ── Native paste wrapper (expo-paste-input) — crash-safe lazy load ──────
   // The native view `ExpoPasteInput` only exists in builds that bundled the
@@ -86,8 +96,15 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
   }, [onPasteImages]);
 
   useImperativeHandle(ref, () => ({
-    setText: (t: string) => setText(t),
-    clear: () => setText(''),
+    setText: (t: string) => {
+      setText(t);
+      if (!t) { expandedRef.current = false; setExpanded(false); }
+    },
+    clear: () => {
+      setText('');
+      lastHeightRef.current = 0;
+      if (expandedRef.current) { expandedRef.current = false; setExpanded(false); }
+    },
     getText: () => text,
   }), [text]);
 
@@ -106,9 +123,17 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
   const lastHeightRef = useRef(0);
   const handleContentSizeChange = useCallback((e: { nativeEvent: { contentSize: { height: number } } }) => {
     const h = Math.round(e.nativeEvent.contentSize.height);
-    if (h !== lastHeightRef.current) {
-      lastHeightRef.current = h;
-      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    if (h === lastHeightRef.current) return;
+    lastHeightRef.current = h;
+    // One layout animation per height change — the height grow AND the
+    // expand/collapse margin+padding shifts all ride this single native pass.
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    // >1 line → expanded. Single line content height ≈ 20-24px; threshold 30
+    // is comfortably between one and two lines.
+    const next = h > 30;
+    if (next !== expandedRef.current) {
+      expandedRef.current = next;
+      setExpanded(next);
     }
   }, []);
 
@@ -137,19 +162,9 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
   );
   const inputInner = (
     <>
-      {/* Attach/photo button — now lives INSIDE the input container on the
-          left, so the single rounded wrap visually surrounds it (one unified
-          composer instead of a detached button + field). `alignSelf:flex-end`
-          pins it to the bottom edge so it stays put while the field grows
-          upward. Plain icon (no nested glass — interactive glass renders its
-          children transparent). Long-press still pastes a clipboard image. */}
-      <Pressable onPress={onPickImages} onLongPress={onPasteImage} delayLongPress={300} hitSlop={8} style={{ alignSelf: 'flex-end', marginRight: 8, marginBottom: 1, padding: 2 }}>
-        <Feather name="image" size={22} color={theme.colors.accent.primary} />
-      </Pressable>
       {/* Wrap the TextInput in the native paste handler when the module is
-          present (new builds). `flex: 1` keeps it filling the row exactly like
-          the bare TextInput did. On older binaries PasteWrapper stays null and
-          we render the plain TextInput — identical layout, no crash. */}
+          present (new builds). `flex: 1` keeps it filling the row. On older
+          binaries PasteWrapper stays null and we render the plain TextInput. */}
       {PasteWrapper ? (
         <PasteWrapper style={{ flex: 1 }} onPaste={handleNativePaste}>
           {textInputEl}
@@ -157,35 +172,54 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
       ) : (
         textInputEl
       )}
-      {/* GIF button inside the input, right side. alignSelf:flex-end so it
-          stays at the bottom row of the input wrap when text wraps. */}
+      {/* GIF button inside the input, right side. */}
       <Pressable onPress={onOpenGif} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 4, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8, backgroundColor: theme.colors.accent.primary + '18' }}>
         <Text style={{ fontSize: 11, fontWeight: '800', color: theme.colors.accent.primary }}>GIF</Text>
       </Pressable>
     </>
   );
 
+  // Field's left padding: normal when collapsed; when expanded it leaves room
+  // for the photo button, which slides UNDER the field's left edge.
+  const wrapPadLeft = expanded ? PHOTO_SLOT + 2 : 14;
+
   return (
-    // alignItems: 'flex-end' — the unified input wrap grows UPWARD on multiline
-    // while the send button stays pinned to the row's bottom edge. The attach
-    // and GIF buttons now live INSIDE the wrap (also flex-end), so the rounded
-    // container surrounds them and they hold their position as the field grows.
+    // alignItems:'flex-end' → the field + send pin to the bottom; the field
+    // grows UPWARD on multiline.
     <Reanimated.View style={[styles.row, inputRowStyle]}>
-      {/* Unified input container: attach icon + TextInput + GIF as children.
-          NON-interactive glass (interactive morph fights text editing) and no
-          overflow so the shape/padding/minHeight match the flat path. */}
+      {/* Photo/attach button. COLLAPSED: a separate capsule with a gap, just
+          like the send button. EXPANDED (multiline): goes borderless and slides
+          UNDER the field via a negative margin, so the growing field visually
+          swallows it while the icon stays put. `zIndex` keeps the icon painted
+          on top of the field background. It's a SIBLING of the field (not a
+          child), so the interactive-glass "transparent child" issue never
+          applies. */}
+      <Pressable
+        onPress={onPickImages}
+        onLongPress={onPasteImage}
+        delayLongPress={300}
+        style={[
+          styles.photoBtn,
+          expanded
+            ? { marginRight: -PHOTO_SLOT, backgroundColor: 'transparent', borderColor: 'transparent' }
+            : { marginRight: 8, backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light },
+        ]}
+      >
+        <Feather name="image" size={20} color={theme.colors.accent.primary} />
+      </Pressable>
+      {/* Input container: TextInput + GIF. NON-interactive-editing-friendly
+          glass when enabled, flat capsule otherwise. */}
       {glassActive ? (
-        <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.inputWrapGlass}>
+        <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={[styles.inputWrapGlass, { paddingLeft: wrapPadLeft }]}>
           {inputInner}
         </NativeGlassView>
       ) : (
-        <View style={[styles.inputWrap, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
+        <View style={[styles.inputWrap, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light, paddingLeft: wrapPadLeft }]}>
           {inputInner}
         </View>
       )}
-      {/* Send button → keep the solid accent affordance when it can send (a
-          filled send button, no glass). When it can't (empty) AND glass is
-          active, render interactive glass holding the icon as a CHILD. */}
+      {/* Send button → solid accent when it can send; interactive glass when
+          empty + glass enabled. */}
       {glassActive && !canSend ? (
         <Pressable onPress={handleSend} style={{ borderRadius: 22, marginLeft: 8 }}>
           <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.btnGlass}>
@@ -207,7 +241,10 @@ const styles = StyleSheet.create({
   // pinned to the bottom (which is the keyboard top), so visually the user
   // sees only the input bubble grow, not the buttons jump.
   row: { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 12, paddingTop: 8 },
-  inputWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 22, paddingLeft: 10, paddingRight: 14, paddingVertical: 10, minHeight: 44, borderWidth: 1 },
+  // Photo/attach button. zIndex:2 so when the field slides under it (expanded)
+  // the icon stays painted on top of the field background.
+  photoBtn: { width: PHOTO_SLOT, height: 44, borderRadius: 22, borderWidth: 1, alignItems: 'center', justifyContent: 'center', alignSelf: 'flex-end', zIndex: 2 },
+  inputWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 22, paddingLeft: 14, paddingRight: 14, paddingVertical: 10, minHeight: 44, borderWidth: 1, zIndex: 1 },
   sendBtn: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', marginLeft: 8 },
   // Interactive-glass shape variants — same geometry as the flat capsules but
   // NO border and NO overflow clipping, so the liquid glass can morph OUTWARD
@@ -216,5 +253,5 @@ const styles = StyleSheet.create({
   btnGlass: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
   // Input-wrap glass: same shape as `inputWrap` minus the border. NON-interactive
   // (the TextInput lives inside; interactive morph would fight text editing).
-  inputWrapGlass: { flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 22, paddingLeft: 10, paddingRight: 14, paddingVertical: 10, minHeight: 44 },
+  inputWrapGlass: { flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 22, paddingLeft: 14, paddingRight: 14, paddingVertical: 10, minHeight: 44, zIndex: 1 },
 });
