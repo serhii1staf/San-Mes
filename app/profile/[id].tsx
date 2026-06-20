@@ -1047,7 +1047,7 @@ export default function UserProfileScreen() {
               ],
             }}
             resizeMode="cover"
-            proxyWidth={1080}
+            proxyWidth={SCREEN_WIDTH}
           />
         ) : null}
         {/* Banner bottom fades into the app background (clean original look). */}

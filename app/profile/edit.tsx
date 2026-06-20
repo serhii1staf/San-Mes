@@ -458,7 +458,7 @@ export default function EditProfileScreen() {
                   },
                 ]}
                 resizeMode="cover"
-                proxyWidth={1080}
+                proxyWidth={SCREEN_WIDTH}
               />
             ) : null}
             <LinearGradient

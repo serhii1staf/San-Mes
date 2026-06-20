@@ -110,6 +110,43 @@ const SYNTHETIC_USER_BLOCK_PREFIX = '__user_block:';
 const isSyntheticUserBlockId = (id: string) => id.startsWith(SYNTHETIC_USER_BLOCK_PREFIX);
 const userIdFromSyntheticId = (id: string) => id.slice(SYNTHETIC_USER_BLOCK_PREFIX.length);
 
+// ─── Staggered ContextMenu arming scheduler ──────────────────────────────
+// iOS builds a `UIContextMenuInteraction` per ContextMenu view, so arming
+// every visible row in a single commit (the previous one-RAF-after-mount
+// strategy) produced the dominant ~182 ms long task on the cold open of
+// (tabs)/messages. This shared FIFO pump arms at most ONE row per animation
+// frame, so the per-view native setup is spread across frames and never
+// lands as a single long task on the navigation-transition frame. Rows
+// enqueue on mount (deferred past the transition via InteractionManager) and
+// cancel their slot on unmount/recycle. By the time the list settles and the
+// user can reach a row, it is already armed → long-press works on the first
+// try, identical to before — only the setup timing moved off the hot frame.
+const __armQueue: Array<() => void> = [];
+let __armPumpScheduled = false;
+function __pumpArmQueue() {
+  __armPumpScheduled = false;
+  const fn = __armQueue.shift();
+  if (fn) {
+    try { fn(); } catch { /* row unmounted between schedule + pump */ }
+  }
+  if (__armQueue.length > 0) {
+    __armPumpScheduled = true;
+    requestAnimationFrame(__pumpArmQueue);
+  }
+}
+function scheduleRowArm(fn: () => void): () => void {
+  __armQueue.push(fn);
+  if (!__armPumpScheduled) {
+    __armPumpScheduled = true;
+    requestAnimationFrame(__pumpArmQueue);
+  }
+  // Canceller — drop this row's slot if it unmounts before its turn.
+  return () => {
+    const i = __armQueue.indexOf(fn);
+    if (i >= 0) __armQueue.splice(i, 1);
+  };
+}
+
 function ConversationItemBase({ item, tab }: { item: Conversation; index: number; tab: ChatTab }) {
   const theme = useTheme();
   const t = useT();
@@ -117,23 +154,30 @@ function ConversationItemBase({ item, tab }: { item: Conversation; index: number
   const localName = useChatSettingsStore((s) => s.settings[item.id]?.localName);
   const displayName = localName || item.participantName;
 
-  // Defer the native ContextMenu wrapper by ONE RAF after the row first
-  // commits. iOS's `UIContextMenuInteraction` is set up per-view by the
-  // ContextMenu library, and on the cold mount of (tabs)/messages with
-  // 4 visible rows that setup landed as the dominant cost behind the
-  // residual `LONG @ (tabs)/messages 145 ms` the perf monitor flagged
-  // even after the action-array memoization. Rendering the plain
-  // Pressable on the first frame and upgrading to ContextMenu one RAF
-  // later moves that native setup off the navigation transition frame
-  // — long-press still works (after the same single RAF the user is
-  // physically in the middle of holding their finger down for >250 ms),
-  // and the visible UI is byte-identical because the wrapper itself is
-  // transparent.
+  // Defer the native ContextMenu wrapper off the cold-mount frame. iOS's
+  // `UIContextMenuInteraction` is set up per-view by the ContextMenu library;
+  // arming all visible rows in one commit (the previous one-RAF-after-mount
+  // approach) landed as the dominant ~182 ms long task behind the residual
+  // `LONG @ (tabs)/messages` the perf monitor flagged on cold open. Instead we
+  // enqueue into a shared scheduler (see `scheduleRowArm`) that arms at most
+  // ONE row per animation frame, AFTER the navigation transition completes
+  // (InteractionManager). The plain Pressable renders on the first frame and
+  // each row upgrades to ContextMenu on its staggered turn — the visible UI is
+  // byte-identical (the wrapper is transparent) and long-press still works
+  // because arming finishes within a few frames of the list settling, well
+  // before the user can physically reach + hold a row for >250 ms.
   const [menuReady, setMenuReady] = useState(false);
   useEffect(() => {
-    const handle = requestAnimationFrame(() => setMenuReady(true));
-    return () => cancelAnimationFrame(handle);
-  }, []);
+    if (menuReady) return;
+    let cancelArm: (() => void) | undefined;
+    const handle = InteractionManager.runAfterInteractions(() => {
+      cancelArm = scheduleRowArm(() => setMenuReady(true));
+    });
+    return () => {
+      handle.cancel();
+      cancelArm?.();
+    };
+  }, [menuReady]);
 
   // Each action has a stable `id` we dispatch on, plus a localized `title`
   // shown by the native context menu. Matching by id (or index) keeps logic

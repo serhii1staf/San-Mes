@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef, useSyncExternalStore } from 'react';
 import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, Alert, Animated, Modal, Dimensions, Keyboard, InteractionManager, type ViewToken } from 'react-native';
 import { useReanimatedKeyboardAnimation, useKeyboardHandler } from 'react-native-keyboard-controller';
 import Reanimated, { useAnimatedStyle, interpolate, Extrapolation, useSharedValue, withSpring, runOnJS, useAnimatedRef, measure, type SharedValue } from 'react-native-reanimated';
@@ -480,6 +480,33 @@ const MemoMessageBubble = React.memo(MessageBubble, (prev, next) => {
     prev.highlighted === next.highlighted &&
     prev.isVisible === next.isVisible
   );
+});
+
+// Per-row visibility tracker — a tiny external store that replaces the
+// `visibleIds`/`viewabilityReady` component state. See `visTrackerRef` in
+// ChatScreen for construction.
+type VisibilityTracker = {
+  subscribe: (listener: () => void) => () => void;
+  isVisible: (id: string) => boolean;
+  update: (next: Set<string>) => void;
+};
+
+// Thin wrapper that subscribes ONLY this row to the visibility tracker, so a
+// viewability change re-renders just the bubbles whose on-screen state flips
+// instead of churning `renderItem`'s identity (which previously listed
+// `visibleIds`/`viewabilityReady` in its deps and forced FlatList to re-run
+// for every mounted cell on every viewability event mid-scroll).
+// `useSyncExternalStore` returns a boolean snapshot, so it bails out for rows
+// whose visibility is unchanged. Behaviour is identical to the old
+// `isVisible={!viewabilityReady || visibleIds.has(id)}`: the tracker reports
+// everything visible until the first viewable set lands.
+type VisibilityBubbleProps = Omit<React.ComponentProps<typeof MemoMessageBubble>, 'isVisible'> & {
+  tracker: VisibilityTracker;
+};
+const VisibilityBubble = React.memo(function VisibilityBubble({ tracker, ...rest }: VisibilityBubbleProps) {
+  const id = rest.message.id;
+  const isVisible = useSyncExternalStore(tracker.subscribe, () => tracker.isVisible(id));
+  return <MemoMessageBubble isVisible={isVisible} {...rest} />;
 });
 
 export default function ChatScreen() {
@@ -1746,14 +1773,35 @@ export default function ChatScreen() {
   // Parse the ::img::url1|url2:: marker for messages coming from the DB, and
   // heal any legacy relative senderId ('current'/'peer') to a real uuid so
   // ownership compares correctly at render time.
+  //
+  // Memoized by RAW item ref via a WeakMap so a given message is parsed at
+  // most once (re-parsing only when the store hands us a NEW object for that
+  // id — i.e. the message actually changed). This keeps the parsed `m` object
+  // identity stable across renders, so `MemoMessageBubble`'s `imageUrls` ref
+  // check and the FlatList cell bail-outs hold during scroll instead of
+  // allocating a fresh object on every `renderItem` call. The cache is rebuilt
+  // (cleared) whenever the identity inputs (`currentUserId`/`participantId`)
+  // change, so healed ownership can never go stale.
+  const parseCache = useMemo(() => new WeakMap<ChatMessage, ChatMessage>(), [currentUserId, participantId]);
   const parseMessage = useCallback((m: ChatMessage): ChatMessage => {
+    const cached = parseCache.get(m);
+    if (cached) return cached;
     const healed = healLegacySender(m, currentUserId, participantId);
-    if (healed.imageUrls || !healed.text?.startsWith('::img::')) return healed;
-    const end = healed.text.indexOf('::', 7);
-    if (end === -1) return healed;
-    const urls = healed.text.slice(7, end).split('|').filter(Boolean);
-    return { ...healed, imageUrls: urls.length ? urls : undefined, text: healed.text.slice(end + 2) };
-  }, [currentUserId, participantId]);
+    let result: ChatMessage;
+    if (healed.imageUrls || !healed.text?.startsWith('::img::')) {
+      result = healed;
+    } else {
+      const end = healed.text.indexOf('::', 7);
+      if (end === -1) {
+        result = healed;
+      } else {
+        const urls = healed.text.slice(7, end).split('|').filter(Boolean);
+        result = { ...healed, imageUrls: urls.length ? urls : undefined, text: healed.text.slice(end + 2) };
+      }
+    }
+    parseCache.set(m, result);
+    return result;
+  }, [currentUserId, participantId, parseCache]);
 
   const activeMatchIndex = searchMatches.length > 0 ? searchMatches[searchActiveIdx] : -1;
   const activeMatchId = activeMatchIndex >= 0 && activeMatchIndex < chatMessages.length ? chatMessages[activeMatchIndex]?.id : null;
@@ -1793,20 +1841,46 @@ export default function ChatScreen() {
 
   // ── GIF off-screen pause (viewability tracking) ───────────────────────
   // Track which message rows are actually on screen so animated images
-  // (GIFs) only decode frames while visible. `viewabilityReady` guards the
-  // window before FlatList has reported its first viewable set — until then
-  // we treat everything as visible so nothing is paused incorrectly on open.
-  // Both config + handler are ref-stable: FlatList warns (and can crash on
-  // some RN versions) if either identity changes between renders.
-  const [visibleIds, setVisibleIds] = useState<Set<string>>(() => new Set());
-  const [viewabilityReady, setViewabilityReady] = useState(false);
+  // (GIFs) only decode frames while visible. The visible set lives in a tiny
+  // external store (`visTracker`) rather than component state: each bubble
+  // subscribes to it individually (via `VisibilityBubble`), so a viewability
+  // change re-renders ONLY the rows whose on-screen state flips — `renderItem`
+  // no longer depends on the visible set, so its identity stays stable across
+  // scroll and FlatList isn't forced to re-run for every mounted cell on each
+  // viewability event. `ready` guards the window before FlatList reports its
+  // first viewable set — until then everything is treated as visible so
+  // nothing is paused incorrectly on open. Both config + handler are
+  // ref-stable: FlatList warns (and can crash on some RN versions) if either
+  // identity changes between renders.
+  const visTrackerRef = useRef<VisibilityTracker | null>(null);
+  if (!visTrackerRef.current) {
+    let visibleSet = new Set<string>();
+    let ready = false;
+    const listeners = new Set<() => void>();
+    visTrackerRef.current = {
+      subscribe(l) { listeners.add(l); return () => { listeners.delete(l); }; },
+      isVisible(itemId) { return !ready || visibleSet.has(itemId); },
+      update(next) {
+        // Skip the listener fan-out when the viewable set is unchanged —
+        // mirrors the old `setVisibleIds` dedupe so tiny scroll jitter is free.
+        if (ready && next.size === visibleSet.size) {
+          let same = true;
+          for (const itemId of next) if (!visibleSet.has(itemId)) { same = false; break; }
+          if (same) return;
+        }
+        visibleSet = next;
+        ready = true;
+        listeners.forEach((fn) => fn());
+      },
+    };
+  }
+  const visTracker = visTrackerRef.current;
   // Deferred past the open-chat transition: FlatList fires its first
   // viewability callback the instant the initial cells lay out, which
   // landed on the same frame as the navigation slide-in and triggered an
-  // immediate re-render of all five mounted bubbles (state write to
-  // `visibleIds`). The 250 ms gate skips that first burst — the list is
-  // already rendering everything visible (initialNumToRender=5), so
-  // nothing is paused incorrectly during the gate.
+  // immediate re-render of all five mounted bubbles. The 250 ms gate skips
+  // that first burst — the list is already rendering everything visible
+  // (initialNumToRender=5), so nothing is paused incorrectly during the gate.
   const viewabilityArmedRef = useRef(false);
   useEffect(() => {
     const handle = setTimeout(() => { viewabilityArmedRef.current = true; }, 250);
@@ -1814,30 +1888,21 @@ export default function ChatScreen() {
   }, []);
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 35 }).current;
   const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ViewToken[] }) => {
-    // Skip viewability-driven state writes until the open-chat transition
-    // has settled. See `viewabilityArmedRef` declaration above.
+    // Skip viewability-driven updates until the open-chat transition has
+    // settled. See `viewabilityArmedRef` declaration above.
     if (!viewabilityArmedRef.current) return;
     const next = new Set<string>();
     for (const v of viewableItems) {
       if (v.isViewable && v.item?.id) next.add(v.item.id as string);
     }
-    setViewabilityReady(true);
-    setVisibleIds((prev) => {
-      // Skip the state write (and the consequent re-render) when the
-      // viewable set is unchanged — avoids churn on tiny scroll jitters.
-      if (prev.size === next.size) {
-        let same = true;
-        for (const id of next) if (!prev.has(id)) { same = false; break; }
-        if (same) return prev;
-      }
-      return next;
-    });
+    visTrackerRef.current?.update(next);
   }).current;
 
   const renderItem = useCallback(({ item }: { item: ChatMessage; index: number }) => {
     const m = parseMessage(item);
     return (
-      <MemoMessageBubble
+      <VisibilityBubble
+        tracker={visTracker}
         message={m}
         isOwn={m.senderId === currentUserId}
         fontSize={chatSettings.fontSize}
@@ -1845,7 +1910,6 @@ export default function ChatScreen() {
         fontFamily={chatSettings.fontFamily}
         linkEmoji={chatSettings.linkEmoji}
         highlighted={item.id === activeMatchId || item.id === jumpHighlightId}
-        isVisible={!viewabilityReady || visibleIds.has(item.id)}
         onReply={startReply}
         onReplyJump={scrollToMessageId}
         onLongPress={onMessageLongPress}
@@ -1859,7 +1923,7 @@ export default function ChatScreen() {
         onFireDragAction={fireDragAction}
       />
     );
-  }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, chatSettings.linkEmoji, startReply, scrollToMessageId, handleSwipeActive, openImageViewer, parseMessage, activeMatchId, jumpHighlightId, onMessageLongPress, currentUserId, visibleIds, viewabilityReady, dragActiveSV, dragFingerYSV, hoveredActionSV, actionZonesSV, fireDragAction]);
+  }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, chatSettings.linkEmoji, startReply, scrollToMessageId, handleSwipeActive, openImageViewer, parseMessage, activeMatchId, jumpHighlightId, onMessageLongPress, currentUserId, dragActiveSV, dragFingerYSV, hoveredActionSV, actionZonesSV, fireDragAction, visTracker]);
 
   // Stable callback refs for FlatList — without these, every parent render
   // hands FlatList fresh function identities and breaks its row recycling
