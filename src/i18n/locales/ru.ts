@@ -521,6 +521,7 @@ const ru: Record<string, string> = {
   'storage.cat.profiles': 'Профили',
   'storage.cat.notifications': 'Уведомления',
   'storage.cat.misc': 'Прочее',
+  'storage.cat.images': 'Изображения / Медиа',
   'storage.unit.b': 'Б',
   'storage.unit.kb': 'КБ',
   'storage.unit.mb': 'МБ',

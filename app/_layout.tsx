@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, StyleSheet, Animated, Text as RNText, Image as RNImage } from 'react-native';
+import { View, StyleSheet, Animated, Text as RNText, Image as RNImage, Dimensions } from 'react-native';
 import { Stack, useRouter, useSegments, useNavigationContainerRef } from 'expo-router';
 import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
@@ -263,7 +263,58 @@ function RootLayout() {
       }
     }, 0);
 
-    return () => clearTimeout(idle);
+    // Phase 4 — boot-time image warming. Deferred well past first paint so it
+    // NEVER competes with the cold-start frame, then warms the on-disk image
+    // cache for the two surfaces the user opens first: the feed heroes and the
+    // recent media of the top conversations. This makes re-entering the feed /
+    // a chat show images instantly even on a cold launch (Telegram-style),
+    // instead of paying a weserv round-trip the first time each screen mounts.
+    // Cheap + capped: ≤4 feed heroes + the existing ≤12-URI chat-media budget,
+    // all routed through expo-image's deduping prefetcher. Fully guarded.
+    const warm = setTimeout(() => {
+      try {
+        // Feed heroes from the cached feed (top few only).
+        const { kvGetJSONSync } = require('../src/services/kvStore');
+        const feed = kvGetJSONSync('@san:feed_posts', []);
+        if (Array.isArray(feed) && feed.length > 0) {
+          const heroes: string[] = [];
+          for (let i = 0; i < Math.min(feed.length, 4); i++) {
+            const p = feed[i];
+            const u = p?.imageUrl || (Array.isArray(p?.imageUrls) ? p.imageUrls[0] : undefined);
+            if (typeof u === 'string' && u.startsWith('http')) heroes.push(u);
+          }
+          if (heroes.length > 0) {
+            import('../src/components/ui/CachedImage')
+              .then(({ prefetchImages }) => {
+                // Must equal PostCard.HERO_IMG_WIDTH (card content width
+                // [screen − 32] minus the 12px image inset on each side) so the
+                // warmed weserv URL shares an expo-image cache key with the feed
+                // hero's real mount. Kept in sync with PostCard by construction.
+                const heroWidth = Dimensions.get('window').width - 56;
+                prefetchImages(heroes, heroWidth);
+              })
+              .catch(() => {});
+          }
+        }
+        // Recent chat media for the most-active conversations (already capped
+        // + chunked inside the helper). entityStore was hydrated in Phase 2,
+        // so the conversation list is available here.
+        const convos = (useEntityStore.getState().conversations || []) as Array<{ id: string; lastMessageAt?: string }>;
+        if (convos.length > 0) {
+          const ids = [...convos]
+            .sort((a, b) => (b.lastMessageAt || '').localeCompare(a.lastMessageAt || ''))
+            .slice(0, 8)
+            .map((c) => c.id);
+          import('../src/services/messagesPrefetch')
+            .then(({ prefetchRecentChatMedia }) => prefetchRecentChatMedia({ conversationIds: ids, budgetUris: 12 }))
+            .catch(() => {});
+        }
+      } catch {
+        // Warming is best-effort; never let it affect launch.
+      }
+    }, 1200);
+
+    return () => { clearTimeout(idle); clearTimeout(warm); };
   }, [ready]);
 
   useEffect(() => {

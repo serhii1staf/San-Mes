@@ -509,6 +509,7 @@ const en: Record<string, string> = {
   'storage.cat.profiles': 'Profiles',
   'storage.cat.notifications': 'Notifications',
   'storage.cat.misc': 'Other',
+  'storage.cat.images': 'Images / Media',
   'storage.unit.b': 'B',
   'storage.unit.kb': 'KB',
   'storage.unit.mb': 'MB',

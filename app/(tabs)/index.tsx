@@ -8,6 +8,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
 import { PostCard } from '../../src/components/feed/PostCard';
+import { HERO_IMG_WIDTH } from '../../src/components/feed/PostCard';
 import { prefetchImages } from '../../src/components/ui/CachedImage';
 import { PostMenuModal } from '../../src/components/feed/PostMenuModal';
 import { useFeedStore, useAuthStore } from '../../src/store';
@@ -338,7 +339,12 @@ export default function FeedScreen() {
         const u = posts[i].imageUrl || posts[i].imageUrls?.[0];
         if (u) heroes.push(u);
       }
-      if (heroes.length > 0) prefetchImages(heroes);
+      // Warm at the EXACT width the hero/carousel displays at (HERO_IMG_WIDTH)
+      // so the warmed weserv URL shares an expo-image cache key with the real
+      // mount. Warming at the old default (600 → w=1200) produced a different
+      // URL than the hero displayed (w=800 via the proxy default), so every
+      // "warmed" hero still cold-fetched on first paint.
+      if (heroes.length > 0) prefetchImages(heroes, HERO_IMG_WIDTH);
       const { postCount } = useWidgetSettingsStore.getState();
       updateFeedWidget(posts.map((p) => ({
         id: p.id,

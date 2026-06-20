@@ -37,6 +37,16 @@ const IMAGE_HEIGHT = 280;
 // Card content width is the screen minus the feed's 16px horizontal padding
 // on each side (same value `ImageCarousel` already used for `imgWidth`).
 const CARD_CONTENT_WIDTH = SCREEN_WIDTH - 32;
+// Actual on-screen DP width of a hero photo: the card content minus the 12px
+// inset on each side of the image wrapper (single hero `paddingHorizontal: 12`
+// / carousel `SLIDE_INSET` ×2). Exported so the feed screen can WARM the proxy
+// at exactly this width — the single hero's style width is `'100%'` (a string),
+// so CachedImage can't derive a numeric width and would otherwise fall back to
+// the proxy DEFAULT (800px), producing a DIFFERENT weserv URL than the warm and
+// guaranteeing a cache MISS on first paint. Pinning both sides to this constant
+// gives one stable cache key shared by warm + display (matches the multi-image
+// carousel, whose numeric `slideImgWidth` already equals this value).
+export const HERO_IMG_WIDTH = CARD_CONTENT_WIDTH - 24;
 const MIN_ASPECT_RATIO = 0.6;
 const MAX_ASPECT_RATIO = 2.2;
 // Placeholder ratio used before onLoad lands so the row doesn't jump much.
@@ -296,8 +306,12 @@ export const PostCard = memo(function PostCard({ post, currentUserId, onLike, on
           <Pressable onPress={() => { const now = Date.now(); if (now - lastTap.current < 300) handleDoubleTap(); lastTap.current = now; }} style={{ paddingHorizontal: 12, paddingBottom: 12 }}>
             {/* Single hero image — sized to its own aspect ratio via onLoad so
                 tall/wide photos aren't cropped (clamped to a layout-safe band;
-                see ASPECT constants). `priority` follows `heroPriority`. */}
-            <CachedImage uri={imageUrls[0]} style={heroImageStyle} resizeMode="cover" priority={heroPriority} onLoad={handleHeroLoad} />
+                see ASPECT constants). `priority` follows `heroPriority`.
+                `proxyWidth` is pinned to HERO_IMG_WIDTH because the style width
+                is `'100%'` (non-numeric) — without it CachedImage falls back to
+                the proxy DEFAULT (800px), a different cache key than the feed's
+                warm + the carousel, so the warmed bytes would never hit. */}
+            <CachedImage uri={imageUrls[0]} style={heroImageStyle} resizeMode="cover" proxyWidth={HERO_IMG_WIDTH} priority={heroPriority} onLoad={handleHeroLoad} />
           </Pressable>
         ) : (
           <ImageCarousel imageUrls={imageUrls} onDoubleTap={handleDoubleTap} heroPriority={heroPriority} />

@@ -11,6 +11,7 @@ import { UserBadge } from '../../src/components/ui/UserBadge';
 import { getProfiles } from '../../src/lib/supabase';
 import { useMiniAppsStore } from '../../src/store/miniAppsStore';
 import { accountKey } from '../../src/services/cacheService';
+import { kvGetStringRawSync } from '../../src/services/kvStore';
 import { useT } from '../../src/i18n/store';
 import { perfMonitor } from '../../src/services/perfMonitor';
 import { useSettingsStore } from '../../src/store/settingsStore';
@@ -45,8 +46,25 @@ export default function SearchScreen() {
   const [isFocused, setIsFocused] = useState(false);
   const [query, setQuery] = useState('');
   const [profiles, setProfiles] = useState<ProfileResult[]>([]);
-  const [allProfiles, setAllProfiles] = useState<ProfileResult[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  // Cache-first hydrate: `@san:all_profiles` is a GLOBAL (un-namespaced) key
+  // stored raw in MMKV, so we can read the batch profile list synchronously on
+  // first render. That lets the user search cached profiles instantly while
+  // the network refresh runs in the background (stale-while-revalidate) — no
+  // spinner flash when a cache exists. Falls back to [] when the cache is
+  // empty or MMKV is unavailable.
+  const [allProfiles, setAllProfiles] = useState<ProfileResult[]>(() => {
+    try {
+      const raw = kvGetStringRawSync('@san:all_profiles');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) return parsed as ProfileResult[];
+      }
+    } catch {}
+    return [];
+  });
+  // Only show the loading spinner when there's genuinely no cached data to
+  // display. With a warm cache the list is interactive immediately.
+  const [isLoading, setIsLoading] = useState(() => allProfiles.length === 0);
   const [history, setHistory] = useState<ProfileResult[]>([]);
 
   useEffect(() => {
@@ -73,9 +91,12 @@ export default function SearchScreen() {
   }, [query, allProfiles]);
 
   const loadProfiles = async () => {
-    setIsLoading(true);
+    // Only gate the UI behind a spinner when we have nothing cached to show.
+    // With a warm cache we refresh silently in the background so the already-
+    // rendered list never flashes a loading state.
+    if (allProfiles.length === 0) setIsLoading(true);
     const { profiles: data } = await getProfiles();
-    setAllProfiles(data as any[]);
+    if (Array.isArray(data) && data.length > 0) setAllProfiles(data as any[]);
     setIsLoading(false);
   };
 
