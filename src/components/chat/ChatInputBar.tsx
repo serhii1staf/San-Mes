@@ -7,6 +7,38 @@ import { useT } from '../../i18n/store';
 import { perfMonitor } from '../../services/perfMonitor';
 import { useLiquidGlassActive, NativeGlassView, GlassContainerView } from '../ui/LiquidGlass';
 
+// Delete the last user-perceived character (grapheme) from a string. Handles
+// astral emoji (surrogate pairs), variation selectors, skin-tone modifiers and
+// ZWJ-joined sequences (👨‍👩‍👧, ❤️‍🔥, 🏳️‍🌈) so one backspace removes one emoji.
+function deleteLastGrapheme(s: string): string {
+  if (!s) return s;
+  const cps = Array.from(s); // code points (surrogate pairs collapse to 1)
+  if (cps.length === 0) return s;
+  const isMod = (cp: string) => {
+    const c = cp.codePointAt(0) || 0;
+    return (
+      c === 0xfe0f || c === 0xfe0e || // variation selectors
+      (c >= 0x1f3fb && c <= 0x1f3ff) || // skin-tone modifiers
+      (c >= 0x0300 && c <= 0x036f) // combining marks
+    );
+  };
+  cps.pop(); // drop the last code point
+  // Then unwind any modifiers / ZWJ chains that were attached to it.
+  while (cps.length > 0) {
+    const last = cps[cps.length - 1];
+    const c = last.codePointAt(0) || 0;
+    if (c === 0x200d) { // ZWJ → also drop the base it joined to
+      cps.pop();
+      if (cps.length > 0) cps.pop();
+    } else if (isMod(last)) {
+      cps.pop();
+    } else {
+      break;
+    }
+  }
+  return cps.join('');
+}
+
 // Geometry of the photo/attach button slot. When the field expands (multiline)
 // it slides LEFT over this slot so the growing input swallows the button.
 const PHOTO_SLOT = 44;
@@ -44,6 +76,9 @@ export interface ChatInputBarHandle {
   // Append a string (emoji) to the local text state — used by the parent's
   // emoji panel so picks land in the composer without re-rendering the screen.
   insert: (s: string) => void;
+  // Delete the last grapheme (whole emoji, incl. ZWJ/skin-tone sequences) —
+  // used by the media panel's backspace button.
+  backspace: () => void;
   // Programmatically focus the TextInput (re-open the keyboard).
   focus: () => void;
 }
@@ -124,6 +159,7 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
     clear: () => { setText(''); lastHeightRef.current = 0; setExpanded(false); },
     getText: () => text,
     insert: (s: string) => { setText((prev) => prev + s); },
+    backspace: () => { setText((prev) => deleteLastGrapheme(prev)); },
     focus: () => { textInputRef.current?.focus(); },
   }), [text, setExpanded]);
 

@@ -39,6 +39,8 @@ import { ChatMessage } from '../../src/types';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { sanitizeUserText } from '../../src/utils/sanitizeText';
 import { getRecentEmoji, pushRecentEmoji } from '../../src/services/recentEmoji';
+import { getRecentGif, pushRecentGif } from '../../src/services/recentGif';
+import { GiphyItem } from '../../src/services/giphy';
 import { useT } from '../../src/i18n/store';
 import { perfMonitor } from '../../src/services/perfMonitor';
 import { useSettingsStore } from '../../src/store/settingsStore';
@@ -615,6 +617,7 @@ export default function ChatScreen() {
   const emojiOpen = panelTab === 'emoji';
   const gifOpen = panelTab === 'gif';
   const [recentEmoji, setRecentEmoji] = useState<string[]>(() => getRecentEmoji());
+  const [recentGif, setRecentGif] = useState<GiphyItem[]>(() => getRecentGif());
   const [keepLifted, setKeepLifted] = useState(false);
   const [emojiPanelHeight, setEmojiPanelHeight] = useState(300);
   const [searchMode, setSearchMode] = useState(false);
@@ -1498,8 +1501,9 @@ export default function ChatScreen() {
 
   // Pick a GIF from the inline panel: send it, then close the panel and let the
   // input bar settle back down (GIFs are one-and-done, not multi-pick).
-  const onPickGif = useCallback((url: string) => {
-    sendGif(url);
+  const onPickGif = useCallback((item: GiphyItem) => {
+    sendGif(item.sendUrl);
+    setRecentGif(pushRecentGif(item));
     setPanelTab(null);
     setKeepLifted(false);
     liftSV.value = 0;
@@ -2273,7 +2277,9 @@ export default function ChatScreen() {
               onTabChange={switchPanel}
               onSelectEmoji={onPickEmoji}
               onSelectGif={onPickGif}
+              onBackspace={() => inputRef.current?.backspace()}
               recentEmoji={recentEmoji}
+              recentGifs={recentGif}
               theme={theme}
               bottomInset={insets.bottom}
               labels={{ gif: t('media.tab.gif'), emoji: t('media.tab.emoji') }}

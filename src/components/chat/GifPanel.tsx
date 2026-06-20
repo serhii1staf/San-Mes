@@ -25,17 +25,20 @@ const CELL_W = Math.floor((SCREEN_WIDTH - H_PAD * 2 - CELL_GAP * (NUM_COLS - 1))
 export interface GifPanelProps {
   /** Panel height in px (≈ last real keyboard height) supplied by the parent. */
   height: number;
-  /** Fired when a GIF cell is tapped. */
-  onSelect: (url: string) => void;
+  /** Fired when a GIF cell is tapped — passes the full item so the caller can
+   *  both send it (sendUrl) and record it in the recent list. */
+  onSelect: (item: GiphyItem) => void;
   /** Active theme object (passed in to avoid an extra context read on mount). */
   theme: any;
   /** Bottom safe-area inset — added as list content padding. */
   bottomInset?: number;
   /** Embedded in the shared MediaPanel surface → no own bg/rounding. */
   bare?: boolean;
+  /** Most-recently-used GIFs — prepended to the trending grid. */
+  recentGifs?: GiphyItem[];
 }
 
-function GifPanelComponent({ height, onSelect, theme, bottomInset = 0, bare = false }: GifPanelProps) {
+function GifPanelComponent({ height, onSelect, theme, bottomInset = 0, bare = false, recentGifs }: GifPanelProps) {
   const t = useT();
   const glassActive = useLiquidGlassActive();
   const [gifs, setGifs] = useState<GiphyItem[]>(() => getCachedTrending() || []);
@@ -84,7 +87,7 @@ function GifPanelComponent({ height, onSelect, theme, bottomInset = 0, bare = fa
   const renderItem = useCallback(
     ({ item }: { item: GiphyItem }) => (
       <Pressable
-        onPress={() => onSelect(item.sendUrl)}
+        onPress={() => onSelect(item)}
         style={{ width: CELL_W, height: CELL_W, borderRadius: 10, overflow: 'hidden', marginBottom: CELL_GAP, backgroundColor: theme.colors.background.secondary }}
       >
         <CachedImage uri={item.previewUrl} style={{ width: '100%', height: '100%' }} resizeMode="cover" priority="low" />
@@ -92,6 +95,13 @@ function GifPanelComponent({ height, onSelect, theme, bottomInset = 0, bare = fa
     ),
     [onSelect, theme],
   );
+
+  // Recently-used GIFs first, then trending (deduped by id).
+  const data = useMemo(() => {
+    if (!recentGifs || recentGifs.length === 0) return gifs;
+    const seen = new Set(recentGifs.map((g) => g.id));
+    return [...recentGifs, ...gifs.filter((g) => !seen.has(g.id))];
+  }, [recentGifs, gifs]);
 
   return (
     <View
@@ -117,13 +127,13 @@ function GifPanelComponent({ height, onSelect, theme, bottomInset = 0, bare = fa
         />
       ) : null}
 
-      {loading && gifs.length === 0 ? (
+      {loading && data.length === 0 ? (
         <View style={styles.center}>
           <ActivityIndicator size="large" color={theme.colors.accent.primary} />
         </View>
       ) : (
         <FlatList
-          data={gifs}
+          data={data}
           style={styles.list}
           keyExtractor={(item) => item.id}
           numColumns={NUM_COLS}
