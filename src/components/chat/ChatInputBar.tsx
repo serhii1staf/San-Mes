@@ -125,12 +125,20 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
     const h = Math.round(e.nativeEvent.contentSize.height);
     if (h === lastHeightRef.current) return;
     lastHeightRef.current = h;
-    // One layout animation per height change — the height grow AND the
-    // expand/collapse margin+padding shifts all ride this single native pass.
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    // >1 line → expanded. Single line content height ≈ 20-24px; threshold 30
-    // is comfortably between one and two lines.
-    const next = h > 30;
+    // Rubbery spring for the grow + swallow. easeInEaseOut on create/delete so
+    // the photo capsule fades (instead of popping) as it morphs into the field.
+    LayoutAnimation.configureNext({
+      duration: 320,
+      create: { type: LayoutAnimation.Types.easeInEaseOut, property: LayoutAnimation.Properties.opacity },
+      update: { type: LayoutAnimation.Types.spring, springDamping: 0.78 },
+      delete: { type: LayoutAnimation.Types.easeInEaseOut, property: LayoutAnimation.Properties.opacity },
+    });
+    // Hysteresis so the state can't flip-flop on the 1↔2 line boundary:
+    // expand only once clearly on a 2nd line (>34), collapse only once clearly
+    // back near a single line (<28). Single line ≈ 22px, two lines ≈ 42px.
+    let next = expandedRef.current;
+    if (!next && h > 34) next = true;
+    else if (next && h < 28) next = false;
     if (next !== expandedRef.current) {
       expandedRef.current = next;
       setExpanded(next);
@@ -181,9 +189,12 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
     </>
   );
 
-  // Field's left padding: normal when collapsed; when expanded it leaves room
-  // for the photo button, which slides UNDER the field's left edge.
-  const wrapPadLeft = expanded ? PHOTO_SLOT + 2 : 14;
+  // Field's left padding. Collapsed = base 14. EXPANDED: the field's left edge
+  // slides left by (PHOTO_SLOT + gap) to cover the photo button, so we add the
+  // SAME amount to paddingLeft. That keeps the text column at the exact same
+  // x-position and width → the text never re-wraps from the swallow, which is
+  // what previously caused the line-reflow jitter / "сходит с ума" feedback loop.
+  const wrapPadLeft = expanded ? 14 + PHOTO_SLOT + 8 : 14;
 
   return (
     // alignItems:'flex-end' → the field + send pin to the bottom; the field
