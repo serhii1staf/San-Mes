@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View, FlatList, TextInput, Pressable, Platform, ActivityIndicator, StyleSheet, Text as RNText, Modal, Alert, LayoutAnimation, UIManager, InteractionManager, ScrollView, Dimensions } from 'react-native';
-import { KeyboardStickyView, useReanimatedKeyboardAnimation, useKeyboardHandler } from 'react-native-keyboard-controller';
-import Reanimated, { useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
+import { View, FlatList, TextInput, Pressable, Platform, ActivityIndicator, StyleSheet, Text as RNText, Modal, Alert, LayoutAnimation, UIManager, InteractionManager, ScrollView, Dimensions, Keyboard } from 'react-native';
+import { useReanimatedKeyboardAnimation, useKeyboardHandler } from 'react-native-keyboard-controller';
+import Reanimated, { useAnimatedStyle, useSharedValue, withTiming, runOnJS, Easing } from 'react-native-reanimated';
 import * as Clipboard from 'expo-clipboard';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -19,8 +19,10 @@ import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
 import { CachedImage } from '../../src/components/ui/CachedImage';
 import { CommentContextMenu, CommentAction } from '../../src/components/ui/CommentContextMenu';
 import { SlideUpSheet } from '../../src/components/ui/SlideUpSheet';
-import { GiphyPicker } from '../../src/components/ui/GiphyPicker';
-import { parseGif } from '../../src/services/giphy';
+import { MediaPanel } from '../../src/components/chat/MediaPanel';
+import { parseGif, GiphyItem } from '../../src/services/giphy';
+import { getRecentEmoji, pushRecentEmoji } from '../../src/services/recentEmoji';
+import { getRecentGif, pushRecentGif } from '../../src/services/recentGif';
 import { kvGetJSONSync, kvSetJSON } from '../../src/services/kvStore';
 import { useAuthStore, useConnectivityStore } from '../../src/store';
 import { getComments, createComment, updateComment, deleteComment, isRepost, parseImageUrls } from '../../src/lib/supabase';
@@ -36,6 +38,39 @@ import { useIsBlocked } from '../../src/store/blockedUsersStore';
 import { BlockedContentPlaceholder } from '../../src/components/feed/BlockedContentPlaceholder';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
+
+// Delete one full user-perceived character from the end of a string. Handles
+// astral emoji (surrogate pairs), variation selectors, skin-tone modifiers and
+// ZWJ-joined sequences (👨‍👩‍👧, ❤️‍🔥, 🏳️‍🌈) so one backspace removes one emoji.
+// (Mirror of the helper in ChatInputBar — kept local so the comments composer
+// doesn't depend on the chat input internals.)
+function deleteLastGrapheme(s: string): string {
+  if (!s) return s;
+  const cps = Array.from(s);
+  if (cps.length === 0) return s;
+  const isMod = (cp: string) => {
+    const c = cp.codePointAt(0) || 0;
+    return (
+      c === 0xfe0f || c === 0xfe0e ||
+      (c >= 0x1f3fb && c <= 0x1f3ff) ||
+      (c >= 0x0300 && c <= 0x036f)
+    );
+  };
+  cps.pop();
+  while (cps.length > 0) {
+    const last = cps[cps.length - 1];
+    const c = last.codePointAt(0) || 0;
+    if (c === 0x200d) {
+      cps.pop();
+      if (cps.length > 0) cps.pop();
+    } else if (isMod(last)) {
+      cps.pop();
+    } else {
+      break;
+    }
+  }
+  return cps.join('');
+}
 
 const REPORT_CATS: { key: string; labelKey: string }[] = [
   { key: 'spam', labelKey: 'report.cat.spam' },
@@ -231,8 +266,25 @@ export default function CommentsScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [perfEnabled]);
   const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
+
+  // ── Media panel (emoji / GIF) state — mirrors the chat composer. ──────────
+  // `panelTab` drives which panel is open (null = none). The bar is lifted
+  // above the panel via `liftSV`; `emojiPanelSV` carries the panel height so
+  // the bar + list shift match it on the UI thread.
+  const [panelTab, setPanelTab] = useState<'emoji' | 'gif' | null>(null);
+  const emojiOpen = panelTab === 'emoji';
+  const gifOpen = panelTab === 'gif';
+  const [emojiPanelHeight, setEmojiPanelHeight] = useState(300);
+  const [keepLifted, setKeepLifted] = useState(false);
+  const [recentEmoji, setRecentEmoji] = useState<string[]>(() => getRecentEmoji());
+  const [recentGif, setRecentGif] = useState<GiphyItem[]>(() => getRecentGif());
+  const lastKbHeightRef = useRef(0);
+  const liftSV = useSharedValue(0);
+  const emojiPanelSV = useSharedValue(300);
+  const EMOJI_GAP = 8;
+
   const inputPadStyle = useAnimatedStyle(() => {
-    const open = Math.abs(keyboardHeight.value) > 1;
+    const open = Math.abs(keyboardHeight.value) > 1 || liftSV.value > 0.5;
     return { paddingBottom: open ? 8 : (insets.bottom > 0 ? insets.bottom : 14) };
   });
 
@@ -252,10 +304,6 @@ export default function CommentsScreen() {
   const minimizedUrl = useBrowserStore((s) => s.minimizedUrl);
   const browserWidgetPosition = useSettingsStore((s) => s.browserWidgetPosition);
   const stickyOpenedOffset = !!minimizedUrl && browserWidgetPosition === 'bottom' ? 56 : 0;
-  const stickyOffset = React.useMemo(
-    () => ({ closed: 0, opened: stickyOpenedOffset }),
-    [stickyOpenedOffset],
-  );
   // Shift the comment list upward by the keyboard height so the very last
   // comment stays visible above the input bar when the user taps it. We
   // drive translateY from `useKeyboardHandler.onMove` — the same low-level
@@ -265,6 +313,15 @@ export default function CommentsScreen() {
   // list rides the finger with the keyboard and we don't get a phantom
   // strip where the last comment used to sit.
   const listShiftY = useSharedValue(0);
+  // Capture the settled keyboard height so the media panel can match it.
+  // Guarded to ignore the close (height 0) — runs on the JS thread.
+  const captureKbHeight = useCallback((h: number) => {
+    if (h > 1) {
+      lastKbHeightRef.current = h;
+      emojiPanelSV.value = h;
+      setEmojiPanelHeight(h);
+    }
+  }, [emojiPanelSV]);
   useKeyboardHandler(
     {
       onMove: (e) => {
@@ -278,12 +335,34 @@ export default function CommentsScreen() {
       onEnd: (e) => {
         'worklet';
         listShiftY.value = -e.height;
+        runOnJS(captureKbHeight)(e.height);
       },
     },
     [],
   );
   const listShiftStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: listShiftY.value }],
+    // Blend the live keyboard-driven shift with the panel lift via min() (both
+    // ≤ 0) so the list rises in lock-step with the bar during an animated
+    // panel open (keyboard-down case) and stays put while the panel is up.
+    transform: [{ translateY: Math.min(listShiftY.value, -liftSV.value * emojiPanelSV.value) }],
+  }));
+
+  // Input bar lift — replaces KeyboardStickyView so we can fold the media-panel
+  // lift into a MONOTONIC max(keyboardHeight, panelLift), eliminating the
+  // keyboard↔panel handoff jump (same approach as the chat composer).
+  const barWrapStyle = useAnimatedStyle(() => {
+    const raw = keyboardHeight.value;
+    const kb = raw < 0 ? -raw : raw;
+    const panelLift = liftSV.value * emojiPanelSV.value;
+    const lift = Math.max(kb, panelLift);
+    const band = kb > 1 ? stickyOpenedOffset : 0;
+    return { transform: [{ translateY: -(lift - band) }] };
+  });
+
+  // Slide the media panel up/down in sync with the bar lift. liftSV 0 → pushed
+  // fully below the screen; liftSV 1 → resting in place.
+  const panelSlideStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: (1 - liftSV.value) * emojiPanelSV.value }],
   }));
   const { id: postId } = useLocalSearchParams<{ id: string }>();
   // Field selector — destructuring the whole auth store re-rendered the entire
@@ -317,7 +396,6 @@ export default function CommentsScreen() {
   const [reportComment, setReportComment] = useState<any>(null); // comment being reported
   const [replyTo, setReplyTo] = useState<any>(null); // comment we are replying to
   const [editing, setEditing] = useState<any>(null); // comment being edited
-  const [gifPickerVisible, setGifPickerVisible] = useState(false);
   // Fullscreen image viewer — `images`/`index` are set for multi-image posts so
   // the viewer opens a horizontal pager on the tapped image; single images and
   // comment GIFs just carry `uri`. Mirrors the profile-screen viewer.
@@ -604,6 +682,133 @@ export default function CommentsScreen() {
     setIsSending(false);
   };
 
+  // Send a single emoji as its own comment (long-press → Send in the panel).
+  const sendEmojiComment = async (emoji: string) => {
+    if (!emoji || !user?.id || !postId) return;
+    triggerHaptic('light');
+    playSendSound();
+    const quoted = parseReply(replyTo?.content || '').body;
+    const quotedGif = parseGif(quoted);
+    const sendText = replyTo
+      ? encodeReply(replyTo.profiles?.username || 'user', quotedGif ? '' : quoted, emoji, quotedGif || undefined)
+      : emoji;
+    setReplyTo(null);
+    setIsSending(true);
+    const { error } = await createComment(postId, user.id, sendText);
+    if (!error) {
+      const { comments: data } = await getComments(postId);
+      setComments(data);
+      kvSetJSON(`comments:${postId}`, data);
+      setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
+    }
+    setIsSending(false);
+  };
+
+  // ── Media panel: lift mirror, open / close, tab switch, pick handlers ─────
+  // Mirrors the chat composer exactly so the panel rises smoothly whether the
+  // keyboard is up (descent reveals it) or down (animated rise via liftSV).
+  useEffect(() => {
+    if (emojiOpen || gifOpen || keepLifted) {
+      if (keepLifted) liftSV.value = 1;
+    } else {
+      liftSV.value = withTiming(0, { duration: 220, easing: Easing.out(Easing.cubic) });
+    }
+  }, [emojiOpen, gifOpen, keepLifted, liftSV]);
+
+  useEffect(() => {
+    if (!keepLifted) return;
+    const sub = Keyboard.addListener('keyboardDidShow', () => setKeepLifted(false));
+    const tid = setTimeout(() => setKeepLifted(false), 650);
+    return () => { sub.remove(); clearTimeout(tid); };
+  }, [keepLifted]);
+
+  useEffect(() => {
+    if (!panelTab) return;
+    setRecentEmoji(getRecentEmoji());
+    setRecentGif(getRecentGif());
+  }, [panelTab]);
+
+  const openEmoji = useCallback(() => {
+    const h = lastKbHeightRef.current > 0 ? lastKbHeightRef.current : 300;
+    emojiPanelSV.value = h;
+    const kbUp = Math.abs(keyboardHeight.value) > 1;
+    if (kbUp) liftSV.value = 1;
+    else liftSV.value = withTiming(1, { duration: 300, easing: Easing.out(Easing.cubic) });
+    setEmojiPanelHeight(h);
+    setKeepLifted(false);
+    setPanelTab('emoji');
+    requestAnimationFrame(() => Keyboard.dismiss());
+  }, [emojiPanelSV, liftSV, keyboardHeight]);
+
+  const openGif = useCallback(() => {
+    const h = lastKbHeightRef.current > 0 ? lastKbHeightRef.current : 300;
+    emojiPanelSV.value = h;
+    const kbUp = Math.abs(keyboardHeight.value) > 1;
+    if (kbUp) liftSV.value = 1;
+    else liftSV.value = withTiming(1, { duration: 300, easing: Easing.out(Easing.cubic) });
+    setEmojiPanelHeight(h);
+    setKeepLifted(false);
+    setPanelTab('gif');
+    requestAnimationFrame(() => Keyboard.dismiss());
+  }, [emojiPanelSV, liftSV, keyboardHeight]);
+
+  const switchPanel = useCallback((tab: 'emoji' | 'gif') => {
+    setPanelTab(tab);
+  }, []);
+
+  const closeEmojiToKeyboard = useCallback(() => {
+    liftSV.value = 1;
+    setPanelTab(null);
+    setKeepLifted(true);
+    inputRef.current?.focus();
+  }, [liftSV]);
+
+  // Composer button taps: open the panel, switch tabs if the other is open, or
+  // return to the keyboard if this tab is already open.
+  const onEmojiBtn = useCallback(() => {
+    if (emojiOpen) closeEmojiToKeyboard();
+    else if (gifOpen) switchPanel('emoji');
+    else openEmoji();
+  }, [emojiOpen, gifOpen, closeEmojiToKeyboard, switchPanel, openEmoji]);
+  const onGifBtn = useCallback(() => {
+    if (gifOpen) closeEmojiToKeyboard();
+    else if (emojiOpen) switchPanel('gif');
+    else openGif();
+  }, [emojiOpen, gifOpen, closeEmojiToKeyboard, switchPanel, openGif]);
+
+  // Insert emoji into the composer; panel stays open for multi-pick.
+  const onPickEmoji = useCallback((e: string) => {
+    setText((prev) => prev + e);
+    setRecentEmoji(pushRecentEmoji(e));
+  }, []);
+
+  const onBackspaceComposer = useCallback(() => {
+    setText((prev) => deleteLastGrapheme(prev));
+  }, []);
+
+  // Tap (or long-press → Send) a GIF → send as a comment, close the panel.
+  // Plain functions so they always see the latest replyTo / user / postId.
+  const onPickGif = (item: GiphyItem) => {
+    setRecentGif(pushRecentGif(item));
+    setPanelTab(null);
+    setKeepLifted(false);
+    void sendGifComment(item.sendUrl);
+  };
+  const onSendEmojiMessage = (e: string) => {
+    setRecentEmoji(pushRecentEmoji(e));
+    setPanelTab(null);
+    setKeepLifted(false);
+    void sendEmojiComment(e);
+  };
+  const onCopyEmoji = (e: string) => {
+    Clipboard.setStringAsync(e);
+    showToast(t('toast.copied'), 'check');
+  };
+  const onCopyGif = (item: GiphyItem) => {
+    Clipboard.setStringAsync(item.sendUrl);
+    showToast(t('toast.copied'), 'check');
+  };
+
   // Long-press menu opener — wraps the guard with the haptic + edge cases that
   // belong here (we still want haptic feedback only for accepted opens).
   const openCommentMenu = useCallback((c: any) => {
@@ -777,10 +982,13 @@ export default function CommentsScreen() {
           style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: insets.bottom + 120 }}
         />
 
-        {/* Input area — sticks to keyboard (smooth, no lag). The input row has
-            no solid backgroundColor: the fade above supplies the darkening so
-            the composer floats over content like the other chats. */}
-        <KeyboardStickyView offset={stickyOffset} style={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}>
+        {/* Input area — manually keyboard-stuck via `barWrapStyle`
+            (translateY = -max(keyboardHeight, panelHeight)) so the emoji/GIF
+            media panel lift folds into a monotonic max() with no handoff jump,
+            exactly like the chat composer. The input row has no solid
+            backgroundColor: the fade above supplies the darkening so the
+            composer floats over content like the other chats. */}
+        <Reanimated.View style={[{ position: 'absolute', left: 0, right: 0, bottom: 0 }, barWrapStyle]}>
           {editing ? (
             <View style={[{ flexDirection: 'row', alignItems: 'center', marginHorizontal: 12, marginBottom: 6, paddingHorizontal: 14, paddingVertical: 7, borderRadius: 12, overflow: 'hidden' }, glassActive ? null : { backgroundColor: theme.colors.background.elevated, borderWidth: 1, borderColor: theme.colors.border.light }]}>
               {glassActive ? <GlassBg borderRadius={12} glassStyle="regular" interactive={false} colorScheme={theme.isDark ? 'dark' : 'light'} tintColor={theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.5)'} /> : null}
@@ -836,8 +1044,11 @@ export default function CommentsScreen() {
                   // (singleton early-returns on the disabled flag).
                   onFocus={() => perfMonitor.markInputFocus('comments')}
                 />
-                {/* GIF button inside the input, right side */}
-                <Pressable onPress={() => setGifPickerVisible(true)} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 2, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8, backgroundColor: theme.colors.accent.primary + '18' }}>
+                {/* Emoji + GIF buttons inside the input, right side */}
+                <Pressable onPress={onEmojiBtn} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 2, padding: 3 }}>
+                  <Feather name="smile" size={18} color={emojiOpen ? theme.colors.accent.primary : theme.colors.text.tertiary} />
+                </Pressable>
+                <Pressable onPress={onGifBtn} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 2, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8, backgroundColor: (gifOpen ? theme.colors.accent.primary + '30' : theme.colors.accent.primary + '18') }}>
                   <RNText style={{ fontSize: 11, fontWeight: '800', color: theme.colors.accent.primary }}>GIF</RNText>
                 </Pressable>
               </NativeGlassView>
@@ -861,8 +1072,11 @@ export default function CommentsScreen() {
                   // (singleton early-returns on the disabled flag).
                   onFocus={() => perfMonitor.markInputFocus('comments')}
                 />
-                {/* GIF button inside the input, right side */}
-                <Pressable onPress={() => setGifPickerVisible(true)} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 2, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8, backgroundColor: theme.colors.accent.primary + '18' }}>
+                {/* Emoji + GIF buttons inside the input, right side */}
+                <Pressable onPress={onEmojiBtn} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 2, padding: 3 }}>
+                  <Feather name="smile" size={18} color={emojiOpen ? theme.colors.accent.primary : theme.colors.text.tertiary} />
+                </Pressable>
+                <Pressable onPress={onGifBtn} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 2, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8, backgroundColor: (gifOpen ? theme.colors.accent.primary + '30' : theme.colors.accent.primary + '18') }}>
                   <RNText style={{ fontSize: 11, fontWeight: '800', color: theme.colors.accent.primary }}>GIF</RNText>
                 </Pressable>
               </View>
@@ -882,7 +1096,39 @@ export default function CommentsScreen() {
               </Pressable>
             )}
           </Reanimated.View>
-        </KeyboardStickyView>
+        </Reanimated.View>
+
+        {/* Media panel (emoji / GIF) — twin of the chat composer's. Mounted
+            while open at the screen bottom; the keyboard's slide-down (or the
+            animated liftSV rise when the keyboard is already down) reveals it.
+            `panelSlideStyle` pushes it below the screen at liftSV 0 and brings
+            it to rest at liftSV 1, in sync with the input-bar lift. */}
+        {panelTab && (
+          <Reanimated.View
+            pointerEvents="box-none"
+            style={[{ position: 'absolute', left: 0, right: 0, bottom: 0, height: emojiPanelHeight }, panelSlideStyle]}
+          >
+            <View style={{ flex: 1, paddingTop: EMOJI_GAP }}>
+              <MediaPanel
+                height={emojiPanelHeight - EMOJI_GAP}
+                tab={panelTab}
+                onTabChange={switchPanel}
+                onSelectEmoji={onPickEmoji}
+                onSelectGif={onPickGif}
+                onBackspace={onBackspaceComposer}
+                recentEmoji={recentEmoji}
+                recentGifs={recentGif}
+                theme={theme}
+                bottomInset={insets.bottom}
+                labels={{ gif: t('media.tab.gif'), emoji: t('media.tab.emoji'), copy: t('media.action.copy'), send: t('media.action.send') }}
+                onSendEmoji={onSendEmojiMessage}
+                onCopyEmoji={onCopyEmoji}
+                onSendGif={onPickGif}
+                onCopyGif={onCopyGif}
+              />
+            </View>
+          </Reanimated.View>
+        )}
 
         {/* Comment long-press menu — smooth slide-up (matches chat/feed) */}
         {(() => {
@@ -914,8 +1160,7 @@ export default function CommentsScreen() {
           ))}
         </SlideUpSheet>
 
-        {/* GIF picker (GIPHY) */}
-        <GiphyPicker visible={gifPickerVisible} onClose={() => setGifPickerVisible(false)} onSelect={sendGifComment} />
+        {/* GIF picker now lives in the inline MediaPanel (emoji/GIF switcher). */}
 
         {/* Fullscreen Image Viewer — mirrors the profile-screen viewer. Black
             backdrop, glass-aware close button top-right, contain-fit image, and

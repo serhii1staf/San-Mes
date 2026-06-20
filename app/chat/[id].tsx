@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, useSyncExternalStore } from 'react';
 import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, Alert, Animated, Modal, Dimensions, Keyboard, InteractionManager, type ViewToken } from 'react-native';
 import { useReanimatedKeyboardAnimation, useKeyboardHandler } from 'react-native-keyboard-controller';
-import Reanimated, { useAnimatedStyle, interpolate, Extrapolation, useSharedValue, withSpring, withTiming, withSequence, withDelay, runOnJS, useAnimatedRef, measure, type SharedValue } from 'react-native-reanimated';
+import Reanimated, { useAnimatedStyle, interpolate, Extrapolation, useSharedValue, withSpring, withTiming, withSequence, withDelay, runOnJS, useAnimatedRef, measure, Easing, type SharedValue } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
@@ -1064,9 +1064,22 @@ export default function ChatScreen() {
   const listShiftStyle = useAnimatedStyle(() => ({
     // While the emoji panel is up (or the keyboard is rising back after a
     // close), shift the list by the panel height instead of the live keyboard
-    // height so the newest messages stay visible above the panel. Additive:
-    // when liftSV === 0 this is exactly the original keyboard-driven shift.
-    transform: [{ translateY: liftSV.value > 0.5 ? -emojiPanelSV.value : listShiftY.value }],
+    // height so the newest messages stay visible above the panel. We blend the
+    // two with min() (both are ≤ 0) so the list rises in lock-step with the bar
+    // during the animated open (keyboard-down case) instead of snapping at a
+    // 0.5 threshold. Additive: when liftSV === 0 this is exactly the original
+    // keyboard-driven shift.
+    transform: [{ translateY: Math.min(listShiftY.value, -liftSV.value * emojiPanelSV.value) }],
+  }));
+
+  // Slide the media panel itself up/down in sync with the bar lift. At
+  // liftSV === 0 it is pushed fully below the screen (translateY = +panelH);
+  // at liftSV === 1 it rests in place (translateY = 0). In the keyboard-down
+  // open case liftSV animates 0→1 so the panel rises smoothly with the bar; in
+  // the keyboard-up case liftSV is set to 1 instantly so the panel already
+  // sits in place and the keyboard's descent reveals it (no double-animation).
+  const panelSlideStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: (1 - liftSV.value) * emojiPanelSV.value }],
   }));
 
   // List bottom spacer matches the input bar's real height so the newest
@@ -1085,8 +1098,17 @@ export default function ChatScreen() {
   const EMOJI_GAP = 8;
 
   // Keep the UI-thread lift mirror in sync with the JS panel state.
+  // IMPORTANT: when a panel is OPENING, the rise is owned by openEmoji/openGif
+  // (they may animate liftSV 0→1 for a smooth rise when the keyboard is down).
+  // This effect must NOT clobber that animation by force-setting liftSV = 1.
+  // It only (a) re-arms the lift while returning to the keyboard (keepLifted)
+  // and (b) animates the lift back down on a full close.
   useEffect(() => {
-    liftSV.value = emojiOpen || gifOpen || keepLifted ? 1 : 0;
+    if (emojiOpen || gifOpen || keepLifted) {
+      if (keepLifted) liftSV.value = 1;
+    } else {
+      liftSV.value = withTiming(0, { duration: 220, easing: Easing.out(Easing.cubic) });
+    }
   }, [emojiOpen, gifOpen, keepLifted, liftSV]);
   // While returning to the keyboard, hold the bar lifted until the keyboard
   // has actually risen — then release the lift with no jump (at that point the
@@ -1105,33 +1127,47 @@ export default function ChatScreen() {
   const openEmoji = useCallback(() => {
     const h = lastKbHeightRef.current > 0 ? lastKbHeightRef.current : 300;
     emojiPanelSV.value = h;
-    // CRITICAL: arm the lift mirror SYNCHRONOUSLY, before the keyboard starts
-    // to descend. The spacer height = liftSV * panelH * (1 - progress), so it
-    // must already be 1 the instant `progress` begins falling from 1→0 — that
-    // way the spacer grows frame-for-frame as the keyboard slides down and the
-    // bar never moves. If we left this to the `useEffect` mirror (async), there
-    // was a window where liftSV was still 0 during the descent, so the bar
-    // followed the keyboard DOWN and then snapped back UP when the effect ran —
-    // exactly the "jump up then settle" the user saw.
-    liftSV.value = 1;
+    // CRITICAL (keyboard UP): arm the lift mirror SYNCHRONOUSLY, before the
+    // keyboard starts to descend. The spacer height = liftSV * panelH *
+    // (1 - progress), so it must already be 1 the instant `progress` begins
+    // falling from 1→0 — that way the spacer grows frame-for-frame as the
+    // keyboard slides down and the bar never moves. If we left this to the
+    // `useEffect` mirror (async), there was a window where liftSV was still 0
+    // during the descent, so the bar followed the keyboard DOWN and then
+    // snapped back UP when the effect ran — the "jump up then settle" bug.
+    //
+    // When the keyboard is already DOWN, nothing animates the reveal for us, so
+    // setting liftSV = 1 instantly makes the bar + panel POP in abruptly.
+    // Animate the lift ourselves in that case for a smooth rise.
+    const kbUp = Math.abs(keyboardHeight.value) > 1;
+    if (kbUp) {
+      liftSV.value = 1;
+    } else {
+      liftSV.value = withTiming(1, { duration: 300, easing: Easing.out(Easing.cubic) });
+    }
     setEmojiPanelHeight(h);
     setKeepLifted(false);
     setPanelTab('emoji');
     // Defer the dismiss one frame so the lifted state is COMMITTED before the
     // keyboard starts descending.
     requestAnimationFrame(() => Keyboard.dismiss());
-  }, [emojiPanelSV, liftSV]);
+  }, [emojiPanelSV, liftSV, keyboardHeight]);
 
   // Open the GIF panel — twin of openEmoji. Mutually exclusive with emoji.
   const openGif = useCallback(() => {
     const h = lastKbHeightRef.current > 0 ? lastKbHeightRef.current : 300;
     emojiPanelSV.value = h;
-    liftSV.value = 1;
+    const kbUp = Math.abs(keyboardHeight.value) > 1;
+    if (kbUp) {
+      liftSV.value = 1;
+    } else {
+      liftSV.value = withTiming(1, { duration: 300, easing: Easing.out(Easing.cubic) });
+    }
     setEmojiPanelHeight(h);
     setKeepLifted(false);
     setPanelTab('gif');
     requestAnimationFrame(() => Keyboard.dismiss());
-  }, [emojiPanelSV, liftSV]);
+  }, [emojiPanelSV, liftSV, keyboardHeight]);
 
   // Switch tab WITHOUT touching the keyboard/lift — the panel is already open
   // and the keyboard is already down, so this is a pure horizontal slide.
@@ -1832,8 +1868,9 @@ export default function ChatScreen() {
     setRecentGif(pushRecentGif(item));
     setPanelTab(null);
     setKeepLifted(false);
-    liftSV.value = 0;
-  }, [sendGif, liftSV]);
+    // liftSV is animated back to 0 by the lift mirror effect (smooth descent)
+    // now that panelTab/keepLifted are cleared — no instant snap here.
+  }, [sendGif]);
   // up. Reset to '' when closed so the next open re-fetches (the service
   // hits its 7-day MMKV cache so this is essentially free).
   const [translateText, setTranslateText] = useState<string>('');
@@ -2755,9 +2792,9 @@ export default function ChatScreen() {
           the keyboard's slide-down REVEALS it; rendered AFTER the input bar so
           it paints on top and receives scroll/touch. */}
       {!searchMode && panelTab && (
-        <View
+        <Reanimated.View
           pointerEvents="box-none"
-          style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: emojiPanelHeight }}
+          style={[{ position: 'absolute', left: 0, right: 0, bottom: 0, height: emojiPanelHeight }, panelSlideStyle]}
         >
           <View style={{ flex: 1, paddingTop: EMOJI_GAP }}>
             <MediaPanel
@@ -2778,7 +2815,7 @@ export default function ChatScreen() {
               onCopyGif={onCopyGif}
             />
           </View>
-        </View>
+        </Reanimated.View>
       )}
 
       {/* Gradient fade header — three stops with a translucent middle so
