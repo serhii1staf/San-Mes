@@ -94,7 +94,19 @@ function GifPanelComponent({ height, onSelect, onLongPress, theme, bottomInset =
         delayLongPress={280}
         style={{ width: CELL_W, height: CELL_W, borderRadius: 10, overflow: 'hidden', marginBottom: CELL_GAP, backgroundColor: theme.colors.background.secondary }}
       >
-        <CachedImage uri={item.previewUrl} style={{ width: '100%', height: '100%' }} resizeMode="cover" priority="low" />
+        {/* STATIC frame in the dense grid — `autoplay={false}` + the still
+            rendition means each cell costs ONE decode instead of animating
+            every frame (a 16-cell grid of animated GIFs was saturating the UI
+            thread on weak devices). Motion is shown on long-press + in the
+            sent message. `(item as any).stillUrl` falls back to previewUrl for
+            GIFs persisted in `recent_gif` before stillUrl existed. */}
+        <CachedImage
+          uri={(item as any).stillUrl || item.previewUrl}
+          style={{ width: '100%', height: '100%' }}
+          resizeMode="cover"
+          priority="low"
+          autoplay={false}
+        />
       </Pressable>
     ),
     [onSelect, onLongPress, theme],

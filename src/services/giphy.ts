@@ -14,8 +14,13 @@ const BASE = 'https://api.giphy.com/v1/gifs';
 
 export interface GiphyItem {
   id: string;
-  // Small preview rendition for the picker grid (light, fast).
+  // Small ANIMATED preview rendition (used for the long-press preview popup).
   previewUrl: string;
+  // STATIC (still) rendition for the picker grid — a single frame, so a grid
+  // of dozens of GIFs costs ONE decode each instead of animating every frame
+  // on the UI thread (which tanked FPS on weak devices). Animation is shown on
+  // long-press and in the sent message, not in the dense grid.
+  stillUrl: string;
   previewWidth: number;
   previewHeight: number;
   // Rendition we actually send / display in the message (still downsized to keep KB low).
@@ -28,6 +33,8 @@ function mapItem(g: any): GiphyItem | null {
   try {
     const images = g.images || {};
     const preview = images.fixed_width_small || images.fixed_width || images.downsized || images.preview_gif || images.original;
+    const stillRendition =
+      images.fixed_width_small_still || images.fixed_width_still || images.downsized_still || images.original_still;
     const send = images.fixed_width || images.downsized_medium || images.downsized || images.original || preview;
     const previewUrl = preview?.url || send?.url;
     const sendUrl = send?.url || preview?.url;
@@ -35,6 +42,7 @@ function mapItem(g: any): GiphyItem | null {
     return {
       id: g.id,
       previewUrl,
+      stillUrl: stillRendition?.url || previewUrl,
       previewWidth: Number(preview?.width) || 100,
       previewHeight: Number(preview?.height) || 100,
       sendUrl,

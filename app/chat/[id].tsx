@@ -535,6 +535,10 @@ type VisibilityTracker = {
   subscribe: (listener: () => void) => () => void;
   isVisible: (id: string) => boolean;
   update: (next: Set<string>) => void;
+  // Pause/resume animation globally while the list is actively scrolling — a
+  // screenful of animated GIFs decoding every frame DURING a scroll/fling is
+  // what tanked UI fps on weak devices.
+  setScrolling: (b: boolean) => void;
 };
 
 // Thin wrapper that subscribes ONLY this row to the visibility tracker, so a
@@ -1994,10 +1998,15 @@ export default function ChatScreen() {
   if (!visTrackerRef.current) {
     let visibleSet = new Set<string>();
     let ready = false;
+    let scrolling = false;
     const listeners = new Set<() => void>();
     visTrackerRef.current = {
       subscribe(l) { listeners.add(l); return () => { listeners.delete(l); }; },
-      isVisible(itemId) { return !ready || visibleSet.has(itemId); },
+      // A row's media animates only when it's on-screen AND the list is not
+      // actively scrolling. The `!scrolling` gate pauses every GIF for the
+      // duration of a scroll/fling so the UI thread isn't decoding frames it
+      // can't show smoothly anyway, then resumes the instant scrolling stops.
+      isVisible(itemId) { return (!ready || visibleSet.has(itemId)) && !scrolling; },
       update(next) {
         // Skip the listener fan-out when the viewable set is unchanged —
         // mirrors the old `setVisibleIds` dedupe so tiny scroll jitter is free.
@@ -2008,6 +2017,11 @@ export default function ChatScreen() {
         }
         visibleSet = next;
         ready = true;
+        listeners.forEach((fn) => fn());
+      },
+      setScrolling(b) {
+        if (b === scrolling) return;
+        scrolling = b;
         listeners.forEach((fn) => fn());
       },
     };
@@ -2089,7 +2103,17 @@ export default function ChatScreen() {
   // call rate at ~30 Hz on iOS; the JS-side guard here is belt-and-suspenders
   // so a chatty Android scroll listener can't churn `setState` either.
   const lastScrollEventAt = useRef(0);
+  // Idle timer that releases the GIF-animation pause shortly after the last
+  // scroll event (covers both drag and momentum/fling uniformly).
+  const scrollIdleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onChatScroll = useCallback((e: any) => {
+    // Pause GIF animation for the duration of the scroll: arm on every scroll
+    // event (no-op once already paused), and release 180 ms after the last
+    // one. Cheap — `setScrolling` only fans out to the bubbles on a true
+    // change (scroll start / scroll settle).
+    visTrackerRef.current?.setScrolling(true);
+    if (scrollIdleRef.current) clearTimeout(scrollIdleRef.current);
+    scrollIdleRef.current = setTimeout(() => visTrackerRef.current?.setScrolling(false), 180);
     const now = Date.now();
     if (now - lastScrollEventAt.current < 32) return;
     lastScrollEventAt.current = now;
@@ -2097,6 +2121,7 @@ export default function ChatScreen() {
     const next = y > SCROLL_BTN_THRESHOLD;
     setScrollBtnVisible((prev) => (prev === next ? prev : next));
   }, []);
+  useEffect(() => () => { if (scrollIdleRef.current) clearTimeout(scrollIdleRef.current); }, []);
   useEffect(() => {
     Animated.timing(scrollBtnOpacity, {
       toValue: scrollBtnVisible ? 1 : 0,
