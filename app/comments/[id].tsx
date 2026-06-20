@@ -23,6 +23,7 @@ import { SlideUpSheet } from '../../src/components/ui/SlideUpSheet';
 import { MediaPanel } from '../../src/components/chat/MediaPanel';
 import { AnimatedEmojiIcon } from '../../src/components/chat/AnimatedEmojiIcon';
 import { AnimatedGifIcon } from '../../src/components/chat/AnimatedGifIcon';
+import { AnimatedKeyboardIcon } from '../../src/components/chat/AnimatedKeyboardIcon';
 import { parseGif, GiphyItem } from '../../src/services/giphy';
 import { getRecentEmoji, pushRecentEmoji } from '../../src/services/recentEmoji';
 import { getRecentGif, pushRecentGif } from '../../src/services/recentGif';
@@ -1105,12 +1106,18 @@ export default function CommentsScreen() {
                   onFocus={handleInputFocus}
                 />
                 {/* Emoji + GIF buttons inside the input, right side */}
-                <Pressable onPress={onEmojiBtn} hitSlop={8} style={{ alignSelf: 'center', marginLeft: 6, height: 30, alignItems: 'center', justifyContent: 'center' }}>
+                <Pressable onPress={onEmojiBtn} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 2, height: 30, alignItems: 'center', justifyContent: 'center' }}>
                   <AnimatedEmojiIcon size={20} color={emojiOpen ? theme.colors.accent.primary : theme.colors.text.tertiary} />
                 </Pressable>
-                <Pressable onPress={onGifBtn} hitSlop={8} style={{ alignSelf: 'center', marginLeft: 6, height: 30, paddingHorizontal: 8, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: (gifOpen ? theme.colors.accent.primary + '30' : theme.colors.accent.primary + '18') }}>
-                  <AnimatedGifIcon color={theme.colors.accent.primary} fontSize={11} />
-                </Pressable>
+                {panelTab ? (
+                  <Pressable onPress={closeEmojiToKeyboard} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 2, height: 30, paddingHorizontal: 8, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.accent.primary + '18' }}>
+                    <AnimatedKeyboardIcon size={20} color={theme.colors.accent.primary} />
+                  </Pressable>
+                ) : (
+                  <Pressable onPress={openGif} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 2, height: 30, paddingHorizontal: 8, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.accent.primary + '18' }}>
+                    <AnimatedGifIcon color={theme.colors.accent.primary} fontSize={11} />
+                  </Pressable>
+                )}
               </NativeGlassView>
             ) : (
               <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 22, paddingHorizontal: 16, paddingVertical: 10, borderWidth: 1, borderColor: theme.colors.border.light, minHeight: 44 }}>
@@ -1133,12 +1140,18 @@ export default function CommentsScreen() {
                   onFocus={handleInputFocus}
                 />
                 {/* Emoji + GIF buttons inside the input, right side */}
-                <Pressable onPress={onEmojiBtn} hitSlop={8} style={{ alignSelf: 'center', marginLeft: 6, height: 30, alignItems: 'center', justifyContent: 'center' }}>
+                <Pressable onPress={onEmojiBtn} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 2, height: 30, alignItems: 'center', justifyContent: 'center' }}>
                   <AnimatedEmojiIcon size={20} color={emojiOpen ? theme.colors.accent.primary : theme.colors.text.tertiary} />
                 </Pressable>
-                <Pressable onPress={onGifBtn} hitSlop={8} style={{ alignSelf: 'center', marginLeft: 6, height: 30, paddingHorizontal: 8, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: (gifOpen ? theme.colors.accent.primary + '30' : theme.colors.accent.primary + '18') }}>
-                  <AnimatedGifIcon color={theme.colors.accent.primary} fontSize={11} />
-                </Pressable>
+                {panelTab ? (
+                  <Pressable onPress={closeEmojiToKeyboard} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 2, height: 30, paddingHorizontal: 8, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.accent.primary + '18' }}>
+                    <AnimatedKeyboardIcon size={20} color={theme.colors.accent.primary} />
+                  </Pressable>
+                ) : (
+                  <Pressable onPress={openGif} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 2, height: 30, paddingHorizontal: 8, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.accent.primary + '18' }}>
+                    <AnimatedGifIcon color={theme.colors.accent.primary} fontSize={11} />
+                  </Pressable>
+                )}
               </View>
             )}
             {/* Send button → keep the solid accent affordance when it can send.
