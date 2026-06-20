@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, Alert, Animated, Modal, Dimensions, Keyboard, InteractionManager, type ViewToken } from 'react-native';
-import { KeyboardStickyView, useReanimatedKeyboardAnimation, useKeyboardHandler } from 'react-native-keyboard-controller';
+import { useReanimatedKeyboardAnimation, useKeyboardHandler } from 'react-native-keyboard-controller';
 import Reanimated, { useAnimatedStyle, interpolate, Extrapolation, useSharedValue, withSpring, runOnJS, useAnimatedRef, measure, type SharedValue } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import * as Clipboard from 'expo-clipboard';
@@ -739,32 +739,30 @@ export default function ChatScreen() {
   const minimizedUrl = useBrowserStore((s) => s.minimizedUrl);
   const browserWidgetPosition = useSettingsStore((s) => s.browserWidgetPosition);
   const stickyOpenedOffset = !!minimizedUrl && browserWidgetPosition === 'bottom' ? 56 : 0;
-  // When the emoji panel holds the bar lifted (keyboard down), pull the sticky
-  // view UP by the panel height via a NEGATIVE `closed` offset (KeyboardSticky
-  // View's translateY = height + offset; closed is the value at progress 0).
-  // Because panelHeight ≈ the keyboard height, the bar lands at the exact spot
-  // it occupied above the keyboard — the keyboard dismiss interpolates from
-  // (-kbHeight + opened) to (-panelHeight), so it doesn't move. The visible gap
-  // between bar and panel is created inside the panel's own top padding.
-  // The emoji panel keeps the input bar lifted via an animated SPACER rendered
-  // below the bar inside the KeyboardStickyView (see `emojiSpacerStyle` + JSX),
-  // NOT via the sticky offset — the spacer compensates the keyboard descent
-  // frame-for-frame so the bar never moves. So the sticky offset only carries
-  // the browser-band compensation now.
-  const stickyOffset = useMemo(
-    () => ({ closed: 0, opened: stickyOpenedOffset }),
-    [stickyOpenedOffset],
-  );
 
-  // Spacer height = panelHeight × (1 − keyboardProgress) while lifted. As the
-  // keyboard slides DOWN (progress 1→0) the spacer grows 0→panelHeight, exactly
-  // replacing the vanishing keyboard-driven translate — so the bar's distance
-  // from the screen bottom stays constant (= keyboard height ≈ panel height)
-  // and it doesn't jump. At rest (keyboard down, panel open) the spacer is the
-  // full panel height, holding the bar right above the panel.
-  const emojiSpacerStyle = useAnimatedStyle(() => ({
-    height: liftSV.value * emojiPanelSV.value * (1 - progress.value),
-  }));
+  // ── Input-bar lift: robust max() of keyboard height and panel height ──
+  // The bar's distance from the screen bottom = max(liveKeyboardHeight,
+  // panelLiftHeight). Because it's a MAX of the two, the bar position is
+  // MONOTONIC across the keyboard↔panel handoff — it can never dip and snap
+  // back, which is exactly the "jump to the top / settle" the spacer approach
+  // suffered from (that relied on two animations cancelling frame-for-frame).
+  //   • Typing:        kb≈300, panelLift=0      → lift=300 (sits on keyboard)
+  //   • Open emoji:    kb 300→0, panelLift=300  → lift stays 300 (no move)
+  //   • Back to kb:    kb 0→300, panelLift=300  → lift stays 300 (no move)
+  // `keyboardHeight` from useReanimatedKeyboardAnimation animates smoothly on
+  // the UI thread (same source KeyboardStickyView used), so the follow is just
+  // as smooth — we simply read it ourselves to fold in the max().
+  const barWrapStyle = useAnimatedStyle(() => {
+    const raw = keyboardHeight.value;
+    const kb = raw < 0 ? -raw : raw; // library reports height as 0 → -kbHeight
+    const panelLift = liftSV.value * emojiPanelSV.value;
+    const lift = Math.max(kb, panelLift);
+    // Browser-band compensation: historically the sticky view pushed the bar
+    // DOWN by the band height while the keyboard was open (the chat screen
+    // bottom sits `band` px above the real screen bottom). Preserve that.
+    const band = kb > 1 ? stickyOpenedOffset : 0;
+    return { transform: [{ translateY: -(lift - band) }] };
+  });
 
   // Shift the entire message list upward by exactly the keyboard height when
   // it rises. We drive the translation from `useKeyboardHandler.onMove`
@@ -2087,9 +2085,12 @@ export default function ChatScreen() {
         </Reanimated.View>
       )}
 
-      {/* Input bar sticks to the keyboard top; hidden while searching */}
+      {/* Input bar — manually keyboard-stuck via `barWrapStyle` (translateY =
+          -max(keyboardHeight, panelHeight)). Replaces KeyboardStickyView so we
+          can fold in the emoji-panel lift as a MONOTONIC max(), eliminating the
+          handoff jump. Hidden while searching. */}
       {!searchMode && (
-      <KeyboardStickyView offset={stickyOffset} style={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}>
+      <Reanimated.View style={[{ position: 'absolute', left: 0, right: 0, bottom: 0 }, barWrapStyle]}>
         {banner && (
           <View style={[{ marginHorizontal: 12, marginTop: 6, flexDirection: 'row', alignItems: 'center', gap: 10, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 6, overflow: 'hidden' }, glassActive ? null : { backgroundColor: theme.colors.background.elevated, borderWidth: 1, borderColor: theme.colors.border.light }]}>
             {glassActive ? <GlassBg borderRadius={12} glassStyle="regular" interactive={false} colorScheme={theme.isDark ? 'dark' : 'light'} tintColor={theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.5)'} /> : null}
@@ -2157,24 +2158,17 @@ export default function ChatScreen() {
           onOpenEmoji={openEmoji}
           onToggleEmoji={closeEmojiToKeyboard}
         />
-        {/* Animated spacer that holds the input bar above the emoji panel as the
-            keyboard descends (and on the way back), with zero jump. Must NOT
-            intercept touches — it overlaps the emoji panel region beneath it,
-            and without this the panel's FlatList could never receive the
-            scroll gesture. */}
-        <Reanimated.View pointerEvents="none" style={emojiSpacerStyle} />
-      </KeyboardStickyView>
+      </Reanimated.View>
       )}
 
       {/* Inline emoji panel — bottom-anchored in the space the keyboard
           vacated. Mounted while open so the keyboard's slide-down REVEALS it
           (it sits beneath the descending keyboard). Height ≈ last real keyboard
           height; the top `EMOJI_GAP` padding leaves a visible gap between the
-          panel and the lifted input bar. Rendered AFTER the input KSV so it
-          paints ON TOP of the KSV's (touch-transparent) spacer and reliably
-          receives the scroll gesture. It only covers the bottom `panelHeight`
-          band, while the lifted input bar sits above it — so they never
-          visually overlap. */}
+          panel and the lifted input bar. Rendered AFTER the input bar so it
+          paints ON TOP and reliably receives the scroll gesture. It only
+          covers the bottom `panelHeight` band, while the lifted input bar sits
+          above it — so they never visually overlap. */}
       {!searchMode && emojiOpen && (
         <View
           pointerEvents="box-none"
