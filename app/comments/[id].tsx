@@ -779,6 +779,14 @@ export default function CommentsScreen() {
     inputRef.current?.focus();
   }, [liftSV]);
 
+  // Dismiss the panel entirely (no keyboard) — fired by a tap on the comment-
+  // list region while a panel is open. The lift mirror effect slides the bar +
+  // panel back down once the state clears.
+  const dismissPanel = useCallback(() => {
+    setPanelTab(null);
+    setKeepLifted(false);
+  }, []);
+
   // Composer button taps: open the panel, switch tabs if the other is open, or
   // return to the keyboard if this tab is already open.
   const onEmojiBtn = useCallback(() => {
@@ -1012,6 +1020,17 @@ export default function CommentsScreen() {
           pointerEvents="none"
           style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: insets.bottom + 120 }}
         />
+
+        {/* Tap-catcher — dismiss the open media panel when the comment list is
+            tapped, like a tap outside dismisses the keyboard. Starts below the
+            header so the back button stays tappable; the input bar + panel
+            render after this so they keep their own taps. */}
+        {panelTab && (
+          <Pressable
+            onPress={dismissPanel}
+            style={{ position: 'absolute', top: headerContentHeight, left: 0, right: 0, bottom: 0 }}
+          />
+        )}
 
         {/* Input area — manually keyboard-stuck via `barWrapStyle`
             (translateY = -max(keyboardHeight, panelHeight)) so the emoji/GIF

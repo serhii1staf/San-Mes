@@ -1191,6 +1191,15 @@ export default function ChatScreen() {
     inputRef.current?.focus();
   }, [liftSV]);
 
+  // Dismiss the panel ENTIRELY (no keyboard) — the panel + bar slide back down.
+  // Fired by a tap on the message-list region while a panel is open, mirroring
+  // the way a tap outside dismisses the keyboard. The lift mirror effect
+  // animates liftSV → 0 (bar + panel descend together) once the state clears.
+  const dismissPanel = useCallback(() => {
+    setPanelTab(null);
+    setKeepLifted(false);
+  }, []);
+
   // Insert a picked emoji into the composer; panel stays open for multi-pick.
   // Also record it in the recently-used list (shown at the top of the panel).
   const onPickEmoji = useCallback((e: string) => {
@@ -2711,6 +2720,18 @@ export default function ChatScreen() {
             )}
           </Animated.View>
         </Reanimated.View>
+      )}
+
+      {/* Tap-catcher — while a media panel is open, a tap on the message-list
+          region (everything above the panel + bar) dismisses the panel, just
+          like a tap outside dismisses the keyboard. Rendered BEFORE the input
+          bar + panel so those paint on top and keep receiving their own taps;
+          the header (rendered later) also stays tappable. Transparent. */}
+      {!searchMode && panelTab && (
+        <Pressable
+          onPress={dismissPanel}
+          style={StyleSheet.absoluteFill}
+        />
       )}
 
       {/* Input bar — manually keyboard-stuck via `barWrapStyle` (translateY =
