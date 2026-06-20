@@ -261,6 +261,7 @@ const ru: Record<string, string> = {
   'emoji.cat.food': 'Еда',
   'emoji.cat.activities': 'Активности',
   'emoji.cat.symbols': 'Символы',
+  'emoji.cat.hearts': 'Сердечки',
   'emoji.cat.objects': 'Объекты',
 
   // ─── Post menu ─────────────────────────────────────────────────────────

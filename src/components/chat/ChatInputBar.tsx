@@ -41,6 +41,11 @@ export interface ChatInputBarHandle {
   setText: (text: string) => void;
   clear: () => void;
   getText: () => string;
+  // Append a string (emoji) to the local text state — used by the parent's
+  // emoji panel so picks land in the composer without re-rendering the screen.
+  insert: (s: string) => void;
+  // Programmatically focus the TextInput (re-open the keyboard).
+  focus: () => void;
 }
 
 interface ChatInputBarProps {
@@ -53,27 +58,44 @@ interface ChatInputBarProps {
   onPasteImages?: (uris: string[]) => void;
   onOpenGif: () => void;
   inputRowStyle: any; // Reanimated animated style (paddingBottom)
+  // ── Emoji panel wiring (all optional — additive) ─────────────────────────
+  // True while the parent's inline emoji panel is open. Swaps the GIF button
+  // for a keyboard icon so the same slot returns the user to the keyboard.
+  emojiOpen?: boolean;
+  // Tapping the keyboard icon (or the text field while the panel is open)
+  // asks the parent to close the panel and re-open the keyboard.
+  onToggleEmoji?: () => void;
+  // Tapping the top-left emoji button asks the parent to open the panel.
+  onOpenEmoji?: () => void;
 }
 
 export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProps>(function ChatInputBar(
-  { isEditing, hasPendingImages, onSend, onPickImages, onPasteImage, onPasteImages, onOpenGif, inputRowStyle },
+  { isEditing, hasPendingImages, onSend, onPickImages, onPasteImage, onPasteImages, onOpenGif, inputRowStyle, emojiOpen, onToggleEmoji, onOpenEmoji },
   ref,
 ) {
   const theme = useTheme();
   const t = useT();
   const glassActive = useLiquidGlassActive();
   const [text, setText] = useState('');
+  // Ref to the underlying TextInput so the parent (via the handle) can focus
+  // it to re-open the keyboard when leaving the emoji panel.
+  const textInputRef = useRef<TextInput>(null);
 
   // Swallow progress 0→1 (UI thread). Only animated when glass is active — the
   // fusion is a glass-only effect; flat capsules stay static & separate.
   const sw = useSharedValue(0);
   const expandedRef = useRef(false);
+  // JS mirror of the expanded flag — drives the emoji button's `pointerEvents`
+  // so the (fully transparent) button can't intercept taps while collapsed.
+  // Flips only on a real 1↔multi-line transition, never per keystroke.
+  const [fieldExpanded, setFieldExpanded] = useState(false);
   const glassRef = useRef(glassActive);
   glassRef.current = glassActive;
   const setExpanded = useCallback((next: boolean) => {
     if (!glassRef.current) return; // swallow/merge is glass-only
     if (next === expandedRef.current) return;
     expandedRef.current = next;
+    setFieldExpanded(next);
     // Soft spring → "liquid" feel as the glass surfaces fuse/part.
     sw.value = withSpring(next ? 1 : 0, { damping: 17, stiffness: 120, mass: 0.8, overshootClamping: false });
   }, [sw]);
@@ -101,6 +123,8 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
     setText: (val: string) => { setText(val); if (!val) setExpanded(false); },
     clear: () => { setText(''); lastHeightRef.current = 0; setExpanded(false); },
     getText: () => text,
+    insert: (s: string) => { setText((prev) => prev + s); },
+    focus: () => { textInputRef.current?.focus(); },
   }), [text, setExpanded]);
 
   const canSend = text.trim().length > 0 || hasPendingImages;
@@ -128,9 +152,17 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
   const fieldPadStyle = useAnimatedStyle(() => ({
     paddingLeft: interpolate(sw.value, [0, 1], [BASE_PAD_LEFT, EXPAND_PAD_LEFT]),
   }));
+  // Emoji button reveal — tied to the SAME `sw` expansion shared value so it
+  // fades + scales in on the UI thread exactly as the field expands to 2+
+  // lines, and out as it collapses. No new per-frame JS.
+  const emojiBtnStyle = useAnimatedStyle(() => ({
+    opacity: sw.value,
+    transform: [{ scale: interpolate(sw.value, [0, 1], [0.55, 1]) }],
+  }));
 
   const textInputEl = (
     <TextInput
+      ref={textInputRef}
       value={text}
       onChangeText={setText}
       placeholder={t('chat.input_placeholder')}
@@ -142,7 +174,12 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
       autoComplete="off"
       spellCheck={false}
       onContentSizeChange={handleContentSizeChange}
-      onFocus={() => { perfMonitor.markInputFocus('chat'); }}
+      onFocus={() => {
+        perfMonitor.markInputFocus('chat');
+        // Tapping the field while the emoji panel is open should close the
+        // panel and return to the keyboard (which is already coming up).
+        if (emojiOpen) onToggleEmoji?.();
+      }}
     />
   );
 
@@ -157,8 +194,32 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
       ) : (
         textInputEl
       )}
-      <Pressable onPress={onOpenGif} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 4, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8, backgroundColor: theme.colors.accent.primary + '18' }}>
-        <Text style={{ fontSize: 11, fontWeight: '800', color: theme.colors.accent.primary }}>GIF</Text>
+      {emojiOpen ? (
+        // Panel is open → this slot returns the user to the keyboard.
+        <Pressable onPress={onToggleEmoji} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 4, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8, backgroundColor: theme.colors.accent.primary + '18' }}>
+          <Feather name="type" size={15} color={theme.colors.accent.primary} />
+        </Pressable>
+      ) : (
+        <Pressable onPress={onOpenGif} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 4, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8, backgroundColor: theme.colors.accent.primary + '18' }}>
+          <Text style={{ fontSize: 11, fontWeight: '800', color: theme.colors.accent.primary }}>GIF</Text>
+        </Pressable>
+      )}
+    </Reanimated.View>
+  );
+
+  // Emoji button — overlaid at the field's TOP-LEFT, OUTSIDE the padded
+  // `fieldContent` so the animated left padding can't shove it over the text.
+  // It anchors to the field wrapper's own left edge. Opacity/scale ride `sw`
+  // on the UI thread (visible when sw≈1 / multiline); `pointerEvents` is gated
+  // on the JS expansion mirror so the transparent button never eats taps while
+  // collapsed. Rendered as a sibling inside each field wrapper below.
+  const emojiOverlay = (
+    <Reanimated.View
+      style={[styles.emojiBtnWrap, emojiBtnStyle]}
+      pointerEvents={fieldExpanded ? 'auto' : 'none'}
+    >
+      <Pressable onPress={onOpenEmoji} hitSlop={8} style={styles.emojiBtn}>
+        <Feather name="smile" size={20} color={theme.colors.accent.primary} />
       </Pressable>
     </Reanimated.View>
   );
@@ -180,6 +241,7 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
           </Reanimated.View>
           <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.inputWrapGlass}>
             {fieldContent}
+            {emojiOverlay}
           </NativeGlassView>
         </GlassContainerView>
       ) : (
@@ -192,6 +254,7 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
           </View>
           <View style={[styles.inputWrap, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
             {fieldContent}
+            {emojiOverlay}
           </View>
         </>
       )}
@@ -222,6 +285,8 @@ const styles = StyleSheet.create({
   center: { width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center' },
   iconBtn: { width: PHOTO_SLOT, height: 44, borderRadius: 22, borderWidth: 1, alignSelf: 'flex-end', marginRight: GAP },
   fieldContent: { flex: 1, flexDirection: 'row', alignItems: 'center' },
+  emojiBtnWrap: { position: 'absolute', left: 8, top: 8, zIndex: 3 },
+  emojiBtn: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
   inputWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 22, paddingRight: 14, paddingVertical: 10, minHeight: 44, borderWidth: 1 },
   sendBtn: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', marginLeft: 8 },
   btnGlass: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },

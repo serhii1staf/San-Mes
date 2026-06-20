@@ -259,6 +259,7 @@ const en: Record<string, string> = {
   'emoji.cat.food': 'Food',
   'emoji.cat.activities': 'Activities',
   'emoji.cat.symbols': 'Symbols',
+  'emoji.cat.hearts': 'Hearts',
   'emoji.cat.objects': 'Objects',
 
   // ─── Post menu ─────────────────────────────────────────────────────────

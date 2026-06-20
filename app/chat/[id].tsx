@@ -22,6 +22,7 @@ import { UserBadge } from '../../src/components/ui/UserBadge';
 import { MessageContextMenu, MessageAction, type ActionZone, type MessageContextMenuHandle } from '../../src/components/ui/MessageContextMenu';
 import { TranslationSheet } from '../../src/components/ui/TranslationSheet';
 import { ChatInputBar, ChatInputBarHandle } from '../../src/components/chat/ChatInputBar';
+import { EmojiPanel } from '../../src/components/chat/EmojiPanel';
 import { EmojiDeleteBurst, EmojiBurstHandle } from '../../src/components/chat/EmojiDeleteBurst';
 import { GiphyPicker } from '../../src/components/ui/GiphyPicker';
 import { getRealtime, chatChannelName } from '../../src/services/realtime/ably';
@@ -577,6 +578,14 @@ export default function ChatScreen() {
   }, []);
   const [viewerImages, setViewerImages] = useState<{ images: string[]; index: number } | null>(null);
   const [gifPickerVisible, setGifPickerVisible] = useState(false);
+  // ── Inline emoji panel ──────────────────────────────────────────────────
+  // `emojiOpen` drives the panel (and the composer's GIF↔keyboard icon swap).
+  // `keepLifted` keeps the input bar lifted while the keyboard rises BACK after
+  // the panel closes, so the bar never drops to the bottom and snaps up. The
+  // panel height tracks the last real keyboard height (captured below).
+  const [emojiOpen, setEmojiOpen] = useState(false);
+  const [keepLifted, setKeepLifted] = useState(false);
+  const [emojiPanelHeight, setEmojiPanelHeight] = useState(300);
   const [searchMode, setSearchMode] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchMatches, setSearchMatches] = useState<number[]>([]);
@@ -605,6 +614,21 @@ export default function ChatScreen() {
   const inputRef = useRef<ChatInputBarHandle>(null);
 
   const { progress, height: keyboardHeight } = useReanimatedKeyboardAnimation();
+
+  // Last real keyboard height — captured at the end of each keyboard-open
+  // settle (see `useKeyboardHandler.onEnd` below) so the emoji panel can match
+  // the exact space the keyboard vacated. Falls back to ~300 if the keyboard
+  // never opened in this session.
+  const lastKbHeightRef = useRef(0);
+  const captureKbHeight = useCallback((h: number) => {
+    if (h > 1) lastKbHeightRef.current = h;
+  }, []);
+  // UI-thread mirrors of the panel state used by the animated styles below.
+  // `liftSV` = 1 while the input bar must stay lifted above the panel (panel
+  // open OR keyboard re-rising after a close). `emojiPanelSV` carries the
+  // panel height so the list shift can match it on the UI thread.
+  const liftSV = useSharedValue(0);
+  const emojiPanelSV = useSharedValue(300);
 
   // Memoize the conversation lookup so the linear scan over `mockConversations`
   // doesn't run on every parent render — typing in the input bar (when local
@@ -689,9 +713,13 @@ export default function ChatScreen() {
   // which felt like the gradient was "sticking" to the input bar.
 
   // Input row bottom padding: safe-area when keyboard closed → small gap when open (UI thread)
-  const inputRowStyle = useAnimatedStyle(() => ({
-    paddingBottom: interpolate(progress.value, [0, 1], [inputBarBottomPad, 8], Extrapolation.CLAMP),
-  }));
+  const inputRowStyle = useAnimatedStyle(() => {
+    const base = interpolate(progress.value, [0, 1], [inputBarBottomPad, 8], Extrapolation.CLAMP);
+    // While the emoji panel holds the bar lifted (keyboard down), keep the
+    // small open-state padding so the bar doesn't gain the safe-area padding
+    // back and visually shift. Purely additive — no effect when liftSV === 0.
+    return { paddingBottom: liftSV.value > 0.5 ? 8 : base };
+  });
 
   // Compensate the KeyboardStickyView's `offset.opened` for the bottom-
   // docked browser widget. When the band is active it lives INSIDE the
@@ -711,9 +739,17 @@ export default function ChatScreen() {
   const minimizedUrl = useBrowserStore((s) => s.minimizedUrl);
   const browserWidgetPosition = useSettingsStore((s) => s.browserWidgetPosition);
   const stickyOpenedOffset = !!minimizedUrl && browserWidgetPosition === 'bottom' ? 56 : 0;
+  // When the emoji panel holds the bar lifted (keyboard down), pull the sticky
+  // view UP by the panel height via a NEGATIVE `closed` offset (KeyboardSticky
+  // View's translateY = height + offset; closed is the value at progress 0).
+  // Because panelHeight ≈ the keyboard height, the bar lands at the exact spot
+  // it occupied above the keyboard — the keyboard dismiss interpolates from
+  // (-kbHeight + opened) to (-panelHeight), so it doesn't move. The visible gap
+  // between bar and panel is created inside the panel's own top padding.
+  const lifted = emojiOpen || keepLifted;
   const stickyOffset = useMemo(
-    () => ({ closed: 0, opened: stickyOpenedOffset }),
-    [stickyOpenedOffset],
+    () => ({ closed: lifted ? -emojiPanelHeight : 0, opened: stickyOpenedOffset }),
+    [stickyOpenedOffset, lifted, emojiPanelHeight],
   );
 
   // Shift the entire message list upward by exactly the keyboard height when
@@ -743,12 +779,19 @@ export default function ChatScreen() {
       onEnd: (e) => {
         'worklet';
         listShiftY.value = -e.height;
+        // Capture the settled keyboard height (once per transition) so the
+        // emoji panel can match it. Guarded to ignore the close (height 0).
+        runOnJS(captureKbHeight)(e.height);
       },
     },
     [],
   );
   const listShiftStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: listShiftY.value }],
+    // While the emoji panel is up (or the keyboard is rising back after a
+    // close), shift the list by the panel height instead of the live keyboard
+    // height so the newest messages stay visible above the panel. Additive:
+    // when liftSV === 0 this is exactly the original keyboard-driven shift.
+    transform: [{ translateY: liftSV.value > 0.5 ? -emojiPanelSV.value : listShiftY.value }],
   }));
 
   // List bottom spacer matches the input bar's real height so the newest
@@ -761,6 +804,60 @@ export default function ChatScreen() {
   // keyboard regardless of this constant.
   const INPUT_BAR_HEIGHT = 60;
   const LIST_FOOTER_HEIGHT = INPUT_BAR_HEIGHT + inputBarBottomPad + 12;
+
+  // ── Emoji panel control ───────────────────────────────────────────────
+  // Visible gap (px) between the input bar and the top of the emoji panel.
+  const EMOJI_GAP = 8;
+
+  // Keep the UI-thread lift mirror in sync with the JS panel state.
+  useEffect(() => {
+    liftSV.value = emojiOpen || keepLifted ? 1 : 0;
+  }, [emojiOpen, keepLifted, liftSV]);
+
+  // While returning to the keyboard, hold the bar lifted until the keyboard
+  // has actually risen — then release the lift with no jump (at that point the
+  // sticky view is fully keyboard-driven). Safety timeout in case the show
+  // event never fires (e.g. focus race).
+  useEffect(() => {
+    if (!keepLifted) return;
+    const sub = Keyboard.addListener('keyboardDidShow', () => setKeepLifted(false));
+    const tid = setTimeout(() => setKeepLifted(false), 650);
+    return () => { sub.remove(); clearTimeout(tid); };
+  }, [keepLifted]);
+
+  // Open the panel: snapshot the panel height from the last real keyboard
+  // height, lift the bar (via stickyOffset/liftSV), then dismiss the keyboard.
+  // The keyboard slides down to REVEAL the panel already sitting beneath it.
+  const openEmoji = useCallback(() => {
+    const h = lastKbHeightRef.current > 0 ? lastKbHeightRef.current : 300;
+    emojiPanelSV.value = h;
+    setEmojiPanelHeight(h);
+    setKeepLifted(false);
+    setEmojiOpen(true);
+    Keyboard.dismiss();
+  }, [emojiPanelSV]);
+
+  // Return to the keyboard: hide the panel, keep the bar lifted, and focus the
+  // field so the keyboard rises back into the same space.
+  const closeEmojiToKeyboard = useCallback(() => {
+    setEmojiOpen(false);
+    setKeepLifted(true);
+    inputRef.current?.focus();
+  }, []);
+
+  // Insert a picked emoji into the composer; panel stays open for multi-pick.
+  const onPickEmoji = useCallback((e: string) => {
+    inputRef.current?.insert(e);
+  }, []);
+
+  // Entering search mode tears down the input bar, so drop any panel state to
+  // keep the lift offsets sane.
+  useEffect(() => {
+    if (searchMode && (emojiOpen || keepLifted)) {
+      setEmojiOpen(false);
+      setKeepLifted(false);
+    }
+  }, [searchMode, emojiOpen, keepLifted]);
 
   const cachedProfile = useEntityStore((s) => (participantId ? s.profiles[participantId] : undefined));
 
@@ -1962,6 +2059,23 @@ export default function ChatScreen() {
         </Reanimated.View>
       )}
 
+      {/* Inline emoji panel — bottom-anchored in the space the keyboard
+          vacated. Mounted while open so the keyboard's slide-down REVEALS it
+          (it sits beneath the descending keyboard). Height ≈ last real keyboard
+          height; the top `EMOJI_GAP` padding leaves a visible gap between the
+          panel and the lifted input bar. Rendered BEFORE the input KSV so the
+          input paints above it (they don't overlap regardless). */}
+      {!searchMode && emojiOpen && (
+        <View
+          pointerEvents="box-none"
+          style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: emojiPanelHeight }}
+        >
+          <View style={{ flex: 1, paddingTop: EMOJI_GAP }}>
+            <EmojiPanel height={emojiPanelHeight - EMOJI_GAP} onSelect={onPickEmoji} theme={theme} />
+          </View>
+        </View>
+      )}
+
       {/* Input bar sticks to the keyboard top; hidden while searching */}
       {!searchMode && (
       <KeyboardStickyView offset={stickyOffset} style={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}>
@@ -2028,6 +2142,9 @@ export default function ChatScreen() {
           onPasteImages={addPastedImages}
           onOpenGif={() => setGifPickerVisible(true)}
           inputRowStyle={inputRowStyle}
+          emojiOpen={emojiOpen}
+          onOpenEmoji={openEmoji}
+          onToggleEmoji={closeEmojiToKeyboard}
         />
       </KeyboardStickyView>
       )}
