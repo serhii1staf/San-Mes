@@ -23,8 +23,8 @@ import { MessageContextMenu, MessageAction, type ActionZone, type MessageContext
 import { TranslationSheet } from '../../src/components/ui/TranslationSheet';
 import { ChatInputBar, ChatInputBarHandle } from '../../src/components/chat/ChatInputBar';
 import { EmojiPanel } from '../../src/components/chat/EmojiPanel';
+import { GifPanel } from '../../src/components/chat/GifPanel';
 import { EmojiDeleteBurst, EmojiBurstHandle } from '../../src/components/chat/EmojiDeleteBurst';
-import { GiphyPicker } from '../../src/components/ui/GiphyPicker';
 import { getRealtime, chatChannelName } from '../../src/services/realtime/ably';
 import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
 import { useChatStore, useEntityStore, useConnectivityStore, useAuthStore } from '../../src/store';
@@ -604,13 +604,14 @@ export default function ChatScreen() {
     return () => handle.cancel();
   }, []);
   const [viewerImages, setViewerImages] = useState<{ images: string[]; index: number } | null>(null);
-  const [gifPickerVisible, setGifPickerVisible] = useState(false);
-  // ── Inline emoji panel ──────────────────────────────────────────────────
-  // `emojiOpen` drives the panel (and the composer's GIF↔keyboard icon swap).
-  // `keepLifted` keeps the input bar lifted while the keyboard rises BACK after
-  // the panel closes, so the bar never drops to the bottom and snaps up. The
-  // panel height tracks the last real keyboard height (captured below).
+  // ── Inline emoji / GIF panels ─────────────────────────────────────────────
+  // `emojiOpen` / `gifOpen` drive the two docked panels (mutually exclusive),
+  // and the composer's GIF↔keyboard icon swap. `keepLifted` keeps the input bar
+  // lifted while the keyboard rises BACK after a panel closes, so the bar never
+  // drops to the bottom and snaps up. The panel height tracks the last real
+  // keyboard height (captured below). Both panels share the SAME lift mechanism.
   const [emojiOpen, setEmojiOpen] = useState(false);
+  const [gifOpen, setGifOpen] = useState(false);
   const [keepLifted, setKeepLifted] = useState(false);
   const [emojiPanelHeight, setEmojiPanelHeight] = useState(300);
   const [searchMode, setSearchMode] = useState(false);
@@ -850,8 +851,8 @@ export default function ChatScreen() {
 
   // Keep the UI-thread lift mirror in sync with the JS panel state.
   useEffect(() => {
-    liftSV.value = emojiOpen || keepLifted ? 1 : 0;
-  }, [emojiOpen, keepLifted, liftSV]);
+    liftSV.value = emojiOpen || gifOpen || keepLifted ? 1 : 0;
+  }, [emojiOpen, gifOpen, keepLifted, liftSV]);
 
   // While returning to the keyboard, hold the bar lifted until the keyboard
   // has actually risen — then release the lift with no jump (at that point the
@@ -881,9 +882,22 @@ export default function ChatScreen() {
     liftSV.value = 1;
     setEmojiPanelHeight(h);
     setKeepLifted(false);
+    setGifOpen(false);
     setEmojiOpen(true);
     // Defer the dismiss one frame so the lifted state is COMMITTED before the
     // keyboard starts descending.
+    requestAnimationFrame(() => Keyboard.dismiss());
+  }, [emojiPanelSV, liftSV]);
+
+  // Open the GIF panel — twin of openEmoji. Mutually exclusive with emoji.
+  const openGif = useCallback(() => {
+    const h = lastKbHeightRef.current > 0 ? lastKbHeightRef.current : 300;
+    emojiPanelSV.value = h;
+    liftSV.value = 1;
+    setEmojiPanelHeight(h);
+    setKeepLifted(false);
+    setEmojiOpen(false);
+    setGifOpen(true);
     requestAnimationFrame(() => Keyboard.dismiss());
   }, [emojiPanelSV, liftSV]);
 
@@ -894,6 +908,7 @@ export default function ChatScreen() {
     // between hiding the panel and the keyboard rising back.
     liftSV.value = 1;
     setEmojiOpen(false);
+    setGifOpen(false);
     setKeepLifted(true);
     inputRef.current?.focus();
   }, [liftSV]);
@@ -906,11 +921,12 @@ export default function ChatScreen() {
   // Entering search mode tears down the input bar, so drop any panel state to
   // keep the lift offsets sane.
   useEffect(() => {
-    if (searchMode && (emojiOpen || keepLifted)) {
+    if (searchMode && (emojiOpen || gifOpen || keepLifted)) {
       setEmojiOpen(false);
+      setGifOpen(false);
       setKeepLifted(false);
     }
-  }, [searchMode, emojiOpen, keepLifted]);
+  }, [searchMode, emojiOpen, gifOpen, keepLifted]);
 
   const cachedProfile = useEntityStore((s) => (participantId ? s.profiles[participantId] : undefined));
 
@@ -1474,7 +1490,14 @@ export default function ChatScreen() {
     })();
   }, [id, conversationId, replyTo, addMessage, scrollToEnd, participantId, t, reconcileConversation]);
 
-  // Translation sheet state — receives source text on demand and animates
+  // Pick a GIF from the inline panel: send it, then close the panel and let the
+  // input bar settle back down (GIFs are one-and-done, not multi-pick).
+  const onPickGif = useCallback((url: string) => {
+    sendGif(url);
+    setGifOpen(false);
+    setKeepLifted(false);
+    liftSV.value = 0;
+  }, [sendGif, liftSV]);
   // up. Reset to '' when closed so the next open re-fetches (the service
   // hits its 7-day MMKV cache so this is essentially free).
   const [translateText, setTranslateText] = useState<string>('');
@@ -2216,9 +2239,10 @@ export default function ChatScreen() {
           onPickImages={pickImages}
           onPasteImage={pasteImageFromClipboard}
           onPasteImages={addPastedImages}
-          onOpenGif={() => setGifPickerVisible(true)}
+          onOpenGif={openGif}
           inputRowStyle={inputRowStyle}
           emojiOpen={emojiOpen}
+          gifOpen={gifOpen}
           onOpenEmoji={openEmoji}
           onToggleEmoji={closeEmojiToKeyboard}
         />
@@ -2242,6 +2266,25 @@ export default function ChatScreen() {
             <EmojiPanel
               height={emojiPanelHeight - EMOJI_GAP}
               onSelect={onPickEmoji}
+              theme={theme}
+              bottomInset={insets.bottom}
+            />
+          </View>
+        </View>
+      )}
+
+      {/* Inline GIF panel — identical docking to the emoji panel above (same
+          lift mechanism, same full-bleed top-rounded surface), just a grid of
+          trending GIF thumbnails instead of emoji. */}
+      {!searchMode && gifOpen && (
+        <View
+          pointerEvents="box-none"
+          style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: emojiPanelHeight }}
+        >
+          <View style={{ flex: 1, paddingTop: EMOJI_GAP }}>
+            <GifPanel
+              height={emojiPanelHeight - EMOJI_GAP}
+              onSelect={onPickGif}
               theme={theme}
               bottomInset={insets.bottom}
             />
@@ -2408,9 +2451,6 @@ export default function ChatScreen() {
           />
         </View>
       )}
-
-      {/* GIF picker (GIPHY) */}
-      <GiphyPicker visible={gifPickerVisible} onClose={() => setGifPickerVisible(false)} onSelect={sendGif} />
 
       {/* Translation sheet — opens when the user picks "Translate" from
           the long-press menu. Source text is the message body; target is

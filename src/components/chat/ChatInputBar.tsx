@@ -62,7 +62,9 @@ interface ChatInputBarProps {
   // True while the parent's inline emoji panel is open. Swaps the GIF button
   // for a keyboard icon so the same slot returns the user to the keyboard.
   emojiOpen?: boolean;
-  // Tapping the keyboard icon (or the text field while the panel is open)
+  // True while the parent's inline GIF panel is open (twin of emojiOpen).
+  gifOpen?: boolean;
+  // Tapping the keyboard icon (or the text field while a panel is open)
   // asks the parent to close the panel and re-open the keyboard.
   onToggleEmoji?: () => void;
   // Tapping the top-left emoji button asks the parent to open the panel.
@@ -70,7 +72,7 @@ interface ChatInputBarProps {
 }
 
 export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProps>(function ChatInputBar(
-  { isEditing, hasPendingImages, onSend, onPickImages, onPasteImage, onPasteImages, onOpenGif, inputRowStyle, emojiOpen, onToggleEmoji, onOpenEmoji },
+  { isEditing, hasPendingImages, onSend, onPickImages, onPasteImage, onPasteImages, onOpenGif, inputRowStyle, emojiOpen, gifOpen, onToggleEmoji, onOpenEmoji },
   ref,
 ) {
   const theme = useTheme();
@@ -174,9 +176,9 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
       onContentSizeChange={handleContentSizeChange}
       onFocus={() => {
         perfMonitor.markInputFocus('chat');
-        // Tapping the field while the emoji panel is open should close the
-        // panel and return to the keyboard (which is already coming up).
-        if (emojiOpen) onToggleEmoji?.();
+        // Tapping the field while a panel is open should close it and
+        // return to the keyboard (which is already coming up).
+        if (emojiOpen || gifOpen) onToggleEmoji?.();
       }}
     />
   );
@@ -192,8 +194,8 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
       ) : (
         textInputEl
       )}
-      {emojiOpen ? (
-        // Panel is open → this slot returns the user to the keyboard.
+      {emojiOpen || gifOpen ? (
+        // A panel is open → this slot returns the user to the keyboard.
         <Pressable onPress={onToggleEmoji} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 4, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8, backgroundColor: theme.colors.accent.primary + '18' }}>
           <Feather name="type" size={15} color={theme.colors.accent.primary} />
         </Pressable>
