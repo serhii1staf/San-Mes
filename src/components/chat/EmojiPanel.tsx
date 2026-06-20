@@ -144,6 +144,7 @@ function EmojiPanelComponent({ height, onSelect, theme }: EmojiPanelProps) {
         data={CATEGORIES}
         keyExtractor={(it) => it.titleKey}
         renderItem={renderCategory}
+        style={styles.list}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.listContent}
         keyboardShouldPersistTaps="always"
@@ -159,6 +160,7 @@ const styles = StyleSheet.create({
     borderRadius: 28,
     overflow: 'hidden',
   },
+  list: { flex: 1 },
   listContent: { paddingVertical: 10, paddingHorizontal: 12 },
   category: { marginBottom: 14 },
   catTitle: {

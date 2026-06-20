@@ -845,23 +845,33 @@ export default function ChatScreen() {
   const openEmoji = useCallback(() => {
     const h = lastKbHeightRef.current > 0 ? lastKbHeightRef.current : 300;
     emojiPanelSV.value = h;
+    // CRITICAL: arm the lift mirror SYNCHRONOUSLY, before the keyboard starts
+    // to descend. The spacer height = liftSV * panelH * (1 - progress), so it
+    // must already be 1 the instant `progress` begins falling from 1→0 — that
+    // way the spacer grows frame-for-frame as the keyboard slides down and the
+    // bar never moves. If we left this to the `useEffect` mirror (async), there
+    // was a window where liftSV was still 0 during the descent, so the bar
+    // followed the keyboard DOWN and then snapped back UP when the effect ran —
+    // exactly the "jump up then settle" the user saw.
+    liftSV.value = 1;
     setEmojiPanelHeight(h);
     setKeepLifted(false);
     setEmojiOpen(true);
-    // Defer the dismiss one frame so the lifted sticky-offset is COMMITTED
-    // before the keyboard starts descending. Dismissing in the same tick left
-    // a frame where the offset was still 0 while the keyboard moved, which the
-    // user saw as the bar darting up and settling. One rAF removes that race.
+    // Defer the dismiss one frame so the lifted state is COMMITTED before the
+    // keyboard starts descending.
     requestAnimationFrame(() => Keyboard.dismiss());
-  }, [emojiPanelSV]);
+  }, [emojiPanelSV, liftSV]);
 
   // Return to the keyboard: hide the panel, keep the bar lifted, and focus the
   // field so the keyboard rises back into the same space.
   const closeEmojiToKeyboard = useCallback(() => {
+    // Keep the lift armed synchronously so the bar doesn't drop for a frame
+    // between hiding the panel and the keyboard rising back.
+    liftSV.value = 1;
     setEmojiOpen(false);
     setKeepLifted(true);
     inputRef.current?.focus();
-  }, []);
+  }, [liftSV]);
 
   // Insert a picked emoji into the composer; panel stays open for multi-pick.
   const onPickEmoji = useCallback((e: string) => {
@@ -2077,23 +2087,6 @@ export default function ChatScreen() {
         </Reanimated.View>
       )}
 
-      {/* Inline emoji panel — bottom-anchored in the space the keyboard
-          vacated. Mounted while open so the keyboard's slide-down REVEALS it
-          (it sits beneath the descending keyboard). Height ≈ last real keyboard
-          height; the top `EMOJI_GAP` padding leaves a visible gap between the
-          panel and the lifted input bar. Rendered BEFORE the input KSV so the
-          input paints above it (they don't overlap regardless). */}
-      {!searchMode && emojiOpen && (
-        <View
-          pointerEvents="box-none"
-          style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: emojiPanelHeight }}
-        >
-          <View style={{ flex: 1, paddingTop: EMOJI_GAP, paddingHorizontal: 8, paddingBottom: insets.bottom > 0 ? insets.bottom : 10 }}>
-            <EmojiPanel height={emojiPanelHeight - EMOJI_GAP - (insets.bottom > 0 ? insets.bottom : 10)} onSelect={onPickEmoji} theme={theme} />
-          </View>
-        </View>
-      )}
-
       {/* Input bar sticks to the keyboard top; hidden while searching */}
       {!searchMode && (
       <KeyboardStickyView offset={stickyOffset} style={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}>
@@ -2165,9 +2158,32 @@ export default function ChatScreen() {
           onToggleEmoji={closeEmojiToKeyboard}
         />
         {/* Animated spacer that holds the input bar above the emoji panel as the
-            keyboard descends (and on the way back), with zero jump. */}
-        <Reanimated.View style={emojiSpacerStyle} />
+            keyboard descends (and on the way back), with zero jump. Must NOT
+            intercept touches — it overlaps the emoji panel region beneath it,
+            and without this the panel's FlatList could never receive the
+            scroll gesture. */}
+        <Reanimated.View pointerEvents="none" style={emojiSpacerStyle} />
       </KeyboardStickyView>
+      )}
+
+      {/* Inline emoji panel — bottom-anchored in the space the keyboard
+          vacated. Mounted while open so the keyboard's slide-down REVEALS it
+          (it sits beneath the descending keyboard). Height ≈ last real keyboard
+          height; the top `EMOJI_GAP` padding leaves a visible gap between the
+          panel and the lifted input bar. Rendered AFTER the input KSV so it
+          paints ON TOP of the KSV's (touch-transparent) spacer and reliably
+          receives the scroll gesture. It only covers the bottom `panelHeight`
+          band, while the lifted input bar sits above it — so they never
+          visually overlap. */}
+      {!searchMode && emojiOpen && (
+        <View
+          pointerEvents="box-none"
+          style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: emojiPanelHeight }}
+        >
+          <View style={{ flex: 1, paddingTop: EMOJI_GAP, paddingHorizontal: 8, paddingBottom: insets.bottom > 0 ? insets.bottom : 10 }}>
+            <EmojiPanel height={emojiPanelHeight - EMOJI_GAP - (insets.bottom > 0 ? insets.bottom : 10)} onSelect={onPickEmoji} theme={theme} />
+          </View>
+        </View>
       )}
 
       {/* Gradient fade header — three stops with a translucent middle so
