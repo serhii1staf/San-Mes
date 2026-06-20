@@ -7,6 +7,8 @@ import { useT } from '../../i18n/store';
 import { perfMonitor } from '../../services/perfMonitor';
 import { useLiquidGlassActive, NativeGlassView, GlassContainerView } from '../ui/LiquidGlass';
 import { AnimatedKeyboardIcon } from './AnimatedKeyboardIcon';
+import { AnimatedEmojiIcon } from './AnimatedEmojiIcon';
+import { AnimatedGifIcon } from './AnimatedGifIcon';
 
 // Delete the last user-perceived character (grapheme) from a string. Handles
 // astral emoji (surrogate pairs), variation selectors, skin-tone modifiers and
@@ -238,7 +240,7 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
         </Pressable>
       ) : (
         <Pressable onPress={onOpenGif} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 4, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8, backgroundColor: theme.colors.accent.primary + '18' }}>
-          <Text style={{ fontSize: 11, fontWeight: '800', color: theme.colors.accent.primary }}>GIF</Text>
+          <AnimatedGifIcon color={theme.colors.accent.primary} fontSize={11} />
         </Pressable>
       )}
     </Reanimated.View>
@@ -256,7 +258,7 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
       pointerEvents={fieldExpanded ? 'auto' : 'none'}
     >
       <Pressable onPress={onOpenEmoji} hitSlop={8} style={styles.emojiBtn}>
-        <Feather name="smile" size={20} color={theme.colors.accent.primary} />
+        <AnimatedEmojiIcon size={22} color={theme.colors.accent.primary} />
       </Pressable>
     </Reanimated.View>
   );

@@ -21,6 +21,8 @@ import { CachedImage } from '../../src/components/ui/CachedImage';
 import { CommentContextMenu, CommentAction } from '../../src/components/ui/CommentContextMenu';
 import { SlideUpSheet } from '../../src/components/ui/SlideUpSheet';
 import { MediaPanel } from '../../src/components/chat/MediaPanel';
+import { AnimatedEmojiIcon } from '../../src/components/chat/AnimatedEmojiIcon';
+import { AnimatedGifIcon } from '../../src/components/chat/AnimatedGifIcon';
 import { parseGif, GiphyItem } from '../../src/services/giphy';
 import { getRecentEmoji, pushRecentEmoji } from '../../src/services/recentEmoji';
 import { getRecentGif, pushRecentGif } from '../../src/services/recentGif';
@@ -1104,10 +1106,10 @@ export default function CommentsScreen() {
                 />
                 {/* Emoji + GIF buttons inside the input, right side */}
                 <Pressable onPress={onEmojiBtn} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 2, padding: 3 }}>
-                  <Feather name="smile" size={18} color={emojiOpen ? theme.colors.accent.primary : theme.colors.text.tertiary} />
+                  <AnimatedEmojiIcon size={20} color={emojiOpen ? theme.colors.accent.primary : theme.colors.text.tertiary} />
                 </Pressable>
                 <Pressable onPress={onGifBtn} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 2, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8, backgroundColor: (gifOpen ? theme.colors.accent.primary + '30' : theme.colors.accent.primary + '18') }}>
-                  <RNText style={{ fontSize: 11, fontWeight: '800', color: theme.colors.accent.primary }}>GIF</RNText>
+                  <AnimatedGifIcon color={theme.colors.accent.primary} fontSize={11} />
                 </Pressable>
               </NativeGlassView>
             ) : (
@@ -1132,10 +1134,10 @@ export default function CommentsScreen() {
                 />
                 {/* Emoji + GIF buttons inside the input, right side */}
                 <Pressable onPress={onEmojiBtn} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 2, padding: 3 }}>
-                  <Feather name="smile" size={18} color={emojiOpen ? theme.colors.accent.primary : theme.colors.text.tertiary} />
+                  <AnimatedEmojiIcon size={20} color={emojiOpen ? theme.colors.accent.primary : theme.colors.text.tertiary} />
                 </Pressable>
                 <Pressable onPress={onGifBtn} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 2, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8, backgroundColor: (gifOpen ? theme.colors.accent.primary + '30' : theme.colors.accent.primary + '18') }}>
-                  <RNText style={{ fontSize: 11, fontWeight: '800', color: theme.colors.accent.primary }}>GIF</RNText>
+                  <AnimatedGifIcon color={theme.colors.accent.primary} fontSize={11} />
                 </Pressable>
               </View>
             )}
