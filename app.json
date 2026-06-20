@@ -124,7 +124,8 @@
           "organization": "san-00",
           "project": "san-mes"
         }
-      ]
+      ],
+      "expo-localization"
     ],
     "experiments": {
       "typedRoutes": true
