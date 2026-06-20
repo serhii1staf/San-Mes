@@ -1,5 +1,5 @@
 import React, { memo, useState, useImperativeHandle, forwardRef, useCallback, useRef, useEffect } from 'react';
-import { View, TextInput, Pressable, Platform, StyleSheet, Text, LayoutAnimation, UIManager } from 'react-native';
+import { View, TextInput, Pressable, Platform, StyleSheet, Text, LayoutAnimation, UIManager, Animated, Easing } from 'react-native';
 import Reanimated from 'react-native-reanimated';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../../theme';
@@ -13,9 +13,15 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
 }
 
 // Width of the photo/attach button slot. When the field expands (multiline),
-// the field slides LEFT over this slot (negative margin) so the growing input
-// visually swallows the still-in-place button.
+// the field slides LEFT over this slot so the growing input swallows it.
 const PHOTO_SLOT = 44;
+const GAP = 8;
+// How far the field's left edge travels to reach the photo button's left edge.
+const SWALLOW_DX = PHOTO_SLOT + GAP; // 52
+const BASE_PAD_LEFT = 14;
+
+// Glass capsule that can fade its opacity (for the photo button morph).
+const AnimatedGlass = Animated.createAnimatedComponent(NativeGlassView);
 
 // Isolated chat input bar.
 //
@@ -69,6 +75,30 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
   // (stable) content-size callback can read the latest value without deps.
   const [expanded, setExpanded] = useState(false);
   const expandedRef = useRef(false);
+
+  // ── Swallow animation (Animated.Value, like the AI/Music "Commands" pill) ─
+  // A single value 0→1 drives the photo button sliding under the field AND the
+  // field's matching left-padding, with a smooth timed ease. It only runs on
+  // the collapse↔expand TOGGLE (≈once per message), NOT per keystroke, so it's
+  // cheap even though layout props can't use the native driver. Because the
+  // photo's negative margin and the field's padding interpolate from the SAME
+  // value, the text column stays pinned at every frame → no re-wrap, no jitter.
+  const swallow = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const anim = Animated.timing(swallow, {
+      toValue: expanded ? 1 : 0,
+      duration: 240,
+      easing: Easing.inOut(Easing.ease),
+      useNativeDriver: false,
+    });
+    anim.start();
+    return () => anim.stop();
+  }, [expanded, swallow]);
+
+  const photoMarginRight = swallow.interpolate({ inputRange: [0, 1], outputRange: [GAP, -PHOTO_SLOT] });
+  const fieldPadLeft = swallow.interpolate({ inputRange: [0, 1], outputRange: [BASE_PAD_LEFT, BASE_PAD_LEFT + SWALLOW_DX] });
+  // Capsule fades out as it merges into the field; the icon stays fully opaque.
+  const capsuleOpacity = swallow.interpolate({ inputRange: [0, 0.6, 1], outputRange: [1, 0, 0] });
 
   // ── Native paste wrapper (expo-paste-input) — crash-safe lazy load ──────
   // The native view `ExpoPasteInput` only exists in builds that bundled the
@@ -125,14 +155,10 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
     const h = Math.round(e.nativeEvent.contentSize.height);
     if (h === lastHeightRef.current) return;
     lastHeightRef.current = h;
-    // Rubbery spring for the grow + swallow. easeInEaseOut on create/delete so
-    // the photo capsule fades (instead of popping) as it morphs into the field.
-    LayoutAnimation.configureNext({
-      duration: 320,
-      create: { type: LayoutAnimation.Types.easeInEaseOut, property: LayoutAnimation.Properties.opacity },
-      update: { type: LayoutAnimation.Types.spring, springDamping: 0.78 },
-      delete: { type: LayoutAnimation.Types.easeInEaseOut, property: LayoutAnimation.Properties.opacity },
-    });
+    // Smooth height growth — exactly like the AI/Music chat composers. The
+    // horizontal swallow is animated separately via the `swallow` value, so
+    // this only needs to ease the per-line height change.
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     // Hysteresis so the state can't flip-flop on the 1↔2 line boundary:
     // expand only once clearly on a 2nd line (>34), collapse only once clearly
     // back near a single line (<28). Single line ≈ 22px, two lines ≈ 42px.
@@ -189,54 +215,42 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
     </>
   );
 
-  // Field's left padding. Collapsed = base 14. EXPANDED: the field's left edge
-  // slides left by (PHOTO_SLOT + gap) to cover the photo button, so we add the
-  // SAME amount to paddingLeft. That keeps the text column at the exact same
-  // x-position and width → the text never re-wraps from the swallow, which is
-  // what previously caused the line-reflow jitter / "сходит с ума" feedback loop.
-  const wrapPadLeft = expanded ? 14 + PHOTO_SLOT + 8 : 14;
+  // Content of the field (TextInput + GIF) wrapped in an Animated.View whose
+  // paddingLeft animates in lock-step with the photo button's margin, so the
+  // text column never moves while the field swallows the button.
+  const fieldContent = (
+    <Animated.View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', paddingLeft: fieldPadLeft }}>
+      {inputInner}
+    </Animated.View>
+  );
 
   return (
     // alignItems:'flex-end' → the field + send pin to the bottom; the field
     // grows UPWARD on multiline.
     <Reanimated.View style={[styles.row, inputRowStyle]}>
-      {/* Photo/attach button. COLLAPSED: a separate capsule with a gap, just
-          like the send button. EXPANDED (multiline): goes borderless and slides
-          UNDER the field via a negative margin, so the growing field visually
-          swallows it while the icon stays put. `zIndex` keeps the icon painted
-          on top of the field background. It's a SIBLING of the field (not a
-          child), so the interactive-glass "transparent child" issue never
-          applies. */}
-      <Pressable
-        onPress={onPickImages}
-        onLongPress={onPasteImage}
-        delayLongPress={300}
-        style={[styles.photoBtn, { marginRight: expanded ? -PHOTO_SLOT : 8 }]}
-      >
-        {expanded ? (
-          // Embedded inside the grown field — just the icon, no capsule.
+      {/* Photo/attach button. Collapsed: a separate capsule with a gap (like
+          the send button). Expanded: the field slides over it (animated
+          negative margin) and the capsule fades out, leaving just the icon
+          sitting inside the grown field. zIndex keeps the icon above the field. */}
+      <Animated.View style={{ marginRight: photoMarginRight, alignSelf: 'flex-end', zIndex: 2 }}>
+        <Pressable onPress={onPickImages} onLongPress={onPasteImage} delayLongPress={300} style={styles.photoBtn}>
+          {glassActive ? (
+            <AnimatedGlass glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} pointerEvents="none" style={[styles.photoCapsule, { opacity: capsuleOpacity }]} />
+          ) : (
+            <Animated.View pointerEvents="none" style={[styles.photoCapsule, { opacity: capsuleOpacity, borderWidth: 1, backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]} />
+          )}
           <Feather name="image" size={20} color={theme.colors.accent.primary} />
-        ) : glassActive ? (
-          // Collapsed + glass: liquid-glass capsule (icon as child).
-          <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.photoFill}>
-            <Feather name="image" size={20} color={theme.colors.accent.primary} />
-          </NativeGlassView>
-        ) : (
-          // Collapsed, no glass: flat bordered capsule.
-          <View style={[styles.photoFill, { borderWidth: 1, backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
-            <Feather name="image" size={20} color={theme.colors.accent.primary} />
-          </View>
-        )}
-      </Pressable>
-      {/* Input container: TextInput + GIF. NON-interactive-editing-friendly
-          glass when enabled, flat capsule otherwise. */}
+        </Pressable>
+      </Animated.View>
+      {/* Input container: glass when enabled, flat capsule otherwise. paddingLeft
+          lives on the inner Animated.View (fieldContent), not here. */}
       {glassActive ? (
-        <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={[styles.inputWrapGlass, { paddingLeft: wrapPadLeft }]}>
-          {inputInner}
+        <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.inputWrapGlass}>
+          {fieldContent}
         </NativeGlassView>
       ) : (
-        <View style={[styles.inputWrap, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light, paddingLeft: wrapPadLeft }]}>
-          {inputInner}
+        <View style={[styles.inputWrap, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
+          {fieldContent}
         </View>
       )}
       {/* Send button → solid accent when it can send; interactive glass when
@@ -262,12 +276,12 @@ const styles = StyleSheet.create({
   // pinned to the bottom (which is the keyboard top), so visually the user
   // sees only the input bubble grow, not the buttons jump.
   row: { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 12, paddingTop: 8 },
-  // Photo/attach button. zIndex:2 so when the field slides under it (expanded)
-  // the icon stays painted on top of the field background. Sizing only — the
-  // capsule background lives on the inner fill so it can fade in/out cleanly.
-  photoBtn: { width: PHOTO_SLOT, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', alignSelf: 'flex-end', zIndex: 2 },
-  photoFill: { width: '100%', height: '100%', borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
-  inputWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 22, paddingLeft: 14, paddingRight: 14, paddingVertical: 10, minHeight: 44, borderWidth: 1, zIndex: 1 },
+  // Photo/attach button sizing. The capsule background is a separate absolute
+  // layer (photoCapsule) so it can fade out independently as the field swallows
+  // it; the icon is centered on top.
+  photoBtn: { width: PHOTO_SLOT, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
+  photoCapsule: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 22 },
+  inputWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 22, paddingRight: 14, paddingVertical: 10, minHeight: 44, borderWidth: 1, zIndex: 1 },
   sendBtn: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', marginLeft: 8 },
   // Interactive-glass shape variants — same geometry as the flat capsules but
   // NO border and NO overflow clipping, so the liquid glass can morph OUTWARD
@@ -276,5 +290,5 @@ const styles = StyleSheet.create({
   btnGlass: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
   // Input-wrap glass: same shape as `inputWrap` minus the border. NON-interactive
   // (the TextInput lives inside; interactive morph would fight text editing).
-  inputWrapGlass: { flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 22, paddingLeft: 14, paddingRight: 14, paddingVertical: 10, minHeight: 44, zIndex: 1 },
+  inputWrapGlass: { flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 22, paddingRight: 14, paddingVertical: 10, minHeight: 44, zIndex: 1 },
 });
