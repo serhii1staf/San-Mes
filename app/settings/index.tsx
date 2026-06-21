@@ -109,6 +109,8 @@ export default function SettingsScreen() {
   const setHaptic = useSettingsStore((s) => s.setHaptic);
   const setInAppBrowser = useSettingsStore((s) => s.setInAppBrowser);
   const setPerfMonitorEnabled = useSettingsStore((s) => s.setPerfMonitorEnabled);
+  const pushNotificationsEnabled = useSettingsStore((s) => s.pushNotificationsEnabled);
+  const setPushNotificationsEnabled = useSettingsStore((s) => s.setPushNotificationsEnabled);
   const liquidGlassEnabled = useSettingsStore((s) => s.liquidGlassEnabled);
   const setLiquidGlassEnabled = useSettingsStore((s) => s.setLiquidGlassEnabled);
   // The liquid-glass toggle is only meaningful on iOS 26+ devices where the
@@ -159,6 +161,17 @@ export default function SettingsScreen() {
       adminTapCount.current = 0;
       router.push('/settings/admin' as any);
     }
+  };
+
+  // Push master switch. Applies immediately: ON re-registers the Expo token
+  // (requests permission if needed), OFF drops the token server-side so the
+  // backend stops fanning pushes to this device. No-op on OTA builds that
+  // predate the native module (the service guards internally).
+  const handleTogglePush = (v: boolean) => {
+    setPushNotificationsEnabled(v);
+    import('../../src/services/pushNotifications')
+      .then((m) => { if (v) m.registerForPush(); else m.unregisterPush(); })
+      .catch(() => {});
   };
 
   const handleLogout = () => {
@@ -288,6 +301,20 @@ export default function SettingsScreen() {
             iconTint="red"
             label={t('settings.notifications')}
             onPress={() => router.push('/notifications')}
+          />
+          <SettingsRow
+            icon="send"
+            iconTint="pink"
+            label={t('settings.push_notifications', 'Push-уведомления')}
+            showChevron={false}
+            rightElement={
+              <Switch
+                value={pushNotificationsEnabled !== false}
+                onValueChange={handleTogglePush}
+                trackColor={{ true: '#4CD964', false: theme.colors.border.light }}
+                thumbColor="#FFFFFF"
+              />
+            }
           />
           <SettingsRow
             icon="hard-drive"

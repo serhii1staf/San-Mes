@@ -45,9 +45,15 @@ function stripCommentTokens(text: string): string {
   let s = text;
   if (s.startsWith(REPLY_TOKEN)) {
     const idx = s.indexOf('::', REPLY_TOKEN.length);
-    if (idx > 0) s = s.slice(idx + 2);
+    s = idx > 0 ? s.slice(idx + 2) : '';
+  } else if (s.startsWith('::re:')) {
+    // Legacy single-colon reply format: ::re:<b64>:<b64>[:<b64>]::<body>
+    const idx = s.indexOf('::', 5);
+    s = idx > 0 ? s.slice(idx + 2) : '';
   }
   if (s.startsWith(GIF_TOKEN)) return '';
+  // Safety net: never leak a residual leading marker into the preview.
+  if (s.trimStart().startsWith('::')) return '';
   return s.trim();
 }
 

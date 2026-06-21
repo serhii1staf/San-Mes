@@ -58,6 +58,12 @@ interface SettingsState {
   // devices get the look out of the box; flipping it OFF fully unmounts every
   // GlassView (no residual layer).
   liquidGlassEnabled: boolean;
+  // Push notifications master switch. Default ON (the app registers a token
+  // after login). Flipping it OFF unregisters the device token from the
+  // backend so the server stops fanning pushes to this device, and prevents
+  // re-registration on next launch until turned back on. Local in-app badges
+  // are unaffected — this only governs off-screen Expo/APNs/FCM pushes.
+  pushNotificationsEnabled: boolean;
   setHaptic: (enabled: boolean) => void;
   setInAppBrowser: (enabled: boolean) => void;
   setBrowserWidgetPosition: (position: 'top' | 'bottom') => void;
@@ -74,6 +80,7 @@ interface SettingsState {
   setProfileTabCustom: (key: string, value: { label?: string; emoji?: string }) => void;
   clearProfileTabCustom: (key: string) => void;
   setLiquidGlassEnabled: (enabled: boolean) => void;
+  setPushNotificationsEnabled: (enabled: boolean) => void;
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -116,6 +123,9 @@ export const useSettingsStore = create<SettingsState>()(
       // Liquid glass ON by default — only visible/active on iOS 26+ where the
       // effect is available; a no-op everywhere else.
       liquidGlassEnabled: true,
+      // Push notifications ON by default — matches the existing behaviour
+      // where the app registers a push token after login.
+      pushNotificationsEnabled: true,
       setHaptic: (hapticEnabled) => set({ hapticEnabled }),
       setInAppBrowser: (useInAppBrowser) => set({ useInAppBrowser }),
       setBrowserWidgetPosition: (browserWidgetPosition) => set({ browserWidgetPosition }),
@@ -162,6 +172,7 @@ export const useSettingsStore = create<SettingsState>()(
           return { profileTabsCustom: next };
         }),
       setLiquidGlassEnabled: (liquidGlassEnabled) => set({ liquidGlassEnabled }),
+      setPushNotificationsEnabled: (pushNotificationsEnabled) => set({ pushNotificationsEnabled }),
     }),
     {
       name: 'app-settings',

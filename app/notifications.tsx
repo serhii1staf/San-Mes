@@ -46,15 +46,38 @@ const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes — fast tab switches stay inst
 const GIF_TOKEN = '::gif::';
 const REPLY_TOKEN = '::re::';
 
+function b64decode(s: string): string {
+  try { return typeof global.atob === 'function' ? decodeURIComponent(escape(global.atob(s))) : ''; }
+  catch { return ''; }
+}
+
+// Pull the gif URL out of a reply marker's base64 metadata blob, if present.
+function replyGifUrl(text: string): string {
+  if (!text.startsWith(REPLY_TOKEN)) return '';
+  const idx = text.indexOf('::', REPLY_TOKEN.length);
+  if (idx <= 0) return '';
+  try { return (JSON.parse(b64decode(text.slice(REPLY_TOKEN.length, idx))) || {}).gif || ''; }
+  catch { return ''; }
+}
+
 function stripMediaTokens(text: string): string {
   if (!text) return '';
   let s = text;
   if (s.startsWith(REPLY_TOKEN)) {
-    // Skip past the base64 metadata block to the actual reply body.
+    // Skip past the base64 metadata block to the actual reply body. If the
+    // closing "::" terminator is missing (e.g. the stored content was
+    // truncated mid-blob), there is no readable body — return empty rather
+    // than leaking the raw "::re::eyJ1..." marker.
     const idx = s.indexOf('::', REPLY_TOKEN.length);
-    if (idx > 0) s = s.slice(idx + 2);
+    s = idx > 0 ? s.slice(idx + 2) : '';
+  } else if (s.startsWith('::re:')) {
+    // Legacy single-colon reply format: ::re:<b64>:<b64>[:<b64>]::<body>
+    const idx = s.indexOf('::', 5);
+    s = idx > 0 ? s.slice(idx + 2) : '';
   }
   if (s.startsWith(GIF_TOKEN)) return '';
+  // Safety net: any residual leading marker must never reach the UI.
+  if (s.trimStart().startsWith('::')) return '';
   return s.trim();
 }
 
@@ -64,8 +87,10 @@ function mediaTagsFor(text: string): MediaTag[] {
   if (!text) return [];
   const tags: MediaTag[] = [];
   // Reply context first — most informative tag for "X replied" notifications.
-  if (text.startsWith(REPLY_TOKEN)) tags.push({ icon: 'corner-up-left', labelKey: 'notifications.tag_reply' });
-  if (text.includes(GIF_TOKEN)) tags.push({ icon: 'image', labelKey: 'notifications.tag_gif' });
+  if (text.startsWith(REPLY_TOKEN) || text.startsWith('::re:')) tags.push({ icon: 'corner-up-left', labelKey: 'notifications.tag_reply' });
+  // GIF can be a standalone ::gif:: comment OR embedded inside a reply's
+  // quoted metadata — detect both so a reply-to-a-gif reads "Ответ · Гифка".
+  if (text.includes(GIF_TOKEN) || replyGifUrl(text)) tags.push({ icon: 'image', labelKey: 'notifications.tag_gif' });
   // After stripping the marker tokens, look for a bare URL in the residual
   // text — covers comments that pasted a YouTube/article link, an image
   // URL, or a sticker host.
@@ -74,7 +99,9 @@ function mediaTagsFor(text: string): MediaTag[] {
   if (urlMatch) {
     const url = urlMatch[0].toLowerCase();
     if (/\.(jpg|jpeg|png|webp|heic|heif)(\?|$)/i.test(url)) tags.push({ icon: 'camera', labelKey: 'notifications.tag_photo' });
-    else if (/\.gif(\?|$)/i.test(url) || url.includes('giphy.com') || url.includes('tenor.com')) tags.push({ icon: 'image', labelKey: 'notifications.tag_gif' });
+    else if (/\.gif(\?|$)/i.test(url) || url.includes('giphy.com') || url.includes('tenor.com')) {
+      if (!tags.some((tg) => tg.labelKey === 'notifications.tag_gif')) tags.push({ icon: 'image', labelKey: 'notifications.tag_gif' });
+    }
     else tags.push({ icon: 'link', labelKey: 'notifications.tag_link' });
   }
   return tags;
@@ -165,7 +192,11 @@ export default function NotificationsScreen() {
           actorVerified: !!p.is_verified,
           postId: r.post_id,
           postPreview: previewFor(r.post_id),
-          commentText: (r.content || '').slice(0, 120),
+          // Keep the FULL content here — stripMediaTokens must see the closing
+          // "::" terminator of a reply marker, which a premature slice would
+          // chop off (the cause of the raw "::re::eyJ1..." leak). The row
+          // strips + display-slices for rendering.
+          commentText: (r.content || ''),
         });
       }
       for (const r of data.follows || []) {
@@ -326,7 +357,7 @@ const NotificationRow = React.memo(function NotificationRow({ item, theme }: { i
           // human "🎁 Гифка" / "🔗 Ссылка" / "📷 Фото" hint instead of a
           // raw URL — matches what the user sees inside the comments thread.
           const ct = item.commentText || '';
-          const stripped = stripMediaTokens(ct);
+          const stripped = stripMediaTokens(ct).slice(0, 140);
           const tags = mediaTagsFor(ct);
           if (ct) {
             const showText = stripped.trim().length > 0 ? stripped : null;

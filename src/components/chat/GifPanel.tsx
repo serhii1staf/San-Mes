@@ -49,6 +49,21 @@ function GifPanelComponent({ height, onSelect, onLongPress, theme, bottomInset =
   const offsetRef = useRef(gifs.length);
   const reqIdRef = useRef(0);
 
+  // ── Decode gate ──────────────────────────────────────────────────────────
+  // The panel mounts the moment the user taps GIF, on the SAME JS pass that
+  // also kicks off the bar/panel rise animation. Decoding ~9 thumbnail
+  // bitmaps on that mount frame was the dominant cost behind the "провисание"
+  // (freeze-then-jerk) on weak Android when opening the panel with the
+  // keyboard down. We hold the cells as cheap placeholder Views until just
+  // after the rise settles, THEN swap in the real images — the grid layout is
+  // already on screen, so the thumbnails simply fade in a beat later instead
+  // of stalling the open. Tuned to ~1 frame past the 300 ms rise.
+  const [decodeReady, setDecodeReady] = useState(false);
+  useEffect(() => {
+    const id = setTimeout(() => setDecodeReady(true), 320);
+    return () => clearTimeout(id);
+  }, []);
+
   const load = useCallback(async (offset: number) => {
     const reqId = ++reqIdRef.current;
     if (offset === 0) {
@@ -99,17 +114,24 @@ function GifPanelComponent({ height, onSelect, onLongPress, theme, bottomInset =
             every frame (a 16-cell grid of animated GIFs was saturating the UI
             thread on weak devices). Motion is shown on long-press + in the
             sent message. `(item as any).stillUrl` falls back to previewUrl for
-            GIFs persisted in `recent_gif` before stillUrl existed. */}
-        <CachedImage
-          uri={(item as any).stillUrl || item.previewUrl}
-          style={{ width: '100%', height: '100%' }}
-          resizeMode="cover"
-          priority="low"
-          autoplay={false}
-        />
+            GIFs persisted in `recent_gif` before stillUrl existed.
+
+            Until `decodeReady` the cell stays a bare tinted View (the
+            `backgroundColor` on the Pressable already provides it) so the
+            open animation never competes with bitmap decode — see the decode
+            gate above. */}
+        {decodeReady ? (
+          <CachedImage
+            uri={(item as any).stillUrl || item.previewUrl}
+            style={{ width: '100%', height: '100%' }}
+            resizeMode="cover"
+            priority="low"
+            autoplay={false}
+          />
+        ) : null}
       </Pressable>
     ),
-    [onSelect, onLongPress, theme],
+    [onSelect, onLongPress, theme, decodeReady],
   );
 
   // Recently-used GIFs first, then trending (deduped by id).

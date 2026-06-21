@@ -575,6 +575,12 @@ export default function MessagesScreen() {
   }, [entityConversations, chatStoreConversations]);
 
   // Filtering: each chat belongs to exactly one bucket. The "apps" tab shows no chats.
+  // Recency comparator — newest activity first. `lastMessageAt` is an ISO
+  // string, so a lexicographic compare is also chronological. Chats with no
+  // timestamp sort last. This is what makes a chat rise to the top the moment
+  // a message is sent/received in it ("по активности").
+  const byRecency = (a: Conversation, b: Conversation) =>
+    (b.lastMessageAt || '').localeCompare(a.lastMessageAt || '');
   const filtered = useMemo(() => {
     if (activeTab === 'apps') return [];
     if (searchQuery) {
@@ -589,9 +595,9 @@ export default function MessagesScreen() {
           !deleted.includes(c.id) &&
           !blocked.includes(c.id) &&
           !blockedUserIds.includes(c.participantId),
-      );
+      ).sort(byRecency);
     }
-    if (activeTab === 'archive') return conversations.filter(c => archived.includes(c.id) && !deleted.includes(c.id) && !blocked.includes(c.id) && !blockedUserIds.includes(c.participantId));
+    if (activeTab === 'archive') return conversations.filter(c => archived.includes(c.id) && !deleted.includes(c.id) && !blocked.includes(c.id) && !blockedUserIds.includes(c.participantId)).sort(byRecency);
     if (activeTab === 'blocked') {
       // Chat-level blocked conversations come straight from
       // `chatSettingsStore.blocked` (existing behaviour).
@@ -630,7 +636,7 @@ export default function MessagesScreen() {
     }
     if (activeTab === 'deleted') return conversations.filter(c => deleted.includes(c.id));
     // 'chats' — exclude archived, blocked (chat or user), deleted.
-    return conversations.filter(c => !archived.includes(c.id) && !blocked.includes(c.id) && !deleted.includes(c.id) && !blockedUserIds.includes(c.participantId));
+    return conversations.filter(c => !archived.includes(c.id) && !blocked.includes(c.id) && !deleted.includes(c.id) && !blockedUserIds.includes(c.participantId)).sort(byRecency);
   }, [conversations, activeTab, searchQuery, archived, blocked, deleted, blockedUserIds, t]);
 
   const containerStyle: ViewStyle = {

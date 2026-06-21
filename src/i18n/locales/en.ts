@@ -664,6 +664,7 @@ const en: Record<string, string> = {
   'settings.perf_monitor': 'Performance monitor',
   'settings.profile': 'Profile',
   'settings.notifications': 'Notifications',
+  'settings.push_notifications': 'Push notifications',
   'settings.data_storage': 'Data & Storage',
   'settings.app_icon': 'App icon',
   'settings.widget': 'Widget',

@@ -2,6 +2,7 @@ import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 import { apiPost } from './apiClient';
 import { kvGetStringRawSync, kvSetStringRaw } from './kvStore';
+import { useSettingsStore } from '../store/settingsStore';
 
 // ── Push notifications (Expo Push) ──────────────────────────────────────────
 //
@@ -66,6 +67,12 @@ function resolveProjectId(): string | undefined {
  * denied.
  */
 export async function registerForPush(): Promise<void> {
+  // Respect the user's master switch — when push is turned off in Settings we
+  // must neither request permission nor register a token. Defensive try/catch
+  // so a store-read failure never blocks the (already best-effort) flow.
+  try {
+    if (useSettingsStore.getState().pushNotificationsEnabled === false) return;
+  } catch {}
   const mods = getModules();
   if (!mods) return;
   const { Notifications, Device } = mods;

@@ -676,6 +676,7 @@ const ru: Record<string, string> = {
   'settings.perf_monitor': 'Монитор производительности',
   'settings.profile': 'Профиль',
   'settings.notifications': 'Уведомления',
+  'settings.push_notifications': 'Push-уведомления',
   'settings.data_storage': 'Данные и память',
   'settings.app_icon': 'Иконка приложения',
   'settings.widget': 'Виджет',
