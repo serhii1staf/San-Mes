@@ -42,12 +42,21 @@ interface Category {
 // Order matters: first match wins. "Прочее" is the catch-all and lives last.
 const CATEGORY_DEFS: Category[] = [
   { id: 'feed',          label: 'storage.cat.feed',          color: '#F4B547', emoji: '📰', match: (k) => /feed_posts|@san:feed|posts_cache|user_posts/.test(k) },
-  { id: 'chats',         label: 'storage.cat.chats',         color: '#4C8DF6', emoji: '💬', match: (k) => /chat|message|conversation|chat_settings/.test(k) },
+  { id: 'chats',         label: 'storage.cat.chats',         color: '#4C8DF6', emoji: '💬', match: (k) => /chat|message|conversation/.test(k) },
   { id: 'music',         label: 'storage.cat.music',         color: '#E5535B', emoji: '🎵', match: (k) => /music_search|music_chat_history|music_/.test(k) },
   { id: 'profiles',      label: 'storage.cat.profiles',      color: '#9B6DDF', emoji: '👤', match: (k) => /profile|user_/.test(k) },
   { id: 'notifications', label: 'storage.cat.notifications', color: '#F08A3E', emoji: '🔔', match: (k) => /notifications|notif/.test(k) },
   { id: 'misc',          label: 'storage.cat.misc',          color: '#7A8190', emoji: '✨', match: () => true },
 ];
+
+// ─── PROTECTED keys — NEVER cleared ─────────────────────────────────────────
+// These hold the user's identity / session and core preferences. They must be
+// excluded from every category (including the "misc" catch-all) so clearing the
+// cache can never log the user out or reset their account/settings. This was
+// the cause of the "clearing cache logged me out" bug: the auth JWT lives in
+// MMKV under `@san:auth_token`, which the catch-all happily swept up.
+const PROTECTED_KEY = (rawKey: string): boolean =>
+  /auth[_-]?token|auth-state|saved-accounts|app-settings|\bi18n\b|chat_settings|@san:auth/i.test(rawKey);
 
 // The Images/Media category is NOT backed by MMKV keys — it's the expo-image
 // on-disk cache, measured asynchronously. Defined separately so it never
@@ -65,6 +74,8 @@ interface CategoryUsage {
 function bucketEntries(entries: Array<{ key: string; bytes: number }>): CategoryUsage[] {
   const out: CategoryUsage[] = CATEGORY_DEFS.map((def) => ({ def, bytes: 0, keys: [] }));
   for (const { key, bytes } of entries) {
+    // Identity / session / settings keys are never bucketed → never deletable.
+    if (PROTECTED_KEY(key)) continue;
     for (let i = 0; i < CATEGORY_DEFS.length; i++) {
       if (CATEGORY_DEFS[i].match(key)) {
         out[i].bytes += bytes;
@@ -188,7 +199,11 @@ export default function StorageScreen() {
   const [imageBytes, setImageBytes] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [isClearing, setIsClearing] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set([...CATEGORY_DEFS.map((c) => c.id), IMAGES_CATEGORY_ID]));
+  // Default selection: ONLY the on-disk image/media cache (the category that
+  // actually grows large). The data caches (chats, feed, profiles, misc) start
+  // UNSELECTED so a careless "Clear" frees disk space without wiping the user's
+  // cached chats/comments. They can still be opted into explicitly.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set([IMAGES_CATEGORY_ID]));
 
   // Gather a few raw image URLs the app is likely to have cached, so the
   // image-cache measurement can dynamically discover expo-image's on-disk

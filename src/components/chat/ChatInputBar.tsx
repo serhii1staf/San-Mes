@@ -206,9 +206,9 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
       onChangeText={setText}
       placeholder={t('chat.input_placeholder')}
       placeholderTextColor={theme.colors.text.tertiary}
-      style={{ flex: 1, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular, maxHeight: 100, paddingTop: 0, paddingBottom: 0, minHeight: 22, lineHeight: 20, alignSelf: 'stretch' }}
+      style={{ flex: 1, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular, maxHeight: 100, paddingTop: 0, paddingBottom: 0, minHeight: 22, lineHeight: 20, alignSelf: 'center' }}
       multiline
-      textAlignVertical="top"
+      textAlignVertical="center"
       autoCorrect={false}
       autoComplete="off"
       spellCheck={false}
@@ -237,11 +237,11 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
         // A panel is open → this slot returns the user to the keyboard. Fixed
         // height matches the GIF state so swapping GIF↔keyboard never resizes
         // the field (no "text shifts up" jump).
-        <Pressable onPress={onToggleEmoji} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 4, height: 24, paddingHorizontal: 7, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.accent.primary + '18' }}>
+        <Pressable onPress={onToggleEmoji} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, height: 24, paddingHorizontal: 7, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.accent.primary + '18' }}>
           <AnimatedKeyboardIcon size={18} color={theme.colors.accent.primary} />
         </Pressable>
       ) : (
-        <Pressable onPress={onOpenGif} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, marginBottom: 4, height: 24, paddingHorizontal: 7, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.accent.primary + '18' }}>
+        <Pressable onPress={onOpenGif} hitSlop={8} style={{ alignSelf: 'flex-end', marginLeft: 6, height: 24, paddingHorizontal: 7, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.accent.primary + '18' }}>
           <AnimatedGifIcon color={theme.colors.accent.primary} fontSize={11} />
         </Pressable>
       )}
