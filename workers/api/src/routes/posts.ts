@@ -26,6 +26,7 @@ import { batch, normalizeProfile, query, queryOne } from '../db';
 import { parseUuid } from '../util';
 import { asStr, readJson } from '../validate';
 import { channels, publishEvent } from '../realtime';
+import { sendPushToUser } from '../push';
 
 interface PostRow {
   id: string;
@@ -471,6 +472,14 @@ register('POST', '/v1/posts/:id/comments', async (req, env, ctx, params, authedU
       { post_id: postId, comment_id: id, by: authedUserId, ts: now },
       ctx,
     );
+    // Real push to the post author's device(s).
+    const commenterName = row.profile_display_name || row.profile_username || 'Someone';
+    const preview = content.slice(0, 140);
+    sendPushToUser(env, ctx, postOwner.author_id, {
+      title: commenterName,
+      body: `commented: ${preview}`,
+      data: { type: 'comment', post_id: postId, comment_id: id, by: authedUserId },
+    });
   }
   return ok(req, shaped);
 });

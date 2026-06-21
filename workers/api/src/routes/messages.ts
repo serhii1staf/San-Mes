@@ -18,6 +18,7 @@ import { batch, exec, query, queryOne } from '../db';
 import { parseUuid } from '../util';
 import { asStr, readJson } from '../validate';
 import { channels, publishEvent } from '../realtime';
+import { sendPushToUser } from '../push';
 
 // ── POST /v1/conversations ────────────────────────────────────────────
 //
@@ -153,6 +154,12 @@ register('POST', '/v1/conversations/:id/messages', async (req, env, ctx, params,
       },
       ctx,
     );
+    // Off-screen / backgrounded recipients get a real push too.
+    sendPushToUser(env, ctx, row.user_id, {
+      title: sender?.display_name || sender?.username || 'New message',
+      body: preview,
+      data: { type: 'message', conversation_id: conversationId, sender_id: authedUserId },
+    });
   }
 
   return ok(req, {

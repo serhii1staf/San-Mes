@@ -43,6 +43,7 @@ import './routes/messages';
 import './routes/miniApps';
 import './routes/notifications';
 import './routes/admin';
+import './routes/push';
 
 // ─── Worker fetch handler ──────────────────────────────────────────────────
 

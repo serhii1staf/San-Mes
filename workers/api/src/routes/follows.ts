@@ -13,6 +13,7 @@ import { register } from '../router';
 import { exec, queryOne } from '../db';
 import { parseUuid } from '../util';
 import { channels, publishEvent } from '../realtime';
+import { sendPushToUser } from '../push';
 
 // ── PUT /v1/profiles/:id/follow ───────────────────────────────────────
 register('PUT', '/v1/profiles/:id/follow', async (req, env, ctx, params, authedUserId) => {
@@ -57,6 +58,18 @@ register('PUT', '/v1/profiles/:id/follow', async (req, env, ctx, params, authedU
     followPayload,
     ctx,
   );
+  // Push the new follower to the followed user's device(s).
+  const follower = await queryOne<{ username: string; display_name: string }>(
+    env,
+    `SELECT username, display_name FROM profiles WHERE id = ?`,
+    [authedUserId],
+  );
+  const followerName = follower?.display_name || follower?.username || 'Someone';
+  sendPushToUser(env, ctx, followingId, {
+    title: followerName,
+    body: 'started following you',
+    data: { type: 'follow', follower_id: authedUserId },
+  });
   return ok(req, { following: true });
 });
 

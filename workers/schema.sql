@@ -156,3 +156,17 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 CREATE INDEX IF NOT EXISTS idx_messages_conv_created ON messages(conversation_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_messages_sender       ON messages(sender_id);
+
+
+-- push_tokens ──────────────────────────────────────────────────────────────
+-- Expo push tokens, one row per device token. `token` is the PK so a device
+-- that switches accounts simply rebinds to a new user_id (ON CONFLICT upsert
+-- in routes/push.ts). Used by push.ts to fan out new-message / comment /
+-- follow notifications via the Expo Push Service.
+CREATE TABLE IF NOT EXISTS push_tokens (
+  token       TEXT PRIMARY KEY,
+  user_id     TEXT NOT NULL,
+  platform    TEXT,
+  created_at  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_push_tokens_user ON push_tokens(user_id);
