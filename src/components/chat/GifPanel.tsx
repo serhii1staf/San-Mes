@@ -1,5 +1,5 @@
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Pressable, FlatList, ActivityIndicator, Text as RNText, StyleSheet, Dimensions } from 'react-native';
+import { View, Pressable, FlatList, ActivityIndicator, Text as RNText, StyleSheet, Dimensions, InteractionManager } from 'react-native';
 import { useLiquidGlassActive, GlassBg } from '../ui/LiquidGlass';
 import { CachedImage } from '../ui/CachedImage';
 import { getTrendingGifs, getCachedTrending, setCachedTrending, GiphyItem } from '../../services/giphy';
@@ -51,17 +51,21 @@ function GifPanelComponent({ height, onSelect, onLongPress, theme, bottomInset =
 
   // ── Decode gate ──────────────────────────────────────────────────────────
   // The panel mounts the moment the user taps GIF, on the SAME JS pass that
-  // also kicks off the bar/panel rise animation. Decoding ~9 thumbnail
-  // bitmaps on that mount frame was the dominant cost behind the "провисание"
-  // (freeze-then-jerk) on weak Android when opening the panel with the
-  // keyboard down. We hold the cells as cheap placeholder Views until just
-  // after the rise settles, THEN swap in the real images — the grid layout is
-  // already on screen, so the thumbnails simply fade in a beat later instead
-  // of stalling the open. Tuned to ~1 frame past the 300 ms rise.
+  // also kicks off the bar/panel rise animation. Decoding ~9 thumbnail bitmaps
+  // on that synchronous mount frame was the dominant cost behind the
+  // "провисание" (freeze-then-jerk) on weak Android. We keep the cells as cheap
+  // placeholder Views ONLY for the mount commit, then flip the images in one
+  // tick later — off the heavy mount frame, but effectively immediate to the
+  // eye (no perceptible blank). Earlier this was a fixed 320 ms timeout, which
+  // made the thumbnails visibly pop in late; runAfterInteractions + a single
+  // RAF protects the same hot frame without the noticeable delay.
   const [decodeReady, setDecodeReady] = useState(false);
   useEffect(() => {
-    const id = setTimeout(() => setDecodeReady(true), 320);
-    return () => clearTimeout(id);
+    let raf = 0;
+    const handle = InteractionManager.runAfterInteractions(() => {
+      raf = requestAnimationFrame(() => setDecodeReady(true));
+    });
+    return () => { handle.cancel(); if (raf) cancelAnimationFrame(raf); };
   }, []);
 
   const load = useCallback(async (offset: number) => {
