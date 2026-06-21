@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
-import { View, Pressable, ViewStyle, Alert, ScrollView, Animated, Easing } from 'react-native';
+import { View, Pressable, ViewStyle, Alert, ScrollView, Animated, Easing, InteractionManager } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -253,7 +253,14 @@ export default function StorageScreen() {
     }
   }, [gatherImageCandidates]);
 
-  useEffect(() => { refresh(); }, [refresh]);
+  // Defer the full storage scan (kvAllEntries walks every cache entry — a
+  // 500 ms+ synchronous-heavy pass on a large cache) past the navigation
+  // transition so the screen slides in instantly with its loading state, then
+  // computes the breakdown off the open frame instead of freezing it.
+  useEffect(() => {
+    const handle = InteractionManager.runAfterInteractions(() => { refresh(); });
+    return () => handle.cancel();
+  }, [refresh]);
 
   const kvBuckets = useMemo(() => bucketEntries(entries), [entries]);
   // Append the Images/Media bucket only when a real measurement exists, so an

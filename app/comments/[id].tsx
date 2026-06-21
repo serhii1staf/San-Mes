@@ -18,6 +18,7 @@ import { LinkPreview } from '../../src/components/ui/LinkPreview';
 import { extractFirstUrl } from '../../src/services/linkPreview';
 import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
 import { CachedImage } from '../../src/components/ui/CachedImage';
+import { useStaggeredReveal } from '../../src/hooks/useStaggeredReveal';
 import { CommentContextMenu, CommentAction } from '../../src/components/ui/CommentContextMenu';
 import { SlideUpSheet } from '../../src/components/ui/SlideUpSheet';
 import { MediaPanel } from '../../src/components/chat/MediaPanel';
@@ -172,6 +173,14 @@ const CommentRow = React.memo(function CommentRow({ item, onLongPress, onReply, 
   // user can also unblock from the messages-tab Blocked section.
   const authorId: string | undefined = item.profiles?.id || item.author_id;
   const isAuthorBlocked = useIsBlocked(authorId);
+  // Parsed body + GIF detection are computed BEFORE the early return so the
+  // staggered-reveal hook below is always called (rules of hooks). Cheap.
+  const parsed = parseReply(item.content || '');
+  const gif = parseGif(parsed.body);
+  // Frame-paced reveal so multiple GIF comments don't all decode on the same
+  // frame (the fps drop the perf monitor flagged on comment threads). Same
+  // shared one-per-frame queue the chat bubbles use.
+  const gifReveal = useStaggeredReveal(!!gif);
   if (isAuthorBlocked && authorId) {
     return (
       <BlockedContentPlaceholder
@@ -182,8 +191,6 @@ const CommentRow = React.memo(function CommentRow({ item, onLongPress, onReply, 
     );
   }
 
-  const parsed = parseReply(item.content || '');
-  const gif = parseGif(parsed.body);
   const link = !gif ? extractFirstUrl(parsed.body) : null;
 
   const formatTime = (dateStr: string) => {
@@ -229,7 +236,11 @@ const CommentRow = React.memo(function CommentRow({ item, onLongPress, onReply, 
         {gif ? null : <FormattedText style={{ marginTop: 3, fontSize: 14 }}>{parsed.body}</FormattedText>}
         {gif ? (
           <Pressable onPress={() => onImagePress(gif)} onLongPress={() => onLongPress(item)} delayLongPress={300} style={{ marginTop: 6 }}>
-            <CachedImage uri={gif} style={{ width: 160, height: 160, borderRadius: 14, backgroundColor: theme.colors.background.secondary }} resizeMode="cover" />
+            {gifReveal ? (
+              <CachedImage uri={gif} style={{ width: 160, height: 160, borderRadius: 14, backgroundColor: theme.colors.background.secondary }} resizeMode="cover" />
+            ) : (
+              <View style={{ width: 160, height: 160, borderRadius: 14, backgroundColor: theme.colors.background.secondary }} />
+            )}
           </Pressable>
         ) : link ? (
           <Pressable onLongPress={() => onLongPress(item)} delayLongPress={300} style={{ marginTop: 6 }}>
