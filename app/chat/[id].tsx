@@ -30,6 +30,7 @@ import { useChatStore, useEntityStore, useConnectivityStore, useAuthStore } from
 import { useChatSettingsStore, GLOBAL_CHAT_SETTINGS_KEY, DEFAULT_CHAT_SETTINGS } from '../../src/store/chatSettingsStore';
 import { readableTextOn, withOpacity } from '../../src/constants/bubbleColors';
 import { useMessageGestures } from '../../src/hooks/useMessageGestures';
+import { useStaggeredReveal } from '../../src/hooks/useStaggeredReveal';
 import { useBrowserStore } from '../../src/store/browserStore';
 import { ChatBackgroundLayer } from '../../src/components/ui/ChatBackgroundLayer';
 import { PixelIcon } from '../../src/components/pixel-icons/PixelIcon';
@@ -261,6 +262,13 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
     actionZones,
   });
 
+  // Frame-paced reveal of this bubble's image(s): once the screen flips
+  // `imagesReady`, image bubbles no longer all decode on the SAME frame —
+  // each waits its turn in a shared one-per-frame queue, so a GIF-heavy chat
+  // opening no longer lands ~10 simultaneous decodes as one long task.
+  const hasImages = !!(message.imageUrls && message.imageUrls.length > 0);
+  const imgReveal = useStaggeredReveal(!!imagesReady && hasImages);
+
   return (
     <View style={bubbleStyles.row}>
       <Reanimated.View style={[bubbleStyles.swipeIcon, replyIconAnimStyle]}>
@@ -359,8 +367,9 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
                   // navigation frame mounts only text/layout — never a burst of
                   // synchronous image decodes. The placeholder matches
                   // `SingleChatImage`'s initial square so the list doesn't jump
-                  // when the real image swaps in.
-                  imagesReady ? (
+                  // when the real image swaps in. `imgReveal` adds a frame-paced
+                  // stagger so multiple image bubbles don't all decode at once.
+                  imgReveal ? (
                     <SingleChatImage
                       uri={message.imageUrls[0]}
                       isVisible={isVisible}
@@ -374,7 +383,7 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
                 ) : (
                   message.imageUrls.map((uri, idx) => (
                     <Pressable key={idx} onPress={() => onImagePress(message.imageUrls!, idx)}>
-                      {imagesReady ? (
+                      {imgReveal ? (
                         <CachedImage
                           uri={uri}
                           style={bubbleStyles.imageMulti}
