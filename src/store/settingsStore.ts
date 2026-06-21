@@ -68,6 +68,9 @@ interface SettingsState {
   // opacity } OR null to follow the theme accent (default). App-wide. The chat
   // screen picks a contrast-aware text color so any style stays readable.
   chatBubble: import('../constants/bubbleColors').BubbleStyle | null;
+  // Same, but for INCOMING (received) messages. null = the default neutral
+  // surface (theme tertiary). Lets users recolor the other person's bubbles too.
+  chatBubbleIn: import('../constants/bubbleColors').BubbleStyle | null;
   setHaptic: (enabled: boolean) => void;
   setInAppBrowser: (enabled: boolean) => void;
   setBrowserWidgetPosition: (position: 'top' | 'bottom') => void;
@@ -86,6 +89,7 @@ interface SettingsState {
   setLiquidGlassEnabled: (enabled: boolean) => void;
   setPushNotificationsEnabled: (enabled: boolean) => void;
   setChatBubble: (style: import('../constants/bubbleColors').BubbleStyle | null) => void;
+  setChatBubbleIn: (style: import('../constants/bubbleColors').BubbleStyle | null) => void;
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -133,6 +137,7 @@ export const useSettingsStore = create<SettingsState>()(
       pushNotificationsEnabled: true,
       // Null = follow the theme accent (current behaviour).
       chatBubble: null,
+      chatBubbleIn: null,
       setHaptic: (hapticEnabled) => set({ hapticEnabled }),
       setInAppBrowser: (useInAppBrowser) => set({ useInAppBrowser }),
       setBrowserWidgetPosition: (browserWidgetPosition) => set({ browserWidgetPosition }),
@@ -181,6 +186,7 @@ export const useSettingsStore = create<SettingsState>()(
       setLiquidGlassEnabled: (liquidGlassEnabled) => set({ liquidGlassEnabled }),
       setPushNotificationsEnabled: (pushNotificationsEnabled) => set({ pushNotificationsEnabled }),
       setChatBubble: (chatBubble) => set({ chatBubble }),
+      setChatBubbleIn: (chatBubbleIn) => set({ chatBubbleIn }),
     }),
     {
       name: 'app-settings',

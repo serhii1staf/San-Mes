@@ -43,6 +43,12 @@ export interface ChatPreviewBubblesProps {
   bubbleOpacity?: number;
   /** Outgoing-bubble text color. Defaults to white. */
   bubbleTextColor?: string;
+  /** Incoming-bubble colors: 1 = solid, 2+ = gradient. Defaults to neutral surface. */
+  inColors?: string[];
+  /** Incoming-bubble opacity 0–1. Default 1. */
+  inOpacity?: number;
+  /** Incoming-bubble text color. Defaults to theme text. */
+  inTextColor?: string;
 }
 
 // 4 px on the inside corner that points to the avatar — matches MessageBubble
@@ -60,6 +66,9 @@ export function ChatPreviewBubbles({
   bubbleColors,
   bubbleOpacity = 1,
   bubbleTextColor,
+  inColors,
+  inOpacity = 1,
+  inTextColor,
 }: ChatPreviewBubblesProps) {
   const theme = useTheme();
   const t = useT();
@@ -72,6 +81,12 @@ export function ChatPreviewBubbles({
   const isGradient = fillColors.length > 1;
   const outText = bubbleTextColor || '#FFFFFF';
   const outTextFaint = outText === '#FFFFFF' ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.55)';
+  // Incoming bubble: custom color/gradient, or the neutral tertiary surface.
+  const inCustom = !!inColors && inColors.length > 0;
+  const inFill = inCustom ? inColors!.map((c) => withOpacity(c, inOpacity)) : [theme.colors.background.tertiary];
+  const inIsGradient = inFill.length > 1;
+  const inBodyColor = inCustom ? (inTextColor || '#FFFFFF') : theme.colors.text.primary;
+  const inReplyAccent = inCustom ? (inTextColor === '#1A1A1A' ? 'rgba(0,0,0,0.6)' : 'rgba(255,255,255,0.8)') : accent;
   const textPrimary = theme.colors.text.primary;
   const textSecondary = theme.colors.text.secondary;
   const textTertiary = theme.colors.text.tertiary;
@@ -109,23 +124,27 @@ export function ChatPreviewBubbles({
             style={[
               styles.bubble,
               {
-                backgroundColor: theme.colors.background.tertiary,
+                backgroundColor: inIsGradient ? 'transparent' : inFill[0],
                 borderRadius: bubbleRadius,
                 borderBottomLeftRadius: TAIL_CORNER,
+                overflow: inIsGradient ? 'hidden' : undefined,
               },
             ]}
           >
+            {inIsGradient ? (
+              <LinearGradient colors={inFill as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} pointerEvents="none" />
+            ) : null}
             <View
               style={[
                 styles.replyBlock,
-                { borderLeftColor: accent, backgroundColor: accent + '15' },
+                { borderLeftColor: inReplyAccent, backgroundColor: inCustom ? 'rgba(255,255,255,0.12)' : accent + '15' },
               ]}
             >
               <RNText
                 allowFontScaling={allowFontScaling}
                 style={[
                   styles.replyName,
-                  { color: accent, fontSize: replyFontSize, fontFamily },
+                  { color: inReplyAccent, fontSize: replyFontSize, fontFamily },
                 ]}
                 numberOfLines={1}
               >
@@ -135,7 +154,7 @@ export function ChatPreviewBubbles({
                 allowFontScaling={allowFontScaling}
                 style={[
                   styles.replyText,
-                  { color: textSecondary, fontSize: replyFontSize, fontFamily },
+                  { color: inCustom ? inBodyColor : textSecondary, fontSize: replyFontSize, fontFamily },
                 ]}
                 numberOfLines={1}
               >
@@ -146,14 +165,14 @@ export function ChatPreviewBubbles({
               allowFontScaling={allowFontScaling}
               style={[
                 styles.bubbleText,
-                { color: textPrimary, fontSize, fontFamily },
+                { color: inBodyColor, fontSize, fontFamily },
               ]}
             >
               {t('chat_settings.preview.msg2', 'Всё отлично, спасибо!')}
             </RNText>
             <RNText
               allowFontScaling={allowFontScaling}
-              style={[styles.bubbleTime, { color: textTertiary, fontSize: timeFontSize }]}
+              style={[styles.bubbleTime, { color: inCustom ? inBodyColor : textTertiary, fontSize: timeFontSize }]}
             >
               12:31
             </RNText>
