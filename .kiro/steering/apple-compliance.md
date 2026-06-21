@@ -54,10 +54,15 @@ ATS is left at its iOS default (HTTPS-only). Do not introduce `NSAllowsArbitrary
 
 ### Push notifications (§3.3.3 + APN definitions)
 
-We currently use only **local notifications** (in-app `notifications.tsx` reading from Supabase). If we add APN push:
-- Request authorization with `Notifications.requestPermissionsAsync()`.
-- Push payloads must be relevant to the user — no marketing/spam without opt-in.
-- Cannot use push for tracking or for sending data to/from device for ad purposes.
+We currently use local notifications (in-app `notifications.tsx`) PLUS Expo push
+notifications (`expo-notifications`, registered in `src/services/pushNotifications.ts`,
+fanned out by the Worker via the Expo Push Service for new DMs, comment replies,
+and new follows). Compliance notes for the push path:
+- Authorization is requested at runtime via `requestPermissionsAsync()`; denial is respected (no token sent).
+- Payloads are strictly relevant (message/comment/follow from real user activity) — NO marketing/spam.
+- Push is NOT used for tracking or ad data. No IDFA involvement.
+- The token registry (`push_tokens`) stores only an opaque Expo push token + the account id — no device fingerprinting.
+- iOS `aps-environment` entitlement is provisioned by EAS credentials (APNs key). Activates only after the next native build.
 
 ## Content & IP rules (§3.3.4)
 
