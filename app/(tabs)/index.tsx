@@ -11,7 +11,7 @@ import { PostCard } from '../../src/components/feed/PostCard';
 import { HERO_IMG_WIDTH } from '../../src/components/feed/PostCard';
 import { prefetchImages } from '../../src/components/ui/CachedImage';
 import { PostMenuModal } from '../../src/components/feed/PostMenuModal';
-import { useFeedStore, useAuthStore } from '../../src/store';
+import { useFeedStore, useAuthStore, useEntityStore } from '../../src/store';
 import { useNotificationsBadge } from '../../src/store/notificationsBadgeStore';
 import { Post } from '../../src/types';
 import { getPosts, isRepost, parseImageUrls, isImageSpoiler, toggleLike as apiToggleLike } from '../../src/lib/supabase';
@@ -634,7 +634,11 @@ export default function FeedScreen() {
 
   const handleFollow = useCallback((targetUserId: string) => {
     triggerHaptic('medium');
-    queueMutation('follow', { followerId: userId, followingId: targetUserId });
+    // Toggle: if already following, unfollow; otherwise follow. Both paths
+    // update the entity store optimistically inside queueMutation, so the
+    // PostCard's follow icon flips immediately.
+    const already = useEntityStore.getState().isFollowing(userId, targetUserId);
+    queueMutation(already ? 'unfollow' : 'follow', { followerId: userId, followingId: targetUserId });
   }, [userId]);
 
   const handleShare = useCallback((postId: string) => {

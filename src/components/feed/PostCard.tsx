@@ -18,6 +18,7 @@ import { formatTimeAgo } from '../../utils/mockData';
 import { triggerHaptic } from '../../utils/haptics';
 import { useT } from '../../i18n/store';
 import { useIsBlocked } from '../../store/blockedUsersStore';
+import { useEntityStore } from '../../store';
 import { BlockedContentPlaceholder } from './BlockedContentPlaceholder';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -96,6 +97,12 @@ export const PostCard = memo(function PostCard({ post, currentUserId, onLike, on
   const theme = useTheme();
   const t = useT();
   const lastTap = useRef<number>(0);
+  // Follow state for the author, read from the entity store so the button
+  // flips the moment the viewer (un)follows — here or anywhere else (profile,
+  // follows list). Cheap boolean selector; re-renders only on an actual flip.
+  const isFollowingAuthor = useEntityStore((s) =>
+    currentUserId && currentUserId !== post.authorId ? s.isFollowing(currentUserId, post.authorId) : false,
+  );
 
   // Block-awareness — read viewer's block list. We compute the effective
   // author up-front so the `useIsBlocked` hook calls always run in a fixed
@@ -251,7 +258,11 @@ export const PostCard = memo(function PostCard({ post, currentUserId, onLike, on
         {/* Right icons */}
         {currentUserId !== post.authorId && (
           <Pressable onPress={() => { triggerHaptic('light'); onFollow?.(post.authorId); }} hitSlop={8} style={{ padding: 4 }}>
-            <Feather name="user-plus" size={16} color={theme.colors.text.tertiary} />
+            <Feather
+              name={isFollowingAuthor ? 'user-check' : 'user-plus'}
+              size={16}
+              color={isFollowingAuthor ? theme.colors.accent.primary : theme.colors.text.tertiary}
+            />
           </Pressable>
         )}
         <Pressable onPress={() => { triggerHaptic('light'); onMenu?.(post); }} hitSlop={8} style={{ padding: 4, marginLeft: 6 }}>
