@@ -76,6 +76,16 @@ export function MusicBottomIndicator() {
   // Horizontal swipe-to-dismiss offset.
   const dragX = useRef(new Animated.Value(0)).current;
   const dismissing = useRef(false);
+  // Stable opacity node for the swipe fade. Created ONCE — recreating the
+  // interpolation on every parent re-render could momentarily reset the
+  // mapping mid-gesture and flash the card.
+  const dismissOpacity = useRef(
+    dragX.interpolate({
+      inputRange: [-SCREEN_WIDTH * 1.25, -DISMISS_DX, 0, DISMISS_DX, SCREEN_WIDTH * 1.25],
+      outputRange: [0, 0.55, 1, 0.55, 0],
+      extrapolate: 'clamp',
+    }),
+  ).current;
 
   // Tracks the previous render's currentId so we can detect a transition
   // from "no track" → "new track" — the case where slideY may have been
@@ -135,11 +145,11 @@ export function MusicBottomIndicator() {
           Animated.timing(dragX, { toValue: target, duration: 200, useNativeDriver: true }).start(() => {
             triggerHaptic('light');
             stop();
-            // After stop() the component returns null on the next render
-            // (current === null), unmounting the entire tree. Reset dragX
-            // to 0 so the NEXT mount (when a new track plays) starts clean
-            // and doesn't render off-screen for a frame.
-            dragX.setValue(0);
+            // DON'T reset dragX here: setting it back to 0 while the component
+            // is still mounted for one more frame flashed the card back to the
+            // center before unmount (the "исчезает→появляется→исчезает"
+            // artefact). The reset happens cleanly on the NEXT appearance via
+            // the `wasNull && currentId` effect above.
             dismissing.current = false;
           });
         } else {
@@ -161,11 +171,10 @@ export function MusicBottomIndicator() {
         styles.wrap,
         {
           // Tab bar geometry: marginBottom 24 + container height ~62
-          // ≈ 86 px from the screen bottom. The indicator sits 16 px above
-          // its top edge so the two read as a stacked pair with breathing
-          // room — earlier 8 px wasn't enough on devices where the tab
-          // bar's drop-shadow extended into the indicator's footprint.
-          bottom: 24 + 62 + 16,
+          // ≈ 86 px from the screen bottom. The indicator sits just 6 px
+          // above its top edge so the two read as a tight stacked pair
+          // (was 16 — that left too big a gap above the tab bar).
+          bottom: 24 + 62 + 6,
           transform: [{ translateY: slideY }],
         },
       ]}
@@ -183,11 +192,7 @@ export function MusicBottomIndicator() {
           // gesture is going to commit. Endpoints at ±SCREEN_WIDTH * 1.25
           // match the dismiss target so opacity hits 0 just as the card
           // finishes its slide-off, leaving zero ghost frames.
-          opacity: dragX.interpolate({
-            inputRange: [-SCREEN_WIDTH * 1.25, -DISMISS_DX, 0, DISMISS_DX, SCREEN_WIDTH * 1.25],
-            outputRange: [0, 0.55, 1, 0.55, 0],
-            extrapolate: 'clamp',
-          }),
+          opacity: dismissOpacity,
         }}
       >
         {/* Card body — borderRadius/marginHorizontal mirror the CustomTabBar
