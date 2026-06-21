@@ -29,6 +29,7 @@ import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
 import { useChatStore, useEntityStore, useConnectivityStore, useAuthStore } from '../../src/store';
 import { useChatSettingsStore, GLOBAL_CHAT_SETTINGS_KEY, DEFAULT_CHAT_SETTINGS } from '../../src/store/chatSettingsStore';
 import { readableTextOn, withOpacity } from '../../src/constants/bubbleColors';
+import { useMessageGestures } from '../../src/hooks/useMessageGestures';
 import { useBrowserStore } from '../../src/store/browserStore';
 import { ChatBackgroundLayer } from '../../src/components/ui/ChatBackgroundLayer';
 import { PixelIcon } from '../../src/components/pixel-icons/PixelIcon';
@@ -239,218 +240,26 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
   const bodyTextColor = coloredBubble ? sideTextColor : theme.colors.text.primary;
   const linkTextColor = coloredBubble ? sideTextColor : theme.colors.accent.primary;
   const timeColor = coloredBubble ? sideTextFaint : theme.colors.text.tertiary;
-  // Animated ref so the LongPress gesture can measure this bubble's window rect
-  // on the UI thread — used to spawn the emoji "dissolve" burst at the right
-  // spot when the message is deleted.
-  const bubbleRef = useAnimatedRef<Reanimated.View>();
   // Native iOS-26 liquid glass for the swipe-to-reply pill. iOS-only + opt-in.
   const glassActive = useLiquidGlassActive();
   const fontFamilyStyle = fontFamily === 'mono' ? 'monospace' : fontFamily === 'serif' ? 'serif' : undefined;
 
-  // ── Reply-jump highlight: GLOW, not a border ───────────────────────────
-  // A border (the old `borderWidth: 2`) grows the bubble ~4 px on all sides,
-  // which reads as the message "enlarging" when a reply-jump lands on it. We
-  // instead fade an absolutely-positioned sibling halo in/out — it sits behind
-  // the bubble (negative inset, so ZERO layout impact: the bubble never moves
-  // or resizes). iOS gets a soft colored shadow glow; Android (no colored
-  // shadows) gets an accent-tinted ring/halo. The opacity is driven entirely on
-  // the UI thread (native) over the ~1600 ms highlight window the parent owns.
-  const glowSV = useSharedValue(0);
-  useEffect(() => {
-    if (highlighted) {
-      // Fade in, hold, fade out — a single self-contained pulse that fits
-      // inside the parent's 1600 ms highlight window.
-      glowSV.value = withSequence(
-        withTiming(1, { duration: 240 }),
-        withDelay(900, withTiming(0, { duration: 440 })),
-      );
-    } else {
-      glowSV.value = withTiming(0, { duration: 200 });
-    }
-  }, [highlighted, glowSV]);
-  const glowStyle = useAnimatedStyle(() => ({ opacity: glowSV.value }));
-
-  // ── Swipe-to-reply: UI-thread gesture (RNGH + Reanimated) ──────────────
-  // Previous implementation was a JS-thread `PanResponder` writing into an RN
-  // `Animated.Value` (non-native-driver — gesture writes have to bridge per
-  // frame). On weak Android 10 the JS thread regularly missed frames during
-  // a swipe (FlatList scroll responder + image decode + selectors), and the
-  // bridged writes blended with the spring-back animation, producing the
-  // "snap back-and-forth" twitch the user reported.
-  //
-  // The new implementation runs ENTIRELY on the UI thread:
-  //   • `Gesture.Pan()` from RNGH dispatches gesture events on the UI thread.
-  //   • `useSharedValue` + `useAnimatedStyle` apply the transform without
-  //     ever crossing the bridge.
-  //   • `withSpring` on release is also UI-thread native.
-  //   • `runOnJS` is used ONCE per phase (start/end) to flip the parent's
-  //     scroll lock and to fire the haptic — never per frame.
-  // JS frame drops can no longer affect the swipe.
-  const translateXSV = useSharedValue(0);
-  // One-shot guard so the haptic fires the moment we cross REPLY_THRESHOLD,
-  // and exactly once per gesture. Reset back to false on release/cancel.
-  const gateFiredHapticSV = useSharedValue(false);
-  // Mirror of "is this gesture currently active?" — used by `onFinalize`
-  // to know whether to clean up state (it fires on EVERY pan termination,
-  // including ones where activation criteria were never met).
-  const swipeActiveSV = useSharedValue(false);
-
-  const pan = useMemo(
-    () =>
-      Gesture.Pan()
-        // Activation gate: only horizontal LEFT motion. `activeOffsetX`
-        // requires the finger to move ≥12 px LEFT before the pan
-        // activates; the +9999 cap means right-direction motion never
-        // activates this. `failOffsetY` makes any vertical motion ≥10 px
-        // (in either direction) FAIL the pan, handing the gesture back
-        // to the FlatList scroll responder. So vertical scrolls always
-        // win and horizontal swipes never fight them.
-        .activeOffsetX([-12, 9999])
-        .failOffsetY([-10, 10])
-        .onStart(() => {
-          'worklet';
-          swipeActiveSV.value = true;
-          // Notify parent ONCE on activate so it can disable FlatList
-          // scrolling while the swipe is in flight. Not per-frame.
-          runOnJS(onSwipeActive)(true);
-        })
-        .onUpdate((e) => {
-          'worklet';
-          // Clamp translateX to [-80, 0] — only swipe LEFT, capped at 80 px.
-          // Whole pixel for predictable rendering on Android.
-          const dx = Math.max(Math.min(Math.round(e.translationX), 0), -80);
-          translateXSV.value = dx;
-          // One-shot threshold haptic. Fired from the worklet via runOnJS
-          // exactly once per gesture; the gate flag prevents storms when
-          // the finger lingers near the threshold.
-          if (!gateFiredHapticSV.value && dx <= -REPLY_THRESHOLD) {
-            gateFiredHapticSV.value = true;
-            runOnJS(triggerHaptic)('light');
-          }
-        })
-        .onEnd((e) => {
-          'worklet';
-          // Trigger reply when the user RELEASED past the threshold —
-          // matches the pre-existing behaviour exactly.
-          if (e.translationX <= -REPLY_THRESHOLD) {
-            runOnJS(onReply)(message);
-          }
-        })
-        .onFinalize(() => {
-          'worklet';
-          // Always run on EVERY pan termination (success or failure). Spring
-          // back to 0 with a UI-thread native spring; reset the haptic gate
-          // and the active flag; notify parent ONCE on end.
-          translateXSV.value = withSpring(0, {
-            damping: 20,
-            stiffness: 220,
-            mass: 0.8,
-          });
-          gateFiredHapticSV.value = false;
-          if (swipeActiveSV.value) {
-            swipeActiveSV.value = false;
-            runOnJS(onSwipeActive)(false);
-          }
-        }),
-    // Stable across renders — message id doesn't change for a given bubble,
-    // and the callbacks are stabilised at the screen level via useCallback.
-    [message, onReply, onSwipeActive, translateXSV, gateFiredHapticSV, swipeActiveSV],
-  );
-
-  // ── Press-drag-release: UI-thread LongPress + drag-to-select ───────────
-  // Replaces the old JS-thread `Pressable onLongPress`. Holding the bubble for
-  // 300 ms opens the context menu (same as before). The LARGE maxDistance means
-  // dragging the still-held finger DOWN onto the action rows never cancels the
-  // long press — instead `onTouchesMove` tracks the finger's absolute Y on the
-  // UI thread and writes which registered row it's over into `hoveredAction`
-  // (the menu reads that shared value to paint the highlight). Releasing over a
-  // row fires that action; releasing over nothing leaves the menu open so the
-  // existing tap-to-select still works. `runOnJS` is used at most once per
-  // phase (open on start, optional gated haptic on hover-change, fire on end).
-  const longPress = useMemo(
-    () =>
-      Gesture.LongPress()
-        .minDuration(300)
-        // `maxDistance` only gates ACTIVATION (RNGH cancels the long press only
-        // if the finger travels past this BEFORE the 300 ms fires). Once
-        // activated, the finger may drag freely down onto the action rows — that
-        // post-activation travel is never restricted. So we keep a SMALL value:
-        // a real vertical scroll (which moves far inside 300 ms) cancels the
-        // long press and stays a scroll, while a still-hold with minor finger
-        // jitter still opens the menu. A huge value here would let a slow
-        // scroll-and-hold accidentally pop the menu.
-        .maxDistance(20)
-        .onStart(() => {
-          'worklet';
-          dragActive.value = true;
-          dragFingerY.value = -1;
-          hoveredAction.value = '';
-          // Measure this bubble's window rect on the UI thread so a later
-          // delete can spawn the emoji burst exactly here. Cheap, fires once.
-          if (onMeasured) {
-            const m = measure(bubbleRef);
-            if (m) runOnJS(onMeasured)(message.id, m.pageX, m.pageY, m.width, m.height);
-          }
-          // Open the menu + medium haptic — exactly once, on activation.
-          runOnJS(triggerHaptic)('medium');
-          runOnJS(onLongPress)(message);
-        })
-        .onTouchesMove((e) => {
-          'worklet';
-          if (!dragActive.value) return;
-          const touch = e.allTouches[0];
-          if (!touch) return;
-          const y = touch.absoluteY;
-          dragFingerY.value = y;
-          // Resolve which registered action row the finger is currently over.
-          const zones = actionZones.value;
-          let found = '';
-          for (let i = 0; i < zones.length; i++) {
-            if (y >= zones[i].top && y <= zones[i].bottom) { found = zones[i].id; break; }
-          }
-          // Fire a light haptic only when the hovered row CHANGES — gated by the
-          // equality check so it can never storm while the finger lingers.
-          if (found !== hoveredAction.value) {
-            hoveredAction.value = found;
-            if (found !== '') runOnJS(triggerHaptic)('light');
-          }
-        })
-        .onEnd(() => {
-          'worklet';
-          // Release over a highlighted row → fire its action (once).
-          const action = hoveredAction.value;
-          if (action !== '') runOnJS(onFireDragAction)(message, action);
-        })
-        .onFinalize(() => {
-          'worklet';
-          // Always clean up, on success OR cancel.
-          dragActive.value = false;
-          dragFingerY.value = -1;
-          hoveredAction.value = '';
-        }),
-    [message, onLongPress, onMeasured, bubbleRef, onFireDragAction, dragActive, dragFingerY, hoveredAction, actionZones],
-  );
-
-  // Compose with the swipe pan via Race: whichever activates FIRST wins and
-  // cancels the other. A clear horizontal swipe (≥12 px left) activates the pan
-  // → reply, unchanged. A still-hold (300 ms) activates the long press → menu.
-  // They can never both be active, so the drag-select can't fight the swipe.
-  const composedGesture = useMemo(() => Gesture.Race(pan, longPress), [pan, longPress]);
-
-  // UI-thread style for the bubble's translateX.
-  const bubbleAnimStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: translateXSV.value }],
-  }));
-  // Reply-icon opacity ramp from -24 → -REPLY_THRESHOLD (matches the legacy
-  // implementation's interpolation), evaluated entirely on the UI thread.
-  const replyIconAnimStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(
-      translateXSV.value,
-      [-REPLY_THRESHOLD, -24, 0],
-      [1, 0, 0],
-      Extrapolation.CLAMP,
-    ),
-  }));
+  // Swipe-to-reply + press-drag-select gestures and the reply-jump glow are
+  // wired by useMessageGestures (extracted for maintainability + testing).
+  // Behaviour is identical to the previous inline implementation.
+  const { bubbleRef, composedGesture, glowStyle, bubbleAnimStyle, replyIconAnimStyle } = useMessageGestures({
+    message,
+    highlighted,
+    onReply,
+    onSwipeActive,
+    onLongPress,
+    onMeasured,
+    onFireDragAction,
+    dragActive,
+    dragFingerY,
+    hoveredAction,
+    actionZones,
+  });
 
   return (
     <View style={bubbleStyles.row}>
