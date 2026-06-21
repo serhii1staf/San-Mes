@@ -40,6 +40,7 @@ import { triggerHaptic } from '../../src/utils/haptics';
 import { sanitizeUserText } from '../../src/utils/sanitizeText';
 import { getRecentEmoji, pushRecentEmoji } from '../../src/services/recentEmoji';
 import { getRecentGif, pushRecentGif } from '../../src/services/recentGif';
+import { playSendSound } from '../../src/utils/sounds';
 import { GiphyItem } from '../../src/services/giphy';
 import { useT } from '../../src/i18n/store';
 import { perfMonitor } from '../../src/services/perfMonitor';
@@ -1800,7 +1801,7 @@ export default function ChatScreen() {
   // animates through the existing image path (expo-image animates GIFs).
   const sendGif = useCallback((url: string) => {
     if (!id || !url) return;
-    triggerHaptic('light');
+    playSendSound();
     const currentReply = replyTo;
     setReplyTo(null);
     const newMessage: ChatMessage = {
@@ -2037,6 +2038,7 @@ export default function ChatScreen() {
     const hasImages = pendingImages.length > 0;
     if ((!rawText.trim() && !hasImages) || !conversationId) return;
     triggerHaptic('medium');
+    playSendSound();
     // Strip dangerous invisible / control / bidi-override chars; keep
     // decorative Unicode + emoji. sanitizeUserText also trims.
     const text = sanitizeUserText(rawText);
