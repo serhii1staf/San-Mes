@@ -633,6 +633,8 @@ const en: Record<string, string> = {
   'chat_settings.local_name_placeholder': 'e.g. Mom',
   'chat_settings.font_size': 'Text size',
   'chat_settings.bubble_radius': 'Bubble radius',
+  'chat_settings.bubble_color': 'Bubble color',
+  'chat_settings.bubble_color.theme': 'Theme',
   'chat_settings.font_family': 'Chat font',
   'chat_settings.font.system': 'System',
   'chat_settings.font.serif': 'Serif',

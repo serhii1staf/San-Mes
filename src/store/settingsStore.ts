@@ -64,6 +64,10 @@ interface SettingsState {
   // re-registration on next launch until turned back on. Local in-app badges
   // are unaffected — this only governs off-screen Expo/APNs/FCM pushes.
   pushNotificationsEnabled: boolean;
+  // Custom outgoing chat-bubble color (hex string) OR null to follow the
+  // current theme accent (default). Applies app-wide to every chat. The chat
+  // screen picks a contrast-aware text color so any swatch stays readable.
+  chatBubbleColor: string | null;
   setHaptic: (enabled: boolean) => void;
   setInAppBrowser: (enabled: boolean) => void;
   setBrowserWidgetPosition: (position: 'top' | 'bottom') => void;
@@ -81,6 +85,7 @@ interface SettingsState {
   clearProfileTabCustom: (key: string) => void;
   setLiquidGlassEnabled: (enabled: boolean) => void;
   setPushNotificationsEnabled: (enabled: boolean) => void;
+  setChatBubbleColor: (color: string | null) => void;
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -126,6 +131,8 @@ export const useSettingsStore = create<SettingsState>()(
       // Push notifications ON by default — matches the existing behaviour
       // where the app registers a push token after login.
       pushNotificationsEnabled: true,
+      // Null = follow the theme accent (current behaviour).
+      chatBubbleColor: null,
       setHaptic: (hapticEnabled) => set({ hapticEnabled }),
       setInAppBrowser: (useInAppBrowser) => set({ useInAppBrowser }),
       setBrowserWidgetPosition: (browserWidgetPosition) => set({ browserWidgetPosition }),
@@ -173,6 +180,7 @@ export const useSettingsStore = create<SettingsState>()(
         }),
       setLiquidGlassEnabled: (liquidGlassEnabled) => set({ liquidGlassEnabled }),
       setPushNotificationsEnabled: (pushNotificationsEnabled) => set({ pushNotificationsEnabled }),
+      setChatBubbleColor: (chatBubbleColor) => set({ chatBubbleColor }),
     }),
     {
       name: 'app-settings',

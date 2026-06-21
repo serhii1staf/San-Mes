@@ -42,6 +42,7 @@ import {
   GLOBAL_CHAT_SETTINGS_KEY,
 } from '../../src/store/chatSettingsStore';
 import { useEntityStore } from '../../src/store';
+import { useSettingsStore } from '../../src/store/settingsStore';
 import { showToast } from '../../src/store/toastStore';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { useT } from '../../src/i18n/store';
@@ -74,6 +75,9 @@ export default function ChatSettingsScreen() {
   void settings;
 
   const conversations = useEntityStore((s) => s.conversations);
+  // App-wide outgoing-bubble color (null = follow theme accent). Shown as a
+  // colored dot on the "Bubble color" row.
+  const chatBubbleColor = useSettingsStore((s) => s.chatBubbleColor);
   const conv = conversations.find((c) => c.id === chatId);
   const headerTitle = isGlobal
     ? t('chat_settings.all_chats')
@@ -275,6 +279,32 @@ export default function ChatSettingsScreen() {
                 {radiusMeta}
               </RNText>
               <Feather name="chevron-right" size={16} color={textTertiary} style={{ marginLeft: 4 }} />
+            </View>
+          </Pressable>
+
+          {/* Bubble color (app-wide) */}
+          <Pressable
+            onPress={() => {
+              triggerHaptic('selection');
+              router.push('/settings/chat-bubble-color' as any);
+            }}
+            style={[styles.row, { borderBottomWidth: 0.5, borderBottomColor: borderLight }]}
+          >
+            <RNText allowFontScaling={false} style={[styles.rowLabel, { color: textPrimary }]}>
+              {t('chat_settings.bubble_color', 'Цвет пузырей')}
+            </RNText>
+            <View style={styles.rowRight}>
+              <View
+                style={{
+                  width: 22,
+                  height: 22,
+                  borderRadius: 11,
+                  backgroundColor: chatBubbleColor || theme.colors.accent.primary,
+                  borderWidth: 0.5,
+                  borderColor: borderLight,
+                }}
+              />
+              <Feather name="chevron-right" size={16} color={textTertiary} style={{ marginLeft: 8 }} />
             </View>
           </Pressable>
 

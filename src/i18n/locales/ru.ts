@@ -645,6 +645,8 @@ const ru: Record<string, string> = {
   'chat_settings.local_name_placeholder': 'Например, мама',
   'chat_settings.font_size': 'Размер текста',
   'chat_settings.bubble_radius': 'Округление пузыря',
+  'chat_settings.bubble_color': 'Цвет пузырей',
+  'chat_settings.bubble_color.theme': 'Тема',
   'chat_settings.font_family': 'Шрифт чата',
   'chat_settings.font.system': 'Системный',
   'chat_settings.font.serif': 'С засечками',

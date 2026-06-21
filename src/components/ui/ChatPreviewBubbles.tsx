@@ -36,6 +36,10 @@ export interface ChatPreviewBubblesProps {
   topPadding: number;
   /** When true, RN scales text per the OS accessibility setting. Default false (faithful preview). */
   allowFontScaling?: boolean;
+  /** Outgoing-bubble color. Defaults to the theme accent (current behaviour). */
+  bubbleColor?: string;
+  /** Outgoing-bubble text color. Defaults to white. */
+  bubbleTextColor?: string;
 }
 
 // 4 px on the inside corner that points to the avatar — matches MessageBubble
@@ -50,12 +54,18 @@ export function ChatPreviewBubbles({
   backgroundImage,
   topPadding,
   allowFontScaling = false,
+  bubbleColor,
+  bubbleTextColor,
 }: ChatPreviewBubblesProps) {
   const theme = useTheme();
   const t = useT();
 
   const bgPrimary = theme.colors.background.primary;
   const accent = theme.colors.accent.primary;
+  // Outgoing bubble color + its text color (defaults preserve the old look).
+  const outBubble = bubbleColor || accent;
+  const outText = bubbleTextColor || '#FFFFFF';
+  const outTextFaint = outText === '#FFFFFF' ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.55)';
   const textPrimary = theme.colors.text.primary;
   const textSecondary = theme.colors.text.secondary;
   const textTertiary = theme.colors.text.tertiary;
@@ -150,7 +160,7 @@ export function ChatPreviewBubbles({
             style={[
               styles.bubble,
               {
-                backgroundColor: accent,
+                backgroundColor: outBubble,
                 borderRadius: bubbleRadius,
                 borderBottomRightRadius: TAIL_CORNER,
               },
@@ -160,7 +170,7 @@ export function ChatPreviewBubbles({
               allowFontScaling={allowFontScaling}
               style={[
                 styles.bubbleText,
-                { color: '#FFFFFF', fontSize, fontFamily },
+                { color: outText, fontSize, fontFamily },
               ]}
             >
               {t('chat_settings.preview.msg3', 'Давай встретимся завтра?')}
@@ -169,7 +179,7 @@ export function ChatPreviewBubbles({
               allowFontScaling={allowFontScaling}
               style={[
                 styles.bubbleTime,
-                { color: 'rgba(255,255,255,0.7)', fontSize: timeFontSize },
+                { color: outTextFaint, fontSize: timeFontSize },
               ]}
             >
               12:32

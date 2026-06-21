@@ -28,6 +28,7 @@ import { getRealtime, chatChannelName } from '../../src/services/realtime/ably';
 import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
 import { useChatStore, useEntityStore, useConnectivityStore, useAuthStore } from '../../src/store';
 import { useChatSettingsStore, GLOBAL_CHAT_SETTINGS_KEY, DEFAULT_CHAT_SETTINGS } from '../../src/store/chatSettingsStore';
+import { readableTextOn } from '../../src/constants/bubbleColors';
 import { useBrowserStore } from '../../src/store/browserStore';
 import { ChatBackgroundLayer } from '../../src/components/ui/ChatBackgroundLayer';
 import { PixelIcon } from '../../src/components/pixel-icons/PixelIcon';
@@ -195,9 +196,15 @@ function SingleChatImage({ uri, isVisible, onPress }: { uri: string; isVisible?:
   );
 }
 
-function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, linkEmoji, highlighted, isVisible, imagesReady, onReply, onReplyJump, onLongPress, onMeasured, onSwipeActive, onImagePress, dragActive, dragFingerY, hoveredAction, actionZones, onFireDragAction }: { message: ChatMessage; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string; linkEmoji?: string; highlighted?: boolean; isVisible?: boolean; imagesReady?: boolean; onReply: (m: ChatMessage) => void; onReplyJump?: (messageId?: string) => void; onLongPress: (m: ChatMessage) => void; onMeasured?: (id: string, x: number, y: number, w: number, h: number) => void; onSwipeActive: (active: boolean) => void; onImagePress: (images: string[], index: number) => void; dragActive: SharedValue<boolean>; dragFingerY: SharedValue<number>; hoveredAction: SharedValue<string>; actionZones: SharedValue<ActionZone[]>; onFireDragAction: (m: ChatMessage, action: string) => void }) {
+function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, linkEmoji, bubbleColor, bubbleTextColor, highlighted, isVisible, imagesReady, onReply, onReplyJump, onLongPress, onMeasured, onSwipeActive, onImagePress, dragActive, dragFingerY, hoveredAction, actionZones, onFireDragAction }: { message: ChatMessage; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string; linkEmoji?: string; bubbleColor: string; bubbleTextColor: string; highlighted?: boolean; isVisible?: boolean; imagesReady?: boolean; onReply: (m: ChatMessage) => void; onReplyJump?: (messageId?: string) => void; onLongPress: (m: ChatMessage) => void; onMeasured?: (id: string, x: number, y: number, w: number, h: number) => void; onSwipeActive: (active: boolean) => void; onImagePress: (images: string[], index: number) => void; dragActive: SharedValue<boolean>; dragFingerY: SharedValue<number>; hoveredAction: SharedValue<string>; actionZones: SharedValue<ActionZone[]>; onFireDragAction: (m: ChatMessage, action: string) => void }) {
   const theme = useTheme();
   const t = useT();
+  // Outgoing-bubble text tints derived from the (custom or theme) bubble
+  // color's contrast pick. White on a saturated/dark bubble, near-black on a
+  // light one — keeps text/timestamp/reply-preview readable for any swatch.
+  const ownTextStrong = bubbleTextColor === '#FFFFFF' ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.85)';
+  const ownTextDim = bubbleTextColor === '#FFFFFF' ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.6)';
+  const ownTextFaint = bubbleTextColor === '#FFFFFF' ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.5)';
   // Animated ref so the LongPress gesture can measure this bubble's window rect
   // on the UI thread — used to spawn the emoji "dissolve" burst at the right
   // spot when the message is deleted.
@@ -460,14 +467,14 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
             paddingHorizontal: 14,
             paddingVertical: 10,
             borderRadius: bubbleRadius,
-            backgroundColor: isOwn ? theme.colors.accent.primary : theme.colors.background.tertiary,
+            backgroundColor: isOwn ? bubbleColor : theme.colors.background.tertiary,
             borderBottomRightRadius: isOwn ? 4 : bubbleRadius,
             borderBottomLeftRadius: isOwn ? bubbleRadius : 4,
           }}>
             {message.replyToText || message.replyToImage || message.replyPixelIconId ? (
               <Pressable
                 onPress={() => onReplyJump?.(message.replyToId)}
-                style={[bubbleStyles.replyBlock, { borderLeftColor: isOwn ? 'rgba(255,255,255,0.7)' : theme.colors.accent.primary }]}
+                style={[bubbleStyles.replyBlock, { borderLeftColor: isOwn ? ownTextDim : theme.colors.accent.primary }]}
               >
                 {message.replyToImage ? (
                   <CachedImage uri={message.replyToImage} style={bubbleStyles.replyAvatar} resizeMode="cover" />
@@ -481,10 +488,10 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
                   <PixelIcon id={message.replyPixelIconId} size={22} style={bubbleStyles.replyPixel} />
                 ) : null}
                 <View style={bubbleStyles.replyTextWrap}>
-                  <Text variant="caption" weight="semibold" color={isOwn ? 'rgba(255,255,255,0.9)' : theme.colors.accent.primary} numberOfLines={1} style={bubbleStyles.replyHeading}>
+                  <Text variant="caption" weight="semibold" color={isOwn ? ownTextStrong : theme.colors.accent.primary} numberOfLines={1} style={bubbleStyles.replyHeading}>
                     {message.replyToIsOwn ? t('chat.you') : t('chat.peer')}
                   </Text>
-                  <Text variant="caption" color={isOwn ? 'rgba(255,255,255,0.7)' : theme.colors.text.tertiary} numberOfLines={1} style={bubbleStyles.replyBody}>
+                  <Text variant="caption" color={isOwn ? ownTextDim : theme.colors.text.tertiary} numberOfLines={1} style={bubbleStyles.replyBody}>
                     {message.replyToText || (message.replyToImage ? t('chat.photo') : '')}
                   </Text>
                 </View>
@@ -540,7 +547,7 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
               </View>
             ) : null}
             {message.text ? (
-              <FormattedText color={isOwn ? '#FFFFFF' : theme.colors.text.primary} linkColor={isOwn ? '#FFFFFF' : theme.colors.accent.primary} style={{ fontSize, fontFamily: fontFamilyStyle }}>{message.text}</FormattedText>
+              <FormattedText color={isOwn ? bubbleTextColor : theme.colors.text.primary} linkColor={isOwn ? bubbleTextColor : theme.colors.accent.primary} style={{ fontSize, fontFamily: fontFamilyStyle }}>{message.text}</FormattedText>
             ) : null}
             {(() => {
               const link = (!message.imageUrls || message.imageUrls.length === 0) ? extractFirstUrl(message.text) : null;
@@ -548,13 +555,13 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
                 <View style={bubbleStyles.linkPreviewWrap}>
                   <LinkPreview
                     url={link}
-                    textColor={isOwn ? '#FFFFFF' : undefined}
+                    textColor={isOwn ? bubbleTextColor : undefined}
                     emoji={linkEmoji}
                   />
                 </View>
               ) : null;
             })()}
-            <Text variant="caption" color={isOwn ? 'rgba(255,255,255,0.6)' : theme.colors.text.tertiary} style={bubbleStyles.timestamp}>
+            <Text variant="caption" color={isOwn ? ownTextFaint : theme.colors.text.tertiary} style={bubbleStyles.timestamp}>
               {formatMessageTime(message.createdAt)}
             </Text>
           </View>
@@ -587,6 +594,8 @@ const MemoMessageBubble = React.memo(MessageBubble, (prev, next) => {
     prev.bubbleRadius === next.bubbleRadius &&
     prev.fontFamily === next.fontFamily &&
     prev.linkEmoji === next.linkEmoji &&
+    prev.bubbleColor === next.bubbleColor &&
+    prev.bubbleTextColor === next.bubbleTextColor &&
     prev.highlighted === next.highlighted &&
     prev.isVisible === next.isVisible &&
     prev.imagesReady === next.imagesReady
@@ -972,6 +981,14 @@ export default function ChatScreen() {
   const chatSettings = useMemo(() => {
     return { ...DEFAULT_CHAT_SETTINGS, ...globalSettings, ...specificSettings };
   }, [globalSettings, specificSettings]);
+
+  // Outgoing-bubble color: a user-chosen swatch (app-wide) or the theme accent
+  // when unset (default). The text color is contrast-picked so any swatch
+  // stays readable. Both are passed down as stable props so MemoMessageBubble
+  // re-renders only when the color actually changes.
+  const customBubbleColor = useSettingsStore((s) => s.chatBubbleColor);
+  const bubbleColor = customBubbleColor || theme.colors.accent.primary;
+  const bubbleTextColor = customBubbleColor ? readableTextOn(customBubbleColor) : '#FFFFFF';
 
   const bgColor = theme.colors.background.primary;
   const bgTransparent = bgColor + '00';
@@ -2486,6 +2503,8 @@ export default function ChatScreen() {
         bubbleRadius={chatSettings.bubbleRadius}
         fontFamily={chatSettings.fontFamily}
         linkEmoji={chatSettings.linkEmoji}
+        bubbleColor={bubbleColor}
+        bubbleTextColor={bubbleTextColor}
         highlighted={item.id === activeMatchId || item.id === jumpHighlightId}
         imagesReady={imagesReady}
         onReply={startReply}
@@ -2501,7 +2520,7 @@ export default function ChatScreen() {
         onFireDragAction={fireDragAction}
       />
     );
-  }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, chatSettings.linkEmoji, startReply, scrollToMessageId, handleSwipeActive, openImageViewer, parseMessage, activeMatchId, jumpHighlightId, onMessageLongPress, currentUserId, dragActiveSV, dragFingerYSV, hoveredActionSV, actionZonesSV, fireDragAction, visTracker, imagesReady]);
+  }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, chatSettings.linkEmoji, bubbleColor, bubbleTextColor, startReply, scrollToMessageId, handleSwipeActive, openImageViewer, parseMessage, activeMatchId, jumpHighlightId, onMessageLongPress, currentUserId, dragActiveSV, dragFingerYSV, hoveredActionSV, actionZonesSV, fireDragAction, visTracker, imagesReady]);
 
   // Stable callback refs for FlatList — without these, every parent render
   // hands FlatList fresh function identities and breaks its row recycling
