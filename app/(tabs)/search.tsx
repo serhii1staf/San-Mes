@@ -215,6 +215,17 @@ export default function SearchScreen() {
           data={profiles}
           keyExtractor={(item) => item.id}
           contentContainerStyle={{ paddingHorizontal: theme.spacing.base, paddingTop: 16, paddingBottom: 100 }}
+          // Virtualization props were absent here — a username search that
+          // matches a large slice of the profile directory would mount every
+          // matched row at once on each keystroke (search-as-you-type is the
+          // hot path). These are purely additive and match the tuning used by
+          // the feed / messages / comments lists. removeClippedSubviews detaches
+          // off-screen rows; the window caps how many mount per batch so a big
+          // result set streams in instead of landing as one long task.
+          removeClippedSubviews={true}
+          initialNumToRender={10}
+          maxToRenderPerBatch={8}
+          windowSize={7}
           ListHeaderComponent={() => {
             const searchTerm = query.startsWith('#') ? query.slice(1) : query;
             const lower = searchTerm.toLowerCase();
