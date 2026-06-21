@@ -126,7 +126,8 @@
           "project": "san-mes"
         }
       ],
-      "expo-localization"
+      "expo-localization",
+      "expo-notifications"
     ],
     "experiments": {
       "typedRoutes": true

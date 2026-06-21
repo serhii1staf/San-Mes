@@ -113,6 +113,19 @@ function AuthNavigationGuard({ children }: { children: React.ReactNode }) {
     }
   }, [isAuthenticated, segments, hasHydrated, showSplash]);
 
+  // Register for push notifications once the user is authenticated and past the
+  // splash. Deferred so the permission prompt + token fetch never block startup.
+  // No-op on the current build (native module absent — guarded inside).
+  useEffect(() => {
+    if (!isAuthenticated || !hasHydrated) return;
+    const tid = setTimeout(() => {
+      import('../src/services/pushNotifications')
+        .then((m) => m.registerForPush())
+        .catch(() => {});
+    }, 1500);
+    return () => clearTimeout(tid);
+  }, [isAuthenticated, hasHydrated]);
+
   if (!hasHydrated || showSplash || isLoggingOut) {
     return <CustomSplash />;
   }
