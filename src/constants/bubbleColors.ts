@@ -97,3 +97,41 @@ export function withOpacity(hex: string, opacity: number): string {
   const a = Math.round(Math.max(0, Math.min(1, opacity)) * 255);
   return `#${h}${a.toString(16).padStart(2, '0').toUpperCase()}`;
 }
+
+// HSL → #RRGGBB. Used by the custom color creator's hue spectrum sliders, with
+// fixed saturation/lightness for vibrant, readable bubble colors.
+export function hslToHex(h: number, s = 0.72, l = 0.55): string {
+  const hue = ((h % 360) + 360) % 360;
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs(((hue / 60) % 2) - 1));
+  const m = l - c / 2;
+  let r = 0, g = 0, b = 0;
+  if (hue < 60) { r = c; g = x; }
+  else if (hue < 120) { r = x; g = c; }
+  else if (hue < 180) { g = c; b = x; }
+  else if (hue < 240) { g = x; b = c; }
+  else if (hue < 300) { r = x; b = c; }
+  else { r = c; b = x; }
+  const to = (v: number) => Math.round((v + m) * 255).toString(16).padStart(2, '0').toUpperCase();
+  return `#${to(r)}${to(g)}${to(b)}`;
+}
+
+// Approximate hue (0–360) of a hex — lets the custom editor's slider position
+// itself when a preset/solid is loaded in for tweaking.
+export function hexToHue(hex: string): number {
+  let h = (hex || '').replace('#', '').trim();
+  if (h.length === 3) h = h.split('').map((c) => c + c).join('');
+  if (h.length !== 6) return 0;
+  const r = parseInt(h.slice(0, 2), 16) / 255;
+  const g = parseInt(h.slice(2, 4), 16) / 255;
+  const b = parseInt(h.slice(4, 6), 16) / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const d = max - min;
+  if (d === 0) return 0;
+  let hue = 0;
+  if (max === r) hue = ((g - b) / d) % 6;
+  else if (max === g) hue = (b - r) / d + 2;
+  else hue = (r - g) / d + 4;
+  hue *= 60;
+  return (hue + 360) % 360;
+}

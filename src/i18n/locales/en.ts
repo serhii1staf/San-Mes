@@ -639,6 +639,7 @@ const en: Record<string, string> = {
   'chat_settings.opacity': 'Opacity',
   'chat_settings.gradients': 'Combinations',
   'chat_settings.solid_colors': 'Solid',
+  'chat_settings.custom': 'Custom',
   'chat_settings.font_family': 'Chat font',
   'chat_settings.font.system': 'System',
   'chat_settings.font.serif': 'Serif',

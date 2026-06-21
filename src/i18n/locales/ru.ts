@@ -651,6 +651,7 @@ const ru: Record<string, string> = {
   'chat_settings.opacity': 'Прозрачность',
   'chat_settings.gradients': 'Комбинации',
   'chat_settings.solid_colors': 'Однотонные',
+  'chat_settings.custom': 'Свой цвет',
   'chat_settings.font_family': 'Шрифт чата',
   'chat_settings.font.system': 'Системный',
   'chat_settings.font.serif': 'С засечками',
