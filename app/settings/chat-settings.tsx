@@ -75,9 +75,9 @@ export default function ChatSettingsScreen() {
   void settings;
 
   const conversations = useEntityStore((s) => s.conversations);
-  // App-wide outgoing-bubble color (null = follow theme accent). Shown as a
-  // colored dot on the "Bubble color" row.
-  const chatBubbleColor = useSettingsStore((s) => s.chatBubbleColor);
+  // App-wide outgoing message style (null = follow theme accent). Shown as a
+  // colored/gradient dot on the "Цвет сообщений" row.
+  const chatBubble = useSettingsStore((s) => s.chatBubble);
   const conv = conversations.find((c) => c.id === chatId);
   const headerTitle = isGlobal
     ? t('chat_settings.all_chats')
@@ -282,7 +282,7 @@ export default function ChatSettingsScreen() {
             </View>
           </Pressable>
 
-          {/* Bubble color (app-wide) */}
+          {/* Message color (app-wide) */}
           <Pressable
             onPress={() => {
               triggerHaptic('selection');
@@ -291,19 +291,28 @@ export default function ChatSettingsScreen() {
             style={[styles.row, { borderBottomWidth: 0.5, borderBottomColor: borderLight }]}
           >
             <RNText allowFontScaling={false} style={[styles.rowLabel, { color: textPrimary }]}>
-              {t('chat_settings.bubble_color', 'Цвет пузырей')}
+              {t('chat_settings.message_color', 'Цвет сообщений')}
             </RNText>
             <View style={styles.rowRight}>
-              <View
-                style={{
-                  width: 22,
-                  height: 22,
-                  borderRadius: 11,
-                  backgroundColor: chatBubbleColor || theme.colors.accent.primary,
-                  borderWidth: 0.5,
-                  borderColor: borderLight,
-                }}
-              />
+              {chatBubble && chatBubble.colors.length > 1 ? (
+                <LinearGradient
+                  colors={chatBubble.colors as any}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={{ width: 22, height: 22, borderRadius: 11, borderWidth: 0.5, borderColor: borderLight }}
+                />
+              ) : (
+                <View
+                  style={{
+                    width: 22,
+                    height: 22,
+                    borderRadius: 11,
+                    backgroundColor: (chatBubble && chatBubble.colors[0]) || theme.colors.accent.primary,
+                    borderWidth: 0.5,
+                    borderColor: borderLight,
+                  }}
+                />
+              )}
               <Feather name="chevron-right" size={16} color={textTertiary} style={{ marginLeft: 8 }} />
             </View>
           </Pressable>

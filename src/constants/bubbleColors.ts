@@ -1,56 +1,99 @@
-// Custom chat-bubble color palette + contrast helper.
+// Message-color customization: solid swatches, gradient "combinations",
+// opacity, and a contrast helper.
 //
-// Used by the chat-bubble-color settings screen (swatch grid) and the chat
-// screen (to render the outgoing bubble + pick a readable text color). Kept in
-// one tiny module so both sides stay in sync and the helper is shared.
+// Used by the message-color settings sheet (swatch + gradient grid, opacity
+// slider) and the chat screen (renders the outgoing bubble + picks a readable
+// text color). Kept in one tiny module so both sides stay in sync.
 
-export interface BubbleSwatch {
+export interface BubbleStyle {
+  /** 1 color = solid fill, 2+ = gradient (top-left → bottom-right). */
+  colors: string[];
+  /** 0.5–1 bubble opacity. */
+  opacity: number;
+}
+
+export interface SolidSwatch {
   key: string;
   label: string;
   color: string;
 }
 
-// A curated set of saturated, "сочные" bubble colors that read well in both
-// light and dark chats. The first entry (null at the call site) means "follow
-// the theme accent" — these are the explicit overrides.
-export const BUBBLE_COLORS: BubbleSwatch[] = [
-  { key: 'blue',     label: 'Синий',      color: '#0A84FF' },
-  { key: 'indigo',   label: 'Индиго',     color: '#5C6BC0' },
-  { key: 'violet',   label: 'Фиалка',     color: '#8B5CF6' },
-  { key: 'purple',   label: 'Пурпур',     color: '#BF5AF2' },
-  { key: 'pink',     label: 'Розовый',    color: '#FF4FA3' },
-  { key: 'rose',     label: 'Роза',       color: '#F43F7E' },
-  { key: 'red',      label: 'Красный',    color: '#FF453A' },
-  { key: 'sunset',   label: 'Закат',      color: '#FF7B54' },
-  { key: 'orange',   label: 'Оранжевый',  color: '#FF9F0A' },
-  { key: 'amber',    label: 'Янтарь',     color: '#F5A623' },
-  { key: 'green',    label: 'Зелёный',    color: '#30D158' },
-  { key: 'emerald',  label: 'Изумруд',    color: '#1DB954' },
-  { key: 'teal',     label: 'Бирюза',     color: '#14B8A6' },
-  { key: 'ocean',    label: 'Океан',      color: '#0EA5E9' },
-  { key: 'graphite', label: 'Графит',     color: '#3A3A3C' },
+export interface GradientPreset {
+  key: string;
+  label: string;
+  emoji: string;
+  colors: [string, string];
+}
+
+// Saturated, "сочные" solid colors that read well in light + dark chats.
+export const BUBBLE_COLORS: SolidSwatch[] = [
+  { key: 'blue',     label: 'Синий',     color: '#0A84FF' },
+  { key: 'indigo',   label: 'Индиго',    color: '#5C6BC0' },
+  { key: 'violet',   label: 'Фиалка',    color: '#8B5CF6' },
+  { key: 'purple',   label: 'Пурпур',    color: '#BF5AF2' },
+  { key: 'pink',     label: 'Розовый',   color: '#FF4FA3' },
+  { key: 'red',      label: 'Красный',   color: '#FF453A' },
+  { key: 'orange',   label: 'Оранжевый', color: '#FF9F0A' },
+  { key: 'amber',    label: 'Янтарь',    color: '#F5A623' },
+  { key: 'green',    label: 'Зелёный',   color: '#30D158' },
+  { key: 'teal',     label: 'Бирюза',    color: '#14B8A6' },
+  { key: 'ocean',    label: 'Океан',     color: '#0EA5E9' },
+  { key: 'graphite', label: 'Графит',    color: '#3A3A3C' },
 ];
 
+// Trendy 2-color gradient "combinations" — the stylish part. Each has an emoji
+// so the grid reads young/modern. Rendered as a diagonal LinearGradient behind
+// the bubble (GPU, opt-in — solid/theme bubbles never mount a gradient).
+export const GRADIENT_PRESETS: GradientPreset[] = [
+  { key: 'sunset',    label: 'Закат',    emoji: '🌅', colors: ['#FF6A88', '#FF9A8B'] },
+  { key: 'grape',     label: 'Виноград', emoji: '🍇', colors: ['#7B2FF7', '#F107A3'] },
+  { key: 'ocean',     label: 'Океан',    emoji: '🌊', colors: ['#2E3192', '#1BFFFF'] },
+  { key: 'mint',      label: 'Мята',     emoji: '🌿', colors: ['#11998E', '#38EF7D'] },
+  { key: 'peach',     label: 'Персик',   emoji: '🍑', colors: ['#FF512F', '#F09819'] },
+  { key: 'flamingo',  label: 'Фламинго', emoji: '🦩', colors: ['#FF5F9E', '#FFC371'] },
+  { key: 'aurora',    label: 'Аврора',   emoji: '🌌', colors: ['#4E54C8', '#8F94FB'] },
+  { key: 'lime',      label: 'Лайм',     emoji: '🍏', colors: ['#A8E063', '#56AB2F'] },
+  { key: 'candy',     label: 'Конфета',  emoji: '🍭', colors: ['#FC466B', '#3F5EFB'] },
+  { key: 'fire',      label: 'Огонь',    emoji: '🔥', colors: ['#F12711', '#F5AF19'] },
+  { key: 'sky',       label: 'Небо',     emoji: '☁️', colors: ['#2980B9', '#6DD5FA'] },
+  { key: 'berry',     label: 'Ягода',    emoji: '🫐', colors: ['#8E2DE2', '#4A00E0'] },
+];
+
+export const MIN_OPACITY = 0.5;
+
 // Relative luminance (sRGB) → pick black or white text for max readability.
-// Handles 3- and 6-digit hex with or without a leading '#'. Falls back to
-// white text on parse failure (matches the historical white-on-accent look).
-export function readableTextOn(hex: string | null | undefined): string {
-  if (!hex) return '#FFFFFF';
-  let h = hex.replace('#', '').trim();
+// For gradients, the average of the stops is used.
+export function readableTextOn(colors: string | string[] | null | undefined): string {
+  if (!colors) return '#FFFFFF';
+  const list = Array.isArray(colors) ? colors : [colors];
+  if (list.length === 0) return '#FFFFFF';
+  let sum = 0;
+  let counted = 0;
+  for (const hex of list) {
+    const lum = luminanceOf(hex);
+    if (lum >= 0) { sum += lum; counted++; }
+  }
+  if (counted === 0) return '#FFFFFF';
+  return sum / counted > 150 ? '#1A1A1A' : '#FFFFFF';
+}
+
+function luminanceOf(hex: string): number {
+  let h = (hex || '').replace('#', '').trim();
   if (h.length === 3) h = h.split('').map((c) => c + c).join('');
-  if (h.length !== 6) return '#FFFFFF';
+  if (h.length !== 6) return -1;
   const r = parseInt(h.slice(0, 2), 16);
   const g = parseInt(h.slice(2, 4), 16);
   const b = parseInt(h.slice(4, 6), 16);
-  if ([r, g, b].some((n) => Number.isNaN(n))) return '#FFFFFF';
-  // Perceived luminance (ITU-R BT.601 weighting), 0–255.
-  const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
-  return luminance > 150 ? '#1A1A1A' : '#FFFFFF';
+  if ([r, g, b].some((n) => Number.isNaN(n))) return -1;
+  return 0.299 * r + 0.587 * g + 0.114 * b; // ITU-R BT.601, 0–255
 }
 
-// A translucent variant of a text color for secondary text (timestamp, reply
-// preview) inside the bubble — keeps the same readable hue at reduced opacity.
-export function bubbleSecondaryText(textColor: string, strong = false): string {
-  const alpha = strong ? 'E6' : '99'; // ~90% / ~60%
-  return textColor === '#FFFFFF' ? `rgba(255,255,255,${strong ? 0.9 : 0.6})` : `rgba(0,0,0,${strong ? 0.85 : 0.55})`;
+// Append an 8-bit alpha suffix to a #RRGGBB hex from a 0–1 opacity. Returns the
+// color unchanged if it isn't a parseable 6-digit hex (e.g. already rgba()).
+export function withOpacity(hex: string, opacity: number): string {
+  let h = (hex || '').replace('#', '').trim();
+  if (h.length === 3) h = h.split('').map((c) => c + c).join('');
+  if (h.length !== 6) return hex;
+  const a = Math.round(Math.max(0, Math.min(1, opacity)) * 255);
+  return `#${h}${a.toString(16).padStart(2, '0').toUpperCase()}`;
 }

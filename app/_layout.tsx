@@ -426,6 +426,14 @@ function RootLayout() {
                 }}
               />
               <Stack.Screen
+                name="settings/chat-bubble-color"
+                options={{
+                  presentation: 'modal',
+                  animation: 'slide_from_bottom',
+                  headerShown: false,
+                }}
+              />
+              <Stack.Screen
                 name="settings/chat-font"
                 options={{
                   presentation: 'modal',

@@ -28,7 +28,7 @@ import { getRealtime, chatChannelName } from '../../src/services/realtime/ably';
 import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
 import { useChatStore, useEntityStore, useConnectivityStore, useAuthStore } from '../../src/store';
 import { useChatSettingsStore, GLOBAL_CHAT_SETTINGS_KEY, DEFAULT_CHAT_SETTINGS } from '../../src/store/chatSettingsStore';
-import { readableTextOn } from '../../src/constants/bubbleColors';
+import { readableTextOn, withOpacity } from '../../src/constants/bubbleColors';
 import { useBrowserStore } from '../../src/store/browserStore';
 import { ChatBackgroundLayer } from '../../src/components/ui/ChatBackgroundLayer';
 import { PixelIcon } from '../../src/components/pixel-icons/PixelIcon';
@@ -196,12 +196,16 @@ function SingleChatImage({ uri, isVisible, onPress }: { uri: string; isVisible?:
   );
 }
 
-function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, linkEmoji, bubbleColor, bubbleTextColor, highlighted, isVisible, imagesReady, onReply, onReplyJump, onLongPress, onMeasured, onSwipeActive, onImagePress, dragActive, dragFingerY, hoveredAction, actionZones, onFireDragAction }: { message: ChatMessage; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string; linkEmoji?: string; bubbleColor: string; bubbleTextColor: string; highlighted?: boolean; isVisible?: boolean; imagesReady?: boolean; onReply: (m: ChatMessage) => void; onReplyJump?: (messageId?: string) => void; onLongPress: (m: ChatMessage) => void; onMeasured?: (id: string, x: number, y: number, w: number, h: number) => void; onSwipeActive: (active: boolean) => void; onImagePress: (images: string[], index: number) => void; dragActive: SharedValue<boolean>; dragFingerY: SharedValue<number>; hoveredAction: SharedValue<string>; actionZones: SharedValue<ActionZone[]>; onFireDragAction: (m: ChatMessage, action: string) => void }) {
+function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, linkEmoji, bubbleColors, bubbleOpacity, bubbleTextColor, highlighted, isVisible, imagesReady, onReply, onReplyJump, onLongPress, onMeasured, onSwipeActive, onImagePress, dragActive, dragFingerY, hoveredAction, actionZones, onFireDragAction }: { message: ChatMessage; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string; linkEmoji?: string; bubbleColors: string[]; bubbleOpacity: number; bubbleTextColor: string; highlighted?: boolean; isVisible?: boolean; imagesReady?: boolean; onReply: (m: ChatMessage) => void; onReplyJump?: (messageId?: string) => void; onLongPress: (m: ChatMessage) => void; onMeasured?: (id: string, x: number, y: number, w: number, h: number) => void; onSwipeActive: (active: boolean) => void; onImagePress: (images: string[], index: number) => void; dragActive: SharedValue<boolean>; dragFingerY: SharedValue<number>; hoveredAction: SharedValue<string>; actionZones: SharedValue<ActionZone[]>; onFireDragAction: (m: ChatMessage, action: string) => void }) {
   const theme = useTheme();
   const t = useT();
-  // Outgoing-bubble text tints derived from the (custom or theme) bubble
-  // color's contrast pick. White on a saturated/dark bubble, near-black on a
-  // light one — keeps text/timestamp/reply-preview readable for any swatch.
+  // Outgoing-bubble fill: solid (1 color) or gradient (2+), at the chosen
+  // opacity. A gradient renders as an absolutely-positioned LinearGradient
+  // behind the content (opt-in — solid/theme bubbles never mount one, so the
+  // default path's perf is unchanged). Text tints derive from the contrast pick.
+  const isGradient = isOwn && bubbleColors.length > 1;
+  const ownSolid = withOpacity(bubbleColors[0] || theme.colors.accent.primary, bubbleOpacity);
+  const gradFill = isGradient ? bubbleColors.map((c) => withOpacity(c, bubbleOpacity)) : null;
   const ownTextStrong = bubbleTextColor === '#FFFFFF' ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.85)';
   const ownTextDim = bubbleTextColor === '#FFFFFF' ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.6)';
   const ownTextFaint = bubbleTextColor === '#FFFFFF' ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.5)';
@@ -467,10 +471,20 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
             paddingHorizontal: 14,
             paddingVertical: 10,
             borderRadius: bubbleRadius,
-            backgroundColor: isOwn ? bubbleColor : theme.colors.background.tertiary,
+            backgroundColor: isOwn ? (isGradient ? 'transparent' : ownSolid) : theme.colors.background.tertiary,
             borderBottomRightRadius: isOwn ? 4 : bubbleRadius,
             borderBottomLeftRadius: isOwn ? bubbleRadius : 4,
+            overflow: isGradient ? 'hidden' : undefined,
           }}>
+            {isGradient && gradFill ? (
+              <LinearGradient
+                colors={gradFill as any}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={StyleSheet.absoluteFill}
+                pointerEvents="none"
+              />
+            ) : null}
             {message.replyToText || message.replyToImage || message.replyPixelIconId ? (
               <Pressable
                 onPress={() => onReplyJump?.(message.replyToId)}
@@ -594,7 +608,8 @@ const MemoMessageBubble = React.memo(MessageBubble, (prev, next) => {
     prev.bubbleRadius === next.bubbleRadius &&
     prev.fontFamily === next.fontFamily &&
     prev.linkEmoji === next.linkEmoji &&
-    prev.bubbleColor === next.bubbleColor &&
+    prev.bubbleColors.join(',') === next.bubbleColors.join(',') &&
+    prev.bubbleOpacity === next.bubbleOpacity &&
     prev.bubbleTextColor === next.bubbleTextColor &&
     prev.highlighted === next.highlighted &&
     prev.isVisible === next.isVisible &&
@@ -982,13 +997,17 @@ export default function ChatScreen() {
     return { ...DEFAULT_CHAT_SETTINGS, ...globalSettings, ...specificSettings };
   }, [globalSettings, specificSettings]);
 
-  // Outgoing-bubble color: a user-chosen swatch (app-wide) or the theme accent
-  // when unset (default). The text color is contrast-picked so any swatch
-  // stays readable. Both are passed down as stable props so MemoMessageBubble
-  // re-renders only when the color actually changes.
-  const customBubbleColor = useSettingsStore((s) => s.chatBubbleColor);
-  const bubbleColor = customBubbleColor || theme.colors.accent.primary;
-  const bubbleTextColor = customBubbleColor ? readableTextOn(customBubbleColor) : '#FFFFFF';
+  // Outgoing-message style: a user-chosen solid/gradient + opacity (app-wide)
+  // or the theme accent when unset (default). Memoized into stable arrays so
+  // MemoMessageBubble re-renders only when the style actually changes.
+  const chatBubble = useSettingsStore((s) => s.chatBubble);
+  const bubbleColors = useMemo<string[]>(
+    () => (chatBubble && chatBubble.colors.length > 0 ? chatBubble.colors : [theme.colors.accent.primary]),
+    [chatBubble, theme.colors.accent.primary],
+  );
+  const bubbleOpacity = chatBubble?.opacity ?? 1;
+  const bubbleTextColor = chatBubble && chatBubble.colors.length > 0 ? readableTextOn(chatBubble.colors) : '#FFFFFF';
+  const bubbleColorsKey = bubbleColors.join(',');
 
   const bgColor = theme.colors.background.primary;
   const bgTransparent = bgColor + '00';
@@ -2503,7 +2522,8 @@ export default function ChatScreen() {
         bubbleRadius={chatSettings.bubbleRadius}
         fontFamily={chatSettings.fontFamily}
         linkEmoji={chatSettings.linkEmoji}
-        bubbleColor={bubbleColor}
+        bubbleColors={bubbleColors}
+        bubbleOpacity={bubbleOpacity}
         bubbleTextColor={bubbleTextColor}
         highlighted={item.id === activeMatchId || item.id === jumpHighlightId}
         imagesReady={imagesReady}
@@ -2520,7 +2540,7 @@ export default function ChatScreen() {
         onFireDragAction={fireDragAction}
       />
     );
-  }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, chatSettings.linkEmoji, bubbleColor, bubbleTextColor, startReply, scrollToMessageId, handleSwipeActive, openImageViewer, parseMessage, activeMatchId, jumpHighlightId, onMessageLongPress, currentUserId, dragActiveSV, dragFingerYSV, hoveredActionSV, actionZonesSV, fireDragAction, visTracker, imagesReady]);
+  }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, chatSettings.linkEmoji, bubbleColorsKey, bubbleColors, bubbleOpacity, bubbleTextColor, startReply, scrollToMessageId, handleSwipeActive, openImageViewer, parseMessage, activeMatchId, jumpHighlightId, onMessageLongPress, currentUserId, dragActiveSV, dragFingerYSV, hoveredActionSV, actionZonesSV, fireDragAction, visTracker, imagesReady]);
 
   // Stable callback refs for FlatList — without these, every parent render
   // hands FlatList fresh function identities and breaks its row recycling
@@ -3032,8 +3052,8 @@ export default function ChatScreen() {
             visible={!!actionMessage}
             message={actionMessage}
             isOwn={menuIsOwn}
-            bubbleColor={menuIsOwn ? theme.colors.accent.primary : theme.colors.background.tertiary}
-            bubbleTextColor={menuIsOwn ? '#FFFFFF' : theme.colors.text.primary}
+            bubbleColor={menuIsOwn ? withOpacity(bubbleColors[0], bubbleOpacity) : theme.colors.background.tertiary}
+            bubbleTextColor={menuIsOwn ? bubbleTextColor : theme.colors.text.primary}
             bubbleRadius={chatSettings.bubbleRadius}
             linkEmoji={chatSettings.linkEmoji}
             dragActive={dragActiveSV}

@@ -64,10 +64,10 @@ interface SettingsState {
   // re-registration on next launch until turned back on. Local in-app badges
   // are unaffected — this only governs off-screen Expo/APNs/FCM pushes.
   pushNotificationsEnabled: boolean;
-  // Custom outgoing chat-bubble color (hex string) OR null to follow the
-  // current theme accent (default). Applies app-wide to every chat. The chat
-  // screen picks a contrast-aware text color so any swatch stays readable.
-  chatBubbleColor: string | null;
+  // Custom outgoing message color/style: { colors:[c] solid | [c1,c2] gradient,
+  // opacity } OR null to follow the theme accent (default). App-wide. The chat
+  // screen picks a contrast-aware text color so any style stays readable.
+  chatBubble: import('../constants/bubbleColors').BubbleStyle | null;
   setHaptic: (enabled: boolean) => void;
   setInAppBrowser: (enabled: boolean) => void;
   setBrowserWidgetPosition: (position: 'top' | 'bottom') => void;
@@ -85,7 +85,7 @@ interface SettingsState {
   clearProfileTabCustom: (key: string) => void;
   setLiquidGlassEnabled: (enabled: boolean) => void;
   setPushNotificationsEnabled: (enabled: boolean) => void;
-  setChatBubbleColor: (color: string | null) => void;
+  setChatBubble: (style: import('../constants/bubbleColors').BubbleStyle | null) => void;
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -132,7 +132,7 @@ export const useSettingsStore = create<SettingsState>()(
       // where the app registers a push token after login.
       pushNotificationsEnabled: true,
       // Null = follow the theme accent (current behaviour).
-      chatBubbleColor: null,
+      chatBubble: null,
       setHaptic: (hapticEnabled) => set({ hapticEnabled }),
       setInAppBrowser: (useInAppBrowser) => set({ useInAppBrowser }),
       setBrowserWidgetPosition: (browserWidgetPosition) => set({ browserWidgetPosition }),
@@ -180,7 +180,7 @@ export const useSettingsStore = create<SettingsState>()(
         }),
       setLiquidGlassEnabled: (liquidGlassEnabled) => set({ liquidGlassEnabled }),
       setPushNotificationsEnabled: (pushNotificationsEnabled) => set({ pushNotificationsEnabled }),
-      setChatBubbleColor: (chatBubbleColor) => set({ chatBubbleColor }),
+      setChatBubble: (chatBubble) => set({ chatBubble }),
     }),
     {
       name: 'app-settings',

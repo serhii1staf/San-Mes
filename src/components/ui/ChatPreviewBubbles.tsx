@@ -20,6 +20,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../theme';
 import { useT } from '../../i18n/store';
 import { ChatBackgroundLayer } from './ChatBackgroundLayer';
+import { withOpacity } from '../../constants/bubbleColors';
 
 export interface ChatPreviewBubblesProps {
   /** Outer height of the preview surface. Parents typically use 60% of screen height. */
@@ -36,8 +37,10 @@ export interface ChatPreviewBubblesProps {
   topPadding: number;
   /** When true, RN scales text per the OS accessibility setting. Default false (faithful preview). */
   allowFontScaling?: boolean;
-  /** Outgoing-bubble color. Defaults to the theme accent (current behaviour). */
-  bubbleColor?: string;
+  /** Outgoing-bubble colors: 1 = solid, 2+ = gradient. Defaults to theme accent. */
+  bubbleColors?: string[];
+  /** Outgoing-bubble opacity 0–1. Default 1. */
+  bubbleOpacity?: number;
   /** Outgoing-bubble text color. Defaults to white. */
   bubbleTextColor?: string;
 }
@@ -54,7 +57,8 @@ export function ChatPreviewBubbles({
   backgroundImage,
   topPadding,
   allowFontScaling = false,
-  bubbleColor,
+  bubbleColors,
+  bubbleOpacity = 1,
   bubbleTextColor,
 }: ChatPreviewBubblesProps) {
   const theme = useTheme();
@@ -62,8 +66,10 @@ export function ChatPreviewBubbles({
 
   const bgPrimary = theme.colors.background.primary;
   const accent = theme.colors.accent.primary;
-  // Outgoing bubble color + its text color (defaults preserve the old look).
-  const outBubble = bubbleColor || accent;
+  // Outgoing bubble fill (solid or gradient) + its text color. Defaults
+  // preserve the old solid-accent look.
+  const fillColors = (bubbleColors && bubbleColors.length > 0 ? bubbleColors : [accent]).map((c) => withOpacity(c, bubbleOpacity));
+  const isGradient = fillColors.length > 1;
   const outText = bubbleTextColor || '#FFFFFF';
   const outTextFaint = outText === '#FFFFFF' ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.55)';
   const textPrimary = theme.colors.text.primary;
@@ -160,12 +166,22 @@ export function ChatPreviewBubbles({
             style={[
               styles.bubble,
               {
-                backgroundColor: outBubble,
+                backgroundColor: isGradient ? 'transparent' : fillColors[0],
                 borderRadius: bubbleRadius,
                 borderBottomRightRadius: TAIL_CORNER,
+                overflow: isGradient ? 'hidden' : undefined,
               },
             ]}
           >
+            {isGradient ? (
+              <LinearGradient
+                colors={fillColors as any}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={StyleSheet.absoluteFill}
+                pointerEvents="none"
+              />
+            ) : null}
             <RNText
               allowFontScaling={allowFontScaling}
               style={[
