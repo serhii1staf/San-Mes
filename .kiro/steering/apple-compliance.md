@@ -21,8 +21,9 @@ Currently declared:
 - `NSPhotoLibraryUsageDescription` — gallery picker (posts, comments, chat, profile, banner, chat background)
 - `NSPhotoLibraryAddUsageDescription` — save post screenshots to library
 - `NSCameraUsageDescription` — camera capture for posts
-- `NSMotionUsageDescription` — gyroscope/accelerometer via `expo-sensors`, reserved for future parallax/motion UI effects. NOTE: the dependency is installed but NOT yet imported in runtime JS; the string is pre-declared so the NEXT native build is App-Store-ready the moment we start using motion. Do not ship a motion feature over OTA to a build that predates the sensors module.
 - `UIBackgroundModes: ["audio"]` — required because `expo-av` plays music with `staysActiveInBackground: true`
+
+> NOTE: `NSMotionUsageDescription` + the `expo-sensors` dependency were REMOVED (build 82 surfaced an unwanted "Motion & Fitness" prompt for a social app with no motion feature — App Review guideline 5.1.1 risk). Do NOT re-add `expo-sensors` / motion permissions unless an actual parallax/motion feature ships, and only via a NEW native build (never OTA).
 
 If we later add features that need any of the following, add the matching key BEFORE merging:
 - Microphone recording → `NSMicrophoneUsageDescription`

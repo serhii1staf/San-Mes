@@ -54,7 +54,6 @@
     "expo-paste-input": "^0.2.2",
     "expo-router": "~6.0.24",
     "expo-screen-capture": "~8.0.9",
-    "expo-sensors": "~15.0.8",
     "expo-sharing": "~14.0.8",
     "expo-splash-screen": "~31.0.13",
     "expo-status-bar": "~3.0.9",

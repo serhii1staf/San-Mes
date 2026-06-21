@@ -25,8 +25,7 @@
         ],
         "NSPhotoLibraryUsageDescription": "San uses your photo library so you can attach images to posts, comments, and chat messages, and so you can set a profile picture, banner, or chat background.",
         "NSPhotoLibraryAddUsageDescription": "San saves screenshots of posts to your photo library when you tap Save.",
-        "NSCameraUsageDescription": "San uses the camera so you can take a photo to attach to a post.",
-        "NSMotionUsageDescription": "San uses motion data from the gyroscope and accelerometer to power subtle parallax and motion effects in the interface."
+        "NSCameraUsageDescription": "San uses the camera so you can take a photo to attach to a post."
       },
       "entitlements": {
         "com.apple.security.application-groups": [
