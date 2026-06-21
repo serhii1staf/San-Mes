@@ -40,6 +40,12 @@ interface ChatSettingsStore {
   archived: string[]; // archived chat IDs
   blocked: string[]; // blocked chat IDs
   deleted: string[]; // deleted chat IDs
+  // Last time the user OPENED each chat (ISO string), keyed by chatId. The
+  // messages list sorts by max(lastMessageAt, openedAt) so opening a chat
+  // floats it to the top "по активности" even if no new message arrived. Kept
+  // SEPARATE from the conversation's lastMessageAt (which a sync overwrites
+  // with the real last-message time) so the open-bump survives reconciliation.
+  openedAt: Record<string, string>;
   getSettings: (chatId: string) => ChatSettings;
   updateSettings: (chatId: string, updates: Partial<ChatSettings>) => void;
   /**
@@ -57,6 +63,8 @@ interface ChatSettingsStore {
   deleteChat: (chatId: string) => void;
   restoreChat: (chatId: string) => void;
   isDeleted: (chatId: string) => boolean;
+  /** Stamp `chatId` as opened right now so it floats to the top of the list. */
+  markChatOpened: (chatId: string) => void;
 }
 
 const DEFAULT_SETTINGS: ChatSettings = { fontSize: 15, fontFamily: 'system', bubbleRadius: 18, scrollToBottomButton: true };
@@ -71,6 +79,7 @@ export const useChatSettingsStore = create<ChatSettingsStore>()(
       archived: [],
       blocked: [],
       deleted: [],
+      openedAt: {},
       getSettings: (chatId) => {
         const state = get();
         const global = state.settings[GLOBAL_CHAT_SETTINGS_KEY];
@@ -98,6 +107,7 @@ export const useChatSettingsStore = create<ChatSettingsStore>()(
       deleteChat: (chatId) => set((s) => ({ deleted: [...s.deleted.filter(id => id !== chatId), chatId], archived: s.archived.filter(id => id !== chatId), blocked: s.blocked.filter(id => id !== chatId) })),
       restoreChat: (chatId) => set((s) => ({ deleted: s.deleted.filter(id => id !== chatId) })),
       isDeleted: (chatId) => get().deleted.includes(chatId),
+      markChatOpened: (chatId) => set((s) => ({ openedAt: { ...s.openedAt, [chatId]: new Date().toISOString() } })),
     }),
     { name: 'chat-settings', storage: createJSONStorage(() => storage) }
   )

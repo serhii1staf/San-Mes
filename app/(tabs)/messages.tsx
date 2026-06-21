@@ -439,6 +439,9 @@ export default function MessagesScreen() {
   const archived = useChatSettingsStore((s) => s.archived);
   const blocked = useChatSettingsStore((s) => s.blocked);
   const deleted = useChatSettingsStore((s) => s.deleted);
+  // Per-chat "last opened" timestamps — folded into the recency sort so a chat
+  // the user just opened floats to the top even with no new message.
+  const openedAt = useChatSettingsStore((s) => s.openedAt);
   // User-level blocked ids (post-menu / profile-menu block flow). The
   // Blocked tab merges synthetic rows for these into the existing
   // chat-level blocked list so both kinds of blocks live in one place.
@@ -576,11 +579,17 @@ export default function MessagesScreen() {
 
   // Filtering: each chat belongs to exactly one bucket. The "apps" tab shows no chats.
   // Recency comparator — newest activity first. `lastMessageAt` is an ISO
-  // string, so a lexicographic compare is also chronological. Chats with no
-  // timestamp sort last. This is what makes a chat rise to the top the moment
-  // a message is sent/received in it ("по активности").
+  // string, so a lexicographic compare is also chronological. Activity is the
+  // LATER of the conversation's last message and the last time the user opened
+  // it (openedAt), so opening a chat floats it to the top "по активности" even
+  // when no new message arrived. Items with neither sort last.
+  const activityOf = (c: Conversation) => {
+    const opened = openedAt[c.id] || '';
+    const last = c.lastMessageAt || '';
+    return opened > last ? opened : last;
+  };
   const byRecency = (a: Conversation, b: Conversation) =>
-    (b.lastMessageAt || '').localeCompare(a.lastMessageAt || '');
+    activityOf(b).localeCompare(activityOf(a));
   const filtered = useMemo(() => {
     if (activeTab === 'apps') return [];
     if (searchQuery) {
@@ -637,7 +646,7 @@ export default function MessagesScreen() {
     if (activeTab === 'deleted') return conversations.filter(c => deleted.includes(c.id));
     // 'chats' — exclude archived, blocked (chat or user), deleted.
     return conversations.filter(c => !archived.includes(c.id) && !blocked.includes(c.id) && !deleted.includes(c.id) && !blockedUserIds.includes(c.participantId)).sort(byRecency);
-  }, [conversations, activeTab, searchQuery, archived, blocked, deleted, blockedUserIds, t]);
+  }, [conversations, activeTab, searchQuery, archived, blocked, deleted, blockedUserIds, openedAt, t]);
 
   const containerStyle: ViewStyle = {
     flex: 1,

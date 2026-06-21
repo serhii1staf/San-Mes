@@ -674,6 +674,17 @@ export default function ChatScreen() {
   // persistence, realtime channel + publishes), while `participantId` (the
   // OTHER user's id) stays separate for display + notification routing.
   const [conversationId, setConversationId] = useState<string>(() => id || '');
+  // Float this chat to the top of the messages list when opened. We stamp the
+  // open time in the persisted chat-settings store (kept separate from the
+  // conversation's lastMessageAt so a sync can't clobber it); the messages
+  // list sorts by max(lastMessageAt, openedAt). Stamps on mount (route id) and
+  // again once the canonical conversationId resolves (profile-entry path), so
+  // whichever id the list row uses gets bumped.
+  useEffect(() => {
+    if (conversationId) {
+      try { useChatSettingsStore.getState().markChatOpened(conversationId); } catch {}
+    }
+  }, [conversationId]);
   // Mount-time marker — captures how long the chat screen took to commit
   // its first render so the perf-monitor panel can attribute open-the-chat
   // freezes. Reads `Date.now()` once at first render via useRef so the
