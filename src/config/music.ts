@@ -6,4 +6,4 @@
 // scraping, no 30-second cap). Register a free app to get a Client ID and
 // paste it below; while empty, the Jamendo source is simply skipped and search
 // falls back to Audius / SoundCloud / iTunes exactly as before.
-export const JAMENDO_CLIENT_ID = '';
+export const JAMENDO_CLIENT_ID = '1764b3f9';
