@@ -212,7 +212,7 @@ export function AuthorInfoModal({ visible, track, onClose }: AuthorInfoModalProp
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 4, marginBottom: 10 }}>
                   <Feather name="music" size={11} color={theme.colors.text.tertiary} />
                   <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 10 }}>
-                    {t('author_info.source_label', undefined, { host: track.sourceHost.includes('soundcloud') ? 'SoundCloud' : track.sourceHost.includes('itunes') ? 'iTunes' : track.sourceHost.includes('audius') ? 'Audius' : track.sourceHost })}
+                    {t('author_info.source_label', undefined, { host: track.sourceHost.includes('soundcloud') ? 'SoundCloud' : track.sourceHost.includes('itunes') ? 'iTunes' : track.sourceHost.includes('audius') ? 'Audius' : track.sourceHost.includes('jamendo') ? 'Jamendo' : track.sourceHost })}
                   </Text>
                 </View>
 

@@ -24,6 +24,7 @@
 // cache so re-typing a song name doesn't re-hit the network.
 
 import { kvGetJSONSync, kvSetJSON } from './kvStore';
+import { JAMENDO_CLIENT_ID } from '../config/music';
 
 const APP_NAME = 'San-Mes';
 
@@ -203,6 +204,45 @@ async function itunesSearch(query: string, limit: number): Promise<Track[]> {
   return out;
 }
 
+// ─── Jamendo ─────────────────────────────────────────────────────────────────
+// Jamendo (https://www.jamendo.com) is a LEGAL, free developer API serving
+// FULL-LENGTH Creative-Commons / artist-licensed tracks — same licensing
+// posture as Audius, App-Store-safe under §3.3.4.A.i. The `audio` field on each
+// track is a direct, full-length progressive MP3 that expo-av plays natively.
+// Requires a free Client ID (src/config/music.ts); skipped entirely when unset.
+function mapJamendoTrack(t: any): Track | null {
+  if (!t?.id || !t?.name || !t?.audio) return null;
+  const art: string = t.image || t.album_image || '';
+  return {
+    id: `jamendo-${t.id}`,
+    title: t.name,
+    artist: t.artist_name || '',
+    artwork: art,
+    streamUrl: t.audio, // full-length progressive MP3
+    durationMs: (Number(t.duration) || 0) * 1000,
+    sourceHost: 'api.jamendo.com',
+    isPreview: false,
+  };
+}
+
+async function jamendoSearch(query: string, limit: number): Promise<Track[]> {
+  if (!JAMENDO_CLIENT_ID) return [];
+  // `namesearch` matches track/artist names; `audioformat=mp32` gives a
+  // higher-bitrate full stream. `imagesize` keeps artwork reasonable.
+  const url =
+    `https://api.jamendo.com/v3.0/tracks/?client_id=${JAMENDO_CLIENT_ID}` +
+    `&format=json&limit=${limit}&audioformat=mp32&imagesize=300` +
+    `&namesearch=${encodeURIComponent(query)}`;
+  const json = await fetchJson(url, 6000);
+  const results: any[] = Array.isArray(json?.results) ? json.results : [];
+  const out: Track[] = [];
+  for (const raw of results) {
+    const mapped = mapJamendoTrack(raw);
+    if (mapped) out.push(mapped);
+  }
+  return out;
+}
+
 // ─── SoundCloud ──────────────────────────────────────────────────────────────
 // SoundCloud doesn't expose an OAuth-free official API any more, but every
 // soundcloud.com page bootstraps a public Web client_id in one of the JS
@@ -365,12 +405,13 @@ function writeCache(query: string, tracks: Track[]): void {
 }
 
 /**
- * Search across Audius (full-length) + iTunes (30s previews).
+ * Search across Audius + Jamendo + SoundCloud (full-length) + iTunes (30s).
  *
  * - Cache hit (≤1h old): return immediately, zero network.
- * - Otherwise: query all Audius hosts in parallel + transliterated variant
- *   if cyrillic + iTunes if pool still thin. Merge, dedupe by id and by
- *   (title, artist), rank by relevance, prefer full-length on ties.
+ * - Otherwise: query all Audius hosts + Jamendo + SoundCloud in parallel
+ *   (+ transliterated variant if cyrillic), then iTunes only if the pool is
+ *   still thin. Merge, dedupe by id and by (title, artist), rank by relevance,
+ *   prefer full-length on ties.
  *
  * Offline / failing hosts simply return []; the function never throws.
  */
@@ -401,15 +442,23 @@ export async function searchTracks(query: string, limit = 20): Promise<Track[]> 
   // doesn't add latency on top of Audius.
   const scJobs: Promise<Track[]>[] = queries.map((v) => soundcloudSearch(v, Math.min(limit, 10)));
 
-  const [audiusResults, scResults] = await Promise.all([
+  // Jamendo (legal full-length CC catalogue) in parallel too — only fires when
+  // a client id is configured, otherwise resolves to [] instantly.
+  const jamendoJobs: Promise<Track[]>[] = queries.map((v) => jamendoSearch(v, Math.min(limit, 15)));
+
+  const [audiusResults, scResults, jamendoResults] = await Promise.all([
     Promise.all(audiusJobs),
     Promise.all(scJobs),
+    Promise.all(jamendoJobs),
   ]);
   for (const list of audiusResults) {
     for (const t of list) if (!byId.has(t.id)) byId.set(t.id, t);
     if (byId.size >= POOL_TARGET) break;
   }
   for (const list of scResults) {
+    for (const t of list) if (!byId.has(t.id)) byId.set(t.id, t);
+  }
+  for (const list of jamendoResults) {
     for (const t of list) if (!byId.has(t.id)) byId.set(t.id, t);
   }
 
