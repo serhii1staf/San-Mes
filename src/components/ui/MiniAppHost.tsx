@@ -1,11 +1,11 @@
 import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react';
-import { View, Pressable, ActivityIndicator, Share, Linking, BackHandler, Animated, Dimensions, Easing, StyleSheet } from 'react-native';
+import { View, Pressable, ActivityIndicator, Share, Linking, BackHandler, Animated, Dimensions, Easing } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
 import { Text } from './Text';
-import { useLiquidGlassActive, GlassBg } from './LiquidGlass';
+import { useLiquidGlassActive, NativeGlassView } from './LiquidGlass';
 import { SlideUpSheet } from './SlideUpSheet';
 import { useMiniAppStore } from '../../store/miniAppStore';
 import { useBrowserStore } from '../../store/browserStore';
@@ -98,14 +98,6 @@ export function MiniAppHost() {
   // fading it out (opacity → 0), both driven by the SAME native-driver value
   // below, so there is no JS-side style commit at the end of the slide.
   const slideY = useRef(new Animated.Value(SCREEN_H)).current;
-  // Opacity is derived from the slide position so it reaches 0 only once the
-  // overlay is fully off-screen (the last pixel). This keeps the slide itself
-  // looking identical (fully opaque the whole visible travel) while guaranteeing
-  // the parked overlay is invisible — defense-in-depth against any subpixel /
-  // compositor quirk on weak Android devices, with zero extra JS commits.
-  const overlayOpacity = useRef(
-    slideY.interpolate({ inputRange: [0, SCREEN_H - 1, SCREEN_H], outputRange: [1, 1, 0], extrapolate: 'clamp' }),
-  ).current;
 
   useEffect(() => {
     if (mode === 'full') {
@@ -218,20 +210,19 @@ export function MiniAppHost() {
 
   return (
     <>
-      {/* WebView overlay — kept mounted across minimize. Its zIndex/elevation
-          and background are STABLE for the whole session: it is parked purely
-          by sliding off-screen (translateY) + fading out (opacity), so there
-          is never a zIndex reorder repaint. While minimized it sits off-screen
-          at opacity 0 with pointerEvents 'none', so the app below is fully
-          visible and interactive and the page state stays alive (reload-free
-          restore). */}
+      {/* WebView overlay — kept mounted across minimize. zIndex + background
+          are STABLE for the whole session (no zIndex flip → no repaint flash),
+          and it is parked purely by sliding fully off-screen via translateY.
+          IMPORTANT: do NOT put an `opacity` on this container — a parent alpha
+          breaks the native liquid-glass (UIVisualEffectView) on the overlay
+          buttons (the effect silently stops rendering). Off-screen translateY
+          alone keeps the parked overlay invisible. */}
       <Animated.View
         pointerEvents={full ? 'auto' : 'none'}
         style={{
           position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
           zIndex: 9999,
           backgroundColor: '#000',
-          opacity: overlayOpacity,
           transform: [{ translateY: slideY }],
         }}
       >
@@ -300,23 +291,37 @@ export function MiniAppHost() {
                 pattern. Putting content INSIDE a GlassView made the glass
                 collapse/disappear (and warp content). A dark tint keeps the
                 glass visible over the WebView, which the effect can't sample. */}
-            <Pressable
-              onPress={() => { triggerHaptic('light'); useMiniAppStore.getState().minimize(); }}
-              style={{ height: 28, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingHorizontal: 10, borderRadius: 14, overflow: 'hidden', backgroundColor: 'rgba(0,0,0,0.42)' }}
-            >
-              {glassActive
-                ? <GlassBg borderRadius={14} glassStyle="regular" colorScheme="dark" tintColor="rgba(20,20,20,0.45)" />
-                : <BlurView intensity={80} tint="dark" style={StyleSheet.absoluteFill} />}
-              <Feather name="chevron-down" size={12} color="#FFFFFF" />
-              <Text style={{ fontSize: 10, color: '#FFFFFF', fontWeight: '500' }}>{t('mini_app.collapse')}</Text>
+            {/* Collapse / actions pills. Restored to the ORIGINAL structure
+                (content INSIDE NativeGlassView) — this is what rendered real
+                liquid glass before. The earlier GlassBg rewrite + the parent
+                `opacity` (now removed) were what killed the effect. */}
+            <Pressable onPress={() => { triggerHaptic('light'); useMiniAppStore.getState().minimize(); }} style={glassActive ? { borderRadius: 14 } : { borderRadius: 14, overflow: 'hidden' }}>
+              {glassActive ? (
+                <NativeGlassView glassStyle="regular" isInteractive colorScheme="dark" style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, borderRadius: 14 }}>
+                  <Feather name="chevron-down" size={12} color="#FFFFFF" />
+                  <Text style={{ fontSize: 10, color: '#FFFFFF', fontWeight: '500' }}>{t('mini_app.collapse')}</Text>
+                </NativeGlassView>
+              ) : (
+                <BlurView intensity={80} tint="dark" style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10 }}>
+                  <Feather name="chevron-down" size={12} color="#FFFFFF" />
+                  <Text style={{ fontSize: 10, color: '#FFFFFF', fontWeight: '500' }}>{t('mini_app.collapse')}</Text>
+                </BlurView>
+              )}
             </Pressable>
-            <View style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 12, borderRadius: 14, overflow: 'hidden', backgroundColor: 'rgba(0,0,0,0.42)' }}>
-              {glassActive
-                ? <GlassBg borderRadius={14} glassStyle="regular" colorScheme="dark" interactive={false} tintColor="rgba(20,20,20,0.45)" />
-                : <BlurView intensity={80} tint="dark" style={StyleSheet.absoluteFill} />}
-              {canShare ? <Pressable onPress={handleShare} hitSlop={6}><Feather name="share" size={13} color="#FFFFFF" /></Pressable> : null}
-              <Pressable onPress={() => { triggerHaptic('light'); setReportOpen(true); }} hitSlop={6}><Feather name="flag" size={13} color="#FFFFFF" /></Pressable>
-              <Pressable onPress={requestClose} hitSlop={6}><Feather name="x" size={14} color="#FFFFFF" /></Pressable>
+            <View style={glassActive ? { borderRadius: 14 } : { borderRadius: 14, overflow: 'hidden' }}>
+              {glassActive ? (
+                <NativeGlassView glassStyle="regular" colorScheme="dark" style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 12, borderRadius: 14 }}>
+                  {canShare ? <Pressable onPress={handleShare} hitSlop={6}><Feather name="share" size={13} color="#FFFFFF" /></Pressable> : null}
+                  <Pressable onPress={() => { triggerHaptic('light'); setReportOpen(true); }} hitSlop={6}><Feather name="flag" size={13} color="#FFFFFF" /></Pressable>
+                  <Pressable onPress={requestClose} hitSlop={6}><Feather name="x" size={14} color="#FFFFFF" /></Pressable>
+                </NativeGlassView>
+              ) : (
+                <BlurView intensity={80} tint="dark" style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 12 }}>
+                  {canShare ? <Pressable onPress={handleShare} hitSlop={6}><Feather name="share" size={13} color="#FFFFFF" /></Pressable> : null}
+                  <Pressable onPress={() => { triggerHaptic('light'); setReportOpen(true); }} hitSlop={6}><Feather name="flag" size={13} color="#FFFFFF" /></Pressable>
+                  <Pressable onPress={requestClose} hitSlop={6}><Feather name="x" size={14} color="#FFFFFF" /></Pressable>
+                </BlurView>
+              )}
             </View>
           </View>
         ) : null}
