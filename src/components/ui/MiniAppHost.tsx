@@ -1,11 +1,11 @@
 import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react';
-import { View, Pressable, ActivityIndicator, Share, Linking, BackHandler, Animated, Dimensions, Easing } from 'react-native';
+import { View, Pressable, ActivityIndicator, Share, Linking, BackHandler, Animated, Dimensions, Easing, StyleSheet } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
 import { Text } from './Text';
-import { useLiquidGlassActive, NativeGlassView } from './LiquidGlass';
+import { useLiquidGlassActive, GlassBg } from './LiquidGlass';
 import { SlideUpSheet } from './SlideUpSheet';
 import { useMiniAppStore } from '../../store/miniAppStore';
 import { useBrowserStore } from '../../store/browserStore';
@@ -295,33 +295,28 @@ export function MiniAppHost() {
 
         {full ? (
           <View style={{ position: 'absolute', top: insets.top + 8, left: 16, right: 16, zIndex: 60, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Pressable onPress={() => { triggerHaptic('light'); useMiniAppStore.getState().minimize(); }} style={glassActive ? { borderRadius: 14 } : { borderRadius: 14, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)' }}>
-              {glassActive ? (
-                <NativeGlassView glassStyle="regular" isInteractive colorScheme="dark" style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, borderRadius: 14 }}>
-                  <Feather name="chevron-down" size={12} color="#FFFFFF" />
-                  <Text style={{ fontSize: 10, color: '#FFFFFF', fontWeight: '500' }}>{t('mini_app.collapse')}</Text>
-                </NativeGlassView>
-              ) : (
-                <BlurView intensity={80} tint="dark" style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10 }}>
-                  <Feather name="chevron-down" size={12} color="#FFFFFF" />
-                  <Text style={{ fontSize: 10, color: '#FFFFFF', fontWeight: '500' }}>{t('mini_app.collapse')}</Text>
-                </BlurView>
-              )}
+            {/* Collapse pill. Glass is rendered as a BACKGROUND layer (GlassBg)
+                with the icon+label as SIBLINGS on top — the codebase's proven
+                pattern. Putting content INSIDE a GlassView made the glass
+                collapse/disappear (and warp content). A dark tint keeps the
+                glass visible over the WebView, which the effect can't sample. */}
+            <Pressable
+              onPress={() => { triggerHaptic('light'); useMiniAppStore.getState().minimize(); }}
+              style={{ height: 28, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingHorizontal: 10, borderRadius: 14, overflow: 'hidden' }}
+            >
+              {glassActive
+                ? <GlassBg borderRadius={14} glassStyle="regular" colorScheme="dark" tintColor="rgba(20,20,20,0.45)" />
+                : <BlurView intensity={80} tint="dark" style={StyleSheet.absoluteFill} />}
+              <Feather name="chevron-down" size={12} color="#FFFFFF" />
+              <Text style={{ fontSize: 10, color: '#FFFFFF', fontWeight: '500' }}>{t('mini_app.collapse')}</Text>
             </Pressable>
-            <View style={glassActive ? { borderRadius: 14 } : { borderRadius: 14, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)' }}>
-              {glassActive ? (
-                <NativeGlassView glassStyle="regular" colorScheme="dark" style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 12, borderRadius: 14 }}>
-                  {canShare ? <Pressable onPress={handleShare} hitSlop={6}><Feather name="share" size={13} color="#FFFFFF" /></Pressable> : null}
-                  <Pressable onPress={() => { triggerHaptic('light'); setReportOpen(true); }} hitSlop={6}><Feather name="flag" size={13} color="#FFFFFF" /></Pressable>
-                  <Pressable onPress={requestClose} hitSlop={6}><Feather name="x" size={14} color="#FFFFFF" /></Pressable>
-                </NativeGlassView>
-              ) : (
-                <BlurView intensity={80} tint="dark" style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 12 }}>
-                  {canShare ? <Pressable onPress={handleShare} hitSlop={6}><Feather name="share" size={13} color="#FFFFFF" /></Pressable> : null}
-                  <Pressable onPress={() => { triggerHaptic('light'); setReportOpen(true); }} hitSlop={6}><Feather name="flag" size={13} color="#FFFFFF" /></Pressable>
-                  <Pressable onPress={requestClose} hitSlop={6}><Feather name="x" size={14} color="#FFFFFF" /></Pressable>
-                </BlurView>
-              )}
+            <View style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 12, borderRadius: 14, overflow: 'hidden' }}>
+              {glassActive
+                ? <GlassBg borderRadius={14} glassStyle="regular" colorScheme="dark" interactive={false} tintColor="rgba(20,20,20,0.45)" />
+                : <BlurView intensity={80} tint="dark" style={StyleSheet.absoluteFill} />}
+              {canShare ? <Pressable onPress={handleShare} hitSlop={6}><Feather name="share" size={13} color="#FFFFFF" /></Pressable> : null}
+              <Pressable onPress={() => { triggerHaptic('light'); setReportOpen(true); }} hitSlop={6}><Feather name="flag" size={13} color="#FFFFFF" /></Pressable>
+              <Pressable onPress={requestClose} hitSlop={6}><Feather name="x" size={14} color="#FFFFFF" /></Pressable>
             </View>
           </View>
         ) : null}
