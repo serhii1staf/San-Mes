@@ -11,6 +11,7 @@ import { BrowserMiniBar } from '../src/components/ui/BrowserMiniBar';
 import { BrowserBottomBand } from '../src/components/ui/BrowserBottomBand';
 import { MusicBottomIndicator } from '../src/components/ui/MusicBottomIndicator';
 import { MusicFullPlayer } from '../src/components/ui/MusicFullPlayer';
+import { MiniAppHost } from '../src/components/ui/MiniAppHost';
 import { Toast } from '../src/components/ui/Toast';
 import { initRateLimits } from '../src/services/rateLimit';
 import { cacheCleanup } from '../src/services/cacheManager';
@@ -369,6 +370,10 @@ function RootLayout() {
             stays visible on every screen. Defaults to ON; users can hide it
             from the panel that opens when they tap the bubble. */}
         <PerfMonitorBubble />
+        {/* Persistent mini-app host — owns the mini-app WebView so collapsing
+            then reopening resumes the same page (no reload). Renders only when
+            a mini-app is open/minimized; nothing otherwise. */}
+        <MiniAppHost />
         {/* App-wide realtime bridge — opens ONE Ably connection for the
             logged-in user, subscribes to the personal notifications
             channel so new conversations / messages show up the instant
@@ -413,7 +418,7 @@ function AppStack() {
       <Stack.Screen name="profile/[id]" />
       <Stack.Screen name="comments/[id]" />
       <Stack.Screen name="browser" options={{ presentation: 'modal', headerShown: false, animation: 'slide_from_bottom' }} />
-      <Stack.Screen name="mini-app" options={{ presentation: 'fullScreenModal', headerShown: false, animation: 'slide_from_bottom' }} />
+      <Stack.Screen name="mini-app" options={{ headerShown: false, animation: 'none' }} />
       <Stack.Screen name="mini/[id]" options={{ headerShown: false, animation: 'fade' }} />
       <Stack.Screen name="m/[short]" options={{ headerShown: false, animation: 'fade' }} />
       <Stack.Screen name="notifications" />
