@@ -8,6 +8,7 @@ import { useTheme } from '../../theme';
 import { Text } from './Text';
 import { CachedImage } from './CachedImage';
 import { useBrowserStore } from '../../store/browserStore';
+import { useMiniAppStore } from '../../store/miniAppStore';
 import { useSettingsStore } from '../../store/settingsStore';
 import { useT } from '../../i18n/store';
 import { triggerHaptic } from '../../utils/haptics';
@@ -94,10 +95,12 @@ export function BrowserMiniBar() {
   const handleOpen = () => {
     const state = useBrowserStore.getState();
     if (state.isMiniApp) {
-      router.push({ pathname: '/mini-app', params: { url: state.minimizedUrl || '', name: state.minimizedDomain || '', emoji: state.minimizedEmoji || '' } });
-    } else {
-      router.push({ pathname: '/browser', params: { url: encodeURIComponent(state.minimizedUrl || '') } });
+      // Restore the LIVE persistent mini-app (no reload) instead of pushing a
+      // fresh /mini-app route. The host clears browserStore as it goes full.
+      useMiniAppStore.getState().restore();
+      return;
     }
+    router.push({ pathname: '/browser', params: { url: encodeURIComponent(state.minimizedUrl || '') } });
     clearMinimized();
   };
 

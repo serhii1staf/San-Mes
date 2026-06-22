@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react';
-import { View, Pressable, ActivityIndicator, Share, Linking, BackHandler, Text as RNText } from 'react-native';
+import { View, Pressable, ActivityIndicator, Share, Linking, BackHandler, Animated, Dimensions, Easing } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -8,12 +8,15 @@ import { Text } from './Text';
 import { useLiquidGlassActive, NativeGlassView } from './LiquidGlass';
 import { SlideUpSheet } from './SlideUpSheet';
 import { useMiniAppStore } from '../../store/miniAppStore';
+import { useBrowserStore } from '../../store/browserStore';
 import { useMiniAppsStore } from '../../store/miniAppsStore';
 import { buildMiniAppShareUrl } from '../../utils/miniAppShare';
 import { useT } from '../../i18n/store';
 import { triggerHaptic } from '../../utils/haptics';
 import { showToast } from '../../store/toastStore';
 import { useTheme } from '../../theme';
+
+const SCREEN_H = Dimensions.get('window').height;
 
 // Root-level persistent mini-app host. See src/store/miniAppStore.ts for the
 // state machine. The WebView is mounted while mode !== 'closed' and is NEVER
@@ -83,6 +86,46 @@ export function MiniAppHost() {
   }, []);
   useEffect(() => () => { if (loadTimeout.current) clearTimeout(loadTimeout.current); }, []);
 
+  // Slide the overlay UP on open/restore and DOWN on minimize/close — restores
+  // the previous open/close feel instead of an instant pop.
+  const slideY = useRef(new Animated.Value(SCREEN_H)).current;
+  useEffect(() => {
+    if (mode === 'full') {
+      Animated.timing(slideY, { toValue: 0, duration: 300, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+      try { useBrowserStore.getState().clearMinimized(); } catch {}
+    } else if (mode === 'min') {
+      // Reuse the user's FAMILIAR minimized widget (BrowserMiniBar /
+      // BrowserBottomBand) — it respects their top/bottom position setting and
+      // its own animation — instead of a bespoke pill.
+      try {
+        const st = useMiniAppStore.getState();
+        useBrowserStore.getState().setMinimized(normalizeUrl(st.url), st.name, true, st.emoji);
+      } catch {}
+      Animated.timing(slideY, { toValue: SCREEN_H, duration: 260, easing: Easing.in(Easing.cubic), useNativeDriver: true }).start();
+    }
+  }, [mode, slideY]);
+
+  // While minimized, dismissing the widget (its x / swipe-away) clears
+  // browserStore — observe that and tear the live WebView down so the two
+  // stores never drift out of sync.
+  useEffect(() => {
+    if (mode !== 'min') return;
+    const unsub = useBrowserStore.subscribe((s) => {
+      if (!s.minimizedUrl) useMiniAppStore.getState().close();
+    });
+    return unsub;
+  }, [mode]);
+
+  // Animate the overlay down before tearing the WebView down (matches the old
+  // dismiss feel), then clear the familiar widget too.
+  const requestClose = useCallback(() => {
+    triggerHaptic('light');
+    Animated.timing(slideY, { toValue: SCREEN_H, duration: 220, easing: Easing.in(Easing.cubic), useNativeDriver: true }).start(() => {
+      useMiniAppStore.getState().close();
+      try { useBrowserStore.getState().clearMinimized(); } catch {}
+    });
+  }, [slideY]);
+
   // Hardware back (Android): while fullscreen, back minimizes the mini-app
   // (Telegram-style) instead of leaving it on screen. No-op otherwise.
   useEffect(() => {
@@ -140,15 +183,14 @@ export function MiniAppHost() {
       {/* WebView overlay — kept mounted across minimize. When minimized it is
           sent behind the (opaque) app with opacity 0 so its page state stays
           alive for an instant, reload-free restore. */}
-      <View
+      <Animated.View
         pointerEvents={full ? 'auto' : 'none'}
-        style={full
-          ? { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999, backgroundColor: '#000' }
-          // Minimized: sit BEHIND the (opaque, themed) app at zIndex -1 but
-          // keep opacity 1 so the OS never culls the WebView — that preserves
-          // the live page (scroll / SPA route / JS state) for a reload-free
-          // restore. The app screens fully cover it, so it's not visible.
-          : { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: -1 }}
+        style={{
+          position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+          zIndex: full ? 9999 : -1,
+          backgroundColor: full ? '#000' : undefined,
+          transform: [{ translateY: slideY }],
+        }}
       >
         {isLoading && (
           <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#000', zIndex: 40, alignItems: 'center', justifyContent: 'center' }}>
@@ -228,41 +270,19 @@ export function MiniAppHost() {
                 <NativeGlassView glassStyle="regular" colorScheme="dark" style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 12, borderRadius: 14 }}>
                   {canShare ? <Pressable onPress={handleShare} hitSlop={6}><Feather name="share" size={13} color="#FFFFFF" /></Pressable> : null}
                   <Pressable onPress={() => { triggerHaptic('light'); setReportOpen(true); }} hitSlop={6}><Feather name="flag" size={13} color="#FFFFFF" /></Pressable>
-                  <Pressable onPress={() => { triggerHaptic('light'); useMiniAppStore.getState().close(); }} hitSlop={6}><Feather name="x" size={14} color="#FFFFFF" /></Pressable>
+                  <Pressable onPress={requestClose} hitSlop={6}><Feather name="x" size={14} color="#FFFFFF" /></Pressable>
                 </NativeGlassView>
               ) : (
                 <BlurView intensity={80} tint="dark" style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 12 }}>
                   {canShare ? <Pressable onPress={handleShare} hitSlop={6}><Feather name="share" size={13} color="#FFFFFF" /></Pressable> : null}
                   <Pressable onPress={() => { triggerHaptic('light'); setReportOpen(true); }} hitSlop={6}><Feather name="flag" size={13} color="#FFFFFF" /></Pressable>
-                  <Pressable onPress={() => { triggerHaptic('light'); useMiniAppStore.getState().close(); }} hitSlop={6}><Feather name="x" size={14} color="#FFFFFF" /></Pressable>
+                  <Pressable onPress={requestClose} hitSlop={6}><Feather name="x" size={14} color="#FFFFFF" /></Pressable>
                 </BlurView>
               )}
             </View>
           </View>
         ) : null}
-      </View>
-
-      {/* Minimized pill — tap to restore, x to close. Sits above the tab bar. */}
-      {mode === 'min' ? (
-        <View style={{ position: 'absolute', left: 16, right: 16, bottom: 24 + 62 + 6, zIndex: 250 }} pointerEvents="box-none">
-          <Pressable
-            onPress={() => { triggerHaptic('light'); useMiniAppStore.getState().restore(); }}
-            style={{
-              flexDirection: 'row', alignItems: 'center', gap: 10,
-              paddingHorizontal: 12, paddingVertical: 10, borderRadius: 24,
-              backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF',
-              borderWidth: 0.5, borderColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
-              shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.14, shadowRadius: 14, elevation: 8,
-            }}
-          >
-            <RNText style={{ fontSize: 18 }} allowFontScaling={false}>{appEmoji}</RNText>
-            <Text variant="body" weight="semibold" numberOfLines={1} style={{ flex: 1, color: theme.colors.text.primary }}>{displayName}</Text>
-            <Pressable onPress={() => { triggerHaptic('light'); useMiniAppStore.getState().close(); }} hitSlop={8} style={{ padding: 4 }}>
-              <Feather name="x" size={16} color={theme.colors.text.tertiary} />
-            </Pressable>
-          </Pressable>
-        </View>
-      ) : null}
+      </Animated.View>
 
       {full ? (
         <SlideUpSheet visible={reportOpen} onClose={() => setReportOpen(false)}>
