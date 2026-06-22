@@ -295,7 +295,7 @@ export function MiniAppHost() {
 
         {full ? (
           <View style={{ position: 'absolute', top: insets.top + 8, left: 16, right: 16, zIndex: 60, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Pressable onPress={() => { triggerHaptic('light'); useMiniAppStore.getState().minimize(); }} style={glassActive ? { borderRadius: 14 } : { borderRadius: 14, overflow: 'hidden' }}>
+            <Pressable onPress={() => { triggerHaptic('light'); useMiniAppStore.getState().minimize(); }} style={glassActive ? { borderRadius: 14 } : { borderRadius: 14, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)' }}>
               {glassActive ? (
                 <NativeGlassView glassStyle="regular" isInteractive colorScheme="dark" style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, borderRadius: 14 }}>
                   <Feather name="chevron-down" size={12} color="#FFFFFF" />
@@ -308,7 +308,7 @@ export function MiniAppHost() {
                 </BlurView>
               )}
             </Pressable>
-            <View style={glassActive ? { borderRadius: 14 } : { borderRadius: 14, overflow: 'hidden' }}>
+            <View style={glassActive ? { borderRadius: 14 } : { borderRadius: 14, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)' }}>
               {glassActive ? (
                 <NativeGlassView glassStyle="regular" colorScheme="dark" style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 12, borderRadius: 14 }}>
                   {canShare ? <Pressable onPress={handleShare} hitSlop={6}><Feather name="share" size={13} color="#FFFFFF" /></Pressable> : null}

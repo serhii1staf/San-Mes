@@ -935,6 +935,9 @@ export default function CommentsScreen() {
             renderItem={renderComment}
             contentContainerStyle={{ paddingHorizontal: 20, paddingTop: headerContentHeight, paddingBottom: 80 + insets.bottom }}
             showsVerticalScrollIndicator={false}
+            // iOS: our listShiftStyle translateY already lifts the list with the
+            // keyboard; disable the OS keyboard inset so it can't double-apply.
+            automaticallyAdjustKeyboardInsets={false}
             removeClippedSubviews={true}
             initialNumToRender={6}
             maxToRenderPerBatch={4}

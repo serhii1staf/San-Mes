@@ -891,6 +891,12 @@ export default function AIChatScreen() {
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
         automaticallyAdjustsScrollIndicatorInsets={false}
+        // iOS only moves content via OUR list translateY (driven by the same
+        // keyboard frame as the input bar). Explicitly disable the OS's own
+        // keyboard inset on the (inverted) scroll view so it can't double-apply
+        // — that double-adjust is what made the focus shift "change after a
+        // while" on iPhone.
+        automaticallyAdjustKeyboardInsets={false}
         removeClippedSubviews={false}
         // Tightened from 12/8/9 — same fix as chat/music. 12 MessageBubbles
         // on first paint piled up on the navigation transition frame.

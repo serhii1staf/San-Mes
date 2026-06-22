@@ -359,6 +359,10 @@ export default function MusicChatScreen() {
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
+        // iOS: disable the OS keyboard inset on the inverted scroll view so it
+        // can't double-apply on top of our own list translateY (the cause of
+        // the focus shift "changing after a while" on iPhone).
+        automaticallyAdjustKeyboardInsets={false}
         removeClippedSubviews
         // Tightened from 12/8/9 — 12 TrackResultCards on first paint were
         // hammering the JS thread on the same RAF as the navigation transition,
