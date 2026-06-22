@@ -22,7 +22,7 @@ import { useMiniAppsStore } from '../../src/store/miniAppsStore';
 import { useChatSettingsStore, GLOBAL_CHAT_SETTINGS_KEY } from '../../src/store/chatSettingsStore';
 import { useSettingsStore } from '../../src/store/settingsStore';
 import { triggerHaptic } from '../../src/utils/haptics';
-import { useT } from '../../src/i18n/store';
+import { useT, t as tStatic, useI18nStore } from '../../src/i18n/store';
 import { Conversation } from '../../src/types';
 import { perfMonitor } from '../../src/services/perfMonitor';
 
@@ -58,15 +58,49 @@ function MiniAppsRow() {
   const glassActive = useLiquidGlassActive();
   // Field-level selectors so the row doesn't re-render on every loading flag.
   const apps = useMiniAppsStore((s) => s.apps);
-  const loadApps = useMiniAppsStore((s) => s.loadApps);
+  const userId = useAuthStore((s) => s.user?.id);
 
-  useEffect(() => { loadApps(); }, []);
+  // Hydrate the user's mini-apps list when the Apps tab opens. Deferred past
+  // the tab-switch transition (InteractionManager) so the network round-trip
+  // never competes with the swipe/tap animation on weak devices — the same
+  // pattern the AI chat uses to warm this exact store. `loadApps` is read via
+  // getState() so the effect has no unstable deps and fires once on mount; the
+  // `apps` selector above re-renders the row live when the fetch resolves.
+  useEffect(() => {
+    const handle = InteractionManager.runAfterInteractions(() => {
+      try { useMiniAppsStore.getState().loadApps(); } catch { /* offline — cached apps still render */ }
+    });
+    return () => handle.cancel();
+  }, []);
 
-  if (apps.length === 0) return null;
+  // Only the viewer's OWN mini-apps. The list endpoint (`/v1/mini-apps`)
+  // returns the newest apps across ALL creators, so we scope by creator_id —
+  // identical to the AI-chat "Управление" manage list (the working reference).
+  // Without this scope the launcher would surface strangers' apps.
+  const myApps = useMemo(
+    () => (userId ? apps.filter((a) => a.creator_id === userId) : []),
+    [apps, userId],
+  );
+
+  // Genuine empty state lives HERE so the Apps tab has a single source of
+  // truth. The screen's generic empty-state block skips the Apps tab, which
+  // fixes the bug where the centered "no mini-apps" message rendered even
+  // while apps existed (the conversation `filtered` list is always empty on
+  // the Apps tab, so that block used to fire unconditionally).
+  if (myApps.length === 0) {
+    return (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingBottom: 100 }}>
+        <Feather name="grid" size={48} color={theme.colors.text.tertiary} />
+        <Text variant="body" color={theme.colors.text.tertiary} style={{ marginTop: theme.spacing.base, textAlign: 'center' }}>
+          {t('messages.empty.apps')}
+        </Text>
+      </View>
+    );
+  }
 
   return (
     <View style={{ paddingHorizontal: 16, paddingBottom: 8 }}>
-      {apps.slice(0, 5).map(app => (
+      {myApps.slice(0, 5).map(app => (
         <Pressable key={app.id} onPress={() => router.push({ pathname: '/mini-app', params: { url: encodeURIComponent(app.url), name: app.name, emoji: app.emoji } })} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border.light }}>
           <View style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: theme.colors.accent.primary + '12', alignItems: 'center', justifyContent: 'center', overflow: 'visible' }}>
             <RNText style={{ fontSize: 20 }} allowFontScaling={false}>{app.emoji}</RNText>
@@ -446,6 +480,14 @@ export default function MessagesScreen() {
   // Blocked tab merges synthetic rows for these into the existing
   // chat-level blocked list so both kinds of blocks live in one place.
   const blockedUserIds = useBlockedUsersStore((s) => s.ids);
+  // Locale value (not the unstable `t` hook) drives the `filtered` memo's
+  // dependency. `useT()` allocates a NEW function every render, so listing
+  // `t` as a memo dep forced the O(n log n) filter+sort to re-run on EVERY
+  // re-render (each store push, each openedAt update on returning from a
+  // chat) — the recurring long task the perf monitor flagged. The memo only
+  // needs a translated string for the synthetic Blocked rows, so we depend on
+  // the stable `locale` value and call the module-level `tStatic` inside.
+  const locale = useI18nStore((s) => s.locale);
 
   // San AI / Music chats are no longer surfaced in this list — they live
   // exclusively behind the FAB. The list shows only real conversations.
@@ -635,7 +677,7 @@ export default function MessagesScreen() {
             // Telegram-style hint that this is a blocked user — keeps the
             // row layout identical (last-message line) without a misleading
             // history. Localised via the same key the placeholder uses.
-            lastMessage: t('block.section.last_seen'),
+            lastMessage: tStatic('block.section.last_seen'),
             lastMessageAt: '',
             unreadCount: 0,
             isOnline: false,
@@ -646,7 +688,7 @@ export default function MessagesScreen() {
     if (activeTab === 'deleted') return conversations.filter(c => deleted.includes(c.id));
     // 'chats' — exclude archived, blocked (chat or user), deleted.
     return conversations.filter(c => !archived.includes(c.id) && !blocked.includes(c.id) && !deleted.includes(c.id) && !blockedUserIds.includes(c.participantId)).sort(byRecency);
-  }, [conversations, activeTab, searchQuery, archived, blocked, deleted, blockedUserIds, openedAt, t]);
+  }, [conversations, activeTab, searchQuery, archived, blocked, deleted, blockedUserIds, openedAt, locale]);
 
   const containerStyle: ViewStyle = {
     flex: 1,
@@ -807,18 +849,24 @@ export default function MessagesScreen() {
         <View style={{ flex: 1 }}>
           {/* AI Chat + Music (chats tab) — only shown once opened, newest first */}
           {activeTab === 'chats' && !searchQuery && specialChats}
-          {activeTab === 'apps' && <MiniAppsRow />}
 
-          {filtered.length === 0 ? (
+          {activeTab === 'apps' ? (
+            /* The Apps tab owns its full content (launcher list OR empty
+               state) via MiniAppsRow, so it must NOT fall through to the
+               conversation empty-state / FlatList block below — `filtered`
+               is always empty on this tab, which previously rendered the
+               "no mini-apps" message on top of an existing apps list. */
+            <MiniAppsRow />
+          ) : filtered.length === 0 ? (
             (activeTab === 'chats' && specialChats && !searchQuery) ? null : (
             <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingBottom: 100 }}>
-              <Feather name={activeTab === 'apps' ? 'grid' : activeTab === 'blocked' ? 'slash' : activeTab === 'deleted' ? 'trash-2' : activeTab === 'archive' ? 'archive' : 'message-circle'} size={48} color={theme.colors.text.tertiary} />
+              <Feather name={activeTab === 'blocked' ? 'slash' : activeTab === 'deleted' ? 'trash-2' : activeTab === 'archive' ? 'archive' : 'message-circle'} size={48} color={theme.colors.text.tertiary} />
               <Text
                 variant="body"
                 color={theme.colors.text.tertiary}
                 style={{ marginTop: theme.spacing.base, textAlign: 'center' }}
               >
-                {activeTab === 'apps' ? t('messages.empty.apps') : activeTab === 'blocked' ? t('messages.empty.blocked') : activeTab === 'deleted' ? t('messages.empty.deleted') : activeTab === 'archive' ? t('messages.empty.archive') : t('messages.empty.chats')}
+                {activeTab === 'blocked' ? t('messages.empty.blocked') : activeTab === 'deleted' ? t('messages.empty.deleted') : activeTab === 'archive' ? t('messages.empty.archive') : t('messages.empty.chats')}
               </Text>
             </View>
             )

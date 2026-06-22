@@ -54,6 +54,31 @@ const PILL_TOP = TAB_ROW_PADDING_V + PILL_INSET_Y;
 const BAR_BORDER_RADIUS = 32;
 const BAR_HORIZONTAL_MARGIN = 16;
 const BAR_BOTTOM_MARGIN = 24;
+
+// ─── Shared geometry (consumed by global overlays e.g. the Toast) ────────────
+//
+// Height of the floating capsule itself (the inner row: button height + the
+// vertical padding above/below it). This is the visual height of the bar.
+export const TAB_BAR_INNER_HEIGHT = TAB_BUTTON_HEIGHT + 2 * TAB_ROW_PADDING_V; // 60
+// How far the bar floats above the very bottom of the screen on iOS (it does
+// NOT add the home-indicator inset there — 24pt already clears it). On Android
+// under edge-to-edge we additionally lift by the system-nav inset.
+export const TAB_BAR_BOTTOM_MARGIN = BAR_BOTTOM_MARGIN; // 24
+
+/**
+ * Total vertical space the floating tab bar occupies measured from the bottom
+ * edge of the screen up to the TOP of the bar capsule. Anything that wants to
+ * sit "just above the tab bar" (the global Toast) should offset by this plus a
+ * small gap. Mirrors the exact margin math used in the render below so the two
+ * never drift apart.
+ */
+export function getTabBarHeight(insetsBottom: number): number {
+  return (
+    TAB_BAR_INNER_HEIGHT +
+    BAR_BOTTOM_MARGIN +
+    (Platform.OS === 'android' ? insetsBottom : 0)
+  );
+}
 // Height of the bottom background-fade behind the floating bar. Mirrors the
 // home header fade (~bar height + margin + a soft fade above the bar top).
 const BAR_FADE_HEIGHT = 132;

@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Pressable, Switch, ScrollView } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import { BlurView } from 'expo-blur';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../src/theme';
@@ -91,29 +92,98 @@ function PositionCard({
   theme: any;
   kind: 'top' | 'bottom';
 }) {
-  const cardBg = theme.isDark ? theme.colors.background.elevated : '#FFFFFF';
+  const isDark = theme.isDark;
   const accent = theme.colors.accent.primary;
-  const screenBg = theme.isDark ? '#000' : '#F5F5F7';
-  const subtle = theme.isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)';
-  const stroke = theme.isDark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.10)';
 
-  // The mini "browser pill" used inside the preview, styled to match the
-  // real widget — pill shape on top, rounded-rectangle band on bottom.
+  // Outer tile chrome.
+  const tileBg = isDark ? theme.colors.background.elevated : '#FFFFFF';
+
+  // The faux phone "screen" — slightly off from pure black/white so the
+  // skeleton content reads as floating cards, like the real feed.
+  const screenBg = isDark ? '#0A0A0C' : '#EEF0F4';
+  // Cards/surfaces that sit on the screen (feed rows, tab bar, bottom band).
+  const surfaceBg = isDark ? 'rgba(255,255,255,0.07)' : '#FFFFFF';
+  // Hairline strokes + neutral skeleton fills.
+  const stroke = isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)';
+  const skeleton = isDark ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.10)';
+  const skeletonFaint = isDark ? 'rgba(255,255,255,0.09)' : 'rgba(0,0,0,0.055)';
+  const inkStrong = isDark ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.45)';
+
+  // The minimised browser pill, matched to the real widgets:
+  //  • top  → a floating glass pill (BrowserMiniBar / BlurView, rounded 16)
+  //  • bottom → a docked band with rounded top corners (BrowserBottomBand)
+  // Both show: favicon/emoji dot + a short title line + a tiny ✕.
   const renderPill = () => {
     if (kind === 'top') {
       return (
-        <View style={{ position: 'absolute', top: 8, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 6, paddingVertical: 3, borderRadius: 8, backgroundColor: theme.isDark ? 'rgba(40,40,40,0.9)' : 'rgba(255,255,255,0.95)', borderWidth: 0.5, borderColor: stroke, gap: 3 }}>
-          <View style={{ width: 5, height: 5, borderRadius: 1, backgroundColor: accent }} />
-          <View style={{ width: 22, height: 3, borderRadius: 1.5, backgroundColor: subtle }} />
-          <View style={{ width: 4, height: 4, backgroundColor: subtle, borderRadius: 1 }} />
+        <View
+          style={{
+            position: 'absolute',
+            top: 22,
+            alignSelf: 'center',
+            borderRadius: 9,
+            overflow: 'hidden',
+            // Accent ring + soft glow so the pill pops on the faux screen.
+            borderWidth: 1,
+            borderColor: active ? accent + 'AA' : stroke,
+            shadowColor: active ? accent : '#000',
+            shadowOpacity: active ? 0.5 : 0.18,
+            shadowRadius: active ? 5 : 3,
+            shadowOffset: { width: 0, height: 1 },
+          }}
+        >
+          <BlurView
+            intensity={70}
+            tint={isDark ? 'dark' : 'light'}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 4,
+              paddingHorizontal: 6,
+              paddingVertical: 4,
+              backgroundColor: isDark ? 'rgba(20,20,20,0.55)' : 'rgba(255,255,255,0.6)',
+            }}
+          >
+            {/* favicon/emoji dot */}
+            <View style={{ width: 7, height: 7, borderRadius: 2, backgroundColor: accent }} />
+            {/* title line */}
+            <View style={{ width: 26, height: 3.5, borderRadius: 2, backgroundColor: inkStrong }} />
+            {/* tiny ✕ */}
+            <Feather name="x" size={7} color={theme.colors.text.tertiary} />
+          </BlurView>
         </View>
       );
     }
+    // Bottom docked band — solid surface, rounded top corners, centered title.
     return (
-      <View style={{ position: 'absolute', bottom: 14, left: 0, right: 0, height: 14, borderTopLeftRadius: 6, borderTopRightRadius: 6, backgroundColor: cardBg, borderWidth: 0.5, borderColor: stroke, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 4, gap: 3 }}>
-        <View style={{ width: 5, height: 5, borderRadius: 1, backgroundColor: accent }} />
-        <View style={{ width: 18, height: 3, borderRadius: 1.5, backgroundColor: subtle, flex: 1 }} />
-        <View style={{ width: 4, height: 4, backgroundColor: subtle, borderRadius: 1 }} />
+      <View
+        style={{
+          position: 'absolute',
+          left: 0,
+          right: 0,
+          bottom: 0,
+          height: 22,
+          borderTopLeftRadius: 11,
+          borderTopRightRadius: 11,
+          backgroundColor: surfaceBg,
+          borderTopWidth: active ? 1.5 : 1,
+          borderColor: active ? accent : stroke,
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 4,
+          shadowColor: active ? accent : '#000',
+          shadowOpacity: active ? 0.45 : 0.12,
+          shadowRadius: active ? 5 : 2,
+          shadowOffset: { width: 0, height: -1 },
+        }}
+      >
+        {/* favicon/emoji dot */}
+        <View style={{ width: 7, height: 7, borderRadius: 2, backgroundColor: accent }} />
+        {/* title line */}
+        <View style={{ width: 30, height: 3.5, borderRadius: 2, backgroundColor: inkStrong }} />
+        {/* tiny ✕ pinned to the right, like the real band */}
+        <Feather name="x" size={8} color={theme.colors.text.tertiary} style={{ position: 'absolute', right: 7 }} />
       </View>
     );
   };
@@ -123,107 +193,148 @@ function PositionCard({
       onPress={onPress}
       style={{
         flex: 1,
-        backgroundColor: cardBg,
-        borderRadius: 18,
-        padding: 12,
+        backgroundColor: tileBg,
+        borderRadius: 20,
+        padding: 14,
         borderWidth: 2,
         borderColor: active ? accent : theme.colors.border.light,
+        // Accent glow on the whole tile when selected.
+        shadowColor: active ? accent : '#000',
+        shadowOpacity: active ? 0.28 : 0.06,
+        shadowRadius: active ? 12 : 4,
+        shadowOffset: { width: 0, height: active ? 4 : 2 },
       }}
     >
-      {/* Mini phone — proportions roughly match a real device */}
+      {/* ── Mini phone frame ─────────────────────────────────────────── */}
       <View
         style={{
-          aspectRatio: 9 / 18,
-          borderRadius: 14,
+          aspectRatio: 9 / 19,
+          borderRadius: 18,
           backgroundColor: screenBg,
-          borderWidth: 1.5,
-          borderColor: stroke,
+          borderWidth: 3,
+          borderColor: isDark ? '#1C1C1F' : '#D7DAE0',
           overflow: 'hidden',
-          padding: 6,
-          paddingTop: 10,
-          paddingBottom: 4,
+          paddingHorizontal: 7,
+          paddingTop: 13,
+          paddingBottom: 5,
         }}
       >
-        {/* Notch */}
+        {/* Status bar — time block + signal/wifi/battery hints */}
+        <View style={{ position: 'absolute', top: 4, left: 9, right: 9, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+          <View style={{ width: 11, height: 3.5, borderRadius: 2, backgroundColor: inkStrong }} />
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
+            <View style={{ width: 4, height: 3.5, borderRadius: 1, backgroundColor: inkStrong }} />
+            <View style={{ width: 4, height: 3.5, borderRadius: 1, backgroundColor: inkStrong }} />
+            <View style={{ width: 7, height: 3.5, borderRadius: 1.5, backgroundColor: inkStrong }} />
+          </View>
+        </View>
+
+        {/* Dynamic-island / notch hint */}
         <View style={{ position: 'absolute', top: 3, left: 0, right: 0, alignItems: 'center' }}>
-          <View style={{ width: 22, height: 4, borderRadius: 2, backgroundColor: theme.isDark ? '#000' : '#222' }} />
+          <View style={{ width: 26, height: 6, borderRadius: 3, backgroundColor: isDark ? '#000' : '#23252B' }} />
         </View>
 
-        {/* Header — app title + bell */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-          <View style={{ width: 14, height: 5, borderRadius: 1, backgroundColor: theme.colors.text.primary, opacity: 0.7 }} />
-          <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: subtle }} />
+        {/* App header — title + bell */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 7 }}>
+          <View style={{ width: 18, height: 5, borderRadius: 2, backgroundColor: inkStrong }} />
+          <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: skeleton }} />
         </View>
 
-        {/* Feed cards — 3 pieces with avatar + lines + image */}
-        {[0, 1, 2].map((i) => (
+        {/* Story / quick-app row — a strip of round avatars */}
+        <View style={{ flexDirection: 'row', gap: 4, marginBottom: 7 }}>
+          {[0, 1, 2, 3].map((s) => (
+            <View
+              key={s}
+              style={{
+                width: 13,
+                height: 13,
+                borderRadius: 7,
+                backgroundColor: skeletonFaint,
+                borderWidth: 1,
+                borderColor: s === 0 ? accent : stroke,
+              }}
+            />
+          ))}
+        </View>
+
+        {/* Feed cards — avatar + lines, one with a media block */}
+        {[0, 1].map((i) => (
           <View
             key={i}
             style={{
-              backgroundColor: cardBg,
-              borderRadius: 5,
-              padding: 4,
-              marginBottom: 4,
-              borderWidth: 0.5,
+              backgroundColor: surfaceBg,
+              borderRadius: 7,
+              padding: 5,
+              marginBottom: 5,
+              borderWidth: 1,
               borderColor: stroke,
             }}
           >
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, marginBottom: 3 }}>
-              <View style={{ width: 7, height: 7, borderRadius: 3.5, backgroundColor: accent + '99' }} />
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 }}>
+              <View style={{ width: 9, height: 9, borderRadius: 4.5, backgroundColor: accent + 'AA' }} />
               <View style={{ flex: 1 }}>
-                <View style={{ width: '70%', height: 2.5, borderRadius: 1, backgroundColor: theme.colors.text.primary, opacity: 0.6 }} />
-                <View style={{ width: '50%', height: 2, borderRadius: 1, backgroundColor: subtle, marginTop: 1.5 }} />
+                <View style={{ width: '65%', height: 3, borderRadius: 1.5, backgroundColor: skeleton }} />
+                <View style={{ width: '40%', height: 2.5, borderRadius: 1.5, backgroundColor: skeletonFaint, marginTop: 2 }} />
               </View>
             </View>
-            {i === 1 ? (
-              <View style={{ height: 14, borderRadius: 3, backgroundColor: subtle }} />
+            {i === 0 ? (
+              <View style={{ height: 20, borderRadius: 4, backgroundColor: skeletonFaint }} />
             ) : (
               <>
-                <View style={{ width: '95%', height: 2, borderRadius: 1, backgroundColor: subtle, marginBottom: 2 }} />
-                <View style={{ width: '70%', height: 2, borderRadius: 1, backgroundColor: subtle }} />
+                <View style={{ width: '92%', height: 2.5, borderRadius: 1.5, backgroundColor: skeletonFaint, marginBottom: 2.5 }} />
+                <View style={{ width: '68%', height: 2.5, borderRadius: 1.5, backgroundColor: skeletonFaint }} />
               </>
             )}
           </View>
         ))}
 
-        {/* Tab bar — floating pill with 5 dots */}
+        {/* Floating tab bar — pill with 5 icons, first one active.
+            Lifted above the docked band on the bottom variant. */}
         <View
           style={{
             position: 'absolute',
-            left: 6,
-            right: 6,
-            bottom: kind === 'bottom' ? 32 : 6,
-            height: 12,
-            borderRadius: 6,
-            backgroundColor: cardBg,
-            borderWidth: 0.5,
+            left: 7,
+            right: 7,
+            bottom: kind === 'bottom' ? 28 : 6,
+            height: 15,
+            borderRadius: 8,
+            backgroundColor: surfaceBg,
+            borderWidth: 1,
             borderColor: stroke,
             flexDirection: 'row',
             alignItems: 'center',
             justifyContent: 'space-around',
-            paddingHorizontal: 4,
+            paddingHorizontal: 5,
+            shadowColor: '#000',
+            shadowOpacity: 0.12,
+            shadowRadius: 3,
+            shadowOffset: { width: 0, height: 1 },
           }}
         >
           {[0, 1, 2, 3, 4].map((d) => (
             <View
               key={d}
               style={{
-                width: 4,
-                height: 4,
-                borderRadius: 2,
-                backgroundColor: d === 0 ? accent : subtle,
+                width: 5,
+                height: 5,
+                borderRadius: 2.5,
+                backgroundColor: d === 0 ? accent : skeleton,
               }}
             />
           ))}
         </View>
 
-        {/* The browser pill */}
+        {/* The minimised browser pill in its real position */}
         {renderPill()}
       </View>
 
-      <Text variant="caption" weight="semibold" align="center" style={{ marginTop: 10, color: active ? accent : theme.colors.text.primary }}>
-        {label}
-      </Text>
+      {/* Label + selected check */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, marginTop: 11 }}>
+        {active && <Feather name="check-circle" size={13} color={accent} />}
+        <Text variant="caption" weight="semibold" style={{ color: active ? accent : theme.colors.text.primary }}>
+          {label}
+        </Text>
+      </View>
     </Pressable>
   );
 }
