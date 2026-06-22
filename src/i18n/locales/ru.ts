@@ -436,6 +436,7 @@ const ru: Record<string, string> = {
   'ai_chat.flow.back': 'Назад',
   'ai_chat.flow.url_invalid': 'Похоже, это не ссылка. Попробуйте ещё раз: «Отправьте ссылку»',
   'ai_chat.flow.signin_required': 'Войдите, чтобы управлять мини-приложениями',
+  'ai_chat.flow.consent_declined': 'Публикация отменена. Мини-приложение не сохранено.',
   'ai_chat.manage.title': 'Ваши мини-приложения',
   'ai_chat.manage.empty': 'У вас пока нет мини-приложений. Используйте «Создать» чтобы добавить первое.',
   'ai_chat.manage.delete_title': 'Удалить мини-приложение?',

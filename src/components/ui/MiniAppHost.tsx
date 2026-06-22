@@ -91,7 +91,7 @@ export function MiniAppHost() {
   const slideY = useRef(new Animated.Value(SCREEN_H)).current;
   useEffect(() => {
     if (mode === 'full') {
-      Animated.timing(slideY, { toValue: 0, duration: 300, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+      Animated.timing(slideY, { toValue: 0, duration: 400, easing: Easing.bezier(0.16, 1, 0.3, 1), useNativeDriver: true }).start();
       try { useBrowserStore.getState().clearMinimized(); } catch {}
     } else if (mode === 'min') {
       // Reuse the user's FAMILIAR minimized widget (BrowserMiniBar /
@@ -101,7 +101,7 @@ export function MiniAppHost() {
         const st = useMiniAppStore.getState();
         useBrowserStore.getState().setMinimized(normalizeUrl(st.url), st.name, true, st.emoji);
       } catch {}
-      Animated.timing(slideY, { toValue: SCREEN_H, duration: 260, easing: Easing.in(Easing.cubic), useNativeDriver: true }).start();
+      Animated.timing(slideY, { toValue: SCREEN_H, duration: 340, easing: Easing.in(Easing.cubic), useNativeDriver: true }).start();
     }
   }, [mode, slideY]);
 
@@ -120,7 +120,7 @@ export function MiniAppHost() {
   // dismiss feel), then clear the familiar widget too.
   const requestClose = useCallback(() => {
     triggerHaptic('light');
-    Animated.timing(slideY, { toValue: SCREEN_H, duration: 220, easing: Easing.in(Easing.cubic), useNativeDriver: true }).start(() => {
+    Animated.timing(slideY, { toValue: SCREEN_H, duration: 320, easing: Easing.in(Easing.cubic), useNativeDriver: true }).start(() => {
       useMiniAppStore.getState().close();
       try { useBrowserStore.getState().clearMinimized(); } catch {}
     });

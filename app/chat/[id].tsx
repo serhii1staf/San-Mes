@@ -555,10 +555,26 @@ export default function ChatScreen() {
   // list sorts by max(lastMessageAt, openedAt). Stamps on mount (route id) and
   // again once the canonical conversationId resolves (profile-entry path), so
   // whichever id the list row uses gets bumped.
+  //
+  // Deferred past the navigation transition. `markChatOpened` writes
+  // `openedAt[conversationId]` into the persisted chat-settings store, and the
+  // STILL-MOUNTED (tabs)/messages tab subscribes to `openedAt` (it's a
+  // dependency of the conversation-list `filtered`/sort memo). Firing this
+  // synchronously on chat mount re-filtered + re-sorted the whole conversation
+  // list, re-rendered its FlatList and ran the MMKV persist write — all on the
+  // chat-open slide-in frame, which is the dominant `LONG ~150 ms @
+  // (tabs)/messages` the perf monitor flagged on every chat open. Pushing it
+  // behind `runAfterInteractions` lands the bump (and the resulting list
+  // re-sort) one beat AFTER the transition completes — imperceptible to the
+  // user, the chat still floats to the top exactly as before, and it matches
+  // the deferral chat/ai.tsx + chat/music.tsx already apply to their
+  // `markOpened` writes for the same reason.
   useEffect(() => {
-    if (conversationId) {
+    if (!conversationId) return;
+    const handle = InteractionManager.runAfterInteractions(() => {
       try { useChatSettingsStore.getState().markChatOpened(conversationId); } catch {}
-    }
+    });
+    return () => handle.cancel();
   }, [conversationId]);
   // Mount-time marker — captures how long the chat screen took to commit
   // its first render so the perf-monitor panel can attribute open-the-chat

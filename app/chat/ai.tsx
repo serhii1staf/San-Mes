@@ -13,6 +13,7 @@ import { useLiquidGlassActive, NativeGlassView, GlassBg } from '../../src/compon
 import { FormattedText } from '../../src/components/ui/FormattedText';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { EmojiPickerModal } from '../../src/components/ui/EmojiPickerModal';
+import { MiniAppConsentDialog } from '../../src/components/mini-apps/MiniAppConsentDialog';
 import { useThemeStore, ACCENT_COLORS } from '../../src/store/themeStore';
 import { useAuthStore } from '../../src/store';
 import { useMiniAppsStore, MiniApp } from '../../src/store/miniAppsStore';
@@ -280,6 +281,22 @@ export default function AIChatScreen() {
   const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
   const [commandsOpen, setCommandsOpen] = useState(false);
 
+  // ── Content-policy consent gate ───────────────────────────────────────────
+  // Publishing / updating a mini app from the AI chat must clear the same
+  // content-policy consent the settings screen enforces (Apple / Google +
+  // San Terms/Privacy) BEFORE any worker call. When the user finishes the
+  // url step we stash the resolved submission here and open the dialog; the
+  // createApp / updateApp call only fires from the Accept handler.
+  const [consentVisible, setConsentVisible] = useState(false);
+  const [pendingSubmit, setPendingSubmit] = useState<{
+    isEdit: boolean;
+    finalUrl: string;
+    name: string;
+    emoji: string;
+    description: string;
+    editingId?: string;
+  } | null>(null);
+
   const COMMANDS: CommandDef[] = useMemo(
     () => [
       { id: 'create', icon: 'plus-square', label: t('ai_chat.command.create_label'), description: t('ai_chat.command.create_desc') },
@@ -343,6 +360,12 @@ export default function AIChatScreen() {
   const nowId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 
   const appendItems = useCallback((items: ChatItem[]) => {
+    // Gentle layout transition for conversational-flow bubbles (name → emoji
+    // → url prompts, success/cancel/decline notices, the manage list). This
+    // helper is used ONLY by the mini-app flow — the regular LLM request path
+    // writes to `setMessages` directly — so easing here never touches the AI
+    // request path where it could risk jank.
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setMessages((prev) => {
       const next = [...prev, ...items];
       saveChatHistory(next);
@@ -453,6 +476,9 @@ export default function AIChatScreen() {
   // text field steering an emoji decision.
   useEffect(() => {
     if (flowStep === 'create_emoji' || flowStep === 'edit_emoji') {
+      // Ease the surrounding layout as the picker comes up so the modal
+      // entrance reads as part of one smooth transition rather than a snap.
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
       setEmojiPickerOpen(true);
     } else {
       setEmojiPickerOpen(false);
@@ -541,36 +567,29 @@ export default function AIChatScreen() {
       const finalUrl = text.startsWith('http') ? text : `https://${text}`;
       appendItems([userBubble(text)]);
 
-      if (isEdit && draft.editingId) {
-        const { error } = await useMiniAppsStore.getState().updateApp(draft.editingId, {
-          name: draft.name,
-          emoji: draft.emoji,
-          url: finalUrl,
-        });
+      // Sign-in is required to publish a NEW app — keep this check BEFORE the
+      // consent gate so we don't ask an unauthenticated user to agree to a
+      // policy for a call that can't succeed. (Edits always have an owner.)
+      if (!isEdit && !user?.id) {
         setFlowStep('idle');
         setDraft(EMPTY_DRAFT);
-        appendItems([
-          aiBubble(error ? t('ai_chat.flow.create_error', undefined, { error }) : t('ai_chat.flow.update_success')),
-        ]);
-      } else {
-        if (!user?.id) {
-          setFlowStep('idle');
-          appendItems([aiBubble(t('ai_chat.flow.signin_required'))]);
-          return;
-        }
-        const { error } = await useMiniAppsStore.getState().createApp({
-          creator_id: user.id,
-          name: draft.name,
-          description: draft.description,
-          emoji: draft.emoji,
-          url: finalUrl,
-        });
-        setFlowStep('idle');
-        setDraft(EMPTY_DRAFT);
-        appendItems([
-          aiBubble(error ? t('ai_chat.flow.create_error', undefined, { error }) : t('ai_chat.flow.create_success')),
-        ]);
+        appendItems([aiBubble(t('ai_chat.flow.signin_required'))]);
+        return;
       }
+
+      // Defer createApp / updateApp behind the content-policy consent dialog.
+      // No worker call happens here — it fires only from handleConsentAccept.
+      // The flow step stays put (the modal covers the input) and the draft is
+      // preserved so Accept can read name/emoji/url and Decline can reset.
+      setPendingSubmit({
+        isEdit,
+        finalUrl,
+        name: draft.name,
+        emoji: draft.emoji,
+        description: draft.description,
+        editingId: draft.editingId,
+      });
+      setConsentVisible(true);
       return;
     }
     if (flowStep === 'create_emoji' || flowStep === 'edit_emoji') {
@@ -624,6 +643,60 @@ export default function AIChatScreen() {
     }
     setIsLoading(false);
   }, [input, isLoading, messages, t, flowStep, draft, user?.id, appendItems]);
+
+  // Accept — the ONLY path from the AI chat that reaches the worker. Mirrors
+  // the create_url/edit_url logic that used to run inline: a non-destructive
+  // PATCH (updateApp) for edits, createApp for new publishes, then the
+  // existing success / error bubble. Resets the flow afterward either way.
+  const handleConsentAccept = useCallback(async () => {
+    const submit = pendingSubmit;
+    setConsentVisible(false);
+    setPendingSubmit(null);
+    if (!submit) return;
+
+    if (submit.isEdit && submit.editingId) {
+      const { error } = await useMiniAppsStore.getState().updateApp(submit.editingId, {
+        name: submit.name,
+        emoji: submit.emoji,
+        url: submit.finalUrl,
+      });
+      setFlowStep('idle');
+      setDraft(EMPTY_DRAFT);
+      appendItems([
+        aiBubble(error ? t('ai_chat.flow.create_error', undefined, { error }) : t('ai_chat.flow.update_success')),
+      ]);
+      return;
+    }
+
+    if (!user?.id) {
+      setFlowStep('idle');
+      setDraft(EMPTY_DRAFT);
+      appendItems([aiBubble(t('ai_chat.flow.signin_required'))]);
+      return;
+    }
+    const { error } = await useMiniAppsStore.getState().createApp({
+      creator_id: user.id,
+      name: submit.name,
+      description: submit.description,
+      emoji: submit.emoji,
+      url: submit.finalUrl,
+    });
+    setFlowStep('idle');
+    setDraft(EMPTY_DRAFT);
+    appendItems([
+      aiBubble(error ? t('ai_chat.flow.create_error', undefined, { error }) : t('ai_chat.flow.create_success')),
+    ]);
+  }, [pendingSubmit, appendItems, t, user?.id]);
+
+  // Decline (or backdrop dismiss) — NO worker call. Surface a cancellation
+  // notice and reset the flow + draft so the user lands cleanly back at idle.
+  const handleConsentDecline = useCallback(() => {
+    setConsentVisible(false);
+    setPendingSubmit(null);
+    setFlowStep('idle');
+    setDraft(EMPTY_DRAFT);
+    appendItems([aiBubble(t('ai_chat.flow.consent_declined'))]);
+  }, [appendItems, t]);
 
   // Inverted data for FlatList — memoized to avoid re-reverse on every keystroke
   const invertedData = React.useMemo(() => [...messages].reverse(), [messages]);
@@ -1009,6 +1082,17 @@ export default function AIChatScreen() {
           }
         }}
         onSelect={handleEmojiPicked}
+      />
+
+      {/* Content-policy consent gate — stands between the final url step and
+          any createApp / updateApp worker call, matching the settings screen.
+          Accept publishes/updates; Decline (or backdrop dismiss) cancels with
+          no network call. `mode` follows whichever submission is pending. */}
+      <MiniAppConsentDialog
+        visible={consentVisible}
+        mode={pendingSubmit?.isEdit ? 'edit' : 'publish'}
+        onAccept={handleConsentAccept}
+        onDecline={handleConsentDecline}
       />
     </View>
   );

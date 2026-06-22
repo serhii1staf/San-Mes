@@ -424,6 +424,7 @@ const en: Record<string, string> = {
   'ai_chat.flow.back': 'Back',
   'ai_chat.flow.url_invalid': "That doesn't look like a link. Try again: 'Send the link'",
   'ai_chat.flow.signin_required': 'Sign in to manage mini apps',
+  'ai_chat.flow.consent_declined': 'Publishing cancelled. The mini app was not saved.',
   'ai_chat.manage.title': 'Your mini apps',
   'ai_chat.manage.empty': "You don't have any mini apps yet. Use 'Create' to add one.",
   'ai_chat.manage.delete_title': 'Delete mini app?',

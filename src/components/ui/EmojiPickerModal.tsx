@@ -1,5 +1,5 @@
 import React, { useRef, useEffect } from 'react';
-import { View, Pressable, Modal, Animated, Dimensions, ScrollView, Text as RNText } from 'react-native';
+import { View, Pressable, Modal, Animated, Dimensions, ScrollView, Text as RNText, Easing } from 'react-native';
 import { useTheme } from '../../theme';
 import { Text } from './Text';
 import { useLiquidGlassActive, GlassBg } from './LiquidGlass';
@@ -29,21 +29,28 @@ export function EmojiPickerModal({ visible, onClose, onSelect }: EmojiPickerModa
   const glassActive = useLiquidGlassActive();
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
   const backdropAnim = useRef(new Animated.Value(0)).current;
+  // Subtle scale paired with the slide so the sheet eases in instead of
+  // snapping up — combined with a gentle cubic-out timing this removes the
+  // abrupt "pop" the spring entrance produced.
+  const scaleAnim = useRef(new Animated.Value(0.96)).current;
 
   useEffect(() => {
     if (visible) {
       slideAnim.setValue(SCREEN_HEIGHT);
       backdropAnim.setValue(0);
+      scaleAnim.setValue(0.96);
       Animated.parallel([
-        Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 50, friction: 9 }),
-        Animated.timing(backdropAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
+        Animated.timing(slideAnim, { toValue: 0, duration: 300, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+        Animated.timing(scaleAnim, { toValue: 1, duration: 300, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+        Animated.timing(backdropAnim, { toValue: 1, duration: 260, easing: Easing.out(Easing.quad), useNativeDriver: true }),
       ]).start();
     }
   }, [visible]);
 
   const dismiss = () => {
     Animated.parallel([
-      Animated.timing(slideAnim, { toValue: SCREEN_HEIGHT, duration: 220, useNativeDriver: true }),
+      Animated.timing(slideAnim, { toValue: SCREEN_HEIGHT, duration: 220, easing: Easing.in(Easing.cubic), useNativeDriver: true }),
+      Animated.timing(scaleAnim, { toValue: 0.98, duration: 220, easing: Easing.in(Easing.cubic), useNativeDriver: true }),
       Animated.timing(backdropAnim, { toValue: 0, duration: 220, useNativeDriver: true }),
     ]).start(({ finished }) => { if (finished) onClose(); });
   };
@@ -60,7 +67,7 @@ export function EmojiPickerModal({ visible, onClose, onSelect }: EmojiPickerModa
           <Pressable style={{ flex: 1 }} onPress={dismiss} />
         </Animated.View>
         <View style={{ flex: 1, justifyContent: 'flex-end' }} pointerEvents="box-none">
-          <Animated.View style={{ transform: [{ translateY: slideAnim }] }}>
+          <Animated.View style={{ transform: [{ translateY: slideAnim }, { scale: scaleAnim }] }}>
             <View style={{ marginHorizontal: 8, marginBottom: 16, maxHeight: SCREEN_HEIGHT * 0.6, backgroundColor: glassActive ? 'transparent' : (theme.isDark ? theme.colors.background.elevated : '#FFFFFF'), borderRadius: 28, overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.12, shadowRadius: 16, elevation: 10 }}>
               {/* Liquid-glass sheet surface (static, non-interactive) behind the
                   content. Tinted so it reads as frosted over the dimmed modal
