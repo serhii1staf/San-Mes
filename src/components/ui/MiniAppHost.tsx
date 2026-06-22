@@ -302,7 +302,7 @@ export function MiniAppHost() {
                 glass visible over the WebView, which the effect can't sample. */}
             <Pressable
               onPress={() => { triggerHaptic('light'); useMiniAppStore.getState().minimize(); }}
-              style={{ height: 28, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingHorizontal: 10, borderRadius: 14, overflow: 'hidden' }}
+              style={{ height: 28, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingHorizontal: 10, borderRadius: 14, overflow: 'hidden', backgroundColor: 'rgba(0,0,0,0.42)' }}
             >
               {glassActive
                 ? <GlassBg borderRadius={14} glassStyle="regular" colorScheme="dark" tintColor="rgba(20,20,20,0.45)" />
@@ -310,7 +310,7 @@ export function MiniAppHost() {
               <Feather name="chevron-down" size={12} color="#FFFFFF" />
               <Text style={{ fontSize: 10, color: '#FFFFFF', fontWeight: '500' }}>{t('mini_app.collapse')}</Text>
             </Pressable>
-            <View style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 12, borderRadius: 14, overflow: 'hidden' }}>
+            <View style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 12, borderRadius: 14, overflow: 'hidden', backgroundColor: 'rgba(0,0,0,0.42)' }}>
               {glassActive
                 ? <GlassBg borderRadius={14} glassStyle="regular" colorScheme="dark" interactive={false} tintColor="rgba(20,20,20,0.45)" />
                 : <BlurView intensity={80} tint="dark" style={StyleSheet.absoluteFill} />}
