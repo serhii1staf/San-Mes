@@ -1,7 +1,9 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { View, Pressable, TextInput, FlatList, ActivityIndicator, Text as RNText, Platform, LayoutAnimation, UIManager, Alert, Animated, InteractionManager } from 'react-native';
+import type { ScrollViewProps } from 'react-native';
 import { KeyboardStickyView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
 import Reanimated, { useAnimatedStyle } from 'react-native-reanimated';
+import { ChatKeyboardScrollView } from '../../src/components/ui/ChatKeyboardScrollView';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -84,17 +86,21 @@ export default function MusicChatScreen() {
 
   const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
   const INPUT_BAR = 60;
-  // Inverted-list keyboard lift — TRANSFORM-based, mirroring app/chat/[id].tsx.
-  // Previously the inverted list's bottom spacer HEIGHT was animated off
-  // `keyboardHeight` every keyboard frame, which relayouts the FlatList and (on
-  // the cold first focus) reads as an abrupt content "jump" even though the
-  // input bar — riding KeyboardStickyView (a pure transform) — lifts smoothly.
-  // Keeping the spacer STATIC and translating the whole list up by the live
-  // keyboard height removes the relayout, so content + bar move in lock-step.
+  // Inverted-list keyboard lift — now handled NATIVELY by the official
+  // KeyboardChatScrollView (via `renderScrollComponent` below). The library
+  // repositions chat content on keyboard open/close with the default "always"
+  // (Telegram/WhatsApp) lift, replacing the old per-frame translateY list
+  // wrapper that relayout-jumped on the first focus / on dismiss. The bottom
+  // spacer stays STATIC — it only reserves room for the floating input bar
+  // while the keyboard is closed.
   const LIST_BOTTOM_SPACER = INPUT_BAR + insets.bottom;
-  const listShiftStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: -Math.abs(keyboardHeight.value) }],
-  }));
+  // Stable renderScrollComponent — FlatList requires a stable reference so it
+  // doesn't tear down / rebuild the scroll view on every render. `inverted` is
+  // forwarded so the wrapper's internal lift math matches the list.
+  const renderScrollComponent = useCallback(
+    (p: ScrollViewProps) => <ChatKeyboardScrollView {...p} inverted />,
+    [],
+  );
   const inputPadStyle = useAnimatedStyle(() => {
     const open = Math.abs(keyboardHeight.value) > 1;
     return { paddingBottom: open ? 8 : (insets.bottom > 0 ? insets.bottom : 16) };
@@ -348,21 +354,17 @@ export default function MusicChatScreen() {
         </LinearGradient>
       </View>
 
-      <Reanimated.View style={[{ flex: 1 }, listShiftStyle]} pointerEvents="box-none">
       <FlatList
         ref={listRef}
         data={invertedData}
         keyExtractor={(item) => item.id}
         inverted
+        renderScrollComponent={renderScrollComponent}
         contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8 }}
         renderItem={renderItem}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
-        // iOS: disable the OS keyboard inset on the inverted scroll view so it
-        // can't double-apply on top of our own list translateY (the cause of
-        // the focus shift "changing after a while" on iPhone).
-        automaticallyAdjustKeyboardInsets={false}
         removeClippedSubviews
         // Tightened from 12/8/9 — 12 TrackResultCards on first paint were
         // hammering the JS thread on the same RAF as the navigation transition,
@@ -372,7 +374,7 @@ export default function MusicChatScreen() {
         initialNumToRender={6}
         maxToRenderPerBatch={4}
         windowSize={5}
-        ListHeaderComponent={<Reanimated.View style={{ height: LIST_BOTTOM_SPACER }} />}
+        ListHeaderComponent={<View style={{ height: LIST_BOTTOM_SPACER }} />}
         ListFooterComponent={<View style={{ height: insets.top + 72 }} />}
         ListEmptyComponent={
           <View style={{ alignItems: 'center', paddingVertical: 60, transform: [{ scaleY: -1 }] }}>
@@ -384,7 +386,6 @@ export default function MusicChatScreen() {
           </View>
         }
       />
-      </Reanimated.View>
 
       {/* Static under-input fade — pinned to the screen bottom and kept
           OUTSIDE the KeyboardStickyView so it does NOT ride up with the

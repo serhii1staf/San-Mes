@@ -1,7 +1,9 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { View, Pressable, TextInput, FlatList, ActivityIndicator, Dimensions, Text as RNText, Platform, LayoutAnimation, UIManager, InteractionManager, Animated, Alert, Share } from 'react-native';
+import type { ScrollViewProps } from 'react-native';
 import { KeyboardStickyView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
 import Reanimated, { useAnimatedStyle } from 'react-native-reanimated';
+import { ChatKeyboardScrollView } from '../../src/components/ui/ChatKeyboardScrollView';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -311,25 +313,22 @@ export default function AIChatScreen() {
 
   const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
   const INPUT_BAR = 60;
-  // Inverted-list keyboard lift — TRANSFORM-based, mirroring app/chat/[id].tsx.
-  //
-  // Previously the inverted list's bottom spacer (its ListHeaderComponent) had
-  // its HEIGHT animated off `keyboardHeight` on every keyboard frame. Animating
-  // a layout dimension forces the FlatList to relayout each frame, and on the
-  // FIRST focus — when the list's cell layout / content size isn't warm yet —
-  // that relayout cascade reads as an abrupt content "jump", while subsequent
-  // focuses (warm layout) feel smooth. The input bar itself rides
-  // `KeyboardStickyView` (a pure transform) and was always smooth, which is why
-  // the field lifted natively while the messages jumped.
-  //
-  // Fix: keep the bottom spacer a STATIC height and translate the WHOLE list up
-  // by the live keyboard height on the UI thread. No relayout, so the content
-  // rides up in lock-step with the input bar (both read the same keyboard
-  // frame) on the first focus and every focus after.
+  // Inverted-list keyboard lift — now handled NATIVELY by the official
+  // KeyboardChatScrollView (via `renderScrollComponent` below). The library
+  // repositions chat content on keyboard open/close with the default "always"
+  // (Telegram/WhatsApp) lift, so the old per-frame translateY list-wrapper
+  // (which relayout-jumped on the first focus and on dismiss) is gone. The
+  // bottom spacer stays a STATIC height — it only reserves room for the
+  // floating input bar while the keyboard is closed.
   const LIST_BOTTOM_SPACER = INPUT_BAR + insets.bottom;
-  const listShiftStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: -Math.abs(keyboardHeight.value) }],
-  }));
+
+  // Stable renderScrollComponent — FlatList requires a stable reference so it
+  // doesn't tear down / rebuild the scroll view on every render. The wrapper
+  // also receives `inverted` so its internal lift math matches the list.
+  const renderScrollComponent = useCallback(
+    (p: ScrollViewProps) => <ChatKeyboardScrollView {...p} inverted />,
+    [],
+  );
 
   // Bottom padding under the input: safe-area when keyboard closed → small gap when open.
   const inputPadStyle = useAnimatedStyle(() => {
@@ -874,29 +873,22 @@ export default function AIChatScreen() {
         </LinearGradient>
       </View>
 
-      {/* Inverted FlatList — newest at bottom, no scroll needed. Wrapped in a
-          Reanimated.View whose translateY is driven by the keyboard frame so
-          the whole list rides up with the keyboard WITHOUT relayout (the bottom
-          spacer below is a STATIC height now). Mirrors app/chat/[id].tsx — this
-          is what removes the first-focus content "jump". */}
-      <Reanimated.View style={[{ flex: 1 }, listShiftStyle]} pointerEvents="box-none">
+      {/* Inverted FlatList — newest at bottom. Content repositioning on
+          keyboard open/close is handled natively by KeyboardChatScrollView
+          via `renderScrollComponent` (default "always" lift). The bottom
+          spacer below stays a STATIC height — it only reserves room for the
+          floating input bar while the keyboard is closed. */}
       <FlatList
         ref={flatListRef}
         data={invertedData}
         keyExtractor={item => item.id}
         inverted
+        renderScrollComponent={renderScrollComponent}
         contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8 }}
         renderItem={renderItem}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
-        automaticallyAdjustsScrollIndicatorInsets={false}
-        // iOS only moves content via OUR list translateY (driven by the same
-        // keyboard frame as the input bar). Explicitly disable the OS's own
-        // keyboard inset on the (inverted) scroll view so it can't double-apply
-        // — that double-adjust is what made the focus shift "change after a
-        // while" on iPhone.
-        automaticallyAdjustKeyboardInsets={false}
         removeClippedSubviews={false}
         // Tightened from 12/8/9 — same fix as chat/music. 12 MessageBubbles
         // on first paint piled up on the navigation transition frame.
@@ -915,7 +907,7 @@ export default function AIChatScreen() {
                 </View>
               </View>
             ) : null}
-            <Reanimated.View style={{ height: LIST_BOTTOM_SPACER }} />
+            <View style={{ height: LIST_BOTTOM_SPACER }} />
           </>
         }
         ListFooterComponent={<View style={{ height: insets.top + 72 }} />}
@@ -932,7 +924,6 @@ export default function AIChatScreen() {
           </View>
         }
       />
-      </Reanimated.View>
 
       {/* Static under-input fade — pinned to the screen bottom and kept
           OUTSIDE the KeyboardStickyView so it does NOT ride up with the

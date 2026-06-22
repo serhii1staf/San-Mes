@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { View, FlatList, TextInput, Pressable, Platform, ActivityIndicator, StyleSheet, Text as RNText, Modal, Alert, LayoutAnimation, UIManager, InteractionManager, ScrollView, Dimensions, Keyboard } from 'react-native';
 import { useReanimatedKeyboardAnimation, useKeyboardHandler } from 'react-native-keyboard-controller';
 import Reanimated, { useAnimatedStyle, useSharedValue, withTiming, runOnJS, Easing } from 'react-native-reanimated';
+import type { ScrollViewProps } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import * as Clipboard from 'expo-clipboard';
 import { useLocalSearchParams, router } from 'expo-router';
@@ -42,7 +43,7 @@ import { useSettingsStore } from '../../src/store/settingsStore';
 import { useBrowserStore } from '../../src/store/browserStore';
 import { useIsBlocked } from '../../src/store/blockedUsersStore';
 import { BlockedContentPlaceholder } from '../../src/components/feed/BlockedContentPlaceholder';
-
+import { ChatKeyboardScrollView } from '../../src/components/ui/ChatKeyboardScrollView';
 const SCREEN_WIDTH = Dimensions.get('window').width;
 
 // Delete one full user-perceived character from the end of a string. Handles
@@ -323,15 +324,17 @@ export default function CommentsScreen() {
   const minimizedUrl = useBrowserStore((s) => s.minimizedUrl);
   const browserWidgetPosition = useSettingsStore((s) => s.browserWidgetPosition);
   const stickyOpenedOffset = !!minimizedUrl && browserWidgetPosition === 'bottom' ? 56 : 0;
-  // Shift the comment list upward by the keyboard height so the very last
-  // comment stays visible above the input bar when the user taps it. We
-  // drive translateY from `useKeyboardHandler.onMove` — the same low-level
-  // event source `KeyboardStickyView` uses — so the list lifts in lock-step
-  // with the input bar instead of snapping when the JS thread is briefly
-  // busy. `onInteractive` covers the iOS interactive-dismiss drag so the
-  // list rides the finger with the keyboard and we don't get a phantom
-  // strip where the last comment used to sit.
-  const listShiftY = useSharedValue(0);
+  // Keyboard-driven list repositioning is now handled NATIVELY by the official
+  // KeyboardChatScrollView (wired via `renderScrollComponent` on the FlatList
+  // below, default "always" lift). We keep `useKeyboardHandler` ONLY to capture
+  // the settled keyboard height so the emoji/GIF media panel can size itself to
+  // match the keyboard it replaces.
+  //
+  // The list still needs a PANEL-driven lift, though: when the media panel
+  // opens the keyboard is down (so KeyboardChatScrollView contributes nothing),
+  // yet the panel covers the bottom of the screen, so the list must shift up by
+  // the panel height to keep the last comment visible above it. `listShiftStyle`
+  // below carries only that panel lift.
   // Capture the settled keyboard height so the media panel can match it.
   // Guarded to ignore the close (height 0) — runs on the JS thread.
   const captureKbHeight = useCallback((h: number) => {
@@ -343,27 +346,19 @@ export default function CommentsScreen() {
   }, [emojiPanelSV]);
   useKeyboardHandler(
     {
-      onMove: (e) => {
-        'worklet';
-        listShiftY.value = -e.height;
-      },
-      onInteractive: (e) => {
-        'worklet';
-        listShiftY.value = -e.height;
-      },
       onEnd: (e) => {
         'worklet';
-        listShiftY.value = -e.height;
         runOnJS(captureKbHeight)(e.height);
       },
     },
     [],
   );
   const listShiftStyle = useAnimatedStyle(() => ({
-    // Blend the live keyboard-driven shift with the panel lift via min() (both
-    // ≤ 0) so the list rises in lock-step with the bar during an animated
-    // panel open (keyboard-down case) and stays put while the panel is up.
-    transform: [{ translateY: Math.min(listShiftY.value, -liftSV.value * emojiPanelSV.value) }],
+    // Panel-only list lift. The keyboard case is handled by
+    // KeyboardChatScrollView; this transform only shifts the list up while the
+    // emoji/GIF media panel is open (keyboard down) so the last comment stays
+    // visible above the panel.
+    transform: [{ translateY: -liftSV.value * emojiPanelSV.value }],
   }));
 
   // Input bar lift — replaces KeyboardStickyView so we can fold the media-panel
@@ -903,6 +898,16 @@ export default function CommentsScreen() {
   );
   const keyExtractor = useCallback((item: any) => item.id, []);
 
+  // Stable renderScrollComponent — the comments list is NON-inverted, so the
+  // wrapper gets inverted={false}. KeyboardChatScrollView repositions the list
+  // content on keyboard open/close natively (default "always" lift). A stable
+  // useCallback reference is required so FlatList doesn't rebuild the scroll
+  // view on every render.
+  const renderScrollComponent = useCallback(
+    (p: ScrollViewProps) => <ChatKeyboardScrollView {...p} inverted={false} />,
+    [],
+  );
+
   return (
     <View style={{ flex: 1, backgroundColor: bgColor }}>
       {/* Gradient fade header */}
@@ -933,11 +938,9 @@ export default function CommentsScreen() {
             data={comments}
             keyExtractor={keyExtractor}
             renderItem={renderComment}
+            renderScrollComponent={renderScrollComponent}
             contentContainerStyle={{ paddingHorizontal: 20, paddingTop: headerContentHeight, paddingBottom: 80 + insets.bottom }}
             showsVerticalScrollIndicator={false}
-            // iOS: our listShiftStyle translateY already lifts the list with the
-            // keyboard; disable the OS keyboard inset so it can't double-apply.
-            automaticallyAdjustKeyboardInsets={false}
             removeClippedSubviews={true}
             initialNumToRender={6}
             maxToRenderPerBatch={4}
