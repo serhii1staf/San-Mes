@@ -40,8 +40,14 @@ export const useMiniAppStore = create<MiniAppState>((set, get) => ({
   sessionKey: 0,
   open: ({ url, name, emoji, id }) => {
     const cur = get();
-    // Same app already open/minimized → just bring it back to full, keeping the
-    // live WebView (no reload). Different app (or none) → fresh session.
+    // Already fullscreen on this exact app → no-op. The launcher route fires
+    // open() on every navigation to `/mini-app`; without this guard a repeated
+    // / double tap (or a duplicate launcher mount) re-commits the full state,
+    // which restarts the slide-up animation and clears the widget for no
+    // reason — the user reads that as a flicker / "open-close-open".
+    if (cur.mode === 'full' && cur.url === url) return;
+    // Same app currently minimized → bring it back to full, keeping the live
+    // WebView (no reload). Different app (or none) → fresh session.
     const sameApp = cur.mode !== 'closed' && cur.url === url;
     set({
       mode: 'full',

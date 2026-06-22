@@ -17,6 +17,7 @@ import { FormattedText } from '../../src/components/ui/FormattedText';
 import { LinkPreview } from '../../src/components/ui/LinkPreview';
 import { extractFirstUrl } from '../../src/services/linkPreview';
 import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
+import { useChatKeyboardMode } from '../../src/hooks/useChatKeyboardMode';
 import { CachedImage } from '../../src/components/ui/CachedImage';
 import { useStaggeredReveal } from '../../src/hooks/useStaggeredReveal';
 import { CommentContextMenu, CommentAction } from '../../src/components/ui/CommentContextMenu';
@@ -266,6 +267,9 @@ export default function CommentsScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
+  // Android: while focused, stop the OS window resize so ONLY our JS-driven
+  // input lift moves content (kills the first-focus jump). No-op on iOS.
+  useChatKeyboardMode();
   // Native iOS-26 liquid glass for the composer chrome. iOS-only and only when
   // the user enabled it — everywhere else this is false and the existing flat
   // bordered capsule renders unchanged (Android always hits the fallback).

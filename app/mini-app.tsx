@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useMiniAppStore } from '../src/store/miniAppStore';
@@ -15,8 +15,16 @@ import { useMiniAppStore } from '../src/store/miniAppStore';
 
 export default function MiniAppLauncher() {
   const { url, name, emoji, id } = useLocalSearchParams<{ url: string; name: string; emoji: string; id?: string }>();
+  // Guard so the open()+back() pair runs EXACTLY once per mount. React can
+  // double-invoke effects (StrictMode / fast remount), and a duplicate fire
+  // here would push open() twice and pop one screen too many — both read as a
+  // flicker / "open-close-open-close" on screen.
+  const fired = useRef(false);
 
   useEffect(() => {
+    if (fired.current) return;
+    fired.current = true;
+
     useMiniAppStore.getState().open({
       url: url || '',
       name: name || 'App',

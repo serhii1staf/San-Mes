@@ -20,9 +20,10 @@ const SCREEN_H = Dimensions.get('window').height;
 
 // Root-level persistent mini-app host. See src/store/miniAppStore.ts for the
 // state machine. The WebView is mounted while mode !== 'closed' and is NEVER
-// torn down on minimize — minimizing just hides the overlay (opacity 0, sent
-// behind the opaque app screens) so the page keeps its scroll/section/JS
-// state and restoring is instant with no reload.
+// torn down on minimize — minimizing just parks the overlay off-screen
+// (translateY) at opacity 0 with pointerEvents 'none', keeping its zIndex
+// STABLE (no reorder repaint), so the page keeps its scroll/section/JS state
+// and restoring is instant with no reload.
 
 const REPORT_CATS: { key: string; labelKey: string }[] = [
   { key: 'spam', labelKey: 'report.cat.spam' },
@@ -65,11 +66,6 @@ export function MiniAppHost() {
   const [currentUrl, setCurrentUrl] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [reportOpen, setReportOpen] = useState(false);
-  // True only WHILE the minimize slide-down is playing. The overlay must stay
-  // elevated (zIndex up, opaque) for the whole animation; otherwise the moment
-  // mode flips to 'min' the view drops to zIndex -1 behind the opaque app and
-  // the slide-down happens off-screen (the user "never sees it collapse").
-  const [minimizing, setMinimizing] = useState(false);
   const loadTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const decodedUrl = useMemo(() => normalizeUrl(url), [url]);
@@ -91,31 +87,50 @@ export function MiniAppHost() {
   }, []);
   useEffect(() => () => { if (loadTimeout.current) clearTimeout(loadTimeout.current); }, []);
 
-  // Slide the overlay UP on open/restore and DOWN on minimize/close — restores
-  // the previous open/close feel instead of an instant pop.
+  // Slide the overlay UP on open/restore and DOWN on minimize/close.
+  //
+  // The overlay's stacking (zIndex / elevation) and background are kept STABLE
+  // for the entire lifetime of a session — they are NEVER toggled at the end of
+  // an animation. On Android, reordering an absolutely-positioned view's zIndex
+  // (the old 9999 → -1 flip when minimize finished) forces a one-frame
+  // repaint, which is exactly the blink/artifact the user saw. Instead the
+  // overlay is "parked" purely by sliding it fully off-screen (translateY) and
+  // fading it out (opacity → 0), both driven by the SAME native-driver value
+  // below, so there is no JS-side style commit at the end of the slide.
   const slideY = useRef(new Animated.Value(SCREEN_H)).current;
+  // Opacity is derived from the slide position so it reaches 0 only once the
+  // overlay is fully off-screen (the last pixel). This keeps the slide itself
+  // looking identical (fully opaque the whole visible travel) while guaranteeing
+  // the parked overlay is invisible — defense-in-depth against any subpixel /
+  // compositor quirk on weak Android devices, with zero extra JS commits.
+  const overlayOpacity = useRef(
+    slideY.interpolate({ inputRange: [0, SCREEN_H - 1, SCREEN_H], outputRange: [1, 1, 0], extrapolate: 'clamp' }),
+  ).current;
+
   useEffect(() => {
     if (mode === 'full') {
-      setMinimizing(false);
+      // Open / restore. Starting a new timing on slideY implicitly cancels any
+      // in-flight minimize/close slide, so a quick restore mid-collapse simply
+      // reverses cleanly from the CURRENT position — no stale state.
       Animated.timing(slideY, { toValue: 0, duration: 400, easing: Easing.bezier(0.16, 1, 0.3, 1), useNativeDriver: true }).start();
       try { useBrowserStore.getState().clearMinimized(); } catch {}
     } else if (mode === 'min') {
-      // Keep the overlay elevated + opaque for the whole slide so the collapse
-      // is actually visible, then drop it behind the app (zIndex -1) once it
-      // has finished sliding off-screen.
-      setMinimizing(true);
       Animated.timing(slideY, { toValue: SCREEN_H, duration: 340, easing: Easing.in(Easing.cubic), useNativeDriver: true }).start(({ finished }) => {
-        if (!finished) return; // interrupted (e.g. user restored mid-collapse)
+        // Bail if the slide was interrupted (e.g. user restored / closed
+        // mid-collapse) — the new transition owns the value now.
+        if (!finished) return;
+        // Re-check the live mode: even a NATURALLY finished slide must no-op if
+        // the session is no longer minimized by the time this fires (a close or
+        // restore could have landed on the final frame). This prevents the
+        // familiar widget from popping in for a stale 'min' that already moved on.
+        if (useMiniAppStore.getState().mode !== 'min') return;
         // Reveal the user's FAMILIAR minimized widget (BrowserMiniBar /
-        // BrowserBottomBand) ONLY AFTER the collapse finishes. Showing it up
-        // front made the bottom widget pop in while the window was still
-        // sliding down — it looked like the widget existed before the app had
-        // collapsed. Now the window fully slides away, THEN the widget appears.
+        // BrowserBottomBand) ONLY AFTER the collapse finishes, so the widget
+        // never appears while the window is still sliding down.
         try {
           const st = useMiniAppStore.getState();
           useBrowserStore.getState().setMinimized(normalizeUrl(st.url), st.name, true, st.emoji);
         } catch {}
-        setMinimizing(false);
       });
     }
   }, [mode, slideY]);
@@ -126,7 +141,15 @@ export function MiniAppHost() {
   useEffect(() => {
     if (mode !== 'min') return;
     const unsub = useBrowserStore.subscribe((s) => {
-      if (!s.minimizedUrl) useMiniAppStore.getState().close();
+      // Only treat a cleared widget as a genuine user-dismiss while we are
+      // STILL minimized. Restore (and close) clear the widget themselves via
+      // clearMinimized(), but by then the mode has already moved off 'min' —
+      // without this guard that self-inflicted clear would fire close() in the
+      // middle of a restore, tearing the WebView down right as it slides back
+      // up (the rapid open/close the user reported).
+      if (!s.minimizedUrl && useMiniAppStore.getState().mode === 'min') {
+        useMiniAppStore.getState().close();
+      }
     });
     return unsub;
   }, [mode]);
@@ -192,21 +215,23 @@ export function MiniAppHost() {
   if (mode === 'closed') return null;
 
   const full = mode === 'full';
-  // Stay on top + opaque during the minimize slide so it's visible; only drop
-  // behind the app once the collapse animation has finished.
-  const elevated = full || minimizing;
 
   return (
     <>
-      {/* WebView overlay — kept mounted across minimize. When minimized it is
-          sent behind the (opaque) app with opacity 0 so its page state stays
-          alive for an instant, reload-free restore. */}
+      {/* WebView overlay — kept mounted across minimize. Its zIndex/elevation
+          and background are STABLE for the whole session: it is parked purely
+          by sliding off-screen (translateY) + fading out (opacity), so there
+          is never a zIndex reorder repaint. While minimized it sits off-screen
+          at opacity 0 with pointerEvents 'none', so the app below is fully
+          visible and interactive and the page state stays alive (reload-free
+          restore). */}
       <Animated.View
         pointerEvents={full ? 'auto' : 'none'}
         style={{
           position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
-          zIndex: elevated ? 9999 : -1,
-          backgroundColor: elevated ? '#000' : undefined,
+          zIndex: 9999,
+          backgroundColor: '#000',
+          opacity: overlayOpacity,
           transform: [{ translateY: slideY }],
         }}
       >

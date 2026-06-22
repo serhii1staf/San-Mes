@@ -25,6 +25,7 @@ import { perfMonitor } from '../../src/services/perfMonitor';
 import { useSettingsStore } from '../../src/store/settingsStore';
 import { ThemeIconCarousel } from '../../src/components/pixel-icons/ThemeIconCarousel';
 import { buildMiniAppShareUrl } from '../../src/utils/miniAppShare';
+import { useChatKeyboardMode } from '../../src/hooks/useChatKeyboardMode';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 
@@ -257,6 +258,9 @@ export default function AIChatScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
+  // Android: while focused, stop the OS window resize so ONLY our JS-driven
+  // input lift moves content (kills the first-focus jump). No-op on iOS.
+  useChatKeyboardMode();
   // Mount-time marker — surfaces in the perf-monitor panel so the user can
   // tell at a glance whether opening the AI chat froze on the JS thread
   // (large initial render) or on the navigation transition itself.

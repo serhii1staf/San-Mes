@@ -30,6 +30,7 @@ import { useChatStore, useEntityStore, useConnectivityStore, useAuthStore } from
 import { useChatSettingsStore, GLOBAL_CHAT_SETTINGS_KEY, DEFAULT_CHAT_SETTINGS } from '../../src/store/chatSettingsStore';
 import { readableTextOn, withOpacity } from '../../src/constants/bubbleColors';
 import { useMessageGestures } from '../../src/hooks/useMessageGestures';
+import { useChatKeyboardMode } from '../../src/hooks/useChatKeyboardMode';
 import { useStaggeredReveal, useStaggeredGifReveal } from '../../src/hooks/useStaggeredReveal';
 import { useBrowserStore } from '../../src/store/browserStore';
 import { ChatBackgroundLayer } from '../../src/components/ui/ChatBackgroundLayer';
@@ -541,6 +542,11 @@ export default function ChatScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
+  // Android: while focused, stop the OS window resize so ONLY this screen's
+  // existing JS-driven lift moves content (kills the first-focus jump).
+  // Purely additive — does not touch the input-bar lift/swallow, liftSV/
+  // panelSlide, MediaPanel slide, or message-bubble gestures. No-op on iOS.
+  useChatKeyboardMode();
   // Native iOS-26 liquid glass for the chat chrome (header / search / scroll
   // button). iOS-only and gated on the user toggle; false everywhere else, so
   // all the fallback paths below render exactly as before. Read once, reused.

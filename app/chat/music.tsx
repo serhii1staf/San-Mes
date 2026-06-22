@@ -21,6 +21,7 @@ import { triggerHaptic } from '../../src/utils/haptics';
 import { useT } from '../../src/i18n/store';
 import { perfMonitor } from '../../src/services/perfMonitor';
 import { useSettingsStore } from '../../src/store/settingsStore';
+import { useChatKeyboardMode } from '../../src/hooks/useChatKeyboardMode';
 
 interface MusicMessage { id: string; query: string; track?: Track | null; tracks?: Track[]; ts: number }
 
@@ -37,6 +38,9 @@ export default function MusicChatScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
+  // Android: while focused, stop the OS window resize so ONLY our JS-driven
+  // input lift moves content (kills the first-focus jump). No-op on iOS.
+  useChatKeyboardMode();
   // Mount-time marker — perf-monitor panel attributes any open-the-music
   // chat freeze either to navigation overhead or to this commit duration.
   // Skipped at the call site when the monitor is off.
