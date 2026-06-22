@@ -6,7 +6,7 @@ import { useSegments } from 'expo-router';
 import { useTheme } from '../../theme';
 import { Text } from './Text';
 import { useToastStore } from '../../store/toastStore';
-import { GlassBg, useLiquidGlassActive } from './LiquidGlass';
+import { NativeGlassView, useLiquidGlassActive } from './LiquidGlass';
 import { getTabBarHeight } from '../navigation/CustomTabBar';
 
 // Breathing room between the toast and whatever sits below/above it.
@@ -99,6 +99,29 @@ export function Toast() {
 
   if (!visible) return null;
 
+  // Solid (non-glass) surface styling, shared by the fallback container.
+  const solidStyle = {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 8,
+    borderRadius: RADIUS,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    backgroundColor: theme.isDark ? 'rgba(30,30,30,0.95)' : 'rgba(255,255,255,0.97)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    elevation: 6,
+    borderWidth: 0.5,
+    borderColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)',
+  };
+
+  const onLayout = (e: any) => {
+    const h = Math.round(e.nativeEvent.layout.height);
+    if (h > 0 && h !== measuredH) setMeasuredH(h);
+  };
+
   return (
     <Animated.View
       pointerEvents="none"
@@ -112,56 +135,43 @@ export function Toast() {
         transform: [{ translateY: slideAnim }],
       }}
     >
-      <View
-        onLayout={(e) => {
-          const h = Math.round(e.nativeEvent.layout.height);
-          if (h > 0 && h !== measuredH) setMeasuredH(h);
-        }}
-        style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 8,
-          borderRadius: RADIUS,
-          paddingHorizontal: 14,
-          paddingVertical: 8,
-          // Clip the glass background layer to the rounded corners. Always on
-          // so the corners stay crisp in both glass and solid modes.
-          overflow: 'hidden',
-          // Glass mode: transparent base — the GlassBg sibling below supplies
-          // the surface. Solid mode: the established dark/light fill.
-          backgroundColor: glassActive
-            ? 'transparent'
-            : theme.isDark
-              ? 'rgba(30,30,30,0.95)'
-              : 'rgba(255,255,255,0.97)',
-          shadowColor: '#000',
-          shadowOffset: { width: 0, height: 3 },
-          shadowOpacity: glassActive ? 0.18 : 0.12,
-          shadowRadius: 8,
-          elevation: 6,
-          borderWidth: 0.5,
-          borderColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)',
-        }}
-      >
-        {/* Liquid-glass BACKGROUND layer — first child, absolute-fill, with the
-            icon + text rendered as SIBLINGS on top. A subtle tint keeps it
-            readable in dark mode. Renders nothing when glass is off. */}
-        {glassActive && (
-          <GlassBg
-            borderRadius={RADIUS}
-            glassStyle="regular"
-            colorScheme={theme.isDark ? 'dark' : 'light'}
-            // Static surface — a transient toast shouldn't morph on touch
-            // (it's also non-interactive via pointerEvents on the wrapper).
-            interactive={false}
-            tintColor={
-              theme.isDark ? 'rgba(28,28,30,0.55)' : 'rgba(255,255,255,0.5)'
-            }
-          />
-        )}
-        <Feather name={(icon || 'check') as any} size={14} color={theme.colors.accent.primary} />
-        <Text variant="caption" weight="medium" style={{ fontSize: 12 }}>{message}</Text>
-      </View>
+      {glassActive ? (
+        // SAME proven glass pattern as the chat header pill (`headerPillGlass`):
+        // the icon + text live INSIDE the NativeGlassView with NO competing
+        // backgroundColor / border / overflow, so the real liquid surface
+        // renders. The previous GlassBg-behind-content version sampled the
+        // container's own fill and read as a flat dark chip. `isInteractive` is
+        // off so a transient toast stays static. The wrapper animates only
+        // `translateY` (never opacity), keeping the native glass drawing.
+        <NativeGlassView
+          glassStyle="regular"
+          isInteractive={false}
+          colorScheme={theme.isDark ? 'dark' : 'light'}
+          tintColor={theme.isDark ? 'rgba(28,28,30,0.55)' : 'rgba(255,255,255,0.5)'}
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 8,
+            borderRadius: RADIUS,
+            paddingHorizontal: 14,
+            paddingVertical: 8,
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: 3 },
+            shadowOpacity: 0.18,
+            shadowRadius: 8,
+          }}
+        >
+          <View onLayout={onLayout} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Feather name={(icon || 'check') as any} size={14} color={theme.colors.accent.primary} />
+            <Text variant="caption" weight="medium" style={{ fontSize: 12 }}>{message}</Text>
+          </View>
+        </NativeGlassView>
+      ) : (
+        <View onLayout={onLayout} style={solidStyle}>
+          <Feather name={(icon || 'check') as any} size={14} color={theme.colors.accent.primary} />
+          <Text variant="caption" weight="medium" style={{ fontSize: 12 }}>{message}</Text>
+        </View>
+      )}
     </Animated.View>
   );
 }

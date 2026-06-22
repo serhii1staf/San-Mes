@@ -2644,31 +2644,24 @@ export default function ChatScreen() {
             style={glassActive ? { transform: [{ scale: scrollBtnOpacity }] } : { opacity: scrollBtnOpacity }}
           >
             {glassActive ? (
-              // Glass capsule via the GlassBg BACKGROUND pattern (the documented
-              // correct way to glass a button). The previous version put the
-              // chevron INSIDE an interactive GlassView, which rendered fully
-              // transparent in this absolutely-positioned overlay (same class of
-              // bug as the Dynamic Island). Now the glass is an absolute-fill
-              // sibling BEHIND the chevron, clipped to the circle, with a faint
-              // tint so it always reads as a button even where the backdrop is
-              // the plain fade. The opacity fade stays on the wrapper above.
-              <Pressable
-                onPress={onScrollBtnTap}
-                hitSlop={6}
-                style={{
-                  width: 36,
-                  height: 36,
-                  borderRadius: 18,
-                  overflow: 'hidden',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  borderWidth: 1,
-                  borderColor: theme.colors.border.light,
-                  backgroundColor: theme.isDark ? 'rgba(40,40,45,0.45)' : 'rgba(255,255,255,0.45)',
-                }}
-              >
-                <GlassBg borderRadius={18} glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} interactive={false} />
-                <Feather name="chevron-down" size={20} color={theme.colors.text.primary} />
+              // SAME proven glass pattern as the chat header circles
+              // (`headerCircleGlass`): the icon lives INSIDE an interactive
+              // NativeGlassView with NO backgroundColor / border / overflow so
+              // the real liquid surface renders and morphs on touch. The
+              // previous GlassBg-background version sat behind a semi-opaque
+              // dark fill, so the glass sampled that dark fill and just looked
+              // like a flat dark circle — which is what showed up as "no glass".
+              // The wrapper above animates `scale` (not opacity), so the native
+              // UIVisualEffectView keeps drawing.
+              <Pressable onPress={onScrollBtnTap} hitSlop={6} style={{ borderRadius: 18 }}>
+                <NativeGlassView
+                  glassStyle="regular"
+                  isInteractive
+                  colorScheme={theme.isDark ? 'dark' : 'light'}
+                  style={styles.headerCircleGlass}
+                >
+                  <Feather name="chevron-down" size={20} color={theme.colors.text.primary} />
+                </NativeGlassView>
               </Pressable>
             ) : (
               <Pressable
