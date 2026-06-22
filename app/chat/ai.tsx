@@ -306,11 +306,25 @@ export default function AIChatScreen() {
   );
 
   const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
-  // Inverted list: the visual bottom spacer is the ListHeaderComponent.
-  // Grow it with the keyboard so newest messages stay above the input bar.
   const INPUT_BAR = 60;
-  const headerSpacerStyle = useAnimatedStyle(() => ({
-    height: Math.abs(keyboardHeight.value) + INPUT_BAR + insets.bottom,
+  // Inverted-list keyboard lift — TRANSFORM-based, mirroring app/chat/[id].tsx.
+  //
+  // Previously the inverted list's bottom spacer (its ListHeaderComponent) had
+  // its HEIGHT animated off `keyboardHeight` on every keyboard frame. Animating
+  // a layout dimension forces the FlatList to relayout each frame, and on the
+  // FIRST focus — when the list's cell layout / content size isn't warm yet —
+  // that relayout cascade reads as an abrupt content "jump", while subsequent
+  // focuses (warm layout) feel smooth. The input bar itself rides
+  // `KeyboardStickyView` (a pure transform) and was always smooth, which is why
+  // the field lifted natively while the messages jumped.
+  //
+  // Fix: keep the bottom spacer a STATIC height and translate the WHOLE list up
+  // by the live keyboard height on the UI thread. No relayout, so the content
+  // rides up in lock-step with the input bar (both read the same keyboard
+  // frame) on the first focus and every focus after.
+  const LIST_BOTTOM_SPACER = INPUT_BAR + insets.bottom;
+  const listShiftStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: -Math.abs(keyboardHeight.value) }],
   }));
 
   // Bottom padding under the input: safe-area when keyboard closed → small gap when open.
@@ -485,10 +499,21 @@ export default function AIChatScreen() {
       // own smooth entrance animation (slide + scale + backdrop, native
       // driver) in EmojiPickerModal.tsx, so the "smooth flow" feel is
       // preserved without stacking a full-list layout animation on top.
-      setEmojiPickerOpen(true);
-    } else {
-      setEmojiPickerOpen(false);
+      //
+      // We reach this step from handleSend's name branch, which on the SAME
+      // tick fires appendItems → LayoutAnimation.configureNext on the inverted
+      // bubble list. Mounting the Modal's native view while that list layout
+      // animation is still committing produces a residual single-frame UI
+      // thread stall (perfMonitor: ui<30 @ chat/ai, chat/ai worstFps 3).
+      // Defer the open by one interaction tick so the bubble-append layout has
+      // committed before the Modal mounts. Cancelled on cleanup so a fast
+      // Back/cancel (flowStep moving away) never opens a stale picker.
+      const handle = InteractionManager.runAfterInteractions(() => setEmojiPickerOpen(true));
+      return () => handle.cancel();
     }
+    // Close path stays synchronous — Back / cancel / pick must hide the picker
+    // immediately with no flicker.
+    setEmojiPickerOpen(false);
   }, [flowStep]);
 
   const cancelFlow = useCallback(() => {
@@ -845,7 +870,12 @@ export default function AIChatScreen() {
         </LinearGradient>
       </View>
 
-      {/* Inverted FlatList — newest at bottom, no scroll needed */}
+      {/* Inverted FlatList — newest at bottom, no scroll needed. Wrapped in a
+          Reanimated.View whose translateY is driven by the keyboard frame so
+          the whole list rides up with the keyboard WITHOUT relayout (the bottom
+          spacer below is a STATIC height now). Mirrors app/chat/[id].tsx — this
+          is what removes the first-focus content "jump". */}
+      <Reanimated.View style={[{ flex: 1 }, listShiftStyle]} pointerEvents="box-none">
       <FlatList
         ref={flatListRef}
         data={invertedData}
@@ -875,7 +905,7 @@ export default function AIChatScreen() {
                 </View>
               </View>
             ) : null}
-            <Reanimated.View style={headerSpacerStyle} />
+            <Reanimated.View style={{ height: LIST_BOTTOM_SPACER }} />
           </>
         }
         ListFooterComponent={<View style={{ height: insets.top + 72 }} />}
@@ -892,6 +922,7 @@ export default function AIChatScreen() {
           </View>
         }
       />
+      </Reanimated.View>
 
       {/* Static under-input fade — pinned to the screen bottom and kept
           OUTSIDE the KeyboardStickyView so it does NOT ride up with the

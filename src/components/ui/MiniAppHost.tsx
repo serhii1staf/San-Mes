@@ -100,19 +100,22 @@ export function MiniAppHost() {
       Animated.timing(slideY, { toValue: 0, duration: 400, easing: Easing.bezier(0.16, 1, 0.3, 1), useNativeDriver: true }).start();
       try { useBrowserStore.getState().clearMinimized(); } catch {}
     } else if (mode === 'min') {
-      // Reuse the user's FAMILIAR minimized widget (BrowserMiniBar /
-      // BrowserBottomBand) — it respects their top/bottom position setting and
-      // its own animation — instead of a bespoke pill.
-      try {
-        const st = useMiniAppStore.getState();
-        useBrowserStore.getState().setMinimized(normalizeUrl(st.url), st.name, true, st.emoji);
-      } catch {}
       // Keep the overlay elevated + opaque for the whole slide so the collapse
       // is actually visible, then drop it behind the app (zIndex -1) once it
       // has finished sliding off-screen.
       setMinimizing(true);
       Animated.timing(slideY, { toValue: SCREEN_H, duration: 340, easing: Easing.in(Easing.cubic), useNativeDriver: true }).start(({ finished }) => {
-        if (finished) setMinimizing(false);
+        if (!finished) return; // interrupted (e.g. user restored mid-collapse)
+        // Reveal the user's FAMILIAR minimized widget (BrowserMiniBar /
+        // BrowserBottomBand) ONLY AFTER the collapse finishes. Showing it up
+        // front made the bottom widget pop in while the window was still
+        // sliding down — it looked like the widget existed before the app had
+        // collapsed. Now the window fully slides away, THEN the widget appears.
+        try {
+          const st = useMiniAppStore.getState();
+          useBrowserStore.getState().setMinimized(normalizeUrl(st.url), st.name, true, st.emoji);
+        } catch {}
+        setMinimizing(false);
       });
     }
   }, [mode, slideY]);

@@ -1,5 +1,5 @@
 import React, { useRef, useEffect } from 'react';
-import { View, Pressable, Modal, Animated, Dimensions, ScrollView, Text as RNText, Easing } from 'react-native';
+import { View, Pressable, Modal, Animated, Dimensions, ScrollView, Text as RNText, Easing, Platform } from 'react-native';
 import { useTheme } from '../../theme';
 import { Text } from './Text';
 import { useLiquidGlassActive, GlassBg } from './LiquidGlass';
@@ -68,7 +68,18 @@ export function EmojiPickerModal({ visible, onClose, onSelect }: EmojiPickerModa
         </Animated.View>
         <View style={{ flex: 1, justifyContent: 'flex-end' }} pointerEvents="box-none">
           <Animated.View style={{ transform: [{ translateY: slideAnim }, { scale: scaleAnim }] }}>
-            <View style={{ marginHorizontal: 8, marginBottom: 16, maxHeight: SCREEN_HEIGHT * 0.6, backgroundColor: glassActive ? 'transparent' : (theme.isDark ? theme.colors.background.elevated : '#FFFFFF'), borderRadius: 28, overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.12, shadowRadius: 16, elevation: 10 }}>
+            <View style={{ marginHorizontal: 8, marginBottom: 16, maxHeight: SCREEN_HEIGHT * 0.6, backgroundColor: glassActive ? 'transparent' : (theme.isDark ? theme.colors.background.elevated : '#FFFFFF'), borderRadius: 28, overflow: 'hidden',
+              // Heavy ambient shadow is iOS-only. On Android, a large
+              // `elevation` on this big animating sheet forces the GPU to
+              // re-render an expensive shadow projection every frame of the
+              // slide-in — on weak Android 10 devices that lands on the same
+              // frames the Modal's native view is being constructed and
+              // produces a residual UI-thread stall (perfMonitor: ui<30 @
+              // chat/ai). Drop to a small elevation on Android; the visual is
+              // essentially unchanged behind the rounded sheet.
+              ...(Platform.OS === 'ios'
+                ? { shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.12, shadowRadius: 16 }
+                : { elevation: 2 }) }}>
               {/* Liquid-glass sheet surface (static, non-interactive) behind the
                   content. Tinted so it reads as frosted over the dimmed modal
                   backdrop instead of nearly-clear `regular` glass. */}

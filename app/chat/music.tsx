@@ -80,7 +80,17 @@ export default function MusicChatScreen() {
 
   const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
   const INPUT_BAR = 60;
-  const headerSpacerStyle = useAnimatedStyle(() => ({ height: Math.abs(keyboardHeight.value) + INPUT_BAR + insets.bottom }));
+  // Inverted-list keyboard lift — TRANSFORM-based, mirroring app/chat/[id].tsx.
+  // Previously the inverted list's bottom spacer HEIGHT was animated off
+  // `keyboardHeight` every keyboard frame, which relayouts the FlatList and (on
+  // the cold first focus) reads as an abrupt content "jump" even though the
+  // input bar — riding KeyboardStickyView (a pure transform) — lifts smoothly.
+  // Keeping the spacer STATIC and translating the whole list up by the live
+  // keyboard height removes the relayout, so content + bar move in lock-step.
+  const LIST_BOTTOM_SPACER = INPUT_BAR + insets.bottom;
+  const listShiftStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: -Math.abs(keyboardHeight.value) }],
+  }));
   const inputPadStyle = useAnimatedStyle(() => {
     const open = Math.abs(keyboardHeight.value) > 1;
     return { paddingBottom: open ? 8 : (insets.bottom > 0 ? insets.bottom : 16) };
@@ -334,6 +344,7 @@ export default function MusicChatScreen() {
         </LinearGradient>
       </View>
 
+      <Reanimated.View style={[{ flex: 1 }, listShiftStyle]} pointerEvents="box-none">
       <FlatList
         ref={listRef}
         data={invertedData}
@@ -353,7 +364,7 @@ export default function MusicChatScreen() {
         initialNumToRender={6}
         maxToRenderPerBatch={4}
         windowSize={5}
-        ListHeaderComponent={<Reanimated.View style={headerSpacerStyle} />}
+        ListHeaderComponent={<Reanimated.View style={{ height: LIST_BOTTOM_SPACER }} />}
         ListFooterComponent={<View style={{ height: insets.top + 72 }} />}
         ListEmptyComponent={
           <View style={{ alignItems: 'center', paddingVertical: 60, transform: [{ scaleY: -1 }] }}>
@@ -365,6 +376,7 @@ export default function MusicChatScreen() {
           </View>
         }
       />
+      </Reanimated.View>
 
       {/* Static under-input fade — pinned to the screen bottom and kept
           OUTSIDE the KeyboardStickyView so it does NOT ride up with the
