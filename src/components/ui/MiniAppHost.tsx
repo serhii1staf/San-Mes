@@ -65,6 +65,11 @@ export function MiniAppHost() {
   const [currentUrl, setCurrentUrl] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [reportOpen, setReportOpen] = useState(false);
+  // True only WHILE the minimize slide-down is playing. The overlay must stay
+  // elevated (zIndex up, opaque) for the whole animation; otherwise the moment
+  // mode flips to 'min' the view drops to zIndex -1 behind the opaque app and
+  // the slide-down happens off-screen (the user "never sees it collapse").
+  const [minimizing, setMinimizing] = useState(false);
   const loadTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const decodedUrl = useMemo(() => normalizeUrl(url), [url]);
@@ -91,6 +96,7 @@ export function MiniAppHost() {
   const slideY = useRef(new Animated.Value(SCREEN_H)).current;
   useEffect(() => {
     if (mode === 'full') {
+      setMinimizing(false);
       Animated.timing(slideY, { toValue: 0, duration: 400, easing: Easing.bezier(0.16, 1, 0.3, 1), useNativeDriver: true }).start();
       try { useBrowserStore.getState().clearMinimized(); } catch {}
     } else if (mode === 'min') {
@@ -101,7 +107,13 @@ export function MiniAppHost() {
         const st = useMiniAppStore.getState();
         useBrowserStore.getState().setMinimized(normalizeUrl(st.url), st.name, true, st.emoji);
       } catch {}
-      Animated.timing(slideY, { toValue: SCREEN_H, duration: 340, easing: Easing.in(Easing.cubic), useNativeDriver: true }).start();
+      // Keep the overlay elevated + opaque for the whole slide so the collapse
+      // is actually visible, then drop it behind the app (zIndex -1) once it
+      // has finished sliding off-screen.
+      setMinimizing(true);
+      Animated.timing(slideY, { toValue: SCREEN_H, duration: 340, easing: Easing.in(Easing.cubic), useNativeDriver: true }).start(({ finished }) => {
+        if (finished) setMinimizing(false);
+      });
     }
   }, [mode, slideY]);
 
@@ -177,6 +189,9 @@ export function MiniAppHost() {
   if (mode === 'closed') return null;
 
   const full = mode === 'full';
+  // Stay on top + opaque during the minimize slide so it's visible; only drop
+  // behind the app once the collapse animation has finished.
+  const elevated = full || minimizing;
 
   return (
     <>
@@ -187,8 +202,8 @@ export function MiniAppHost() {
         pointerEvents={full ? 'auto' : 'none'}
         style={{
           position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
-          zIndex: full ? 9999 : -1,
-          backgroundColor: full ? '#000' : undefined,
+          zIndex: elevated ? 9999 : -1,
+          backgroundColor: elevated ? '#000' : undefined,
           transform: [{ translateY: slideY }],
         }}
       >

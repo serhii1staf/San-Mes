@@ -476,9 +476,15 @@ export default function AIChatScreen() {
   // text field steering an emoji decision.
   useEffect(() => {
     if (flowStep === 'create_emoji' || flowStep === 'edit_emoji') {
-      // Ease the surrounding layout as the picker comes up so the modal
-      // entrance reads as part of one smooth transition rather than a snap.
-      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      // NOTE: Do NOT run LayoutAnimation.configureNext here. On weak Android
+      // devices, firing a global LayoutAnimation on the exact frame the
+      // EmojiPickerModal mounts forces the whole inverted bubble FlatList to
+      // be measured/animated on the same frame the Modal's native view is
+      // constructed — that collision produced a single catastrophic jank
+      // frame (perfMonitor: chat/ai worstFps 2). The modal already runs its
+      // own smooth entrance animation (slide + scale + backdrop, native
+      // driver) in EmojiPickerModal.tsx, so the "smooth flow" feel is
+      // preserved without stacking a full-list layout animation on top.
       setEmojiPickerOpen(true);
     } else {
       setEmojiPickerOpen(false);

@@ -59,3 +59,70 @@ export function useStaggeredReveal(active: boolean): boolean {
   }, [active, revealed]);
   return revealed;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Animated-GIF reveal pump (concurrency-aware via time spacing)
+// ─────────────────────────────────────────────────────────────────────────────
+// Animated GIFs are MUCH heavier to decode than a static photo: expo-image
+// decodes frames continuously, and the FIRST decode on a weak Android 10 device
+// measures ~100-180 ms per GIF (the perf monitor caught media{0..4}.giphy.com
+// loads clustering ~100-182 ms each). The photo pump above grants one reveal
+// PER FRAME (~16 ms apart), which is fine for cheap static decodes but starts
+// GIF decodes far faster than they finish — so a fast scroll through a GIF-heavy
+// history (or the window filling on open) kicks off 5-8 OVERLAPPING GIF decodes
+// and lands a ~500 ms long task / fps dip, recurring on every new window of rows.
+//
+// This sibling pump grants one GIF reveal per `GIF_REVEAL_INTERVAL_MS`, chosen
+// to be wider than a single GIF decode takes, so decode STARTS never stack up:
+// at most ~2 GIFs decode concurrently instead of a whole screenful at once.
+//
+// It is deliberately TIME-based, not decode-completion-based: a GIF always
+// reveals on schedule and can never get stuck waiting on an onLoad signal that
+// might not fire (broken URL, recycled cell). The only visible effect is that a
+// screenful of GIFs cascades in over a few hundred ms instead of popping all at
+// once — the same Telegram-style cascade the photo pump already produces, and
+// imperceptible for the 2-3 GIFs actually on-screen at any moment.
+const GIF_REVEAL_INTERVAL_MS = 90;
+const gifQueue: Array<() => void> = [];
+let gifPumpScheduled = false;
+
+function gifPump() {
+  gifPumpScheduled = false;
+  const fn = gifQueue.shift();
+  if (fn) {
+    try { fn(); } catch { /* caller unmounted between schedule + pump */ }
+  }
+  if (gifQueue.length > 0) {
+    gifPumpScheduled = true;
+    setTimeout(gifPump, GIF_REVEAL_INTERVAL_MS);
+  }
+}
+
+function enqueueGifReveal(fn: () => void): () => void {
+  gifQueue.push(fn);
+  if (!gifPumpScheduled) {
+    gifPumpScheduled = true;
+    // First GIF reveals on the next frame (a lone GIF pays no delay);
+    // subsequent ones are spaced by GIF_REVEAL_INTERVAL_MS.
+    requestAnimationFrame(gifPump);
+  }
+  return () => {
+    const i = gifQueue.indexOf(fn);
+    if (i >= 0) gifQueue.splice(i, 1);
+  };
+}
+
+/**
+ * Like {@link useStaggeredReveal} but paced for animated GIFs: reveals are
+ * granted on a wider time interval so heavy GIF decodes don't overlap into a
+ * burst. Same `false → true (forever)` contract; pass `active=false` to opt out.
+ */
+export function useStaggeredGifReveal(active: boolean): boolean {
+  const [revealed, setRevealed] = useState(false);
+  useEffect(() => {
+    if (!active || revealed) return;
+    const cancel = enqueueGifReveal(() => setRevealed(true));
+    return cancel;
+  }, [active, revealed]);
+  return revealed;
+}

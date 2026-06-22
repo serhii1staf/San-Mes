@@ -30,7 +30,7 @@ import { useChatStore, useEntityStore, useConnectivityStore, useAuthStore } from
 import { useChatSettingsStore, GLOBAL_CHAT_SETTINGS_KEY, DEFAULT_CHAT_SETTINGS } from '../../src/store/chatSettingsStore';
 import { readableTextOn, withOpacity } from '../../src/constants/bubbleColors';
 import { useMessageGestures } from '../../src/hooks/useMessageGestures';
-import { useStaggeredReveal } from '../../src/hooks/useStaggeredReveal';
+import { useStaggeredReveal, useStaggeredGifReveal } from '../../src/hooks/useStaggeredReveal';
 import { useBrowserStore } from '../../src/store/browserStore';
 import { ChatBackgroundLayer } from '../../src/components/ui/ChatBackgroundLayer';
 import { PixelIcon } from '../../src/components/pixel-icons/PixelIcon';
@@ -266,8 +266,21 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
   // `imagesReady`, image bubbles no longer all decode on the SAME frame —
   // each waits its turn in a shared one-per-frame queue, so a GIF-heavy chat
   // opening no longer lands ~10 simultaneous decodes as one long task.
+  //
+  // Animated GIFs additionally go through a WIDER-spaced reveal pump
+  // (`useStaggeredGifReveal`): a static photo decodes once and cheaply, but an
+  // animated GIF's first decode is ~100-180 ms on weak Android, so spacing GIF
+  // reveals only one frame apart still stacks 5-8 overlapping decodes into the
+  // recurring ~500 ms long task the perf monitor flagged. The GIF pump spaces
+  // decode STARTS wider than one decode takes (≈2 concurrent max) while photos
+  // keep the unchanged 1/frame pump. GIFs are always single-image bubbles
+  // (sent as `imageUrls:[url]`), but we test every url so a mixed bubble still
+  // takes the heavier-gated path. Both hooks are always called (rules of hooks).
   const hasImages = !!(message.imageUrls && message.imageUrls.length > 0);
-  const imgReveal = useStaggeredReveal(!!imagesReady && hasImages);
+  const isGifBubble = hasImages && message.imageUrls!.some(isAnimatedImageUrl);
+  const photoReveal = useStaggeredReveal(!!imagesReady && hasImages && !isGifBubble);
+  const gifReveal = useStaggeredGifReveal(!!imagesReady && hasImages && isGifBubble);
+  const imgReveal = isGifBubble ? gifReveal : photoReveal;
 
   return (
     <View style={bubbleStyles.row}>
