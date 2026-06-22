@@ -14,6 +14,13 @@ import { showToast } from '../../src/store/toastStore';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { useT } from '../../src/i18n/store';
 import { buildMiniAppShareUrl } from '../../src/utils/miniAppShare';
+import { MiniAppConsentDialog } from '../../src/components/mini-apps/MiniAppConsentDialog';
+import { openLegalLink } from '../../src/components/mini-apps/openLegalLink';
+import { planSave, dispatchAccept } from '../../src/components/mini-apps/consentGate';
+
+// HTTPS-only legal page literals (same destinations as the consent dialog).
+const TERMS_URL = 'https://legal.san-m-app.com/terms.html';
+const PRIVACY_URL = 'https://legal.san-m-app.com/privacy.html';
 
 export default function MiniAppsScreen() {
   const theme = useTheme();
@@ -28,6 +35,7 @@ export default function MiniAppsScreen() {
   const isLoading = useMiniAppsStore((s) => s.isLoading);
   const loadApps = useMiniAppsStore((s) => s.loadApps);
   const createApp = useMiniAppsStore((s) => s.createApp);
+  const updateApp = useMiniAppsStore((s) => s.updateApp);
   const deleteApp = useMiniAppsStore((s) => s.deleteApp);
   const [showCreate, setShowCreate] = useState(false);
   const [editingApp, setEditingApp] = useState<MiniApp | null>(null);
@@ -36,6 +44,11 @@ export default function MiniAppsScreen() {
   const [emoji, setEmoji] = useState('🎮');
   const [url, setUrl] = useState('');
   const [creating, setCreating] = useState(false);
+  // Consent gate — a single dialog stands between Save and any worker call,
+  // covering BOTH publish and edit. `pendingMode` tells the dialog (and the
+  // accept handler) which path to route once the user agrees.
+  const [consentVisible, setConsentVisible] = useState(false);
+  const [pendingMode, setPendingMode] = useState<'publish' | 'edit'>('publish');
 
   useEffect(() => { loadApps(); }, []);
 
@@ -44,39 +57,41 @@ export default function MiniAppsScreen() {
     setEditingApp(null); setShowCreate(false);
   };
 
-  const handleCreate = async () => {
-    if (!name.trim() || !url.trim() || !user?.id) {
+  // Save press — validate fields and OPEN the consent gate. No network call
+  // happens here; submission is deferred until the user explicitly accepts
+  // the content policy in MiniAppConsentDialog.
+  const handleSavePress = () => {
+    const plan = planSave({ name, description, emoji, url }, !!user?.id, !!editingApp);
+    if (plan.type === 'error') {
       Alert.alert(t('common.error'), t('mini_apps.error.fill_fields'));
       return;
     }
-    setCreating(true);
+    setPendingMode(plan.mode);
+    setConsentVisible(true);
+  };
 
-    if (editingApp) {
-      // Update: delete old + create new
-      await deleteApp(editingApp.id);
-      const { error } = await createApp({
-        creator_id: user.id,
-        name: name.trim(),
-        description: description.trim(),
-        emoji: emoji || '🎮',
-        url: url.trim().startsWith('http') ? url.trim() : `https://${url.trim()}`,
-      });
-      setCreating(false);
-      if (error) { Alert.alert(t('common.error'), error); return; }
-      showToast(t('toast.saved'), 'check');
-    } else {
-      const { error } = await createApp({
-        creator_id: user.id,
-        name: name.trim(),
-        description: description.trim(),
-        emoji: emoji || '🎮',
-        url: url.trim().startsWith('http') ? url.trim() : `https://${url.trim()}`,
-      });
-      setCreating(false);
-      if (error) { Alert.alert(t('common.error'), error); return; }
-      showToast(t('mini_apps.toast.created'), 'check');
-    }
+  // Accept — the only path that reaches the worker. Routes to a non-destructive
+  // PATCH (updateApp) for edits and createApp for new publishes. On success we
+  // reset the form; on error we keep the draft so the user can retry.
+  const handleConsentAccept = async () => {
+    setConsentVisible(false);
+    setCreating(true);
+    const result = await dispatchAccept(
+      { name, description, emoji, url },
+      pendingMode,
+      { editingId: editingApp?.id ?? null, creatorId: user!.id },
+      { createApp, updateApp },
+    );
+    setCreating(false);
+    if (!result.ok) { Alert.alert(t('common.error'), result.error!); return; }
+    showToast(pendingMode === 'edit' ? t('toast.saved') : t('mini_apps.toast.created'), 'check');
     resetForm();
+  };
+
+  // Decline — close the gate only. No network call, no form mutation: the
+  // draft is preserved exactly as the user left it.
+  const handleConsentDecline = () => {
+    setConsentVisible(false);
   };
 
   const handleEdit = (app: MiniApp) => {
@@ -173,9 +188,18 @@ export default function MiniAppsScreen() {
           </View>
           <TextInput value={description} onChangeText={setDescription} placeholder={t('mini_apps.description_placeholder')} placeholderTextColor={theme.colors.text.tertiary} style={{ backgroundColor: theme.colors.background.elevated, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: theme.colors.text.primary, marginBottom: 8, borderWidth: 1, borderColor: theme.colors.border.light }} />
           <TextInput value={url} onChangeText={setUrl} placeholder="https://..." placeholderTextColor={theme.colors.text.tertiary} autoCapitalize="none" keyboardType="url" style={{ backgroundColor: theme.colors.background.elevated, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: theme.colors.text.primary, marginBottom: 12, borderWidth: 1, borderColor: theme.colors.border.light }} />
-          <Pressable onPress={handleCreate} disabled={creating} style={{ backgroundColor: theme.colors.accent.primary, borderRadius: 12, paddingVertical: 12, alignItems: 'center', opacity: creating ? 0.6 : 1 }}>
+          <Pressable onPress={handleSavePress} disabled={creating} style={{ backgroundColor: theme.colors.accent.primary, borderRadius: 12, paddingVertical: 12, alignItems: 'center', opacity: creating ? 0.6 : 1 }}>
             <Text variant="body" weight="semibold" color="#FFFFFF">{creating ? t('mini_apps.saving') : (editingApp ? t('common.save') : t('mini_apps.create'))}</Text>
           </Pressable>
+          {/* HTTPS-only legal links — opened strictly over HTTPS via openLegalLink. */}
+          <View style={{ flexDirection: 'row', justifyContent: 'center', flexWrap: 'wrap', gap: 16, marginTop: 12 }}>
+            <Pressable accessibilityRole="link" onPress={() => openLegalLink(TERMS_URL)}>
+              <Text variant="caption" color={theme.colors.accent.primary} style={{ textDecorationLine: 'underline' }}>{t('mini_apps.consent.terms_link')}</Text>
+            </Pressable>
+            <Pressable accessibilityRole="link" onPress={() => openLegalLink(PRIVACY_URL)}>
+              <Text variant="caption" color={theme.colors.accent.primary} style={{ textDecorationLine: 'underline' }}>{t('mini_apps.consent.privacy_link')}</Text>
+            </Pressable>
+          </View>
         </View>
       )}
 
@@ -222,6 +246,13 @@ export default function MiniAppsScreen() {
           )}
         />
       )}
+
+      <MiniAppConsentDialog
+        visible={consentVisible}
+        mode={pendingMode}
+        onAccept={handleConsentAccept}
+        onDecline={handleConsentDecline}
+      />
     </View>
   );
 }
