@@ -486,7 +486,10 @@ const MemoMessageBubble = React.memo(MessageBubble, (prev, next) => {
 // `visibleIds`/`viewabilityReady` component state. See `visTrackerRef` in
 // ChatScreen for construction.
 type VisibilityTracker = {
-  subscribe: (listener: () => void) => () => void;
+  // Per-ROW subscription (keyed by message id) so a scroll-pause toggle can
+  // notify ONLY the affected rows and, crucially, resume GIFs ONE AT A TIME
+  // when the list settles (see the staggered-resume pump in ChatScreen).
+  subscribeRow: (id: string, listener: () => void) => () => void;
   isVisible: (id: string) => boolean;
   update: (next: Set<string>) => void;
   // Pause/resume animation globally while the list is actively scrolling — a
@@ -515,7 +518,11 @@ type VisibilityBubbleProps = Omit<React.ComponentProps<typeof MemoMessageBubble>
 };
 const VisibilityBubble = React.memo(function VisibilityBubble({ tracker, ...rest }: VisibilityBubbleProps) {
   const id = rest.message.id;
-  const isVisible = useSyncExternalStore(tracker.subscribe, () => tracker.isVisible(id));
+  // Per-row subscription: bind this row's id to the tracker so scroll-pause /
+  // staggered-resume can notify just this row. Stable per id so the store
+  // subscription isn't torn down on every render.
+  const subscribeRow = useCallback((cb: () => void) => tracker.subscribeRow(id, cb), [tracker, id]);
+  const isVisible = useSyncExternalStore(subscribeRow, () => tracker.isVisible(id));
   // Does this row contain an animated image (GIF)? Only such rows need to
   // react to the scroll-pause gate, so we register them with the tracker. A
   // text/photo bubble registers `false` and is therefore never re-rendered
@@ -2340,19 +2347,52 @@ export default function ChatScreen() {
     // Ids of rows that contain an animated image (GIF). Only these rows are
     // affected by the scroll-pause gate.
     const gifIds = new Set<string>();
-    const listeners = new Set<() => void>();
+    // Per-row listeners keyed by message id. Keying by id (instead of one flat
+    // Set) lets us notify ONLY the rows that change AND release GIFs one at a
+    // time on scroll-settle (see `held` + the staggered pump below).
+    const rowListeners = new Map<string, Set<() => void>>();
+    const notify = (itemId: string) => {
+      const set = rowListeners.get(itemId);
+      if (set) set.forEach((fn) => fn());
+    };
+    const notifyAll = () => { rowListeners.forEach((set) => set.forEach((fn) => fn())); };
+
+    // ── Staggered GIF resume ────────────────────────────────────────────
+    // Pausing GIFs while scrolling is cheap and correct. The problem was the
+    // RESUME: when the list settled we flipped EVERY visible GIF back to
+    // autoplay on one frame, so expo-image kicked off ~10+ fresh decodes at
+    // once → a ~500 ms long task / fps→0 on weak devices (perf monitor caught
+    // ~14 giphy decodes inside a 19 ms window). Fix, per the same proven
+    // one-per-interval pattern already used for first-reveal: hold all visible
+    // GIFs paused when scrolling stops, then release ONE every
+    // RESUME_INTERVAL_MS so at most ~2 decode concurrently. A generation
+    // counter + clearResume() abort an in-flight stagger the instant a new
+    // scroll begins.
+    const RESUME_INTERVAL_MS = 90;
+    const held = new Set<string>();
+    let resumeGen = 0;
+    let resumeTimer: ReturnType<typeof setTimeout> | null = null;
+    const clearResume = () => { if (resumeTimer) { clearTimeout(resumeTimer); resumeTimer = null; } };
+
     visTrackerRef.current = {
-      subscribe(l) { listeners.add(l); return () => { listeners.delete(l); }; },
-      // A row's media animates only when it's on-screen. The scroll-pause gate
-      // (`scrolling`) is applied ONLY to rows that actually hold a GIF — a
-      // text/photo row's snapshot never changes when scrolling toggles, so
-      // `useSyncExternalStore` bails it out and it isn't re-rendered. This is
-      // what removed the scroll-START hitch: previously the gate was global, so
-      // every mounted bubble re-rendered the instant a scroll began.
+      subscribeRow(itemId, l) {
+        let set = rowListeners.get(itemId);
+        if (!set) { set = new Set(); rowListeners.set(itemId, set); }
+        set.add(l);
+        return () => {
+          const s = rowListeners.get(itemId);
+          if (s) { s.delete(l); if (s.size === 0) rowListeners.delete(itemId); }
+        };
+      },
+      // A row's media animates only when it's on-screen. GIF rows are
+      // additionally gated: paused for the whole active scroll, then held
+      // paused until their staggered resume turn after the scroll settles.
+      // Text/photo rows ignore both gates (their snapshot never changes when
+      // scrolling toggles) so `useSyncExternalStore` bails them out.
       isVisible(itemId) {
         const onScreen = !ready || visibleSet.has(itemId);
         if (!onScreen) return false;
-        if (scrolling && gifIds.has(itemId)) return false;
+        if (gifIds.has(itemId) && (scrolling || held.has(itemId))) return false;
         return true;
       },
       update(next) {
@@ -2365,20 +2405,42 @@ export default function ChatScreen() {
         }
         visibleSet = next;
         ready = true;
-        listeners.forEach((fn) => fn());
+        notifyAll();
       },
       setScrolling(b) {
         if (b === scrolling) return;
         scrolling = b;
-        // No animated rows mounted → toggling `scrolling` changes no row's
-        // snapshot, so skip the fan-out entirely (zero work, zero re-render).
-        // This is the common case (text/photo chats) and is what makes scroll
-        // start hitch-free.
-        if (gifIds.size === 0) return;
-        listeners.forEach((fn) => fn());
+        if (gifIds.size === 0) { clearResume(); held.clear(); return; }
+        if (b) {
+          // Scroll started → pause GIFs immediately (the `scrolling` flag does
+          // it). Drop any pending resume + hold marks, and notify only the
+          // VISIBLE GIF rows so just they re-render to stopAnimating(). Non-GIF
+          // and off-screen rows have an unchanged snapshot → no re-render →
+          // hitch-free scroll start.
+          clearResume();
+          held.clear();
+          gifIds.forEach((gid) => { if (!ready || visibleSet.has(gid)) notify(gid); });
+        } else {
+          // Scroll settled → hold every currently-visible GIF, then release one
+          // per RESUME_INTERVAL_MS. No notify on hold: the snapshot is already
+          // `false` from the scroll, so nothing re-renders until its release.
+          clearResume();
+          const pending = [...gifIds].filter((gid) => (!ready || visibleSet.has(gid)));
+          pending.forEach((gid) => held.add(gid));
+          const gen = ++resumeGen;
+          const step = () => {
+            if (gen !== resumeGen) return; // a new scroll superseded this stagger
+            const nextId = pending.shift();
+            if (nextId === undefined) { resumeTimer = null; return; }
+            held.delete(nextId);
+            notify(nextId);
+            resumeTimer = setTimeout(step, RESUME_INTERVAL_MS);
+          };
+          step();
+        }
       },
       setHasGif(itemId, hasGif) {
-        if (hasGif) gifIds.add(itemId); else gifIds.delete(itemId);
+        if (hasGif) gifIds.add(itemId); else { gifIds.delete(itemId); held.delete(itemId); }
       },
     };
   }
