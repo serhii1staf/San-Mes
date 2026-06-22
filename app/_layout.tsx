@@ -361,105 +361,7 @@ function RootLayout() {
             inside BrowserBottomBand. */}
         <View style={styles.rootColumn}>
           <View style={styles.stackWrapper}>
-            <Stack screenOptions={{ headerShown: false }}>
-              <Stack.Screen name="(tabs)" />
-              <Stack.Screen name="(auth)" />
-              <Stack.Screen name="chat/[id]" />
-              <Stack.Screen name="chat/ai" />
-              <Stack.Screen name="chat/music" />
-              <Stack.Screen name="profile/edit" options={{ presentation: 'modal', animation: 'slide_from_bottom', headerShown: false }} />
-              <Stack.Screen name="profile/[id]" />
-              <Stack.Screen name="comments/[id]" />
-              <Stack.Screen name="browser" options={{ presentation: 'modal', headerShown: false, animation: 'slide_from_bottom' }} />
-              <Stack.Screen name="mini-app" options={{ presentation: 'fullScreenModal', headerShown: false, animation: 'slide_from_bottom' }} />
-              <Stack.Screen name="mini/[id]" options={{ headerShown: false, animation: 'fade' }} />
-              <Stack.Screen name="m/[short]" options={{ headerShown: false, animation: 'fade' }} />
-              <Stack.Screen name="notifications" />
-              <Stack.Screen name="settings/index" />
-              <Stack.Screen name="settings/appearance" />
-              <Stack.Screen name="settings/widget" />
-              <Stack.Screen name="settings/storage" />
-              <Stack.Screen name="settings/device-key" />
-              <Stack.Screen name="settings/privacy" />
-              <Stack.Screen name="settings/admin" />
-              <Stack.Screen name="settings/fonts" />
-              <Stack.Screen
-                name="settings/fonts-size"
-                options={{
-                  presentation: 'modal',
-                  animation: 'slide_from_bottom',
-                  headerShown: false,
-                }}
-              />
-              <Stack.Screen
-                name="settings/fonts-family"
-                options={{
-                  presentation: 'modal',
-                  animation: 'slide_from_bottom',
-                  headerShown: false,
-                }}
-              />
-              <Stack.Screen name="settings/mini-apps" />
-              <Stack.Screen name="settings/chat-settings" />
-              <Stack.Screen
-                name="settings/chat-background"
-                options={{
-                  presentation: 'modal',
-                  animation: 'slide_from_bottom',
-                  headerShown: false,
-                }}
-              />
-              <Stack.Screen
-                name="settings/chat-text-size"
-                options={{
-                  presentation: 'modal',
-                  animation: 'slide_from_bottom',
-                  headerShown: false,
-                }}
-              />
-              <Stack.Screen
-                name="settings/chat-bubble-radius"
-                options={{
-                  presentation: 'modal',
-                  animation: 'slide_from_bottom',
-                  headerShown: false,
-                }}
-              />
-              <Stack.Screen
-                name="settings/chat-bubble-color"
-                options={{
-                  presentation: 'modal',
-                  animation: 'slide_from_bottom',
-                  headerShown: false,
-                }}
-              />
-              <Stack.Screen
-                name="settings/chat-font"
-                options={{
-                  presentation: 'modal',
-                  animation: 'slide_from_bottom',
-                  headerShown: false,
-                }}
-              />
-              <Stack.Screen name="settings/browser" />
-              <Stack.Screen name="settings/language" />
-              <Stack.Screen
-                name="settings/pixel-icons"
-                options={{
-                  presentation: 'modal',
-                  animation: 'slide_from_bottom',
-                  headerShown: false,
-                }}
-              />
-              <Stack.Screen
-                name="settings/mini-app-preview"
-                options={{
-                  presentation: 'modal',
-                  animation: 'slide_from_bottom',
-                  headerShown: false,
-                }}
-              />
-            </Stack>
+            <AppStack />
           </View>
           <BrowserBottomBand />
         </View>
@@ -485,6 +387,58 @@ function RootLayout() {
     </KeyboardProvider>
     </BottomSheetModalProvider>
     </GestureHandlerRootView>
+  );
+}
+
+// Navigator extracted into its own component so it can read the active theme
+// (RootLayout sits ABOVE ThemeProvider and can't call useTheme). The key bit
+// is `contentStyle`: it paints every native-stack scene on the theme
+// background, which kills the white sliver/flash that showed during screen
+// transitions and modal dismissals (e.g. closing a mini-app) when the OS color
+// scheme didn't match the app's dark theme.
+function AppStack() {
+  const theme = useTheme();
+  const screenOptions = React.useMemo(
+    () => ({ headerShown: false, contentStyle: { backgroundColor: theme.colors.background.primary } }),
+    [theme.colors.background.primary],
+  );
+  return (
+    <Stack screenOptions={screenOptions}>
+      <Stack.Screen name="(tabs)" />
+      <Stack.Screen name="(auth)" />
+      <Stack.Screen name="chat/[id]" />
+      <Stack.Screen name="chat/ai" />
+      <Stack.Screen name="chat/music" />
+      <Stack.Screen name="profile/edit" options={{ presentation: 'modal', animation: 'slide_from_bottom', headerShown: false }} />
+      <Stack.Screen name="profile/[id]" />
+      <Stack.Screen name="comments/[id]" />
+      <Stack.Screen name="browser" options={{ presentation: 'modal', headerShown: false, animation: 'slide_from_bottom' }} />
+      <Stack.Screen name="mini-app" options={{ presentation: 'fullScreenModal', headerShown: false, animation: 'slide_from_bottom' }} />
+      <Stack.Screen name="mini/[id]" options={{ headerShown: false, animation: 'fade' }} />
+      <Stack.Screen name="m/[short]" options={{ headerShown: false, animation: 'fade' }} />
+      <Stack.Screen name="notifications" />
+      <Stack.Screen name="settings/index" />
+      <Stack.Screen name="settings/appearance" />
+      <Stack.Screen name="settings/widget" />
+      <Stack.Screen name="settings/storage" />
+      <Stack.Screen name="settings/device-key" />
+      <Stack.Screen name="settings/privacy" />
+      <Stack.Screen name="settings/admin" />
+      <Stack.Screen name="settings/fonts" />
+      <Stack.Screen name="settings/fonts-size" options={{ presentation: 'modal', animation: 'slide_from_bottom', headerShown: false }} />
+      <Stack.Screen name="settings/fonts-family" options={{ presentation: 'modal', animation: 'slide_from_bottom', headerShown: false }} />
+      <Stack.Screen name="settings/mini-apps" />
+      <Stack.Screen name="settings/chat-settings" />
+      <Stack.Screen name="settings/chat-background" options={{ presentation: 'modal', animation: 'slide_from_bottom', headerShown: false }} />
+      <Stack.Screen name="settings/chat-text-size" options={{ presentation: 'modal', animation: 'slide_from_bottom', headerShown: false }} />
+      <Stack.Screen name="settings/chat-bubble-radius" options={{ presentation: 'modal', animation: 'slide_from_bottom', headerShown: false }} />
+      <Stack.Screen name="settings/chat-bubble-color" options={{ presentation: 'modal', animation: 'slide_from_bottom', headerShown: false }} />
+      <Stack.Screen name="settings/chat-font" options={{ presentation: 'modal', animation: 'slide_from_bottom', headerShown: false }} />
+      <Stack.Screen name="settings/browser" />
+      <Stack.Screen name="settings/language" />
+      <Stack.Screen name="settings/pixel-icons" options={{ presentation: 'modal', animation: 'slide_from_bottom', headerShown: false }} />
+      <Stack.Screen name="settings/mini-app-preview" options={{ presentation: 'modal', animation: 'slide_from_bottom', headerShown: false }} />
+    </Stack>
   );
 }
 
