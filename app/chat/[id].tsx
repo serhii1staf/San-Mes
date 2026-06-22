@@ -2628,13 +2628,20 @@ export default function ChatScreen() {
           ]}
         >
           <Animated.View
-            // Native-driver opacity fade. `pointerEvents` follows the
-            // visibility flag so the button is non-interactive while
-            // hidden — prevents a "hidden but tappable" footgun where a
-            // mis-targeted tap near the input bar fires `scrollToOffset`
-            // unexpectedly.
+            // Reveal animation. `pointerEvents` follows the visibility flag so
+            // the button is non-interactive while hidden — prevents a "hidden
+            // but tappable" footgun where a mis-targeted tap near the input bar
+            // fires `scrollToOffset` unexpectedly.
+            //
+            // GLASS-SAFE: when liquid glass is on we must NOT animate `opacity`
+            // on this wrapper — an animated/non-1 opacity on a parent stops the
+            // native UIVisualEffectView from drawing, which is exactly why the
+            // glass capsule below was rendering as just a dark bordered circle.
+            // So we drive a `scale` transform (0→1) instead, which the native
+            // driver supports and which leaves glass intact. Non-glass keeps
+            // the lighter opacity fade.
             pointerEvents={scrollBtnVisible ? 'auto' : 'none'}
-            style={{ opacity: scrollBtnOpacity }}
+            style={glassActive ? { transform: [{ scale: scrollBtnOpacity }] } : { opacity: scrollBtnOpacity }}
           >
             {glassActive ? (
               // Glass capsule via the GlassBg BACKGROUND pattern (the documented

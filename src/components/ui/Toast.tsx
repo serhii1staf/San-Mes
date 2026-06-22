@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Animated, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -9,24 +9,32 @@ import { useToastStore } from '../../store/toastStore';
 import { GlassBg, useLiquidGlassActive } from './LiquidGlass';
 import { getTabBarHeight } from '../navigation/CustomTabBar';
 
-// Distance the toast travels while sliding in/out (from below).
-const SLIDE_DISTANCE = 60;
-// Breathing room between the toast and whatever sits below it (tab bar / safe area).
+// Breathing room between the toast and whatever sits below/above it.
 const GAP = 12;
 // Rounded surface radius — also used to clip the glass background layer.
 const RADIUS = 14;
+// Fallback height used before the toast has measured itself (so the very first
+// frame is still parked fully off-screen).
+const DEFAULT_H = 56;
 
 /**
- * Global toast notification — floats at bottom center, JUST ABOVE the bottom
- * tab navigation bar, and auto-hides after 2s. Slides + fades up from the
- * bottom. On screens that have no tab bar it sits above the safe-area bottom
- * instead.
+ * Global toast notification.
+ *
+ * Position: on tab screens it floats at bottom center JUST ABOVE the bottom
+ * tab navigation bar; on every other screen (chat, comments, profile, …) it
+ * drops down from the TOP under the status bar — that's where copy / link /
+ * status confirmations read best while you're inside a conversation.
  *
  * Surface: when liquid glass is enabled it renders as a shaped, overflow-hidden
  * rounded container with a `GlassBg` BACKGROUND layer and the icon + text as
- * siblings ON TOP (never inside a GlassView — that collapses/warps the glass,
- * see LiquidGlass.tsx). When glass is off it falls back to the solid tinted
- * surface.
+ * siblings ON TOP (never inside a GlassView — that collapses the glass).
+ *
+ * GLASS-SAFE ANIMATION: the reveal is a pure `translateY` SLIDE — we do NOT
+ * animate `opacity` on any ancestor of the glass layer, because an animated /
+ * non-1 opacity on a parent stops the native UIVisualEffectView from drawing
+ * (that bug is exactly why toasts showed no glass before). The toast slides a
+ * full clearing distance so it is completely off-screen when hidden, then
+ * unmounts — no opacity fade required.
  */
 export function Toast() {
   const theme = useTheme();
@@ -34,9 +42,11 @@ export function Toast() {
   const glassActive = useLiquidGlassActive();
   // The toast is global (mounted at root over every screen), so it must work
   // out for itself whether the current route shows the floating tab bar. The
-  // tab group is `(tabs)` — only those routes render <CustomTabBar/>.
+  // tab group is `(tabs)` — only those routes render <CustomTabBar/> and want
+  // the toast docked at the bottom; everything else gets it at the top.
   const segments = useSegments();
   const isTabScreen = segments[0] === '(tabs)';
+  const topMode = !isTabScreen;
 
   // Field-by-field selectors — pulling the whole toast store re-rendered
   // this top-level component on every unrelated state change.
@@ -44,22 +54,43 @@ export function Toast() {
   const icon = useToastStore((s) => s.icon);
   const visible = useToastStore((s) => s.visible);
   const hide = useToastStore((s) => s.hide);
-  // Start BELOW the resting position so the toast slides up into view.
-  const slideAnim = useRef(new Animated.Value(SLIDE_DISTANCE)).current;
-  const opacityAnim = useRef(new Animated.Value(0)).current;
+
+  // Measured surface height → lets us compute a slide distance that parks the
+  // toast fully off-screen regardless of font scaling / message length.
+  const [measuredH, setMeasuredH] = useState(DEFAULT_H);
+
+  // Resting bottom/top offset for the surface.
+  const bottomOffset = isTabScreen ? getTabBarHeight(insets.bottom) + GAP : 0;
+  const topOffset = Math.max(insets.top, 8) + GAP;
+
+  // Distance needed to push the toast completely past the nearest screen edge.
+  // Held in a ref so a late height measurement updates the OUT distance without
+  // re-triggering the entrance animation (which would cause a visible re-slide).
+  const hiddenTranslate = topMode
+    ? -(measuredH + topOffset + 8)
+    : measuredH + bottomOffset + 8;
+  const hiddenRef = useRef(hiddenTranslate);
+  hiddenRef.current = hiddenTranslate;
+
+  // Start parked off-screen so it slides into view.
+  const slideAnim = useRef(new Animated.Value(hiddenTranslate)).current;
 
   useEffect(() => {
     if (visible) {
-      Animated.parallel([
-        Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 80, friction: 12 }),
-        Animated.timing(opacityAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
-      ]).start();
+      slideAnim.setValue(hiddenRef.current);
+      Animated.spring(slideAnim, {
+        toValue: 0,
+        useNativeDriver: true,
+        tension: 80,
+        friction: 12,
+      }).start();
 
       const timer = setTimeout(() => {
-        Animated.parallel([
-          Animated.timing(slideAnim, { toValue: SLIDE_DISTANCE, duration: 200, useNativeDriver: true }),
-          Animated.timing(opacityAnim, { toValue: 0, duration: 200, useNativeDriver: true }),
-        ]).start(() => hide());
+        Animated.timing(slideAnim, {
+          toValue: hiddenRef.current,
+          duration: 220,
+          useNativeDriver: true,
+        }).start(() => hide());
       }, 2000);
 
       return () => clearTimeout(timer);
@@ -68,12 +99,6 @@ export function Toast() {
 
   if (!visible) return null;
 
-  // Position the toast just above the tab bar on tab screens; otherwise just
-  // above the safe-area bottom. Offset = reserved-space + gap.
-  const bottomOffset = isTabScreen
-    ? getTabBarHeight(insets.bottom) + GAP
-    : Math.max(insets.bottom, 8) + 16;
-
   return (
     <Animated.View
       pointerEvents="none"
@@ -81,14 +106,17 @@ export function Toast() {
         position: 'absolute',
         left: 0,
         right: 0,
-        bottom: bottomOffset,
+        ...(topMode ? { top: topOffset } : { bottom: bottomOffset }),
         alignItems: 'center',
         zIndex: 9999,
         transform: [{ translateY: slideAnim }],
-        opacity: opacityAnim,
       }}
     >
       <View
+        onLayout={(e) => {
+          const h = Math.round(e.nativeEvent.layout.height);
+          if (h > 0 && h !== measuredH) setMeasuredH(h);
+        }}
         style={{
           flexDirection: 'row',
           alignItems: 'center',
