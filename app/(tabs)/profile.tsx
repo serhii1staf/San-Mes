@@ -108,6 +108,43 @@ function SocialLinkIcon({ type, url }: { type: string; url: string }) {
   );
 }
 
+// Compact count formatter for the inline profile stats ("14.8K", "1.2M").
+function formatCount(n: number): string {
+  if (!n || n < 0) return '0';
+  if (n >= 1000000) return (n / 1000000).toFixed(n % 1000000 === 0 ? 0 : 1).replace('.0', '') + 'M';
+  if (n >= 1000) return (n / 1000).toFixed(n % 1000 === 0 ? 0 : 1).replace('.0', '') + 'K';
+  return String(n);
+}
+
+// Labeled social-link pill (icon + platform name) for the redesigned profile
+// header module — matches the Instagram/TikTok-style chips in the mockup.
+function SocialChip({ url, theme }: { url: string; theme: any }) {
+  const type = detectLinkType(url);
+  const map: Record<string, { name: string; color: string; isBrand: boolean; label: string }> = {
+    github: { name: 'github', color: theme.isDark ? '#FFF' : '#333', isBrand: true, label: 'GitHub' },
+    twitter: { name: 'twitter', color: '#1DA1F2', isBrand: true, label: 'Twitter' },
+    instagram: { name: 'instagram', color: '#E4405F', isBrand: true, label: 'Instagram' },
+    youtube: { name: 'youtube', color: '#FF0000', isBrand: true, label: 'YouTube' },
+    telegram: { name: 'telegram-plane', color: '#0088CC', isBrand: true, label: 'Telegram' },
+    tiktok: { name: 'tiktok', color: theme.isDark ? '#FFF' : '#000', isBrand: true, label: 'TikTok' },
+    linkedin: { name: 'linkedin-in', color: '#0A66C2', isBrand: true, label: 'LinkedIn' },
+    discord: { name: 'discord', color: '#5865F2', isBrand: true, label: 'Discord' },
+    twitch: { name: 'twitch', color: '#9146FF', isBrand: true, label: 'Twitch' },
+    spotify: { name: 'spotify', color: '#1DB954', isBrand: true, label: 'Spotify' },
+    website: { name: 'globe', color: '#2563EB', isBrand: false, label: 'Сайт' },
+  };
+  const icon = map[type] || map.website;
+  return (
+    <Pressable
+      onPress={() => { triggerHaptic('light'); openUrl(url); }}
+      style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 14, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' }}
+    >
+      {icon.isBrand ? <FontAwesome5 name={icon.name} size={13} color={icon.color} brand /> : <Feather name={icon.name as any} size={13} color={icon.color} />}
+      <Text variant="caption" weight="semibold">{icon.label}</Text>
+    </Pressable>
+  );
+}
+
 export default function ProfileScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
@@ -836,9 +873,11 @@ export default function ProfileScreen() {
   // came from `setPostsReady(false)` clearing `data` for ~16 ms during
   // tab taps; that gate was removed above.
   const bannerHeader = useMemo(() => (
-    <>
-      <View style={{ height: 300, marginHorizontal: -16, marginTop: -12, backgroundColor: theme.colors.accent.primary + '20', overflow: 'hidden' }}>
-        {bannerUrl && chromeReady ? (
+    <View style={{ marginHorizontal: -16, marginTop: -12, borderBottomLeftRadius: 30, borderBottomRightRadius: 30, overflow: 'hidden', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)' }}>
+      {/* Custom cover photo as the module backdrop (the seasonal theme gradient
+          already fills the screen behind this module). */}
+      {bannerUrl && chromeReady ? (
+        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
           <CachedImage
             uri={bannerUrl}
             style={{
@@ -853,76 +892,81 @@ export default function ProfileScreen() {
             resizeMode="cover"
             proxyWidth={SCREEN_WIDTH}
           />
-        ) : null}
-        {/* Banner bottom fades into the app background (clean original look). */}
-        <LinearGradient
-          colors={[theme.colors.background.primary + '00', theme.colors.background.primary + 'B3', theme.colors.background.primary]}
-          locations={[0, 0.45, 1]}
-          style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 140 }}
-          pointerEvents="none"
-        />
-        {/* Social links scattered across the banner — random spot each open + gentle drift. */}
-        <BannerFloatingLinks links={userLinks} bannerHeight={300} />
-      </View>
-      <View style={{ flexDirection: 'row', alignItems: 'center', alignSelf: 'stretch', marginTop: -140, paddingHorizontal: 8 }}>
-        <View style={{ flex: 1 }}>
-          <AdaptiveProfileText
-            isLight={bannerIsLight}
-            darkBgColor="rgba(255,255,255,0.92)"
-            lightBgColor={theme.colors.text.secondary}
-            numberOfLines={1}
-            style={{
-              textAlign: 'right',
-              fontSize: 13,
-              textShadowColor: 'rgba(0,0,0,0.45)',
-              textShadowOffset: { width: 0, height: 1 },
-              textShadowRadius: 2,
-              marginRight: 12,
-            }}
-          >
-            @{user.username}
-          </AdaptiveProfileText>
-        </View>
-        <Pressable onPress={() => setShowAccountSwitcher(true)}>
-          <View style={{ width: 72, height: 72, borderRadius: 36, overflow: 'hidden', borderWidth: 3, borderColor: theme.colors.background.primary, backgroundColor: theme.isDark ? 'rgba(30,30,30,0.85)' : 'rgba(255,255,255,0.85)', alignItems: 'center', justifyContent: 'center' }}>
-            <Avatar emoji={user.emoji} size="lg" />
-          </View>
-        </Pressable>
-        <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 12 }}>
-          <AdaptiveProfileText
-            isLight={bannerIsLight}
-            darkBgColor="#FFFFFF"
-            lightBgColor={theme.colors.text.primary}
-            numberOfLines={1}
-            style={{
-              flexShrink: 1,
-              fontSize: 15,
-              fontWeight: '700',
-              textShadowColor: 'rgba(0,0,0,0.45)',
-              textShadowOffset: { width: 0, height: 1 },
-              textShadowRadius: 2,
-            }}
-          >
-            {user.displayName}
-          </AdaptiveProfileText>
-          {user.is_verified && <VerifiedBadge size={13} />}
-          {user.badge && <UserBadge badge={user.badge} size="sm" />}
-        </View>
-      </View>
-      {user.bio ? (
-        <View style={{ marginTop: 12, alignItems: 'center', paddingHorizontal: 8 }}>
-          <LinkedText
-            style={{
-              textAlign: 'center',
-              color: theme.colors.text.secondary,
-            }}
-          >
-            {user.bio}
-          </LinkedText>
+          <LinearGradient
+            colors={[theme.colors.background.primary + '00', theme.colors.background.primary + '55']}
+            style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+            pointerEvents="none"
+          />
         </View>
       ) : null}
-    </>
-  ), [theme, user, bannerUrl, bannerTransform, chromeReady, bannerIsLight, userLinks]);
+      {/* Subtle scrim → translucent panel look + text legibility on any cover. */}
+      <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: theme.isDark ? 'rgba(0,0,0,0.14)' : 'rgba(255,255,255,0.10)' }} />
+
+      {/* ── Module content (left-aligned identity block, matches the mockup) ── */}
+      <View style={{ paddingTop: insets.top + 52, paddingHorizontal: 20, paddingBottom: 22 }}>
+        {/* Avatar — rounded square, top-left; tap opens the account switcher. */}
+        <Pressable onPress={() => setShowAccountSwitcher(true)} style={{ width: 84, height: 84, borderRadius: 26, overflow: 'hidden', borderWidth: 3, borderColor: theme.colors.background.primary, backgroundColor: theme.isDark ? 'rgba(30,30,30,0.9)' : 'rgba(255,255,255,0.92)', alignItems: 'center', justifyContent: 'center' }}>
+          <Avatar emoji={user.emoji} size="lg" />
+        </Pressable>
+
+        {/* Name + verified + badge */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 12 }}>
+          <Text variant="h2" weight="bold" numberOfLines={1} style={{ flexShrink: 1, fontSize: 24, lineHeight: 28 }}>{user.displayName}</Text>
+          {user.is_verified && <VerifiedBadge size={18} />}
+          {user.badge && <UserBadge badge={user.badge} size="md" />}
+        </View>
+        {/* @handle */}
+        <Text variant="body" color={theme.colors.text.tertiary} numberOfLines={1} style={{ marginTop: 2 }}>@{user.username}</Text>
+
+        {/* Social link chips */}
+        {userLinks.length > 0 && (
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 14 }}>
+            {userLinks.slice(0, 5).map((lnk: any, i: number) => (
+              <SocialChip key={`${lnk.url}-${i}`} url={lnk.url} theme={theme} />
+            ))}
+          </View>
+        )}
+
+        {/* Bio */}
+        {user.bio ? (
+          <View style={{ marginTop: 14 }}>
+            <LinkedText style={{ color: theme.colors.text.secondary, fontSize: 15, lineHeight: 21 }}>
+              {user.bio}
+            </LinkedText>
+          </View>
+        ) : null}
+
+        {/* Inline stats — tap opens followers / following lists */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', marginTop: 14 }}>
+          <Pressable onPress={() => { triggerHaptic('selection'); setFollowsModal('followers'); }} style={{ flexDirection: 'row', alignItems: 'baseline' }}>
+            <Text variant="body" weight="bold">{formatCount(followCounts.followers)}</Text>
+            <Text variant="body" color={theme.colors.text.tertiary}> {t('profile.followers_short')}</Text>
+          </Pressable>
+          <Text variant="body" color={theme.colors.text.tertiary} style={{ marginHorizontal: 8 }}>·</Text>
+          <Pressable onPress={() => { triggerHaptic('selection'); setFollowsModal('following'); }} style={{ flexDirection: 'row', alignItems: 'baseline' }}>
+            <Text variant="body" weight="bold">{formatCount(followCounts.following)}</Text>
+            <Text variant="body" color={theme.colors.text.tertiary}> {t('profile.following_short')}</Text>
+          </Pressable>
+        </View>
+
+        {/* Action row — own profile: rounded Редактировать + Поделиться */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 18 }}>
+          <Pressable
+            onPress={() => router.push('/profile/edit')}
+            style={{ flex: 1, height: 46, borderRadius: 23, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.accent.primary }}
+          >
+            <Text variant="body" weight="semibold" color="#FFFFFF">{t('profile.edit', 'Редактировать')}</Text>
+          </Pressable>
+          <Pressable
+            onPress={async () => { triggerHaptic('light'); try { await Share.share({ message: `https://san-m-app.com/profile/${user.id}` }); } catch {} }}
+            style={{ width: 46, height: 46, borderRadius: 23, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.06)' }}
+          >
+            <Feather name="share" size={18} color={theme.colors.text.primary} />
+          </Pressable>
+        </View>
+      </View>
+    </View>
+  ), [theme, user, bannerUrl, bannerTransform, chromeReady, userLinks, followCounts, insets.top, t]);
 
   // Tabs row is split out of the banner header so switching tabs only
   // reconciles this lightweight subtree — the heavy banner (CachedImage,
@@ -1027,69 +1071,8 @@ export default function ProfileScreen() {
       </Animated.View>
       <View style={{ position: 'absolute', top: insets.top + 8, left: 16, right: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', zIndex: 100 }}>
         <Animated.View style={{ transform: [{ translateX: buttonsTranslateX }] }}><Pressable onPress={() => { triggerHaptic('light'); setShowQR(true); }} style={{ borderRadius: 17 }}>{glassActive ? (<NativeGlassView glassStyle="regular" isInteractive colorScheme="dark" style={{ width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' }}><FontAwesome5 name="qrcode" size={15} color="#FFFFFF" /></NativeGlassView>) : chromeReady ? (<BlurView intensity={80} tint="dark" style={{ width: 34, height: 34, borderRadius: 17, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' }}><FontAwesome5 name="qrcode" size={15} color="#FFFFFF" /></BlurView>) : (<View style={{ width: 34, height: 34, borderRadius: 17, overflow: 'hidden', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.4)' }}><FontAwesome5 name="qrcode" size={15} color="#FFFFFF" /></View>)}</Pressable></Animated.View>
-        {/* Compact follow stats live in the centre of the top bar in the
-            redesigned layout — counters used to sit in a row under the
-            avatar (Twitter-clone-style); pulling them up here clears the
-            content area for a centered bio + social-icons block and
-            keeps the stats within thumb reach without scrolling. Fades
-            with `centerStatsOpacity` on scroll so it doesn't fight the
-            sticky-title gradient that fades in at scrollY ≈ 50–120. */}
-        <Animated.View pointerEvents="box-none" style={{ flexDirection: 'row', alignItems: 'center', gap: 6, opacity: centerStatsOpacity, transform: [{ scale: centerStatsScale }] }}>
-          <Pressable
-            onPress={() => { triggerHaptic('selection'); setFollowsModal('following'); }}
-            hitSlop={6}
-            // Interactive morph: keep only the hit-shape borderRadius. NO overflow
-            // when glass is active so the liquid stretch can spill past the pill.
-            // Fallback path keeps overflow:'hidden' so the BlurView/View stays clipped.
-            style={{ borderRadius: 14, overflow: glassActive ? undefined : 'hidden' }}
-          >
-            {glassActive ? (
-              // The interactive glass IS the pill: row/gap/padding/radius live here,
-              // the two Text nodes are its children so the text drives the width.
-              <NativeGlassView glassStyle="regular" isInteractive colorScheme="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14 }}>
-                <Text variant="caption" weight="bold" color="#FFFFFF" style={{ fontSize: 12 }}>{followCounts.following}</Text>
-                <Text variant="caption" color="rgba(255,255,255,0.85)" style={{ fontSize: 11 }}>{t('profile.following_short')}</Text>
-              </NativeGlassView>
-            ) : chromeReady ? (
-              <BlurView intensity={80} tint="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6 }}>
-                <Text variant="caption" weight="bold" color="#FFFFFF" style={{ fontSize: 12 }}>{followCounts.following}</Text>
-                <Text variant="caption" color="rgba(255,255,255,0.85)" style={{ fontSize: 11 }}>{t('profile.following_short')}</Text>
-              </BlurView>
-            ) : (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6, backgroundColor: 'rgba(0,0,0,0.4)' }}>
-                <Text variant="caption" weight="bold" color="#FFFFFF" style={{ fontSize: 12 }}>{followCounts.following}</Text>
-                <Text variant="caption" color="rgba(255,255,255,0.85)" style={{ fontSize: 11 }}>{t('profile.following_short')}</Text>
-              </View>
-            )}
-          </Pressable>
-          <Pressable
-            onPress={() => { triggerHaptic('selection'); setFollowsModal('followers'); }}
-            hitSlop={6}
-            // Interactive morph: keep only the hit-shape borderRadius. NO overflow
-            // when glass is active so the liquid stretch can spill past the pill.
-            // Fallback path keeps overflow:'hidden' so the BlurView/View stays clipped.
-            style={{ borderRadius: 14, overflow: glassActive ? undefined : 'hidden' }}
-          >
-            {glassActive ? (
-              // The interactive glass IS the pill: row/gap/padding/radius live here,
-              // the two Text nodes are its children so the text drives the width.
-              <NativeGlassView glassStyle="regular" isInteractive colorScheme="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14 }}>
-                <Text variant="caption" weight="bold" color="#FFFFFF" style={{ fontSize: 12 }}>{followCounts.followers}</Text>
-                <Text variant="caption" color="rgba(255,255,255,0.85)" style={{ fontSize: 11 }}>{t('profile.followers_short')}</Text>
-              </NativeGlassView>
-            ) : chromeReady ? (
-              <BlurView intensity={80} tint="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6 }}>
-                <Text variant="caption" weight="bold" color="#FFFFFF" style={{ fontSize: 12 }}>{followCounts.followers}</Text>
-                <Text variant="caption" color="rgba(255,255,255,0.85)" style={{ fontSize: 11 }}>{t('profile.followers_short')}</Text>
-              </BlurView>
-            ) : (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6, backgroundColor: 'rgba(0,0,0,0.4)' }}>
-                <Text variant="caption" weight="bold" color="#FFFFFF" style={{ fontSize: 12 }}>{followCounts.followers}</Text>
-                <Text variant="caption" color="rgba(255,255,255,0.85)" style={{ fontSize: 11 }}>{t('profile.followers_short')}</Text>
-              </View>
-            )}
-          </Pressable>
-        </Animated.View>
+        {/* Follow stats moved into the redesigned header module below. */}
+        <View pointerEvents="none" />
         <Animated.View style={{ transform: [{ translateX: settingsTranslateX }] }}><Pressable onPress={() => { triggerHaptic('light'); router.push('/settings'); }} style={{ borderRadius: 17 }}>{glassActive ? (<NativeGlassView glassStyle="regular" isInteractive colorScheme="dark" style={{ width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' }}><Feather name="settings" size={16} color="#FFFFFF" /></NativeGlassView>) : chromeReady ? (<BlurView intensity={80} tint="dark" style={{ width: 34, height: 34, borderRadius: 17, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' }}><Feather name="settings" size={16} color="#FFFFFF" /></BlurView>) : (<View style={{ width: 34, height: 34, borderRadius: 17, overflow: 'hidden', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.4)' }}><Feather name="settings" size={16} color="#FFFFFF" /></View>)}</Pressable></Animated.View>
       </View>
       <Animated.FlatList

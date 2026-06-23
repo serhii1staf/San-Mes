@@ -1100,13 +1100,11 @@ export default function UserProfileScreen() {
   const bannerHeader = useMemo(() => {
     if (!displayProfile) return null;
     return (
-    <>
-      {/* Optional custom cover photo as the TOP backdrop. The seasonal theme
-          gradient/illustration already fills the whole screen behind this
-          (ProfileThemeScope), so the cover just tops it off and fades into the
-          background. No cover → a small spacer below the floating chrome. */}
+    <View style={{ marginHorizontal: -16, marginTop: -12, borderBottomLeftRadius: 30, borderBottomRightRadius: 30, overflow: 'hidden', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)' }}>
+      {/* Custom cover photo as the module backdrop (the seasonal theme gradient
+          already fills the screen behind this module). */}
       {bannerUrl && chromeReady ? (
-        <View style={{ height: 190, marginHorizontal: -16, marginTop: -12, overflow: 'hidden' }}>
+        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
           <CachedImage
             uri={bannerUrl}
             style={{
@@ -1122,18 +1120,18 @@ export default function UserProfileScreen() {
             proxyWidth={SCREEN_WIDTH}
           />
           <LinearGradient
-            colors={[theme.colors.background.primary + '00', theme.colors.background.primary + '99', theme.colors.background.primary]}
-            locations={[0, 0.6, 1]}
-            style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 120 }}
+            colors={[theme.colors.background.primary + '00', theme.colors.background.primary + '55']}
+            style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
             pointerEvents="none"
           />
         </View>
-      ) : (
-        <View style={{ height: insets.top + 44 }} />
-      )}
+      ) : null}
+      {/* Subtle scrim → keeps the module reading as a translucent panel over the
+          themed backdrop and keeps text legible on any cover. */}
+      <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: theme.isDark ? 'rgba(0,0,0,0.14)' : 'rgba(255,255,255,0.10)' }} />
 
-      {/* ── Left-aligned identity block (matches the target mockup) ──────── */}
-      <View style={{ paddingHorizontal: 4, marginTop: bannerUrl && chromeReady ? -44 : 4 }}>
+      {/* ── Module content (left-aligned identity block, matches the mockup) ── */}
+      <View style={{ paddingTop: insets.top + 52, paddingHorizontal: 20, paddingBottom: 22 }}>
         {/* Avatar — rounded square, top-left */}
         <View style={{ width: 84, height: 84, borderRadius: 26, overflow: 'hidden', borderWidth: 3, borderColor: theme.colors.background.primary, backgroundColor: theme.isDark ? 'rgba(30,30,30,0.9)' : 'rgba(255,255,255,0.92)', alignItems: 'center', justifyContent: 'center' }}>
           <Avatar emoji={displayProfile.emoji || '😊'} size="lg" />
@@ -1179,9 +1177,9 @@ export default function UserProfileScreen() {
           </Pressable>
         </View>
 
-        {/* Action row — Подписаться / Сообщение / Поделиться */}
+        {/* Action row — rounded Подписаться / Сообщение / Поделиться */}
         {!isOwnProfile && (
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 16 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 18 }}>
             <ThemedFollowButton
               following={isFollowingState}
               onPress={handleFollow}
@@ -1190,11 +1188,11 @@ export default function UserProfileScreen() {
               textStyle={{ fontSize: 15, lineHeight: 18 }}
               style={{
                 flex: 1,
-                height: 44,
+                height: 46,
                 backgroundColor: isFollowingState ? 'transparent' : theme.colors.accent.primary,
                 borderWidth: isFollowingState ? 1 : 0,
                 borderColor: theme.colors.border.medium,
-                borderRadius: 14,
+                borderRadius: 23,
                 alignItems: 'center',
                 justifyContent: 'center',
               }}
@@ -1202,21 +1200,21 @@ export default function UserProfileScreen() {
             {fromChat !== '1' && (
               <Pressable
                 onPress={() => router.push({ pathname: '/chat/[id]', params: { id: displayProfile.id } })}
-                style={{ flex: 1, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)' }}
+                style={{ flex: 1, height: 46, borderRadius: 23, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.06)' }}
               >
                 <Text variant="body" weight="semibold">{t('profile.message', 'Сообщение')}</Text>
               </Pressable>
             )}
             <Pressable
               onPress={async () => { triggerHaptic('light'); try { await Share.share({ message: `https://san-m-app.com/profile/${displayProfile.id}` }); } catch {} }}
-              style={{ width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)' }}
+              style={{ width: 46, height: 46, borderRadius: 23, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.06)' }}
             >
               <Feather name="share" size={18} color={theme.colors.text.primary} />
             </Pressable>
           </View>
         )}
       </View>
-    </>
+    </View>
     );
   }, [theme, displayProfile, bannerUrl, bannerTransform, chromeReady, isOwnProfile, isFollowingState, fromChat, handleFollow, t, userLinks, followCounts, insets.top]);
 
