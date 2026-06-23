@@ -386,6 +386,12 @@ export default function SettingsScreen() {
             isFirst
           />
           <SettingsRow
+            icon="image"
+            iconTint="pink"
+            label={t('settings.profile_theme', 'Тема профиля')}
+            onPress={() => router.push('/settings/profile-theme' as any)}
+          />
+          <SettingsRow
             icon="type"
             iconTint="indigo"
             label={t('settings.fonts')}
