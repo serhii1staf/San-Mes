@@ -119,6 +119,7 @@ function formatCount(n: number): string {
 // Labeled social-link pill (icon + platform name) for the redesigned profile
 // header module — matches the Instagram/TikTok-style chips in the mockup.
 function SocialChip({ url, theme }: { url: string; theme: any }) {
+  const glassActive = useLiquidGlassActive();
   const type = detectLinkType(url);
   const map: Record<string, { name: string; color: string; isBrand: boolean; label: string }> = {
     github: { name: 'github', color: theme.isDark ? '#FFF' : '#333', isBrand: true, label: 'GitHub' },
@@ -134,13 +135,27 @@ function SocialChip({ url, theme }: { url: string; theme: any }) {
     website: { name: 'globe', color: '#2563EB', isBrand: false, label: 'Сайт' },
   };
   const icon = map[type] || map.website;
+  const content = (
+    <>
+      {icon.isBrand ? <FontAwesome5 name={icon.name} size={13} color={icon.color} brand /> : <Feather name={icon.name as any} size={13} color={icon.color} />}
+      <Text variant="caption" weight="semibold">{icon.label}</Text>
+    </>
+  );
+  if (glassActive) {
+    return (
+      <Pressable onPress={() => { triggerHaptic('light'); openUrl(url); }} style={{ borderRadius: 16 }}>
+        <NativeGlassView glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16 }}>
+          {content}
+        </NativeGlassView>
+      </Pressable>
+    );
+  }
   return (
     <Pressable
       onPress={() => { triggerHaptic('light'); openUrl(url); }}
-      style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 14, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' }}
+      style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.55)' }}
     >
-      {icon.isBrand ? <FontAwesome5 name={icon.name} size={13} color={icon.color} brand /> : <Feather name={icon.name as any} size={13} color={icon.color} />}
-      <Text variant="caption" weight="semibold">{icon.label}</Text>
+      {content}
     </Pressable>
   );
 }
@@ -904,19 +919,27 @@ export default function ProfileScreen() {
 
       {/* ── Module content (left-aligned identity block, matches the mockup) ── */}
       <View style={{ paddingTop: insets.top + 52, paddingHorizontal: 20, paddingBottom: 22 }}>
-        {/* Avatar — rounded square, top-left; tap opens the account switcher. */}
-        <Pressable onPress={() => setShowAccountSwitcher(true)} style={{ width: 84, height: 84, borderRadius: 26, overflow: 'hidden', borderWidth: 3, borderColor: theme.colors.background.primary, backgroundColor: theme.isDark ? 'rgba(30,30,30,0.9)' : 'rgba(255,255,255,0.92)', alignItems: 'center', justifyContent: 'center' }}>
-          <Avatar emoji={user.emoji} size="lg" />
+        {/* Avatar — rounded square; liquid glass when enabled; tap → account switcher */}
+        <Pressable onPress={() => setShowAccountSwitcher(true)} style={{ borderRadius: 26, alignSelf: 'flex-start' }}>
+          {glassActive ? (
+            <NativeGlassView glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} style={{ width: 84, height: 84, borderRadius: 26, alignItems: 'center', justifyContent: 'center' }}>
+              <Avatar emoji={user.emoji} size="lg" />
+            </NativeGlassView>
+          ) : (
+            <View style={{ width: 84, height: 84, borderRadius: 26, overflow: 'hidden', borderWidth: 3, borderColor: theme.colors.background.primary, backgroundColor: theme.isDark ? 'rgba(30,30,30,0.9)' : 'rgba(255,255,255,0.92)', alignItems: 'center', justifyContent: 'center' }}>
+              <Avatar emoji={user.emoji} size="lg" />
+            </View>
+          )}
         </Pressable>
 
         {/* Name + verified + badge */}
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 12 }}>
-          <Text variant="h2" weight="bold" numberOfLines={1} style={{ flexShrink: 1, fontSize: 24, lineHeight: 28 }}>{user.displayName}</Text>
+          <Text variant="h2" weight="bold" color="#FFFFFF" numberOfLines={1} style={{ flexShrink: 1, fontSize: 24, lineHeight: 28, textShadowColor: 'rgba(0,0,0,0.35)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 }}>{user.displayName}</Text>
           {user.is_verified && <VerifiedBadge size={18} />}
           {user.badge && <UserBadge badge={user.badge} size="md" />}
         </View>
         {/* @handle */}
-        <Text variant="body" color={theme.colors.text.tertiary} numberOfLines={1} style={{ marginTop: 2 }}>@{user.username}</Text>
+        <Text variant="body" color="rgba(255,255,255,0.85)" numberOfLines={1} style={{ marginTop: 2, textShadowColor: 'rgba(0,0,0,0.35)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 }}>@{user.username}</Text>
 
         {/* Social link chips */}
         {userLinks.length > 0 && (
@@ -939,34 +962,34 @@ export default function ProfileScreen() {
         {/* Inline stats — tap opens followers / following lists */}
         <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', marginTop: 14 }}>
           <Pressable onPress={() => { triggerHaptic('selection'); setFollowsModal('followers'); }} style={{ flexDirection: 'row', alignItems: 'baseline' }}>
-            <Text variant="body" weight="bold">{formatCount(followCounts.followers)}</Text>
-            <Text variant="body" color={theme.colors.text.tertiary}> {t('profile.followers_short')}</Text>
+            <Text variant="body" weight="bold" color="#FFFFFF" style={{ textShadowColor: 'rgba(0,0,0,0.3)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 }}>{formatCount(followCounts.followers)}</Text>
+            <Text variant="body" color="rgba(255,255,255,0.8)"> {t('profile.followers_short')}</Text>
           </Pressable>
-          <Text variant="body" color={theme.colors.text.tertiary} style={{ marginHorizontal: 8 }}>·</Text>
+          <Text variant="body" color="rgba(255,255,255,0.8)" style={{ marginHorizontal: 8 }}>·</Text>
           <Pressable onPress={() => { triggerHaptic('selection'); setFollowsModal('following'); }} style={{ flexDirection: 'row', alignItems: 'baseline' }}>
-            <Text variant="body" weight="bold">{formatCount(followCounts.following)}</Text>
-            <Text variant="body" color={theme.colors.text.tertiary}> {t('profile.following_short')}</Text>
+            <Text variant="body" weight="bold" color="#FFFFFF" style={{ textShadowColor: 'rgba(0,0,0,0.3)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 }}>{formatCount(followCounts.following)}</Text>
+            <Text variant="body" color="rgba(255,255,255,0.8)"> {t('profile.following_short')}</Text>
           </Pressable>
         </View>
 
-        {/* Action row — own profile: rounded Редактировать + Поделиться */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 18 }}>
+        {/* Action row — own profile: compact rounded Редактировать + Поделиться */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 16 }}>
           <Pressable
             onPress={() => router.push('/profile/edit')}
-            style={{ flex: 1, height: 46, borderRadius: 23, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.accent.primary }}
+            style={{ height: 38, paddingHorizontal: 22, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.accent.primary }}
           >
-            <Text variant="body" weight="semibold" color="#FFFFFF">{t('profile.edit', 'Редактировать')}</Text>
+            <Text variant="caption" weight="semibold" color="#FFFFFF" style={{ fontSize: 14 }}>{t('profile.edit', 'Редактировать')}</Text>
           </Pressable>
           <Pressable
             onPress={async () => { triggerHaptic('light'); try { await Share.share({ message: `https://san-m-app.com/profile/${user.id}` }); } catch {} }}
-            style={{ width: 46, height: 46, borderRadius: 23, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.06)' }}
+            style={{ width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.06)' }}
           >
-            <Feather name="share" size={18} color={theme.colors.text.primary} />
+            <Feather name="share" size={16} color={theme.colors.text.primary} />
           </Pressable>
         </View>
       </View>
     </View>
-  ), [theme, user, bannerUrl, bannerTransform, chromeReady, userLinks, followCounts, insets.top, t]);
+  ), [theme, user, bannerUrl, bannerTransform, chromeReady, userLinks, followCounts, insets.top, t, glassActive]);
 
   // Tabs row is split out of the banner header so switching tabs only
   // reconciles this lightweight subtree — the heavy banner (CachedImage,
