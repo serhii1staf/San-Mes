@@ -229,7 +229,7 @@ describe('ProfileThemeScreen — deferred-mount + virtualized carousel (Req 9.4,
 
     const flat = getFlatList(renderer);
     expect(flat.props.data).toBe(BUILT_IN_THEME_LIST);
-    expect(flat.props.data).toHaveLength(6);
+    expect(flat.props.data).toHaveLength(BUILT_IN_THEME_LIST.length);
     expect(flat.props.horizontal).toBe(true);
     expect(flat.props.initialNumToRender).toBe(2);
     expect(flat.props.maxToRenderPerBatch).toBe(1);
@@ -263,7 +263,7 @@ describe('ProfileThemeScreen — one preview per built-in theme (Req 2.1)', () =
     });
 
     // And the always-rendered dots indicator has one dot per theme.
-    expect(dotViews(renderer)).toHaveLength(6);
+    expect(dotViews(renderer)).toHaveLength(BUILT_IN_THEME_LIST.length);
 
     act(() => renderer.unmount());
   });

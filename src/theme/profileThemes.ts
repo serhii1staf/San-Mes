@@ -21,7 +21,17 @@ export type ProfileThemeId =
   | 'summer-beach'
   | 'autumn'
   | 'winter'
-  | 'purple-pixel';
+  | 'purple-pixel'
+  | 'night'
+  | 'sunset'
+  | 'ocean'
+  | 'desert'
+  | 'forest'
+  | 'sakura'
+  | 'aurora'
+  | 'city'
+  | 'galaxy'
+  | 'lavender';
 
 export type AmbientAnimationType = 'snow' | 'leaves';
 
@@ -167,6 +177,97 @@ export const BUILT_IN_THEMES: Record<ProfileThemeId, ProfileTheme> = {
     emojiAccents: { like: '👾', menu: '🕹️', follow: '⭐' },
     themeFont: { key: 'pixel', family: 'pixel', asset: null },
   },
+
+  night: {
+    id: 'night',
+    label: 'Ночь',
+    palette: { gradient: ['#0B1E3D', '#16335E', '#2E5A8F'], text: '#EAF2FF', secondaryText: '#9DB6D6', accent: '#7FB2FF' },
+    backgroundIllustration: null,
+    ambientAnimation: null,
+    emojiAccents: { like: '🌙', menu: '⭐', follow: '✨' },
+    themeFont: null,
+  },
+  sunset: {
+    id: 'sunset',
+    label: 'Закат',
+    palette: { gradient: ['#FFC18A', '#FF7E79', '#7A4A86'], text: '#FFF1E8', secondaryText: '#F3CFC6', accent: '#FF6F61' },
+    backgroundIllustration: null,
+    ambientAnimation: null,
+    emojiAccents: { like: '🌅', menu: '🌇', follow: '🧡' },
+    themeFont: null,
+  },
+  ocean: {
+    id: 'ocean',
+    label: 'Океан',
+    palette: { gradient: ['#CDEFFF', '#7FC9EC', '#1E6FA8'], text: '#06324F', secondaryText: '#2E6F92', accent: '#0FB5C9' },
+    backgroundIllustration: null,
+    ambientAnimation: null,
+    emojiAccents: { like: '🌊', menu: '🐚', follow: '⚓' },
+    themeFont: null,
+  },
+  desert: {
+    id: 'desert',
+    label: 'Пустыня',
+    palette: { gradient: ['#FCE8BE', '#F4C56E', '#DC8A3C'], text: '#5A3A12', secondaryText: '#8A6230', accent: '#E0892F' },
+    backgroundIllustration: null,
+    ambientAnimation: null,
+    emojiAccents: { like: '🌵', menu: '🦂', follow: '🐪' },
+    themeFont: null,
+  },
+  forest: {
+    id: 'forest',
+    label: 'Лес',
+    palette: { gradient: ['#CFE9C7', '#7FB069', '#27531F'], text: '#15300F', secondaryText: '#3E5E36', accent: '#3E8E43' },
+    backgroundIllustration: null,
+    ambientAnimation: null,
+    emojiAccents: { like: '🌲', menu: '🍄', follow: '🦌' },
+    themeFont: null,
+  },
+  sakura: {
+    id: 'sakura',
+    label: 'Сакура',
+    palette: { gradient: ['#FFE9F0', '#FBC9DA', '#F49AB6'], text: '#5A2A3E', secondaryText: '#8A5A6E', accent: '#F06292' },
+    backgroundIllustration: null,
+    ambientAnimation: null,
+    emojiAccents: { like: '🌸', menu: '🍡', follow: '🦋' },
+    themeFont: null,
+  },
+  aurora: {
+    id: 'aurora',
+    label: 'Сияние',
+    palette: { gradient: ['#06121F', '#0E2A3A', '#123048'], text: '#E6F7FF', secondaryText: '#9FC7D6', accent: '#5FE0B0' },
+    backgroundIllustration: null,
+    ambientAnimation: null,
+    emojiAccents: { like: '🌌', menu: '❄️', follow: '💫' },
+    themeFont: null,
+  },
+  city: {
+    id: 'city',
+    label: 'Город',
+    palette: { gradient: ['#16203A', '#2C3A63', '#4E5E96'], text: '#EAF0FF', secondaryText: '#A9B6DA', accent: '#FFB74D' },
+    backgroundIllustration: null,
+    ambientAnimation: null,
+    emojiAccents: { like: '🏙️', menu: '🌃', follow: '🚕' },
+    themeFont: null,
+  },
+  galaxy: {
+    id: 'galaxy',
+    label: 'Галактика',
+    palette: { gradient: ['#0A0420', '#241252', '#4B2A8A'], text: '#EDE3FF', secondaryText: '#B6A6E0', accent: '#B388FF' },
+    backgroundIllustration: null,
+    ambientAnimation: null,
+    emojiAccents: { like: '🪐', menu: '🌌', follow: '🚀' },
+    themeFont: null,
+  },
+  lavender: {
+    id: 'lavender',
+    label: 'Лаванда',
+    palette: { gradient: ['#ECE3F7', '#CBB3EA', '#9B7FD0'], text: '#3A2A55', secondaryText: '#6E5A8E', accent: '#7E57C2' },
+    backgroundIllustration: null,
+    ambientAnimation: null,
+    emojiAccents: { like: '💜', menu: '🌿', follow: '🐝' },
+    themeFont: null,
+  },
 };
 
 /**
@@ -178,6 +279,16 @@ export const BUILT_IN_THEME_LIST: ProfileTheme[] = [
   BUILT_IN_THEMES['summer-beach'],
   BUILT_IN_THEMES.autumn,
   BUILT_IN_THEMES.winter,
+  BUILT_IN_THEMES.sakura,
+  BUILT_IN_THEMES.forest,
+  BUILT_IN_THEMES.ocean,
+  BUILT_IN_THEMES.sunset,
+  BUILT_IN_THEMES.desert,
+  BUILT_IN_THEMES.lavender,
+  BUILT_IN_THEMES.night,
+  BUILT_IN_THEMES.aurora,
+  BUILT_IN_THEMES.city,
+  BUILT_IN_THEMES.galaxy,
   BUILT_IN_THEMES['purple-pixel'],
 ];
 

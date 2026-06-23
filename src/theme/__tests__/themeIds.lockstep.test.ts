@@ -19,6 +19,16 @@ const CANONICAL_THEME_IDS = [
   'summer-beach',
   'autumn',
   'winter',
+  'sakura',
+  'forest',
+  'ocean',
+  'sunset',
+  'desert',
+  'lavender',
+  'night',
+  'aurora',
+  'city',
+  'galaxy',
   'purple-pixel',
 ] as const;
 
@@ -29,14 +39,15 @@ describe('theme id lock-step: Worker KNOWN_THEME_IDS vs RN BUILT_IN_THEME_LIST',
     expect(KNOWN_THEME_IDS).toEqual(registryIds);
   });
 
-  it('both lists equal the canonical six-id list', () => {
+  it('both lists equal the canonical id list', () => {
     expect(registryIds).toEqual(CANONICAL_THEME_IDS);
     expect([...KNOWN_THEME_IDS]).toEqual(CANONICAL_THEME_IDS);
   });
 
-  it('both lists contain exactly six unique ids', () => {
-    expect(KNOWN_THEME_IDS).toHaveLength(6);
-    expect(new Set(KNOWN_THEME_IDS).size).toBe(6);
-    expect(new Set(registryIds).size).toBe(6);
+  it('both lists contain the same number of unique ids', () => {
+    const n = CANONICAL_THEME_IDS.length;
+    expect(KNOWN_THEME_IDS).toHaveLength(n);
+    expect(new Set(KNOWN_THEME_IDS).size).toBe(n);
+    expect(new Set(registryIds).size).toBe(n);
   });
 });

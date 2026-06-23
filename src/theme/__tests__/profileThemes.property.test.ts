@@ -18,13 +18,23 @@ import {
 // Convention (design "Testing Strategy"): each property is tagged with the
 // feature name and the numbered design property it validates.
 
-// The six known Theme_Ids, per design Data Models + Requirement 1.1.
+// The known Theme_Ids, per design Data Models + Requirement 1.1.
 const KNOWN_IDS: ProfileThemeId[] = [
   'default-dark',
   'spring',
   'summer-beach',
   'autumn',
   'winter',
+  'sakura',
+  'forest',
+  'ocean',
+  'sunset',
+  'desert',
+  'lavender',
+  'night',
+  'aurora',
+  'city',
+  'galaxy',
   'purple-pixel',
 ];
 
@@ -150,14 +160,14 @@ describe('profileThemes registry + resolver', () => {
   // ---- Task 1.6 ----------------------------------------------------------
   // Unit test: registry shape (Requirements 1.1, 1.6).
   describe('registry shape', () => {
-    it('BUILT_IN_THEME_LIST has exactly six ids equal to the expected set', () => {
-      expect(BUILT_IN_THEME_LIST).toHaveLength(6);
+    it('BUILT_IN_THEME_LIST has exactly the expected id set', () => {
+      expect(BUILT_IN_THEME_LIST).toHaveLength(KNOWN_IDS.length);
 
       const listIds = BUILT_IN_THEME_LIST.map((t) => t.id);
       // Exact set match (order-independent).
       expect([...listIds].sort()).toEqual([...KNOWN_IDS].sort());
       // No duplicates.
-      expect(new Set(listIds).size).toBe(6);
+      expect(new Set(listIds).size).toBe(KNOWN_IDS.length);
 
       // BUILT_IN_THEMES keys match the same set.
       expect(Object.keys(BUILT_IN_THEMES).sort()).toEqual([...KNOWN_IDS].sort());

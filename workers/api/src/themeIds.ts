@@ -19,6 +19,16 @@ export const KNOWN_THEME_IDS = [
   'summer-beach',
   'autumn',
   'winter',
+  'sakura',
+  'forest',
+  'ocean',
+  'sunset',
+  'desert',
+  'lavender',
+  'night',
+  'aurora',
+  'city',
+  'galaxy',
   'purple-pixel',
 ] as const;
 
