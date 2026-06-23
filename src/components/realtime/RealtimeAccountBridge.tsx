@@ -229,6 +229,7 @@ export function RealtimeAccountBridge(): null {
           if ('emoji' in payload) updates.emoji = payload.emoji;
           if ('bio' in payload) updates.bio = payload.bio;
           if ('banner_url' in payload) updates.bannerUrl = payload.banner_url;
+          if ('theme_id' in payload) updates.themeId = payload.theme_id;
           if ('badge' in payload) updates.badge = payload.badge;
           if ('is_verified' in payload) updates.is_verified = !!payload.is_verified;
           if ('username' in payload) updates.username = payload.username;
@@ -252,6 +253,7 @@ export function RealtimeAccountBridge(): null {
               emoji: payload.emoji ?? existing.emoji,
               bio: payload.bio ?? existing.bio,
               banner_url: payload.banner_url ?? existing.banner_url,
+              theme_id: payload.theme_id ?? existing.theme_id,
               badge: payload.badge ?? existing.badge,
               is_verified:
                 'is_verified' in payload ? !!payload.is_verified : existing.is_verified,

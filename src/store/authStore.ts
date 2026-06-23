@@ -36,6 +36,7 @@ export interface User {
   deviceKey?: string;
   links?: UserLink[];
   bannerUrl?: string;
+  themeId?: string;
   badge?: string;
   is_verified?: boolean;
   /** Owner-controlled flag: when true, viewers can't screenshot/record this account's profile & chats. */
@@ -126,6 +127,7 @@ export const useAuthStore = create<AuthStoreState>()(
               badge: profile.badge || undefined,
               is_verified: !!profile.is_verified,
               bannerUrl: profile.banner_url || undefined,
+              themeId: profile.theme_id || undefined,
               screenshots_disabled: !!(profile as any).screenshots_disabled,
               links: (profile.links || undefined) as any,
               // Preserve the in-memory PIN if the user already entered

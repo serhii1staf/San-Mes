@@ -125,6 +125,7 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
       badge: profile.badge || undefined,
       is_verified: profile.is_verified || false,
       bannerUrl: profile.banner_url || undefined,
+      themeId: profile.theme_id || undefined,
       links: profile.links || undefined,
     });
 
@@ -184,6 +185,7 @@ export function AccountSwitcher({ visible, onClose }: AccountSwitcherProps) {
       badge: profile.badge || undefined,
       is_verified: profile.is_verified || false,
       bannerUrl: profile.banner_url || undefined,
+      themeId: profile.theme_id || undefined,
       links: profile.links || undefined,
     });
 

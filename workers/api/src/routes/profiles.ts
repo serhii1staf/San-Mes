@@ -15,10 +15,11 @@ import { exec, normalizeProfile, query, queryOne } from '../db';
 import { parseLimit, parseOffset, parseUuid } from '../util';
 import { readJson } from '../validate';
 import { channels, publishEvent } from '../realtime';
+import { validateThemeId } from '../themeIds';
 
 // ── helpers ─────────────────────────────────────────────────────────────
 
-const PROFILE_FULL_COLUMNS = `id, username, display_name, emoji, bio, pin_hash, device_key, banner_url, links, badge, is_verified, created_at, updated_at`;
+const PROFILE_FULL_COLUMNS = `id, username, display_name, emoji, bio, pin_hash, device_key, banner_url, links, badge, is_verified, created_at, updated_at, theme_id`;
 
 // Compact projection used wherever a profile is embedded inside another
 // row — same columns the existing PostgREST embeds project. Keeping it
@@ -433,6 +434,16 @@ register('PATCH', '/v1/profiles/me', async (req, env, ctx, _params, authedUserId
     sets.push('banner_url = ?');
     binds.push(null);
     recordChange('banner_url', null);
+  }
+  // Seasonal profile theme. Validate against the shared known-id set; an
+  // unknown id rejects the WHOLE update with `invalid_theme_id` (400) so the
+  // previously stored value is retained (Req 3.7). A valid id is bound and
+  // recorded so it joins the realtime `profile.edit` delta (Req 3.2, 3.4).
+  if (typeof v.theme_id === 'string') {
+    if (!validateThemeId(v.theme_id)) return fail(req, 'invalid_theme_id', 400);
+    sets.push('theme_id = ?');
+    binds.push(v.theme_id);
+    recordChange('theme_id', v.theme_id);
   }
   if (Array.isArray(v.links) || v.links === null) {
     const nextStored = v.links == null ? null : JSON.stringify(v.links);

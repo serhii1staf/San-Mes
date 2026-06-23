@@ -22,6 +22,7 @@ export interface LocalProfile {
   emoji: string;
   bio: string;
   banner_url: string | null;
+  theme_id?: string | null;
   links: string | null;
   badge?: string | null;
   is_verified?: boolean;

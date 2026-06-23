@@ -24,7 +24,7 @@ import { exec, normalizeProfile, query, queryOne } from '../db';
 import { signToken } from '../auth';
 import { asStr, readJson } from '../validate';
 
-const PROFILE_FULL_COLUMNS = `id, username, display_name, emoji, bio, pin_hash, device_key, banner_url, links, badge, is_verified, created_at, updated_at`;
+const PROFILE_FULL_COLUMNS = `id, username, display_name, emoji, bio, pin_hash, device_key, banner_url, theme_id, links, badge, is_verified, created_at, updated_at`;
 
 // Mirror of `hashPin` in `src/lib/supabase.ts`. Keeps the on-the-wire
 // PIN hash compatible with any client build that still computes it

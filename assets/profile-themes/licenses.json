@@ -1,0 +1,11 @@
+{
+  "description": "Asset license manifest for Seasonal Profile Themes. One record per shipped illustration or font asset, used by scripts/verify-theme-assets.js to gate the build (Apple Developer Program License Agreement 3.3.4). PLACEHOLDER PHASE: no illustration/font assets are bundled yet, so records is empty. Adding any real asset without a matching record fails the build.",
+  "recordSchema": {
+    "assetPath": "string - repo-relative path to the bundled asset file",
+    "type": "'illustration' | 'font'",
+    "licenseType": "string - e.g. 'owned', 'CC0', 'CC-BY-4.0', 'OFL-1.1', commercial license id",
+    "source": "string - where the asset came from (URL or origin)",
+    "owner": "string - rights holder / author"
+  },
+  "records": []
+}

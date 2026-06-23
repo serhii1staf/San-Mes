@@ -21,6 +21,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Apple §3.3.4 license gate: fail the build if any bundled profile-theme
+      # illustration/font asset ships without a license record.
+      - name: Verify theme asset licenses
+        run: npm run verify:theme-assets
+
       - name: Setup Expo
         uses: expo/expo-github-action@v8
         with:

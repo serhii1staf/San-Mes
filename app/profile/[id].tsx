@@ -44,6 +44,17 @@ import { useBannerBrightness } from '../../src/hooks/useBannerBrightness';
 import { kvGetJSONSync, kvSetJSON } from '../../src/services/kvStore';
 import { useLiquidGlassActive, NativeGlassView } from '../../src/components/ui/LiquidGlass';
 import { BannerFloatingLinks } from '../../src/components/profile/BannerFloatingLinks';
+import { useIsFocused } from '@react-navigation/native';
+// Seasonal Profile Themes (task 6.2) — render the viewed profile in its owner's
+// public theme. Background + ambient layers are SIBLINGS BENEATH the content
+// (never wrap a glass view); themed controls read accents from the scope context.
+import { resolveProfileTheme } from '../../src/theme/profileThemes';
+import { ProfileThemeScope } from '../../src/components/profile/ProfileThemeScope';
+import { ProfileThemeBackground } from '../../src/components/profile/ProfileThemeBackground';
+import { AmbientAnimationLayer } from '../../src/components/profile/AmbientAnimationLayer';
+import { useAmbientAnimationGate } from '../../src/hooks/useAmbientAnimationGate';
+import { ThemedMenuTrigger } from '../../src/components/profile/ThemedMenuTrigger';
+import { ThemedFollowButton } from '../../src/components/profile/ThemedFollowButton';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const SCREEN_HEIGHT = Dimensions.get('window').height;
@@ -532,6 +543,25 @@ export default function UserProfileScreen() {
 
   // Display profile: prefer cached from store, fallback to direct fetch
   const displayProfile = cachedProfile || fallbackProfile;
+
+  // ─── Seasonal Profile Themes (task 6.2) ────────────────────────────────
+  // Render the viewed profile in its OWNER's public theme. The raw theme_id is
+  // read off the fetched/cached profile row; resolveProfileTheme maps a missing
+  // or unknown id to the Default_Theme (Req 4.1, 4.3, 5.1, 5.2). All hooks here
+  // run unconditionally and BEFORE the loading/not-found guards below, so the
+  // hook order stays stable across renders (see rules-of-hooks note).
+  const screenFocused = useIsFocused();
+  // True while a drag / momentum scroll is in progress — freezes the ambient
+  // particles within 100 ms and resumes within 200 ms (Req 6.2, 6.3).
+  const [scrollActive, setScrollActive] = useState(false);
+  const profileThemeId = (displayProfile as any)?.theme_id as string | null | undefined;
+  const resolvedProfileTheme = useMemo(() => resolveProfileTheme(profileThemeId), [profileThemeId]);
+  const ambientGate = useAmbientAnimationGate(resolvedProfileTheme);
+  // Illustration load fallback: on error / 5 s timeout drop to palette-only
+  // while keeping the palette + accents (Req 4.5). Reset when the theme changes.
+  const [illustrationFailed, setIllustrationFailed] = useState(false);
+  useEffect(() => { setIllustrationFailed(false); }, [profileThemeId]);
+  const themeIllustration = illustrationFailed ? null : resolvedProfileTheme.backgroundIllustration;
 
   // Display posts mapped for UI — resolve reposts
   const [resolvedOriginals, setResolvedOriginals] = useState<Record<string, any>>({});
@@ -1121,8 +1151,12 @@ export default function UserProfileScreen() {
               )}
             </Pressable>
           )}
-          <Pressable
+          <ThemedFollowButton
+            following={isFollowingState}
             onPress={handleFollow}
+            label={isFollowingState ? t('profile.unfollow') : t('profile.follow')}
+            textColor={isFollowingState ? theme.colors.text.primary : '#FFFFFF'}
+            textStyle={{ fontSize: 13, lineHeight: 16 }}
             style={{
               minWidth: 96,
               height: 32,
@@ -1134,17 +1168,7 @@ export default function UserProfileScreen() {
               alignItems: 'center',
               justifyContent: 'center',
             }}
-          >
-            <Text
-              variant="caption"
-              weight="semibold"
-              color={isFollowingState ? theme.colors.text.primary : '#FFFFFF'}
-              align="center"
-              style={{ fontSize: 13, lineHeight: 16 }}
-            >
-              {isFollowingState ? t('profile.unfollow') : t('profile.follow')}
-            </Text>
-          </Pressable>
+          />
         </View>
       )}
       {displayProfile.bio ? (
@@ -1253,6 +1277,28 @@ export default function UserProfileScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
+      <ProfileThemeScope themeId={profileThemeId} scrollActive={scrollActive} screenFocused={screenFocused}>
+      {/* Layer 1: themed background illustration — a SIBLING beneath the
+          content (never a parent of a glass view). Renders nothing while the
+          asset is null/failed so the palette gradient shows through (Req 4.4,
+          4.5, 9.2). */}
+      <ProfileThemeBackground
+        illustration={themeIllustration}
+        onError={() => setIllustrationFailed(true)}
+        onTimeout={() => setIllustrationFailed(true)}
+      />
+      {/* Layer 2: bounded ambient animation — gated off on weak devices /
+          reduced motion, paused during scroll or while the screen is
+          unfocused (Req 6.1, 6.2, 6.3, 6.7, 7.1, 7.2). */}
+      {ambientGate.enabled && resolvedProfileTheme.ambientAnimation ? (
+        <AmbientAnimationLayer
+          type={resolvedProfileTheme.ambientAnimation}
+          active={ambientGate.enabled}
+          paused={scrollActive || !screenFocused}
+          particleCap={ambientGate.particleCap}
+        />
+      ) : null}
+
       {/* Header gradient overlay - smooth opacity based on scroll */}
       <Animated.View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 50, height: insets.top + 50, opacity: headerOpacity }} pointerEvents="none">
         <LinearGradient colors={[theme.colors.background.primary, theme.colors.background.primary, theme.colors.background.primary + '00']} locations={[0, 0.6, 1]} style={{ flex: 1 }} />
@@ -1334,15 +1380,15 @@ export default function UserProfileScreen() {
           <Pressable onPress={() => { triggerHaptic('light'); setShowMenu(true); }} style={{ borderRadius: 17, overflow: glassActive ? undefined : 'hidden' }}>
             {glassActive ? (
               <NativeGlassView glassStyle="regular" isInteractive colorScheme="dark" style={{ width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' }}>
-                <Feather name="more-horizontal" size={18} color="#FFFFFF" />
+                <ThemedMenuTrigger size={18} color="#FFFFFF" iconName="more-horizontal" />
               </NativeGlassView>
             ) : chromeReady ? (
               <BlurView intensity={80} tint="dark" style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center' }}>
-                <Feather name="more-horizontal" size={18} color="#FFFFFF" />
+                <ThemedMenuTrigger size={18} color="#FFFFFF" iconName="more-horizontal" />
               </BlurView>
             ) : (
               <View style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.4)' }}>
-                <Feather name="more-horizontal" size={18} color="#FFFFFF" />
+                <ThemedMenuTrigger size={18} color="#FFFFFF" iconName="more-horizontal" />
               </View>
             )}
           </Pressable>
@@ -1386,6 +1432,13 @@ export default function UserProfileScreen() {
         bounces={false}
         onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true })}
         scrollEventThrottle={16}
+        // Seasonal theme ambient pause: freeze particles while a scroll gesture
+        // is in progress and resume when it settles (Req 6.2, 6.3). These are
+        // lightweight JS handlers that fire only on drag start/end, so they do
+        // not contend with the native-driven `onScroll` above.
+        onScrollBeginDrag={() => setScrollActive(true)}
+        onScrollEndDrag={() => setScrollActive(false)}
+        onMomentumScrollEnd={() => setScrollActive(false)}
         // Posts get a 16px gutter; the banner + tabs in the header extend
         // edge-to-edge via negative horizontal margins below.
         contentContainerStyle={{ paddingBottom: 100, paddingHorizontal: 16, paddingTop: 12 }}
@@ -1417,9 +1470,15 @@ export default function UserProfileScreen() {
             <Avatar emoji={displayProfile.emoji || '😊'} size="xs" />
             <Text variant="caption" weight="semibold" numberOfLines={1} style={{ maxWidth: 100 }}>{displayProfile.display_name}</Text>
             {displayProfile.is_verified && <VerifiedBadge size={10} />}
-            <Pressable onPress={handleFollow} style={{ paddingHorizontal: 12, paddingVertical: 5, backgroundColor: isFollowingState ? 'transparent' : theme.colors.accent.primary, borderWidth: isFollowingState ? 1 : 0, borderColor: theme.colors.border.medium, borderRadius: 12 }}>
-              <Text variant="caption" weight="semibold" color={isFollowingState ? theme.colors.text.primary : '#FFFFFF'} style={{ fontSize: 11 }}>{isFollowingState ? t('profile.unfollow') : t('profile.follow')}</Text>
-            </Pressable>
+            <ThemedFollowButton
+              following={isFollowingState}
+              onPress={handleFollow}
+              label={isFollowingState ? t('profile.unfollow') : t('profile.follow')}
+              textColor={isFollowingState ? theme.colors.text.primary : '#FFFFFF'}
+              textStyle={{ fontSize: 11 }}
+              emojiSize={11}
+              style={{ paddingHorizontal: 12, paddingVertical: 5, backgroundColor: isFollowingState ? 'transparent' : theme.colors.accent.primary, borderWidth: isFollowingState ? 1 : 0, borderColor: theme.colors.border.medium, borderRadius: 12 }}
+            />
           </View>
         </Animated.View>
       )}
@@ -1532,6 +1591,7 @@ export default function UserProfileScreen() {
           />
         );
       })()}
+      </ProfileThemeScope>
     </View>
   );
 }

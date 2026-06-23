@@ -47,6 +47,17 @@ import { useBannerBrightness } from '../../src/hooks/useBannerBrightness';
 import { useScreenCaptureGuard } from '../../src/hooks/useScreenCaptureGuard';
 import { ScreenshotShield } from '../../src/components/ui/ScreenshotShield';
 import { BannerFloatingLinks } from '../../src/components/profile/BannerFloatingLinks';
+import { useIsFocused } from '@react-navigation/native';
+// Seasonal Profile Themes (task 6.1) — render the owner's OWN profile in the
+// account's selected public theme. Background + ambient layers are SIBLINGS
+// BENEATH the content (never wrap a glass view); the palette gradient shows
+// through the transparent FlatList behind the glass cards.
+import { resolveProfileTheme } from '../../src/theme/profileThemes';
+import { ProfileThemeScope } from '../../src/components/profile/ProfileThemeScope';
+import { ProfileThemeBackground } from '../../src/components/profile/ProfileThemeBackground';
+import { AmbientAnimationLayer } from '../../src/components/profile/AmbientAnimationLayer';
+import { useAmbientAnimationGate } from '../../src/hooks/useAmbientAnimationGate';
+import { useActiveProfileThemeId } from '../../src/store/profileThemeStore';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const MY_POSTS_CACHE_KEY = '@san:my_posts';
@@ -734,6 +745,26 @@ export default function ProfileScreen() {
   // the Text-tree count for nothing visible. Identity row now stays
   // static during scroll. Pills above shrink/fade as before.
 
+  // ─── Seasonal Profile Themes (task 6.1) ────────────────────────────────
+  // The owner's own profile renders in the account's selected theme. These
+  // hooks run unconditionally and BEFORE the `if (!user)` guard below so the
+  // hook order stays stable across renders (the loading guard early-returns).
+  const screenFocused = useIsFocused();
+  // True while a drag / momentum scroll is in progress — freezes the ambient
+  // particles within 100 ms and resumes within 200 ms (Req 6.2, 6.3).
+  const [scrollActive, setScrollActive] = useState(false);
+  // Optimistic per-account theme id wins; fall back to the persisted user row
+  // (`themeId`, mapped from `theme_id`), then the resolver's default (Req 4.2).
+  const activeProfileThemeId = useActiveProfileThemeId(user?.id ?? '');
+  const profileThemeId = activeProfileThemeId ?? user?.themeId;
+  const resolvedProfileTheme = useMemo(() => resolveProfileTheme(profileThemeId), [profileThemeId]);
+  const ambientGate = useAmbientAnimationGate(resolvedProfileTheme);
+  // Illustration load fallback: on error / 5 s timeout drop to palette-only
+  // while keeping the palette (Req 4.5). Reset when the theme changes.
+  const [illustrationFailed, setIllustrationFailed] = useState(false);
+  useEffect(() => { setIllustrationFailed(false); }, [profileThemeId]);
+  const themeIllustration = illustrationFailed ? null : resolvedProfileTheme.backgroundIllustration;
+
   if (!user) return <View style={{ flex: 1, backgroundColor: theme.colors.background.primary, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator size="large" color={theme.colors.accent.primary} /></View>;
 
   const userLinks = useMemo<{ type: string; url: string }[]>(() => (user as any)?.links || [], [user]);
@@ -970,6 +1001,27 @@ export default function ProfileScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
+      <ProfileThemeScope themeId={profileThemeId} scrollActive={scrollActive} screenFocused={screenFocused}>
+      {/* Layer 1: themed background illustration — a SIBLING beneath the content
+          (never a parent of a glass view). Renders nothing while the asset is
+          null/failed so the palette gradient shows through (Req 4.4, 4.5, 9.2). */}
+      <ProfileThemeBackground
+        illustration={themeIllustration}
+        onError={() => setIllustrationFailed(true)}
+        onTimeout={() => setIllustrationFailed(true)}
+      />
+      {/* Layer 2: bounded ambient animation — gated off on weak devices /
+          reduced motion, paused during scroll or while the screen is unfocused
+          (Req 6.1, 6.2, 6.3, 6.7, 7.1, 7.2). */}
+      {ambientGate.enabled && resolvedProfileTheme.ambientAnimation ? (
+        <AmbientAnimationLayer
+          type={resolvedProfileTheme.ambientAnimation}
+          active={ambientGate.enabled}
+          paused={scrollActive || !screenFocused}
+          particleCap={ambientGate.particleCap}
+        />
+      ) : null}
+
       <Animated.View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 50, height: insets.top + 50, opacity: headerOpacity }} pointerEvents="none">
         <LinearGradient colors={[theme.colors.background.primary, theme.colors.background.primary, theme.colors.background.primary + '00']} locations={[0, 0.6, 1]} style={{ flex: 1 }} />
       </Animated.View>
@@ -1082,6 +1134,12 @@ export default function ProfileScreen() {
         bounces={false}
         onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true })}
         scrollEventThrottle={16}
+        // Seasonal Profile Themes (Req 6.2, 6.3): drive the ambient pause from
+        // lightweight JS handlers that fire only on drag/momentum start/end, so
+        // they do not contend with the native-driven `onScroll` above.
+        onScrollBeginDrag={() => setScrollActive(true)}
+        onScrollEndDrag={() => setScrollActive(false)}
+        onMomentumScrollEnd={() => setScrollActive(false)}
         contentContainerStyle={{ paddingBottom: 100, paddingHorizontal: 16, paddingTop: 12 }}
         ListHeaderComponent={listHeader}
         ListEmptyComponent={(
@@ -1224,6 +1282,7 @@ export default function ProfileScreen() {
         }}
       />
       <ScreenshotShield visible={screenshotDetected} />
+      </ProfileThemeScope>
     </View>
   );
 }

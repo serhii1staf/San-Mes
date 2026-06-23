@@ -26,7 +26,7 @@
 
 -- profiles ────────────────────────────────────────────────────────────────
 -- Reverse-engineered columns: id, username, display_name, emoji, bio,
--- pin_hash, device_key, banner_url, links (jsonb in pg → text here),
+-- pin_hash, device_key, banner_url, theme_id, links (jsonb in pg → text here),
 -- badge, is_verified, created_at, updated_at.
 -- `username` is queried with a unique constraint check on register
 -- (`error.message.includes('duplicate')` branch), so a UNIQUE index is
@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS profiles (
   pin_hash      TEXT,
   device_key    TEXT,
   banner_url    TEXT,
+  theme_id      TEXT,            -- selected profile theme id; NULL ⇒ default-dark
   links         TEXT,            -- JSON array of {type,url}
   badge         TEXT,
   is_verified   INTEGER NOT NULL DEFAULT 0,
