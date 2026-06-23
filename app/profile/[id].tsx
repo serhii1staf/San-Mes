@@ -487,6 +487,28 @@ export default function UserProfileScreen() {
   // Virtualization is handled by Animated.FlatList below — no manual windowing
   // needed. Initial mount is gated by `postsReady` so the tab tap stays snappy.
   const scrollY = useRef(new Animated.Value(0)).current;
+  // Floating follow widget visibility — spring-driven SLIDE (smooth), toggled
+  // when the user scrolls past a threshold rather than mapped 1:1 to scroll
+  // position (that felt abrupt). Slide-only (no opacity) so the glass keeps
+  // drawing. Hysteresis avoids flip-flop at the threshold.
+  const [followWidgetVisible, setFollowWidgetVisible] = useState(false);
+  const widgetSlide = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.spring(widgetSlide, {
+      toValue: followWidgetVisible ? 1 : 0,
+      useNativeDriver: true,
+      tension: 55,
+      friction: 11,
+    }).start();
+  }, [followWidgetVisible, widgetSlide]);
+  const onProfileScrollY = useCallback((e: any) => {
+    const y = e?.nativeEvent?.contentOffset?.y ?? 0;
+    setFollowWidgetVisible((prev) => (prev ? y > 170 : y > 230));
+  }, []);
+  const widgetTranslateY = useMemo(
+    () => widgetSlide.interpolate({ inputRange: [0, 1], outputRange: [150, 0] }),
+    [widgetSlide],
+  );
   // Memoize interpolations so each is allocated once, not per-render. Each
   // re-render of this screen otherwise creates 5 new AnimatedInterpolation
   // nodes that the same scrollY then has to drive.
@@ -1442,7 +1464,7 @@ export default function UserProfileScreen() {
         removeClippedSubviews={true}
         showsVerticalScrollIndicator={false}
         bounces={false}
-        onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true })}
+        onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true, listener: onProfileScrollY })}
         scrollEventThrottle={16}
         // Seasonal theme ambient pause: freeze particles while a scroll gesture
         // is in progress and resume when it settles (Req 6.2, 6.3). These are
@@ -1473,7 +1495,7 @@ export default function UserProfileScreen() {
           BlurView otherwise. Entrance is a translateY SLIDE (never an opacity
           fade) so the native glass keeps drawing. */}
       {!isOwnProfile && (
-        <Animated.View pointerEvents="box-none" style={{ position: 'absolute', bottom: 28, left: 0, right: 0, alignItems: 'center', zIndex: 100, transform: [{ translateY: badgeTranslateY }] }}>
+        <Animated.View pointerEvents={followWidgetVisible ? 'box-none' : 'none'} style={{ position: 'absolute', bottom: 28, left: 0, right: 0, alignItems: 'center', zIndex: 100, transform: [{ translateY: widgetTranslateY }] }}>
           {(() => {
             const followEmoji = resolvedProfileTheme.emojiAccents?.follow;
             const pillStyle = { flexDirection: 'row' as const, alignItems: 'center' as const, paddingHorizontal: 12, paddingVertical: 7, gap: 8, borderRadius: 22 };
