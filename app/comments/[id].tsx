@@ -377,13 +377,28 @@ export default function CommentsScreen() {
     },
     [],
   );
-  const listShiftStyle = useAnimatedStyle(() => ({
-    // Panel-only list lift. The keyboard case is handled by
-    // KeyboardChatScrollView; this transform only shifts the list up while the
-    // emoji/GIF media panel is open (keyboard down) so the last comment stays
-    // visible above the panel.
-    transform: [{ translateY: -liftSV.value * emojiPanelSV.value }],
-  }));
+  const listShiftStyle = useAnimatedStyle(() => {
+    // MONOTONIC panel lift — mirrors `barWrapStyle` so the keyboard↔panel
+    // handoff produces ZERO net list motion (kills the "content jumps when I
+    // open the GIF/emoji panel" report).
+    //
+    // The keyboard lift itself is applied NATIVELY by KeyboardChatScrollView
+    // (contributes `kb`). This transform must therefore add ONLY the portion
+    // of the panel lift that EXCEEDS what the keyboard is already providing:
+    //   extra = max(0, panelLift − kb)
+    // While the keyboard is up and the panel opens (panelLift ≈ kb) extra ≈ 0,
+    // so the list does not jump. As the keyboard then animates away (kb → 0)
+    // KCSV removes its `kb` lift while `extra` grows to the full panel height —
+    // the two are exactly complementary, so the total list lift stays pinned at
+    // `panelLift` throughout the transition (kb + (panelLift − kb) = panelLift).
+    // Keyboard-down open is unchanged: kb = 0 ⇒ extra = panelLift, animated by
+    // the same `liftSV` timing as before.
+    const raw = keyboardHeight.value;
+    const kb = raw < 0 ? -raw : raw;
+    const panelLift = liftSV.value * emojiPanelSV.value;
+    const extra = Math.max(0, panelLift - kb);
+    return { transform: [{ translateY: -extra }] };
+  });
 
   // Input bar lift — replaces KeyboardStickyView so we can fold the media-panel
   // lift into a MONOTONIC max(keyboardHeight, panelLift), eliminating the
