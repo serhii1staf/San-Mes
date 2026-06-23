@@ -144,18 +144,42 @@ function SocialChip({ url, theme }: { url: string; theme: any }) {
   if (glassActive) {
     return (
       <Pressable onPress={() => { triggerHaptic('light'); openUrl(url); }} style={{ borderRadius: 16 }}>
-        <NativeGlassView glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16 }}>
+        <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16 }}>
           {content}
         </NativeGlassView>
       </Pressable>
     );
   }
   return (
-    <Pressable
-      onPress={() => { triggerHaptic('light'); openUrl(url); }}
-      style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.55)' }}
-    >
-      {content}
+    <Pressable onPress={() => { triggerHaptic('light'); openUrl(url); }} style={{ borderRadius: 16, overflow: 'hidden' }}>
+      <BlurView intensity={70} tint={theme.isDark ? 'dark' : 'light'} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 7 }}>
+        {content}
+      </BlurView>
+    </Pressable>
+  );
+}
+
+// Unified action pill — liquid glass (interactive) when enabled, else the SAME
+// BlurView used for the floating chrome buttons. `accent` paints the CTA fill.
+function ActionPill({ glassActive, theme, onPress, height = 38, square = false, accent = false, children }: { glassActive: boolean; theme: any; onPress: () => void; height?: number; square?: boolean; accent?: boolean; children: React.ReactNode }) {
+  const radius = height / 2;
+  const surface = { height, width: square ? height : undefined, paddingHorizontal: square ? 0 : 20, borderRadius: radius, flexDirection: 'row' as const, alignItems: 'center' as const, justifyContent: 'center' as const, gap: 6 };
+  const accentFill = theme.colors.accent.primary;
+  if (glassActive) {
+    return (
+      <Pressable onPress={onPress} style={{ borderRadius: radius }}>
+        <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} tintColor={accent ? accentFill + 'D9' : undefined} style={surface}>
+          {children}
+        </NativeGlassView>
+      </Pressable>
+    );
+  }
+  return (
+    <Pressable onPress={onPress} style={{ borderRadius: radius, overflow: 'hidden' }}>
+      <BlurView intensity={70} tint={theme.isDark ? 'dark' : 'light'} style={surface}>
+        {accent ? <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: accentFill + 'E6' }} /> : null}
+        {children}
+      </BlurView>
     </Pressable>
   );
 }
@@ -926,8 +950,10 @@ export default function ProfileScreen() {
               <Avatar emoji={user.emoji} size="lg" />
             </NativeGlassView>
           ) : (
-            <View style={{ width: 84, height: 84, borderRadius: 26, overflow: 'hidden', borderWidth: 3, borderColor: theme.colors.background.primary, backgroundColor: theme.isDark ? 'rgba(30,30,30,0.9)' : 'rgba(255,255,255,0.92)', alignItems: 'center', justifyContent: 'center' }}>
-              <Avatar emoji={user.emoji} size="lg" />
+            <View style={{ width: 84, height: 84, borderRadius: 26, overflow: 'hidden' }}>
+              <BlurView intensity={70} tint={theme.isDark ? 'dark' : 'light'} style={{ width: 84, height: 84, alignItems: 'center', justifyContent: 'center' }}>
+                <Avatar emoji={user.emoji} size="lg" />
+              </BlurView>
             </View>
           )}
         </Pressable>
@@ -972,20 +998,14 @@ export default function ProfileScreen() {
           </Pressable>
         </View>
 
-        {/* Action row — own profile: compact rounded Редактировать + Поделиться */}
+        {/* Action row — own profile: glass (interactive) / BlurView pills */}
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 16 }}>
-          <Pressable
-            onPress={() => router.push('/profile/edit')}
-            style={{ height: 38, paddingHorizontal: 22, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.accent.primary }}
-          >
+          <ActionPill glassActive={glassActive} theme={theme} accent onPress={() => router.push('/profile/edit')}>
             <Text variant="caption" weight="semibold" color="#FFFFFF" style={{ fontSize: 14 }}>{t('profile.edit', 'Редактировать')}</Text>
-          </Pressable>
-          <Pressable
-            onPress={async () => { triggerHaptic('light'); try { await Share.share({ message: `https://san-m-app.com/profile/${user.id}` }); } catch {} }}
-            style={{ width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.06)' }}
-          >
+          </ActionPill>
+          <ActionPill glassActive={glassActive} theme={theme} square onPress={async () => { triggerHaptic('light'); try { await Share.share({ message: `https://san-m-app.com/profile/${user.id}` }); } catch {} }}>
             <Feather name="share" size={16} color={theme.colors.text.primary} />
-          </Pressable>
+          </ActionPill>
         </View>
       </View>
     </View>
