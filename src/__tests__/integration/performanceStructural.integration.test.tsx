@@ -352,15 +352,22 @@ function detectFlatListVirt(source: string): ListVirt {
   };
 }
 
+// A screen satisfies the Property-5 "list is virtualised" invariant if it
+// uses EITHER:
+//   • FlashList (Shopify's cell-recycling list — the stronger form, no manual
+//     virtualization knobs needed: sizing + recycling are automatic), OR
+//   • a FlatList configured with the full set of virtualization knobs.
+// The feed and conversations list were migrated to FlashList v2 (native
+// recycling) — they no longer carry the FlatList knobs by design.
+function usesFlashList(source: string): boolean {
+  return /@shopify\/flash-list/.test(source) && /<FlashList\b/.test(source);
+}
+
 describe('Performance integration — heavy screens declare FlatList virtualization', () => {
-  // (tabs)/index — main feed.
-  it('(tabs)/index.tsx FlatList is virtualised', () => {
+  // (tabs)/index — main feed. Migrated to FlashList v2 (cell recycling).
+  it('(tabs)/index.tsx uses a recycling list (FlashList)', () => {
     const src = readScreen('app/(tabs)/index.tsx');
-    const v = detectFlatListVirt(src);
-    expect(v.removeClippedSubviews).toBe(true);
-    expect(v.initialNumToRender).toBe(true);
-    expect(v.maxToRenderPerBatch).toBe(true);
-    expect(v.windowSize).toBe(true);
+    expect(usesFlashList(src)).toBe(true);
   });
 
   // (tabs)/profile — own profile.
@@ -404,15 +411,12 @@ describe('Performance integration — heavy screens declare FlatList virtualizat
     expect(v.windowSize).toBe(true);
   });
 
-  // (tabs)/messages — the conversations list. ContextMenu wrappers per row
-  // make virtualization especially important here.
-  it('(tabs)/messages.tsx FlatList is virtualised', () => {
+  // (tabs)/messages — the conversations list. Migrated to FlashList v2:
+  // per-row native ContextMenu cost is now amortized by cell recycling
+  // instead of the FlatList initial-batch mount burst.
+  it('(tabs)/messages.tsx uses a recycling list (FlashList)', () => {
     const src = readScreen('app/(tabs)/messages.tsx');
-    const v = detectFlatListVirt(src);
-    expect(v.removeClippedSubviews).toBe(true);
-    expect(v.initialNumToRender).toBe(true);
-    expect(v.maxToRenderPerBatch).toBe(true);
-    expect(v.windowSize).toBe(true);
+    expect(usesFlashList(src)).toBe(true);
   });
 });
 

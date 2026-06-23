@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { View, FlatList, Pressable, ViewStyle, TextInput, StyleSheet, Text as RNText, Alert, Animated, Easing, InteractionManager } from 'react-native';
+import { FlashList } from '@shopify/flash-list';
 import { Feather } from '@expo/vector-icons';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-reanimated';
@@ -871,36 +872,20 @@ export default function MessagesScreen() {
             </View>
             )
           ) : (
-            <FlatList
+            <FlashList
               data={filtered}
               keyExtractor={(item) => item.id}
               renderItem={renderConversationItem}
               ItemSeparatorComponent={renderSeparator}
               contentContainerStyle={{ paddingBottom: 100 }}
               showsVerticalScrollIndicator={false}
-              removeClippedSubviews={true}
-              // Tightened on weak devices: ContextMenu (the native wrapper
-              // around each row) creates a UIContextMenuInteraction per view
-              // on iOS, which is the dominant cost when this list mounts. 12
-              // rows × ~12 ms = the 178 ms long task users were seeing on
-              // the first open of (tabs)/messages. Even at 6 rows the burst
-              // landed as a 127 ms task right after navigation. Going to
-              // 4 rows means the visible viewport (≈ 5 rows on most phones)
-              // still feels populated on first paint, and the 5th+ row
-              // batches in over the next two RAF ticks instead of all at
-              // once on the navigation transition frame.
-              initialNumToRender={4}
-              maxToRenderPerBatch={3}
-              windowSize={5}
-              updateCellsBatchingPeriod={100}
-              // Fixed row geometry: Avatar size="md" is 44 px tall + 10 px
-              // top + 10 px bottom padding = 64 px per row; the 0.5 px
-              // separator is rendered as a sibling. Providing getItemLayout
-              // lets FlatList skip the per-row onLayout measurement pass on
-              // the cold-mount frame, shaving the residual mount cost left
-              // after the ContextMenu lazy-mount fix and helping
-              // scroll-to-index work without an intermediate measurement.
-              getItemLayout={MESSAGES_ITEM_LAYOUT}
+              // FlashList v2 cell recycling — replaces the FlatList
+              // virtualization knobs (initialNumToRender/maxToRenderPerBatch/
+              // windowSize/updateCellsBatchingPeriod/removeClippedSubviews) and
+              // getItemLayout. The per-row native ContextMenu cost that drove
+              // the ~178 ms cold-mount long task is now amortized by recycling:
+              // only the visible rows mount, off-screen rows are recycled from
+              // the pool instead of mounted fresh.
             />
           )}
         </View>

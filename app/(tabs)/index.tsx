@@ -1,5 +1,6 @@
 import React, { useEffect, useCallback, useState, useRef } from 'react';
-import { View, FlatList, RefreshControl, Pressable, StyleSheet, ActivityIndicator, Modal, InteractionManager } from 'react-native';
+import { View, RefreshControl, Pressable, StyleSheet, ActivityIndicator, Modal, InteractionManager } from 'react-native';
+import { FlashList } from '@shopify/flash-list';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
@@ -732,37 +733,23 @@ export default function FeedScreen() {
         </View>
       </View>
 
-      <FlatList
+      <FlashList
         data={posts}
         keyExtractor={(item) => item.id}
         renderItem={renderPost}
         ListHeaderComponent={posts.length === 0 ? FeedHeader : undefined}
         contentContainerStyle={{ paddingHorizontal: theme.spacing.base, paddingBottom: 100, paddingTop: headerContentHeight }}
         showsVerticalScrollIndicator={false}
-        removeClippedSubviews={true}
-        // PostCards are heavy: each one carries up to 1+ CachedImage (or
-        // a LinkPreview thumbnail), an Avatar, FormattedText, action bar,
-        // and on reposts an embedded original-post block. iPhone viewport
-        // fits 1.5-2 cards above the fold, so any further "off-screen"
-        // mounts on cold open are paying their cost on the navigation
-        // transition frame and showing up as native UI-thread dips.
-        // 2/1/3 means: 2 cards on first paint (visible viewport), 1
-        // card per subsequent batch, ~1 viewport cushion. Combined with
-        // the lazy-hydrate latch in PostCard (placeholder first commit,
-        // hydrate one RAF later), the cold-open frame's UI-thread work
-        // is now ~2 placeholders × 1ms with no parallel image decodes
-        // before the first paint settles.
-        initialNumToRender={2}
-        maxToRenderPerBatch={1}
-        windowSize={3}
-        // Post cards now size to their image's aspect ratio, so an image
-        // finishing its decode WHILE you scroll changes that card's height.
-        // Without anchoring, every such resize above the viewport shifted the
-        // content offset → the "feed jerks / scrolls on its own" the user hit.
-        // maintainVisibleContentPosition pins the currently-visible item so
-        // height changes above it are compensated by an offset adjustment
-        // instead of a visible jump.
-        maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+        // FlashList v2 (cell recycling): no FlatList virtualization knobs
+        // (initialNumToRender/maxToRenderPerBatch/windowSize/removeClippedSubviews)
+        // — sizing is automatic and recycling replaces them. PostCards remain
+        // heavy, so `drawDistance` is kept modest to avoid pre-rendering far
+        // off-screen cards (and the parallel image-decode burst that caused).
+        // `maintainVisibleContentPosition` is ON BY DEFAULT in v2, which is the
+        // documented fix for the "feed jerks when an image finishes decoding and
+        // resizes a card above the viewport" jump (replaces the old FlatList
+        // `{ minIndexForVisible: 0 }` shape).
+        drawDistance={250}
         refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={theme.colors.accent.primary} progressViewOffset={headerContentHeight} />}
       />
 
