@@ -80,6 +80,20 @@ jest.mock('expo-image', () => {
   };
 });
 
+// The background is now a react-native-svg vector scene. Mock it to a host View
+// that exposes the resolved theme id so the layering + palette assertions below
+// can read which theme the scene is drawing (the live scene's sky gradient uses
+// the same palette, so resolving id→palette keeps the existing expectations).
+jest.mock('../ProfileThemeScene', () => {
+  const React_ = require('react');
+  const { View: RNView } = require('react-native');
+  return {
+    __esModule: true,
+    ProfileThemeScene: ({ theme }: any) =>
+      React_.createElement(RNView, { testID: 'scene', sceneThemeId: theme.id }),
+  };
+});
+
 // Control themed-font load state deterministically (mirrors ThemedControls.test).
 jest.mock('expo-font', () => ({ isLoaded: jest.fn(() => true) }));
 
@@ -100,6 +114,7 @@ import {
   APP_DEFAULT_FONT,
   BUILT_IN_THEMES,
   DEFAULT_THEME,
+  resolveProfileTheme,
   type ProfileTheme,
 } from '../../../theme/profileThemes';
 
@@ -169,12 +184,15 @@ function topLevelHostNodes(renderer: TestRenderer.ReactTestRenderer): any[] {
   return Array.isArray(json) ? json : [json];
 }
 
-/** The Layer-0 palette gradient's `colors` (the resolved theme palette). */
+/** The resolved palette of the theme the background SCENE is drawing — read via
+ *  the mocked scene's `sceneThemeId` and mapped back to the palette (the live
+ *  scene's sky gradient uses this same palette). */
 function gradientColors(renderer: TestRenderer.ReactTestRenderer): string[] | undefined {
-  const grad = renderer.root.findAll(
-    (n) => typeof n.type === 'string' && Array.isArray(n.props?.colors),
+  const node = renderer.root.findAll(
+    (n) => typeof n.type === 'string' && n.props?.testID === 'scene',
   )[0];
-  return grad?.props?.colors;
+  const id = node?.props?.sceneThemeId as string | undefined;
+  return id ? resolveProfileTheme(id).palette.gradient : undefined;
 }
 
 /** True when a text node containing `glyph` is present anywhere in the tree. */
@@ -276,14 +294,14 @@ describe('themed background layering (Req 4.4, 9.2)', () => {
     const imageContainsSurface = imageNode.findAll((n: any) => n === surface).length > 0;
     expect(imageContainsSurface).toBe(false);
 
-    // Ordering: gradient (Layer 0) → illustration (Layer 1) → content (Layer 3),
+    // Ordering: scene (Layer 0/1) → illustration → content (Layer 3),
     // i.e. the background sits BENEATH the content in paint order.
     const top = topLevelHostNodes(r);
-    const gradientIdx = top.findIndex((n) => Array.isArray(n.props?.colors));
+    const sceneIdx = top.findIndex((n) => n.props?.testID === 'scene');
     const imageIdx = top.findIndex((n) => n.props?.source === FAKE_ILLUSTRATION);
     const surfaceIdx = top.findIndex((n) => n.props?.testID === 'fallback-surface');
-    expect(gradientIdx).toBeGreaterThanOrEqual(0);
-    expect(imageIdx).toBeGreaterThan(gradientIdx);
+    expect(sceneIdx).toBeGreaterThanOrEqual(0);
+    expect(imageIdx).toBeGreaterThan(sceneIdx);
     expect(surfaceIdx).toBeGreaterThan(imageIdx);
   });
 
