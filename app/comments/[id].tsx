@@ -20,7 +20,7 @@ import { extractFirstUrl } from '../../src/services/linkPreview';
 import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
 import { useChatKeyboardMode } from '../../src/hooks/useChatKeyboardMode';
 import { CachedImage } from '../../src/components/ui/CachedImage';
-import { useStaggeredReveal } from '../../src/hooks/useStaggeredReveal';
+import { useStaggeredReveal, useStaggeredGifReveal } from '../../src/hooks/useStaggeredReveal';
 import { CommentContextMenu, CommentAction } from '../../src/components/ui/CommentContextMenu';
 import { SlideUpSheet } from '../../src/components/ui/SlideUpSheet';
 import { MediaPanel } from '../../src/components/chat/MediaPanel';
@@ -179,10 +179,12 @@ const CommentRow = React.memo(function CommentRow({ item, onLongPress, onReply, 
   // staggered-reveal hook below is always called (rules of hooks). Cheap.
   const parsed = parseReply(item.content || '');
   const gif = parseGif(parsed.body);
-  // Frame-paced reveal so multiple GIF comments don't all decode on the same
-  // frame (the fps drop the perf monitor flagged on comment threads). Same
-  // shared one-per-frame queue the chat bubbles use.
-  const gifReveal = useStaggeredReveal(!!gif);
+  // GIF-paced reveal: animated GIFs cost ~100-180ms to decode, so the
+  // one-per-FRAME photo pump starts them faster than they finish and a thread
+  // with several GIF comments lands a decode burst (the recurring ~110ms x10
+  // stall the perf monitor flagged on comment threads). The wider GIF pump
+  // (~90ms apart) keeps at most ~2 decoding at once — same fix as the chat.
+  const gifReveal = useStaggeredGifReveal(!!gif);
   if (isAuthorBlocked && authorId) {
     return (
       <BlockedContentPlaceholder

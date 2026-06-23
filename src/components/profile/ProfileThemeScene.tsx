@@ -532,7 +532,16 @@ interface ProfileThemeSceneProps {
 export const ProfileThemeScene = React.memo(
   function ProfileThemeScene({ theme, style }: ProfileThemeSceneProps) {
     return (
-      <View style={[StyleSheet.absoluteFill, style]} pointerEvents="none">
+      <View
+        style={[StyleSheet.absoluteFill, style]}
+        pointerEvents="none"
+        // The scene is fully STATIC, so flatten it to a single GPU texture and
+        // never re-rasterize it while the profile list scrolls above it. This
+        // keeps the detailed SVG off the per-frame raster path on weak devices.
+        renderToHardwareTextureAndroid
+        shouldRasterizeIOS
+        collapsable={false}
+      >
         <Svg width="100%" height="100%" viewBox={`0 0 ${VB_W} ${VB_H}`} preserveAspectRatio="xMidYMid slice">
           {SceneFor(theme.id)}
         </Svg>
