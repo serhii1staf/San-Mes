@@ -111,6 +111,44 @@ function SocialLinkIcon({ type, url }: { type: string; url: string }) {
   );
 }
 
+// Compact count formatter for the inline profile stats row ("14.8K", "1.2M").
+function formatCount(n: number): string {
+  if (!n || n < 0) return '0';
+  if (n >= 1000000) return (n / 1000000).toFixed(n % 1000000 === 0 ? 0 : 1).replace('.0', '') + 'M';
+  if (n >= 1000) return (n / 1000).toFixed(n % 1000 === 0 ? 0 : 1).replace('.0', '') + 'K';
+  return String(n);
+}
+
+// Labeled social-link pill (icon + platform name) for the redesigned, left-
+// aligned profile header — matches the Instagram/TikTok-style chips in the
+// target mockup. Reuses the same brand-icon mapping as `SocialLinkIcon`.
+function SocialChip({ url, theme }: { url: string; theme: any }) {
+  const type = detectLinkType(url);
+  const map: Record<string, { name: string; color: string; isBrand: boolean; label: string }> = {
+    github: { name: 'github', color: theme.isDark ? '#FFF' : '#333', isBrand: true, label: 'GitHub' },
+    twitter: { name: 'twitter', color: '#1DA1F2', isBrand: true, label: 'Twitter' },
+    instagram: { name: 'instagram', color: '#E4405F', isBrand: true, label: 'Instagram' },
+    youtube: { name: 'youtube', color: '#FF0000', isBrand: true, label: 'YouTube' },
+    telegram: { name: 'telegram-plane', color: '#0088CC', isBrand: true, label: 'Telegram' },
+    tiktok: { name: 'tiktok', color: theme.isDark ? '#FFF' : '#000', isBrand: true, label: 'TikTok' },
+    linkedin: { name: 'linkedin-in', color: '#0A66C2', isBrand: true, label: 'LinkedIn' },
+    discord: { name: 'discord', color: '#5865F2', isBrand: true, label: 'Discord' },
+    twitch: { name: 'twitch', color: '#9146FF', isBrand: true, label: 'Twitch' },
+    spotify: { name: 'spotify', color: '#1DB954', isBrand: true, label: 'Spotify' },
+    website: { name: 'globe', color: '#2563EB', isBrand: false, label: 'Сайт' },
+  };
+  const icon = map[type] || map.website;
+  return (
+    <Pressable
+      onPress={() => { triggerHaptic('light'); openUrl(url); }}
+      style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 14, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' }}
+    >
+      {icon.isBrand ? <FontAwesome5 name={icon.name} size={13} color={icon.color} brand /> : <Feather name={icon.name as any} size={13} color={icon.color} />}
+      <Text variant="caption" weight="semibold">{icon.label}</Text>
+    </Pressable>
+  );
+}
+
 function ProfileMenuModalImpl({ visible, profile, onClose }: { visible: boolean; profile: any; onClose: () => void }) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
@@ -1063,8 +1101,12 @@ export default function UserProfileScreen() {
     if (!displayProfile) return null;
     return (
     <>
-      <View style={{ height: 300, marginHorizontal: -16, marginTop: -12, backgroundColor: theme.colors.accent.primary + '20', overflow: 'hidden' }}>
-        {bannerUrl && chromeReady ? (
+      {/* Optional custom cover photo as the TOP backdrop. The seasonal theme
+          gradient/illustration already fills the whole screen behind this
+          (ProfileThemeScope), so the cover just tops it off and fades into the
+          background. No cover → a small spacer below the floating chrome. */}
+      {bannerUrl && chromeReady ? (
+        <View style={{ height: 190, marginHorizontal: -16, marginTop: -12, overflow: 'hidden' }}>
           <CachedImage
             uri={bannerUrl}
             style={{
@@ -1079,113 +1121,104 @@ export default function UserProfileScreen() {
             resizeMode="cover"
             proxyWidth={SCREEN_WIDTH}
           />
-        ) : null}
-        {/* Banner bottom fades into the app background (clean original look). */}
-        <LinearGradient
-          colors={[theme.colors.background.primary + '00', theme.colors.background.primary + 'B3', theme.colors.background.primary]}
-          locations={[0, 0.45, 1]}
-          style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 140 }}
-          pointerEvents="none"
-        />
-        {/* Social links scattered across the banner — random spot each open + gentle drift. */}
-        <BannerFloatingLinks links={userLinks} bannerHeight={300} />
-      </View>
-      <View style={{ flexDirection: 'row', alignItems: 'center', alignSelf: 'stretch', marginTop: -140, paddingHorizontal: 8 }}>
-        <View style={{ flex: 1 }}>
-          <AdaptiveProfileText
-            isLight={bannerIsLight}
-            darkBgColor="rgba(255,255,255,0.92)"
-            lightBgColor={theme.colors.text.secondary}
-            numberOfLines={1}
-            style={{
-              textAlign: 'right',
-              fontSize: 13,
-              textShadowColor: 'rgba(0,0,0,0.45)',
-              textShadowOffset: { width: 0, height: 1 },
-              textShadowRadius: 2,
-              marginRight: 12,
-            }}
-          >
-            @{displayProfile.username}
-          </AdaptiveProfileText>
-        </View>
-        <View style={{ width: 72, height: 72, borderRadius: 36, overflow: 'hidden', borderWidth: 3, borderColor: theme.colors.background.primary, backgroundColor: theme.isDark ? 'rgba(30,30,30,0.85)' : 'rgba(255,255,255,0.85)', alignItems: 'center', justifyContent: 'center' }}>
-          <Avatar emoji={displayProfile.emoji || '😊'} size="lg" />
-        </View>
-        <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 12 }}>
-          <AdaptiveProfileText
-            isLight={bannerIsLight}
-            darkBgColor="#FFFFFF"
-            lightBgColor={theme.colors.text.primary}
-            numberOfLines={1}
-            style={{
-              flexShrink: 1,
-              fontSize: 15,
-              fontWeight: '700',
-              textShadowColor: 'rgba(0,0,0,0.45)',
-              textShadowOffset: { width: 0, height: 1 },
-              textShadowRadius: 2,
-            }}
-          >
-            {displayProfile.display_name}
-          </AdaptiveProfileText>
-          {displayProfile.is_verified && <VerifiedBadge size={13} />}
-          {displayProfile.badge && <UserBadge badge={displayProfile.badge} size="sm" />}
-        </View>
-      </View>
-      {!isOwnProfile && (
-        <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 8, marginTop: 12 }}>
-          {fromChat !== '1' && (
-            <Pressable
-              onPress={() => router.push({ pathname: '/chat/[id]', params: { id: displayProfile.id } })}
-              style={{ width: 32, height: 32, borderRadius: 16, overflow: 'hidden' }}
-            >
-              {chromeReady ? (
-                <BlurView intensity={70} tint={theme.isDark ? 'dark' : 'light'} style={{ width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' }}>
-                  <Feather name="send" size={14} color={theme.colors.text.primary} />
-                </BlurView>
-              ) : (
-                <View style={{ width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)' }}>
-                  <Feather name="send" size={14} color={theme.colors.text.primary} />
-                </View>
-              )}
-            </Pressable>
-          )}
-          <ThemedFollowButton
-            following={isFollowingState}
-            onPress={handleFollow}
-            label={isFollowingState ? t('profile.unfollow') : t('profile.follow')}
-            textColor={isFollowingState ? theme.colors.text.primary : '#FFFFFF'}
-            textStyle={{ fontSize: 13, lineHeight: 16 }}
-            style={{
-              minWidth: 96,
-              height: 32,
-              paddingHorizontal: 16,
-              backgroundColor: isFollowingState ? 'transparent' : theme.colors.accent.primary,
-              borderWidth: isFollowingState ? 1 : 0,
-              borderColor: theme.colors.border.medium,
-              borderRadius: 16,
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
+          <LinearGradient
+            colors={[theme.colors.background.primary + '00', theme.colors.background.primary + '99', theme.colors.background.primary]}
+            locations={[0, 0.6, 1]}
+            style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 120 }}
+            pointerEvents="none"
           />
         </View>
+      ) : (
+        <View style={{ height: insets.top + 44 }} />
       )}
-      {displayProfile.bio ? (
-        <View style={{ marginTop: isOwnProfile ? 12 : 14, alignItems: 'center', paddingHorizontal: 8 }}>
-          <LinkedText
-            style={{
-              textAlign: 'center',
-              color: theme.colors.text.secondary,
-            }}
-          >
-            {displayProfile.bio}
-          </LinkedText>
+
+      {/* ── Left-aligned identity block (matches the target mockup) ──────── */}
+      <View style={{ paddingHorizontal: 4, marginTop: bannerUrl && chromeReady ? -44 : 4 }}>
+        {/* Avatar — rounded square, top-left */}
+        <View style={{ width: 84, height: 84, borderRadius: 26, overflow: 'hidden', borderWidth: 3, borderColor: theme.colors.background.primary, backgroundColor: theme.isDark ? 'rgba(30,30,30,0.9)' : 'rgba(255,255,255,0.92)', alignItems: 'center', justifyContent: 'center' }}>
+          <Avatar emoji={displayProfile.emoji || '😊'} size="lg" />
         </View>
-      ) : null}
+
+        {/* Name + verified + badge */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 12 }}>
+          <Text variant="h2" weight="bold" numberOfLines={1} style={{ flexShrink: 1, fontSize: 24, lineHeight: 28 }}>{displayProfile.display_name}</Text>
+          {displayProfile.is_verified && <VerifiedBadge size={18} />}
+          {displayProfile.badge && <UserBadge badge={displayProfile.badge} size="md" />}
+        </View>
+        {/* @handle */}
+        <Text variant="body" color={theme.colors.text.tertiary} numberOfLines={1} style={{ marginTop: 2 }}>@{displayProfile.username}</Text>
+
+        {/* Social link chips (Instagram / TikTok / …) */}
+        {userLinks.length > 0 && (
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 14 }}>
+            {userLinks.slice(0, 5).map((lnk, i) => (
+              <SocialChip key={`${lnk.url}-${i}`} url={lnk.url} theme={theme} />
+            ))}
+          </View>
+        )}
+
+        {/* Bio */}
+        {displayProfile.bio ? (
+          <View style={{ marginTop: 14 }}>
+            <LinkedText style={{ color: theme.colors.text.secondary, fontSize: 15, lineHeight: 21 }}>
+              {displayProfile.bio}
+            </LinkedText>
+          </View>
+        ) : null}
+
+        {/* Inline stats — tap opens the followers / following lists */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', marginTop: 14 }}>
+          <Pressable onPress={() => { triggerHaptic('selection'); setFollowsModal('followers'); }} style={{ flexDirection: 'row', alignItems: 'baseline' }}>
+            <Text variant="body" weight="bold">{formatCount(followCounts.followers)}</Text>
+            <Text variant="body" color={theme.colors.text.tertiary}> {t('profile.followers_short')}</Text>
+          </Pressable>
+          <Text variant="body" color={theme.colors.text.tertiary} style={{ marginHorizontal: 8 }}>·</Text>
+          <Pressable onPress={() => { triggerHaptic('selection'); setFollowsModal('following'); }} style={{ flexDirection: 'row', alignItems: 'baseline' }}>
+            <Text variant="body" weight="bold">{formatCount(followCounts.following)}</Text>
+            <Text variant="body" color={theme.colors.text.tertiary}> {t('profile.following_short')}</Text>
+          </Pressable>
+        </View>
+
+        {/* Action row — Подписаться / Сообщение / Поделиться */}
+        {!isOwnProfile && (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 16 }}>
+            <ThemedFollowButton
+              following={isFollowingState}
+              onPress={handleFollow}
+              label={isFollowingState ? t('profile.unfollow') : t('profile.follow')}
+              textColor={isFollowingState ? theme.colors.text.primary : '#FFFFFF'}
+              textStyle={{ fontSize: 15, lineHeight: 18 }}
+              style={{
+                flex: 1,
+                height: 44,
+                backgroundColor: isFollowingState ? 'transparent' : theme.colors.accent.primary,
+                borderWidth: isFollowingState ? 1 : 0,
+                borderColor: theme.colors.border.medium,
+                borderRadius: 14,
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            />
+            {fromChat !== '1' && (
+              <Pressable
+                onPress={() => router.push({ pathname: '/chat/[id]', params: { id: displayProfile.id } })}
+                style={{ flex: 1, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)' }}
+              >
+                <Text variant="body" weight="semibold">{t('profile.message', 'Сообщение')}</Text>
+              </Pressable>
+            )}
+            <Pressable
+              onPress={async () => { triggerHaptic('light'); try { await Share.share({ message: `https://san-m-app.com/profile/${displayProfile.id}` }); } catch {} }}
+              style={{ width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)' }}
+            >
+              <Feather name="share" size={18} color={theme.colors.text.primary} />
+            </Pressable>
+          </View>
+        )}
+      </View>
     </>
     );
-  }, [theme, displayProfile, bannerUrl, bannerTransform, chromeReady, bannerIsLight, isOwnProfile, isFollowingState, fromChat, handleFollow, t, userLinks]);
+  }, [theme, displayProfile, bannerUrl, bannerTransform, chromeReady, isOwnProfile, isFollowingState, fromChat, handleFollow, t, userLinks, followCounts, insets.top]);
 
   // Tabs row split out so switching tabs only reconciles this light subtree —
   // the heavy banner (CachedImage + BannerFloatingLinks) keeps a stable element
@@ -1330,52 +1363,8 @@ export default function UserProfileScreen() {
             )}
           </Pressable>
         </Animated.View>
-        <Animated.View pointerEvents="box-none" style={{ flexDirection: 'row', alignItems: 'center', gap: 6, opacity: centerStatsOpacity, transform: [{ scale: centerStatsScale }] }}>
-          <Pressable
-            onPress={() => { triggerHaptic('selection'); setFollowsModal('following'); }}
-            hitSlop={6}
-            style={{ borderRadius: 14, overflow: glassActive ? undefined : 'hidden' }}
-          >
-            {glassActive ? (
-              <NativeGlassView glassStyle="regular" isInteractive colorScheme="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14 }}>
-                <Text variant="caption" weight="bold" color="#FFFFFF" style={{ fontSize: 12 }}>{followCounts.following}</Text>
-                <Text variant="caption" color="rgba(255,255,255,0.85)" style={{ fontSize: 11 }}>{t('profile.following_short')}</Text>
-              </NativeGlassView>
-            ) : chromeReady ? (
-              <BlurView intensity={80} tint="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6 }}>
-                <Text variant="caption" weight="bold" color="#FFFFFF" style={{ fontSize: 12 }}>{followCounts.following}</Text>
-                <Text variant="caption" color="rgba(255,255,255,0.85)" style={{ fontSize: 11 }}>{t('profile.following_short')}</Text>
-              </BlurView>
-            ) : (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6, backgroundColor: 'rgba(0,0,0,0.4)' }}>
-                <Text variant="caption" weight="bold" color="#FFFFFF" style={{ fontSize: 12 }}>{followCounts.following}</Text>
-                <Text variant="caption" color="rgba(255,255,255,0.85)" style={{ fontSize: 11 }}>{t('profile.following_short')}</Text>
-              </View>
-            )}
-          </Pressable>
-          <Pressable
-            onPress={() => { triggerHaptic('selection'); setFollowsModal('followers'); }}
-            hitSlop={6}
-            style={{ borderRadius: 14, overflow: glassActive ? undefined : 'hidden' }}
-          >
-            {glassActive ? (
-              <NativeGlassView glassStyle="regular" isInteractive colorScheme="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14 }}>
-                <Text variant="caption" weight="bold" color="#FFFFFF" style={{ fontSize: 12 }}>{followCounts.followers}</Text>
-                <Text variant="caption" color="rgba(255,255,255,0.85)" style={{ fontSize: 11 }}>{t('profile.followers_short')}</Text>
-              </NativeGlassView>
-            ) : chromeReady ? (
-              <BlurView intensity={80} tint="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6 }}>
-                <Text variant="caption" weight="bold" color="#FFFFFF" style={{ fontSize: 12 }}>{followCounts.followers}</Text>
-                <Text variant="caption" color="rgba(255,255,255,0.85)" style={{ fontSize: 11 }}>{t('profile.followers_short')}</Text>
-              </BlurView>
-            ) : (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6, backgroundColor: 'rgba(0,0,0,0.4)' }}>
-                <Text variant="caption" weight="bold" color="#FFFFFF" style={{ fontSize: 12 }}>{followCounts.followers}</Text>
-                <Text variant="caption" color="rgba(255,255,255,0.85)" style={{ fontSize: 11 }}>{t('profile.followers_short')}</Text>
-              </View>
-            )}
-          </Pressable>
-        </Animated.View>
+        {/* Stats moved into the redesigned left-aligned header below. */}
+        <View pointerEvents="none" />
         <Animated.View style={{ transform: [{ translateX: menuTranslateX }] }}>
           <Pressable onPress={() => { triggerHaptic('light'); setShowMenu(true); }} style={{ borderRadius: 17, overflow: glassActive ? undefined : 'hidden' }}>
             {glassActive ? (
