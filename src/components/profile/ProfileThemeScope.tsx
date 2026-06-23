@@ -1,12 +1,11 @@
 import React, { useMemo } from 'react';
-import { StyleSheet } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
 
 import {
   APP_DEFAULT_FONT,
   resolveProfileTheme,
 } from '../../theme/profileThemes';
 import { effectiveEmojiAccents } from '../../theme/profileThemeEffective';
+import { ProfileThemeScene } from './ProfileThemeScene';
 import {
   ProfileThemeProvider,
   type ProfileThemeContextValue,
@@ -72,32 +71,14 @@ export function ProfileThemeScope({
     [theme],
   );
 
-  // Gradient must have ≥2 stops; the registry guarantees this for every theme.
-  const gradientColors = theme.palette.gradient as readonly [
-    string,
-    string,
-    ...string[],
-  ];
-
   return (
     <ProfileThemeProvider value={contextValue}>
-      {/* Layer 0: palette gradient — bottom-most, absolute fill, non-interactive. */}
-      <LinearGradient
-        colors={gradientColors}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 0, y: 1 }}
-        style={StyleSheet.absoluteFill}
-        pointerEvents="none"
-      />
+      {/* Layer 0/1: the real vector LANDSCAPE for this theme — bottom-most,
+          absolute fill, static (no particles), non-interactive. Identical to
+          the Theme_Selection_Screen preview (same component). */}
+      <ProfileThemeScene theme={theme} />
 
-      {/*
-        Layer 1 (Background_Illustration, task 5.3) and Layer 2
-        (AmbientAnimationLayer, task 5.4) mount here as SIBLINGS beneath the
-        content once those components land — each owning its own opacity, never
-        wrapping `children`. Left intentionally as an integration point.
-      */}
-
-      {/* Layer 3: profile content — siblings ON TOP of the background layers. */}
+      {/* Layer 3: profile content — siblings ON TOP of the background scene. */}
       {children}
     </ProfileThemeProvider>
   );

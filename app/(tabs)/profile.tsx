@@ -1001,6 +1001,7 @@ export default function ProfileScreen() {
         {/* Action row — own profile: glass (interactive) / BlurView pills */}
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 16 }}>
           <ActionPill glassActive={glassActive} theme={theme} accent onPress={() => router.push('/profile/edit')}>
+            {resolvedProfileTheme.emojiAccents?.follow ? <Text style={{ fontSize: 14 }}>{resolvedProfileTheme.emojiAccents.follow}</Text> : null}
             <Text variant="caption" weight="semibold" color="#FFFFFF" style={{ fontSize: 14 }}>{t('profile.edit', 'Редактировать')}</Text>
           </ActionPill>
           <ActionPill glassActive={glassActive} theme={theme} square onPress={async () => { triggerHaptic('light'); try { await Share.share({ message: `https://san-m-app.com/profile/${user.id}` }); } catch {} }}>
@@ -1097,17 +1098,8 @@ export default function ProfileScreen() {
         onError={() => setIllustrationFailed(true)}
         onTimeout={() => setIllustrationFailed(true)}
       />
-      {/* Layer 2: bounded ambient animation — gated off on weak devices /
-          reduced motion, paused during scroll or while the screen is unfocused
-          (Req 6.1, 6.2, 6.3, 6.7, 7.1, 7.2). */}
-      {ambientGate.enabled && resolvedProfileTheme.ambientAnimation ? (
-        <AmbientAnimationLayer
-          type={resolvedProfileTheme.ambientAnimation}
-          active={ambientGate.enabled}
-          paused={scrollActive || !screenFocused}
-          particleCap={ambientGate.particleCap}
-        />
-      ) : null}
+      {/* Ambient particle layer removed — the theme background is a clean static
+          vector landscape (ProfileThemeScene) now, no snow/leaf particles. */}
 
       <Animated.View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 50, height: insets.top + 50, opacity: headerOpacity }} pointerEvents="none">
         <LinearGradient colors={[theme.colors.background.primary, theme.colors.background.primary, theme.colors.background.primary + '00']} locations={[0, 0.6, 1]} style={{ flex: 1 }} />

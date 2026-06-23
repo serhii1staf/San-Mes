@@ -27,13 +27,12 @@
 
 import React from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
-import { Image } from 'expo-image';
-import { LinearGradient } from 'expo-linear-gradient';
 
 import { Text } from '../ui';
 import { borderRadius, spacing } from '../../theme/tokens';
 import type { ProfileTheme } from '../../theme/profileThemes';
 import { effectiveEmojiAccents } from '../../theme/profileThemeEffective';
+import { ProfileThemeScene } from './ProfileThemeScene';
 
 interface ProfileThemePreviewCardProps {
   /** The built-in theme this card previews. */
@@ -80,32 +79,10 @@ function ProfileThemePreviewCardBase({
         },
       ]}
     >
-      {/* Palette swatch — bottom-most, full-bleed (Req 2.1). */}
-      <LinearGradient
-        colors={gradientColors}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 0, y: 1 }}
-        style={StyleSheet.absoluteFill}
-        pointerEvents="none"
-      />
-
-      {/* Illustration thumbnail when bundled; otherwise a palette-only
-          placeholder so the card never renders blank (Req 2.1, null-safe). */}
-      {theme.backgroundIllustration != null ? (
-        <Image
-          source={theme.backgroundIllustration}
-          style={StyleSheet.absoluteFill}
-          contentFit="cover"
-          pointerEvents="none"
-          transition={150}
-        />
-      ) : (
-        <View style={styles.placeholder} pointerEvents="none">
-          <Text variant="label" weight="semibold" color={palette.secondaryText}>
-            {theme.label}
-          </Text>
-        </View>
-      )}
+      {/* Real vector landscape — IDENTICAL to the live profile background
+          (same ProfileThemeScene component), so the preview is 1:1 with what
+          visitors actually see. */}
+      <ProfileThemeScene theme={theme} />
 
       {/* Static emoji accents (like / menu / follow) — no animation, rendered
           only when the theme defines an Emoji_Accent_Set (Req 2.1). */}

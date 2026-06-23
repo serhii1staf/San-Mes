@@ -525,7 +525,7 @@ export default function UserProfileScreen() {
     [scrollY],
   );
   const badgeTranslateY = useMemo(
-    () => scrollY.interpolate({ inputRange: [180, 220], outputRange: [20, 0], extrapolate: 'clamp' }),
+    () => scrollY.interpolate({ inputRange: [180, 220], outputRange: [140, 0], extrapolate: 'clamp' }),
     [scrollY],
   );
 
@@ -1233,10 +1233,12 @@ export default function UserProfileScreen() {
         {!isOwnProfile && (
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 16 }}>
             <ActionPill glassActive={glassActive} theme={theme} accent={!isFollowingState} onPress={handleFollow}>
+              {resolvedProfileTheme.emojiAccents?.follow ? <Text style={{ fontSize: 14 }}>{resolvedProfileTheme.emojiAccents.follow}</Text> : null}
               <Text variant="caption" weight="semibold" color={isFollowingState ? theme.colors.text.primary : '#FFFFFF'} style={{ fontSize: 14 }}>{isFollowingState ? t('profile.unfollow') : t('profile.follow')}</Text>
             </ActionPill>
             {fromChat !== '1' && (
               <ActionPill glassActive={glassActive} theme={theme} onPress={() => router.push({ pathname: '/chat/[id]', params: { id: displayProfile.id } })}>
+                {resolvedProfileTheme.emojiAccents?.like ? <Text style={{ fontSize: 14 }}>{resolvedProfileTheme.emojiAccents.like}</Text> : null}
                 <Text variant="caption" weight="semibold" color={theme.colors.text.primary} style={{ fontSize: 14 }}>{t('profile.message', 'Сообщение')}</Text>
               </ActionPill>
             )}
@@ -1350,17 +1352,8 @@ export default function UserProfileScreen() {
         onError={() => setIllustrationFailed(true)}
         onTimeout={() => setIllustrationFailed(true)}
       />
-      {/* Layer 2: bounded ambient animation — gated off on weak devices /
-          reduced motion, paused during scroll or while the screen is
-          unfocused (Req 6.1, 6.2, 6.3, 6.7, 7.1, 7.2). */}
-      {ambientGate.enabled && resolvedProfileTheme.ambientAnimation ? (
-        <AmbientAnimationLayer
-          type={resolvedProfileTheme.ambientAnimation}
-          active={ambientGate.enabled}
-          paused={scrollActive || !screenFocused}
-          particleCap={ambientGate.particleCap}
-        />
-      ) : null}
+      {/* Ambient particle layer removed — the theme background is now a clean
+          static vector landscape (ProfileThemeScene), no snow/leaf particles. */}
 
       {/* Header gradient overlay - smooth opacity based on scroll */}
       <Animated.View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 50, height: insets.top + 50, opacity: headerOpacity }} pointerEvents="none">
@@ -1476,29 +1469,43 @@ export default function UserProfileScreen() {
         <LinearGradient colors={['transparent', theme.colors.background.primary]} locations={[0, 0.8]} style={{ flex: 1 }} />
       </View>
 
-      {/* Floating badge - animated */}
+      {/* Floating follow widget — slides up on scroll. Glass when enabled,
+          BlurView otherwise. Entrance is a translateY SLIDE (never an opacity
+          fade) so the native glass keeps drawing. */}
       {!isOwnProfile && (
-        <Animated.View style={{ position: 'absolute', bottom: 28, left: 0, right: 0, alignItems: 'center', zIndex: 100, opacity: badgeOpacity, transform: [{ translateY: badgeTranslateY }] }}>
-          <View style={{
-            flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 7, gap: 8,
-            borderRadius: 20,
-            backgroundColor: theme.isDark ? 'rgba(22,22,22,0.95)' : 'rgba(255,255,255,0.95)',
-            shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.12, shadowRadius: 8, elevation: 6,
-            borderWidth: 0.5, borderColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)',
-          }}>
-            <Avatar emoji={displayProfile.emoji || '😊'} size="xs" />
-            <Text variant="caption" weight="semibold" numberOfLines={1} style={{ maxWidth: 100 }}>{displayProfile.display_name}</Text>
-            {displayProfile.is_verified && <VerifiedBadge size={10} />}
-            <ThemedFollowButton
-              following={isFollowingState}
-              onPress={handleFollow}
-              label={isFollowingState ? t('profile.unfollow') : t('profile.follow')}
-              textColor={isFollowingState ? theme.colors.text.primary : '#FFFFFF'}
-              textStyle={{ fontSize: 11 }}
-              emojiSize={11}
-              style={{ paddingHorizontal: 12, paddingVertical: 5, backgroundColor: isFollowingState ? 'transparent' : theme.colors.accent.primary, borderWidth: isFollowingState ? 1 : 0, borderColor: theme.colors.border.medium, borderRadius: 12 }}
-            />
-          </View>
+        <Animated.View pointerEvents="box-none" style={{ position: 'absolute', bottom: 28, left: 0, right: 0, alignItems: 'center', zIndex: 100, transform: [{ translateY: badgeTranslateY }] }}>
+          {(() => {
+            const followEmoji = resolvedProfileTheme.emojiAccents?.follow;
+            const pillStyle = { flexDirection: 'row' as const, alignItems: 'center' as const, paddingHorizontal: 12, paddingVertical: 7, gap: 8, borderRadius: 22 };
+            const inner = (
+              <>
+                <Avatar emoji={displayProfile.emoji || '😊'} size="xs" />
+                <Text variant="caption" weight="semibold" numberOfLines={1} style={{ maxWidth: 100 }}>{displayProfile.display_name}</Text>
+                {displayProfile.is_verified && <VerifiedBadge size={10} />}
+                <Pressable
+                  onPress={handleFollow}
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 12, height: 28, borderRadius: 14, backgroundColor: isFollowingState ? 'rgba(255,255,255,0.18)' : theme.colors.accent.primary }}
+                >
+                  {followEmoji ? <Text style={{ fontSize: 11 }}>{followEmoji}</Text> : null}
+                  <Text variant="caption" weight="semibold" color={isFollowingState ? theme.colors.text.primary : '#FFFFFF'} style={{ fontSize: 11 }}>{isFollowingState ? t('profile.unfollow') : t('profile.follow')}</Text>
+                </Pressable>
+              </>
+            );
+            if (glassActive) {
+              return (
+                <NativeGlassView glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} style={pillStyle}>
+                  {inner}
+                </NativeGlassView>
+              );
+            }
+            return (
+              <View style={{ borderRadius: 22, overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.18, shadowRadius: 8, elevation: 6 }}>
+                <BlurView intensity={70} tint={theme.isDark ? 'dark' : 'light'} style={pillStyle}>
+                  {inner}
+                </BlurView>
+              </View>
+            );
+          })()}
         </Animated.View>
       )}
 
