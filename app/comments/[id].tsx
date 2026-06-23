@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo, useSyncExternalStore } from 'react';
 import { View, FlatList, TextInput, Pressable, Platform, ActivityIndicator, StyleSheet, Text as RNText, Modal, Alert, LayoutAnimation, UIManager, InteractionManager, ScrollView, Dimensions, Keyboard } from 'react-native';
 import { useReanimatedKeyboardAnimation, useKeyboardHandler } from 'react-native-keyboard-controller';
 import Reanimated, { useAnimatedStyle, useSharedValue, withTiming, runOnJS, Easing } from 'react-native-reanimated';
@@ -159,14 +159,23 @@ function parseReply(content: string): { replyUser?: string; replyText?: string; 
 //
 // `onLongPress` and `onReply` are stable callbacks from the parent, so when
 // the parent re-renders the row's props don't change and React.memo bails.
+type GifVisTracker = {
+  subscribeRow: (id: string, l: () => void) => () => void;
+  isActive: (id: string) => boolean;
+  update: (next: Set<string>) => void;
+  setScrolling: (b: boolean) => void;
+  setHasGif: (id: string, has: boolean) => void;
+};
+
 type CommentRowProps = {
   item: any;
   onLongPress: (c: any) => void;
   onReply: (c: any) => void;
   onImagePress: (uri: string) => void;
+  gifTracker: GifVisTracker;
 };
 
-const CommentRow = React.memo(function CommentRow({ item, onLongPress, onReply, onImagePress }: CommentRowProps) {
+const CommentRow = React.memo(function CommentRow({ item, onLongPress, onReply, onImagePress, gifTracker }: CommentRowProps) {
   const theme = useTheme();
   const t = useT();
   // Block-aware short circuit: comments authored by a blocked user are
@@ -185,6 +194,18 @@ const CommentRow = React.memo(function CommentRow({ item, onLongPress, onReply, 
   // stall the perf monitor flagged on comment threads). The wider GIF pump
   // (~90ms apart) keeps at most ~2 decoding at once — same fix as the chat.
   const gifReveal = useStaggeredGifReveal(!!gif);
+  // Per-row animation gate (chat-style): a GIF only ANIMATES while it is
+  // on-screen AND the list isn't scrolling. Off-screen / during-scroll it
+  // freezes (autoplay=false → stopAnimating), so recycled rows don't re-decode
+  // and a thread of GIFs doesn't saturate the UI thread. `useSyncExternalStore`
+  // re-renders ONLY the rows whose state flips (the tracker notifies just GIF
+  // rows), so this adds no cost to text rows or to scroll start.
+  const subscribeRow = useCallback((cb: () => void) => gifTracker.subscribeRow(item.id, cb), [gifTracker, item.id]);
+  const gifActive = useSyncExternalStore(subscribeRow, () => gifTracker.isActive(item.id));
+  useEffect(() => {
+    gifTracker.setHasGif(item.id, !!gif);
+    return () => gifTracker.setHasGif(item.id, false);
+  }, [item.id, gif, gifTracker]);
   if (isAuthorBlocked && authorId) {
     return (
       <BlockedContentPlaceholder
@@ -241,7 +262,7 @@ const CommentRow = React.memo(function CommentRow({ item, onLongPress, onReply, 
         {gif ? (
           <Pressable onPress={() => onImagePress(gif)} onLongPress={() => onLongPress(item)} delayLongPress={300} style={{ marginTop: 6 }}>
             {gifReveal ? (
-              <CachedImage uri={gif} style={{ width: 160, height: 160, borderRadius: 14, backgroundColor: theme.colors.background.secondary }} resizeMode="cover" />
+              <CachedImage uri={gif} style={{ width: 160, height: 160, borderRadius: 14, backgroundColor: theme.colors.background.secondary }} resizeMode="cover" autoplay={gifActive} />
             ) : (
               <View style={{ width: 160, height: 160, borderRadius: 14, backgroundColor: theme.colors.background.secondary }} />
             )}
@@ -264,7 +285,8 @@ const CommentRow = React.memo(function CommentRow({ item, onLongPress, onReply, 
   prev.item.created_at === next.item.created_at &&
   prev.onLongPress === next.onLongPress &&
   prev.onReply === next.onReply &&
-  prev.onImagePress === next.onImagePress,
+  prev.onImagePress === next.onImagePress &&
+  prev.gifTracker === next.gifTracker,
 );
 export default function CommentsScreen() {
   const theme = useTheme();
@@ -418,6 +440,72 @@ export default function CommentsScreen() {
   const [viewingImage, setViewingImage] = useState<{ uri: string; images?: string[]; index?: number } | null>(null);
   const inputRef = useRef<TextInput>(null);
   const listRef = useRef<FlatList>(null);
+
+  // ── GIF animation gate (chat-style) ──────────────────────────────────────
+  // Pauses comment-GIF animation off-screen and during scroll so recycled rows
+  // don't re-decode and a thread of GIFs never saturates the UI thread. Only
+  // GIF rows subscribe + re-render when their state flips (text rows untouched,
+  // scroll start hitch-free).
+  const gifTrackerRef = useRef<GifVisTracker | null>(null);
+  if (!gifTrackerRef.current) {
+    let visibleSet = new Set<string>();
+    let ready = false;
+    let scrolling = false;
+    const gifIds = new Set<string>();
+    const rowListeners = new Map<string, Set<() => void>>();
+    const notifyGifs = () => {
+      gifIds.forEach((id) => {
+        const s = rowListeners.get(id);
+        if (s) s.forEach((fn) => fn());
+      });
+    };
+    gifTrackerRef.current = {
+      subscribeRow(id, l) {
+        let s = rowListeners.get(id);
+        if (!s) { s = new Set(); rowListeners.set(id, s); }
+        s.add(l);
+        return () => {
+          const set = rowListeners.get(id);
+          if (set) { set.delete(l); if (set.size === 0) rowListeners.delete(id); }
+        };
+      },
+      isActive(id) {
+        const onScreen = !ready || visibleSet.has(id);
+        return onScreen && !scrolling;
+      },
+      update(next) {
+        if (ready && next.size === visibleSet.size) {
+          let same = true;
+          for (const id of next) if (!visibleSet.has(id)) { same = false; break; }
+          if (same) return;
+        }
+        visibleSet = next;
+        ready = true;
+        notifyGifs();
+      },
+      setScrolling(b) {
+        if (b === scrolling) return;
+        scrolling = b;
+        if (gifIds.size === 0) return;
+        notifyGifs();
+      },
+      setHasGif(id, has) { if (has) gifIds.add(id); else gifIds.delete(id); },
+    };
+  }
+  const gifTracker = gifTrackerRef.current;
+  const gifScrollIdleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const onCommentsScroll = useCallback(() => {
+    gifTracker.setScrolling(true);
+    if (gifScrollIdleRef.current) clearTimeout(gifScrollIdleRef.current);
+    gifScrollIdleRef.current = setTimeout(() => gifTracker.setScrolling(false), 200);
+  }, [gifTracker]);
+  useEffect(() => () => { if (gifScrollIdleRef.current) clearTimeout(gifScrollIdleRef.current); }, []);
+  const onCommentsViewable = useRef(({ viewableItems }: { viewableItems: any[] }) => {
+    const next = new Set<string>();
+    for (const v of viewableItems) { const id = v?.item?.id; if (id) next.add(id); }
+    gifTrackerRef.current?.update(next);
+  }).current;
+  const commentsViewabilityConfig = useRef({ itemVisiblePercentThreshold: 35 }).current;
 
   const bgColor = theme.colors.background.primary;
   const bgTransparent = bgColor + '00';
@@ -894,9 +982,9 @@ export default function CommentsScreen() {
   }, []);
   const renderComment = useCallback(
     ({ item }: { item: any }) => (
-      <CommentRow item={item} onLongPress={openCommentMenu} onReply={startReply} onImagePress={openImageViewer} />
+      <CommentRow item={item} onLongPress={openCommentMenu} onReply={startReply} onImagePress={openImageViewer} gifTracker={gifTracker} />
     ),
-    [openCommentMenu, startReply, openImageViewer],
+    [openCommentMenu, startReply, openImageViewer, gifTracker],
   );
   const keyExtractor = useCallback((item: any) => item.id, []);
 
@@ -948,6 +1036,10 @@ export default function CommentsScreen() {
             maxToRenderPerBatch={4}
             windowSize={6}
             updateCellsBatchingPeriod={80}
+            onScroll={onCommentsScroll}
+            scrollEventThrottle={64}
+            onViewableItemsChanged={onCommentsViewable}
+            viewabilityConfig={commentsViewabilityConfig}
             ListHeaderComponent={postData ? (() => {
               const repostInfo = isRepost(postData.content || '');
               const repostComment = repostInfo.isRepost ? (repostInfo.comment || '') : '';
