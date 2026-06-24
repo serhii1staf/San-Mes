@@ -2613,11 +2613,17 @@ export default function ChatScreen() {
         // (RNGH + Reanimated worklets), so once the bubbles are mounted
         // they don't compete with subsequent JS work.
         initialNumToRender={4}
-        maxToRenderPerBatch={3}
-        windowSize={5}
-        // Larger update batching window — keeps cell mounting from competing
-        // with scroll gestures on weak devices. Default is 50 ms; bumping to
-        // 80 ms is invisible to the user and lets scroll frames win.
+        maxToRenderPerBatch={4}
+        // windowSize raised 5 → 13 (~6 viewports of mounted buffer above+below
+        // the visible area). The PREVIOUS value kept only ~2 viewports mounted,
+        // so a photo/GIF/link-preview bubble was mounted AND decoded on the
+        // exact frame it scrolled into view — the per-image scroll freeze the
+        // user hit. With a wider window those bubbles mount + decode while still
+        // OFF-screen (during idle frames ahead of the scroll), so by the time
+        // they reach the viewport the bitmap is already on the GPU and the
+        // scroll frame does no decode work. `initialNumToRender` stays 4 so the
+        // open frame is unchanged — only the off-screen retention grows.
+        windowSize={13}
         updateCellsBatchingPeriod={80}
         onScrollToIndexFailed={onScrollToIndexFailedCb}
         viewabilityConfig={viewabilityConfig}
