@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, useSyncExternalStore } from 'react';
 import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, Alert, Animated, Modal, Dimensions, Keyboard, InteractionManager, ActivityIndicator, type ViewToken } from 'react-native';
 import { useReanimatedKeyboardAnimation, useKeyboardHandler } from 'react-native-keyboard-controller';
+import { FlashList, type FlashListRef } from '@shopify/flash-list';
 import Reanimated, { useAnimatedStyle, interpolate, Extrapolation, useSharedValue, withSpring, withTiming, withSequence, withDelay, runOnJS, useAnimatedRef, measure, Easing, type SharedValue } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import * as Clipboard from 'expo-clipboard';
@@ -751,7 +752,7 @@ export default function ChatScreen() {
   // messages keep their real `senderId` (the author's uuid) and only the
   // comparison target (`currentUserId`) changes per account.
   const currentUserId = useAuthStore((s) => s.user?.id);
-  const flatListRef = useRef<FlatList>(null);
+  const flatListRef = useRef<FlashListRef<ChatMessage>>(null);
   const inputRef = useRef<ChatInputBarHandle>(null);
   // Retry counter shared by every programmatic scroll-to-index path (reply
   // jump + search jump). `onScrollToIndexFailed` backs off with an increasing
@@ -1450,10 +1451,9 @@ export default function ChatScreen() {
     [id, participantId, displayName, displayEmoji, setMessages, t],
   );
 
-  // Inverted list: the newest message is at scroll offset 0, so "scroll to end"
-  // (newest) = scroll to offset 0. No manual scroll needed on open.
+  // Non-inverted list: newest is at the END, so "scroll to newest" = scrollToEnd.
   const scrollToEnd = useCallback((_animated = true) => {
-    requestAnimationFrame(() => { try { flatListRef.current?.scrollToOffset({ offset: 0, animated: _animated }); } catch {} });
+    requestAnimationFrame(() => { try { flatListRef.current?.scrollToEnd({ animated: _animated }); } catch {} });
   }, []);
 
   // ── Resolve the canonical conversation id up front ────────────────────
@@ -1641,18 +1641,13 @@ export default function ChatScreen() {
     setTimeout(() => setSearchMode(false), 50);
   }, []);
 
-  // Search match indices are in original order; map to the inverted list index.
+  // Non-inverted list: data IS `chatMessages` (oldest→newest), so a search-match
+  // index maps DIRECTLY to the list index — no inversion, no window remap.
   const scrollToIndex = useCallback((index: number) => {
     if (index < 0 || index >= chatMessages.length) return;
-    const invIndex = chatMessages.length - 1 - index;
-    // A search match can live in an OLD message beyond the current render
-    // window — grow the window to include it before scrolling, and defer the
-    // scroll a frame so the grown window commits first. Far/unmeasured rows
-    // are then handled by the `onScrollToIndexFailed` backoff loop.
-    setVisibleCount((c) => (invIndex >= c ? Math.min(invIndex + 10, chatMessages.length) : c));
     jumpAttemptRef.current = 0;
     requestAnimationFrame(() => {
-      try { flatListRef.current?.scrollToIndex({ index: invIndex, animated: true, viewPosition: 0.5 }); } catch {}
+      try { flatListRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.5 }); } catch {}
     });
   }, [chatMessages.length]);
 
@@ -2259,57 +2254,25 @@ export default function ChatScreen() {
   const activeMatchIndex = searchMatches.length > 0 ? searchMatches[searchActiveIdx] : -1;
   const activeMatchId = activeMatchIndex >= 0 && activeMatchIndex < chatMessages.length ? chatMessages[activeMatchIndex]?.id : null;
 
-  // Inverted data: render newest-first so the FlatList's natural bottom is the
-  // newest message — no auto-scroll-to-end needed.
-  // latest message (no scrolling needed). Memoized to avoid re-reversing on every
-  // keystroke / re-render.
-  const invertedMessages = useMemo(() => {
-    const arr = chatMessages.slice();
-    arr.reverse();
-    return arr;
-  }, [chatMessages]);
+  // Non-inverted FlashList: data stays in natural order (oldest→newest) and the
+  // list renders from the BOTTOM (newest) via maintainVisibleContentPosition's
+  // `startRenderingFromBottom`. FlashList RECYCLES cells, so we feed it the
+  // whole loaded set directly — no manual window cap or index remapping needed
+  // (the old inverted FlatList needed both). The newest message sits at the
+  // bottom with no manual scroll; prepending OLDER messages at the top keeps
+  // the viewport pinned (mvcp's core job).
+  const windowedMessages = chatMessages;
 
-  // ── Windowed render cap (Telegram-style) ──────────────────────────────
-  // `invertedMessages` is the FULL conversation (newest→oldest). We only feed
-  // the most-recent `visibleCount` of it to the FlatList, and grow the window
-  // by `WINDOW_CHUNK` as the user scrolls toward the top (`onEndReached` on an
-  // inverted list). Because the slice is taken from the FRONT (newest), the
-  // newest message, optimistic sends and realtime appends always stay in the
-  // window, so "scroll to bottom" / new-message behaviour is unchanged.
-  const [visibleCount, setVisibleCount] = useState(INITIAL_WINDOW);
-  const windowedMessages = useMemo(
-    () => (invertedMessages.length > visibleCount ? invertedMessages.slice(0, visibleCount) : invertedMessages),
-    [invertedMessages, visibleCount],
-  );
-  // Grow the window when the user reaches the top (oldest) of the inverted
-  // list. Guarded against growing past the array length so it settles once the
-  // whole history is mounted. When the window already covers everything that's
-  // LOADED but the full history hasn't been hydrated yet (open path holds only
-  // the bounded seed), pull the full history from cache now — then grow the
-  // window into the newly-available older messages.
-  const onEndReached = useCallback(() => {
-    const total = invertedMessages.length;
-    if (visibleCount < total) {
-      setVisibleCount((c) => Math.min(c + WINDOW_CHUNK, total));
-      return;
-    }
+  // Load OLDER history when the user reaches the TOP (oldest) of the list.
+  // Only fires the heavy full-history hydrate once, and defers the parse OFF
+  // the active scroll frame (a long, legacy-format chat otherwise stalls the
+  // gesture). FlashList + mvcp keeps the scroll position stable when the older
+  // messages prepend.
+  const onStartReached = useCallback(() => {
     if (historyHydratedRef.current !== conversationId) {
-      // Defer the heavy full-history parse + heal OFF the active scroll frame.
-      // On a long, legacy-format chat this synchronous `kvGetJSONSync` + map
-      // over the ENTIRE history + setMessages was the "бам, завис" freeze the
-      // moment you scrolled up past the seed — and it's exactly why a SHORT
-      // recreated chat felt smooth while the real, older one stalled.
-      // runAfterInteractions waits for the scroll/fling to settle, so older
-      // messages load a beat later (Telegram-style) instead of stalling the
-      // gesture.
-      InteractionManager.runAfterInteractions(() => {
-        const healed = hydrateFullHistory();
-        if (healed && healed.length > total) {
-          setVisibleCount((c) => Math.min(c + WINDOW_CHUNK, healed.length));
-        }
-      });
+      InteractionManager.runAfterInteractions(() => { hydrateFullHistory(); });
     }
-  }, [invertedMessages.length, visibleCount, conversationId, hydrateFullHistory]);
+  }, [conversationId, hydrateFullHistory]);
 
   // Tap-a-reply-to-jump: scroll to the message a reply is quoting and flash it.
   // `replyToId` is stored on every reply message (see sendText/sendGif). The
@@ -2318,40 +2281,30 @@ export default function ChatScreen() {
   const jumpTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollToMessageId = useCallback((messageId?: string) => {
     if (!messageId) return;
-    let idx = invertedMessages.findIndex((mm) => mm.id === messageId);
-    let total = invertedMessages.length;
+    let idx = chatMessages.findIndex((mm) => mm.id === messageId);
     if (idx < 0) {
-      // Reply target is older than the currently-loaded window/seed. Lazily
-      // hydrate the FULL history from cache (the open path holds only the
-      // bounded seed), then map the target into the freshly-inverted index
-      // space (store is oldest→newest; the inverted list reverses it).
+      // Reply target is older than the loaded seed. Lazily hydrate the FULL
+      // history from cache, then find it in the (oldest→newest) array — the
+      // list data IS that array, so the index maps directly.
       const healed = historyHydratedRef.current === conversationId ? null : hydrateFullHistory();
       if (healed && healed.length > 0) {
-        const fwdIdx = healed.findIndex((mm) => mm.id === messageId);
-        if (fwdIdx < 0) return;
-        total = healed.length;
-        idx = total - 1 - fwdIdx;
+        idx = healed.findIndex((mm) => mm.id === messageId);
+        if (idx < 0) return;
       } else {
         return; // genuinely not in this conversation
       }
     }
-    // Reply-jump to an OLD message: if the target sits beyond the current
-    // render window, grow the window to include it (+ a small buffer) BEFORE
-    // scrolling so the row actually exists in the FlatList data.
-    setVisibleCount((c) => (idx >= c ? Math.min(idx + 10, total) : c));
     triggerHaptic('selection');
     setJumpHighlightId(messageId);
     if (jumpTimerRef.current) clearTimeout(jumpTimerRef.current);
     jumpTimerRef.current = setTimeout(() => setJumpHighlightId(null), 1600);
-    // Reset the retry counter and defer the scroll one frame so a freshly
-    // grown window can commit before we ask the list to scroll to the
-    // (possibly newly-added) index. If the target row still isn't measured,
-    // `onScrollToIndexFailed` takes over with the backoff retry loop.
+    // Defer one frame so a freshly hydrated array can commit before we scroll.
+    // If the target row still isn't measured, `onScrollToIndexFailed` retries.
     jumpAttemptRef.current = 0;
     requestAnimationFrame(() => {
       try { flatListRef.current?.scrollToIndex({ index: idx, animated: true, viewPosition: 0.5 }); } catch {}
     });
-  }, [invertedMessages, conversationId, hydrateFullHistory]);
+  }, [chatMessages, conversationId, hydrateFullHistory]);
   useEffect(() => () => { if (jumpTimerRef.current) clearTimeout(jumpTimerRef.current); }, []);
 
   // Guard against the freeze caused by rapid long-presses / taps while a menu is
@@ -2548,12 +2501,11 @@ export default function ChatScreen() {
     // is what drives the loop forward until the row lands.
     const attempt = jumpAttemptRef.current++;
     if (attempt > 12) return;
-    setVisibleCount((c) => (info.index >= c ? Math.min(info.index + 10, invertedMessages.length) : c));
     const delay = 80 + attempt * 80;
     setTimeout(() => {
       try { flatListRef.current?.scrollToIndex({ index: info.index, animated: true, viewPosition: 0.5 }); } catch {}
     }, delay);
-  }, [invertedMessages.length]);
+  }, []);
 
   // ── Scroll-to-bottom button ────────────────────────────────────────────
   // Telegram-style floating affordance that appears when the user has
@@ -2590,8 +2542,14 @@ export default function ChatScreen() {
     const now = Date.now();
     if (now - lastScrollEventAt.current < 32) return;
     lastScrollEventAt.current = now;
-    const y = e?.nativeEvent?.contentOffset?.y ?? 0;
-    const next = y > SCROLL_BTN_THRESHOLD;
+    const ne = e?.nativeEvent;
+    const y = ne?.contentOffset?.y ?? 0;
+    const layoutH = ne?.layoutMeasurement?.height ?? 0;
+    const contentH = ne?.contentSize?.height ?? 0;
+    // Non-inverted list: the newest message is at the BOTTOM. Show the
+    // scroll-to-bottom button when the user has scrolled UP away from it.
+    const distanceFromBottom = contentH - (y + layoutH);
+    const next = distanceFromBottom > SCROLL_BTN_THRESHOLD;
     setScrollBtnVisible((prev) => (prev === next ? prev : next));
   }, []);
   useEffect(() => () => { if (scrollIdleRef.current) clearTimeout(scrollIdleRef.current); setRevealScrollPaused(false); }, []);
@@ -2604,7 +2562,7 @@ export default function ChatScreen() {
   }, [scrollBtnVisible, scrollBtnOpacity]);
   const onScrollBtnTap = useCallback(() => {
     triggerHaptic('light');
-    try { flatListRef.current?.scrollToOffset({ offset: 0, animated: true }); } catch {}
+    try { flatListRef.current?.scrollToEnd({ animated: true }); } catch {}
   }, []);
 
   const banner = editing || replyTo;
@@ -2626,52 +2584,36 @@ export default function ChatScreen() {
       <Reanimated.View style={[StyleSheet.absoluteFill, listShiftStyle]} pointerEvents="box-none">
       <GestureDetector gesture={panelDismissTap}>
       {listReady ? (
-      <FlatList
+      <FlashList
         ref={flatListRef}
         data={windowedMessages}
-        style={StyleSheet.absoluteFill}
         keyExtractor={chatKeyExtractor}
         renderItem={renderItem}
-        inverted
+        // FlashList v2 (cell recycling). No `inverted` (removed in v2): instead
+        // maintainVisibleContentPosition.startRenderingFromBottom puts the
+        // NEWEST message at the bottom, and prepending OLDER messages at the top
+        // keeps the viewport pinned. Recycling replaces every FlatList
+        // virtualization knob — and it's exactly what removes the heavy
+        // per-bubble mount-on-scroll cost (gestures + Reanimated layers) that
+        // FlatList re-paid on every row scrolling into view.
+        maintainVisibleContentPosition={{ startRenderingFromBottom: true }}
         contentContainerStyle={{ paddingBottom: 8 }}
-        ListHeaderComponent={<View style={{ height: LIST_FOOTER_HEIGHT }} />}
-        ListFooterComponent={<View style={{ height: headerContentHeight + 8 }} />}
+        // Non-inverted: ListHeaderComponent is the TOP (oldest) spacer under the
+        // header gradient; ListFooterComponent is the BOTTOM spacer above the
+        // input bar. (Swapped from the old inverted layout.)
+        ListHeaderComponent={<View style={{ height: headerContentHeight + 8 }} />}
+        ListFooterComponent={<View style={{ height: LIST_FOOTER_HEIGHT }} />}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
-        removeClippedSubviews={true}
-        // Tuned for iPhone 12 / weak Android: ~4 bubbles fit the visible
-        // window above the input bar (the 5th was usually clipped under
-        // the gradient anyway). Each bubble allocates a `Reanimated`
-        // shared value, a `LinkPreview` slot, and a `Gesture.Pan()`
-        // builder for swipe-to-reply — the more we mount on the first
-        // commit, the longer the navigation transition fights for the
-        // JS thread. Cutting the initial batch by one and the per-batch
-        // budget by one buys ~5–10 ms on weak Android 10 (Telegram-grade
-        // target device). The pan gesture itself runs ON THE UI THREAD
-        // (RNGH + Reanimated worklets), so once the bubbles are mounted
-        // they don't compete with subsequent JS work.
-        initialNumToRender={4}
-        maxToRenderPerBatch={3}
-        // windowSize 7: a modest off-screen buffer. A LARGE window (tried 13)
-        // backfired on long chats — it keeps many HEAVY bubbles (gestures +
-        // Reanimated layers) mounted at once, which is itself costly. 7 keeps
-        // enough buffer for a smooth short scroll without over-mounting.
-        windowSize={7}
-        updateCellsBatchingPeriod={80}
         onScrollToIndexFailed={onScrollToIndexFailedCb}
         viewabilityConfig={viewabilityConfig}
         onViewableItemsChanged={onViewableItemsChanged}
-        // Windowed loading: when the user reaches the top (oldest) of the
-        // INVERTED list, grow the render window by a chunk. Threshold is in
-        // viewport-lengths from the end, so loading starts slightly before the
-        // user hits the very top — no visible "pop".
-        onEndReached={onEndReached}
-        onEndReachedThreshold={0.5}
-        // Scroll-to-bottom button visibility tracker. Throttled to ~30 Hz
-        // via `scrollEventThrottle={32}` plus a JS-side guard inside
-        // `onChatScroll`, and the handler only writes state when the
-        // visibility flag actually flips — so steady scrolling is free.
+        // Load OLDER history when the user nears the TOP (oldest) of the list.
+        onStartReached={onStartReached}
+        onStartReachedThreshold={0.5}
+        // Scroll-to-bottom button visibility — onChatScroll computes distance
+        // from the bottom (newest) from the scroll event.
         onScroll={onChatScroll}
         scrollEventThrottle={32}
       />
