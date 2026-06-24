@@ -1,5 +1,5 @@
-import React, { memo, useCallback, useEffect, useState } from 'react';
-import { View, Pressable, ScrollView, Text as RNText, StyleSheet, Dimensions } from 'react-native';
+import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { View, Pressable, ScrollView, Text as RNText, StyleSheet, Dimensions, InteractionManager } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { Feather } from '@expo/vector-icons';
 import Reanimated, { useSharedValue, useAnimatedStyle, withTiming, Easing, runOnJS } from 'react-native-reanimated';
@@ -69,6 +69,26 @@ function MediaPanelComponent({
   onCopyGif,
 }: MediaPanelProps) {
   const glassActive = useLiquidGlassActive();
+
+  // ── Lazy-mount the inactive tab ────────────────────────────────────────────
+  // The panel mounts the instant the user taps GIF/emoji — on the SAME frame as
+  // the open/rise animation. Mounting BOTH heavy grids (the ~96-cell emoji
+  // FlatList AND the GIF grid) on that frame is the dominant "menu freezes when
+  // it opens" cost. So we mount ONLY the tab the user opened, and bring the
+  // other one in a tick later (after interactions) — off the open frame, but
+  // ready well before the user could slide to it. If the user switches tabs
+  // before that deferral fires, we mount it immediately.
+  const initialTab = useRef(tab).current;
+  const [mountInactive, setMountInactive] = useState(false);
+  useEffect(() => {
+    const h = InteractionManager.runAfterInteractions(() => setMountInactive(true));
+    return () => h.cancel();
+  }, []);
+  useEffect(() => {
+    if (tab !== initialTab) setMountInactive(true);
+  }, [tab, initialTab]);
+  const showEmoji = initialTab === 'emoji' || mountInactive;
+  const showGif = initialTab === 'gif' || mountInactive;
 
   // Horizontal slide. 0 → emoji, 1 → gif. Native-driver translateX.
   const tabSV = useSharedValue(tab === 'gif' ? 1 : 0);
@@ -198,10 +218,14 @@ function MediaPanelComponent({
       <View style={styles.trackWrap}>
         <Reanimated.View style={[styles.track, trackStyle]}>
           <View style={styles.page}>
-            <EmojiPanel bare height={height} onSelect={onSelectEmoji} onLongPress={onSendEmoji || onCopyEmoji ? onLongPressEmoji : undefined} theme={theme} bottomInset={56 + bottomInset} />
+            {showEmoji ? (
+              <EmojiPanel bare height={height} onSelect={onSelectEmoji} onLongPress={onSendEmoji || onCopyEmoji ? onLongPressEmoji : undefined} theme={theme} bottomInset={56 + bottomInset} />
+            ) : <View style={styles.bareFill} />}
           </View>
           <View style={styles.page}>
-            <GifPanel bare height={height} onSelect={onSelectGif} onLongPress={onSendGif || onCopyGif ? onLongPressGif : undefined} recentGifs={recentGifs} theme={theme} bottomInset={56 + bottomInset} />
+            {showGif ? (
+              <GifPanel bare height={height} onSelect={onSelectGif} onLongPress={onSendGif || onCopyGif ? onLongPressGif : undefined} recentGifs={recentGifs} theme={theme} bottomInset={56 + bottomInset} />
+            ) : <View style={styles.bareFill} />}
           </View>
         </Reanimated.View>
       </View>
@@ -296,6 +320,7 @@ const styles = StyleSheet.create({
   recentCell: { width: 38, height: 38, alignItems: 'center', justifyContent: 'center' },
   recentEmoji: { fontSize: 26 },
   trackWrap: { flex: 1, overflow: 'hidden' },
+  bareFill: { flex: 1 },
   track: { flex: 1, flexDirection: 'row', width: PANEL_W * 2 },
   page: { width: PANEL_W },
   // The switcher floats over the bottom of the grids (the grids already pad

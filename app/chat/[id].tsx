@@ -2741,6 +2741,16 @@ export default function ChatScreen() {
   // shortcuts. Both functions only close over `flatListRef.current`, so they
   // never need to change.
   const chatKeyExtractor = useCallback((item: ChatMessage) => item.id, []);
+  // Recycle pools by bubble SHAPE so FlashList reuses a text cell only as
+  // another text cell, an image cell as another image cell, etc. Without this,
+  // scrolling reshapes a recycled text bubble into an image bubble (and back),
+  // which forces a full re-layout of that cell on the scroll frame — a real
+  // contributor to scroll jank in image/GIF-mixed histories.
+  const chatGetItemType = useCallback((item: ChatMessage) => {
+    const n = item.imageUrls?.length || 0;
+    if (n === 0) return 'text';
+    return n === 1 ? 'media1' : 'mediaN';
+  }, []);
   const onScrollToIndexFailedCb = useCallback((info: { index: number; averageItemLength: number; highestMeasuredFrameIndex: number }) => {
     // Far/unmeasured target (no getItemLayout + variable heights): grow the
     // render window to include the target, then retry with an INCREASING delay
@@ -2837,6 +2847,7 @@ export default function ChatScreen() {
         ref={flatListRef}
         data={windowedMessages}
         keyExtractor={chatKeyExtractor}
+        getItemType={chatGetItemType}
         renderItem={renderItem}
         // FlashList v2 (cell recycling). No `inverted` (removed in v2): instead
         // maintainVisibleContentPosition.startRenderingFromBottom puts the

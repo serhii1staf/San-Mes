@@ -171,7 +171,7 @@ function EmojiPanelComponent({ height, onSelect, onLongPress, theme, bottomInset
         showsVerticalScrollIndicator={false}
         contentContainerStyle={contentStyle}
         keyboardShouldPersistTaps="always"
-        initialNumToRender={3}
+        initialNumToRender={2}
         windowSize={5}
       />
     </View>
