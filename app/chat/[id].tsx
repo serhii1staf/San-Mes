@@ -2274,10 +2274,20 @@ export default function ChatScreen() {
       return;
     }
     if (historyHydratedRef.current !== conversationId) {
-      const healed = hydrateFullHistory();
-      if (healed && healed.length > total) {
-        setVisibleCount((c) => Math.min(c + WINDOW_CHUNK, healed.length));
-      }
+      // Defer the heavy full-history parse + heal OFF the active scroll frame.
+      // On a long, legacy-format chat this synchronous `kvGetJSONSync` + map
+      // over the ENTIRE history + setMessages was the "бам, завис" freeze the
+      // moment you scrolled up past the seed — and it's exactly why a SHORT
+      // recreated chat felt smooth while the real, older one stalled.
+      // runAfterInteractions waits for the scroll/fling to settle, so older
+      // messages load a beat later (Telegram-style) instead of stalling the
+      // gesture.
+      InteractionManager.runAfterInteractions(() => {
+        const healed = hydrateFullHistory();
+        if (healed && healed.length > total) {
+          setVisibleCount((c) => Math.min(c + WINDOW_CHUNK, healed.length));
+        }
+      });
     }
   }, [invertedMessages.length, visibleCount, conversationId, hydrateFullHistory]);
 
@@ -2621,17 +2631,12 @@ export default function ChatScreen() {
         // (RNGH + Reanimated worklets), so once the bubbles are mounted
         // they don't compete with subsequent JS work.
         initialNumToRender={4}
-        maxToRenderPerBatch={4}
-        // windowSize raised 5 → 13 (~6 viewports of mounted buffer above+below
-        // the visible area). The PREVIOUS value kept only ~2 viewports mounted,
-        // so a photo/GIF/link-preview bubble was mounted AND decoded on the
-        // exact frame it scrolled into view — the per-image scroll freeze the
-        // user hit. With a wider window those bubbles mount + decode while still
-        // OFF-screen (during idle frames ahead of the scroll), so by the time
-        // they reach the viewport the bitmap is already on the GPU and the
-        // scroll frame does no decode work. `initialNumToRender` stays 4 so the
-        // open frame is unchanged — only the off-screen retention grows.
-        windowSize={13}
+        maxToRenderPerBatch={3}
+        // windowSize 7: a modest off-screen buffer. A LARGE window (tried 13)
+        // backfired on long chats — it keeps many HEAVY bubbles (gestures +
+        // Reanimated layers) mounted at once, which is itself costly. 7 keeps
+        // enough buffer for a smooth short scroll without over-mounting.
+        windowSize={7}
         updateCellsBatchingPeriod={80}
         onScrollToIndexFailed={onScrollToIndexFailedCb}
         viewabilityConfig={viewabilityConfig}

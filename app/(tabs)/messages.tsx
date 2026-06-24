@@ -872,20 +872,19 @@ export default function MessagesScreen() {
             </View>
             )
           ) : (
-            <FlashList
+            <FlatList
               data={filtered}
               keyExtractor={(item) => item.id}
               renderItem={renderConversationItem}
               ItemSeparatorComponent={renderSeparator}
               contentContainerStyle={{ paddingBottom: 100 }}
               showsVerticalScrollIndicator={false}
-              // FlashList v2 cell recycling — replaces the FlatList
-              // virtualization knobs (initialNumToRender/maxToRenderPerBatch/
-              // windowSize/updateCellsBatchingPeriod/removeClippedSubviews) and
-              // getItemLayout. The per-row native ContextMenu cost that drove
-              // the ~178 ms cold-mount long task is now amortized by recycling:
-              // only the visible rows mount, off-screen rows are recycled from
-              // the pool instead of mounted fresh.
+              removeClippedSubviews={true}
+              initialNumToRender={8}
+              maxToRenderPerBatch={6}
+              windowSize={9}
+              updateCellsBatchingPeriod={60}
+              getItemLayout={MESSAGES_ITEM_LAYOUT}
             />
           )}
         </View>

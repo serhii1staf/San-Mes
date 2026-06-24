@@ -411,12 +411,16 @@ describe('Performance integration — heavy screens declare FlatList virtualizat
     expect(v.windowSize).toBe(true);
   });
 
-  // (tabs)/messages — the conversations list. Migrated to FlashList v2:
-  // per-row native ContextMenu cost is now amortized by cell recycling
-  // instead of the FlatList initial-batch mount burst.
-  it('(tabs)/messages.tsx uses a recycling list (FlashList)', () => {
+  // (tabs)/messages — the conversations list. Fixed-height rows + getItemLayout
+  // keep it fast on FlatList; FlashList there caused a render regression
+  // (rows missing until a tab switch), so it stays on a virtualised FlatList.
+  it('(tabs)/messages.tsx FlatList is virtualised', () => {
     const src = readScreen('app/(tabs)/messages.tsx');
-    expect(usesFlashList(src)).toBe(true);
+    const v = detectFlatListVirt(src);
+    expect(v.removeClippedSubviews).toBe(true);
+    expect(v.initialNumToRender).toBe(true);
+    expect(v.maxToRenderPerBatch).toBe(true);
+    expect(v.windowSize).toBe(true);
   });
 });
 
