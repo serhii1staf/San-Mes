@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, useSyncExternalStore } from 'react';
 import { View, FlatList, TextInput, Pressable, Platform, ActivityIndicator, StyleSheet, Text as RNText, Modal, Alert, LayoutAnimation, UIManager, InteractionManager, ScrollView, Dimensions, Keyboard } from 'react-native';
 import { useReanimatedKeyboardAnimation, useKeyboardHandler } from 'react-native-keyboard-controller';
+import { FlashList, type FlashListRef } from '@shopify/flash-list';
 import Reanimated, { useAnimatedStyle, useSharedValue, withTiming, runOnJS, Easing } from 'react-native-reanimated';
 import type { ScrollViewProps } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -378,26 +379,21 @@ export default function CommentsScreen() {
     [],
   );
   const listShiftStyle = useAnimatedStyle(() => {
-    // MONOTONIC panel lift — mirrors `barWrapStyle` so the keyboard↔panel
-    // handoff produces ZERO net list motion (kills the "content jumps when I
-    // open the GIF/emoji panel" report).
-    //
-    // The keyboard lift itself is applied NATIVELY by KeyboardChatScrollView
-    // (contributes `kb`). This transform must therefore add ONLY the portion
-    // of the panel lift that EXCEEDS what the keyboard is already providing:
-    //   extra = max(0, panelLift − kb)
-    // While the keyboard is up and the panel opens (panelLift ≈ kb) extra ≈ 0,
-    // so the list does not jump. As the keyboard then animates away (kb → 0)
-    // KCSV removes its `kb` lift while `extra` grows to the full panel height —
-    // the two are exactly complementary, so the total list lift stays pinned at
-    // `panelLift` throughout the transition (kb + (panelLift − kb) = panelLift).
-    // Keyboard-down open is unchanged: kb = 0 ⇒ extra = panelLift, animated by
-    // the same `liftSV` timing as before.
+    // FULL monotonic list lift (chat-style). The comments list is now a
+    // FlashList, which does NOT support `renderScrollComponent`, so the native
+    // KeyboardChatScrollView path is gone — this transform owns the ENTIRE
+    // keyboard + panel lift on the UI thread (driven by the keyboard shared
+    // value, identical mechanism to `app/chat/[id].tsx`'s `listShiftY`).
+    //   lift = max(keyboardHeight, panelLift)
+    // Monotonic max() means opening the GIF/emoji panel while the keyboard is
+    // up produces ZERO net jump (the panel ≈ keyboard height), and the keyboard
+    // ↔ panel handoff is seamless. The input bar uses the same max() in
+    // `barWrapStyle`, so bar + list move together.
     const raw = keyboardHeight.value;
     const kb = raw < 0 ? -raw : raw;
     const panelLift = liftSV.value * emojiPanelSV.value;
-    const extra = Math.max(0, panelLift - kb);
-    return { transform: [{ translateY: -extra }] };
+    const lift = Math.max(kb, panelLift);
+    return { transform: [{ translateY: -lift }] };
   });
 
   // Input bar lift — replaces KeyboardStickyView so we can fold the media-panel
@@ -454,7 +450,7 @@ export default function CommentsScreen() {
   // comment GIFs just carry `uri`. Mirrors the profile-screen viewer.
   const [viewingImage, setViewingImage] = useState<{ uri: string; images?: string[]; index?: number } | null>(null);
   const inputRef = useRef<TextInput>(null);
-  const listRef = useRef<FlatList>(null);
+  const listRef = useRef<FlashListRef<any>>(null);
 
   // ── GIF animation gate (chat-style) ──────────────────────────────────────
   // Pauses comment-GIF animation off-screen and during scroll so recycled rows
@@ -1038,19 +1034,13 @@ export default function CommentsScreen() {
           // animates, and the last comment stays above the sticky input.
           <Reanimated.View style={[{ flex: 1 }, listShiftStyle]} pointerEvents="box-none">
           <GestureDetector gesture={panelDismissTap}>
-          <FlatList
+          <FlashList
             ref={listRef}
             data={comments}
             keyExtractor={keyExtractor}
             renderItem={renderComment}
-            renderScrollComponent={renderScrollComponent}
             contentContainerStyle={{ paddingHorizontal: 20, paddingTop: headerContentHeight, paddingBottom: 80 + insets.bottom }}
             showsVerticalScrollIndicator={false}
-            removeClippedSubviews={true}
-            initialNumToRender={6}
-            maxToRenderPerBatch={4}
-            windowSize={6}
-            updateCellsBatchingPeriod={80}
             onScroll={onCommentsScroll}
             scrollEventThrottle={64}
             onViewableItemsChanged={onCommentsViewable}
