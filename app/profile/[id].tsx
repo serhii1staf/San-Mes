@@ -1377,9 +1377,21 @@ export default function UserProfileScreen() {
       {/* Ambient particle layer removed — the theme background is now a clean
           static vector landscape (ProfileThemeScene), no snow/leaf particles. */}
 
-      {/* Header gradient overlay - smooth opacity based on scroll */}
-      <Animated.View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 50, height: insets.top + 50, opacity: headerOpacity }} pointerEvents="none">
-        <LinearGradient colors={[theme.colors.background.primary, theme.colors.background.primary, theme.colors.background.primary + '00']} locations={[0, 0.6, 1]} style={{ flex: 1 }} />
+      {/* Header scroll-in overlay. TEMPORARY: the dark gradient is replaced by a
+          frosted BLUR covering the top hero (down past the Subscribe / Message /
+          Share buttons), fading in on scroll, with a faint accent glow behind
+          it. Height is the single value to tune. */}
+      <Animated.View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 50, height: insets.top + 250, opacity: headerOpacity }} pointerEvents="none">
+        {chromeReady ? (
+          <BlurView intensity={48} tint={theme.isDark ? 'dark' : 'light'} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} />
+        ) : null}
+        <LinearGradient
+          colors={[theme.colors.accent.primary + '00', theme.colors.accent.primary + '1F', theme.colors.accent.primary + '00']}
+          locations={[0, 0.5, 1]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+        />
       </Animated.View>
 
       {/* Fixed header buttons - animate out on scroll. The redesigned
