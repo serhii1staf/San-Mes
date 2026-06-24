@@ -391,14 +391,11 @@ describe('Performance integration — heavy screens declare FlatList virtualizat
     expect(v.windowSize).toBe(true);
   });
 
-  // chat/[id] — heavy chat (the worst offender pre-fix).
-  it('chat/[id].tsx FlatList is virtualised', () => {
+  // chat/[id] — heavy chat (the worst offender pre-fix). Migrated to FlashList
+  // v2 with the scaleY container/row flip reproducing the old `inverted` layout.
+  it('chat/[id].tsx uses a recycling list (FlashList)', () => {
     const src = readScreen('app/chat/[id].tsx');
-    const v = detectFlatListVirt(src);
-    expect(v.removeClippedSubviews).toBe(true);
-    expect(v.initialNumToRender).toBe(true);
-    expect(v.maxToRenderPerBatch).toBe(true);
-    expect(v.windowSize).toBe(true);
+    expect(usesFlashList(src)).toBe(true);
   });
 
   // chat/music — also a long FlatList of TrackResultCards.

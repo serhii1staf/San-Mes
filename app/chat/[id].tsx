@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, useSyncExternalStore } from 'react';
 import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, Alert, Animated, Modal, Dimensions, Keyboard, InteractionManager, type ViewToken } from 'react-native';
 import { useReanimatedKeyboardAnimation, useKeyboardHandler } from 'react-native-keyboard-controller';
+import { FlashList, type FlashListRef } from '@shopify/flash-list';
 import Reanimated, { useAnimatedStyle, interpolate, Extrapolation, useSharedValue, withSpring, withTiming, withSequence, withDelay, runOnJS, useAnimatedRef, measure, Easing, type SharedValue } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import * as Clipboard from 'expo-clipboard';
@@ -55,6 +56,14 @@ import { ScreenshotShield } from '../../src/components/ui/ScreenshotShield';
 
 const REPLY_THRESHOLD = 60;
 const SCREEN_WIDTH = Dimensions.get('window').width;
+// Inverted-list row counter-flip. The chat list reproduces RN's deprecated
+// `inverted` behaviour on FlashList v2 by applying `scaleY:-1` to the list
+// container; each row must be counter-flipped by the SAME transform so its
+// content renders upright (this is exactly what RN's `inverted` does to cells
+// under the hood). Module-level so the style identity is stable across the
+// recycler's row re-use.
+const CHAT_ROW_FLIP = StyleSheet.create({ row: { transform: [{ scaleY: -1 }] } }).row;
+const CHAT_LIST_FLIP = StyleSheet.create({ list: { transform: [{ scaleY: -1 }] } }).list;
 const SCREEN_HEIGHT = Dimensions.get('window').height;
 
 // ── Telegram-style windowed message loading ───────────────────────────────
@@ -729,7 +738,7 @@ export default function ChatScreen() {
   // messages keep their real `senderId` (the author's uuid) and only the
   // comparison target (`currentUserId`) changes per account.
   const currentUserId = useAuthStore((s) => s.user?.id);
-  const flatListRef = useRef<FlatList>(null);
+  const flatListRef = useRef<FlashListRef<ChatMessage>>(null);
   const inputRef = useRef<ChatInputBarHandle>(null);
   // Retry counter shared by every programmatic scroll-to-index path (reply
   // jump + search jump). `onScrollToIndexFailed` backs off with an increasing
@@ -2471,6 +2480,7 @@ export default function ChatScreen() {
   const renderItem = useCallback(({ item }: { item: ChatMessage; index: number }) => {
     const m = parseMessage(item);
     return (
+      <View style={CHAT_ROW_FLIP}>
       <VisibilityBubble
         tracker={visTracker}
         message={m}
@@ -2499,6 +2509,7 @@ export default function ChatScreen() {
         actionZones={actionZonesSV}
         onFireDragAction={fireDragAction}
       />
+      </View>
     );
   }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, chatSettings.linkEmoji, bubbleColorsKey, bubbleColors, bubbleOpacity, bubbleTextColor, inColorsKey, inColors, inOpacity, inTextColor, startReply, scrollToMessageId, handleSwipeActive, openImageViewer, parseMessage, activeMatchId, jumpHighlightId, onMessageLongPress, currentUserId, dragActiveSV, dragFingerYSV, hoveredActionSV, actionZonesSV, fireDragAction, visTracker, imagesReady]);
 
@@ -2587,51 +2598,34 @@ export default function ChatScreen() {
           above the input bar) without triggering FlatList layout. */}
       <Reanimated.View style={[StyleSheet.absoluteFill, listShiftStyle]} pointerEvents="box-none">
       <GestureDetector gesture={panelDismissTap}>
-      <FlatList
+      <FlashList
         ref={flatListRef}
         data={windowedMessages}
-        style={StyleSheet.absoluteFill}
+        style={[StyleSheet.absoluteFill, CHAT_LIST_FLIP]}
         keyExtractor={chatKeyExtractor}
         renderItem={renderItem}
-        inverted
+        // FlashList v2 has no `inverted` prop — we reproduce the inverted
+        // layout exactly the way RN did under the hood: scaleY:-1 on the list
+        // container (CHAT_LIST_FLIP) + a counter scaleY:-1 on every row
+        // (CHAT_ROW_FLIP in renderItem). This keeps the ENTIRE existing scroll
+        // engine valid unchanged — offset 0 = newest, onEndReached = oldest,
+        // scrollToIndex/scrollToOffset/contentOffset.y all behave identically
+        // to the previous inverted FlatList — while swapping virtualization for
+        // cell recycling. mvcp is disabled because the chat manages its own
+        // scroll position (growing the window adds OLDEST rows at the content
+        // end, which never shifts the newest row at offset 0).
+        maintainVisibleContentPosition={{ disabled: true }}
         contentContainerStyle={{ paddingBottom: 8 }}
         ListHeaderComponent={<View style={{ height: LIST_FOOTER_HEIGHT }} />}
         ListFooterComponent={<View style={{ height: headerContentHeight + 8 }} />}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
-        removeClippedSubviews={true}
-        // Tuned for iPhone 12 / weak Android: ~4 bubbles fit the visible
-        // window above the input bar (the 5th was usually clipped under
-        // the gradient anyway). Each bubble allocates a `Reanimated`
-        // shared value, a `LinkPreview` slot, and a `Gesture.Pan()`
-        // builder for swipe-to-reply — the more we mount on the first
-        // commit, the longer the navigation transition fights for the
-        // JS thread. Cutting the initial batch by one and the per-batch
-        // budget by one buys ~5–10 ms on weak Android 10 (Telegram-grade
-        // target device). The pan gesture itself runs ON THE UI THREAD
-        // (RNGH + Reanimated worklets), so once the bubbles are mounted
-        // they don't compete with subsequent JS work.
-        initialNumToRender={4}
-        maxToRenderPerBatch={3}
-        windowSize={5}
-        // Larger update batching window — keeps cell mounting from competing
-        // with scroll gestures on weak devices. Default is 50 ms; bumping to
-        // 80 ms is invisible to the user and lets scroll frames win.
-        updateCellsBatchingPeriod={80}
         onScrollToIndexFailed={onScrollToIndexFailedCb}
         viewabilityConfig={viewabilityConfig}
         onViewableItemsChanged={onViewableItemsChanged}
-        // Windowed loading: when the user reaches the top (oldest) of the
-        // INVERTED list, grow the render window by a chunk. Threshold is in
-        // viewport-lengths from the end, so loading starts slightly before the
-        // user hits the very top — no visible "pop".
         onEndReached={onEndReached}
         onEndReachedThreshold={0.5}
-        // Scroll-to-bottom button visibility tracker. Throttled to ~30 Hz
-        // via `scrollEventThrottle={32}` plus a JS-side guard inside
-        // `onChatScroll`, and the handler only writes state when the
-        // visibility flag actually flips — so steady scrolling is free.
         onScroll={onChatScroll}
         scrollEventThrottle={32}
       />
