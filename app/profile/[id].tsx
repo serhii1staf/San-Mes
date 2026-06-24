@@ -513,7 +513,7 @@ export default function UserProfileScreen() {
   // re-render of this screen otherwise creates 5 new AnimatedInterpolation
   // nodes that the same scrollY then has to drive.
   const headerOpacity = useMemo(
-    () => scrollY.interpolate({ inputRange: [0, 50, 120], outputRange: [0, 0, 1], extrapolate: 'clamp' }),
+    () => scrollY.interpolate({ inputRange: [0, 36, 210], outputRange: [0, 0, 1], extrapolate: 'clamp' }),
     [scrollY],
   );
   const buttonsTranslateX = useMemo(

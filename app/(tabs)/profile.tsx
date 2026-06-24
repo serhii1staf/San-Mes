@@ -786,7 +786,7 @@ export default function ProfileScreen() {
   // Declared BEFORE any conditional returns to keep hook order stable.
   const scrollY = useRef(new Animated.Value(0)).current;
   const headerOpacity = useMemo(
-    () => scrollY.interpolate({ inputRange: [0, 50, 120], outputRange: [0, 0, 1], extrapolate: 'clamp' }),
+    () => scrollY.interpolate({ inputRange: [0, 36, 210], outputRange: [0, 0, 1], extrapolate: 'clamp' }),
     [scrollY],
   );
   const buttonsTranslateX = useMemo(
