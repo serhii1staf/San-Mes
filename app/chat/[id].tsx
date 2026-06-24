@@ -286,15 +286,17 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
   return (
     <View style={bubbleStyles.row}>
       <Reanimated.View style={[bubbleStyles.swipeIcon, replyIconAnimStyle]}>
-        {glassActive ? (
-          <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} tintColor={theme.colors.accent.primary + '40'} style={bubbleStyles.swipeIconCircle}>
-            <Feather name="corner-up-left" size={16} color={theme.colors.accent.primary} />
-          </NativeGlassView>
-        ) : (
-          <View style={[bubbleStyles.swipeIconCircle, { backgroundColor: theme.colors.accent.primary + '20' }]}>
-            <Feather name="corner-up-left" size={16} color={theme.colors.accent.primary} />
-          </View>
-        )}
+        {/* Swipe-to-reply icon. Intentionally NOT a NativeGlassView: a glass
+            view is a UIVisualEffectView, one of the most expensive native views
+            to instantiate, and mounting one PER BUBBLE (this icon exists on
+            every message row, just hidden until a swipe) made every row that
+            scrolled into view pay that cost on the scroll frame — a primary
+            cause of the per-message scroll freeze. The icon is a tiny circle
+            shown only mid-swipe, so a flat tinted circle is visually
+            indistinguishable and costs ~nothing to mount. */}
+        <View style={[bubbleStyles.swipeIconCircle, { backgroundColor: theme.colors.accent.primary + '20' }]}>
+          <Feather name="corner-up-left" size={16} color={theme.colors.accent.primary} />
+        </View>
       </Reanimated.View>
 
       <GestureDetector gesture={composedGesture}>
