@@ -2,6 +2,8 @@ import React, { useMemo } from 'react';
 
 import {
   APP_DEFAULT_FONT,
+  DEFAULT_THEME,
+  PROFILE_THEMES_ENABLED,
   resolveProfileTheme,
 } from '../../theme/profileThemes';
 import { effectiveEmojiAccents } from '../../theme/profileThemeEffective';
@@ -56,7 +58,10 @@ export function ProfileThemeScope({
   void scrollActive;
   void screenFocused;
 
-  const theme = useMemo(() => resolveProfileTheme(themeId), [themeId]);
+  const theme = useMemo(
+    () => (PROFILE_THEMES_ENABLED ? resolveProfileTheme(themeId) : DEFAULT_THEME),
+    [themeId],
+  );
 
   const contextValue = useMemo<ProfileThemeContextValue>(
     () => ({
@@ -75,8 +80,10 @@ export function ProfileThemeScope({
     <ProfileThemeProvider value={contextValue}>
       {/* Layer 0/1: the real vector LANDSCAPE for this theme — bottom-most,
           absolute fill, static (no particles), non-interactive. Identical to
-          the Theme_Selection_Screen preview (same component). */}
-      <ProfileThemeScene theme={theme} />
+          the Theme_Selection_Screen preview (same component).
+          TEMPORARILY DISABLED via PROFILE_THEMES_ENABLED: while off, the scene
+          is not rendered so profiles show the plain app background. */}
+      {PROFILE_THEMES_ENABLED ? <ProfileThemeScene theme={theme} /> : null}
 
       {/* Layer 3: profile content — siblings ON TOP of the background scene. */}
       {children}

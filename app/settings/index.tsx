@@ -10,6 +10,7 @@ import { useAuthStore } from '../../src/store';
 import { useSettingsStore } from '../../src/store/settingsStore';
 import { isNativeGlassCapable } from '../../src/components/ui/LiquidGlass';
 import { useT } from '../../src/i18n/store';
+import { PROFILE_THEMES_ENABLED } from '../../src/theme/profileThemes';
 
 // Per-row tint pairs (icon color + soft tile bg) — picked to be readable in
 // both light and dark mode without being eye-piercing. Same hue family as
@@ -385,12 +386,14 @@ export default function SettingsScreen() {
             onPress={() => router.push('/settings/appearance')}
             isFirst
           />
-          <SettingsRow
-            icon="image"
-            iconTint="pink"
-            label={t('settings.profile_theme', 'Тема профиля')}
-            onPress={() => router.push('/settings/profile-theme' as any)}
-          />
+          {PROFILE_THEMES_ENABLED && (
+            <SettingsRow
+              icon="image"
+              iconTint="pink"
+              label={t('settings.profile_theme', 'Тема профиля')}
+              onPress={() => router.push('/settings/profile-theme' as any)}
+            />
+          )}
           <SettingsRow
             icon="type"
             iconTint="indigo"

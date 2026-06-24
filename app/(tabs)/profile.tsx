@@ -52,7 +52,7 @@ import { useIsFocused } from '@react-navigation/native';
 // account's selected public theme. Background + ambient layers are SIBLINGS
 // BENEATH the content (never wrap a glass view); the palette gradient shows
 // through the transparent FlatList behind the glass cards.
-import { resolveProfileTheme } from '../../src/theme/profileThemes';
+import { resolveProfileTheme, PROFILE_THEMES_ENABLED, DEFAULT_THEME } from '../../src/theme/profileThemes';
 import { ProfileThemeScope } from '../../src/components/profile/ProfileThemeScope';
 import { ProfileThemeBackground } from '../../src/components/profile/ProfileThemeBackground';
 import { AmbientAnimationLayer } from '../../src/components/profile/AmbientAnimationLayer';
@@ -833,7 +833,7 @@ export default function ProfileScreen() {
   // (`themeId`, mapped from `theme_id`), then the resolver's default (Req 4.2).
   const activeProfileThemeId = useActiveProfileThemeId(user?.id ?? '');
   const profileThemeId = activeProfileThemeId ?? user?.themeId;
-  const resolvedProfileTheme = useMemo(() => resolveProfileTheme(profileThemeId), [profileThemeId]);
+  const resolvedProfileTheme = useMemo(() => (PROFILE_THEMES_ENABLED ? resolveProfileTheme(profileThemeId) : DEFAULT_THEME), [profileThemeId]);
   const ambientGate = useAmbientAnimationGate(resolvedProfileTheme);
   // Illustration load fallback: on error / 5 s timeout drop to palette-only
   // while keeping the palette (Req 4.5). Reset when the theme changes.

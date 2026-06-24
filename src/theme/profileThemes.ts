@@ -69,6 +69,18 @@ export interface ProfileTheme {
 export const DEFAULT_THEME_ID: ProfileThemeId = 'default-dark';
 
 /**
+ * TEMPORARY KILL-SWITCH — profile themes are fully disabled for now (user
+ * request). While `false`:
+ *   - profile screens render with the plain app background (no landscape
+ *     ProfileThemeScene, no themed gradient/illustration);
+ *   - action buttons show NO theme emoji accents (forced Default_Theme);
+ *   - the Settings → "Тема профиля" entry is hidden.
+ * The registry, resolver, store, and selection screen are left INTACT so this
+ * is a one-line revert (flip back to `true`) when themes return.
+ */
+export const PROFILE_THEMES_ENABLED = false;
+
+/**
  * The app default font, exposed as a renderable ThemeFont. A theme whose
  * `themeFont` is `null` renders with this font; it is kept here so the resolver
  * and effective-font selectors always have a concrete app-default reference.

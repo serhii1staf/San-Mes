@@ -48,7 +48,7 @@ import { useIsFocused } from '@react-navigation/native';
 // Seasonal Profile Themes (task 6.2) — render the viewed profile in its owner's
 // public theme. Background + ambient layers are SIBLINGS BENEATH the content
 // (never wrap a glass view); themed controls read accents from the scope context.
-import { resolveProfileTheme } from '../../src/theme/profileThemes';
+import { resolveProfileTheme, PROFILE_THEMES_ENABLED, DEFAULT_THEME } from '../../src/theme/profileThemes';
 import { ProfileThemeScope } from '../../src/components/profile/ProfileThemeScope';
 import { ProfileThemeBackground } from '../../src/components/profile/ProfileThemeBackground';
 import { AmbientAnimationLayer } from '../../src/components/profile/AmbientAnimationLayer';
@@ -657,7 +657,7 @@ export default function UserProfileScreen() {
   // particles within 100 ms and resumes within 200 ms (Req 6.2, 6.3).
   const [scrollActive, setScrollActive] = useState(false);
   const profileThemeId = (displayProfile as any)?.theme_id as string | null | undefined;
-  const resolvedProfileTheme = useMemo(() => resolveProfileTheme(profileThemeId), [profileThemeId]);
+  const resolvedProfileTheme = useMemo(() => (PROFILE_THEMES_ENABLED ? resolveProfileTheme(profileThemeId) : DEFAULT_THEME), [profileThemeId]);
   const ambientGate = useAmbientAnimationGate(resolvedProfileTheme);
   // Illustration load fallback: on error / 5 s timeout drop to palette-only
   // while keeping the palette + accents (Req 4.5). Reset when the theme changes.
