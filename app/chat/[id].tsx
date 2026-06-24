@@ -309,6 +309,15 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
   const photoReveal = useStaggeredReveal(!!imagesReady && hasImages && !isGifBubble);
   const gifReveal = useStaggeredGifReveal(!!imagesReady && hasImages && isGifBubble);
   const imgReveal = isGifBubble ? gifReveal : photoReveal;
+  // Photos we've already seen are on disk (their dimensions are remembered):
+  // render them IMMEDIATELY instead of routing through the placeholder →
+  // staggered-reveal path. That deferral exists ONLY to avoid a decode STORM
+  // when a chat full of FRESH images opens; for an already-cached image it just
+  // produced a dark placeholder → spinner → image flash on every single open
+  // (the "photos reload as black images every time I reopen the chat" report).
+  // First-time images keep the staggered path so a fresh GIF-heavy chat still
+  // doesn't decode-storm the open frame.
+  const singleImgKnown = hasImages && message.imageUrls!.length === 1 && !!getImageDims(message.imageUrls![0]);
 
   return (
     <View style={bubbleStyles.row}>
@@ -412,7 +421,7 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
                   // `SingleChatImage`'s initial square so the list doesn't jump
                   // when the real image swaps in. `imgReveal` adds a frame-paced
                   // stagger so multiple image bubbles don't all decode at once.
-                  imgReveal ? (
+                  imgReveal || singleImgKnown ? (
                     <SingleChatImage
                       uri={message.imageUrls[0]}
                       isVisible={isVisible}
@@ -435,7 +444,7 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
                 ) : (
                   message.imageUrls.map((uri, idx) => (
                     <Pressable key={idx} onPress={() => onImagePress(message.imageUrls!, idx)}>
-                      {imgReveal ? (
+                      {imgReveal || getImageDims(uri) ? (
                         <CachedImage
                           uri={uri}
                           style={bubbleStyles.imageMulti}
@@ -1401,12 +1410,39 @@ export default function ChatScreen() {
       return;
     }
     if (myMessages === seededArrayRef.current) return; // untouched seed — already on disk
-    const handle = InteractionManager.runAfterInteractions(() => {
-      if (historyHydratedRef.current === conversationId) return;
-      const merged = hydrateFullHistory();
-      if (!merged) {
-        kvSetJSON(`chat_messages:${conversationId}`, useChatStore.getState().messages[conversationId] || myMessages);
+
+    // Store diverged from the seed = a real mutation (send / receive / edit).
+    // DURABLY persist it RIGHT NOW by merging the store delta into the full
+    // cached array on disk (id-keyed; never truncates the older history that
+    // isn't in the bounded store window). Synchronous on purpose: a message
+    // must never be lost if the user leaves the chat before a deferred write
+    // runs — the previous InteractionManager-only write was cancelled on
+    // unmount, which is exactly how a freshly-received/-sent message could
+    // vanish from a chat on reopen (there is no server refetch to recover it).
+    // Mutations are infrequent (send/receive/edit), so this is off the hot path.
+    try {
+      const cached = kvGetJSONSync<ChatMessage[]>(`chat_messages:${conversationId}`, []);
+      if (cached.length > 0) {
+        const pos = new Map(cached.map((m, i) => [m.id, i] as const));
+        const merged = cached.slice();
+        for (const sm of myMessages as ChatMessage[]) {
+          const at = pos.get(sm.id);
+          if (at === undefined) { merged.push(sm); pos.set(sm.id, merged.length - 1); }
+          else { merged[at] = sm; }
+        }
+        kvSetJSON(`chat_messages:${conversationId}`, merged);
+      } else {
+        // Brand-new chat (no cached history yet) → the store is the whole truth.
+        kvSetJSON(`chat_messages:${conversationId}`, myMessages);
       }
+    } catch {}
+
+    // Hydrate the full history into the STORE (off the input frame) so
+    // scroll-up / reply-jump / search have the complete array in memory. Safe
+    // to defer now that the durable write above already landed — if this is
+    // cancelled on unmount, no data is lost.
+    const handle = InteractionManager.runAfterInteractions(() => {
+      hydrateFullHistory();
     });
     return () => handle.cancel();
   }, [conversationId, myMessages, hydrateFullHistory]);
