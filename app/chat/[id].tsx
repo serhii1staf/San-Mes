@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, useSyncExternalStore } from 'react';
-import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, Alert, Animated, Modal, Dimensions, Keyboard, InteractionManager, type ViewToken } from 'react-native';
+import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, Alert, Animated, Modal, Dimensions, Keyboard, InteractionManager, ActivityIndicator, type ViewToken } from 'react-native';
 import { useReanimatedKeyboardAnimation, useKeyboardHandler } from 'react-native-keyboard-controller';
 import Reanimated, { useAnimatedStyle, interpolate, Extrapolation, useSharedValue, withSpring, withTiming, withSequence, withDelay, runOnJS, useAnimatedRef, measure, Easing, type SharedValue } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -163,7 +163,9 @@ const CHAT_IMG_MAX_H = 340;
 function SingleChatImage({ uri, isVisible, onPress }: { uri: string; isVisible?: boolean; onPress: () => void }) {
   const theme = useTheme();
   const [size, setSize] = useState<{ w: number; h: number }>({ w: 220, h: 220 });
+  const [loading, setLoading] = useState(true);
   const handleLoad = useCallback((e: any) => {
+    setLoading(false);
     const s = e?.source;
     if (!s?.width || !s?.height) return;
     const ar = s.width / s.height;
@@ -172,29 +174,33 @@ function SingleChatImage({ uri, isVisible, onPress }: { uri: string; isVisible?:
     if (h > CHAT_IMG_MAX_H) { h = CHAT_IMG_MAX_H; w = Math.round(h * ar); }
     setSize({ w, h });
   }, []);
+  const handleError = useCallback(() => setLoading(false), []);
   return (
     <Pressable onPress={onPress}>
-      <CachedImage
-        uri={uri}
-        style={{ width: size.w, height: size.h, borderRadius: 12, backgroundColor: theme.colors.background.tertiary }}
-        // Container now matches the image aspect ratio, so "cover" shows the
-        // full image with no cropping and no letterboxing.
-        resizeMode="cover"
-        // Pin the proxy width to the bubble's MAX display width instead of
-        // letting it track `size.w`. The container animates from the initial
-        // 220 px square to the photo's real width (≤ CHAT_IMG_MAX_W) once
-        // onLoad reports the source dimensions — if the proxy width tracked
-        // that, expo-image would fetch+decode TWICE (once at w≈440 for the
-        // 220 px placeholder, again at w≈540 for the final size). Pinning to
-        // CHAT_IMG_MAX_W yields ONE stable proxy URL for the whole lifecycle,
-        // which also matches the width `messagesPrefetch` warms, so the disk
-        // cache actually hits on open. Visual is identical (cover at the same
-        // final size, equal-or-sharper bytes).
-        proxyWidth={CHAT_IMG_MAX_W}
-        priority="low"
-        autoplay={isVisible}
-        onLoad={handleLoad}
-      />
+      {/* Fixed-size rounded container holds the image AND a centered loading
+          spinner overlay. The image fills the container (100%×100%) so while it
+          uploads/decodes the user sees a spinner over a neutral tile instead of
+          a blank box, and there is no second "reload" flash. The container
+          still snaps from the neutral square to the photo's real aspect ratio
+          once dimensions are known — but the spinner makes that read as
+          "loading", which is exactly the affordance requested. */}
+      <View style={{ width: size.w, height: size.h, borderRadius: 12, overflow: 'hidden', backgroundColor: theme.colors.background.tertiary }}>
+        <CachedImage
+          uri={uri}
+          style={{ width: '100%', height: '100%' }}
+          resizeMode="cover"
+          proxyWidth={CHAT_IMG_MAX_W}
+          priority="low"
+          autoplay={isVisible}
+          onLoad={handleLoad}
+          onError={handleError}
+        />
+        {loading ? (
+          <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
+            <ActivityIndicator size="small" color={theme.colors.accent.primary} />
+          </View>
+        ) : null}
+      </View>
     </Pressable>
   );
 }

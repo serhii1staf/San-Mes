@@ -19,6 +19,10 @@ import { useEffect, useState } from 'react';
 
 const queue: Array<() => void> = [];
 let pumpScheduled = false;
+// Spacing between photo reveals (ms). Wider than a frame so overlapping photo
+// decodes don't pile into a burst on chat/feed open. ~45 ms ≈ one decode at a
+// time on a mid device while still cascading in fast enough to feel instant.
+const PHOTO_REVEAL_INTERVAL_MS = 45;
 
 // ── Scroll-pause gate (shared by BOTH the photo and GIF pumps) ──────────────
 // While the user is actively scrolling/flinging a media list, granting reveal
@@ -63,7 +67,13 @@ function pump() {
   }
   if (queue.length > 0) {
     pumpScheduled = true;
-    requestAnimationFrame(pump);
+    // Space photo reveals ~PHOTO_REVEAL_INTERVAL_MS apart instead of one-per-
+    // FRAME. A static photo decode is ~80-170 ms; granting one per 16 ms frame
+    // started 5-6 decodes before the first finished, so a screenful (or the
+    // chat-open window) landed a BURST of overlapping decodes that each
+    // reported ~220-270 ms (contention) and froze the frame. Spacing them out
+    // keeps at most ~2 decoding at once — the burst disappears.
+    setTimeout(pump, PHOTO_REVEAL_INTERVAL_MS);
   }
 }
 
