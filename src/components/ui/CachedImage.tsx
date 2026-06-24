@@ -41,9 +41,17 @@ export function proxiedImageUrl(uri: string, displayWidth?: number): string {
   if (!uri || typeof uri !== 'string') return uri;
   if (!uri.startsWith('http')) return uri;
   if (uri.indexOf('images.weserv.nl') !== -1) return uri;
-  // Private / signed URLs — weserv can't fetch them, and the per-request
-  // signature would defeat caching anyway.
-  if (uri.indexOf('token=') !== -1 || uri.indexOf('Signature=') !== -1) return uri;
+  // Private / signed URLs — weserv usually can't fetch them, and the per-request
+  // signature defeats caching. EXCEPTION: legacy Amazon S3 photos
+  // (*.amazonaws.com) are proxied ANYWAY. Reopened photo chats surface these as
+  // full-resolution decodes (~300 ms UI-thread stalls — the "БАМ, freeze" in
+  // photo-heavy chats) precisely because the signature made them skip the
+  // downscaling proxy. weserv fetches the signed URL as-is (valid until expiry)
+  // and returns a display-sized WebP, so the on-device decode drops to a few ms.
+  // If weserv can't fetch it, CachedImage's onError handler falls back to the
+  // ORIGINAL signed URL — so this can only ever be faster, never break loading.
+  const isS3 = uri.indexOf('.amazonaws.com') !== -1;
+  if (!isS3 && (uri.indexOf('token=') !== -1 || uri.indexOf('Signature=') !== -1)) return uri;
   // GIFs must not be proxied: weserv re-encodes to WebP by default and
   // animations get flattened to the first frame. Sending output=gif keeps
   // them animated but breaks decoding on some devices, so we just skip the
