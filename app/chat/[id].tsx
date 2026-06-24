@@ -1382,6 +1382,80 @@ export default function ChatScreen() {
     return () => handle.cancel();
   }, [conversationId, myMessages, hydrateFullHistory]);
 
+  // ── Heal stuck local images (root-cause fix for "one chat lags, an
+  // identical-looking one doesn't") ────────────────────────────────────────
+  // Some of OUR OWN messages can end up permanently referencing a local
+  // `file://` image instead of the uploaded remote URL:
+  //   • the message was sent while OFFLINE (handleSend returns before upload),
+  //   • the upload threw (a network blip) and the catch swallowed it,
+  //   • the app was killed mid-upload before the local→remote swap persisted.
+  // Such a message keeps a FULL-resolution local JPEG (~1600 px) in imageUrls.
+  // On every open, expo-image decodes that full bitmap for a ~270 px bubble —
+  // a 200-260 ms UI-thread stall PER photo (the perf monitor's `file` /
+  // `s3.amazonaws.com` 247-260 ms decodes). A chat holding a few of these is
+  // exactly the one that "freezes on scroll", while a visually identical chat
+  // whose photos round-tripped to r2.dev (4-24 ms proxied WebP decodes) stays
+  // smooth. The stuck local refs are also invisible on every OTHER device.
+  //
+  // Heal them: re-upload any own-message local images and swap imageUrls to the
+  // remote URL. The persist effect mirrors the swap to disk, so the heavy local
+  // decode never happens again and the photo finally syncs to peers. Deferred
+  // past interactions + sequential so the re-uploads never touch the open/
+  // scroll frames; online-only; failures leave the message untouched and retry
+  // on the next open. Deduped by message id so a history-hydration re-render
+  // never double-uploads an in-flight heal.
+  const healingIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!conversationId || !currentUserId) return;
+    if (!myMessages || myMessages.length === 0) return;
+    if (!useConnectivityStore.getState().isOnline) return;
+    const stuck = myMessages.filter(
+      (m) =>
+        (m.senderId === currentUserId || m.senderId === 'current') &&
+        Array.isArray(m.imageUrls) &&
+        m.imageUrls.some((u) => typeof u === 'string' && !u.startsWith('http')) &&
+        !healingIdsRef.current.has(m.id),
+    );
+    if (stuck.length === 0) return;
+    let cancelled = false;
+    const handle = InteractionManager.runAfterInteractions(() => {
+      void (async () => {
+        for (const m of stuck) {
+          if (cancelled) return;
+          healingIdsRef.current.add(m.id);
+          try {
+            const original = m.imageUrls || [];
+            const swapped = await Promise.all(
+              original.map(async (u) => {
+                if (typeof u !== 'string' || u.startsWith('http')) return u;
+                const { url } = await uploadChatImage(u);
+                return url || u; // keep the local ref if the upload failed
+              }),
+            );
+            const changed = swapped.some((u, i) => u !== original[i]);
+            if (!changed) {
+              // Upload failed (e.g. the cached file is gone) — allow a retry
+              // on the next open rather than pinning the id forever.
+              healingIdsRef.current.delete(m.id);
+              continue;
+            }
+            const current = useChatStore.getState().messages[conversationId] || [];
+            setMessages(
+              conversationId,
+              current.map((mm) => (mm.id === m.id ? { ...mm, imageUrls: swapped } : mm)) as any,
+            );
+          } catch {
+            healingIdsRef.current.delete(m.id);
+          }
+        }
+      })();
+    });
+    return () => {
+      cancelled = true;
+      handle.cancel();
+    };
+  }, [conversationId, currentUserId, myMessages, setMessages]);
+
   const chatLocalName = specificSettings?.localName;
   const displayName = chatLocalName || conversation?.participantName || profileData?.display_name || entityConv?.participantName || t('chat.fallback_name');
   const displayEmoji = (conversation as any)?.participantEmoji || profileData?.emoji || entityConv?.participantEmoji || '😊';
