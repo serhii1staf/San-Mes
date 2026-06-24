@@ -21,15 +21,12 @@ import { useSettingsStore } from '../../store/settingsStore';
 // ─────────────────────────────────────────────────────────────────────────────
 
 const PROXY_HOST = 'https://images.weserv.nl';
-const MAX_PROXY_WIDTH = 1000; // hard cap so giant fullscreen viewers don't pull megabytes
-const DEFAULT_PROXY_WIDTH = 560;
-// Device-pixel-ratio compensation. Lowered from 2 → 1.4: a 2× bitmap decodes
-// ~2× the pixels of a 1.4× one, and that decode + GPU upload happens largely on
-// the UI thread — the single biggest per-image cost behind scroll FPS drops in
-// photo / GIF / link-preview heavy chats. 1.4× still stays sharp on retina at
-// the small display sizes we use (chat bubble ≤270pt, preview thumb, feed card)
-// while cutting decode work ~50%.
-const DPR = 1.4;
+const MAX_PROXY_WIDTH = 1200; // hard cap so giant fullscreen viewers don't pull megabytes
+const DEFAULT_PROXY_WIDTH = 800;
+// Retina-sharp display. (An earlier 1.4 experiment to cut decode cost made
+// photos look noticeably soft — and it did NOT fix the chat lag, which comes
+// from heavy bubble MOUNTS, not image decode. So quality is restored to 2×.)
+const DPR = 2;
 
 /**
  * Wrap a remote image URL in the public images.weserv.nl proxy so that:

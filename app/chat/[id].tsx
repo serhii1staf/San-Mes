@@ -1692,7 +1692,7 @@ export default function ChatScreen() {
       const isGif = (a.uri.split('.').pop() || '').toLowerCase() === 'gif';
       if (isGif) return a.uri;
       try {
-        const r = await manipulateAsync(a.uri, [{ resize: { width: 1280 } }], { compress: 0.6, format: SaveFormat.JPEG });
+        const r = await manipulateAsync(a.uri, [{ resize: { width: 1600 } }], { compress: 0.85, format: SaveFormat.JPEG });
         return r.uri;
       } catch {
         return a.uri;
