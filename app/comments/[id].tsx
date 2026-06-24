@@ -482,7 +482,19 @@ export default function CommentsScreen() {
       },
       isActive(id) {
         const onScreen = !ready || visibleSet.has(id);
-        return onScreen && !scrolling;
+        if (!onScreen || scrolling) return false;
+        // Concurrency cap: only the first 2 visible GIFs animate; the rest show
+        // their static frame until they scroll into the cap window. Stops a
+        // GIF-heavy comment thread from decoding 5-6 GIF streams at once.
+        let rank = 0;
+        for (const vid of visibleSet) {
+          if (!gifIds.has(vid)) continue;
+          if (vid === id) return rank < 2;
+          rank++;
+          if (rank >= 2) break;
+        }
+        if (rank >= 2) return false;
+        return true;
       },
       update(next) {
         if (ready && next.size === visibleSet.size) {

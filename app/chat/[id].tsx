@@ -2354,6 +2354,13 @@ export default function ChatScreen() {
     // counter + clearResume() abort an in-flight stagger the instant a new
     // scroll begins.
     const RESUME_INTERVAL_MS = 90;
+    // Hard cap on how many GIFs ANIMATE at once, even when the list is still.
+    // A GIF-spam chat had 5-6 visible GIFs all decoding frames continuously →
+    // fps 18. Telegram-style: only the first N visible GIFs play; the rest show
+    // their static first frame (autoplay off) until they become one of the
+    // first N (which changes as the user scrolls). This is the decisive fix for
+    // the "GIF-heavy chat freezes" case.
+    const GIF_ANIM_CAP = 2;
     const held = new Set<string>();
     let resumeGen = 0;
     let resumeTimer: ReturnType<typeof setTimeout> | null = null;
@@ -2377,7 +2384,22 @@ export default function ChatScreen() {
       isVisible(itemId) {
         const onScreen = !ready || visibleSet.has(itemId);
         if (!onScreen) return false;
-        if (gifIds.has(itemId) && (scrolling || held.has(itemId))) return false;
+        if (gifIds.has(itemId)) {
+          if (scrolling || held.has(itemId)) return false;
+          // Concurrency cap: only the first GIF_ANIM_CAP visible GIFs animate.
+          // visibleSet preserves viewable order (onViewableItemsChanged inserts
+          // top→bottom), so we count GIF rows until we hit this one.
+          let rank = 0;
+          for (const vid of visibleSet) {
+            if (!gifIds.has(vid)) continue;
+            if (vid === itemId) return rank < GIF_ANIM_CAP;
+            rank++;
+            if (rank >= GIF_ANIM_CAP) break;
+          }
+          // Not located within the cap window (or visibleSet not ready) → if we
+          // broke out past the cap, this GIF is beyond it → freeze.
+          if (rank >= GIF_ANIM_CAP) return false;
+        }
         return true;
       },
       update(next) {
