@@ -20,8 +20,43 @@ import { useEffect, useState } from 'react';
 const queue: Array<() => void> = [];
 let pumpScheduled = false;
 
+// ── Scroll-pause gate (shared by BOTH the photo and GIF pumps) ──────────────
+// While the user is actively scrolling/flinging a media list, granting reveal
+// permits would kick off bitmap decodes ON the scroll frames — the per-image
+// "freeze when a photo/GIF scrolls into view" the perf snapshots and the user
+// both reported. So both pumps HALT while `scrollPaused` is true and drain once
+// the list settles (the screen wires this to its scroll idle timer). Images
+// already revealed stay revealed; only NOT-yet-decoded media waits for the
+// scroll to stop — exactly Telegram's "media loads when you stop scrolling".
+let scrollPaused = false;
+
+/**
+ * Pause/resume ALL staggered media reveals (photos + GIFs) globally. Screens
+ * call `setRevealScrollPaused(true)` on every scroll event and
+ * `setRevealScrollPaused(false)` a short idle after scrolling stops. While
+ * paused, no new image/GIF decode is kicked off, so scroll frames stay free.
+ */
+export function setRevealScrollPaused(paused: boolean): void {
+  if (paused === scrollPaused) return;
+  scrollPaused = paused;
+  if (!paused) {
+    // Resume: re-arm whichever pump has pending work.
+    if (!pumpScheduled && queue.length > 0) {
+      pumpScheduled = true;
+      requestAnimationFrame(pump);
+    }
+    if (!gifPumpScheduled && gifQueue.length > 0) {
+      gifPumpScheduled = true;
+      requestAnimationFrame(gifPump);
+    }
+  }
+}
+
 function pump() {
   pumpScheduled = false;
+  // Halt while scrolling — do NOT grant or reschedule. `setRevealScrollPaused`
+  // re-arms the pump when the list settles.
+  if (scrollPaused) return;
   const fn = queue.shift();
   if (fn) {
     try { fn(); } catch { /* caller unmounted between schedule + pump */ }
@@ -88,6 +123,8 @@ let gifPumpScheduled = false;
 
 function gifPump() {
   gifPumpScheduled = false;
+  // Same scroll-pause halt as the photo pump — never start a GIF decode mid-scroll.
+  if (scrollPaused) return;
   const fn = gifQueue.shift();
   if (fn) {
     try { fn(); } catch { /* caller unmounted between schedule + pump */ }

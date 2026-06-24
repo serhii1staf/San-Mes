@@ -21,7 +21,7 @@ import { extractFirstUrl } from '../../src/services/linkPreview';
 import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
 import { useChatKeyboardMode } from '../../src/hooks/useChatKeyboardMode';
 import { CachedImage } from '../../src/components/ui/CachedImage';
-import { useStaggeredReveal, useStaggeredGifReveal } from '../../src/hooks/useStaggeredReveal';
+import { useStaggeredReveal, useStaggeredGifReveal, setRevealScrollPaused } from '../../src/hooks/useStaggeredReveal';
 import { CommentContextMenu, CommentAction } from '../../src/components/ui/CommentContextMenu';
 import { SlideUpSheet } from '../../src/components/ui/SlideUpSheet';
 import { MediaPanel } from '../../src/components/chat/MediaPanel';
@@ -507,10 +507,14 @@ export default function CommentsScreen() {
   const gifScrollIdleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onCommentsScroll = useCallback(() => {
     gifTracker.setScrolling(true);
+    setRevealScrollPaused(true);
     if (gifScrollIdleRef.current) clearTimeout(gifScrollIdleRef.current);
-    gifScrollIdleRef.current = setTimeout(() => gifTracker.setScrolling(false), 200);
+    gifScrollIdleRef.current = setTimeout(() => {
+      gifTracker.setScrolling(false);
+      setRevealScrollPaused(false);
+    }, 200);
   }, [gifTracker]);
-  useEffect(() => () => { if (gifScrollIdleRef.current) clearTimeout(gifScrollIdleRef.current); }, []);
+  useEffect(() => () => { if (gifScrollIdleRef.current) clearTimeout(gifScrollIdleRef.current); setRevealScrollPaused(false); }, []);
   const onCommentsViewable = useRef(({ viewableItems }: { viewableItems: any[] }) => {
     const next = new Set<string>();
     for (const v of viewableItems) { const id = v?.item?.id; if (id) next.add(id); }

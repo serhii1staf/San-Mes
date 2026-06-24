@@ -31,7 +31,7 @@ import { useChatSettingsStore, GLOBAL_CHAT_SETTINGS_KEY, DEFAULT_CHAT_SETTINGS }
 import { readableTextOn, withOpacity } from '../../src/constants/bubbleColors';
 import { useMessageGestures } from '../../src/hooks/useMessageGestures';
 import { useChatKeyboardMode } from '../../src/hooks/useChatKeyboardMode';
-import { useStaggeredReveal, useStaggeredGifReveal } from '../../src/hooks/useStaggeredReveal';
+import { useStaggeredReveal, useStaggeredGifReveal, setRevealScrollPaused } from '../../src/hooks/useStaggeredReveal';
 import { useBrowserStore } from '../../src/store/browserStore';
 import { ChatBackgroundLayer } from '../../src/components/ui/ChatBackgroundLayer';
 import { PixelIcon } from '../../src/components/pixel-icons/PixelIcon';
@@ -2547,8 +2547,14 @@ export default function ChatScreen() {
     // one. Cheap — `setScrolling` only fans out to the bubbles on a true
     // change (scroll start / scroll settle).
     visTrackerRef.current?.setScrolling(true);
+    // Halt ALL media decode (photos + GIFs) while scrolling so no bitmap decode
+    // lands on a scroll frame — the per-image "freeze when it scrolls into view".
+    setRevealScrollPaused(true);
     if (scrollIdleRef.current) clearTimeout(scrollIdleRef.current);
-    scrollIdleRef.current = setTimeout(() => visTrackerRef.current?.setScrolling(false), 180);
+    scrollIdleRef.current = setTimeout(() => {
+      visTrackerRef.current?.setScrolling(false);
+      setRevealScrollPaused(false);
+    }, 180);
     const now = Date.now();
     if (now - lastScrollEventAt.current < 32) return;
     lastScrollEventAt.current = now;
@@ -2556,7 +2562,7 @@ export default function ChatScreen() {
     const next = y > SCROLL_BTN_THRESHOLD;
     setScrollBtnVisible((prev) => (prev === next ? prev : next));
   }, []);
-  useEffect(() => () => { if (scrollIdleRef.current) clearTimeout(scrollIdleRef.current); }, []);
+  useEffect(() => () => { if (scrollIdleRef.current) clearTimeout(scrollIdleRef.current); setRevealScrollPaused(false); }, []);
   useEffect(() => {
     Animated.timing(scrollBtnOpacity, {
       toValue: scrollBtnVisible ? 1 : 0,
