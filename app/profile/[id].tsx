@@ -1190,24 +1190,9 @@ export default function UserProfileScreen() {
           />
         </View>
       ) : null}
-      {/* Frosted-glass overlay — THIS is the "blur card" look. Sits ABOVE the
-          cover photo (banner softly shows through the frost) but BELOW the
-          identity content (avatar / name / stats / buttons stay crisp). Opacity
-          is driven by scroll (`headerOpacity`): crisp banner at rest, frost
-          FADES IN on scroll — not always-on. */}
-      <Animated.View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, opacity: headerOpacity }}>
-        {chromeReady ? (
-          <BlurView intensity={theme.isDark ? 55 : 75} tint={theme.isDark ? 'dark' : 'light'} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} />
-        ) : null}
-        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: theme.isDark ? 'rgba(20,21,28,0.32)' : 'rgba(255,255,255,0.34)' }} />
-        <LinearGradient
-          colors={[theme.colors.accent.primary + '26', theme.colors.accent.primary + '00', theme.colors.accent.primary + '1C']}
-          locations={[0, 0.55, 1]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
-        />
-      </Animated.View>
+      {/* (Frosted overlay moved to the END of the card so it covers the
+          content too — see below, just before the card closes.) */}
+
 
       {/* ── Module content (left-aligned identity block, matches the mockup) ── */}
       <View style={{ paddingTop: insets.top + 52, paddingHorizontal: 20, paddingBottom: 22 }}>
@@ -1285,6 +1270,24 @@ export default function UserProfileScreen() {
           </View>
         )}
       </View>
+
+      {/* Frosted-glass overlay — TOP layer of the card so it covers the cover
+          photo AND the identity content. Opacity driven by scroll
+          (`headerOpacity`): crisp at rest, frost FADES IN over everything as
+          the user scrolls. pointerEvents="none" keeps the buttons tappable. */}
+      <Animated.View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, opacity: headerOpacity }}>
+        {chromeReady ? (
+          <BlurView intensity={theme.isDark ? 55 : 75} tint={theme.isDark ? 'dark' : 'light'} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} />
+        ) : null}
+        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: theme.isDark ? 'rgba(20,21,28,0.32)' : 'rgba(255,255,255,0.34)' }} />
+        <LinearGradient
+          colors={[theme.colors.accent.primary + '26', theme.colors.accent.primary + '00', theme.colors.accent.primary + '1C']}
+          locations={[0, 0.55, 1]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+        />
+      </Animated.View>
     </View>
     );
   }, [theme, displayProfile, bannerUrl, bannerTransform, chromeReady, isOwnProfile, isFollowingState, fromChat, handleFollow, t, userLinks, followCounts, insets.top, glassActive]);
