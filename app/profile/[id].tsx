@@ -1165,6 +1165,21 @@ export default function UserProfileScreen() {
     if (!displayProfile) return null;
     return (
     <View style={{ marginHorizontal: -16, marginTop: -12, borderBottomLeftRadius: 30, borderBottomRightRadius: 30, overflow: 'hidden', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)' }}>
+      {/* Frosted-glass base of the rounded header card itself (the "blur card"
+          look). With no cover photo this frosts the theme scene behind the
+          module; a cover photo, when present, renders OVER it below. A faint
+          accent glow gives the subtle "magic" shimmer. */}
+      {chromeReady ? (
+        <BlurView intensity={theme.isDark ? 40 : 60} tint={theme.isDark ? 'dark' : 'light'} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} />
+      ) : null}
+      <LinearGradient
+        colors={[theme.colors.accent.primary + '1A', theme.colors.accent.primary + '00', theme.colors.accent.primary + '14']}
+        locations={[0, 0.55, 1]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+        pointerEvents="none"
+      />
       {/* Custom cover photo as the module backdrop (the seasonal theme gradient
           already fills the screen behind this module). */}
       {bannerUrl && chromeReady ? (
@@ -1377,22 +1392,8 @@ export default function UserProfileScreen() {
       {/* Ambient particle layer removed — the theme background is now a clean
           static vector landscape (ProfileThemeScene), no snow/leaf particles. */}
 
-      {/* Header scroll-in overlay. TEMPORARY: the dark gradient is replaced by a
-          frosted BLUR covering the top hero (down past the Subscribe / Message /
-          Share buttons), fading in on scroll, with a faint accent glow behind
-          it. Height is the single value to tune. */}
-      <Animated.View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 50, height: insets.top + 250, opacity: headerOpacity }} pointerEvents="none">
-        {chromeReady ? (
-          <BlurView intensity={48} tint={theme.isDark ? 'dark' : 'light'} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} />
-        ) : null}
-        <LinearGradient
-          colors={[theme.colors.accent.primary + '00', theme.colors.accent.primary + '1F', theme.colors.accent.primary + '00']}
-          locations={[0, 0.5, 1]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
-        />
-      </Animated.View>
+      {/* (The old scroll-in dark gradient / overlay blur was removed — the
+          frosted look now lives ON the rounded header card itself.) */}
 
       {/* Fixed header buttons - animate out on scroll. The redesigned
           layout drops compact follow-stat pills between the back button

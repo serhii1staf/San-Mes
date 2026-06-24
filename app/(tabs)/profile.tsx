@@ -913,6 +913,21 @@ export default function ProfileScreen() {
   // tab taps; that gate was removed above.
   const bannerHeader = useMemo(() => (
     <View style={{ marginHorizontal: -16, marginTop: -12, borderBottomLeftRadius: 30, borderBottomRightRadius: 30, overflow: 'hidden', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)' }}>
+      {/* Frosted-glass base of the rounded header card itself. With no cover
+          photo this frosts the theme scene behind the module (the "blur card"
+          look); a cover photo, when present, renders OVER it below. A faint
+          accent glow gives the subtle "magic" shimmer. */}
+      {chromeReady ? (
+        <BlurView intensity={theme.isDark ? 40 : 60} tint={theme.isDark ? 'dark' : 'light'} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} />
+      ) : null}
+      <LinearGradient
+        colors={[theme.colors.accent.primary + '1A', theme.colors.accent.primary + '00', theme.colors.accent.primary + '14']}
+        locations={[0, 0.55, 1]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+        pointerEvents="none"
+      />
       {/* Custom cover photo as the module backdrop (the seasonal theme gradient
           already fills the screen behind this module). */}
       {bannerUrl && chromeReady ? (
@@ -1101,22 +1116,9 @@ export default function ProfileScreen() {
       {/* Ambient particle layer removed — the theme background is a clean static
           vector landscape (ProfileThemeScene) now, no snow/leaf particles. */}
 
-      {/* Scroll-in top overlay. TEMPORARY: the dark gradient is replaced by a
-          frosted BLUR that covers the whole top hero (down past the action
-          buttons), fading in on scroll. A faint accent glow sits behind the
-          blur for the "magic" look. Height is the one number to tune. */}
-      <Animated.View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 50, height: insets.top + 250, opacity: headerOpacity }} pointerEvents="none">
-        {chromeReady ? (
-          <BlurView intensity={48} tint={theme.isDark ? 'dark' : 'light'} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} />
-        ) : null}
-        <LinearGradient
-          colors={[theme.colors.accent.primary + '00', theme.colors.accent.primary + '1F', theme.colors.accent.primary + '00']}
-          locations={[0, 0.5, 1]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
-        />
-      </Animated.View>
+      {/* (The old scroll-in dark gradient / overlay blur was removed — the
+          frosted look now lives ON the rounded header card itself, see
+          `bannerHeader` below.) */}
       <View style={{ position: 'absolute', top: insets.top + 8, left: 16, right: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', zIndex: 100 }}>
         <Animated.View style={{ transform: [{ translateX: buttonsTranslateX }] }}><Pressable onPress={() => { triggerHaptic('light'); setShowQR(true); }} style={{ borderRadius: 17 }}>{glassActive ? (<NativeGlassView glassStyle="regular" isInteractive colorScheme="dark" style={{ width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' }}><FontAwesome5 name="qrcode" size={15} color="#FFFFFF" /></NativeGlassView>) : chromeReady ? (<BlurView intensity={80} tint="dark" style={{ width: 34, height: 34, borderRadius: 17, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' }}><FontAwesome5 name="qrcode" size={15} color="#FFFFFF" /></BlurView>) : (<View style={{ width: 34, height: 34, borderRadius: 17, overflow: 'hidden', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.4)' }}><FontAwesome5 name="qrcode" size={15} color="#FFFFFF" /></View>)}</Pressable></Animated.View>
         {/* Follow stats moved into the redesigned header module below. */}
