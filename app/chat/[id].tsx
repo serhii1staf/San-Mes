@@ -66,8 +66,8 @@ const SCREEN_HEIGHT = Dimensions.get('window').height;
 // INVERTED list, is `onEndReached`). `SEED_CAP` bounds the synchronous
 // first-paint parse — the full history is still hydrated into the store off
 // the critical path so scroll-up and reply-jump to old messages keep working.
-const INITIAL_WINDOW = 40;
-const WINDOW_CHUNK = 40;
+const INITIAL_WINDOW = 30;
+const WINDOW_CHUNK = 30;
 const SEED_CAP = 60;
 
 // How many of the most-recent messages the chat-open warm prefetches. Bounded
@@ -151,6 +151,33 @@ const bubbleStyles = StyleSheet.create({
   linkPreviewWrap: { marginTop: 6, width: 280, maxWidth: '100%' },
   timestamp: { marginTop: 3, alignSelf: 'flex-end', fontSize: 10 },
 });
+
+// Soft glowing "loading older messages" indicator shown at the TOP of the chat
+// (oldest end) while the next older chunk is being revealed from cache. Pure
+// cosmetic pulse — the data is already local, so this just gives the
+// Telegram-style "more is loading above" affordance instead of messages
+// silently popping in. Animated with the native driver (opacity only) so it
+// never touches the JS thread during scroll.
+function OlderMessagesLoader({ visible, color }: { visible: boolean; color: string }) {
+  const pulse = useRef(new Animated.Value(0.25)).current;
+  useEffect(() => {
+    if (!visible) return;
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1, duration: 600, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 0.25, duration: 600, useNativeDriver: true }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [visible, pulse]);
+  if (!visible) return null;
+  return (
+    <View style={{ alignItems: 'center', paddingTop: 6, paddingBottom: 12 }}>
+      <Animated.View style={{ width: 84, height: 6, borderRadius: 3, backgroundColor: color, opacity: pulse }} />
+    </View>
+  );
+}
 
 // Max bounds for a single sent photo. The container is sized to the image's
 // natural aspect ratio (capped to these bounds) so the WHOLE image is visible
@@ -858,6 +885,32 @@ export default function ChatScreen() {
   // never empty on the first frame if a cache exists.
   const storeChat = (myStoreMessages || []) as ChatMessage[];
   const chatMessages = storeChat.length > 0 ? storeChat : seedMessages;
+
+  // ── Visible window (Telegram-style chunked rendering) ──────────────────────
+  // FlashList is fed only the most-recent `renderWindow` messages; scrolling to
+  // the top grows it by `WINDOW_CHUNK` (see `onStartReached`). This keeps a
+  // huge history from rendering all at once while still letting the user page
+  // up through the whole cached conversation.
+  const [renderWindow, setRenderWindow] = useState(INITIAL_WINDOW);
+  // Reset to the initial window whenever the conversation changes.
+  useEffect(() => { setRenderWindow(INITIAL_WINDOW); }, [conversationId]);
+  // Keep the TOP of the visible window fixed when new messages APPEND at the
+  // bottom, so receiving/sending a message while scrolled up never shifts the
+  // view. We grow `renderWindow` by the number appended. Hydration (older
+  // messages added at the FRONT, newest unchanged) must NOT bump it — detected
+  // by the newest id staying the same.
+  const prevLenRef = useRef(0);
+  const prevLastIdRef = useRef<string | undefined>(undefined);
+  const curLen = chatMessages.length;
+  const curLastId = curLen > 0 ? chatMessages[curLen - 1].id : undefined;
+  useEffect(() => {
+    const prevLen = prevLenRef.current;
+    if (curLen > prevLen && prevLen > 0 && curLastId !== prevLastIdRef.current) {
+      setRenderWindow((w) => w + (curLen - prevLen));
+    }
+    prevLenRef.current = curLen;
+    prevLastIdRef.current = curLastId;
+  }, [curLen, curLastId]);
 
   // ── Lazy full-history hydration ────────────────────────────────────────
   // The open path deliberately holds only the bounded `SEED_CAP` tail (see
@@ -1790,12 +1843,25 @@ export default function ChatScreen() {
   // Non-inverted list: data IS `chatMessages` (oldest→newest), so a search-match
   // index maps DIRECTLY to the list index — no inversion, no window remap.
   const scrollToIndex = useCallback((index: number) => {
-    if (index < 0 || index >= chatMessages.length) return;
+    // Read the freshest total from the store (the closure's `chatMessages` can
+    // be the stale bounded seed right after a lazy hydrate).
+    const live = useChatStore.getState().messages[conversationId || ''] as ChatMessage[] | undefined;
+    const total = live && live.length > 0 ? live.length : chatMessages.length;
+    if (index < 0 || index >= total) return;
     jumpAttemptRef.current = 0;
-    requestAnimationFrame(() => {
-      try { flatListRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.5 }); } catch {}
-    });
-  }, [chatMessages.length]);
+    // Ensure the (possibly older) target message is inside the visible window;
+    // grow the window if needed so the row exists in the FlashList data, then
+    // map the full-array index to the windowed index.
+    const needWindow = total - index + 4;
+    const win = Math.max(renderWindow, needWindow);
+    if (win > renderWindow) setRenderWindow(win);
+    const start = Math.max(0, total - win);
+    const winIdx = index - start;
+    // Two frames: one for a grown window to commit, one to issue the scroll.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      try { flatListRef.current?.scrollToIndex({ index: winIdx, animated: true, viewPosition: 0.5 }); } catch {}
+    }));
+  }, [chatMessages.length, conversationId, renderWindow]);
 
   // Recompute matches when the query changes; jump to the most recent match
   useEffect(() => {
@@ -2403,25 +2469,40 @@ export default function ChatScreen() {
   const activeMatchIndex = searchMatches.length > 0 ? searchMatches[searchActiveIdx] : -1;
   const activeMatchId = activeMatchIndex >= 0 && activeMatchIndex < chatMessages.length ? chatMessages[activeMatchIndex]?.id : null;
 
-  // Non-inverted FlashList: data stays in natural order (oldest→newest) and the
-  // list renders from the BOTTOM (newest) via maintainVisibleContentPosition's
-  // `startRenderingFromBottom`. FlashList RECYCLES cells, so we feed it the
-  // whole loaded set directly — no manual window cap or index remapping needed
-  // (the old inverted FlatList needed both). The newest message sits at the
-  // bottom with no manual scroll; prepending OLDER messages at the top keeps
-  // the viewport pinned (mvcp's core job).
-  const windowedMessages = chatMessages;
+  // Non-inverted FlashList: data is the TAIL window of the full history
+  // (oldest-in-window → newest), rendered from the BOTTOM via
+  // maintainVisibleContentPosition's `startRenderingFromBottom`. FlashList
+  // RECYCLES cells, but we still cap the DATA to `renderWindow` so a huge chat
+  // never builds a giant element tree at once; scrolling up grows the window.
+  const windowStart = Math.max(0, chatMessages.length - renderWindow);
+  const windowedMessages = useMemo(
+    () => (windowStart > 0 ? chatMessages.slice(windowStart) : chatMessages),
+    [chatMessages, windowStart],
+  );
 
-  // Load OLDER history when the user reaches the TOP (oldest) of the list.
-  // Only fires the heavy full-history hydrate once, and defers the parse OFF
-  // the active scroll frame (a long, legacy-format chat otherwise stalls the
-  // gesture). FlashList + mvcp keeps the scroll position stable when the older
-  // messages prepend.
+  // Are there older messages above the current window? Either already loaded in
+  // the array (windowStart > 0) or still on disk (the bounded seed hit the cap,
+  // so the cache holds more behind it). Drives the top "loading older" glow.
+  const moreOlderInCache = historyHydratedRef.current !== conversationId && seedMessages.length >= SEED_CAP;
+  const hasMoreOlder = windowStart > 0 || moreOlderInCache;
+
+  // Load OLDER messages when the user reaches the TOP — purely from the
+  // in-memory/cached history (never the network). Hydrate the full array once
+  // (synchronously, so the count is accurate), then reveal the next chunk after
+  // a short beat so the top glow reads as "loading more". FlashList + mvcp keeps
+  // the scroll position pinned as the older messages prepend.
+  const loadingOlderRef = useRef(false);
   const onStartReached = useCallback(() => {
-    if (historyHydratedRef.current !== conversationId) {
-      InteractionManager.runAfterInteractions(() => { hydrateFullHistory(); });
-    }
-  }, [conversationId, hydrateFullHistory]);
+    if (loadingOlderRef.current) return;
+    if (historyHydratedRef.current !== conversationId) hydrateFullHistory();
+    const total = (useChatStore.getState().messages[conversationId || ''] || []).length;
+    if (renderWindow >= total) return; // everything older is already shown
+    loadingOlderRef.current = true;
+    setTimeout(() => {
+      setRenderWindow((cur) => Math.min(cur + WINDOW_CHUNK, Math.max(cur, total)));
+      loadingOlderRef.current = false;
+    }, 160);
+  }, [conversationId, hydrateFullHistory, renderWindow]);
 
   // Tap-a-reply-to-jump: scroll to the message a reply is quoting and flash it.
   // `replyToId` is stored on every reply message (see sendText/sendGif). The
@@ -2447,13 +2528,10 @@ export default function ChatScreen() {
     setJumpHighlightId(messageId);
     if (jumpTimerRef.current) clearTimeout(jumpTimerRef.current);
     jumpTimerRef.current = setTimeout(() => setJumpHighlightId(null), 1600);
-    // Defer one frame so a freshly hydrated array can commit before we scroll.
-    // If the target row still isn't measured, `onScrollToIndexFailed` retries.
-    jumpAttemptRef.current = 0;
-    requestAnimationFrame(() => {
-      try { flatListRef.current?.scrollToIndex({ index: idx, animated: true, viewPosition: 0.5 }); } catch {}
-    });
-  }, [chatMessages, conversationId, hydrateFullHistory]);
+    // Window-aware scroll: grows the visible window to include the target if
+    // it's older than what's currently rendered, then maps to the row.
+    scrollToIndex(idx);
+  }, [chatMessages, conversationId, hydrateFullHistory, scrollToIndex]);
   useEffect(() => () => { if (jumpTimerRef.current) clearTimeout(jumpTimerRef.current); }, []);
 
   // Guard against the freeze caused by rapid long-presses / taps while a menu is
@@ -2772,7 +2850,12 @@ export default function ChatScreen() {
         // Non-inverted: ListHeaderComponent is the TOP (oldest) spacer under the
         // header gradient; ListFooterComponent is the BOTTOM spacer above the
         // input bar. (Swapped from the old inverted layout.)
-        ListHeaderComponent={<View style={{ height: headerContentHeight + 8 }} />}
+        ListHeaderComponent={
+          <View>
+            <View style={{ height: headerContentHeight + 8 }} />
+            <OlderMessagesLoader visible={hasMoreOlder} color={theme.colors.accent.primary} />
+          </View>
+        }
         ListFooterComponent={<View style={{ height: LIST_FOOTER_HEIGHT }} />}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
