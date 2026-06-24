@@ -673,6 +673,20 @@ export default function ChatScreen() {
     const handle = InteractionManager.runAfterInteractions(() => setChromeReady(true));
     return () => handle.cancel();
   }, []);
+  // Defer the message-list mount itself past the open slide-in. Mounting the
+  // FlatList + its first batch of HEAVY bubbles (each carries gestures +
+  // several Reanimated layers) on the navigation frame is the dominant
+  // ~150-190 ms `LONG @ (tabs)/messages` long task that fires on EVERY chat
+  // open (perf snapshots). Holding the list back one InteractionManager tick
+  // lets the slide-in animation complete smoothly, THEN mounts the list — the
+  // heavy work no longer lands on the transition frame, so opening a chat no
+  // longer freezes. The keyboard/composer chrome stays mounted immediately so
+  // the screen never looks empty-broken; only the scrollback defers ~1 frame.
+  const [listReady, setListReady] = useState(false);
+  useEffect(() => {
+    const handle = InteractionManager.runAfterInteractions(() => setListReady(true));
+    return () => handle.cancel();
+  }, []);
 
   // ── Telegram-style deferred image decode (open-frame protection) ───────
   // On open, message bubbles render TEXT + correctly-sized placeholder boxes
@@ -2605,6 +2619,7 @@ export default function ChatScreen() {
           above the input bar) without triggering FlatList layout. */}
       <Reanimated.View style={[StyleSheet.absoluteFill, listShiftStyle]} pointerEvents="box-none">
       <GestureDetector gesture={panelDismissTap}>
+      {listReady ? (
       <FlatList
         ref={flatListRef}
         data={windowedMessages}
@@ -2654,6 +2669,9 @@ export default function ChatScreen() {
         onScroll={onChatScroll}
         scrollEventThrottle={32}
       />
+      ) : (
+        <View style={StyleSheet.absoluteFill} />
+      )}
       </GestureDetector>
       </Reanimated.View>
 
