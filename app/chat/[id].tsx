@@ -37,6 +37,7 @@ import { useBrowserStore } from '../../src/store/browserStore';
 import { ChatBackgroundLayer } from '../../src/components/ui/ChatBackgroundLayer';
 import { PixelIcon } from '../../src/components/pixel-icons/PixelIcon';
 import { uploadChatImage } from '../../src/lib/supabase';
+import { getImageDims, setImageDims } from '../../src/services/imageDimsCache';
 import { kvGetJSONSync, kvSetJSON, kvWarm } from '../../src/services/kvStore';
 import { mockMessages, mockConversations, formatMessageTime } from '../../src/utils/mockData';
 import { showToast } from '../../src/store/toastStore';
@@ -157,24 +158,43 @@ const bubbleStyles = StyleSheet.create({
 const CHAT_IMG_MAX_W = Math.min(Math.round(SCREEN_WIDTH * 0.66), 270);
 const CHAT_IMG_MAX_H = 340;
 
+// Fit a photo's natural pixel size into the bubble's max bounds, preserving
+// aspect ratio (no crop). Shared by the live onLoad handler and the
+// remembered-dimensions path so both compute the SAME box.
+function fitChatImageBox(natW: number, natH: number): { w: number; h: number } {
+  const ar = natW / natH;
+  let w = CHAT_IMG_MAX_W;
+  let h = Math.round(w / ar);
+  if (h > CHAT_IMG_MAX_H) { h = CHAT_IMG_MAX_H; w = Math.round(h * ar); }
+  return { w, h };
+}
+
 // Single-image bubble that fits its container to the photo's aspect ratio.
-// Starts at a neutral square placeholder, then snaps to the real dimensions
-// once expo-image reports the decoded source size (onLoad). Own tiny state →
-// the memoized MessageBubble around it is untouched.
+// If we've seen this photo before, we OPEN at its remembered size immediately
+// (no jump). Otherwise we start at a neutral square and snap to the real
+// dimensions once expo-image reports the decoded source size (onLoad) — and
+// remember them so every future open of this chat is jump-free. Own tiny
+// state → the memoized MessageBubble around it is untouched.
 function SingleChatImage({ uri, isVisible, onPress }: { uri: string; isVisible?: boolean; onPress: () => void }) {
   const theme = useTheme();
-  const [size, setSize] = useState<{ w: number; h: number }>({ w: 220, h: 220 });
-  const [loading, setLoading] = useState(true);
+  // Seed from the persisted dimension cache so a previously-seen photo mounts
+  // at the correct aspect-ratio box on the very first frame — this removes the
+  // "container changes size / photo reloads every time I open the chat" jump.
+  const [size, setSize] = useState<{ w: number; h: number }>(() => {
+    const d = getImageDims(uri);
+    return d ? fitChatImageBox(d.w, d.h) : { w: 220, h: 220 };
+  });
+  // Skip the spinner when we already know the size AND the bytes are almost
+  // certainly disk-cached (we've decoded this exact URL before) — a known
+  // photo should just appear, not flash a loader.
+  const [loading, setLoading] = useState(() => !getImageDims(uri));
   const handleLoad = useCallback((e: any) => {
     setLoading(false);
     const s = e?.source;
     if (!s?.width || !s?.height) return;
-    const ar = s.width / s.height;
-    let w = CHAT_IMG_MAX_W;
-    let h = Math.round(w / ar);
-    if (h > CHAT_IMG_MAX_H) { h = CHAT_IMG_MAX_H; w = Math.round(h * ar); }
-    setSize({ w, h });
-  }, []);
+    setImageDims(uri, s.width, s.height);
+    setSize(fitChatImageBox(s.width, s.height));
+  }, [uri]);
   const handleError = useCallback(() => setLoading(false), []);
   return (
     <Pressable onPress={onPress}>
@@ -400,7 +420,16 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
                     />
                   ) : (
                     <Pressable onPress={() => onImagePress(message.imageUrls!, 0)}>
-                      <View style={[bubbleStyles.imageSinglePlaceholder, { backgroundColor: theme.colors.background.tertiary }]} />
+                      {(() => {
+                        // Size the placeholder to the remembered photo box when
+                        // known, so the swap placeholder → real image never
+                        // changes the bubble height (no layout jump on open).
+                        const d = getImageDims(message.imageUrls![0]);
+                        const box = d ? fitChatImageBox(d.w, d.h) : { w: 220, h: 220 };
+                        return (
+                          <View style={[{ width: box.w, height: box.h, borderRadius: 12 }, { backgroundColor: theme.colors.background.tertiary }]} />
+                        );
+                      })()}
                     </Pressable>
                   )
                 ) : (
@@ -1429,6 +1458,13 @@ export default function ChatScreen() {
               original.map(async (u) => {
                 if (typeof u !== 'string' || u.startsWith('http')) return u;
                 const { url } = await uploadChatImage(u);
+                if (url) {
+                  // Carry the remembered dimensions from the local key onto the
+                  // new remote key so the photo keeps its correct box (no jump)
+                  // after the heal swaps file:// → https://.
+                  const d = getImageDims(u);
+                  if (d) setImageDims(url, d.w, d.h);
+                }
                 return url || u; // keep the local ref if the upload failed
               }),
             );
@@ -1782,6 +1818,9 @@ export default function ChatScreen() {
       if (isGif) return a.uri;
       try {
         const r = await manipulateAsync(a.uri, [{ resize: { width: 1600 } }], { compress: 0.85, format: SaveFormat.JPEG });
+        // Remember the processed dimensions so the optimistic bubble (and every
+        // future open) mounts at the correct aspect-ratio box — no size jump.
+        if (r.width && r.height) setImageDims(r.uri, r.width, r.height);
         return r.uri;
       } catch {
         return a.uri;
