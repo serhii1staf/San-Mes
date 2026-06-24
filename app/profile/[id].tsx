@@ -1165,21 +1165,6 @@ export default function UserProfileScreen() {
     if (!displayProfile) return null;
     return (
     <View style={{ marginHorizontal: -16, marginTop: -12, borderBottomLeftRadius: 30, borderBottomRightRadius: 30, overflow: 'hidden', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)' }}>
-      {/* Frosted-glass base of the rounded header card itself (the "blur card"
-          look). With no cover photo this frosts the theme scene behind the
-          module; a cover photo, when present, renders OVER it below. A faint
-          accent glow gives the subtle "magic" shimmer. */}
-      {chromeReady ? (
-        <BlurView intensity={theme.isDark ? 40 : 60} tint={theme.isDark ? 'dark' : 'light'} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} />
-      ) : null}
-      <LinearGradient
-        colors={[theme.colors.accent.primary + '1A', theme.colors.accent.primary + '00', theme.colors.accent.primary + '14']}
-        locations={[0, 0.55, 1]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
-        pointerEvents="none"
-      />
       {/* Custom cover photo as the module backdrop (the seasonal theme gradient
           already fills the screen behind this module). */}
       {bannerUrl && chromeReady ? (
@@ -1205,9 +1190,23 @@ export default function UserProfileScreen() {
           />
         </View>
       ) : null}
-      {/* Subtle scrim → keeps the module reading as a translucent panel over the
-          themed backdrop and keeps text legible on any cover. */}
-      <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: theme.isDark ? 'rgba(0,0,0,0.14)' : 'rgba(255,255,255,0.10)' }} />
+      {/* Frosted-glass overlay — THIS is the "blur card" look. Sits ABOVE the
+          cover photo (banner softly shows through the frost) but BELOW the
+          identity content (avatar / name / stats / buttons stay crisp). Visible
+          with or without a cover photo; a translucent tint guarantees the glass
+          panel reads even over a flat background, plus a faint accent glow. */}
+      {chromeReady ? (
+        <BlurView intensity={theme.isDark ? 55 : 75} tint={theme.isDark ? 'dark' : 'light'} pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} />
+      ) : null}
+      <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: theme.isDark ? 'rgba(20,21,28,0.32)' : 'rgba(255,255,255,0.34)' }} />
+      <LinearGradient
+        colors={[theme.colors.accent.primary + '26', theme.colors.accent.primary + '00', theme.colors.accent.primary + '1C']}
+        locations={[0, 0.55, 1]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+        pointerEvents="none"
+      />
 
       {/* ── Module content (left-aligned identity block, matches the mockup) ── */}
       <View style={{ paddingTop: insets.top + 52, paddingHorizontal: 20, paddingBottom: 22 }}>
