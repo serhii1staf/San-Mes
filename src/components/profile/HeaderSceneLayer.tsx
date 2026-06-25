@@ -6,10 +6,14 @@
 // needing onLayout. Used on both the owner's profile and other users' profiles
 // (the scene travels with the profile row). Purely presentational + memoized;
 // pointerEvents are off so it never blocks taps on the content beneath.
+//
+// Each glyph renders via <StickerGlyph/> at its real font size (crisp at any
+// scale) and runs its optional looping animation on the native thread.
 
 import React, { memo } from 'react';
-import { View, Text as RNText, StyleSheet } from 'react-native';
+import { View, StyleSheet } from 'react-native';
 import { HeaderScene, BASE_ITEM_SIZE } from '../../services/headerScene';
+import { StickerGlyph } from './StickerGlyph';
 
 interface Props {
   scene: HeaderScene | null | undefined;
@@ -22,10 +26,6 @@ function HeaderSceneLayerComponent({ scene, style }: Props) {
   return (
     <View pointerEvents="none" style={[StyleSheet.absoluteFill, style]}>
       {scene.items.map((it) => {
-        // Render the glyph at its REAL final size (fontSize), NOT via a
-        // transform scale of a base-size glyph — scaling a rasterized emoji is
-        // what made enlarged stickers look blurry/low-quality. Sizing the Text
-        // itself rasterizes the glyph crisply at any size.
         const size = BASE_ITEM_SIZE * it.scale;
         return (
           <View
@@ -36,18 +36,10 @@ function HeaderSceneLayerComponent({ scene, style }: Props) {
               top: `${it.y * 100}%`,
               width: size,
               height: size,
-              alignItems: 'center',
-              justifyContent: 'center',
-              transform: [
-                { translateX: -size / 2 },
-                { translateY: -size / 2 },
-                { rotate: `${it.rotation}deg` },
-              ],
+              transform: [{ translateX: -size / 2 }, { translateY: -size / 2 }],
             }}
           >
-            <RNText allowFontScaling={false} style={{ fontSize: size * 0.82 }}>
-              {it.value}
-            </RNText>
+            <StickerGlyph value={it.value} size={size} rotation={it.rotation} anim={it.anim} />
           </View>
         );
       })}

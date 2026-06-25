@@ -6,10 +6,9 @@
 // profile row (best-effort) so other users see it. Coordinates are stored
 // NORMALIZED (0..1) so the same scene renders across device widths.
 
-import React, { useCallback, useMemo, useRef, useState } from 'react';
-import { View, Pressable, ScrollView, Text as RNText, StyleSheet, PanResponder, useWindowDimensions, ActivityIndicator } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { View, Pressable, ScrollView, Text as RNText, StyleSheet, PanResponder, useWindowDimensions, ActivityIndicator, InteractionManager } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../src/theme';
@@ -19,13 +18,25 @@ import { useAuthStore } from '../../src/store/authStore';
 import { updateProfile as updateRemoteProfile } from '../../src/lib/supabase';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { showToast } from '../../src/store/toastStore';
+import { HeaderLandscape } from '../../src/components/profile/HeaderLandscape';
+import { StickerGlyph } from '../../src/components/profile/StickerGlyph';
 import {
-  HeaderScene, HeaderItem, EMPTY_SCENE, BASE_ITEM_SIZE, MAX_ITEMS,
-  STICKER_LIBRARY, HEADER_BACKGROUNDS, backgroundColors,
+  HeaderScene, HeaderItem, HeaderItemAnim, EMPTY_SCENE, BASE_ITEM_SIZE, MAX_ITEMS,
+  STICKER_LIBRARY, HEADER_BACKGROUNDS,
   getLocalScene, setLocalScene, normalizeScene,
 } from '../../src/services/headerScene';
 
 const PREVIEW_H = 300;
+
+// Looping animations a sticker can carry. Labels go through t() with a Russian
+// fallback (no new hardcoded strings — uses the existing i18n system).
+const ANIM_OPTIONS: { key: HeaderItemAnim; icon: any; label: string; tKey: string }[] = [
+  { key: 'none', icon: 'slash', label: 'Без', tKey: 'customize.anim_none' },
+  { key: 'float', icon: 'chevrons-up', label: 'Парение', tKey: 'customize.anim_float' },
+  { key: 'pulse', icon: 'heart', label: 'Пульс', tKey: 'customize.anim_pulse' },
+  { key: 'spin', icon: 'refresh-cw', label: 'Вращение', tKey: 'customize.anim_spin' },
+  { key: 'swing', icon: 'wind', label: 'Качание', tKey: 'customize.anim_swing' },
+];
 
 export default function CustomizeHeaderScreen() {
   const theme = useTheme();
@@ -49,6 +60,15 @@ export default function CustomizeHeaderScreen() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [activeGroup, setActiveGroup] = useState('bg');
+  // Defer the (heavy) library grid mount until the open transition finishes so
+  // the screen animates in at 60fps. The background grid renders 14 SVG
+  // landscapes; mounting them on the same frame as the navigation push was the
+  // cause of the open/close FPS drop. `libReady` flips one interaction later.
+  const [libReady, setLibReady] = useState(false);
+  useEffect(() => {
+    const h = InteractionManager.runAfterInteractions(() => setLibReady(true));
+    return () => h.cancel();
+  }, []);
 
   // Live drag bookkeeping (px), committed to normalized state on release.
   const dragRef = useRef<{ id: string; startX: number; startY: number } | null>(null);
@@ -151,10 +171,8 @@ export default function CustomizeHeaderScreen() {
       {/* Preview — shaped like the header card. Tap empty space to deselect. */}
       <Pressable onPress={() => setSelectedId(null)}>
         <View style={{ width: previewW, height: PREVIEW_H, overflow: 'hidden', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)', borderBottomLeftRadius: 30, borderBottomRightRadius: 30 }}>
-          {/* Chosen background gradient (behind everything in the preview). */}
-          {backgroundColors(background) ? (
-            <LinearGradient colors={backgroundColors(background) as any} start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 1 }} style={StyleSheet.absoluteFill} pointerEvents="none" />
-          ) : null}
+          {/* Chosen background — drawn landscape (behind everything in the preview). */}
+          <HeaderLandscape backgroundId={background} />
           {/* Hint when empty */}
           {items.length === 0 ? (
             <View style={{ ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 40 }}>
@@ -177,12 +195,9 @@ export default function CustomizeHeaderScreen() {
                   top: `${it.y * 100}%`,
                   width: size,
                   height: size,
-                  alignItems: 'center',
-                  justifyContent: 'center',
                   transform: [
                     { translateX: -size / 2 },
                     { translateY: -size / 2 },
-                    { rotate: `${it.rotation}deg` },
                   ],
                   borderWidth: isSel ? 1.5 : 0,
                   borderColor: theme.colors.accent.primary,
@@ -190,7 +205,7 @@ export default function CustomizeHeaderScreen() {
                   borderStyle: 'dashed',
                 }}
               >
-                <RNText allowFontScaling={false} style={{ fontSize: size * 0.82 }}>{it.value}</RNText>
+                <StickerGlyph value={it.value} size={size} rotation={it.rotation} anim={it.anim} />
               </View>
             );
           })}
@@ -199,12 +214,30 @@ export default function CustomizeHeaderScreen() {
 
       {/* Selected-item toolbar */}
       {selected ? (
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, paddingVertical: 12 }}>
-          <ToolBtn theme={theme} icon="minus" onPress={() => updateSelected({ scale: Math.max(0.4, +(selected.scale - 0.15).toFixed(2)) })} />
-          <ToolBtn theme={theme} icon="plus" onPress={() => updateSelected({ scale: Math.min(4, +(selected.scale + 0.15).toFixed(2)) })} />
-          <ToolBtn theme={theme} icon="rotate-ccw" onPress={() => updateSelected({ rotation: (selected.rotation - 15 + 360) % 360 })} />
-          <ToolBtn theme={theme} icon="rotate-cw" onPress={() => updateSelected({ rotation: (selected.rotation + 15) % 360 })} />
-          <ToolBtn theme={theme} icon="trash-2" danger onPress={deleteSelected} />
+        <View style={{ paddingVertical: 12, gap: 10 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
+            <ToolBtn theme={theme} icon="minus" onPress={() => updateSelected({ scale: Math.max(0.4, +(selected.scale - 0.15).toFixed(2)) })} />
+            <ToolBtn theme={theme} icon="plus" onPress={() => updateSelected({ scale: Math.min(4, +(selected.scale + 0.15).toFixed(2)) })} />
+            <ToolBtn theme={theme} icon="rotate-ccw" onPress={() => updateSelected({ rotation: (selected.rotation - 15 + 360) % 360 })} />
+            <ToolBtn theme={theme} icon="rotate-cw" onPress={() => updateSelected({ rotation: (selected.rotation + 15) % 360 })} />
+            <ToolBtn theme={theme} icon="trash-2" danger onPress={deleteSelected} />
+          </View>
+          {/* Animation picker — gives each sticker its own looping motion. */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+            {ANIM_OPTIONS.map((opt) => {
+              const cur = selected.anim || 'none';
+              return (
+                <AnimChip
+                  key={opt.key}
+                  theme={theme}
+                  icon={opt.icon}
+                  label={t(opt.tKey, opt.label)}
+                  active={cur === opt.key}
+                  onPress={() => { triggerHaptic('light'); updateSelected({ anim: opt.key }); }}
+                />
+              );
+            })}
+          </View>
         </View>
       ) : (
         <View style={{ height: 12 }} />
@@ -216,31 +249,33 @@ export default function CustomizeHeaderScreen() {
           {[{ key: 'bg', label: t('customize.bg', 'Фон') }, ...STICKER_LIBRARY.map((g) => ({ key: g.key, label: g.label }))].map((g) => {
             const active = g.key === activeGroup;
             return (
-              <Pressable key={g.key} onPress={() => setActiveGroup(g.key)} style={{ paddingHorizontal: 14, paddingVertical: 7, borderRadius: 18, backgroundColor: active ? theme.colors.accent.primary : (theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)') }}>
-                <RNText style={{ fontSize: 13, fontWeight: '700', color: active ? '#FFFFFF' : theme.colors.text.secondary }}>{g.label}</RNText>
+              <Pressable key={g.key} onPress={() => setActiveGroup(g.key)} style={{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 18, backgroundColor: active ? theme.colors.accent.primary : (theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)') }}>
+                <RNText allowFontScaling={false} style={{ fontSize: 13, lineHeight: 18, includeFontPadding: false, textAlignVertical: 'center', fontWeight: '700', color: active ? '#FFFFFF' : theme.colors.text.secondary }}>{g.label}</RNText>
               </Pressable>
             );
           })}
         </ScrollView>
 
         {activeGroup === 'bg' ? (
-          <ScrollView contentContainerStyle={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-evenly', paddingHorizontal: 8, paddingBottom: insets.bottom + 16, paddingTop: 10, rowGap: 16 }}>
+          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-evenly', paddingHorizontal: 8, paddingBottom: insets.bottom + 16, paddingTop: 10, rowGap: 16 }}>
             {/* "None" swatch */}
             <Pressable onPress={() => { triggerHaptic('light'); setBackground(null); }} style={{ width: 90, alignItems: 'center' }}>
               <View style={{ width: 90, height: 90, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)', borderWidth: background == null ? 3 : 0, borderColor: theme.colors.accent.primary }}>
                 <Feather name="slash" size={24} color={theme.colors.text.tertiary} />
               </View>
-              <RNText style={{ fontSize: 11, color: theme.colors.text.secondary, marginTop: 5 }}>{t('customize.none', 'Нет')}</RNText>
+              <RNText allowFontScaling={false} style={{ fontSize: 11, lineHeight: 15, includeFontPadding: false, color: theme.colors.text.secondary, marginTop: 5 }}>{t('customize.none', 'Нет')}</RNText>
             </Pressable>
-            {HEADER_BACKGROUNDS.map((b) => (
+            {libReady ? HEADER_BACKGROUNDS.map((b) => (
               <Pressable key={b.id} onPress={() => { triggerHaptic('light'); setBackground(b.id); }} style={{ width: 90, alignItems: 'center' }}>
-                <LinearGradient colors={b.colors as any} start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 1 }} style={{ width: 90, height: 90, borderRadius: 18, borderWidth: background === b.id ? 3 : 0, borderColor: theme.colors.accent.primary }} />
-                <RNText style={{ fontSize: 11, color: theme.colors.text.secondary, marginTop: 5 }}>{b.label}</RNText>
+                <View style={{ width: 90, height: 90, borderRadius: 18, overflow: 'hidden', borderWidth: background === b.id ? 3 : 0, borderColor: theme.colors.accent.primary }}>
+                  <HeaderLandscape backgroundId={b.id} />
+                </View>
+                <RNText allowFontScaling={false} style={{ fontSize: 11, lineHeight: 15, includeFontPadding: false, color: theme.colors.text.secondary, marginTop: 5 }}>{b.label}</RNText>
               </Pressable>
-            ))}
+            )) : null}
           </ScrollView>
         ) : (
-          <ScrollView contentContainerStyle={{ flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 10, paddingBottom: insets.bottom + 16, paddingTop: 4 }} keyboardShouldPersistTaps="always">
+          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 10, paddingBottom: insets.bottom + 16, paddingTop: 4 }} keyboardShouldPersistTaps="always">
             {(STICKER_LIBRARY.find((g) => g.key === activeGroup) || STICKER_LIBRARY[0]).items.map((g, i) => (
               <Pressable key={g + i} onPress={() => addItem(g)} style={{ width: '12.5%', aspectRatio: 1, alignItems: 'center', justifyContent: 'center' }}>
                 <RNText allowFontScaling={false} style={{ fontSize: 30 }}>{g}</RNText>
@@ -257,6 +292,15 @@ function ToolBtn({ theme, icon, onPress, danger }: { theme: any; icon: any; onPr
   return (
     <Pressable onPress={onPress} hitSlop={8} style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: danger ? '#FF3B3022' : (theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)') }}>
       <Feather name={icon} size={20} color={danger ? '#FF3B30' : theme.colors.text.primary} />
+    </Pressable>
+  );
+}
+
+function AnimChip({ theme, icon, label, active, onPress }: { theme: any; icon: any; label: string; active: boolean; onPress: () => void }) {
+  return (
+    <Pressable onPress={onPress} hitSlop={6} style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 11, paddingVertical: 7, borderRadius: 16, backgroundColor: active ? theme.colors.accent.primary : (theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)') }}>
+      <Feather name={icon} size={13} color={active ? '#FFFFFF' : theme.colors.text.secondary} />
+      <RNText allowFontScaling={false} style={{ fontSize: 12, lineHeight: 16, includeFontPadding: false, fontWeight: '600', color: active ? '#FFFFFF' : theme.colors.text.secondary }}>{label}</RNText>
     </Pressable>
   );
 }

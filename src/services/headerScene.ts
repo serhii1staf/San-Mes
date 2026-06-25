@@ -16,6 +16,7 @@
 import { kvGetJSONSync, kvSetJSON } from './kvStore';
 
 export type HeaderItemKind = 'emoji';
+export type HeaderItemAnim = 'none' | 'float' | 'pulse' | 'spin' | 'swing';
 
 export interface HeaderItem {
   id: string;
@@ -25,6 +26,7 @@ export interface HeaderItem {
   y: number;     // 0..1 center Y
   scale: number; // size multiplier (1 = BASE_ITEM_SIZE px)
   rotation: number; // degrees
+  anim?: HeaderItemAnim; // optional looping animation (default 'none')
 }
 
 export interface HeaderScene {
@@ -66,6 +68,56 @@ export function backgroundColors(id: string | null | undefined): string[] | null
   return HEADER_BACKGROUNDS.find((b) => b.id === id)!.colors;
 }
 
+// ── Drawn landscape scenes ────────────────────────────────────────────────
+// Each background renders as a SIMPLE DRAWN LANDSCAPE — a sky, an optional
+// sun/moon, and one or two layered silhouettes (mountains / hills / waves /
+// stars) — instead of a flat colour gradient. It is rendered by
+// <HeaderLandscape/> (SVG, viewBox-based) so the swatch, the editor preview
+// and the live profile card all draw identically at any size.
+export type LandscapeKind = 'mountains' | 'hills' | 'waves' | 'space';
+export interface LandscapeScene {
+  sky: [string, string]; // sky gradient: top → horizon
+  layers: string[];       // silhouette colours, back → front
+  kind: LandscapeKind;
+  celestial: 'sun' | 'moon' | null;
+  celestialColor: string;
+}
+
+// Silhouette shape per background id.
+const LANDSCAPE_KIND: Record<string, LandscapeKind> = {
+  sunset: 'mountains', dawn: 'mountains', ocean: 'waves', meadow: 'hills',
+  forest: 'hills', desert: 'mountains', galaxy: 'space', aurora: 'space',
+  sakura: 'hills', snow: 'mountains', lavender: 'hills', fire: 'mountains',
+  mint: 'hills', night: 'space',
+};
+// Sun / moon (or none) per background id.
+const CELESTIAL: Record<string, 'sun' | 'moon' | null> = {
+  sunset: 'sun', dawn: 'sun', ocean: 'sun', meadow: 'sun', forest: null,
+  desert: 'sun', galaxy: 'moon', aurora: 'moon', sakura: 'sun', snow: 'sun',
+  lavender: 'moon', fire: 'sun', mint: 'sun', night: 'moon',
+};
+// Warm-vs-cool celestial body tint per background id.
+const CELESTIAL_COLOR: Record<string, string> = {
+  sunset: '#FFE3A0', dawn: '#FFE0B8', ocean: '#FFF4C8', meadow: '#FFF6CE',
+  desert: '#FFEAB0', sakura: '#FFF0F5', snow: '#FFFBEF', fire: '#FFD27A',
+  mint: '#F2FFF6', galaxy: '#DCE6FF', aurora: '#E6FFF4', lavender: '#F0EAFF',
+  night: '#E6EEFF',
+};
+
+/** Full drawn-landscape descriptor for a background id (or null if unknown). */
+export function backgroundScene(id: string | null | undefined): LandscapeScene | null {
+  if (!id || !BG_SET.has(id)) return null;
+  const c = HEADER_BACKGROUNDS.find((b) => b.id === id)!.colors;
+  const celestial = id in CELESTIAL ? CELESTIAL[id] : 'sun';
+  return {
+    sky: [c[0], c[1]],
+    layers: [c[2] ?? c[1], c[3] ?? c[2] ?? c[1]],
+    kind: LANDSCAPE_KIND[id] ?? 'mountains',
+    celestial,
+    celestialColor: CELESTIAL_COLOR[id] ?? (celestial === 'moon' ? '#E6EEFF' : '#FFE8A3'),
+  };
+}
+
 /** Normalize any unknown/legacy value (object OR JSON string) into a safe scene. */
 export function normalizeScene(raw: unknown): HeaderScene {
   let obj: any = raw;
@@ -76,6 +128,7 @@ export function normalizeScene(raw: unknown): HeaderScene {
   if (!obj || typeof obj !== 'object') return EMPTY_SCENE;
   const items = Array.isArray(obj.items) ? obj.items : [];
   const clean: HeaderItem[] = [];
+  const ANIMS = new Set(['none', 'float', 'pulse', 'spin', 'swing']);
   for (const it of items) {
     if (!it || typeof it !== 'object') continue;
     if (typeof it.value !== 'string' || !it.value) continue;
@@ -89,6 +142,7 @@ export function normalizeScene(raw: unknown): HeaderScene {
       y: isFinite(y) ? Math.min(1, Math.max(0, y)) : 0.5,
       scale: isFinite(scale) ? Math.min(4, Math.max(0.4, scale)) : 1,
       rotation: isFinite(rotation) ? ((rotation % 360) + 360) % 360 : 0,
+      anim: typeof it.anim === 'string' && ANIMS.has(it.anim) ? (it.anim as any) : 'none',
     });
     if (clean.length >= MAX_ITEMS) break;
   }
