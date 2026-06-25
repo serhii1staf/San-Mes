@@ -131,6 +131,39 @@ export function backgroundScene(id: string | null | undefined): LandscapeScene |
   };
 }
 
+/**
+ * Sanitize a freehand SVG path `d` into a SAFE string for react-native-svg's
+ * native parser. Critically, it rebuilds the path from only FULLY-MATCHED
+ * "M x y" / "L x y" commands, so a value that was truncated mid-number (e.g.
+ * by a length cap) can never reach the native parser — a partial trailing
+ * number there throws `characterAtIndex: out of bounds` and crashes the app.
+ * Returns null when there's nothing valid to draw. Also length-bounds the
+ * result by keeping whole commands only (never cutting inside a token).
+ */
+export function sanitizePathD(input: unknown, maxLen = 1400): string | null {
+  if (typeof input !== 'string') return null;
+  // Reject anything with characters outside the safe path alphabet.
+  if (!/^[MLZmlz0-9.\-\s]*$/.test(input)) return null;
+  // Extract only complete move/line commands with two finite coordinates.
+  const cmds = input.match(/[ML]\s*-?\d+(?:\.\d+)?\s+-?\d+(?:\.\d+)?/gi);
+  if (!cmds || cmds.length === 0) return null;
+  // Normalize each command's internal spacing and keep whole commands until
+  // the length budget is reached (so the result is always valid SVG).
+  const out: string[] = [];
+  let len = 0;
+  for (const c of cmds) {
+    const norm = c.replace(/\s+/g, ' ').trim();
+    if (len + norm.length + 1 > maxLen) break;
+    out.push(norm);
+    len += norm.length + 1;
+  }
+  if (out.length === 0) return null;
+  // A path must start with a moveto; if the budget dropped the leading M,
+  // promote the first lineto to a moveto so it still renders.
+  if (!/^M/i.test(out[0])) out[0] = out[0].replace(/^L/i, 'M');
+  return out.join(' ');
+}
+
 /** Normalize any unknown/legacy value (object OR JSON string) into a safe scene. */
 export function normalizeScene(raw: unknown): HeaderScene {
   let obj: any = raw;
@@ -168,10 +201,11 @@ export function normalizeScene(raw: unknown): HeaderScene {
     const strokes: HeaderDrawStroke[] = [];
     for (const s of obj.drawing) {
       if (!s || typeof s !== 'object') continue;
-      if (typeof s.d !== 'string' || !s.d) continue;
+      const d = sanitizePathD(s.d);
+      if (!d) continue; // drop malformed / truncated strokes (crash-safe)
       strokes.push({
-        d: String(s.d).slice(0, 1400),
-        color: typeof s.color === 'string' ? s.color.slice(0, 16) : '#FFFFFF',
+        d,
+        color: typeof s.color === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(s.color) ? s.color : '#FFFFFF',
         w: isFinite(Number(s.w)) ? Math.min(12, Math.max(0.5, Number(s.w))) : 2,
       });
       if (strokes.length >= 60) break;

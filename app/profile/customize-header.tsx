@@ -339,25 +339,45 @@ function DrawCanvas({ width, height, color, strokeWidth, strokes, onComplete }: 
 }) {
   const [cur, setCur] = useState('');
   const pathRef = useRef('');
-  const to = (v: number, size: number) => Math.max(0, Math.min(100, (v / size) * 100)).toFixed(1);
+  const lastRef = useRef<{ x: number; y: number } | null>(null);
+  const ptsRef = useRef(0);
+  const to = (v: number, size: number) => Math.max(0, Math.min(100, (v / size) * 100));
+  const fmt = (n: number) => n.toFixed(1);
+  const MAX_PTS = 240; // hard cap so a single stroke can't bloat the scene
+  const MIN_STEP = 0.6; // min normalized distance between captured points
   const pan = useMemo(() => PanResponder.create({
     onStartShouldSetPanResponder: () => true,
     onMoveShouldSetPanResponder: () => true,
     onPanResponderGrant: (e) => {
-      const { locationX: x, locationY: y } = e.nativeEvent;
-      pathRef.current = `M${to(x, width)} ${to(y, height)}`;
+      const x = to(e.nativeEvent.locationX, width);
+      const y = to(e.nativeEvent.locationY, height);
+      pathRef.current = `M${fmt(x)} ${fmt(y)}`;
+      lastRef.current = { x, y };
+      ptsRef.current = 1;
       setCur(pathRef.current);
     },
     onPanResponderMove: (e) => {
-      const { locationX: x, locationY: y } = e.nativeEvent;
-      pathRef.current += ` L${to(x, width)} ${to(y, height)}`;
+      if (ptsRef.current >= MAX_PTS) return;
+      const x = to(e.nativeEvent.locationX, width);
+      const y = to(e.nativeEvent.locationY, height);
+      const last = lastRef.current;
+      // Throttle: skip points that barely moved (keeps the path short + smooth).
+      if (last && Math.abs(x - last.x) < MIN_STEP && Math.abs(y - last.y) < MIN_STEP) return;
+      pathRef.current += ` L${fmt(x)} ${fmt(y)}`;
+      lastRef.current = { x, y };
+      ptsRef.current += 1;
       setCur(pathRef.current);
     },
     onPanResponderRelease: () => {
+      // Only commit strokes that actually have a line (≥1 L command); the
+      // scene normalizer sanitizes again before persisting.
       if (pathRef.current.includes('L')) onComplete({ d: pathRef.current, color, w: strokeWidth });
-      pathRef.current = ''; setCur('');
+      pathRef.current = ''; lastRef.current = null; ptsRef.current = 0; setCur('');
     },
-    onPanResponderTerminate: () => { pathRef.current = ''; setCur(''); },
+    onPanResponderTerminate: () => {
+      if (pathRef.current.includes('L')) onComplete({ d: pathRef.current, color, w: strokeWidth });
+      pathRef.current = ''; lastRef.current = null; ptsRef.current = 0; setCur('');
+    },
   }), [width, height, color, strokeWidth, onComplete]);
 
   return (
