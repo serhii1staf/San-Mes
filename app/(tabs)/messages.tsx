@@ -51,6 +51,15 @@ const MESSAGES_ITEM_LAYOUT = (_data: ArrayLike<Conversation> | null | undefined,
   index,
 });
 
+// Stable keyExtractor + content-container style for the conversation FlatList.
+// Both were previously inline (`(item) => item.id` and `{ paddingBottom: 100 }`),
+// so every MessagesScreen re-render (one per search keystroke, plus store
+// pushes) handed FlatList fresh identities and defeated its prop-equality
+// bail-outs. Hoisting to module scope makes them referentially stable for the
+// life of the screen.
+const MESSAGES_KEY_EXTRACTOR = (item: Conversation) => item.id;
+const MESSAGES_LIST_CONTENT_STYLE = { paddingBottom: 100 } as const;
+
 function MiniAppsRow() {
   const theme = useTheme();
   const t = useT();
@@ -750,6 +759,65 @@ export default function MessagesScreen() {
     [separatorColor],
   );
 
+  // ─── Category-tab chips — memoized data + renderItem ──────────────────────
+  // The horizontal category FlatList previously took an INLINE `data` literal
+  // (5 fresh objects every render) and an INLINE `renderItem` arrow (fresh
+  // identity every render), so it reconciled all five chip subtrees on EVERY
+  // MessagesScreen re-render — including one per keystroke while searching and
+  // every store push / openedAt bump. Memoizing both confines that work to
+  // when the inputs actually change: `locale` for the labels (depending on the
+  // unstable `t` hook would defeat the memo — same reasoning as the `filtered`
+  // memo above), and active tab / glass mode / theme for the chip styling.
+  const categoryTabsData = useMemo(
+    () => [
+      { key: 'chats' as ChatTab, label: tStatic('messages.tab.chats') },
+      { key: 'apps' as ChatTab, label: tStatic('messages.tab.apps') },
+      { key: 'archive' as ChatTab, label: tStatic('messages.tab.archive') },
+      { key: 'blocked' as ChatTab, label: tStatic('messages.tab.blocked') },
+      { key: 'deleted' as ChatTab, label: tStatic('messages.tab.deleted') },
+    ],
+    // `locale` (stable) drives label re-translation; tStatic reads the same
+    // active locale the `t` hook would. eslint-disable to keep `locale` as the
+    // intentional trigger without listing the module-level `tStatic`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [locale],
+  );
+  const categoryTabKeyExtractor = useCallback((tab: { key: ChatTab }) => tab.key, []);
+  const renderCategoryTab = useCallback(
+    ({ item: tab }: { item: { key: ChatTab; label: string } }) => {
+      const isActive = activeTab === tab.key;
+      const label = (
+        <Text variant="caption" weight={isActive ? 'bold' : 'regular'} color={isActive ? theme.colors.accent.primary : theme.colors.text.tertiary} style={{ fontSize: 12 }}>{tab.label}</Text>
+      );
+      // Interactive liquid glass capsule holding the label as a CHILD so it
+      // morphs outward on touch (gold-standard pattern). The ACTIVE chip gets a
+      // subtle accent tint so selection still reads clearly over the glass;
+      // inactive chips are clear glass. NO overflow clip, own borderRadius.
+      // Falls back to the flat accent fill when off.
+      if (glassActive) {
+        return (
+          <Pressable onPress={() => setActiveTab(tab.key)} style={{ borderRadius: 16 }}>
+            <NativeGlassView
+              glassStyle="regular"
+              isInteractive
+              colorScheme={theme.isDark ? 'dark' : 'light'}
+              tintColor={isActive ? theme.colors.accent.primary + '38' : undefined}
+              style={{ paddingHorizontal: 14, paddingVertical: 6, borderRadius: 16, alignItems: 'center', justifyContent: 'center' }}
+            >
+              {label}
+            </NativeGlassView>
+          </Pressable>
+        );
+      }
+      return (
+        <Pressable onPress={() => setActiveTab(tab.key)} style={{ paddingHorizontal: 14, paddingVertical: 6, borderRadius: 16, backgroundColor: isActive ? theme.colors.accent.primary + '20' : 'transparent' }}>
+          {label}
+        </Pressable>
+      );
+    },
+    [activeTab, glassActive, theme],
+  );
+
   return (
     <View style={containerStyle}>
       {/* Gradient fade header */}
@@ -800,47 +868,11 @@ export default function MessagesScreen() {
       <View style={{ marginBottom: 8 }}>
         <FlatList
           horizontal
-          data={[
-            { key: 'chats', label: t('messages.tab.chats') },
-            { key: 'apps', label: t('messages.tab.apps') },
-            { key: 'archive', label: t('messages.tab.archive') },
-            { key: 'blocked', label: t('messages.tab.blocked') },
-            { key: 'deleted', label: t('messages.tab.deleted') },
-          ]}
-          keyExtractor={(t) => t.key}
+          data={categoryTabsData}
+          keyExtractor={categoryTabKeyExtractor}
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={{ paddingHorizontal: theme.spacing.base, gap: 8 }}
-          renderItem={({ item: tab }) => {
-            const isActive = activeTab === tab.key;
-            const label = (
-              <Text variant="caption" weight={isActive ? 'bold' : 'regular'} color={isActive ? theme.colors.accent.primary : theme.colors.text.tertiary} style={{ fontSize: 12 }}>{tab.label}</Text>
-            );
-            // Interactive liquid glass capsule holding the label as a CHILD so
-            // it morphs outward on touch (gold-standard pattern). The ACTIVE
-            // chip gets a subtle accent tint so selection still reads clearly
-            // over the glass; inactive chips are clear glass. NO overflow clip,
-            // own borderRadius. Falls back to the flat accent fill when off.
-            if (glassActive) {
-              return (
-                <Pressable onPress={() => setActiveTab(tab.key as ChatTab)} style={{ borderRadius: 16 }}>
-                  <NativeGlassView
-                    glassStyle="regular"
-                    isInteractive
-                    colorScheme={theme.isDark ? 'dark' : 'light'}
-                    tintColor={isActive ? theme.colors.accent.primary + '38' : undefined}
-                    style={{ paddingHorizontal: 14, paddingVertical: 6, borderRadius: 16, alignItems: 'center', justifyContent: 'center' }}
-                  >
-                    {label}
-                  </NativeGlassView>
-                </Pressable>
-              );
-            }
-            return (
-              <Pressable onPress={() => setActiveTab(tab.key as ChatTab)} style={{ paddingHorizontal: 14, paddingVertical: 6, borderRadius: 16, backgroundColor: isActive ? theme.colors.accent.primary + '20' : 'transparent' }}>
-                {label}
-              </Pressable>
-            );
-          }}
+          renderItem={renderCategoryTab}
         />
       </View>
 
@@ -874,10 +906,10 @@ export default function MessagesScreen() {
           ) : (
             <FlatList
               data={filtered}
-              keyExtractor={(item) => item.id}
+              keyExtractor={MESSAGES_KEY_EXTRACTOR}
               renderItem={renderConversationItem}
               ItemSeparatorComponent={renderSeparator}
-              contentContainerStyle={{ paddingBottom: 100 }}
+              contentContainerStyle={MESSAGES_LIST_CONTENT_STYLE}
               showsVerticalScrollIndicator={false}
               removeClippedSubviews={true}
               initialNumToRender={8}

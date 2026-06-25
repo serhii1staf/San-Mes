@@ -2736,6 +2736,28 @@ export default function ChatScreen() {
     );
   }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, chatSettings.linkEmoji, bubbleColorsKey, bubbleColors, bubbleOpacity, bubbleTextColor, inColorsKey, inColors, inOpacity, inTextColor, startReply, scrollToMessageId, handleSwipeActive, openImageViewer, parseMessage, activeMatchId, jumpHighlightId, onMessageLongPress, currentUserId, dragActiveSV, dragFingerYSV, hoveredActionSV, actionZonesSV, fireDragAction, visTracker, imagesReady]);
 
+  // Stable list header / footer elements. Passing INLINE JSX to FlashList's
+  // ListHeaderComponent / ListFooterComponent handed it a fresh element
+  // identity on every ChatScreen re-render (reply / edit / keyboard /
+  // scroll-button state all re-render this screen), forcing FlashList to
+  // reconcile the header subtree — which holds the animated
+  // OlderMessagesLoader — and the footer spacer each time. Memoizing them
+  // keeps the element identities stable except when their real inputs change
+  // (header height, the "more older" flag, accent color, footer height).
+  const listHeaderEl = useMemo(
+    () => (
+      <View>
+        <View style={{ height: headerContentHeight + 8 }} />
+        <OlderMessagesLoader visible={hasMoreOlder} color={theme.colors.accent.primary} />
+      </View>
+    ),
+    [headerContentHeight, hasMoreOlder, theme.colors.accent.primary],
+  );
+  const listFooterEl = useMemo(
+    () => <View style={{ height: LIST_FOOTER_HEIGHT }} />,
+    [LIST_FOOTER_HEIGHT],
+  );
+
   // Stable callback refs for FlatList — without these, every parent render
   // hands FlatList fresh function identities and breaks its row recycling
   // shortcuts. Both functions only close over `flatListRef.current`, so they
@@ -2861,13 +2883,8 @@ export default function ChatScreen() {
         // Non-inverted: ListHeaderComponent is the TOP (oldest) spacer under the
         // header gradient; ListFooterComponent is the BOTTOM spacer above the
         // input bar. (Swapped from the old inverted layout.)
-        ListHeaderComponent={
-          <View>
-            <View style={{ height: headerContentHeight + 8 }} />
-            <OlderMessagesLoader visible={hasMoreOlder} color={theme.colors.accent.primary} />
-          </View>
-        }
-        ListFooterComponent={<View style={{ height: LIST_FOOTER_HEIGHT }} />}
+        ListHeaderComponent={listHeaderEl}
+        ListFooterComponent={listFooterEl}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
