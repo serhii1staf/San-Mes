@@ -48,6 +48,7 @@ import { useScreenCaptureGuard } from '../../src/hooks/useScreenCaptureGuard';
 import { ScreenshotShield } from '../../src/components/ui/ScreenshotShield';
 import { BannerFloatingLinks } from '../../src/components/profile/BannerFloatingLinks';
 import { HeaderSceneLayer } from '../../src/components/profile/HeaderSceneLayer';
+import { HeaderBackgroundLayer } from '../../src/components/profile/HeaderBackgroundLayer';
 import { getLocalScene, normalizeScene } from '../../src/services/headerScene';
 import { useIsFocused } from '@react-navigation/native';
 // Seasonal Profile Themes (task 6.1) — render the owner's OWN profile in the
@@ -948,6 +949,10 @@ export default function ProfileScreen() {
       ) : null}
       {/* (Frosted overlay moved to the END of the card so it covers the
           content too — see below, just before the card closes.) */}
+
+      {/* User-chosen background gradient — card backdrop, above any cover photo
+          but below the identity content. */}
+      <HeaderBackgroundLayer backgroundId={ownScene.background} />
 
       {/* ── Module content (left-aligned identity block, matches the mockup) ── */}
       <View style={{ paddingTop: insets.top + 52, paddingHorizontal: 20, paddingBottom: 22 }}>

@@ -1,16 +1,17 @@
 // headerScene
 // -----------
-// "Build-your-own" profile header decorations. A HeaderScene is a small list
-// of freely-placed items (emoji / sticker glyphs) the user arranges on top of
-// the frosted header card. It is stored:
-//   • LOCALLY (per-account MMKV) keyed by user id, so the owner sees their
-//     scene instantly and offline; and
-//   • on the PROFILE ROW (best-effort, via updateProfile → PATCH /v1/profiles/me
-//     `header_scene`) so OTHER users fetch and render it through getProfile.
+// "Build-your-own" profile header. A HeaderScene is an optional BACKGROUND
+// (a named gradient) plus a list of freely-placed sticker items the user
+// arranges on the frosted header card. Stored:
+//   • LOCALLY (per-account MMKV) keyed by user id — instant + offline for the
+//     owner; and
+//   • on the PROFILE ROW via PATCH /v1/profiles/me `header_scene` (the Worker
+//     persists it as TEXT JSON and returns it on GET /v1/profiles/:id), so
+//     OTHER users render it too.
 //
-// Coordinates are NORMALIZED (0..1) relative to the header card box, so a scene
-// renders identically across device widths. `scale` is relative to a base glyph
-// size; `rotation` is in degrees.
+// Coordinates are NORMALIZED (0..1) within the card box so a scene renders
+// identically on any device width. `scale` is relative to BASE_ITEM_SIZE;
+// `rotation` is degrees.
 
 import { kvGetJSONSync, kvSetJSON } from './kvStore';
 
@@ -19,9 +20,9 @@ export type HeaderItemKind = 'emoji';
 export interface HeaderItem {
   id: string;
   kind: HeaderItemKind;
-  value: string; // the emoji / sticker glyph
-  x: number;     // 0..1 (left → right) center position within the card
-  y: number;     // 0..1 (top → bottom) center position within the card
+  value: string; // emoji / sticker glyph
+  x: number;     // 0..1 center X
+  y: number;     // 0..1 center Y
   scale: number; // size multiplier (1 = BASE_ITEM_SIZE px)
   rotation: number; // degrees
 }
@@ -29,22 +30,45 @@ export interface HeaderItem {
 export interface HeaderScene {
   version: 1;
   items: HeaderItem[];
+  /** Named background gradient id (see HEADER_BACKGROUNDS), or null = none. */
+  background?: string | null;
 }
 
-/** Base glyph size (px) at scale = 1. */
 export const BASE_ITEM_SIZE = 40;
-/** Hard cap on items so a scene can never bloat the profile row / a frame. */
 export const MAX_ITEMS = 24;
-
-export const EMPTY_SCENE: HeaderScene = { version: 1, items: [] };
+export const EMPTY_SCENE: HeaderScene = { version: 1, items: [], background: null };
 
 const keyFor = (userId: string) => `header_scene:${userId}`;
 
-/** Normalize any unknown/legacy value into a safe, renderable HeaderScene. */
+// ── Background gradients ──────────────────────────────────────────────────
+export interface HeaderBackground { id: string; label: string; colors: string[] }
+export const HEADER_BACKGROUNDS: HeaderBackground[] = [
+  { id: 'sunset', label: 'Закат', colors: ['#FFC18A', '#FF7E79', '#7A4A86'] },
+  { id: 'ocean', label: 'Океан', colors: ['#CDEFFF', '#7FC9EC', '#1E6FA8'] },
+  { id: 'forest', label: 'Лес', colors: ['#CFE9C7', '#7FB069', '#27531F'] },
+  { id: 'galaxy', label: 'Галактика', colors: ['#0A0420', '#241252', '#4B2A8A'] },
+  { id: 'sakura', label: 'Сакура', colors: ['#FFE9F0', '#FBC9DA', '#F49AB6'] },
+  { id: 'aurora', label: 'Сияние', colors: ['#06121F', '#0E2A3A', '#123048'] },
+  { id: 'lavender', label: 'Лаванда', colors: ['#ECE3F7', '#CBB3EA', '#9B7FD0'] },
+  { id: 'fire', label: 'Пламя', colors: ['#2B0A0A', '#7A1F1F', '#FF6A3D'] },
+  { id: 'mint', label: 'Мята', colors: ['#E6FFF4', '#9CE7C9', '#39B58C'] },
+  { id: 'night', label: 'Ночь', colors: ['#0B1E3D', '#16335E', '#2E5A8F'] },
+];
+const BG_SET = new Set(HEADER_BACKGROUNDS.map((b) => b.id));
+export function backgroundColors(id: string | null | undefined): string[] | null {
+  if (!id || !BG_SET.has(id)) return null;
+  return HEADER_BACKGROUNDS.find((b) => b.id === id)!.colors;
+}
+
+/** Normalize any unknown/legacy value (object OR JSON string) into a safe scene. */
 export function normalizeScene(raw: unknown): HeaderScene {
-  if (!raw || typeof raw !== 'object') return EMPTY_SCENE;
-  const anyRaw = raw as any;
-  const items = Array.isArray(anyRaw.items) ? anyRaw.items : [];
+  let obj: any = raw;
+  if (typeof raw === 'string') {
+    if (!raw.trim()) return EMPTY_SCENE;
+    try { obj = JSON.parse(raw); } catch { return EMPTY_SCENE; }
+  }
+  if (!obj || typeof obj !== 'object') return EMPTY_SCENE;
+  const items = Array.isArray(obj.items) ? obj.items : [];
   const clean: HeaderItem[] = [];
   for (const it of items) {
     if (!it || typeof it !== 'object') continue;
@@ -62,36 +86,35 @@ export function normalizeScene(raw: unknown): HeaderScene {
     });
     if (clean.length >= MAX_ITEMS) break;
   }
-  return { version: 1, items: clean };
+  const background = typeof obj.background === 'string' && BG_SET.has(obj.background) ? obj.background : null;
+  return { version: 1, items: clean, background };
 }
 
-/** Read the locally-cached scene for a user (synchronous, cheap). */
 export function getLocalScene(userId: string | null | undefined): HeaderScene {
   if (!userId) return EMPTY_SCENE;
-  try {
-    return normalizeScene(kvGetJSONSync<HeaderScene>(keyFor(userId), EMPTY_SCENE as any));
-  } catch {
-    return EMPTY_SCENE;
-  }
+  try { return normalizeScene(kvGetJSONSync<HeaderScene>(keyFor(userId), EMPTY_SCENE as any)); }
+  catch { return EMPTY_SCENE; }
 }
 
-/** Persist the scene locally (per-account). */
 export function setLocalScene(userId: string | null | undefined, scene: HeaderScene): void {
   if (!userId) return;
   try { kvSetJSON(keyFor(userId), normalizeScene(scene)); } catch {}
 }
 
+/** True when a scene has nothing to render (used to skip layers). */
+export function isEmptyScene(s: HeaderScene | null | undefined): boolean {
+  return !s || ((s.items?.length ?? 0) === 0 && !s.background);
+}
+
 // ── Sticker library ─────────────────────────────────────────────────────────
-// Curated, grouped glyphs the user drags onto the card. Kept as plain emoji so
-// it renders everywhere with zero assets; richer sticker packs (pixel icons,
-// animated) can be layered on later behind the same HeaderItem model.
+// Tightly-themed groups; each glyph belongs to its category's topic.
 export interface StickerGroup { key: string; label: string; items: string[] }
 
 export const STICKER_LIBRARY: StickerGroup[] = [
-  { key: 'space', label: 'Космос', items: ['🌙', '⭐', '🌟', '✨', '💫', '🪐', '🚀', '🌌', '☄️', '🛸', '👽', '🌠'] },
-  { key: 'nature', label: 'Природа', items: ['🌸', '🌷', '🌹', '🌻', '🌿', '🍃', '🌲', '🌴', '🍀', '🌊', '🔥', '🌈', '☀️', '⛅', '❄️', '🍄'] },
-  { key: 'cute', label: 'Милое', items: ['🐱', '🐶', '🦊', '🐼', '🐰', '🐻', '🦋', '🐝', '🐙', '🦄', '🐧', '🐢', '🦔', '🐸'] },
-  { key: 'love', label: 'Любовь', items: ['❤️', '🧡', '💛', '💚', '💙', '💜', '🤍', '🩷', '💖', '💗', '💕', '💞', '💘', '💝'] },
-  { key: 'fun', label: 'Фан', items: ['😎', '🥳', '🤩', '😈', '👾', '🤖', '🎮', '🕹️', '🎲', '🎯', '🎸', '🎧', '👑', '💎', '⚡', '💥'] },
-  { key: 'signs', label: 'Знаки', items: ['✅', '❌', '❗', '❓', '💯', '♾️', '☯️', '☮️', '🔮', '🧿', '🪬', '🏆', '🥇', '🎀'] },
+  { key: 'space', label: 'Космос', items: ['🌙', '⭐', '🌟', '✨', '💫', '☄️', '🪐', '🌌', '🚀', '🛸', '👽', '🌠', '🔭', '🌕', '🌑', '🪨'] },
+  { key: 'nature', label: 'Природа', items: ['🌸', '🌷', '🌹', '🌻', '🌼', '🌿', '🍃', '🍀', '🌲', '🌴', '🌵', '🍄', '🌊', '🏔️', '🌈', '🍁'] },
+  { key: 'cute', label: 'Милые', items: ['🐱', '🐶', '🦊', '🐼', '🐰', '🐻', '🐨', '🐸', '🦋', '🐝', '🐧', '🐙', '🦄', '🦔', '🐢', '🐹'] },
+  { key: 'love', label: 'Любовь', items: ['❤️', '🧡', '💛', '💚', '💙', '💜', '🤍', '🩷', '💖', '💗', '💕', '💞', '💘', '💝', '😍', '🥰'] },
+  { key: 'badges', label: 'Значки', items: ['✅', '⭐', '🏆', '🥇', '🥈', '🥉', '👑', '💎', '🔰', '🎖️', '🏅', '💯', '✔️', '⚜️', '🛡️', '🎗️'] },
+  { key: 'fun', label: 'Фан', items: ['😎', '🥳', '🤩', '😈', '👾', '🤖', '🎮', '🕹️', '🎲', '🎯', '🎸', '🎧', '🔥', '⚡', '💥', '🎉'] },
 ];

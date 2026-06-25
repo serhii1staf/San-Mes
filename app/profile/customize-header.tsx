@@ -9,6 +9,7 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { View, Pressable, ScrollView, Text as RNText, StyleSheet, PanResponder, useWindowDimensions, ActivityIndicator } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../src/theme';
@@ -19,7 +20,8 @@ import { triggerHaptic } from '../../src/utils/haptics';
 import { showToast } from '../../src/store/toastStore';
 import {
   HeaderScene, HeaderItem, EMPTY_SCENE, BASE_ITEM_SIZE, MAX_ITEMS,
-  STICKER_LIBRARY, getLocalScene, setLocalScene, normalizeScene,
+  STICKER_LIBRARY, HEADER_BACKGROUNDS, backgroundColors,
+  getLocalScene, setLocalScene, normalizeScene,
 } from '../../src/services/headerScene';
 
 const PREVIEW_H = 300;
@@ -41,9 +43,10 @@ export default function CustomizeHeaderScreen() {
   }, [user]);
 
   const [items, setItems] = useState<HeaderItem[]>(initial.items);
+  const [background, setBackground] = useState<string | null>(initial.background ?? null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [activeGroup, setActiveGroup] = useState(STICKER_LIBRARY[0].key);
+  const [activeGroup, setActiveGroup] = useState('bg');
 
   // Live drag bookkeeping (px), committed to normalized state on release.
   const dragRef = useRef<{ id: string; startX: number; startY: number } | null>(null);
@@ -115,7 +118,7 @@ export default function CustomizeHeaderScreen() {
   const onSave = useCallback(async () => {
     if (!user?.id) { router.back(); return; }
     setSaving(true);
-    const scene: HeaderScene = normalizeScene({ version: 1, items });
+    const scene: HeaderScene = normalizeScene({ version: 1, items, background });
     // 1) Local (instant, offline, per-account).
     setLocalScene(user.id, scene);
     // 2) Reflect on the in-memory user so the profile card updates immediately.
@@ -126,10 +129,9 @@ export default function CustomizeHeaderScreen() {
     triggerHaptic('light');
     showToast('Оформление сохранено', 'check-circle');
     router.back();
-  }, [user, items, updateLocalUser]);
+  }, [user, items, background, updateLocalUser]);
 
   const selected = items.find((it) => it.id === selectedId) || null;
-  const group = STICKER_LIBRARY.find((g) => g.key === activeGroup) || STICKER_LIBRARY[0];
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
@@ -147,6 +149,10 @@ export default function CustomizeHeaderScreen() {
       {/* Preview — shaped like the header card. Tap empty space to deselect. */}
       <Pressable onPress={() => setSelectedId(null)}>
         <View style={{ width: previewW, height: PREVIEW_H, overflow: 'hidden', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)', borderBottomLeftRadius: 30, borderBottomRightRadius: 30 }}>
+          {/* Chosen background gradient (behind everything in the preview). */}
+          {backgroundColors(background) ? (
+            <LinearGradient colors={backgroundColors(background) as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} pointerEvents="none" />
+          ) : null}
           {/* Hint when empty */}
           {items.length === 0 ? (
             <View style={{ ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 40 }}>
@@ -205,7 +211,7 @@ export default function CustomizeHeaderScreen() {
       {/* Library — group tabs + glyph grid */}
       <View style={{ flex: 1 }}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 12, gap: 8, paddingVertical: 6 }} style={{ flexGrow: 0 }}>
-          {STICKER_LIBRARY.map((g) => {
+          {[{ key: 'bg', label: 'Фон' }, ...STICKER_LIBRARY.map((g) => ({ key: g.key, label: g.label }))].map((g) => {
             const active = g.key === activeGroup;
             return (
               <Pressable key={g.key} onPress={() => setActiveGroup(g.key)} style={{ paddingHorizontal: 14, paddingVertical: 7, borderRadius: 18, backgroundColor: active ? theme.colors.accent.primary : (theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)') }}>
@@ -214,13 +220,30 @@ export default function CustomizeHeaderScreen() {
             );
           })}
         </ScrollView>
-        <ScrollView contentContainerStyle={{ flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 10, paddingBottom: insets.bottom + 16, paddingTop: 4 }} keyboardShouldPersistTaps="always">
-          {group.items.map((g, i) => (
-            <Pressable key={g + i} onPress={() => addItem(g)} style={{ width: '12.5%', aspectRatio: 1, alignItems: 'center', justifyContent: 'center' }}>
-              <RNText allowFontScaling={false} style={{ fontSize: 30 }}>{g}</RNText>
+
+        {activeGroup === 'bg' ? (
+          <ScrollView contentContainerStyle={{ flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 12, paddingBottom: insets.bottom + 16, paddingTop: 6, gap: 12 }}>
+            {/* "None" swatch */}
+            <Pressable onPress={() => { triggerHaptic('light'); setBackground(null); }} style={{ width: 76, height: 76, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)', borderWidth: background == null ? 2 : 0, borderColor: theme.colors.accent.primary }}>
+              <Feather name="slash" size={22} color={theme.colors.text.tertiary} />
+              <RNText style={{ fontSize: 10, color: theme.colors.text.tertiary, marginTop: 4 }}>Нет</RNText>
             </Pressable>
-          ))}
-        </ScrollView>
+            {HEADER_BACKGROUNDS.map((b) => (
+              <Pressable key={b.id} onPress={() => { triggerHaptic('light'); setBackground(b.id); }} style={{ width: 76, alignItems: 'center' }}>
+                <LinearGradient colors={b.colors as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={{ width: 76, height: 76, borderRadius: 16, borderWidth: background === b.id ? 3 : 0, borderColor: theme.colors.accent.primary }} />
+                <RNText style={{ fontSize: 11, color: theme.colors.text.secondary, marginTop: 4 }}>{b.label}</RNText>
+              </Pressable>
+            ))}
+          </ScrollView>
+        ) : (
+          <ScrollView contentContainerStyle={{ flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 10, paddingBottom: insets.bottom + 16, paddingTop: 4 }} keyboardShouldPersistTaps="always">
+            {(STICKER_LIBRARY.find((g) => g.key === activeGroup) || STICKER_LIBRARY[0]).items.map((g, i) => (
+              <Pressable key={g + i} onPress={() => addItem(g)} style={{ width: '12.5%', aspectRatio: 1, alignItems: 'center', justifyContent: 'center' }}>
+                <RNText allowFontScaling={false} style={{ fontSize: 30 }}>{g}</RNText>
+              </Pressable>
+            ))}
+          </ScrollView>
+        )}
       </View>
     </View>
   );

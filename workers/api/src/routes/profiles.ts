@@ -19,7 +19,7 @@ import { validateThemeId } from '../themeIds';
 
 // ── helpers ─────────────────────────────────────────────────────────────
 
-const PROFILE_FULL_COLUMNS = `id, username, display_name, emoji, bio, pin_hash, device_key, banner_url, links, badge, is_verified, created_at, updated_at, theme_id`;
+const PROFILE_FULL_COLUMNS = `id, username, display_name, emoji, bio, pin_hash, device_key, banner_url, links, badge, is_verified, created_at, updated_at, theme_id, header_scene`;
 
 // Compact projection used wherever a profile is embedded inside another
 // row — same columns the existing PostgREST embeds project. Keeping it
@@ -460,6 +460,25 @@ register('PATCH', '/v1/profiles/me', async (req, env, ctx, _params, authedUserId
           : JSON.stringify(currentLinks);
     if (nextStored !== currentStored) {
       delta['links'] = v.links == null ? null : v.links;
+    }
+  }
+  // Build-your-own header decorations. Accept an object ({version,items,...})
+  // or null; stored as a length-capped JSON TEXT (mirrors `links`). Returned
+  // verbatim on GET /v1/profiles/:id so any viewer renders it. Joins the
+  // realtime `profile.edit` delta so a mounted profile updates live.
+  if ((v.header_scene && typeof v.header_scene === 'object') || v.header_scene === null) {
+    const nextStored = v.header_scene == null ? null : JSON.stringify(v.header_scene).slice(0, 8000);
+    sets.push('header_scene = ?');
+    binds.push(nextStored);
+    const currentScene = current?.header_scene;
+    const currentStored =
+      currentScene == null
+        ? null
+        : typeof currentScene === 'string'
+          ? currentScene
+          : JSON.stringify(currentScene);
+    if (nextStored !== currentStored) {
+      delta['header_scene'] = v.header_scene == null ? null : v.header_scene;
     }
   }
   if (typeof v.badge === 'string' || v.badge === null) {

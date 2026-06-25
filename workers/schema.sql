@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS profiles (
   device_key    TEXT,
   banner_url    TEXT,
   theme_id      TEXT,            -- selected profile theme id; NULL ⇒ default-dark
+  header_scene  TEXT,            -- "build-your-own" header decorations; JSON {version,items,background?}
   links         TEXT,            -- JSON array of {type,url}
   badge         TEXT,
   is_verified   INTEGER NOT NULL DEFAULT 0,

@@ -45,6 +45,7 @@ import { kvGetJSONSync, kvSetJSON } from '../../src/services/kvStore';
 import { useLiquidGlassActive, NativeGlassView } from '../../src/components/ui/LiquidGlass';
 import { BannerFloatingLinks } from '../../src/components/profile/BannerFloatingLinks';
 import { HeaderSceneLayer } from '../../src/components/profile/HeaderSceneLayer';
+import { HeaderBackgroundLayer } from '../../src/components/profile/HeaderBackgroundLayer';
 import { normalizeScene } from '../../src/services/headerScene';
 import { useIsFocused } from '@react-navigation/native';
 // Seasonal Profile Themes (task 6.2) — render the viewed profile in its owner's
@@ -1165,6 +1166,7 @@ export default function UserProfileScreen() {
   //   header itself.
   const bannerHeader = useMemo(() => {
     if (!displayProfile) return null;
+    const scene = normalizeScene((displayProfile as any).header_scene);
     return (
     <View style={{ marginHorizontal: -16, marginTop: -12, borderBottomLeftRadius: 30, borderBottomRightRadius: 30, overflow: 'hidden', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)' }}>
       {/* Custom cover photo as the module backdrop (the seasonal theme gradient
@@ -1195,6 +1197,9 @@ export default function UserProfileScreen() {
       {/* (Frosted overlay moved to the END of the card so it covers the
           content too — see below, just before the card closes.) */}
 
+      {/* User-chosen background gradient — card backdrop, above the cover photo
+          but below the identity content. */}
+      <HeaderBackgroundLayer backgroundId={scene.background} />
 
       {/* ── Module content (left-aligned identity block, matches the mockup) ── */}
       <View style={{ paddingTop: insets.top + 52, paddingHorizontal: 20, paddingBottom: 22 }}>
@@ -1275,7 +1280,7 @@ export default function UserProfileScreen() {
 
       {/* User-built decorations from the profile owner — rendered for everyone
           (the scene travels on the profile row). Above content, below frost. */}
-      <HeaderSceneLayer scene={normalizeScene((displayProfile as any).header_scene)} />
+      <HeaderSceneLayer scene={scene} />
 
       {/* Frosted-glass overlay — TOP layer of the card so it covers the cover
           photo AND the identity content. Opacity driven by scroll
