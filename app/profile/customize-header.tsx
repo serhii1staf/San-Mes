@@ -95,6 +95,13 @@ export default function CustomizeHeaderScreen() {
   // animation visually ends, so we add one rAF to push the mount past it —
   // mounting 14 swatches mid-animation was the open/close FPS drop.
   const [libReady, setLibReady] = useState(false);
+  // Second-stage gate: the background swatch grid (24 live HeaderLandscape SVG
+  // scenes) is the single most expensive subtree. Mounting it in the SAME frame
+  // as the big preview produced one giant synchronous render → the long task
+  // that showed up as the 60→40 dip right after the screen opened. Gating the
+  // grid one extra frame behind `libReady` splits that work across two frames,
+  // so neither frame blows the budget.
+  const [gridReady, setGridReady] = useState(false);
   useEffect(() => {
     let raf = 0;
     const h = InteractionManager.runAfterInteractions(() => {
@@ -102,6 +109,11 @@ export default function CustomizeHeaderScreen() {
     });
     return () => { h.cancel(); if (raf) cancelAnimationFrame(raf); };
   }, []);
+  useEffect(() => {
+    if (!libReady) return;
+    const raf = requestAnimationFrame(() => setGridReady(true));
+    return () => cancelAnimationFrame(raf);
+  }, [libReady]);
 
   // Live drag bookkeeping (px), committed to normalized state on release.
   const dragRef = useRef<{ id: string; startX: number; startY: number } | null>(null);
@@ -356,7 +368,7 @@ export default function CustomizeHeaderScreen() {
           </ScrollView>
 
           {activeGroup === 'bg' ? (
-            libReady ? (
+            gridReady ? (
               <FlatList
                 data={BG_ITEMS}
                 keyExtractor={(it) => it.id ?? 'none'}
@@ -517,11 +529,17 @@ function VSizeSlider({ value, min, max, color, onChange, theme, height }: { valu
     onPanResponderMove: (e) => set(e.nativeEvent.locationY),
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [H, min, max, onChange]);
+  // CRITICAL: every inner View is pointerEvents="none". Otherwise a move event
+  // whose finger drifts over the thumb (or the fill) reports nativeEvent.locationY
+  // relative to THAT child instead of the track container, which made the size
+  // jump around erratically once the user started dragging after drawing.
+  // Forcing all children non-interactive guarantees locationY is always measured
+  // against the panHandlers container, so dragging is smooth and predictable.
   return (
     <View {...pan.panHandlers} style={{ width: 44, height: H, alignItems: 'center', justifyContent: 'center' }}>
-      <View style={{ position: 'absolute', top: 0, bottom: 0, width: 6, borderRadius: 3, backgroundColor: 'rgba(127,127,127,0.4)' }} />
-      <View style={{ position: 'absolute', bottom: 0, width: 6, height: `${(1 - frac) * 100}%`, borderRadius: 3, backgroundColor: 'rgba(127,127,127,0.22)' }} />
-      <View style={{ position: 'absolute', top: (1 - frac) * H - thumb / 2, width: thumb, height: thumb, borderRadius: thumb / 2, backgroundColor: color, borderWidth: 2, borderColor: theme.isDark ? 'rgba(0,0,0,0.5)' : 'rgba(255,255,255,0.9)' }} />
+      <View pointerEvents="none" style={{ position: 'absolute', top: 0, bottom: 0, width: 6, borderRadius: 3, backgroundColor: 'rgba(127,127,127,0.4)' }} />
+      <View pointerEvents="none" style={{ position: 'absolute', bottom: 0, width: 6, height: `${(1 - frac) * 100}%`, borderRadius: 3, backgroundColor: 'rgba(127,127,127,0.22)' }} />
+      <View pointerEvents="none" style={{ position: 'absolute', top: (1 - frac) * H - thumb / 2, width: thumb, height: thumb, borderRadius: thumb / 2, backgroundColor: color, borderWidth: 2, borderColor: theme.isDark ? 'rgba(0,0,0,0.5)' : 'rgba(255,255,255,0.9)' }} />
     </View>
   );
 }
