@@ -16,17 +16,20 @@ function StickerGlyphComponent({
   size,
   rotation,
   anim,
+  paused,
 }: {
   value: string;
   size: number;
   rotation: number;
   anim?: HeaderItemAnim;
+  paused?: boolean;
 }) {
   const v = useRef(new Animated.Value(0)).current;
-  const active = !!anim && anim !== 'none';
+  const active = !!anim && anim !== 'none' && !paused;
 
   useEffect(() => {
     if (!active) {
+      v.stopAnimation();
       v.setValue(0);
       return;
     }

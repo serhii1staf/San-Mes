@@ -9,7 +9,7 @@
 // drawing) so the same scene renders across device widths.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Pressable, ScrollView, Text as RNText, StyleSheet, PanResponder, useWindowDimensions, ActivityIndicator, InteractionManager } from 'react-native';
+import { View, Pressable, ScrollView, FlatList, Text as RNText, StyleSheet, PanResponder, useWindowDimensions, ActivityIndicator, InteractionManager } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import Svg, { Path } from 'react-native-svg';
 import { router } from 'expo-router';
@@ -21,7 +21,7 @@ import { useAuthStore } from '../../src/store/authStore';
 import { updateProfile as updateRemoteProfile } from '../../src/lib/supabase';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { showToast } from '../../src/store/toastStore';
-import { HeaderLandscape, MiniScene } from '../../src/components/profile/HeaderLandscape';
+import { HeaderLandscape } from '../../src/components/profile/HeaderLandscape';
 import { StickerGlyph } from '../../src/components/profile/StickerGlyph';
 import {
   HeaderScene, HeaderItem, HeaderItemAnim, HeaderDrawStroke, BASE_ITEM_SIZE, MAX_ITEMS,
@@ -41,9 +41,18 @@ const ANIM_OPTIONS: { key: HeaderItemAnim; icon: any; label: string; tKey: strin
   { key: 'swing', icon: 'wind', label: 'Качание', tKey: 'customize.anim_swing' },
 ];
 
-// Freehand drawing palette + brush sizes.
-const DRAW_COLORS = ['#FFFFFF', '#000000', '#FF6B6B', '#FFD93D', '#6BCB77', '#4D96FF', '#B388FF', '#FF9F45', '#FF6FB5', '#2EC4B6'];
-const DRAW_WIDTHS = [1.5, 3, 5, 8];
+// Freehand drawing palette + brush size range (continuous via the slider).
+const DRAW_COLORS = [
+  '#FFFFFF', '#C9CDD4', '#000000', '#FF3B30', '#FF6B6B', '#FF9F45', '#FFD93D',
+  '#A8E05F', '#6BCB77', '#2EC4B6', '#4D96FF', '#3A6EA5', '#B388FF', '#9B59B6',
+  '#FF6FB5', '#8B5A2B',
+];
+const DRAW_MIN_W = 1;
+const DRAW_MAX_W = 18;
+
+// Background swatch list: a "none" tile followed by every scene. Rendered in a
+// windowed FlatList so only visible swatches mount (scales to many scenes).
+const BG_ITEMS: { id: string | null }[] = [{ id: null }, ...HEADER_BACKGROUNDS.map((b) => ({ id: b.id }))];
 
 export default function CustomizeHeaderScreen() {
   const theme = useTheme();
@@ -71,7 +80,7 @@ export default function CustomizeHeaderScreen() {
   const [activeGroup, setActiveGroup] = useState('bg');
   const [drawMode, setDrawMode] = useState(false);
   const [drawColor, setDrawColor] = useState(DRAW_COLORS[0]);
-  const [drawWidth, setDrawWidth] = useState(DRAW_WIDTHS[1]);
+  const [drawWidth, setDrawWidth] = useState(4);
   const [eraser, setEraser] = useState(false);
 
   // Defer the (heavy) library grid mount until the open transition fully
@@ -236,6 +245,10 @@ export default function CustomizeHeaderScreen() {
           {drawMode ? (
             <DrawCanvas width={previewW} height={PREVIEW_H} color={drawColor} strokeWidth={drawWidth} strokes={strokes} onComplete={onStrokeComplete} eraser={eraser} onErase={eraseAt} />
           ) : null}
+          {/* Left-side vertical brush-size slider (above the canvas so it works). */}
+          {drawMode ? (
+            <VSizeSlider value={drawWidth} min={DRAW_MIN_W} max={DRAW_MAX_W} color={eraser ? theme.colors.text.secondary : drawColor} onChange={setDrawWidth} theme={theme} />
+          ) : null}
         </View>
       </Pressable>
 
@@ -262,18 +275,10 @@ export default function CustomizeHeaderScreen() {
               })}
             </ScrollView>
 
-            {/* Brush sizes + actions */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, paddingHorizontal: 12 }}>
-              {DRAW_WIDTHS.map((w) => {
-                const active = !eraser && drawWidth === w;
-                return (
-                  <Pressable key={w} onPress={() => { triggerHaptic('light'); setEraser(false); setDrawWidth(w); }} style={{ width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? theme.colors.accent.primary : (theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)') }}>
-                    <View style={{ width: Math.max(6, w * 2.2), height: Math.max(6, w * 2.2), borderRadius: 999, backgroundColor: active ? '#FFFFFF' : theme.colors.text.secondary }} />
-                  </Pressable>
-                );
-              })}
+            {/* Actions row (brush size is the left slider on the preview). */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 12, paddingHorizontal: 12 }}>
               {/* Eraser toggle */}
-              <Pressable onPress={() => { triggerHaptic('light'); setEraser((e) => !e); }} style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: eraser ? theme.colors.accent.primary : (theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)') }}>
+              <Pressable onPress={() => { triggerHaptic('light'); setEraser((e) => !e); }} style={{ width: 46, height: 46, borderRadius: 23, alignItems: 'center', justifyContent: 'center', backgroundColor: eraser ? theme.colors.accent.primary : (theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)') }}>
                 <Feather name="delete" size={20} color={eraser ? '#FFFFFF' : theme.colors.text.primary} />
               </Pressable>
               <ToolBtn theme={theme} icon="corner-up-left" onPress={undoStroke} />
@@ -324,40 +329,50 @@ export default function CustomizeHeaderScreen() {
           </ScrollView>
 
           {activeGroup === 'bg' ? (
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: insets.bottom + 16, paddingTop: 6 }}>
-              {/* Action row: draw your own + blend with banner */}
-              <View style={{ flexDirection: 'row', gap: 10, paddingHorizontal: 12, marginBottom: 12 }}>
-                <Pressable onPress={() => { triggerHaptic('light'); setSelectedId(null); setDrawMode(true); }} style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, height: 44, borderRadius: 14, backgroundColor: theme.colors.accent.primary }}>
-                  <Feather name="edit-2" size={16} color="#FFFFFF" />
-                  <RNText allowFontScaling={false} style={{ fontSize: 13, fontWeight: '700', color: '#FFFFFF', includeFontPadding: false }}>{t('customize.draw', 'Рисовать свой')}</RNText>
-                </Pressable>
-                <Pressable onPress={() => { triggerHaptic('light'); setBgBlend((b) => !b); }} style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, height: 44, borderRadius: 14, backgroundColor: bgBlend ? theme.colors.accent.primary : (theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)') }}>
-                  <Feather name="layers" size={16} color={bgBlend ? '#FFFFFF' : theme.colors.text.secondary} />
-                  <RNText allowFontScaling={false} style={{ fontSize: 13, fontWeight: '700', includeFontPadding: false, color: bgBlend ? '#FFFFFF' : theme.colors.text.secondary }}>{t('customize.blend', 'Слить с баннером')}</RNText>
-                </Pressable>
-              </View>
-
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-evenly', paddingHorizontal: 8, rowGap: 16 }}>
-                {/* "None" swatch */}
-                <Pressable onPress={() => { triggerHaptic('light'); setBackground(null); }} style={{ width: 90, alignItems: 'center' }}>
-                  <View style={{ width: 90, height: 90, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)', borderWidth: background == null ? 3 : 0, borderColor: theme.colors.accent.primary }}>
-                    <Feather name="slash" size={24} color={theme.colors.text.tertiary} />
+            libReady ? (
+              <FlatList
+                data={BG_ITEMS}
+                keyExtractor={(it) => it.id ?? 'none'}
+                numColumns={3}
+                showsVerticalScrollIndicator={false}
+                initialNumToRender={6}
+                maxToRenderPerBatch={6}
+                windowSize={5}
+                removeClippedSubviews
+                columnWrapperStyle={{ paddingHorizontal: 12, gap: 10 }}
+                contentContainerStyle={{ paddingBottom: insets.bottom + 16, gap: 10 }}
+                ListHeaderComponent={
+                  <View style={{ flexDirection: 'row', gap: 10, paddingHorizontal: 12, marginBottom: 12 }}>
+                    <Pressable onPress={() => { triggerHaptic('light'); setSelectedId(null); setDrawMode(true); }} style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, height: 44, borderRadius: 14, backgroundColor: theme.colors.accent.primary }}>
+                      <Feather name="edit-2" size={16} color="#FFFFFF" />
+                      <RNText allowFontScaling={false} style={{ fontSize: 13, fontWeight: '700', color: '#FFFFFF', includeFontPadding: false }}>{t('customize.draw', 'Рисовать свой')}</RNText>
+                    </Pressable>
+                    <Pressable onPress={() => { triggerHaptic('light'); setBgBlend((b) => !b); }} style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, height: 44, borderRadius: 14, backgroundColor: bgBlend ? theme.colors.accent.primary : (theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)') }}>
+                      <Feather name="layers" size={16} color={bgBlend ? '#FFFFFF' : theme.colors.text.secondary} />
+                      <RNText allowFontScaling={false} style={{ fontSize: 13, fontWeight: '700', includeFontPadding: false, color: bgBlend ? '#FFFFFF' : theme.colors.text.secondary }}>{t('customize.blend', 'Слить с баннером')}</RNText>
+                    </Pressable>
                   </View>
-                  <RNText allowFontScaling={false} style={{ fontSize: 11, includeFontPadding: false, color: theme.colors.text.secondary, marginTop: 5 }}>{t('customize.none', 'Нет')}</RNText>
-                </Pressable>
-                {libReady ? HEADER_BACKGROUNDS.map((b) => {
-                  const isSel = background === b.id;
+                }
+                renderItem={({ item }) => {
+                  const isSel = background === item.id;
                   return (
-                    <Pressable key={b.id} onPress={() => { triggerHaptic('light'); setBackground(b.id); }} style={{ width: 90, alignItems: 'center' }}>
-                      <View style={{ width: 90, height: 90, borderRadius: 18, overflow: 'hidden', borderWidth: isSel ? 3 : 0, borderColor: theme.colors.accent.primary }}>
-                        <MiniScene backgroundId={b.id} />
+                    <Pressable onPress={() => { triggerHaptic('light'); setBackground(item.id); }} style={{ flex: 1 }}>
+                      <View style={{ aspectRatio: 1, borderRadius: 16, overflow: 'hidden', borderWidth: isSel ? 3 : 0, borderColor: theme.colors.accent.primary, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)', alignItems: 'center', justifyContent: 'center' }}>
+                        {item.id ? (
+                          // SAME renderer as the big preview + profile → the swatch
+                          // matches the applied result exactly.
+                          <HeaderLandscape backgroundId={item.id} />
+                        ) : (
+                          <Feather name="slash" size={24} color={theme.colors.text.tertiary} />
+                        )}
                       </View>
-                      <RNText allowFontScaling={false} style={{ fontSize: 11, includeFontPadding: false, color: theme.colors.text.secondary, marginTop: 5 }}>{b.label}</RNText>
                     </Pressable>
                   );
-                }) : null}
-              </View>
-            </ScrollView>
+                }}
+              />
+            ) : (
+              <View style={{ flex: 1 }} />
+            )
           ) : (
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 10, paddingBottom: insets.bottom + 16, paddingTop: 4 }} keyboardShouldPersistTaps="always">
               {(STICKER_LIBRARY.find((g) => g.key === activeGroup) || STICKER_LIBRARY[0]).items.map((g, i) => (
@@ -453,5 +468,36 @@ function AnimChip({ theme, icon, label, active, onPress }: { theme: any; icon: a
       <Feather name={icon} size={13} color={active ? '#FFFFFF' : theme.colors.text.secondary} />
       <RNText allowFontScaling={false} style={{ fontSize: 12, includeFontPadding: false, fontWeight: '600', color: active ? '#FFFFFF' : theme.colors.text.secondary }}>{label}</RNText>
     </Pressable>
+  );
+}
+
+// Vertical brush-size slider pinned to the LEFT of the drawing preview. The top
+// of the track = max size, bottom = min. Sits above the canvas so it captures
+// touches in its narrow strip without blocking drawing elsewhere.
+function VSizeSlider({ value, min, max, color, onChange, theme }: { value: number; min: number; max: number; color: string; onChange: (v: number) => void; theme: any }) {
+  const H = Math.round(PREVIEW_H * 0.66);
+  const top = Math.round((PREVIEW_H - H) / 2);
+  const frac = Math.max(0, Math.min(1, (value - min) / (max - min)));
+  const thumb = Math.max(12, Math.min(40, value * 2.2));
+  const set = (y: number) => {
+    const f = 1 - Math.max(0, Math.min(1, y / H));
+    onChange(+(min + f * (max - min)).toFixed(1));
+  };
+  const pan = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: () => true,
+    onPanResponderGrant: (e) => set(e.nativeEvent.locationY),
+    onPanResponderMove: (e) => set(e.nativeEvent.locationY),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [min, max, H, onChange]);
+  return (
+    <View {...pan.panHandlers} style={{ position: 'absolute', left: 8, top, width: 44, height: H, alignItems: 'center', justifyContent: 'center' }}>
+      {/* track */}
+      <View style={{ position: 'absolute', top: 0, bottom: 0, width: 6, borderRadius: 3, backgroundColor: 'rgba(127,127,127,0.45)' }} />
+      {/* filled portion (from thumb down) */}
+      <View style={{ position: 'absolute', bottom: 0, width: 6, height: `${(1 - frac) * 100}%`, borderRadius: 3, backgroundColor: 'rgba(127,127,127,0.25)' }} />
+      {/* thumb — its size previews the brush size */}
+      <View style={{ position: 'absolute', top: (1 - frac) * H - thumb / 2, width: thumb, height: thumb, borderRadius: thumb / 2, backgroundColor: color, borderWidth: 2, borderColor: theme.isDark ? 'rgba(0,0,0,0.5)' : 'rgba(255,255,255,0.9)' }} />
+    </View>
   );
 }

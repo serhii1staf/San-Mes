@@ -74,6 +74,16 @@ export const HEADER_BACKGROUNDS: HeaderBackground[] = [
   { id: 'fire', label: 'Пламя', colors: ['#2B0A0A', '#7A1F1F', '#E04A1F', '#FFB347'] },
   { id: 'mint', label: 'Мята', colors: ['#EAFFF6', '#9CE7C9', '#39B58C', '#0E6B53'] },
   { id: 'night', label: 'Ночь', colors: ['#05070F', '#0B1E3D', '#16335E', '#2E5A8F'] },
+  { id: 'twilight', label: 'Сумерки', colors: ['#20143A', '#5B3A7E', '#C0689B', '#FFC7A0'] },
+  { id: 'volcano', label: 'Вулкан', colors: ['#1A0A0A', '#4A1414', '#B5301B', '#FFB347'] },
+  { id: 'tropic', label: 'Тропики', colors: ['#BDEFFF', '#7FE0C0', '#2BAE66', '#0E5A3A'] },
+  { id: 'arctic', label: 'Арктика', colors: ['#DDF3FF', '#A9D6F0', '#6FA8CF', '#3C6E94'] },
+  { id: 'canyon', label: 'Каньон', colors: ['#FFE9C7', '#F0A35E', '#C25B33', '#6E2E1C'] },
+  { id: 'emerald', label: 'Изумруд', colors: ['#E8FFF3', '#8FE3B8', '#2FA873', '#0C5A3C'] },
+  { id: 'rose', label: 'Роза', colors: ['#FFF0F3', '#FCC2CE', '#F07A98', '#B23A5E'] },
+  { id: 'storm', label: 'Шторм', colors: ['#0E1116', '#26313D', '#46606F', '#7E9AAB'] },
+  { id: 'gold', label: 'Золото', colors: ['#2A1E06', '#7A5A18', '#D9A52A', '#FFE38A'] },
+  { id: 'nebula', label: 'Туманность', colors: ['#0A0418', '#2A1248', '#6A2A8A', '#E08AD0'] },
 ];
 const BG_SET = new Set(HEADER_BACKGROUNDS.map((b) => b.id));
 export function backgroundColors(id: string | null | undefined): string[] | null {
@@ -102,12 +112,17 @@ const LANDSCAPE_KIND: Record<string, LandscapeKind> = {
   forest: 'hills', desert: 'mountains', galaxy: 'space', aurora: 'space',
   sakura: 'hills', snow: 'mountains', lavender: 'hills', fire: 'mountains',
   mint: 'hills', night: 'space',
+  twilight: 'mountains', volcano: 'mountains', tropic: 'hills', arctic: 'mountains',
+  canyon: 'mountains', emerald: 'hills', rose: 'hills', storm: 'waves',
+  gold: 'hills', nebula: 'space',
 };
 // Sun / moon (or none) per background id.
 const CELESTIAL: Record<string, 'sun' | 'moon' | null> = {
   sunset: 'sun', dawn: 'sun', ocean: 'sun', meadow: 'sun', forest: null,
   desert: 'sun', galaxy: 'moon', aurora: 'moon', sakura: 'sun', snow: 'sun',
   lavender: 'moon', fire: 'sun', mint: 'sun', night: 'moon',
+  twilight: 'sun', volcano: 'sun', tropic: 'sun', arctic: 'sun', canyon: 'sun',
+  emerald: 'sun', rose: 'sun', storm: null, gold: 'sun', nebula: 'moon',
 };
 // Warm-vs-cool celestial body tint per background id.
 const CELESTIAL_COLOR: Record<string, string> = {

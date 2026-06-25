@@ -1280,7 +1280,7 @@ export default function UserProfileScreen() {
 
       {/* User-built decorations from the profile owner — rendered for everyone
           (the scene travels on the profile row). Above content, below frost. */}
-      <HeaderSceneLayer scene={scene} />
+      <HeaderSceneLayer scene={scene} animate={screenFocused} />
 
       {/* Frosted-glass overlay — TOP layer of the card so it covers the cover
           photo AND the identity content. Opacity driven by scroll

@@ -17,11 +17,13 @@ import { StickerGlyph } from './StickerGlyph';
 
 interface Props {
   scene: HeaderScene | null | undefined;
+  /** When false, all sticker animations pause (e.g. screen not focused). */
+  animate?: boolean;
   /** Render above (true) or below the frosted overlay. Default above. */
   style?: any;
 }
 
-function HeaderSceneLayerComponent({ scene, style }: Props) {
+function HeaderSceneLayerComponent({ scene, animate = true, style }: Props) {
   if (!scene || scene.items.length === 0) return null;
   return (
     <View pointerEvents="none" style={[StyleSheet.absoluteFill, style]}>
@@ -39,7 +41,7 @@ function HeaderSceneLayerComponent({ scene, style }: Props) {
               transform: [{ translateX: -size / 2 }, { translateY: -size / 2 }],
             }}
           >
-            <StickerGlyph value={it.value} size={size} rotation={it.rotation} anim={it.anim} />
+            <StickerGlyph value={it.value} size={size} rotation={it.rotation} anim={it.anim} paused={!animate} />
           </View>
         );
       })}

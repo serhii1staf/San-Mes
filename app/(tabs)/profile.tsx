@@ -1029,7 +1029,7 @@ export default function ProfileScreen() {
       {/* User-built decorations layer — sits above the identity content as a
           decorative sticker layer, below the frosted overlay (so it frosts on
           scroll with everything else). pointerEvents off → taps pass through. */}
-      <HeaderSceneLayer scene={ownScene} />
+      <HeaderSceneLayer scene={ownScene} animate={screenFocused} />
 
       {/* Frosted-glass overlay — TOP layer of the card so it covers the cover
           photo AND the identity content. Opacity is driven by scroll
