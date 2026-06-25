@@ -141,3 +141,50 @@ function HeaderLandscapeComponent({
 }
 
 export const HeaderLandscape = memo(HeaderLandscapeComponent);
+
+// ── MiniScene ────────────────────────────────────────────────────────────
+// A CHEAP themed thumbnail for the background picker swatches, built entirely
+// from plain RN Views (the lightest primitive) — no SVG, no native gradient
+// modules. 14 of these mount/unmount far cheaper than 14 SVG/gradient views,
+// which is what made the customize screen drop frames on open/close. Conveys
+// the scene's theme (sky, sun/moon, mountains/water, stars) without detail.
+const STAR_POS = [
+  { x: 14, y: 12 }, { x: 32, y: 22 }, { x: 50, y: 10 }, { x: 78, y: 18 },
+  { x: 88, y: 30 }, { x: 22, y: 34 }, { x: 64, y: 28 },
+];
+
+function MiniSceneComponent({ backgroundId }: { backgroundId?: string | null }) {
+  const scene = backgroundScene(backgroundId);
+  if (!scene) return null;
+  const isSpace = scene.kind === 'space';
+  const isWaves = scene.kind === 'waves';
+  const groundTop = isWaves ? '66%' : scene.kind === 'hills' ? '60%' : '56%';
+  return (
+    <View style={{ flex: 1, backgroundColor: scene.sky[1], overflow: 'hidden' }}>
+      {/* upper sky band */}
+      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '58%', backgroundColor: scene.sky[0] }} />
+      {/* stars (space) */}
+      {isSpace && STAR_POS.map((s, i) => (
+        <View key={i} style={{ position: 'absolute', left: `${s.x}%`, top: `${s.y}%`, width: 2, height: 2, borderRadius: 1, backgroundColor: '#FFFFFF', opacity: 0.9 }} />
+      ))}
+      {/* sun / moon */}
+      {scene.celestial ? (
+        <View style={{ position: 'absolute', left: '58%', top: '12%', width: '26%', aspectRatio: 1, borderRadius: 999, backgroundColor: scene.celestialColor, opacity: 0.95 }} />
+      ) : null}
+      {/* back mountain peaks (skip for water / space) */}
+      {!isSpace && !isWaves ? (
+        <>
+          <View style={{ position: 'absolute', left: '6%', top: groundTop, width: '50%', aspectRatio: 1, transform: [{ translateY: -8 }, { rotate: '45deg' }], backgroundColor: scene.layers[0] }} />
+          <View style={{ position: 'absolute', left: '44%', top: groundTop, width: '56%', aspectRatio: 1, transform: [{ translateY: -10 }, { rotate: '45deg' }], backgroundColor: scene.layers[0] }} />
+        </>
+      ) : null}
+      {/* front ground / water band */}
+      <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, top: groundTop, backgroundColor: scene.layers[1] }} />
+      {isWaves ? (
+        <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: '16%', backgroundColor: scene.layers[0], opacity: 0.6 }} />
+      ) : null}
+    </View>
+  );
+}
+
+export const MiniScene = memo(MiniSceneComponent);

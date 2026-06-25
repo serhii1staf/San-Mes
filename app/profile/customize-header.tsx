@@ -11,7 +11,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Pressable, ScrollView, Text as RNText, StyleSheet, PanResponder, useWindowDimensions, ActivityIndicator, InteractionManager } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Path } from 'react-native-svg';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -22,7 +21,7 @@ import { useAuthStore } from '../../src/store/authStore';
 import { updateProfile as updateRemoteProfile } from '../../src/lib/supabase';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { showToast } from '../../src/store/toastStore';
-import { HeaderLandscape } from '../../src/components/profile/HeaderLandscape';
+import { HeaderLandscape, MiniScene } from '../../src/components/profile/HeaderLandscape';
 import { StickerGlyph } from '../../src/components/profile/StickerGlyph';
 import {
   HeaderScene, HeaderItem, HeaderItemAnim, HeaderDrawStroke, BASE_ITEM_SIZE, MAX_ITEMS,
@@ -73,13 +72,19 @@ export default function CustomizeHeaderScreen() {
   const [drawMode, setDrawMode] = useState(false);
   const [drawColor, setDrawColor] = useState(DRAW_COLORS[0]);
   const [drawWidth, setDrawWidth] = useState(DRAW_WIDTHS[1]);
+  const [eraser, setEraser] = useState(false);
 
-  // Defer the (heavy) library grid mount until the open transition finishes so
-  // the screen animates in at 60fps.
+  // Defer the (heavy) library grid mount until the open transition fully
+  // finishes. runAfterInteractions can resolve a frame or two before the nav
+  // animation visually ends, so we add one rAF to push the mount past it —
+  // mounting 14 swatches mid-animation was the open/close FPS drop.
   const [libReady, setLibReady] = useState(false);
   useEffect(() => {
-    const h = InteractionManager.runAfterInteractions(() => setLibReady(true));
-    return () => h.cancel();
+    let raf = 0;
+    const h = InteractionManager.runAfterInteractions(() => {
+      raf = requestAnimationFrame(() => setLibReady(true));
+    });
+    return () => { h.cancel(); if (raf) cancelAnimationFrame(raf); };
   }, []);
 
   // Live drag bookkeeping (px), committed to normalized state on release.
@@ -145,6 +150,24 @@ export default function CustomizeHeaderScreen() {
   }, []);
   const undoStroke = useCallback(() => { triggerHaptic('light'); setStrokes((p) => p.slice(0, -1)); }, []);
   const clearStrokes = useCallback(() => { triggerHaptic('medium'); setStrokes([]); }, []);
+  // Eraser: remove the top-most stroke that passes near the tapped point
+  // (coords are in the shared 0..100 space). Lets the user delete individual
+  // strokes instead of only undo/clear.
+  const eraseAt = useCallback((x: number, y: number) => {
+    setStrokes((prev) => {
+      for (let i = prev.length - 1; i >= 0; i--) {
+        const nums = prev[i].d.match(/-?\d+(?:\.\d+)?/g);
+        if (!nums) continue;
+        const tol = Math.max(5, prev[i].w + 3);
+        for (let k = 0; k + 1 < nums.length; k += 2) {
+          if (Math.abs(+nums[k] - x) < tol && Math.abs(+nums[k + 1] - y) < tol) {
+            const next = prev.slice(); next.splice(i, 1); triggerHaptic('light'); return next;
+          }
+        }
+      }
+      return prev;
+    });
+  }, []);
 
   const onSave = useCallback(async () => {
     if (!user?.id) { router.back(); return; }
@@ -211,31 +234,58 @@ export default function CustomizeHeaderScreen() {
 
           {/* Drawing surface — on top, captures touches only in draw mode. */}
           {drawMode ? (
-            <DrawCanvas width={previewW} height={PREVIEW_H} color={drawColor} strokeWidth={drawWidth} strokes={strokes} onComplete={onStrokeComplete} />
+            <DrawCanvas width={previewW} height={PREVIEW_H} color={drawColor} strokeWidth={drawWidth} strokes={strokes} onComplete={onStrokeComplete} eraser={eraser} onErase={eraseAt} />
           ) : null}
         </View>
       </Pressable>
 
       {/* ── Contextual controls ───────────────────────────────────────── */}
       {drawMode ? (
-        // DRAW controls
-        <View style={{ paddingVertical: 10, gap: 10 }}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 14, gap: 10, alignItems: 'center' }}>
-            {DRAW_COLORS.map((c) => (
-              <Pressable key={c} onPress={() => { triggerHaptic('light'); setDrawColor(c); }} style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: c, borderWidth: drawColor === c ? 3 : 1, borderColor: drawColor === c ? theme.colors.accent.primary : 'rgba(127,127,127,0.4)' }} />
-            ))}
-          </ScrollView>
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
-            {DRAW_WIDTHS.map((w) => (
-              <Pressable key={w} onPress={() => { triggerHaptic('light'); setDrawWidth(w); }} style={{ width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: drawWidth === w ? theme.colors.accent.primary : (theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)') }}>
-                <View style={{ width: w * 2.4, height: w * 2.4, borderRadius: 999, backgroundColor: drawWidth === w ? '#FFFFFF' : theme.colors.text.secondary }} />
+        // DRAW controls — a clean panel that fills the space below the preview
+        // and anchors its toolbar near the bottom for easy thumb reach.
+        <View style={{ flex: 1, justifyContent: 'space-between', paddingTop: 12, paddingBottom: insets.bottom + 12 }}>
+          {/* hint */}
+          <Text variant="caption" color={theme.colors.text.tertiary} style={{ textAlign: 'center', paddingHorizontal: 24 }}>
+            {eraser
+              ? t('customize.draw_erase_hint', 'Нажимай по линиям, чтобы стирать.')
+              : t('customize.draw_hint', 'Рисуй пальцем по превью сверху.')}
+          </Text>
+
+          <View style={{ gap: 14 }}>
+            {/* Colour row (scrollable) */}
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, gap: 12, alignItems: 'center' }}>
+              {DRAW_COLORS.map((c) => {
+                const active = !eraser && drawColor === c;
+                return (
+                  <Pressable key={c} onPress={() => { triggerHaptic('light'); setEraser(false); setDrawColor(c); }} style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: c, borderWidth: active ? 3 : 1, borderColor: active ? theme.colors.accent.primary : 'rgba(127,127,127,0.4)' }} />
+                );
+              })}
+            </ScrollView>
+
+            {/* Brush sizes + actions */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, paddingHorizontal: 12 }}>
+              {DRAW_WIDTHS.map((w) => {
+                const active = !eraser && drawWidth === w;
+                return (
+                  <Pressable key={w} onPress={() => { triggerHaptic('light'); setEraser(false); setDrawWidth(w); }} style={{ width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? theme.colors.accent.primary : (theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)') }}>
+                    <View style={{ width: Math.max(6, w * 2.2), height: Math.max(6, w * 2.2), borderRadius: 999, backgroundColor: active ? '#FFFFFF' : theme.colors.text.secondary }} />
+                  </Pressable>
+                );
+              })}
+              {/* Eraser toggle */}
+              <Pressable onPress={() => { triggerHaptic('light'); setEraser((e) => !e); }} style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: eraser ? theme.colors.accent.primary : (theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)') }}>
+                <Feather name="delete" size={20} color={eraser ? '#FFFFFF' : theme.colors.text.primary} />
               </Pressable>
-            ))}
-            <ToolBtn theme={theme} icon="corner-up-left" onPress={undoStroke} />
-            <ToolBtn theme={theme} icon="trash-2" danger onPress={clearStrokes} />
-            <Pressable onPress={() => { triggerHaptic('light'); setDrawMode(false); }} style={{ paddingHorizontal: 16, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.accent.primary }}>
-              <RNText allowFontScaling={false} style={{ fontSize: 13, fontWeight: '700', color: '#FFFFFF', includeFontPadding: false }}>{t('common.done', 'Готово')}</RNText>
-            </Pressable>
+              <ToolBtn theme={theme} icon="corner-up-left" onPress={undoStroke} />
+              <ToolBtn theme={theme} icon="trash-2" danger onPress={clearStrokes} />
+            </View>
+
+            {/* Done */}
+            <View style={{ paddingHorizontal: 16 }}>
+              <Pressable onPress={() => { triggerHaptic('light'); setEraser(false); setDrawMode(false); }} style={{ height: 48, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.accent.primary }}>
+                <RNText allowFontScaling={false} style={{ fontSize: 15, fontWeight: '700', color: '#FFFFFF', includeFontPadding: false }}>{t('customize.draw_done', 'Готово')}</RNText>
+              </Pressable>
+            </View>
           </View>
         </View>
       ) : selected ? (
@@ -300,13 +350,7 @@ export default function CustomizeHeaderScreen() {
                   return (
                     <Pressable key={b.id} onPress={() => { triggerHaptic('light'); setBackground(b.id); }} style={{ width: 90, alignItems: 'center' }}>
                       <View style={{ width: 90, height: 90, borderRadius: 18, overflow: 'hidden', borderWidth: isSel ? 3 : 0, borderColor: theme.colors.accent.primary }}>
-                        {/* Only the SELECTED swatch renders the full SVG landscape; the
-                            rest are cheap gradient thumbnails (keeps the grid at 60fps). */}
-                        {isSel ? (
-                          <HeaderLandscape backgroundId={b.id} />
-                        ) : (
-                          <LinearGradient colors={b.colors as any} start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 1 }} style={{ width: '100%', height: '100%' }} />
-                        )}
+                        <MiniScene backgroundId={b.id} />
                       </View>
                       <RNText allowFontScaling={false} style={{ fontSize: 11, includeFontPadding: false, color: theme.colors.text.secondary, marginTop: 5 }}>{b.label}</RNText>
                     </Pressable>
@@ -324,23 +368,24 @@ export default function CustomizeHeaderScreen() {
             </ScrollView>
           )}
         </View>
-      ) : (
-        <View style={{ flex: 1 }} />
-      )}
+      ) : null}
     </View>
   );
 }
 
 // Isolated drawing surface: keeps the in-progress stroke in its OWN state so
 // the per-move re-renders don't touch the rest of the editor (smooth drawing).
-function DrawCanvas({ width, height, color, strokeWidth, strokes, onComplete }: {
+function DrawCanvas({ width, height, color, strokeWidth, strokes, onComplete, eraser, onErase }: {
   width: number; height: number; color: string; strokeWidth: number;
   strokes: HeaderDrawStroke[]; onComplete: (s: HeaderDrawStroke) => void;
+  eraser?: boolean; onErase?: (x: number, y: number) => void;
 }) {
   const [cur, setCur] = useState('');
   const pathRef = useRef('');
   const lastRef = useRef<{ x: number; y: number } | null>(null);
   const ptsRef = useRef(0);
+  const eraserRef = useRef(!!eraser);
+  eraserRef.current = !!eraser;
   const to = (v: number, size: number) => Math.max(0, Math.min(100, (v / size) * 100));
   const fmt = (n: number) => n.toFixed(1);
   const MAX_PTS = 240; // hard cap so a single stroke can't bloat the scene
@@ -351,15 +396,17 @@ function DrawCanvas({ width, height, color, strokeWidth, strokes, onComplete }: 
     onPanResponderGrant: (e) => {
       const x = to(e.nativeEvent.locationX, width);
       const y = to(e.nativeEvent.locationY, height);
+      if (eraserRef.current) { onErase?.(x, y); return; }
       pathRef.current = `M${fmt(x)} ${fmt(y)}`;
       lastRef.current = { x, y };
       ptsRef.current = 1;
       setCur(pathRef.current);
     },
     onPanResponderMove: (e) => {
-      if (ptsRef.current >= MAX_PTS) return;
       const x = to(e.nativeEvent.locationX, width);
       const y = to(e.nativeEvent.locationY, height);
+      if (eraserRef.current) { onErase?.(x, y); return; }
+      if (ptsRef.current >= MAX_PTS) return;
       const last = lastRef.current;
       // Throttle: skip points that barely moved (keeps the path short + smooth).
       if (last && Math.abs(x - last.x) < MIN_STEP && Math.abs(y - last.y) < MIN_STEP) return;
@@ -371,14 +418,14 @@ function DrawCanvas({ width, height, color, strokeWidth, strokes, onComplete }: 
     onPanResponderRelease: () => {
       // Only commit strokes that actually have a line (≥1 L command); the
       // scene normalizer sanitizes again before persisting.
-      if (pathRef.current.includes('L')) onComplete({ d: pathRef.current, color, w: strokeWidth });
+      if (!eraserRef.current && pathRef.current.includes('L')) onComplete({ d: pathRef.current, color, w: strokeWidth });
       pathRef.current = ''; lastRef.current = null; ptsRef.current = 0; setCur('');
     },
     onPanResponderTerminate: () => {
-      if (pathRef.current.includes('L')) onComplete({ d: pathRef.current, color, w: strokeWidth });
+      if (!eraserRef.current && pathRef.current.includes('L')) onComplete({ d: pathRef.current, color, w: strokeWidth });
       pathRef.current = ''; lastRef.current = null; ptsRef.current = 0; setCur('');
     },
-  }), [width, height, color, strokeWidth, onComplete]);
+  }), [width, height, color, strokeWidth, onComplete, onErase]);
 
   return (
     <View {...pan.panHandlers} style={StyleSheet.absoluteFill}>
