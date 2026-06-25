@@ -182,8 +182,15 @@ export const CachedImage = memo(function CachedImage({
     const ref = imageRef.current;
     if (!ref) return;
     try {
-      if (autoplay) ref.startAnimating?.();
-      else ref.stopAnimating?.();
+      // expo-image's start/stopAnimating() are ASYNC (return a Promise). When
+      // the underlying native ImageView has already been torn down — e.g. the
+      // row unmounted during fast navigation (messages ↔ chat) — the native
+      // call rejects with "Unable to find the 'ImageView' view with tag …".
+      // A synchronous try/catch can't catch that async rejection, so we MUST
+      // attach a .catch() or it surfaces as an unhandled promise rejection
+      // (the Sentry `startAnimating`/`stopAnimating` errors).
+      const p = autoplay ? ref.startAnimating?.() : ref.stopAnimating?.();
+      if (p && typeof (p as any).catch === 'function') (p as any).catch(() => {});
     } catch {
       // Static images have no animation to control; ignore.
     }
