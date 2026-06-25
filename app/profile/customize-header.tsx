@@ -81,6 +81,7 @@ export default function CustomizeHeaderScreen() {
   const [background, setBackground] = useState<string | null>(initial.background ?? null);
   const [bgBlend, setBgBlend] = useState<boolean>(!!initial.bgBlend);
   const [strokes, setStrokes] = useState<HeaderDrawStroke[]>(initial.drawing ?? []);
+  const [redo, setRedo] = useState<HeaderDrawStroke[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [activeGroup, setActiveGroup] = useState('bg');
@@ -162,9 +163,26 @@ export default function CustomizeHeaderScreen() {
 
   const onStrokeComplete = useCallback((s: HeaderDrawStroke) => {
     setStrokes((prev) => (prev.length >= 60 ? prev : [...prev, s]));
+    setRedo([]); // a new stroke invalidates the redo stack
   }, []);
-  const undoStroke = useCallback(() => { triggerHaptic('light'); setStrokes((p) => p.slice(0, -1)); }, []);
-  const clearStrokes = useCallback(() => { triggerHaptic('medium'); setStrokes([]); }, []);
+  const undoStroke = useCallback(() => {
+    triggerHaptic('light');
+    setStrokes((p) => {
+      if (p.length === 0) return p;
+      setRedo((r) => [...r, p[p.length - 1]]);
+      return p.slice(0, -1);
+    });
+  }, []);
+  const redoStroke = useCallback(() => {
+    triggerHaptic('light');
+    setRedo((r) => {
+      if (r.length === 0) return r;
+      const s = r[r.length - 1];
+      setStrokes((p) => (p.length >= 60 ? p : [...p, s]));
+      return r.slice(0, -1);
+    });
+  }, []);
+  const clearStrokes = useCallback(() => { triggerHaptic('medium'); setStrokes([]); setRedo([]); }, []);
   // Eraser: remove the top-most stroke that passes near the tapped point
   // (coords are in the shared 0..100 space). Lets the user delete individual
   // strokes instead of only undo/clear.
@@ -215,8 +233,10 @@ export default function CustomizeHeaderScreen() {
       {/* Preview — shaped like the header card. Tap empty space to deselect. */}
       <Pressable onPress={() => !drawMode && setSelectedId(null)}>
         <View style={{ width: previewW, height: PREVIEW_H, overflow: 'hidden', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)', borderBottomLeftRadius: 30, borderBottomRightRadius: 30 }}>
-          {/* Background landscape + saved drawing */}
-          <HeaderLandscape backgroundId={background} drawing={strokes} />
+          {/* Background landscape + saved drawing. Deferred behind libReady so
+              NO SVG renders during the open transition (that was the 60→40
+              drop on open). The in-progress drawing still shows via DrawCanvas. */}
+          {libReady ? <HeaderLandscape backgroundId={background} drawing={strokes} /> : null}
 
           {/* Hint when empty */}
           {items.length === 0 && !background && strokes.length === 0 && !drawMode ? (
@@ -251,49 +271,50 @@ export default function CustomizeHeaderScreen() {
           {drawMode ? (
             <DrawCanvas width={previewW} height={PREVIEW_H} color={drawColor} strokeWidth={drawWidth} strokes={strokes} onComplete={onStrokeComplete} eraser={eraser} onErase={eraseAt} />
           ) : null}
-          {/* Left-side vertical brush-size slider (above the canvas so it works). */}
-          {drawMode ? (
-            <VSizeSlider value={drawWidth} min={DRAW_MIN_W} max={DRAW_MAX_W} color={eraser ? theme.colors.text.secondary : drawColor} onChange={setDrawWidth} theme={theme} />
-          ) : null}
         </View>
       </Pressable>
 
       {/* ── Contextual controls ───────────────────────────────────────── */}
       {drawMode ? (
-        // DRAW controls — a clean panel that fills the space below the preview
-        // and anchors its toolbar near the bottom for easy thumb reach.
-        <View style={{ flex: 1, justifyContent: 'space-between', paddingTop: 12, paddingBottom: insets.bottom + 12 }}>
-          {/* hint */}
-          <Text variant="caption" color={theme.colors.text.tertiary} style={{ textAlign: 'center', paddingHorizontal: 24 }}>
-            {eraser
-              ? t('customize.draw_erase_hint', 'Нажимай по линиям, чтобы стирать.')
-              : t('customize.draw_hint', 'Рисуй пальцем по превью сверху.')}
-          </Text>
+        // DRAW controls — left column = vertical size slider (no overlap with
+        // the canvas, so it never behaves weirdly); right column = colours +
+        // tools + done.
+        <View style={{ flex: 1, flexDirection: 'row', paddingTop: 10, paddingBottom: insets.bottom + 12, paddingHorizontal: 8 }}>
+          {/* Left: vertical brush-size slider */}
+          <View style={{ width: 60, alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+            <Feather name="maximize-2" size={14} color={theme.colors.text.tertiary} />
+            <VSizeSlider value={drawWidth} min={DRAW_MIN_W} max={DRAW_MAX_W} color={eraser ? theme.colors.text.secondary : drawColor} onChange={setDrawWidth} theme={theme} height={150} />
+            <RNText allowFontScaling={false} style={{ fontSize: 11, color: theme.colors.text.secondary, includeFontPadding: false }}>{Math.round(drawWidth)}</RNText>
+          </View>
 
-          <View style={{ gap: 14 }}>
-            {/* Colour row (scrollable) */}
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, gap: 12, alignItems: 'center' }}>
-              {DRAW_COLORS.map((c) => {
-                const active = !eraser && drawColor === c;
-                return (
-                  <Pressable key={c} onPress={() => { triggerHaptic('light'); setEraser(false); setDrawColor(c); }} style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: c, borderWidth: active ? 3 : 1, borderColor: active ? theme.colors.accent.primary : 'rgba(127,127,127,0.4)' }} />
-                );
-              })}
-            </ScrollView>
+          {/* Right: hint + colours + tools + done */}
+          <View style={{ flex: 1, justifyContent: 'space-between', paddingLeft: 6 }}>
+            <Text variant="caption" color={theme.colors.text.tertiary} style={{ textAlign: 'center', paddingHorizontal: 8, paddingTop: 4 }}>
+              {eraser
+                ? t('customize.draw_erase_hint', 'Нажимай по линиям, чтобы стирать.')
+                : t('customize.draw_hint', 'Рисуй пальцем по превью сверху.')}
+            </Text>
 
-            {/* Actions row (brush size is the left slider on the preview). */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 12, paddingHorizontal: 12 }}>
-              {/* Eraser toggle */}
-              <Pressable onPress={() => { triggerHaptic('light'); setEraser((e) => !e); }} style={{ width: 46, height: 46, borderRadius: 23, alignItems: 'center', justifyContent: 'center', backgroundColor: eraser ? theme.colors.accent.primary : (theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)') }}>
-                <Feather name="delete" size={20} color={eraser ? '#FFFFFF' : theme.colors.text.primary} />
-              </Pressable>
-              <ToolBtn theme={theme} icon="corner-up-left" onPress={undoStroke} />
-              <ToolBtn theme={theme} icon="trash-2" danger onPress={clearStrokes} />
-            </View>
+            <View style={{ gap: 12 }}>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 8, gap: 10, alignItems: 'center' }}>
+                {DRAW_COLORS.map((c) => {
+                  const active = !eraser && drawColor === c;
+                  return (
+                    <Pressable key={c} onPress={() => { triggerHaptic('light'); setEraser(false); setDrawColor(c); }} style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: c, borderWidth: active ? 3 : 1, borderColor: active ? theme.colors.accent.primary : 'rgba(127,127,127,0.4)' }} />
+                  );
+                })}
+              </ScrollView>
 
-            {/* Done */}
-            <View style={{ paddingHorizontal: 16 }}>
-              <Pressable onPress={() => { triggerHaptic('light'); setEraser(false); setDrawMode(false); }} style={{ height: 48, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.accent.primary }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
+                <Pressable onPress={() => { triggerHaptic('light'); setEraser((e) => !e); }} style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: eraser ? theme.colors.accent.primary : (theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)') }}>
+                  <Feather name="delete" size={19} color={eraser ? '#FFFFFF' : theme.colors.text.primary} />
+                </Pressable>
+                <ToolBtn theme={theme} icon="corner-up-left" onPress={undoStroke} />
+                <ToolBtn theme={theme} icon="corner-up-right" onPress={redoStroke} />
+                <ToolBtn theme={theme} icon="trash-2" danger onPress={clearStrokes} />
+              </View>
+
+              <Pressable onPress={() => { triggerHaptic('light'); setEraser(false); setDrawMode(false); }} style={{ height: 46, marginHorizontal: 8, borderRadius: 15, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.accent.primary }}>
                 <RNText allowFontScaling={false} style={{ fontSize: 15, fontWeight: '700', color: '#FFFFFF', includeFontPadding: false }}>{t('customize.draw_done', 'Готово')}</RNText>
               </Pressable>
             </View>
@@ -477,14 +498,13 @@ function AnimChip({ theme, icon, label, active, onPress }: { theme: any; icon: a
   );
 }
 
-// Vertical brush-size slider pinned to the LEFT of the drawing preview. The top
-// of the track = max size, bottom = min. Sits above the canvas so it captures
-// touches in its narrow strip without blocking drawing elsewhere.
-function VSizeSlider({ value, min, max, color, onChange, theme }: { value: number; min: number; max: number; color: string; onChange: (v: number) => void; theme: any }) {
-  const H = Math.round(PREVIEW_H * 0.66);
-  const top = Math.round((PREVIEW_H - H) / 2);
+// Vertical brush-size slider used in the draw toolbar's left column. It is a
+// standalone control (NOT overlaid on the canvas), so dragging it never
+// conflicts with drawing. Top of the track = max size, bottom = min.
+function VSizeSlider({ value, min, max, color, onChange, theme, height }: { value: number; min: number; max: number; color: string; onChange: (v: number) => void; theme: any; height: number }) {
+  const H = height;
   const frac = Math.max(0, Math.min(1, (value - min) / (max - min)));
-  const thumb = Math.max(12, Math.min(40, value * 2.2));
+  const thumb = Math.max(12, Math.min(34, value * 2));
   const set = (y: number) => {
     const f = 1 - Math.max(0, Math.min(1, y / H));
     onChange(+(min + f * (max - min)).toFixed(1));
@@ -492,17 +512,15 @@ function VSizeSlider({ value, min, max, color, onChange, theme }: { value: numbe
   const pan = useMemo(() => PanResponder.create({
     onStartShouldSetPanResponder: () => true,
     onMoveShouldSetPanResponder: () => true,
+    onPanResponderTerminationRequest: () => false,
     onPanResponderGrant: (e) => set(e.nativeEvent.locationY),
     onPanResponderMove: (e) => set(e.nativeEvent.locationY),
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [min, max, H, onChange]);
+  }), [H, min, max, onChange]);
   return (
-    <View {...pan.panHandlers} style={{ position: 'absolute', left: 8, top, width: 44, height: H, alignItems: 'center', justifyContent: 'center' }}>
-      {/* track */}
-      <View style={{ position: 'absolute', top: 0, bottom: 0, width: 6, borderRadius: 3, backgroundColor: 'rgba(127,127,127,0.45)' }} />
-      {/* filled portion (from thumb down) */}
-      <View style={{ position: 'absolute', bottom: 0, width: 6, height: `${(1 - frac) * 100}%`, borderRadius: 3, backgroundColor: 'rgba(127,127,127,0.25)' }} />
-      {/* thumb — its size previews the brush size */}
+    <View {...pan.panHandlers} style={{ width: 44, height: H, alignItems: 'center', justifyContent: 'center' }}>
+      <View style={{ position: 'absolute', top: 0, bottom: 0, width: 6, borderRadius: 3, backgroundColor: 'rgba(127,127,127,0.4)' }} />
+      <View style={{ position: 'absolute', bottom: 0, width: 6, height: `${(1 - frac) * 100}%`, borderRadius: 3, backgroundColor: 'rgba(127,127,127,0.22)' }} />
       <View style={{ position: 'absolute', top: (1 - frac) * H - thumb / 2, width: thumb, height: thumb, borderRadius: thumb / 2, backgroundColor: color, borderWidth: 2, borderColor: theme.isDark ? 'rgba(0,0,0,0.5)' : 'rgba(255,255,255,0.9)' }} />
     </View>
   );
