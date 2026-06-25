@@ -47,6 +47,8 @@ import { useBannerBrightness } from '../../src/hooks/useBannerBrightness';
 import { useScreenCaptureGuard } from '../../src/hooks/useScreenCaptureGuard';
 import { ScreenshotShield } from '../../src/components/ui/ScreenshotShield';
 import { BannerFloatingLinks } from '../../src/components/profile/BannerFloatingLinks';
+import { HeaderSceneLayer } from '../../src/components/profile/HeaderSceneLayer';
+import { getLocalScene, normalizeScene } from '../../src/services/headerScene';
 import { useIsFocused } from '@react-navigation/native';
 // Seasonal Profile Themes (task 6.1) — render the owner's OWN profile in the
 // account's selected public theme. Background + ambient layers are SIBLINGS
@@ -844,6 +846,12 @@ export default function ProfileScreen() {
   if (!user) return <View style={{ flex: 1, backgroundColor: theme.colors.background.primary, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator size="large" color={theme.colors.accent.primary} /></View>;
 
   const userLinks = useMemo<{ type: string; url: string }[]>(() => (user as any)?.links || [], [user]);
+  // "Build-your-own" header decorations. Prefer the in-memory user value (set
+  // right after editing), else the locally-cached scene (instant on cold start).
+  const ownScene = useMemo(() => {
+    const s = normalizeScene((user as any)?.headerScene);
+    return s.items.length > 0 ? s : getLocalScene(user?.id);
+  }, [user]);
   const bannerUrlRaw = (user as any)?.bannerUrl as string | undefined;
   // Banner URL is stored with an optional `#x=&y=&s=` hash carrying the
   // user-chosen position + zoom. The hash must be stripped before the
@@ -1004,11 +1012,19 @@ export default function ProfileScreen() {
             {resolvedProfileTheme.emojiAccents?.follow ? <Text style={{ fontSize: 14 }}>{resolvedProfileTheme.emojiAccents.follow}</Text> : null}
             <Text variant="caption" weight="semibold" color="#FFFFFF" style={{ fontSize: 14 }}>{t('profile.edit', 'Редактировать')}</Text>
           </ActionPill>
+          <ActionPill glassActive={glassActive} theme={theme} square onPress={() => { triggerHaptic('light'); router.push('/profile/customize-header'); }}>
+            <Feather name="smile" size={16} color={theme.colors.text.primary} />
+          </ActionPill>
           <ActionPill glassActive={glassActive} theme={theme} square onPress={async () => { triggerHaptic('light'); try { await Share.share({ message: `https://san-m-app.com/profile/${user.id}` }); } catch {} }}>
             <Feather name="share" size={16} color={theme.colors.text.primary} />
           </ActionPill>
         </View>
       </View>
+
+      {/* User-built decorations layer — sits above the identity content as a
+          decorative sticker layer, below the frosted overlay (so it frosts on
+          scroll with everything else). pointerEvents off → taps pass through. */}
+      <HeaderSceneLayer scene={ownScene} />
 
       {/* Frosted-glass overlay — TOP layer of the card so it covers the cover
           photo AND the identity content. Opacity is driven by scroll
@@ -1029,7 +1045,7 @@ export default function ProfileScreen() {
         />
       </Animated.View>
     </View>
-  ), [theme, user, bannerUrl, bannerTransform, chromeReady, userLinks, followCounts, insets.top, t, glassActive]);
+  ), [theme, user, bannerUrl, bannerTransform, chromeReady, userLinks, followCounts, insets.top, t, glassActive, ownScene]);
 
   // Tabs row is split out of the banner header so switching tabs only
   // reconciles this lightweight subtree — the heavy banner (CachedImage,

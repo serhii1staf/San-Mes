@@ -44,6 +44,8 @@ import { useBannerBrightness } from '../../src/hooks/useBannerBrightness';
 import { kvGetJSONSync, kvSetJSON } from '../../src/services/kvStore';
 import { useLiquidGlassActive, NativeGlassView } from '../../src/components/ui/LiquidGlass';
 import { BannerFloatingLinks } from '../../src/components/profile/BannerFloatingLinks';
+import { HeaderSceneLayer } from '../../src/components/profile/HeaderSceneLayer';
+import { normalizeScene } from '../../src/services/headerScene';
 import { useIsFocused } from '@react-navigation/native';
 // Seasonal Profile Themes (task 6.2) — render the viewed profile in its owner's
 // public theme. Background + ambient layers are SIBLINGS BENEATH the content
@@ -1270,6 +1272,10 @@ export default function UserProfileScreen() {
           </View>
         )}
       </View>
+
+      {/* User-built decorations from the profile owner — rendered for everyone
+          (the scene travels on the profile row). Above content, below frost. */}
+      <HeaderSceneLayer scene={normalizeScene((displayProfile as any).header_scene)} />
 
       {/* Frosted-glass overlay — TOP layer of the card so it covers the cover
           photo AND the identity content. Opacity driven by scroll
