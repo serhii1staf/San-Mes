@@ -97,7 +97,7 @@ export function backgroundColors(id: string | null | undefined): string[] | null
 // stars) — instead of a flat colour gradient. It is rendered by
 // <HeaderLandscape/> (SVG, viewBox-based) so the swatch, the editor preview
 // and the live profile card all draw identically at any size.
-export type LandscapeKind = 'mountains' | 'hills' | 'waves' | 'space';
+export type LandscapeKind = 'mountains' | 'hills' | 'waves' | 'space' | 'city' | 'forest' | 'desert';
 export interface LandscapeScene {
   sky: [string, string]; // sky gradient: top → horizon
   layers: string[];       // silhouette colours, back → front
@@ -108,13 +108,13 @@ export interface LandscapeScene {
 
 // Silhouette shape per background id.
 const LANDSCAPE_KIND: Record<string, LandscapeKind> = {
-  sunset: 'mountains', dawn: 'mountains', ocean: 'waves', meadow: 'hills',
-  forest: 'hills', desert: 'mountains', galaxy: 'space', aurora: 'space',
+  sunset: 'mountains', dawn: 'mountains', ocean: 'waves', meadow: 'forest',
+  forest: 'forest', desert: 'desert', galaxy: 'space', aurora: 'space',
   sakura: 'hills', snow: 'mountains', lavender: 'hills', fire: 'mountains',
-  mint: 'hills', night: 'space',
-  twilight: 'mountains', volcano: 'mountains', tropic: 'hills', arctic: 'mountains',
-  canyon: 'mountains', emerald: 'hills', rose: 'hills', storm: 'waves',
-  gold: 'hills', nebula: 'space',
+  mint: 'hills', night: 'city',
+  twilight: 'city', volcano: 'mountains', tropic: 'forest', arctic: 'mountains',
+  canyon: 'desert', emerald: 'forest', rose: 'hills', storm: 'city',
+  gold: 'city', nebula: 'space',
 };
 // Sun / moon (or none) per background id.
 const CELESTIAL: Record<string, 'sun' | 'moon' | null> = {

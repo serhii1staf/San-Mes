@@ -50,9 +50,15 @@ const DRAW_COLORS = [
 const DRAW_MIN_W = 1;
 const DRAW_MAX_W = 18;
 
-// Background swatch list: a "none" tile followed by every scene. Rendered in a
-// windowed FlatList so only visible swatches mount (scales to many scenes).
-const BG_ITEMS: { id: string | null }[] = [{ id: null }, ...HEADER_BACKGROUNDS.map((b) => ({ id: b.id }))];
+// Background swatch list: a "none" tile followed by every scene, PADDED to a
+// multiple of 3 with invisible spacers so the last FlatList row never stretches
+// a lone item to full width (that was the giant background at the bottom).
+const BG_ITEMS: { id: string | null }[] = (() => {
+  const list: { id: string | null }[] = [{ id: null }, ...HEADER_BACKGROUNDS.map((b) => ({ id: b.id }))];
+  while (list.length % 3 !== 0) list.push({ id: `__pad${list.length}` });
+  return list;
+})();
+const isPad = (id: string | null) => !!id && id.startsWith('__pad');
 
 export default function CustomizeHeaderScreen() {
   const theme = useTheme();
@@ -335,14 +341,15 @@ export default function CustomizeHeaderScreen() {
                 keyExtractor={(it) => it.id ?? 'none'}
                 numColumns={3}
                 showsVerticalScrollIndicator={false}
-                initialNumToRender={6}
-                maxToRenderPerBatch={6}
-                windowSize={5}
+                initialNumToRender={3}
+                maxToRenderPerBatch={3}
+                windowSize={3}
+                updateCellsBatchingPeriod={90}
                 removeClippedSubviews
                 columnWrapperStyle={{ paddingHorizontal: 12, gap: 10 }}
                 contentContainerStyle={{ paddingBottom: insets.bottom + 16, gap: 10 }}
                 ListHeaderComponent={
-                  <View style={{ flexDirection: 'row', gap: 10, paddingHorizontal: 12, marginBottom: 12 }}>
+                  <View style={{ flexDirection: 'row', gap: 10, paddingHorizontal: 12, marginTop: 6, marginBottom: 16 }}>
                     <Pressable onPress={() => { triggerHaptic('light'); setSelectedId(null); setDrawMode(true); }} style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, height: 44, borderRadius: 14, backgroundColor: theme.colors.accent.primary }}>
                       <Feather name="edit-2" size={16} color="#FFFFFF" />
                       <RNText allowFontScaling={false} style={{ fontSize: 13, fontWeight: '700', color: '#FFFFFF', includeFontPadding: false }}>{t('customize.draw', 'Рисовать свой')}</RNText>
@@ -354,13 +361,12 @@ export default function CustomizeHeaderScreen() {
                   </View>
                 }
                 renderItem={({ item }) => {
+                  if (isPad(item.id)) return <View style={{ flex: 1 }} />;
                   const isSel = background === item.id;
                   return (
                     <Pressable onPress={() => { triggerHaptic('light'); setBackground(item.id); }} style={{ flex: 1 }}>
                       <View style={{ aspectRatio: 1, borderRadius: 16, overflow: 'hidden', borderWidth: isSel ? 3 : 0, borderColor: theme.colors.accent.primary, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)', alignItems: 'center', justifyContent: 'center' }}>
                         {item.id ? (
-                          // SAME renderer as the big preview + profile → the swatch
-                          // matches the applied result exactly.
                           <HeaderLandscape backgroundId={item.id} />
                         ) : (
                           <Feather name="slash" size={24} color={theme.colors.text.tertiary} />
