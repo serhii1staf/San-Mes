@@ -1199,7 +1199,7 @@ export default function UserProfileScreen() {
 
       {/* User-chosen background gradient — card backdrop, above the cover photo
           but below the identity content. */}
-      <HeaderBackgroundLayer backgroundId={scene.background} hasBanner={!!bannerUrl} />
+      <HeaderBackgroundLayer backgroundId={scene.background} drawing={scene.drawing} hasBanner={!!bannerUrl} blend={scene.bgBlend} />
 
       {/* ── Module content (left-aligned identity block, matches the mockup) ── */}
       <View style={{ paddingTop: insets.top + 52, paddingHorizontal: 20, paddingBottom: 22 }}>

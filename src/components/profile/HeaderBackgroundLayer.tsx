@@ -1,26 +1,31 @@
 // HeaderBackgroundLayer
 // ---------------------
-// Renders a user-chosen DRAWN LANDSCAPE (sky + sun/moon + layered silhouettes,
-// see HeaderLandscape) as the profile header card backdrop. Placed ABOVE the
-// cover photo but BELOW the identity content. Read-only + memoized;
-// pointerEvents off. Renders nothing when no background is selected.
+// Renders a user-chosen DRAWN LANDSCAPE and/or the user's FREEHAND DRAWING as
+// the profile header card backdrop (above the cover photo, below the identity
+// content). Read-only + memoized; pointerEvents off via HeaderLandscape.
 //
-// Banner combination: when the card ALSO has a cover photo (`hasBanner`), the
-// landscape is rendered at a reduced opacity so the banner shows through and
-// the two read as a single combined backdrop. With no banner it's fully opaque.
+// Banner combination is now EXPLICIT: the landscape is drawn semi-transparently
+// (so the banner photo shows through) only when the user turned on "blend"
+// (`blend` + there's a banner). Otherwise it's fully opaque.
 
 import React, { memo } from 'react';
 import { HeaderLandscape } from './HeaderLandscape';
+import { HeaderDrawStroke } from '../../services/headerScene';
 
 function HeaderBackgroundLayerComponent({
   backgroundId,
+  drawing,
   hasBanner,
+  blend,
 }: {
   backgroundId: string | null | undefined;
+  drawing?: HeaderDrawStroke[] | null;
   hasBanner?: boolean;
+  blend?: boolean;
 }) {
+  const dimmed = !!blend && !!hasBanner;
   return (
-    <HeaderLandscape backgroundId={backgroundId} style={hasBanner ? { opacity: 0.55 } : null} />
+    <HeaderLandscape backgroundId={backgroundId} drawing={drawing} style={dimmed ? { opacity: 0.5 } : null} />
   );
 }
 

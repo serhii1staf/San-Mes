@@ -34,6 +34,19 @@ export interface HeaderScene {
   items: HeaderItem[];
   /** Named background gradient id (see HEADER_BACKGROUNDS), or null = none. */
   background?: string | null;
+  /** When true, a chosen background is drawn semi-transparently so the user's
+   *  banner photo shows through (background + banner combined). */
+  bgBlend?: boolean;
+  /** Freehand strokes the user drew for a custom background (normalized 0..100
+   *  coordinate space). Rendered behind the stickers. */
+  drawing?: HeaderDrawStroke[];
+}
+
+/** One freehand stroke: an SVG path in a 0..100 viewBox, a colour and width. */
+export interface HeaderDrawStroke {
+  d: string;
+  color: string;
+  w: number;
 }
 
 export const BASE_ITEM_SIZE = 40;
@@ -147,7 +160,25 @@ export function normalizeScene(raw: unknown): HeaderScene {
     if (clean.length >= MAX_ITEMS) break;
   }
   const background = typeof obj.background === 'string' && BG_SET.has(obj.background) ? obj.background : null;
-  return { version: 1, items: clean, background };
+  const bgBlend = obj.bgBlend === true;
+  // Freehand drawing — bounded so the serialized scene stays under the 8 KB
+  // server cap. Strokes capped, each path string length-capped.
+  let drawing: HeaderDrawStroke[] | undefined;
+  if (Array.isArray(obj.drawing)) {
+    const strokes: HeaderDrawStroke[] = [];
+    for (const s of obj.drawing) {
+      if (!s || typeof s !== 'object') continue;
+      if (typeof s.d !== 'string' || !s.d) continue;
+      strokes.push({
+        d: String(s.d).slice(0, 1400),
+        color: typeof s.color === 'string' ? s.color.slice(0, 16) : '#FFFFFF',
+        w: isFinite(Number(s.w)) ? Math.min(12, Math.max(0.5, Number(s.w))) : 2,
+      });
+      if (strokes.length >= 60) break;
+    }
+    if (strokes.length > 0) drawing = strokes;
+  }
+  return { version: 1, items: clean, background, bgBlend, drawing };
 }
 
 export function getLocalScene(userId: string | null | undefined): HeaderScene {
@@ -163,7 +194,7 @@ export function setLocalScene(userId: string | null | undefined, scene: HeaderSc
 
 /** True when a scene has nothing to render (used to skip layers). */
 export function isEmptyScene(s: HeaderScene | null | undefined): boolean {
-  return !s || ((s.items?.length ?? 0) === 0 && !s.background);
+  return !s || ((s.items?.length ?? 0) === 0 && !s.background && (s.drawing?.length ?? 0) === 0);
 }
 
 // ── Sticker library ─────────────────────────────────────────────────────────
