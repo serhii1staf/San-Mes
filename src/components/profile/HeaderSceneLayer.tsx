@@ -21,30 +21,36 @@ function HeaderSceneLayerComponent({ scene, style }: Props) {
   if (!scene || scene.items.length === 0) return null;
   return (
     <View pointerEvents="none" style={[StyleSheet.absoluteFill, style]}>
-      {scene.items.map((it) => (
-        <View
-          key={it.id}
-          style={{
-            position: 'absolute',
-            left: `${it.x * 100}%`,
-            top: `${it.y * 100}%`,
-            width: BASE_ITEM_SIZE,
-            height: BASE_ITEM_SIZE,
-            alignItems: 'center',
-            justifyContent: 'center',
-            transform: [
-              { translateX: -BASE_ITEM_SIZE / 2 },
-              { translateY: -BASE_ITEM_SIZE / 2 },
-              { rotate: `${it.rotation}deg` },
-              { scale: it.scale },
-            ],
-          }}
-        >
-          <RNText allowFontScaling={false} style={{ fontSize: BASE_ITEM_SIZE * 0.82 }}>
-            {it.value}
-          </RNText>
-        </View>
-      ))}
+      {scene.items.map((it) => {
+        // Render the glyph at its REAL final size (fontSize), NOT via a
+        // transform scale of a base-size glyph — scaling a rasterized emoji is
+        // what made enlarged stickers look blurry/low-quality. Sizing the Text
+        // itself rasterizes the glyph crisply at any size.
+        const size = BASE_ITEM_SIZE * it.scale;
+        return (
+          <View
+            key={it.id}
+            style={{
+              position: 'absolute',
+              left: `${it.x * 100}%`,
+              top: `${it.y * 100}%`,
+              width: size,
+              height: size,
+              alignItems: 'center',
+              justifyContent: 'center',
+              transform: [
+                { translateX: -size / 2 },
+                { translateY: -size / 2 },
+                { rotate: `${it.rotation}deg` },
+              ],
+            }}
+          >
+            <RNText allowFontScaling={false} style={{ fontSize: size * 0.82 }}>
+              {it.value}
+            </RNText>
+          </View>
+        );
+      })}
     </View>
   );
 }

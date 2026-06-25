@@ -14,6 +14,7 @@ import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
+import { useT } from '../../src/i18n/store';
 import { useAuthStore } from '../../src/store/authStore';
 import { updateProfile as updateRemoteProfile } from '../../src/lib/supabase';
 import { triggerHaptic } from '../../src/utils/haptics';
@@ -28,6 +29,7 @@ const PREVIEW_H = 300;
 
 export default function CustomizeHeaderScreen() {
   const theme = useTheme();
+  const t = useT();
   const insets = useSafeAreaInsets();
   const { width: screenW } = useWindowDimensions();
   const user = useAuthStore((s) => s.user);
@@ -55,7 +57,7 @@ export default function CustomizeHeaderScreen() {
     triggerHaptic('light');
     setItems((prev) => {
       if (prev.length >= MAX_ITEMS) {
-        showToast(`Максимум ${MAX_ITEMS} элементов`, 'alert-circle');
+        showToast(t('customize.max_items', `Максимум ${MAX_ITEMS} элементов`), 'alert-circle');
         return prev;
       }
       const it: HeaderItem = {
@@ -127,7 +129,7 @@ export default function CustomizeHeaderScreen() {
     try { await updateRemoteProfile(user.id, { header_scene: scene } as any); } catch {}
     setSaving(false);
     triggerHaptic('light');
-    showToast('Оформление сохранено', 'check-circle');
+    showToast(t('customize.saved', 'Оформление сохранено'), 'check-circle');
     router.back();
   }, [user, items, background, updateLocalUser]);
 
@@ -140,9 +142,9 @@ export default function CustomizeHeaderScreen() {
         <Pressable onPress={() => router.back()} hitSlop={10} style={{ width: 40, height: 40, alignItems: 'center', justifyContent: 'center' }}>
           <Feather name="x" size={24} color={theme.colors.text.primary} />
         </Pressable>
-        <Text variant="h3" weight="bold">Оформление</Text>
+        <Text variant="h3" weight="bold">{t('customize.title', 'Оформление')}</Text>
         <Pressable onPress={onSave} disabled={saving} hitSlop={10} style={{ minWidth: 40, height: 40, alignItems: 'flex-end', justifyContent: 'center' }}>
-          {saving ? <ActivityIndicator color={theme.colors.accent.primary} /> : <Text variant="body" weight="bold" color={theme.colors.accent.primary}>Готово</Text>}
+          {saving ? <ActivityIndicator color={theme.colors.accent.primary} /> : <Text variant="body" weight="bold" color={theme.colors.accent.primary}>{t('common.done', 'Готово')}</Text>}
         </Pressable>
       </View>
 
@@ -151,19 +153,20 @@ export default function CustomizeHeaderScreen() {
         <View style={{ width: previewW, height: PREVIEW_H, overflow: 'hidden', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)', borderBottomLeftRadius: 30, borderBottomRightRadius: 30 }}>
           {/* Chosen background gradient (behind everything in the preview). */}
           {backgroundColors(background) ? (
-            <LinearGradient colors={backgroundColors(background) as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} pointerEvents="none" />
+            <LinearGradient colors={backgroundColors(background) as any} start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 1 }} style={StyleSheet.absoluteFill} pointerEvents="none" />
           ) : null}
           {/* Hint when empty */}
           {items.length === 0 ? (
             <View style={{ ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 40 }}>
               <Text variant="body" color={theme.colors.text.tertiary} style={{ textAlign: 'center' }}>
-                Нажимай на элементы снизу, чтобы добавить. Перетаскивай, чтобы двигать, и выбирай для размера/поворота.
+                {t('customize.hint', 'Нажимай на элементы снизу, чтобы добавить. Перетаскивай, чтобы двигать, и выбирай для размера/поворота.')}
               </Text>
             </View>
           ) : null}
 
           {items.map((it) => {
             const isSel = it.id === selectedId;
+            const size = BASE_ITEM_SIZE * it.scale;
             return (
               <View
                 key={it.id}
@@ -172,15 +175,14 @@ export default function CustomizeHeaderScreen() {
                   position: 'absolute',
                   left: `${it.x * 100}%`,
                   top: `${it.y * 100}%`,
-                  width: BASE_ITEM_SIZE,
-                  height: BASE_ITEM_SIZE,
+                  width: size,
+                  height: size,
                   alignItems: 'center',
                   justifyContent: 'center',
                   transform: [
-                    { translateX: -BASE_ITEM_SIZE / 2 },
-                    { translateY: -BASE_ITEM_SIZE / 2 },
+                    { translateX: -size / 2 },
+                    { translateY: -size / 2 },
                     { rotate: `${it.rotation}deg` },
-                    { scale: it.scale },
                   ],
                   borderWidth: isSel ? 1.5 : 0,
                   borderColor: theme.colors.accent.primary,
@@ -188,7 +190,7 @@ export default function CustomizeHeaderScreen() {
                   borderStyle: 'dashed',
                 }}
               >
-                <RNText allowFontScaling={false} style={{ fontSize: BASE_ITEM_SIZE * 0.82 }}>{it.value}</RNText>
+                <RNText allowFontScaling={false} style={{ fontSize: size * 0.82 }}>{it.value}</RNText>
               </View>
             );
           })}
@@ -211,7 +213,7 @@ export default function CustomizeHeaderScreen() {
       {/* Library — group tabs + glyph grid */}
       <View style={{ flex: 1 }}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 12, gap: 8, paddingVertical: 6 }} style={{ flexGrow: 0 }}>
-          {[{ key: 'bg', label: 'Фон' }, ...STICKER_LIBRARY.map((g) => ({ key: g.key, label: g.label }))].map((g) => {
+          {[{ key: 'bg', label: t('customize.bg', 'Фон') }, ...STICKER_LIBRARY.map((g) => ({ key: g.key, label: g.label }))].map((g) => {
             const active = g.key === activeGroup;
             return (
               <Pressable key={g.key} onPress={() => setActiveGroup(g.key)} style={{ paddingHorizontal: 14, paddingVertical: 7, borderRadius: 18, backgroundColor: active ? theme.colors.accent.primary : (theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)') }}>
@@ -222,16 +224,18 @@ export default function CustomizeHeaderScreen() {
         </ScrollView>
 
         {activeGroup === 'bg' ? (
-          <ScrollView contentContainerStyle={{ flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 12, paddingBottom: insets.bottom + 16, paddingTop: 6, gap: 12 }}>
+          <ScrollView contentContainerStyle={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-evenly', paddingHorizontal: 8, paddingBottom: insets.bottom + 16, paddingTop: 10, rowGap: 16 }}>
             {/* "None" swatch */}
-            <Pressable onPress={() => { triggerHaptic('light'); setBackground(null); }} style={{ width: 76, height: 76, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)', borderWidth: background == null ? 2 : 0, borderColor: theme.colors.accent.primary }}>
-              <Feather name="slash" size={22} color={theme.colors.text.tertiary} />
-              <RNText style={{ fontSize: 10, color: theme.colors.text.tertiary, marginTop: 4 }}>Нет</RNText>
+            <Pressable onPress={() => { triggerHaptic('light'); setBackground(null); }} style={{ width: 90, alignItems: 'center' }}>
+              <View style={{ width: 90, height: 90, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)', borderWidth: background == null ? 3 : 0, borderColor: theme.colors.accent.primary }}>
+                <Feather name="slash" size={24} color={theme.colors.text.tertiary} />
+              </View>
+              <RNText style={{ fontSize: 11, color: theme.colors.text.secondary, marginTop: 5 }}>{t('customize.none', 'Нет')}</RNText>
             </Pressable>
             {HEADER_BACKGROUNDS.map((b) => (
-              <Pressable key={b.id} onPress={() => { triggerHaptic('light'); setBackground(b.id); }} style={{ width: 76, alignItems: 'center' }}>
-                <LinearGradient colors={b.colors as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={{ width: 76, height: 76, borderRadius: 16, borderWidth: background === b.id ? 3 : 0, borderColor: theme.colors.accent.primary }} />
-                <RNText style={{ fontSize: 11, color: theme.colors.text.secondary, marginTop: 4 }}>{b.label}</RNText>
+              <Pressable key={b.id} onPress={() => { triggerHaptic('light'); setBackground(b.id); }} style={{ width: 90, alignItems: 'center' }}>
+                <LinearGradient colors={b.colors as any} start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 1 }} style={{ width: 90, height: 90, borderRadius: 18, borderWidth: background === b.id ? 3 : 0, borderColor: theme.colors.accent.primary }} />
+                <RNText style={{ fontSize: 11, color: theme.colors.text.secondary, marginTop: 5 }}>{b.label}</RNText>
               </Pressable>
             ))}
           </ScrollView>

@@ -417,7 +417,7 @@ export async function createRepost(_authorId: string, originalPostId: string, co
 
 export async function updateProfile(
   _userId: string,
-  updates: Partial<{ display_name: string; emoji: string; bio: string; banner_url: string; theme_id: string | null; links: any; username: string; badge: string | null; is_verified: boolean; screenshots_disabled: boolean }>,
+  updates: Partial<{ display_name: string; emoji: string; bio: string; banner_url: string; theme_id: string | null; header_scene: any; links: any; username: string; badge: string | null; is_verified: boolean; screenshots_disabled: boolean }>,
 ): Promise<{ error: string | null }> {
   const { error } = await apiPatch('/v1/profiles/me', updates);
   if (error) {

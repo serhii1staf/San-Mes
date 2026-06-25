@@ -42,17 +42,23 @@ const keyFor = (userId: string) => `header_scene:${userId}`;
 
 // ── Background gradients ──────────────────────────────────────────────────
 export interface HeaderBackground { id: string; label: string; colors: string[] }
+// Vertical, multi-stop palettes that read like LANDSCAPES (sky → horizon →
+// ground), not flat diagonal fills. Rendered top→bottom.
 export const HEADER_BACKGROUNDS: HeaderBackground[] = [
-  { id: 'sunset', label: 'Закат', colors: ['#FFC18A', '#FF7E79', '#7A4A86'] },
-  { id: 'ocean', label: 'Океан', colors: ['#CDEFFF', '#7FC9EC', '#1E6FA8'] },
-  { id: 'forest', label: 'Лес', colors: ['#CFE9C7', '#7FB069', '#27531F'] },
-  { id: 'galaxy', label: 'Галактика', colors: ['#0A0420', '#241252', '#4B2A8A'] },
-  { id: 'sakura', label: 'Сакура', colors: ['#FFE9F0', '#FBC9DA', '#F49AB6'] },
-  { id: 'aurora', label: 'Сияние', colors: ['#06121F', '#0E2A3A', '#123048'] },
-  { id: 'lavender', label: 'Лаванда', colors: ['#ECE3F7', '#CBB3EA', '#9B7FD0'] },
-  { id: 'fire', label: 'Пламя', colors: ['#2B0A0A', '#7A1F1F', '#FF6A3D'] },
-  { id: 'mint', label: 'Мята', colors: ['#E6FFF4', '#9CE7C9', '#39B58C'] },
-  { id: 'night', label: 'Ночь', colors: ['#0B1E3D', '#16335E', '#2E5A8F'] },
+  { id: 'sunset', label: 'Закат', colors: ['#2A1A3D', '#7A4A86', '#FF7E79', '#FFC18A'] },
+  { id: 'dawn', label: 'Рассвет', colors: ['#1B2A4A', '#8A5A8E', '#C96F8B', '#FFD3A5'] },
+  { id: 'ocean', label: 'Океан', colors: ['#CDEFFF', '#7FC9EC', '#2E86C1', '#0B3A5B'] },
+  { id: 'meadow', label: 'Луг', colors: ['#AEE3FF', '#CFF0B8', '#8FCB6A', '#3E7D33'] },
+  { id: 'forest', label: 'Лес', colors: ['#BFE3F5', '#7FB069', '#3E7D33', '#15300F'] },
+  { id: 'desert', label: 'Пустыня', colors: ['#FBE3B3', '#F4C56E', '#DC8A3C', '#8A4B20'] },
+  { id: 'galaxy', label: 'Галактика', colors: ['#0A0420', '#241252', '#4B2A8A', '#B388FF'] },
+  { id: 'aurora', label: 'Сияние', colors: ['#06121F', '#0E2A3A', '#1E6F62', '#5FE0B0'] },
+  { id: 'sakura', label: 'Сакура', colors: ['#FFF0F5', '#FBC9DA', '#F49AB6', '#C75B86'] },
+  { id: 'snow', label: 'Снег', colors: ['#EAF4FF', '#CFE6F7', '#9BBEDC', '#5E7FA0'] },
+  { id: 'lavender', label: 'Лаванда', colors: ['#F3ECFB', '#CBB3EA', '#9B7FD0', '#5E3F94'] },
+  { id: 'fire', label: 'Пламя', colors: ['#2B0A0A', '#7A1F1F', '#E04A1F', '#FFB347'] },
+  { id: 'mint', label: 'Мята', colors: ['#EAFFF6', '#9CE7C9', '#39B58C', '#0E6B53'] },
+  { id: 'night', label: 'Ночь', colors: ['#05070F', '#0B1E3D', '#16335E', '#2E5A8F'] },
 ];
 const BG_SET = new Set(HEADER_BACKGROUNDS.map((b) => b.id));
 export function backgroundColors(id: string | null | undefined): string[] | null {
@@ -111,10 +117,10 @@ export function isEmptyScene(s: HeaderScene | null | undefined): boolean {
 export interface StickerGroup { key: string; label: string; items: string[] }
 
 export const STICKER_LIBRARY: StickerGroup[] = [
-  { key: 'space', label: 'Космос', items: ['🌙', '⭐', '🌟', '✨', '💫', '☄️', '🪐', '🌌', '🚀', '🛸', '👽', '🌠', '🔭', '🌕', '🌑', '🪨'] },
-  { key: 'nature', label: 'Природа', items: ['🌸', '🌷', '🌹', '🌻', '🌼', '🌿', '🍃', '🍀', '🌲', '🌴', '🌵', '🍄', '🌊', '🏔️', '🌈', '🍁'] },
-  { key: 'cute', label: 'Милые', items: ['🐱', '🐶', '🦊', '🐼', '🐰', '🐻', '🐨', '🐸', '🦋', '🐝', '🐧', '🐙', '🦄', '🦔', '🐢', '🐹'] },
-  { key: 'love', label: 'Любовь', items: ['❤️', '🧡', '💛', '💚', '💙', '💜', '🤍', '🩷', '💖', '💗', '💕', '💞', '💘', '💝', '😍', '🥰'] },
-  { key: 'badges', label: 'Значки', items: ['✅', '⭐', '🏆', '🥇', '🥈', '🥉', '👑', '💎', '🔰', '🎖️', '🏅', '💯', '✔️', '⚜️', '🛡️', '🎗️'] },
-  { key: 'fun', label: 'Фан', items: ['😎', '🥳', '🤩', '😈', '👾', '🤖', '🎮', '🕹️', '🎲', '🎯', '🎸', '🎧', '🔥', '⚡', '💥', '🎉'] },
+  { key: 'space', label: 'Космос', items: ['🌙', '⭐', '🌟', '✨', '💫', '☄️', '🪐', '🌌', '🚀', '🛸', '👽', '🌠', '🔭', '🌕', '🌑', '🌗', '🌘', '🌖', '🪨', '🌞', '🌛', '🌜', '🌚', '🛰️'] },
+  { key: 'nature', label: 'Природа', items: ['🌸', '🌷', '🌹', '🌻', '🌼', '🌺', '🌿', '🍃', '🍀', '🌱', '🌲', '🌳', '🌴', '🌵', '🍄', '🌊', '🏔️', '⛰️', '🌈', '🍁', '🍂', '🌾', '💐', '🪷'] },
+  { key: 'cute', label: 'Милые', items: ['🐱', '🐶', '🦊', '🐼', '🐰', '🐻', '🐨', '🐸', '🦋', '🐝', '🐧', '🐙', '🦄', '🦔', '🐢', '🐹', '🐥', '🦉', '🦦', '🦝', '🐳', '🐬', '🦭', '🐞'] },
+  { key: 'love', label: 'Любовь', items: ['❤️', '🧡', '💛', '💚', '💙', '💜', '🤍', '🩷', '🩵', '🤎', '🖤', '💖', '💗', '💕', '💞', '💘', '💝', '💟', '❣️', '😍', '🥰', '😘', '🫶', '💌'] },
+  { key: 'badges', label: 'Значки', items: ['✅', '⭐', '🏆', '🥇', '🥈', '🥉', '👑', '💎', '🔰', '🎖️', '🏅', '💯', '✔️', '⚜️', '🛡️', '🎗️', '🔱', '⚡', '🚩', '🏵️', '📛', '🆒', '🆕', '🔥'] },
+  { key: 'fun', label: 'Фан', items: ['😎', '🥳', '🤩', '😈', '👾', '🤖', '🎮', '🕹️', '🎲', '🎯', '🎸', '🎧', '🎤', '🎹', '🎺', '🪩', '🍿', '🎈', '🎉', '🎊', '💥', '💢', '🤙', '🤘'] },
 ];
