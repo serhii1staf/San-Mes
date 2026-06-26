@@ -97,8 +97,10 @@ export default function ChatBubbleColorScreen() {
   const borderLight = theme.colors.border.light;
 
   // A message-bubble-shaped tile (rounded with a tail corre­sponding to the
-  // side being edited) — Telegram-like read. Selected state lifts the bubble
-  // with a soft accent ring + check; idle state stays clean and minimal.
+  // side being edited) — Telegram-like read. Selection is shown ONLY by the
+  // accent ring + subtle tint; idle tiles stay clean and show their emoji.
+  // Pressing scales the rounded bubble down with a soft accent tint that's
+  // clipped to the tile's border-radius so the feedback feels tactile.
   const Tile = ({ colors, selected, emoji, label, onPress, defaultFill }: {
     colors: string[] | null; selected: boolean; emoji?: string; label: string; onPress: () => void; defaultFill?: string;
   }) => {
@@ -108,23 +110,23 @@ export default function ChatBubbleColorScreen() {
     const tail = target === 'out'
       ? { borderBottomRightRadius: 7 }
       : { borderBottomLeftRadius: 7 };
-    const checkColor = readableTextOn(colors ? colors : (defaultFill || accent));
     return (
       <Pressable onPress={onPress} style={styles.tileWrap}>
-        <View style={[styles.tileRing, { borderColor: selected ? accent : 'transparent', backgroundColor: selected ? accent + '14' : 'transparent' }]}>
-          <View style={[styles.tile, tail, { backgroundColor: solid || fill || 'transparent' }]}>
-            {grad ? (
-              <LinearGradient colors={colors as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
-            ) : null}
-            <View style={[StyleSheet.absoluteFill, tail, styles.tileHairline]} pointerEvents="none" />
-            {selected ? (
-              <View style={styles.tileCheck}>
-                <Feather name="check" size={16} color={checkColor} />
+        {({ pressed }) => (
+          <>
+            <View style={[styles.tileRing, { borderColor: selected ? accent : 'transparent', backgroundColor: selected ? accent + '14' : 'transparent', transform: [{ scale: pressed ? 0.96 : 1 }] }]}>
+              <View style={[styles.tile, tail, { backgroundColor: solid || fill || 'transparent' }]}>
+                {grad ? (
+                  <LinearGradient colors={colors as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
+                ) : null}
+                <View style={[StyleSheet.absoluteFill, tail, styles.tileHairline]} pointerEvents="none" />
+                {emoji ? <RNText style={styles.tileEmoji} allowFontScaling={false}>{emoji}</RNText> : null}
+                {pressed ? <View style={[StyleSheet.absoluteFill, tail, styles.tilePress, { backgroundColor: accent + '1F' }]} pointerEvents="none" /> : null}
               </View>
-            ) : (emoji ? <RNText style={styles.tileEmoji} allowFontScaling={false}>{emoji}</RNText> : null)}
-          </View>
-        </View>
-        <RNText style={[styles.tileLabel, { color: selected ? textPrimary : textTertiary }]} numberOfLines={1} allowFontScaling={false}>{label}</RNText>
+            </View>
+            <RNText style={[styles.tileLabel, { color: selected ? textPrimary : textTertiary }]} numberOfLines={1} allowFontScaling={false}>{label}</RNText>
+          </>
+        )}
       </Pressable>
     );
   };
@@ -385,19 +387,16 @@ const styles = StyleSheet.create({
 
   sliderCard: { paddingHorizontal: 18, paddingVertical: 8, borderRadius: 18, borderWidth: StyleSheet.hairlineWidth },
 
-  grid: { flexDirection: 'row', flexWrap: 'wrap', rowGap: 18 },
-  tileWrap: { width: '25%', alignItems: 'center', gap: 8 },
-  tileRing: { padding: 3, borderRadius: 20, borderWidth: 2 },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', rowGap: 16 },
+  tileWrap: { width: '25%', alignItems: 'center', gap: 7 },
+  tileRing: { padding: 3, borderRadius: 18, borderWidth: 1.5 },
   tile: {
     width: 58, height: 42, borderRadius: 15, overflow: 'hidden',
     alignItems: 'center', justifyContent: 'center',
-    shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, elevation: 2,
+    shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 3, shadowOffset: { width: 0, height: 1 }, elevation: 1,
   },
-  tileHairline: { borderRadius: 15, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(127,127,127,0.2)' },
-  tileCheck: {
-    width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(0,0,0,0.16)',
-  },
+  tileHairline: { borderRadius: 15, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(127,127,127,0.18)' },
+  tilePress: { borderRadius: 15 },
   tileEmoji: { fontSize: 18 },
   tileLabel: { fontSize: 10.5, fontWeight: '500', letterSpacing: 0.1 },
 

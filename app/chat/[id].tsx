@@ -355,7 +355,22 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
   // (the "photos reload as black images every time I reopen the chat" report).
   // First-time images keep the staggered path so a fresh GIF-heavy chat still
   // doesn't decode-storm the open frame.
-  const singleImgKnown = hasImages && message.imageUrls!.length === 1 && !!getImageDims(message.imageUrls![0]);
+  //
+  // GIFs are DELIBERATELY excluded from this fast path (`!isGifBubble`). A
+  // static photo's bytes+bitmap are cached after the first decode, so a known
+  // photo is genuinely cheap to re-mount. An animated GIF is NOT: expo-image
+  // re-decodes the first frame (~40-74 ms each on a weak device) on every fresh
+  // mount even when the bytes are on disk and the dimensions are remembered.
+  // `getImageDims` persists across launches (MMKV), so on RE-open of a GIF-heavy
+  // chat every GIF satisfied `singleImgKnown` and mounted its CachedImage on the
+  // SAME frame — exactly the ~10-11 simultaneous Giphy decodes / 125-134 ms long
+  // task the perf monitor caught right after navigation. Forcing GIFs to always
+  // honour `gifReveal` routes them through the wider-spaced GIF reveal pump
+  // (≈90 ms apart, ~2 concurrent) so the first-frame decodes cascade across
+  // frames instead of bursting. The placeholder skeleton below is sized to the
+  // remembered dims, so the Skeleton → CachedImage swap is layout-identical
+  // (no jump). This mirrors the comments screen, which always gates GIF reveal.
+  const singleImgKnown = hasImages && message.imageUrls!.length === 1 && !isGifBubble && !!getImageDims(message.imageUrls![0]);
 
   return (
     <View style={bubbleStyles.row}>
@@ -482,7 +497,7 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
                 ) : (
                   message.imageUrls.map((uri, idx) => (
                     <Pressable key={idx} onPress={() => onImagePress(message.imageUrls!, idx)}>
-                      {imgReveal || getImageDims(uri) ? (
+                      {imgReveal || (!isGifBubble && getImageDims(uri)) ? (
                         <CachedImage
                           uri={uri}
                           style={bubbleStyles.imageMulti}

@@ -1,6 +1,6 @@
 import React, { useEffect, useCallback, useState, useRef, useMemo } from 'react';
 import { View, RefreshControl, Pressable, StyleSheet, ActivityIndicator, Modal, InteractionManager, Animated, Easing } from 'react-native';
-import { FlashList } from '@shopify/flash-list';
+import { AnimatedFlashList } from '@shopify/flash-list';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
@@ -401,6 +401,26 @@ export default function FeedScreen() {
   // Both animate exclusively on opacity/transform so useNativeDriver works.
   const spinValue = useRef(new Animated.Value(0)).current;
   const appearValue = useRef(new Animated.Value(0)).current;
+  // Scroll-linked driver for the pull-to-reveal animation. Updated NATIVELY by
+  // the FlashList onScroll Animated.event (useNativeDriver: true) below, so the
+  // spinner reveals smoothly with the drag with zero JS-thread work per frame.
+  // Created via useRef at the top level alongside spinValue/appearValue so the
+  // hook order/count is identical on every render (never conditional, always
+  // above the early `isLoading` return).
+  const scrollY = useRef(new Animated.Value(0)).current;
+  // Native-driven scroll handler, lazily created exactly once. Maps the list's
+  // vertical content offset onto `scrollY`. The negative over-scroll at the top
+  // of the feed (iOS rubber-banding, contentOffset.y < 0) is what drives the
+  // reveal interpolations further down. `listener` is omitted (null) so nothing
+  // runs on the JS thread per frame. The `if` guard is a standard lazy-init for
+  // the ref's value — the useRef hook itself is unconditional.
+  const onScrollRef = useRef<((...args: any[]) => void) | null>(null);
+  if (!onScrollRef.current) {
+    onScrollRef.current = Animated.event(
+      [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+      { useNativeDriver: true },
+    );
+  }
   useEffect(() => {
     let loop: Animated.CompositeAnimation | null = null;
     if (isRefreshing) {
@@ -431,7 +451,7 @@ export default function FeedScreen() {
         easing: Easing.out(Easing.quad),
         useNativeDriver: true,
       }).start(() => {
-        spinValue.stopAnimation();
+        spinValue.stopAnimation(() => spinValue.setValue(0));
       });
     }
     return () => {
@@ -730,10 +750,26 @@ export default function FeedScreen() {
   const headerContentHeight = insets.top + 48;
   const headerGradientHeight = headerContentHeight + 28;
 
-  // Render-time (non-hook) derived value: maps the 0→1 spin loop to a full
-  // rotation. Computed inline on the stable Animated.Value ref.
-  const spinRotate = spinValue.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
-  const spinScale = appearValue.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1] });
+  // Render-time (non-hook) derived values. The spinner's reveal combines TWO
+  // native-driven contributions so it animates with the pull AND keeps a clean
+  // continuous spin during the actual refresh:
+  //   • appearValue  — the refresh fade/scale envelope (springs to 1 while
+  //                    `isRefreshing`, times back to 0 after).
+  //   • pullProgress — 0→1 as the user over-scrolls the top of the feed from
+  //                    0 → ~90px (scrollY goes 0 → -90). Reveals the spinner
+  //                    WITH the drag, before any refresh has been triggered.
+  // Because appearValue, spinValue and scrollY are ALL native-driven, the
+  // Animated.add combinations stay on the native driver — transforms/opacity
+  // never touch the JS thread.
+  const pullProgress = scrollY.interpolate({ inputRange: [-90, 0], outputRange: [1, 0], extrapolate: 'clamp' });
+  const pullRotate = scrollY.interpolate({ inputRange: [-90, 0], outputRange: [0.75, 0], extrapolate: 'clamp' });
+  // Combined reveal envelope (pull + refresh), clamped to [0,1].
+  const revealValue = Animated.add(appearValue, pullProgress);
+  const spinnerOpacity = revealValue.interpolate({ inputRange: [0, 1], outputRange: [0, 1], extrapolate: 'clamp' });
+  const spinScale = revealValue.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1], extrapolate: 'clamp' });
+  // Rotation: a proportional turn driven by pull distance (so the ring rotates
+  // as it's dragged in) PLUS the continuous 0→1 spin loop while refreshing.
+  const spinRotate = Animated.add(spinValue, pullRotate).interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
 
   // Stable contentContainerStyle — the previous inline object literal was a
   // new reference every render, busting FlashList's prop comparison and
@@ -782,31 +818,41 @@ export default function FeedScreen() {
             <Pressable onLongPress={onTitleLongPress} delayLongPress={350} hitSlop={6} style={styles.titleRow}>
               {homeHeaderIcon ? <PixelIcon id={homeHeaderIcon} size={26} /> : null}
               <Text variant="subheading" weight="bold">San</Text>
-            </Pressable>
-            {/* Custom pull-to-refresh spinner — sits right next to the "San"
-                wordmark, above the blur. Fades + scales in and rotates while
-                refreshing, then fades out. The classic ring (faint full circle
-                + solid accent top arc) reads as a clean, compact spinner. */}
-            <Animated.View
-              pointerEvents="none"
-              style={{
-                width: 16,
-                height: 16,
-                opacity: appearValue,
-                transform: [{ scale: spinScale }, { rotate: spinRotate }],
-              }}
-            >
-              <View
+              {/* Custom pull-to-refresh spinner — sits flush beside the "San"
+                  wordmark, above the blur. It is ABSOLUTELY positioned (left:'100%'
+                  of the title box + an 8px gap, vertically centred), so it is
+                  removed from the header flex flow entirely: it reserves NO width
+                  and contributes NO gap whether idle or refreshing, and the header
+                  never shifts. It fades + scales + rotates in as the feed is
+                  pulled, spins continuously while refreshing, then fades out. The
+                  classic ring (faint full circle + solid accent top arc) reads as
+                  a clean, compact spinner. */}
+              <Animated.View
+                pointerEvents="none"
                 style={{
+                  position: 'absolute',
+                  left: '100%',
+                  marginLeft: 8,
+                  top: '50%',
+                  marginTop: -8,
                   width: 16,
                   height: 16,
-                  borderRadius: 8,
-                  borderWidth: 2,
-                  borderColor: theme.colors.accent.primary + '33',
-                  borderTopColor: theme.colors.accent.primary,
+                  opacity: spinnerOpacity,
+                  transform: [{ scale: spinScale }, { rotate: spinRotate }],
                 }}
-              />
-            </Animated.View>
+              >
+                <View
+                  style={{
+                    width: 16,
+                    height: 16,
+                    borderRadius: 8,
+                    borderWidth: 2,
+                    borderColor: theme.colors.accent.primary + '33',
+                    borderTopColor: theme.colors.accent.primary,
+                  }}
+                />
+              </Animated.View>
+            </Pressable>
             {!isOnline && (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(255,59,48,0.12)', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 }}>
                 <ActivityIndicator size={10} color="#FF3B30" />
@@ -827,13 +873,19 @@ export default function FeedScreen() {
         </View>
       </View>
 
-      <FlashList
+      <AnimatedFlashList
         data={posts}
         keyExtractor={keyExtractor}
         renderItem={renderPost}
         ListHeaderComponent={posts.length === 0 ? FeedHeader : undefined}
         contentContainerStyle={listContentContainerStyle}
         showsVerticalScrollIndicator={false}
+        // Native-driven scroll handler powering the pull-to-reveal spinner. It
+        // ONLY feeds the `scrollY` Animated.Value (useNativeDriver: true, no
+        // listener) — zero setState/JS work per frame, so recycling and scroll
+        // performance are untouched. Throttled to one event per frame.
+        onScroll={onScrollRef.current}
+        scrollEventThrottle={16}
         // FlashList v2 (cell recycling): no FlatList virtualization knobs
         // (initialNumToRender/maxToRenderPerBatch/windowSize/removeClippedSubviews)
         // — sizing is automatic and recycling replaces them. PostCards remain
@@ -844,6 +896,14 @@ export default function FeedScreen() {
         // resizes a card above the viewport" jump (replaces the old FlatList
         // `{ minIndexForVisible: 0 }` shape).
         drawDistance={250}
+        // Native/custom indicator conflict resolution: KEEP RefreshControl so
+        // the native pull gesture + refresh trigger stay intact, but render its
+        // OWN indicator fully invisible — `tintColor="transparent"` hides the
+        // iOS spinner, `colors`/`progressBackgroundColor` hide the Android one,
+        // and there is no `title`/`titleColor`, so nothing native is drawn. The
+        // only visible affordance is the custom ring above. Refresh is triggered
+        // solely by RefreshControl (onScroll just animates), so there is no
+        // double-trigger.
         refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor="transparent" colors={['transparent']} progressBackgroundColor="transparent" progressViewOffset={headerContentHeight} />}
       />
 
