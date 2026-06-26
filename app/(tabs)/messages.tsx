@@ -486,6 +486,25 @@ export default function MessagesScreen() {
   // Per-chat "last opened" timestamps — folded into the recency sort so a chat
   // the user just opened floats to the top even with no new message.
   const openedAt = useChatSettingsStore((s) => s.openedAt);
+  // `openedAt` feeds ONLY the float-to-top recency sort (the `filtered` memo
+  // below), never the bucket filter. The chat screen defers its markChatOpened
+  // write past its own open transition, so the openedAt bump lands ~one
+  // transition later (the perf snapshot's "~877 ms after nav") WHILE this
+  // messages tab is still mounted behind the chat. Applying it synchronously
+  // re-ran the whole filter + sort + FlatList reconcile in a single task — the
+  // 159 ms `LONG @ (tabs)/messages`. Mirror openedAt into a state value that
+  // updates AFTER interactions so the (now sort-only) recompute lands once the
+  // transition has settled instead of on its frame. The float-to-top ordering
+  // is byte-identical — only the instant it recomputes moved off the hot frame,
+  // exactly like the other InteractionManager-deferred work on this screen.
+  const [openedAtForSort, setOpenedAtForSort] = useState(openedAt);
+  useEffect(() => {
+    if (openedAtForSort === openedAt) return;
+    const handle = InteractionManager.runAfterInteractions(() => {
+      setOpenedAtForSort(openedAt);
+    });
+    return () => handle.cancel();
+  }, [openedAt, openedAtForSort]);
   // User-level blocked ids (post-menu / profile-menu block flow). The
   // Blocked tab merges synthetic rows for these into the existing
   // chat-level blocked list so both kinds of blocks live in one place.
@@ -629,20 +648,17 @@ export default function MessagesScreen() {
     return chatStoreConversations;
   }, [entityConversations, chatStoreConversations]);
 
-  // Filtering: each chat belongs to exactly one bucket. The "apps" tab shows no chats.
-  // Recency comparator — newest activity first. `lastMessageAt` is an ISO
-  // string, so a lexicographic compare is also chronological. Activity is the
-  // LATER of the conversation's last message and the last time the user opened
-  // it (openedAt), so opening a chat floats it to the top "по активности" even
-  // when no new message arrived. Items with neither sort last.
-  const activityOf = (c: Conversation) => {
-    const opened = openedAt[c.id] || '';
-    const last = c.lastMessageAt || '';
-    return opened > last ? opened : last;
-  };
-  const byRecency = (a: Conversation, b: Conversation) =>
-    activityOf(b).localeCompare(activityOf(a));
-  const filtered = useMemo(() => {
+  // ─── Bucket filter (openedAt-INDEPENDENT) ─────────────────────────────────
+  // Each chat belongs to exactly one bucket. The "apps" tab shows no chats.
+  // This memo does ONLY the bucketing — several `.includes()` scans over the
+  // whole conversation list — and its result never depends on `openedAt`.
+  // Lifting the recency sort out of it (into the `filtered` memo below) is the
+  // crux of the chat-open fix: returning from a chat bumps `openedAt`, which
+  // used to re-run these whole-list scans on the still-mounted tab; now they
+  // only re-run when the actual data/bucket inputs change. The per-branch
+  // filtering is byte-identical to the previous single memo — only `.sort(...)`
+  // was removed from each branch.
+  const filteredBase = useMemo(() => {
     if (activeTab === 'apps') return [];
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
@@ -656,9 +672,9 @@ export default function MessagesScreen() {
           !deleted.includes(c.id) &&
           !blocked.includes(c.id) &&
           !blockedUserIds.includes(c.participantId),
-      ).sort(byRecency);
+      );
     }
-    if (activeTab === 'archive') return conversations.filter(c => archived.includes(c.id) && !deleted.includes(c.id) && !blocked.includes(c.id) && !blockedUserIds.includes(c.participantId)).sort(byRecency);
+    if (activeTab === 'archive') return conversations.filter(c => archived.includes(c.id) && !deleted.includes(c.id) && !blocked.includes(c.id) && !blockedUserIds.includes(c.participantId));
     if (activeTab === 'blocked') {
       // Chat-level blocked conversations come straight from
       // `chatSettingsStore.blocked` (existing behaviour).
@@ -697,8 +713,37 @@ export default function MessagesScreen() {
     }
     if (activeTab === 'deleted') return conversations.filter(c => deleted.includes(c.id));
     // 'chats' — exclude archived, blocked (chat or user), deleted.
-    return conversations.filter(c => !archived.includes(c.id) && !blocked.includes(c.id) && !deleted.includes(c.id) && !blockedUserIds.includes(c.participantId)).sort(byRecency);
-  }, [conversations, activeTab, searchQuery, archived, blocked, deleted, blockedUserIds, openedAt, locale]);
+    return conversations.filter(c => !archived.includes(c.id) && !blocked.includes(c.id) && !deleted.includes(c.id) && !blockedUserIds.includes(c.participantId));
+  }, [conversations, activeTab, searchQuery, archived, blocked, deleted, blockedUserIds, locale]);
+
+  // ─── Recency sort (the ONLY openedAt-dependent step) ──────────────────────
+  // Newest activity first. `lastMessageAt`/`openedAt` are ISO strings, so a
+  // lexicographic compare is also chronological. Activity is the LATER of the
+  // conversation's last message and the last time the user opened it, so
+  // opening a chat floats it to the top "по активности" even when no new
+  // message arrived. ONLY the buckets that sorted before — search results,
+  // archive and chats — sort here; blocked/deleted keep their insertion order
+  // exactly as before (they never called `.sort` in the original). The sort
+  // reads `openedAtForSort` (the interaction-deferred mirror of `openedAt`), so
+  // this recompute lands AFTER the chat-open transition rather than on its
+  // frame. Per-row activity is precomputed once (O(n)) into a Map so the
+  // comparator does plain string compares instead of two lookups + a max per
+  // comparison.
+  const filtered = useMemo(() => {
+    const shouldSort =
+      activeTab !== 'apps' &&
+      (searchQuery !== '' || activeTab === 'archive' || activeTab === 'chats');
+    if (!shouldSort) return filteredBase;
+    const activity = new Map<string, string>();
+    for (const c of filteredBase) {
+      const opened = openedAtForSort[c.id] || '';
+      const last = c.lastMessageAt || '';
+      activity.set(c.id, opened > last ? opened : last);
+    }
+    return [...filteredBase].sort((a, b) =>
+      (activity.get(b.id) || '').localeCompare(activity.get(a.id) || ''),
+    );
+  }, [filteredBase, activeTab, searchQuery, openedAtForSort]);
 
   const containerStyle: ViewStyle = {
     flex: 1,

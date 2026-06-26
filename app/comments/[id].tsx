@@ -149,6 +149,31 @@ function parseReply(content: string): { replyUser?: string; replyText?: string; 
   return { body: content };
 }
 
+// Merge a freshly-fetched comments array into the previous one, REUSING the
+// previous object reference for any row whose id + content + created_at are
+// unchanged. CommentRow is memoized on `item` identity, so reusing references
+// lets every unchanged row bail out of re-render — only genuinely new / edited
+// rows (and the just-sent comment) re-render. Previously `setComments(data)`
+// after a send/refetch replaced EVERY identity, so the whole visible window
+// re-rendered (re-running parseReply/parseGif/extractFirstUrl per row) in one
+// synchronous commit — a contributor to the long task flagged on send. Server
+// order + content are preserved exactly (order/content are read from `next`).
+function reconcileComments(prev: any[], next: any[]): any[] {
+  if (!Array.isArray(next)) return prev;
+  if (!Array.isArray(prev) || prev.length === 0) return next;
+  const prevById = new Map<string, any>();
+  for (const c of prev) if (c && c.id != null) prevById.set(String(c.id), c);
+  let identical = prev.length === next.length;
+  const merged = next.map((c, i) => {
+    const old = prevById.get(String(c?.id));
+    const reuse = !!old && old.content === c.content && old.created_at === c.created_at;
+    const row = reuse ? old : c;
+    if (identical && prev[i] !== row) identical = false;
+    return row;
+  });
+  return identical ? prev : merged;
+}
+
 // ─── Memoized comment row ──────────────────────────────────────────────────
 // Hoisted out of CommentsScreen so the FlatList's renderItem can hand each row
 // a STABLE component reference. Previously the row JSX lived inline inside
@@ -462,13 +487,36 @@ export default function CommentsScreen() {
     let ready = false;
     let scrolling = false;
     const gifIds = new Set<string>();
+    // Per-row listeners keyed by comment id. Keying by id (not one flat Set)
+    // lets the scroll-pause / staggered-resume pump notify ONLY the rows that
+    // change and release GIFs one at a time when the list settles.
     const rowListeners = new Map<string, Set<() => void>>();
-    const notifyGifs = () => {
-      gifIds.forEach((id) => {
-        const s = rowListeners.get(id);
-        if (s) s.forEach((fn) => fn());
-      });
+    const notify = (id: string) => {
+      const s = rowListeners.get(id);
+      if (s) s.forEach((fn) => fn());
     };
+    const notifyGifs = () => { gifIds.forEach((id) => notify(id)); };
+
+    // ── Staggered GIF resume (mirrors app/chat/[id].tsx visTracker) ───────
+    // Pausing GIFs while scrolling is cheap and correct. The trap is the
+    // RESUME: flipping every visible GIF back to autoplay on ONE frame
+    // restarts ~10 expo-image decodes at once → the decode storm / long-task
+    // the perf snapshot caught (10 giphy decodes inside an ~11 ms window). So
+    // when the list settles we HOLD every visible GIF and release ONE every
+    // RESUME_INTERVAL_MS, capped by GIF_ANIM_CAP, so resuming never lands a
+    // burst. A generation counter aborts an in-flight stagger the instant a
+    // new scroll begins.
+    const RESUME_INTERVAL_MS = 90;
+    // Telegram-style hard cap: only the first N visible GIFs animate; the rest
+    // show their static first frame until they scroll into the cap window.
+    // This is the decisive fix for the on-open storm — at most ~2 decode at
+    // once instead of the whole visible screenful.
+    const GIF_ANIM_CAP = 2;
+    const held = new Set<string>();
+    let resumeGen = 0;
+    let resumeTimer: ReturnType<typeof setTimeout> | null = null;
+    const clearResume = () => { if (resumeTimer) { clearTimeout(resumeTimer); resumeTimer = null; } };
+
     gifTrackerRef.current = {
       subscribeRow(id, l) {
         let s = rowListeners.get(id);
@@ -480,19 +528,27 @@ export default function CommentsScreen() {
         };
       },
       isActive(id) {
-        const onScreen = !ready || visibleSet.has(id);
-        if (!onScreen || scrolling) return false;
-        // Concurrency cap: only the first 2 visible GIFs animate; the rest show
-        // their static frame until they scroll into the cap window. Stops a
-        // GIF-heavy comment thread from decoding 5-6 GIF streams at once.
+        // `ready` gate (mirrors chat): nothing animates before the first
+        // viewability callback lands. The cap can't rank an empty viewable set,
+        // so on open EVERY GIF would otherwise read active and decode at once —
+        // exactly the storm. Hold them on their static frame until the viewable
+        // set is known (fires within a frame of layout), then the cap applies.
+        if (!ready) return false;
+        if (!visibleSet.has(id)) return false;
+        // Paused for the whole active scroll, then held until this row's
+        // staggered-resume turn after the scroll settles.
+        if (scrolling || held.has(id)) return false;
+        // Concurrency cap: visibleSet preserves viewable order (the viewability
+        // callback inserts top→bottom), so count GIF rows until we reach this
+        // one — only the first GIF_ANIM_CAP animate.
         let rank = 0;
         for (const vid of visibleSet) {
           if (!gifIds.has(vid)) continue;
-          if (vid === id) return rank < 2;
+          if (vid === id) return rank < GIF_ANIM_CAP;
           rank++;
-          if (rank >= 2) break;
+          if (rank >= GIF_ANIM_CAP) break;
         }
-        if (rank >= 2) return false;
+        if (rank >= GIF_ANIM_CAP) return false;
         return true;
       },
       update(next) {
@@ -508,10 +564,37 @@ export default function CommentsScreen() {
       setScrolling(b) {
         if (b === scrolling) return;
         scrolling = b;
-        if (gifIds.size === 0) return;
-        notifyGifs();
+        if (gifIds.size === 0) { clearResume(); held.clear(); return; }
+        if (b) {
+          // Scroll started → pause GIFs immediately (the `scrolling` flag does
+          // it). Drop any pending resume + holds and notify only the VISIBLE
+          // GIF rows so just they re-render to their static frame; off-screen
+          // rows keep an unchanged snapshot → no re-render → hitch-free start.
+          clearResume();
+          held.clear();
+          gifIds.forEach((gid) => { if (!ready || visibleSet.has(gid)) notify(gid); });
+        } else {
+          // Scroll settled → hold every visible GIF, then release ONE per
+          // RESUME_INTERVAL_MS. No notify on hold: the snapshot is already
+          // false from the scroll, so nothing re-renders until its release.
+          clearResume();
+          const pending = [...gifIds].filter((gid) => (!ready || visibleSet.has(gid)));
+          pending.forEach((gid) => held.add(gid));
+          const gen = ++resumeGen;
+          const step = () => {
+            if (gen !== resumeGen) return; // a new scroll superseded this stagger
+            const nextId = pending.shift();
+            if (nextId === undefined) { resumeTimer = null; return; }
+            held.delete(nextId);
+            notify(nextId);
+            resumeTimer = setTimeout(step, RESUME_INTERVAL_MS);
+          };
+          step();
+        }
       },
-      setHasGif(id, has) { if (has) gifIds.add(id); else gifIds.delete(id); },
+      setHasGif(id, has) {
+        if (has) gifIds.add(id); else { gifIds.delete(id); held.delete(id); }
+      },
     };
   }
   const gifTracker = gifTrackerRef.current;
@@ -676,9 +759,14 @@ export default function CommentsScreen() {
     try {
       const { comments: data } = await getComments(postId);
       if (Array.isArray(data)) {
-        setComments(data);
-        kvSetJSON(`comments:${postId}`, data);
-        kvSetJSON(tsKey, Date.now());
+        setComments((prev) => reconcileComments(prev, data));
+        // Defer the cache serialize off the open/render frame: JSON.stringify of
+        // a long thread is synchronous and was landing on the same frame as the
+        // list mount → a contributor to the cold-open long task.
+        InteractionManager.runAfterInteractions(() => {
+          kvSetJSON(`comments:${postId}`, data);
+          kvSetJSON(tsKey, Date.now());
+        });
         if (data.length > 0) {
           setTimeout(() => listRef.current?.scrollToEnd({ animated: false }), 150);
         }
@@ -751,8 +839,11 @@ export default function CommentsScreen() {
     const { error } = await createComment(postId, user.id, sendText);
     if (!error) {
       const { comments: data } = await getComments(postId);
-      setComments(data);
-      kvSetJSON(`comments:${postId}`, data);
+      setComments((prev) => reconcileComments(prev, data));
+      // Defer the cache serialize past the send interaction — JSON.stringify of
+      // a long thread is synchronous and was piling onto the same frame as the
+      // list re-render + scroll-to-end.
+      InteractionManager.runAfterInteractions(() => kvSetJSON(`comments:${postId}`, data));
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
     }
     setIsSending(false);
@@ -805,8 +896,8 @@ export default function CommentsScreen() {
     const { error } = await createComment(postId, user.id, content);
     if (!error) {
       const { comments: data } = await getComments(postId);
-      setComments(data);
-      kvSetJSON(`comments:${postId}`, data);
+      setComments((prev) => reconcileComments(prev, data));
+      InteractionManager.runAfterInteractions(() => kvSetJSON(`comments:${postId}`, data));
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
     }
     setIsSending(false);
@@ -827,8 +918,8 @@ export default function CommentsScreen() {
     const { error } = await createComment(postId, user.id, sendText);
     if (!error) {
       const { comments: data } = await getComments(postId);
-      setComments(data);
-      kvSetJSON(`comments:${postId}`, data);
+      setComments((prev) => reconcileComments(prev, data));
+      InteractionManager.runAfterInteractions(() => kvSetJSON(`comments:${postId}`, data));
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
     }
     setIsSending(false);
