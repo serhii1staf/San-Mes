@@ -12,6 +12,7 @@ import { getProfiles } from '../../src/lib/supabase';
 import { useMiniAppsStore } from '../../src/store/miniAppsStore';
 import { accountKey } from '../../src/services/cacheService';
 import { kvGetStringRawSync } from '../../src/services/kvStore';
+import { shouldSync } from '../../src/services/syncThrottle';
 import { useT } from '../../src/i18n/store';
 import { perfMonitor } from '../../src/services/perfMonitor';
 import { useSettingsStore } from '../../src/store/settingsStore';
@@ -189,6 +190,16 @@ export default function SearchScreen() {
       hasCache = !!(raw && raw.length > 2);
     } catch {}
     if (!hasCache) setIsLoading(true);
+    // Throttle gate: only hit the profile-directory network fetch if we
+    // haven't synced recently (~15 min). The cache-first display path above
+    // (cheap existence check) and the deferred InteractionManager hydrate of
+    // the cached directory still run, so the screen shows cached profiles
+    // instantly even when we skip the network. shouldSync records the
+    // timestamp when it returns true.
+    if (!(await shouldSync('search_all_profiles', 15 * 60 * 1000))) {
+      setIsLoading(false);
+      return;
+    }
     const { profiles: data } = await getProfiles();
     if (Array.isArray(data) && data.length > 0) setAllProfiles(data as any[]);
     setIsLoading(false);

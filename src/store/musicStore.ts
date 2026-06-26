@@ -85,6 +85,25 @@ async function unloadActiveSound() {
   }
 }
 
+// Idle-release the audio session so the OS can suspend the app when nothing is
+// playing. ensureAudioMode() latches `audioModeSet` + `staysActiveInBackground`
+// forever; once the sound is unloaded that background-active session keeps the
+// app awake and drains battery for no reason. We drop back to a non-background
+// mode and reset the latch so the next play() re-arms bg-audio via
+// ensureAudioMode(). Guarded by `sound` (only release when nothing is loaded)
+// so it can never interrupt an in-progress play. Never throws.
+async function releaseAudioSessionIfIdle() {
+  if (sound) return; // a (re)load won the race — keep the session armed
+  try {
+    await Audio.setAudioModeAsync({
+      staysActiveInBackground: false,
+      playsInSilentModeIOS: true,
+      shouldDuckAndroid: true,
+    });
+    audioModeSet = false;
+  } catch {}
+}
+
 export const useMusicStore = create<MusicState>((set, get) => ({
   current: null,
   recent: [],
@@ -171,7 +190,23 @@ export const useMusicStore = create<MusicState>((set, get) => ({
               // single source of truth and is updated by play/toggle/stop only.
               set({ positionMs: reportedPos, durationMs: reportedDur });
             }
-            if (status.didJustFinish) set({ isPlaying: false, positionMs: 0 });
+            if (status.didJustFinish) {
+              set({ isPlaying: false, positionMs: 0 });
+              // FIX 1: tear down the finished sound so native decode buffers and
+              // the (bg-active) audio session don't persist after playback ends.
+              // Fire-and-forget — this callback belongs to the active sound
+              // (myGen === playGen was checked above), so the unload targets the
+              // right Sound and can't race the generation-token logic. The next
+              // toggle()/play() handles a null `sound` by reloading `current`.
+              const finishedGen = myGen;
+              void unloadActiveSound()
+                .then(() => {
+                  // FIX 2: only release the session if no newer play() started
+                  // and nothing got reloaded in the meantime.
+                  if (finishedGen === playGen && !sound) return releaseAudioSessionIfIdle();
+                })
+                .catch(() => {});
+            }
           }
         );
 
@@ -256,5 +291,8 @@ export const useMusicStore = create<MusicState>((set, get) => ({
     playGen++;
     await unloadActiveSound();
     set({ current: null, isPlaying: false, positionMs: 0, durationMs: 0, playerOpen: false });
+    // FIX 2: with nothing loaded, drop the bg-active audio session so the OS can
+    // suspend the app. Guarded by `sound` inside the helper; next play() re-arms.
+    await releaseAudioSessionIfIdle();
   },
 }));

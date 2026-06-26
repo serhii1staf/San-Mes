@@ -108,12 +108,23 @@ export const useAuthStore = create<AuthStoreState>()(
         const tok = getAuthToken();
         if (!tok) return false;
         try {
-          const { profile, error } = await authMe();
+          const { profile, error, unauthorised } = await authMe();
           if (error || !profile) {
-            // Token is dead — wipe it so the next paint shows welcome.
-            try { clearAuthToken(); } catch {}
-            set({ user: null, token: null, isAuthenticated: false });
-            return false;
+            // SAFETY: only a GENUINE auth rejection (HTTP 401 / Worker
+            // `error === 'unauthorised'`) may wipe the token. Transient
+            // or transport failures — timeout, offline, network error,
+            // 5xx, bad-json — must KEEP the (still-valid) 30-day token
+            // and session intact. restoreSession() runs on boot AND on
+            // every foreground, so treating a hiccup as a logout would
+            // force a needless PIN re-login. Stay optimistic: cached UI
+            // remains usable and the next successful call / foreground
+            // revalidates.
+            if (unauthorised) {
+              try { clearAuthToken(); } catch {}
+              set({ user: null, token: null, isAuthenticated: false });
+              return false;
+            }
+            return true;
           }
           const existing = get().user;
           set({
@@ -139,7 +150,10 @@ export const useAuthStore = create<AuthStoreState>()(
           });
           return true;
         } catch {
-          return false;
+          // Unexpected throw is treated as transient, NOT an auth
+          // rejection — keep the existing token/session rather than
+          // logging the user out on a hiccup.
+          return true;
         }
       },
     }),

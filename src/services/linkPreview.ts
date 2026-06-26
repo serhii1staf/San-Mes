@@ -42,8 +42,42 @@ interface CacheEntry {
   d: LinkPreviewData | null; // null = known "no preview"
 }
 
+// Cap on distinct previews held in memory. Without this the map grew unbounded
+// for the whole session (every URL ever previewed stayed resident → slow leak).
+const MAX_MEM_PREVIEWS = 200;
+
 const memCache = new Map<string, CacheEntry>();
 const inflight = new Map<string, Promise<LinkPreviewData | null>>();
+
+// --- Bounded-LRU bookkeeping around `memCache` -----------------------------
+// A Map preserves insertion order, so the first key is the least-recently-used.
+// Reads promote the entry to most-recently-used (delete + re-insert); writes
+// insert at the back and then evict from the front until we're within the cap.
+//
+// Eviction is LOSSLESS: every entry is also mirrored to MMKV/AsyncStorage (see
+// `writePersisted`), so a later miss simply re-reads it from disk via the
+// existing sync/async paths. Disk-write behavior is unchanged.
+function memCacheGet(url: string): CacheEntry | undefined {
+  const entry = memCache.get(url);
+  if (entry !== undefined) {
+    // Mark most-recently-used.
+    memCache.delete(url);
+    memCache.set(url, entry);
+  }
+  return entry;
+}
+
+function memCacheSet(url: string, entry: CacheEntry): void {
+  // Re-insert at the back so it counts as most-recently-used.
+  memCache.delete(url);
+  memCache.set(url, entry);
+  // Evict the oldest entries until we're back within the cap.
+  while (memCache.size > MAX_MEM_PREVIEWS) {
+    const oldest = memCache.keys().next().value as string | undefined;
+    if (oldest === undefined) break;
+    memCache.delete(oldest);
+  }
+}
 
 /** Extract the first http(s) URL from a string of text, if any. */
 export function extractFirstUrl(text: string | null | undefined): string | null {
@@ -107,7 +141,7 @@ function softFresh(entry: CacheEntry | null | undefined): boolean {
  */
 export function getCachedPreviewSync(url: string): LinkPreviewData | null | undefined {
   if (!url) return null;
-  const mem = memCache.get(url);
+  const mem = memCacheGet(url);
   if (fresh(mem)) return mem!.d;
   // MMKV mirror (sync) — promotes into memCache for next time.
   if (isMMKVAvailable()) {
@@ -116,7 +150,7 @@ export function getCachedPreviewSync(url: string): LinkPreviewData | null | unde
       if (raw) {
         const entry = JSON.parse(raw) as CacheEntry;
         if (fresh(entry)) {
-          memCache.set(url, entry);
+          memCacheSet(url, entry);
           return entry.d;
         }
       }
@@ -139,7 +173,7 @@ export async function getLinkPreview(url: string): Promise<LinkPreviewData | nul
   if (!url) return null;
 
   // 1. Memory cache.
-  const mem = memCache.get(url);
+  const mem = memCacheGet(url);
   if (mem && fresh(mem)) {
     // Soft-stale → kick off a silent background refresh, but return the
     // cached value right now so the caller renders without a skeleton.
@@ -166,7 +200,7 @@ export async function getLinkPreview(url: string): Promise<LinkPreviewData | nul
       persisted = await readPersisted(url);
     }
     if (fresh(persisted)) {
-      memCache.set(url, persisted!);
+      memCacheSet(url, persisted!);
       // Same SWR check on the persisted path.
       if (!softFresh(persisted!)) {
         void revalidate(url);
@@ -177,7 +211,7 @@ export async function getLinkPreview(url: string): Promise<LinkPreviewData | nul
     // 4. Network fetch via our unfurl endpoint.
     const data = await fetchFresh(url);
     const entry: CacheEntry = { t: Date.now(), d: data };
-    memCache.set(url, entry);
+    memCacheSet(url, entry);
     void writePersisted(url, entry);
     return data;
   })();
@@ -198,7 +232,7 @@ async function revalidate(url: string): Promise<void> {
   const task = (async () => {
     const data = await fetchFresh(url);
     const entry: CacheEntry = { t: Date.now(), d: data };
-    memCache.set(url, entry);
+    memCacheSet(url, entry);
     void writePersisted(url, entry);
     return data;
   })();

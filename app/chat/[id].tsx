@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, useSyncExternalStore } from 'react';
-import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, Alert, Animated, Modal, Dimensions, Keyboard, InteractionManager, type ViewToken } from 'react-native';
+import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, Alert, Animated, Modal, Dimensions, Keyboard, InteractionManager, AppState, type ViewToken } from 'react-native';
 import { useReanimatedKeyboardAnimation, useKeyboardHandler } from 'react-native-keyboard-controller';
 import { FlashList, type FlashListRef } from '@shopify/flash-list';
 import Reanimated, { useAnimatedStyle, interpolate, Extrapolation, useSharedValue, withSpring, withTiming, withSequence, withDelay, runOnJS, useAnimatedRef, measure, Easing, type SharedValue } from 'react-native-reanimated';
@@ -81,6 +81,19 @@ const INITIAL_WINDOW = 30;
 const WINDOW_CHUNK = 30;
 const SEED_CAP = 60;
 
+// Hard cap on how many messages we keep in the durable `chat_messages:<id>`
+// blob. Without this, every send/receive grows the MMKV blob unbounded, and
+// each persist re-serializes the whole thing. 1000 is generous enough for
+// reply-jump / search into old history while stopping unbounded MMKV growth.
+// `writeTailCache` already bounds its own (much smaller) key independently.
+const MAX_PERSISTED_MESSAGES = 1000;
+
+// Slice an authoritative (oldest→newest) array down to the newest
+// MAX_PERSISTED_MESSAGES before it is written to disk.
+function capPersisted<T>(arr: T[]): T[] {
+  return arr.length > MAX_PERSISTED_MESSAGES ? arr.slice(arr.length - MAX_PERSISTED_MESSAGES) : arr;
+}
+
 // ── Bounded recent-tail cache ──────────────────────────────────────────────
 // First paint only needs the most-recent `SEED_CAP` messages, yet the full
 // `chat_messages:<id>` blob can hold hundreds/thousands of messages. Parsing
@@ -103,6 +116,53 @@ function writeTailCache(conversationId: string, full: ChatMessage[]): void {
     // ignore — the full blob remains the durable source of truth
   }
 }
+
+// ── Coalesced (debounced) message-persist machinery ────────────────────────
+// Sending one photo fires setMessages/addMessage ~3 times (optimistic add →
+// server-id reconcile → upload-URL swap). Persisting SYNCHRONOUSLY on every
+// `myMessages` change therefore stacks ~3 full-array JSON.stringify writes per
+// photo onto the frame budget; a rapid photo burst stacks dozens and blows the
+// frame budget (the FPS crash). We instead coalesce writes behind a trailing
+// debounce: a burst of N sends collapses into ONE disk write ~450 ms after the
+// burst settles.
+//
+// Durability is preserved WITHOUT a synchronous-per-change write because this
+// state is MODULE-LEVEL (it outlives the component): the pending write closure
+// captures everything it needs, so even on unmount the timer still fires and
+// the write lands. On top of that we (a) flush on AppState 'background' (covers
+// app kill within the debounce window), (b) flush when the conversation id
+// changes, and (c) flush on a real teardown (deferred a microtask so a mere
+// `myMessages` re-render — which also tears the effect down — does NOT defeat
+// coalescing; an immediately-following re-run for the same conversation cancels
+// the deferred flush).
+const PERSIST_DEBOUNCE_MS = 450;
+let persistTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingPersistWrite: (() => void) | null = null;
+let pendingPersistConv: string | null = null;
+let persistTeardownPending = false;
+
+function runPendingPersist(): void {
+  if (persistTimer) { clearTimeout(persistTimer); persistTimer = null; }
+  const fn = pendingPersistWrite;
+  pendingPersistWrite = null;
+  pendingPersistConv = null;
+  if (fn) { try { fn(); } catch {} }
+}
+
+function schedulePersist(conversationId: string, write: () => void): void {
+  // A pending write for a DIFFERENT conversation must land before we start
+  // accumulating writes for the new one — never drop a write on chat switch.
+  if (pendingPersistConv && pendingPersistConv !== conversationId) runPendingPersist();
+  pendingPersistWrite = write;
+  pendingPersistConv = conversationId;
+  if (persistTimer) clearTimeout(persistTimer);
+  persistTimer = setTimeout(runPendingPersist, PERSIST_DEBOUNCE_MS);
+}
+
+// One-shot guard timer for the scroll-to-bottom button's clean-landing settle
+// (see `onScrollBtnTap`). Module-level so it needs no extra component hook;
+// only one chat screen is mounted at a time.
+let scrollSettleGuardTimer: ReturnType<typeof setTimeout> | null = null;
 
 // How many of the most-recent messages the chat-open warm prefetches. Bounded
 // low (the first screen is only a handful of bubbles) so opening a chat never
@@ -1559,49 +1619,89 @@ export default function ChatScreen() {
   useEffect(() => {
     if (!conversationId) return;
     if (!myMessages || myMessages.length === 0) return;
-    if (historyHydratedRef.current === conversationId) {
-      kvSetJSON(`chat_messages:${conversationId}`, myMessages);
-      writeTailCache(conversationId, myMessages);
-      return;
+
+    // A still-pending write for a PREVIOUS conversation must land before we
+    // start coalescing writes for this one (never drop a write on chat switch).
+    if (pendingPersistConv && pendingPersistConv !== conversationId) runPendingPersist();
+    // This effect also tears down on a mere `myMessages` re-render; a re-run
+    // for the (same) conversation cancels any deferred teardown flush so the
+    // debounce keeps coalescing the burst.
+    persistTeardownPending = false;
+
+    const convId = conversationId;
+    const snapshot = myMessages;
+
+    // Shared durability wiring: flush the pending coalesced write immediately
+    // when the app is backgrounded (covers an app kill within the debounce
+    // window) and on a real teardown (unmount / conversation change). The
+    // teardown flush is deferred one microtask so a same-conversation re-render
+    // — which tears the effect down too — can cancel it (preserving coalescing);
+    // a TRUE teardown has no such re-run, so the write flushes promptly. Even
+    // absent any flush, the module-level debounce timer outlives the component
+    // and still lands the write, so nothing is lost.
+    const wireDurability = (handle?: { cancel: () => void }) => {
+      const sub = AppState.addEventListener('change', (s) => {
+        if (s === 'background' || s === 'inactive') runPendingPersist();
+      });
+      return () => {
+        sub.remove();
+        handle?.cancel();
+        persistTeardownPending = true;
+        Promise.resolve().then(() => {
+          if (persistTeardownPending) { persistTeardownPending = false; runPendingPersist(); }
+        });
+      };
+    };
+
+    if (historyHydratedRef.current === convId) {
+      // Full history hydrated → the store IS the complete authoritative array
+      // → safe to mirror wholesale (capped to the newest MAX_PERSISTED_MESSAGES).
+      schedulePersist(convId, () => {
+        kvSetJSON(`chat_messages:${convId}`, capPersisted(snapshot));
+        writeTailCache(convId, snapshot);
+      });
+      return wireDurability();
     }
-    if (myMessages === seededArrayRef.current) return; // untouched seed — already on disk
+
+    if (snapshot === seededArrayRef.current) return; // untouched seed — already on disk
 
     // Store diverged from the seed = a real mutation (send / receive / edit).
-    // DURABLY persist it RIGHT NOW by merging the store delta into the full
-    // cached array on disk (id-keyed; never truncates the older history that
-    // isn't in the bounded store window). Synchronous on purpose: a message
-    // must never be lost if the user leaves the chat before a deferred write
-    // runs — the previous InteractionManager-only write was cancelled on
-    // unmount, which is exactly how a freshly-received/-sent message could
-    // vanish from a chat on reopen (there is no server refetch to recover it).
-    // Mutations are infrequent (send/receive/edit), so this is off the hot path.
-    try {
-      const cached = kvGetJSONSync<ChatMessage[]>(`chat_messages:${conversationId}`, []);
-      if (cached.length > 0) {
-        const pos = new Map(cached.map((m, i) => [m.id, i] as const));
-        const merged = cached.slice();
-        for (const sm of myMessages as ChatMessage[]) {
-          const at = pos.get(sm.id);
-          if (at === undefined) { merged.push(sm); pos.set(sm.id, merged.length - 1); }
-          else { merged[at] = sm; }
+    // DURABLY persist it by merging the store delta into the full cached array
+    // on disk (id-keyed; never truncates the older history that isn't in the
+    // bounded store window). The write is now COALESCED behind a trailing
+    // debounce: sending one photo fires setMessages ~3 times and a rapid burst
+    // would otherwise stack dozens of synchronous full-array serializations
+    // into the frame budget (the FPS crash). Durability is preserved by the
+    // module-level timer (survives unmount), the AppState 'background' flush,
+    // and the teardown flush wired above.
+    schedulePersist(convId, () => {
+      try {
+        const cached = kvGetJSONSync<ChatMessage[]>(`chat_messages:${convId}`, []);
+        if (cached.length > 0) {
+          const pos = new Map(cached.map((m, i) => [m.id, i] as const));
+          const merged = cached.slice();
+          for (const sm of snapshot as ChatMessage[]) {
+            const at = pos.get(sm.id);
+            if (at === undefined) { merged.push(sm); pos.set(sm.id, merged.length - 1); }
+            else { merged[at] = sm; }
+          }
+          kvSetJSON(`chat_messages:${convId}`, capPersisted(merged));
+          writeTailCache(convId, merged);
+        } else {
+          // Brand-new chat (no cached history yet) → the store is the whole truth.
+          kvSetJSON(`chat_messages:${convId}`, capPersisted(snapshot));
+          writeTailCache(convId, snapshot);
         }
-        kvSetJSON(`chat_messages:${conversationId}`, merged);
-        writeTailCache(conversationId, merged);
-      } else {
-        // Brand-new chat (no cached history yet) → the store is the whole truth.
-        kvSetJSON(`chat_messages:${conversationId}`, myMessages);
-        writeTailCache(conversationId, myMessages);
-      }
-    } catch {}
+      } catch {}
+    });
 
     // Hydrate the full history into the STORE (off the input frame) so
     // scroll-up / reply-jump / search have the complete array in memory. Safe
-    // to defer now that the durable write above already landed — if this is
-    // cancelled on unmount, no data is lost.
+    // to defer — the coalesced durable write above will land regardless.
     const handle = InteractionManager.runAfterInteractions(() => {
       hydrateFullHistory();
     });
-    return () => handle.cancel();
+    return wireDurability(handle);
   }, [conversationId, myMessages, hydrateFullHistory]);
 
   // ── Heal stuck local images (root-cause fix for "one chat lags, an
@@ -2963,7 +3063,7 @@ export default function ChatScreen() {
     const next = distanceFromBottom > SCROLL_BTN_THRESHOLD;
     setScrollBtnVisible((prev) => (prev === next ? prev : next));
   }, []);
-  useEffect(() => () => { if (scrollIdleRef.current) clearTimeout(scrollIdleRef.current); setRevealScrollPaused(false); }, []);
+  useEffect(() => () => { if (scrollIdleRef.current) clearTimeout(scrollIdleRef.current); if (scrollSettleGuardTimer) { clearTimeout(scrollSettleGuardTimer); scrollSettleGuardTimer = null; } setRevealScrollPaused(false); }, []);
   useEffect(() => {
     Animated.timing(scrollBtnOpacity, {
       toValue: scrollBtnVisible ? 1 : 0,
@@ -2984,19 +3084,33 @@ export default function ChatScreen() {
     //
     // Fix: when we're more than ~1.5 viewports from the bottom, INSTANTLY jump
     // to within one viewport of the newest message first (cheap — the bottom
-    // cells stay warm under startRenderingFromBottom), then animate ONLY that
-    // final short, fully-measured distance. The list lands cleanly on the newest
-    // message with no mid-scroll stall and no overshoot (`near` is strictly
-    // above the true bottom, so the settle never overscrolls). Closer than that,
-    // a plain animated scrollToEnd is already smooth, so keep it.
+    // cells stay warm under startRenderingFromBottom), then settle ONLY that
+    // final short, already-measured distance — never animating across unmeasured
+    // cells. A one-shot guard re-settles (non-animated) if late cell measurement
+    // changes the content height within ~250 ms, so the list lands exactly on
+    // the newest message with ZERO visible stutter. Closer than that, a plain
+    // animated scrollToEnd is already smooth, so keep it.
     const m = scrollMetricsRef.current;
     const distanceFromBottom = m ? m.contentH - (m.y + m.layoutH) : 0;
     if (m && m.layoutH > 0 && distanceFromBottom > m.layoutH * 1.5) {
       const near = Math.max(0, m.contentH - m.layoutH * 1.2);
+      const baselineH = m.contentH;
       try { fl.scrollToOffset({ offset: near, animated: false }); } catch {}
+      // Next frame: one short animated settle over the now-measured last view.
       requestAnimationFrame(() => {
         try { flatListRef.current?.scrollToEnd({ animated: true }); } catch {}
       });
+      // One-shot guard: if cells finished measuring (content height changed)
+      // within ~250 ms of the tap, re-issue a NON-animated scrollToEnd so we
+      // settle cleanly on the newest message with no visible stutter.
+      if (scrollSettleGuardTimer) clearTimeout(scrollSettleGuardTimer);
+      scrollSettleGuardTimer = setTimeout(() => {
+        scrollSettleGuardTimer = null;
+        const cur = scrollMetricsRef.current;
+        if (!cur || cur.contentH !== baselineH) {
+          try { flatListRef.current?.scrollToEnd({ animated: false }); } catch {}
+        }
+      }, 250);
     } else {
       try { fl.scrollToEnd({ animated: true }); } catch {}
     }

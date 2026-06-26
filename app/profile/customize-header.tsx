@@ -267,17 +267,19 @@ export default function CustomizeHeaderScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
+      {/* Screen title — a full-width overlay anchored to the ROOT view (not the
+          padded header row) so it is mathematically centered on the screen,
+          independent of the close/save button widths or the row's horizontal
+          padding. pointerEvents="none" keeps both buttons fully tappable;
+          symmetric horizontal padding clears the side buttons so a long title
+          truncates (numberOfLines={1}) instead of overlapping. */}
+      <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, top: insets.top + 8, height: 34, zIndex: 10, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 84 }}>
+        <Text variant="h3" weight="bold" numberOfLines={1} style={{ textAlign: 'center' }}>{t('customize.title', 'Оформление')}</Text>
+      </View>
+
       {/* Top bar — floating ghost close pill + filled accent save pill, no hard
           divider (the rounded preview card below provides the separation). */}
       <View style={{ paddingTop: insets.top + 8, paddingHorizontal: 14, paddingBottom: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-        {/* Title lives in its OWN absolutely-positioned, full-width layer so it
-            is truly centered on screen regardless of the close/save button
-            widths. pointerEvents="none" keeps both buttons fully tappable
-            underneath; symmetric horizontal padding clears the side buttons so a
-            long title truncates (numberOfLines={1}) instead of overlapping. */}
-        <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, top: insets.top + 8, height: 34, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 84 }}>
-          <Text variant="h3" weight="bold" numberOfLines={1}>{t('customize.title', 'Оформление')}</Text>
-        </View>
         <Pressable onPress={() => router.back()} hitSlop={10} style={({ pressed }) => ({ width: 34, height: 34, borderRadius: 17, transform: [{ scale: pressed ? 0.92 : 1 }], opacity: glassActive ? 1 : (pressed ? 0.6 : 1) })}>
           {glassActive ? (
             <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={{ width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' }}>
@@ -369,8 +371,8 @@ export default function CustomizeHeaderScreen() {
               {BRUSH_OPTIONS.map((b) => {
                 const active = brush === b.key;
                 return (
-                  <Pressable key={b.key} onPress={() => { triggerHaptic('light'); setEraser(false); setBrush(b.key); }} style={({ pressed }) => ({ flex: 1, height: 54, borderRadius: 14, alignItems: 'center', justifyContent: 'center', gap: 5, backgroundColor: active ? accentTint : (pressed ? neutralSurface : 'transparent'), borderWidth: StyleSheet.hairlineWidth, borderColor: active ? 'transparent' : theme.colors.border.light, opacity: pressed ? 0.85 : 1, transform: [{ scale: pressed ? 0.97 : 1 }] })}>
-                    <Feather name={b.icon} size={17} color={active ? theme.colors.accent.primary : theme.colors.text.secondary} />
+                  <Pressable key={b.key} onPress={() => { triggerHaptic('light'); setEraser(false); setBrush(b.key); }} style={({ pressed }) => ({ flex: 1, height: 52, borderRadius: 18, alignItems: 'center', justifyContent: 'center', gap: 5, backgroundColor: active ? accentTint : (pressed ? neutralSurface : 'transparent'), borderWidth: active ? 0 : StyleSheet.hairlineWidth, borderColor: theme.colors.border.light, opacity: pressed ? 0.85 : 1, transform: [{ scale: pressed ? 0.97 : 1 }] })}>
+                    <Feather name={b.icon} size={16} color={active ? theme.colors.accent.primary : theme.colors.text.secondary} />
                     <RNText allowFontScaling={false} style={{ fontSize: 10.5, fontWeight: '500', includeFontPadding: false, color: active ? theme.colors.accent.primary : theme.colors.text.secondary }}>{t(b.tKey, b.label)}</RNText>
                   </Pressable>
                 );
@@ -385,7 +387,7 @@ export default function CustomizeHeaderScreen() {
               {DRAW_COLORS.map((c) => {
                 const active = !eraser && drawColor === c;
                 return (
-                  <Pressable key={c} onPress={() => { triggerHaptic('light'); setEraser(false); setDrawColor(c); }} style={({ pressed }) => ({ width: 30, height: 30, borderRadius: 15, backgroundColor: c, borderWidth: active ? 2.5 : StyleSheet.hairlineWidth, borderColor: active ? theme.colors.accent.primary : 'rgba(127,127,127,0.22)', opacity: pressed ? 0.7 : 1, transform: [{ scale: pressed ? 0.9 : 1 }] })} />
+                  <Pressable key={c} onPress={() => { triggerHaptic('light'); setEraser(false); setDrawColor(c); }} style={({ pressed }) => ({ width: 30, height: 30, borderRadius: 15, backgroundColor: c, borderWidth: active ? 2 : StyleSheet.hairlineWidth, borderColor: active ? theme.colors.accent.primary : 'rgba(127,127,127,0.22)', opacity: pressed ? 0.7 : 1, transform: [{ scale: pressed ? 0.9 : 1 }] })} />
                 );
               })}
             </ScrollView>
@@ -400,7 +402,7 @@ export default function CustomizeHeaderScreen() {
               <ToolBtn theme={theme} glassActive={glassActive} icon="corner-up-right" onPress={redoStroke} />
               <ToolBtn theme={theme} glassActive={glassActive} icon="trash-2" danger onPress={clearStrokes} />
             </View>
-            <Pressable onPress={() => { triggerHaptic('light'); setEraser(false); setDrawMode(false); }} style={({ pressed }) => ({ height: 46, marginTop: 12, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.accent.primary, opacity: pressed ? 0.9 : 1, transform: [{ scale: pressed ? 0.99 : 1 }] })}>
+            <Pressable onPress={() => { triggerHaptic('light'); setEraser(false); setDrawMode(false); }} style={({ pressed }) => ({ height: 46, marginTop: 12, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.accent.primary, opacity: pressed ? 0.9 : 1, transform: [{ scale: pressed ? 0.99 : 1 }] })}>
               <RNText allowFontScaling={false} style={{ fontSize: 15, fontWeight: '600', color: '#FFFFFF', includeFontPadding: false }}>{t('customize.draw_done', 'Готово')}</RNText>
             </Pressable>
           </DrawCard>
@@ -421,7 +423,7 @@ export default function CustomizeHeaderScreen() {
             {/* Animation picker — horizontally scrollable so every option is reachable. */}
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, alignItems: 'center' }}>
               {ANIM_OPTIONS.map((opt) => (
-                <AnimChip key={opt.key} theme={theme} icon={opt.icon} label={t(opt.tKey, opt.label)} active={(selected.anim || 'none') === opt.key} onPress={() => { triggerHaptic('light'); updateSelected({ anim: opt.key }); }} />
+                <AnimChip key={opt.key} theme={theme} glassActive={glassActive} icon={opt.icon} label={t(opt.tKey, opt.label)} active={(selected.anim || 'none') === opt.key} onPress={() => { triggerHaptic('light'); updateSelected({ anim: opt.key }); }} />
               ))}
             </ScrollView>
           </DrawCard>
@@ -433,7 +435,7 @@ export default function CustomizeHeaderScreen() {
       {/* ── Library — group tabs + grids ──────────────────────────────── */}
       {!drawMode ? (
         <View style={{ flex: 1 }}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 12, gap: 8, paddingTop: 8, paddingBottom: 10 }} style={{ flexGrow: 0, marginTop: 0 }}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 12, gap: 8, paddingTop: 8, paddingBottom: 10 }} style={{ flexGrow: 0, marginTop: 0, marginBottom: 14 }}>
             {[{ key: 'bg', label: t('customize.bg', 'Фон') }, ...STICKER_LIBRARY.map((g) => ({ key: g.key, label: g.label }))].map((g) => {
               const active = g.key === activeGroup;
               return (
@@ -468,11 +470,11 @@ export default function CustomizeHeaderScreen() {
                 contentContainerStyle={{ paddingBottom: insets.bottom + 16, gap: 10 }}
                 ListHeaderComponent={
                   <View style={{ flexDirection: 'row', gap: 10, paddingHorizontal: 12, marginTop: 6, marginBottom: 16 }}>
-                    <Pressable onPress={() => { triggerHaptic('light'); setSelectedId(null); setDrawMode(true); }} style={({ pressed }) => ({ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, height: 46, borderRadius: 12, backgroundColor: accentTint, opacity: pressed ? 0.7 : 1 })}>
+                    <Pressable onPress={() => { triggerHaptic('light'); setSelectedId(null); setDrawMode(true); }} style={({ pressed }) => ({ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, height: 46, borderRadius: 14, backgroundColor: accentTint, opacity: pressed ? 0.7 : 1 })}>
                       <Feather name="edit-2" size={16} color={theme.colors.accent.primary} />
                       <RNText allowFontScaling={false} style={{ fontSize: 13.5, fontWeight: '600', color: theme.colors.accent.primary, includeFontPadding: false }}>{t('customize.draw', 'Рисовать свой')}</RNText>
                     </Pressable>
-                    <Pressable onPress={() => { triggerHaptic('light'); setBgBlend((b) => !b); }} style={({ pressed }) => ({ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, height: 46, borderRadius: 12, backgroundColor: bgBlend ? accentTint : neutralSurface, borderWidth: bgBlend ? 0 : StyleSheet.hairlineWidth, borderColor: theme.colors.border.light, opacity: pressed ? 0.7 : 1 })}>
+                    <Pressable onPress={() => { triggerHaptic('light'); setBgBlend((b) => !b); }} style={({ pressed }) => ({ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, height: 46, borderRadius: 14, backgroundColor: bgBlend ? accentTint : neutralSurface, borderWidth: bgBlend ? 0 : StyleSheet.hairlineWidth, borderColor: theme.colors.border.light, opacity: pressed ? 0.7 : 1 })}>
                       <Feather name="layers" size={16} color={bgBlend ? theme.colors.accent.primary : theme.colors.text.secondary} />
                       <RNText allowFontScaling={false} style={{ fontSize: 13.5, fontWeight: '600', includeFontPadding: false, color: bgBlend ? theme.colors.accent.primary : theme.colors.text.secondary }}>{t('customize.blend', 'Слить с баннером')}</RNText>
                     </Pressable>
@@ -600,12 +602,26 @@ function ToolBtn({ theme, icon, onPress, danger, glassActive }: { theme: any; ic
   );
 }
 
-function AnimChip({ theme, icon, label, active, onPress }: { theme: any; icon: any; label: string; active: boolean; onPress: () => void }) {
+function AnimChip({ theme, glassActive, icon, label, active, onPress }: { theme: any; glassActive?: boolean; icon: any; label: string; active: boolean; onPress: () => void }) {
   const tint = theme.colors.accent.primary + '22';
+  const fg = active ? theme.colors.accent.primary : theme.colors.text.secondary;
+  // Glass variant — same conditional pattern as the category tab pills: the
+  // native glass surface IS the chip background when glass is active, with a
+  // soft accent tint marking the selected animation.
+  if (glassActive) {
+    return (
+      <Pressable onPress={onPress} hitSlop={6} style={({ pressed }) => ({ borderRadius: 17, transform: [{ scale: pressed ? 0.96 : 1 }] })}>
+        <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} tintColor={active ? theme.colors.accent.primary + '33' : undefined} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, height: 34, paddingHorizontal: 14, borderRadius: 17 }}>
+          <Feather name={icon} size={13} color={fg} />
+          <RNText allowFontScaling={false} style={{ fontSize: 12, includeFontPadding: false, fontWeight: '500', color: fg }}>{label}</RNText>
+        </NativeGlassView>
+      </Pressable>
+    );
+  }
   return (
     <Pressable onPress={onPress} hitSlop={6} style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: 5, height: 34, paddingHorizontal: 13, borderRadius: 17, backgroundColor: active ? tint : (theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)'), borderWidth: active ? 0 : StyleSheet.hairlineWidth, borderColor: theme.colors.border.light, opacity: pressed ? 0.7 : 1 })}>
-      <Feather name={icon} size={13} color={active ? theme.colors.accent.primary : theme.colors.text.secondary} />
-      <RNText allowFontScaling={false} style={{ fontSize: 12, includeFontPadding: false, fontWeight: '600', color: active ? theme.colors.accent.primary : theme.colors.text.secondary }}>{label}</RNText>
+      <Feather name={icon} size={13} color={fg} />
+      <RNText allowFontScaling={false} style={{ fontSize: 12, includeFontPadding: false, fontWeight: '500', color: fg }}>{label}</RNText>
     </Pressable>
   );
 }
@@ -615,7 +631,7 @@ function AnimChip({ theme, icon, label, active, onPress }: { theme: any; icon: a
 // rather than chunky blocks.
 function DrawCard({ theme, children }: { theme: any; children: React.ReactNode }) {
   return (
-    <View style={{ borderRadius: 16, padding: 14, gap: 12, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.035)' : 'rgba(0,0,0,0.018)', borderWidth: StyleSheet.hairlineWidth, borderColor: theme.colors.border.light }}>
+    <View style={{ borderRadius: 20, padding: 14, gap: 12, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.014)', borderWidth: StyleSheet.hairlineWidth, borderColor: theme.colors.border.light }}>
       {children}
     </View>
   );

@@ -66,7 +66,41 @@ interface CallOpts {
   authed?: boolean;
 }
 
-async function call<T>(path: string, opts: CallOpts): Promise<{ data: T | null; error: string | null }> {
+/**
+ * Lazy-import the connectivity store so this module doesn't pull the
+ * monitor into early-startup bundles. Mirrors `apiClient.request`'s
+ * offline short-circuit: when the OS already knows we're disconnected,
+ * never attempt the fetch — and crucially surface a TRANSIENT error
+ * (`'offline'`, never `unauthorised`) so a known-offline foreground
+ * can't be mistaken for a token rejection and log the user out.
+ */
+async function isOnline(): Promise<boolean> {
+  try {
+    const { useConnectivityStore } = await import('./connectivityMonitor');
+    return useConnectivityStore.getState().isOnline;
+  } catch {
+    // If the store isn't initialised yet, be optimistic and try.
+    return true;
+  }
+}
+
+/**
+ * Result of a raw Worker call.
+ *   - `data` / `error`: unchanged, backward-compatible fields.
+ *   - `status`: the HTTP status (or `null` for a transport failure that
+ *     never reached the server — timeout / offline / network error).
+ *   - `unauthorised`: `true` ONLY for a genuine auth rejection — HTTP
+ *     401 or the Worker's `error === 'unauthorised'`. Lets callers tell
+ *     a real 401 apart from a transient/transport hiccup.
+ */
+interface CallResult<T> {
+  data: T | null;
+  error: string | null;
+  status: number | null;
+  unauthorised: boolean;
+}
+
+async function call<T>(path: string, opts: CallOpts): Promise<CallResult<T>> {
   const headers: Record<string, string> = { 'Accept': 'application/json' };
   if (opts.body != null) headers['Content-Type'] = 'application/json';
   if (opts.authed) {
@@ -89,16 +123,23 @@ async function call<T>(path: string, opts: CallOpts): Promise<{ data: T | null; 
       parsed = await res.json();
     } catch {
       perfMonitor.recordError(`authClient ${opts.method} ${path}: bad-json:${res.status}`);
-      return { data: null, error: `bad-json:${res.status}` };
+      // A bad body is transient EXCEPT when the status itself is a 401.
+      return { data: null, error: `bad-json:${res.status}`, status: res.status, unauthorised: res.status === 401 };
     }
     const body = parsed as { data?: T | null; error?: string | null };
-    if (!body || typeof body !== 'object') return { data: null, error: 'bad-shape' };
-    return { data: body.data ?? null, error: body.error ?? null };
+    if (!body || typeof body !== 'object') {
+      return { data: null, error: 'bad-shape', status: res.status, unauthorised: res.status === 401 };
+    }
+    const errStr = body.error ?? null;
+    // Genuine auth rejection: HTTP 401 or the Worker's explicit marker.
+    const unauthorised = res.status === 401 || errStr === 'unauthorised';
+    return { data: body.data ?? null, error: errStr, status: res.status, unauthorised };
   } catch (e: any) {
     clearTimeout(timer);
     const msg = e?.name === 'AbortError' ? 'timeout' : (e?.message || 'network error');
     perfMonitor.recordError(`authClient ${opts.method} ${path}: ${msg}`);
-    return { data: null, error: msg };
+    // Never reached the server — purely transient, never unauthorised.
+    return { data: null, error: msg, status: null, unauthorised: false };
   }
 }
 
@@ -169,18 +210,23 @@ export async function loginWithPin(
   return { profile: null, error: t('auth.error.invalid_pin') };
 }
 
-export async function me(): Promise<{ profile: DBProfileLike | null; error: string | null }> {
-  if (!getAuthToken()) return { profile: null, error: 'no_token' };
-  const { data, error } = await call<DBProfileLike>('/v1/auth/me', {
+export async function me(): Promise<{ profile: DBProfileLike | null; error: string | null; unauthorised: boolean }> {
+  if (!getAuthToken()) return { profile: null, error: 'no_token', unauthorised: false };
+  // Known-offline: short-circuit before the fetch. This is a TRANSIENT
+  // failure, NOT an auth rejection — callers must keep the session.
+  if (!(await isOnline())) return { profile: null, error: 'offline', unauthorised: false };
+  const { data, error, unauthorised } = await call<DBProfileLike>('/v1/auth/me', {
     method: 'GET',
     authed: true,
   });
-  if (error) return { profile: null, error };
-  return { profile: data, error: null };
+  if (error) return { profile: null, error, unauthorised };
+  return { profile: data, error: null, unauthorised: false };
 }
 
 export async function refresh(): Promise<{ token: string | null; error: string | null }> {
   if (!getAuthToken()) return { token: null, error: 'no_token' };
+  // Don't burn a refresh attempt while the OS reports offline.
+  if (!(await isOnline())) return { token: null, error: 'offline' };
   const { data, error } = await call<{ token: string }>('/v1/auth/refresh', {
     method: 'POST',
     authed: true,
