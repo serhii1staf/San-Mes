@@ -322,7 +322,7 @@ export const PostCard = memo(function PostCard({ post, currentUserId, onLike, on
                 is `'100%'` (non-numeric) — without it CachedImage falls back to
                 the proxy DEFAULT (800px), a different cache key than the feed's
                 warm + the carousel, so the warmed bytes would never hit. */}
-            <CachedImage uri={imageUrls[0]} style={heroImageStyle} resizeMode="cover" proxyWidth={HERO_IMG_WIDTH} priority={heroPriority} onLoad={handleHeroLoad} />
+            <CachedImage uri={imageUrls[0]} style={heroImageStyle} resizeMode="cover" proxyWidth={HERO_IMG_WIDTH} priority={heroPriority} onLoad={handleHeroLoad} skeleton />
           </Pressable>
         ) : (
           <ImageCarousel imageUrls={imageUrls} onDoubleTap={handleDoubleTap} heroPriority={heroPriority} />
@@ -408,7 +408,7 @@ function ImageCarousel({ imageUrls, onDoubleTap, heroPriority }: { imageUrls: st
                 queues them behind the first page's decode. The first slide
                 also reports its dimensions so the shared carousel height
                 matches the set's orientation. */}
-            <CachedImage uri={url} style={{ width: slideImgWidth, height: carouselHeight, borderRadius: 18 }} resizeMode="cover" priority={i === 0 ? heroPriority : 'low'} onLoad={i === 0 ? handleFirstLoad : undefined} />
+            <CachedImage uri={url} style={{ width: slideImgWidth, height: carouselHeight, borderRadius: 18 }} resizeMode="cover" priority={i === 0 ? heroPriority : 'low'} onLoad={i === 0 ? handleFirstLoad : undefined} skeleton />
           </Pressable>
         ))}
       </ScrollView>

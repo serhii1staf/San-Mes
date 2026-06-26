@@ -250,27 +250,27 @@ function UserProfilePostCardBase({
           <Pressable onPress={() => onImagePress(postImages[0], post.id, postImages)}>
             <View style={styles.thumbWrap}>
               {postImages.length === 1 ? (
-                <CachedImage uri={postImages[0]} style={styles.thumbSingle} resizeMode="cover" priority="low" />
+                <CachedImage uri={postImages[0]} style={styles.thumbSingle} resizeMode="cover" priority="low" skeleton />
               ) : postImages.length === 2 ? (
                 <View style={styles.thumbRow}>
-                  <CachedImage uri={postImages[0]} style={styles.thumbHalf} resizeMode="cover" priority="low" />
+                  <CachedImage uri={postImages[0]} style={styles.thumbHalf} resizeMode="cover" priority="low" skeleton />
                   <View style={styles.spacerH} />
-                  <CachedImage uri={postImages[1]} style={styles.thumbHalf} resizeMode="cover" priority="low" />
+                  <CachedImage uri={postImages[1]} style={styles.thumbHalf} resizeMode="cover" priority="low" skeleton />
                 </View>
               ) : postImages.length === 3 ? (
                 <View style={styles.thumbRow}>
-                  <CachedImage uri={postImages[0]} style={styles.thumbHalf} resizeMode="cover" priority="low" />
+                  <CachedImage uri={postImages[0]} style={styles.thumbHalf} resizeMode="cover" priority="low" skeleton />
                   <View style={styles.spacerH} />
                   <View style={styles.thumbHalfCol}>
-                    <CachedImage uri={postImages[1]} style={styles.thumbQuarter} resizeMode="cover" priority="low" />
+                    <CachedImage uri={postImages[1]} style={styles.thumbQuarter} resizeMode="cover" priority="low" skeleton />
                     <View style={styles.spacerV} />
-                    <CachedImage uri={postImages[2]} style={styles.thumbQuarter} resizeMode="cover" priority="low" />
+                    <CachedImage uri={postImages[2]} style={styles.thumbQuarter} resizeMode="cover" priority="low" skeleton />
                   </View>
                 </View>
               ) : (
                 <View style={styles.thumbGrid4}>
                   {postImages.slice(0, 4).map((imgUri: string, idx: number) => (
-                    <CachedImage key={idx} uri={imgUri} style={{ width: 49, height: 49, marginRight: idx % 2 === 0 ? 2 : 0, marginBottom: idx < 2 ? 2 : 0 }} resizeMode="cover" priority="low" />
+                    <CachedImage key={idx} uri={imgUri} style={{ width: 49, height: 49, marginRight: idx % 2 === 0 ? 2 : 0, marginBottom: idx < 2 ? 2 : 0 }} resizeMode="cover" priority="low" skeleton />
                   ))}
                 </View>
               )}

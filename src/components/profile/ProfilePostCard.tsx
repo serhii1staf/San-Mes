@@ -222,27 +222,27 @@ function ProfilePostCardBase({ post, authorName, authorEmoji, authorVerified, au
           <Pressable onPress={() => onImagePress(imgs[0], post.id, imgs)}>
             <View style={styles.thumbWrap}>
               {imgs.length === 1 ? (
-                <CachedImage uri={imgs[0]} style={styles.thumbSingle} resizeMode="cover" proxyWidth={singleProxyWidth} priority="low" />
+                <CachedImage uri={imgs[0]} style={styles.thumbSingle} resizeMode="cover" proxyWidth={singleProxyWidth} priority="low" skeleton />
               ) : imgs.length === 2 ? (
                 <View style={styles.thumbRow}>
-                  <CachedImage uri={imgs[0]} style={styles.thumbHalf} resizeMode="cover" proxyWidth={49} priority="low" />
+                  <CachedImage uri={imgs[0]} style={styles.thumbHalf} resizeMode="cover" proxyWidth={49} priority="low" skeleton />
                   <View style={styles.spacerH} />
-                  <CachedImage uri={imgs[1]} style={styles.thumbHalf} resizeMode="cover" proxyWidth={49} priority="low" />
+                  <CachedImage uri={imgs[1]} style={styles.thumbHalf} resizeMode="cover" proxyWidth={49} priority="low" skeleton />
                 </View>
               ) : imgs.length === 3 ? (
                 <View style={styles.thumbRow}>
-                  <CachedImage uri={imgs[0]} style={styles.thumbHalf} resizeMode="cover" proxyWidth={49} priority="low" />
+                  <CachedImage uri={imgs[0]} style={styles.thumbHalf} resizeMode="cover" proxyWidth={49} priority="low" skeleton />
                   <View style={styles.spacerH} />
                   <View style={styles.thumbHalfCol}>
-                    <CachedImage uri={imgs[1]} style={styles.thumbQuarter} resizeMode="cover" proxyWidth={49} priority="low" />
+                    <CachedImage uri={imgs[1]} style={styles.thumbQuarter} resizeMode="cover" proxyWidth={49} priority="low" skeleton />
                     <View style={styles.spacerV} />
-                    <CachedImage uri={imgs[2]} style={styles.thumbQuarter} resizeMode="cover" proxyWidth={49} priority="low" />
+                    <CachedImage uri={imgs[2]} style={styles.thumbQuarter} resizeMode="cover" proxyWidth={49} priority="low" skeleton />
                   </View>
                 </View>
               ) : (
                 <View style={styles.thumbGrid4}>
                   {imgs.slice(0, 4).map((imgUri, idx) => (
-                    <CachedImage key={idx} uri={imgUri} style={{ width: 49, height: 49, marginRight: idx % 2 === 0 ? 2 : 0, marginBottom: idx < 2 ? 2 : 0 }} resizeMode="cover" proxyWidth={49} priority="low" />
+                    <CachedImage key={idx} uri={imgUri} style={{ width: 49, height: 49, marginRight: idx % 2 === 0 ? 2 : 0, marginBottom: idx < 2 ? 2 : 0 }} resizeMode="cover" proxyWidth={49} priority="low" skeleton />
                   ))}
                 </View>
               )}
