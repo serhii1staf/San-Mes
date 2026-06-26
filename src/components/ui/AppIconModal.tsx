@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { View, Pressable, Modal, Image, ActivityIndicator, Alert, Animated, Dimensions, Platform } from 'react-native';
+import { View, Pressable, Modal, Image, ActivityIndicator, Alert, Animated, Dimensions, Platform, AppState } from 'react-native';
 import { useTheme } from '../../theme';
 import { Text } from './Text';
 import {
@@ -14,24 +14,51 @@ const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 // iOS (18/26) intermittently rejects `setAlternateIconName` with
 // NSPOSIXErrorDomain code 35 ("Resource temporarily unavailable" / EAGAIN)
 // coming from LSIconAlertManager — it couldn't acquire the icon-change system
-// alert token in time. It's transient: a short delay + retry almost always
-// succeeds on the next attempt. We retry a few times before surfacing an error.
-const ICON_SET_RETRIES = 4;
-const ICON_SET_RETRY_DELAY_MS = 350;
+// alert token. On iOS 26.1+ the call also forces the app to briefly resign
+// active (the alert moved to an out-of-process SpringBoard overlay). So we
+// retry with growing backoff AND wait for the app to return to the active
+// state before each retry, which gives the alert subsystem the best chance to
+// serve the token on devices where the failure is transient.
+const ICON_SET_RETRY_DELAYS_MS = [300, 500, 800, 1200, 1600]; // => 6 attempts total
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+async function waitForActive(timeoutMs = 2500): Promise<void> {
+  if (AppState.currentState === 'active') return;
+  await new Promise<void>((resolve) => {
+    const sub = AppState.addEventListener('change', (s) => {
+      if (s === 'active') { sub.remove(); resolve(); }
+    });
+    setTimeout(() => { sub.remove(); resolve(); }, timeoutMs);
+  });
+}
 
 async function setAppIconWithRetry(name: string | null): Promise<void> {
   let lastError: any;
-  for (let attempt = 0; attempt < ICON_SET_RETRIES; attempt++) {
+  const attempts = ICON_SET_RETRY_DELAYS_MS.length + 1;
+  for (let i = 0; i < attempts; i++) {
     try {
       await setAlternateAppIcon(name);
       return;
     } catch (e) {
       lastError = e;
-      if (attempt < ICON_SET_RETRIES - 1) await sleep(ICON_SET_RETRY_DELAY_MS);
+      if (i < ICON_SET_RETRY_DELAYS_MS.length) {
+        await sleep(ICON_SET_RETRY_DELAYS_MS[i]);
+        await waitForActive();
+      }
     }
   }
   throw lastError;
+}
+
+// Recognize the specific iOS 26.1+ platform bug so we can show a friendly
+// message instead of the raw "Resource temporarily unavailable" technical text.
+function isIosIconChangeBug(e: any): boolean {
+  const code = e?.code;
+  const msg = String(e?.message ?? '');
+  return (
+    code === 35 || code === '35' ||
+    /temporarily unavailable|NSPOSIXErrorDomain|resource temporarily/i.test(msg)
+  );
 }
 
 interface IconOption {
@@ -96,8 +123,14 @@ export function AppIconModal({ visible, onClose }: AppIconModalProps) {
       dismiss();
     } catch (e: any) {
       setApplying(null);
-      const detail = e?.message ? `\n\n${String(e.message)}` : '';
-      Alert.alert(t('app_icon.error_title'), `${t('app_icon.error_change')}${detail}`);
+      // Show a friendly explanation for the known iOS 26.1+ icon-change bug;
+      // fall back to the raw reason for any other (unexpected) failure.
+      if (isIosIconChangeBug(e)) {
+        Alert.alert(t('app_icon.error_title'), t('app_icon.error_ios_bug'));
+      } else {
+        const detail = e?.message ? `\n\n${String(e.message)}` : '';
+        Alert.alert(t('app_icon.error_title'), `${t('app_icon.error_change')}${detail}`);
+      }
     }
   };
 

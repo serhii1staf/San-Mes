@@ -528,6 +528,7 @@ const ru: Record<string, string> = {
   'app_icon.style2': 'Стиль 2',
   'app_icon.style3': 'Стиль 3',
   'app_icon.style4': 'Стиль 4',
+  'app_icon.error_ios_bug': 'Смена иконки временно недоступна из-за ошибки в iOS. Apple уже знает о проблеме — это исправится с обновлением системы.',
 
   // ─── GIF picker ────────────────────────────────────────────────────────
   'giphy.search_placeholder': 'Поиск GIF...',

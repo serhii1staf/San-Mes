@@ -516,6 +516,7 @@ const en: Record<string, string> = {
   'app_icon.style2': 'Style 2',
   'app_icon.style3': 'Style 3',
   'app_icon.style4': 'Style 4',
+  'app_icon.error_ios_bug': 'Changing the icon is temporarily unavailable due to an iOS bug. Apple is aware of it — it will be fixed in a system update.',
 
   // ─── GIF picker ────────────────────────────────────────────────────────
   'giphy.search_placeholder': 'Search GIFs...',
