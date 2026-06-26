@@ -169,7 +169,7 @@ function GifPanelComponent({ height, onSelect, onLongPress, theme, bottomInset =
         />
       ) : null}
 
-      {loading && data.length === 0 ? (
+      {(!decodeReady || (loading && data.length === 0)) ? (
         <View style={styles.center}>
           <ActivityIndicator size="large" color={theme.colors.accent.primary} />
         </View>

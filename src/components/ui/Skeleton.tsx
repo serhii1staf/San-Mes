@@ -58,36 +58,55 @@ export interface SkeletonProps {
   colorMode?: 'light' | 'dark';
 }
 
-/** Full sweep duration in ms — kept subtle / Telegram-like. */
-const SHIMMER_DURATION = 1200;
+/**
+ * Full sweep duration in ms — lively but smooth. A touch quicker than
+ * a full second so the band feels alive without being frantic.
+ */
+const SHIMMER_DURATION = 1150;
 
 /**
  * Resolve the base (box) and highlight (sweep band) colors for the
- * requested mode. Base is intentionally very subtle; the highlight is
- * a slightly brighter band that fades in and back out at its edges so
- * the sweep reads as a soft glow rather than a hard bar.
+ * requested mode. The base is clearly tinted so the resting box reads
+ * on its own, and the highlight is a bright band whose alpha ramps up
+ * then back down across FIVE stops (0 -> soft -> peak -> soft -> 0) so
+ * the leading/trailing edges feather into a soft glow with depth,
+ * rather than a flat, hard-edged bar.
  */
 function getColors(isDark: boolean): {
   base: string;
-  /** Gradient stops: transparent -> highlight -> transparent. */
-  gradient: readonly [string, string, string];
+  /**
+   * Gradient stops for the moving highlight band. Five stops give the
+   * band a feathered glow: fully transparent at both ends, a gentle
+   * shoulder on each side, and a bright peak in the middle. Typed as a
+   * 2+ tuple so it satisfies `expo-linear-gradient`'s `colors` prop.
+   */
+  gradient: readonly [string, string, ...string[]];
 } {
   if (isDark) {
     return {
-      base: 'rgba(255,255,255,0.06)',
+      // Clearly-visible tinted base box.
+      base: 'rgba(255,255,255,0.10)',
+      // Bright white sweep with feathered shoulders for a glowy band.
       gradient: [
         'rgba(255,255,255,0)',
-        'rgba(255,255,255,0.10)',
+        'rgba(255,255,255,0.08)',
+        'rgba(255,255,255,0.28)',
+        'rgba(255,255,255,0.08)',
         'rgba(255,255,255,0)',
       ],
     };
   }
   return {
-    base: 'rgba(0,0,0,0.06)',
+    // Darker gray base so the bright band reads as a glossy sweep.
+    base: 'rgba(0,0,0,0.09)',
+    // Bright white glossy band over the gray base — the classic,
+    // clearly-visible "content loading" shimmer.
     gradient: [
-      'rgba(0,0,0,0)',
-      'rgba(0,0,0,0.07)',
-      'rgba(0,0,0,0)',
+      'rgba(255,255,255,0)',
+      'rgba(255,255,255,0.18)',
+      'rgba(255,255,255,0.65)',
+      'rgba(255,255,255,0.18)',
+      'rgba(255,255,255,0)',
     ],
   };
 }

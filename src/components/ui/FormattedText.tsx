@@ -372,9 +372,12 @@ const blockCache = new Map<string, BlockSegment[] | null>();
 const BLOCK_CACHE_MAX = 500;
 
 function splitBlocks(text: string): BlockSegment[] | null {
-  // Fast bail-out: no fence → no block work. Don't even touch the cache.
-  if (text.indexOf('```') === -1) return null;
-
+  // No fast bail-out on '```' anymore: even fence-less text must run through
+  // splitBlocksUncached so the conservative code heuristic (looksLikeCode)
+  // gets a chance to auto-wrap pasted snippets. splitBlocksUncached returns
+  // null cheaply for the common non-code case, and the cache below guarantees
+  // each UNIQUE string runs that heuristic at most once (same discipline as
+  // parseCache) so repeated renders never re-run it.
   const cached = blockCache.get(text);
   if (cached !== undefined) return cached;
 
@@ -407,12 +410,85 @@ function splitBlocksUncached(text: string): BlockSegment[] | null {
     lastIndex = match.index + match[0].length;
   }
 
-  // No actual closing fence matched (e.g. a lone "```") — behave as no-fence.
-  if (!found) return null;
+  // No actual closing fence matched (e.g. a lone "```") — fall through to the
+  // conservative heuristic. If the whole message clearly looks like code,
+  // wrap it as a single CodeBlock; otherwise return null so the caller takes
+  // the unchanged single-<Text> path.
+  if (!found) {
+    if (looksLikeCode(text)) {
+      return [{ kind: 'code', lang: '', value: text.replace(/\n+$/, '') }];
+    }
+    return null;
+  }
 
   if (lastIndex < text.length) {
     segments.push({ kind: 'text', value: text.slice(lastIndex) });
   }
 
   return segments;
+}
+
+// ─── Conservative code auto-detection ───────────────────────────────────────
+// When a message has NO explicit ``` fence we still want to recognise raw
+// pasted code (C/C++, Java, JS, Python, …) and render it in a CodeBlock. The
+// heuristic below is deliberately conservative: it must NOT fire on ordinary
+// prose (including short multi-line greetings). All regexes are module-level
+// consts so they are compiled once, not per call. None use the `g` flag, so
+// `.test()` is stateless (no lastIndex bookkeeping needed).
+
+// STRONG signals: essentially never appear in natural prose. Any match → code.
+const STRONG_CODE_PATTERNS: RegExp[] = [
+  /#include\s*[<"]/,                                            // C/C++
+  /\b(public|private|protected)\s+(static\s+)?(void|int|String|class|final)\b/, // Java/C#
+  /\bclass\s+\w+\s*[:({]/,                                      // class decl
+  /\b(function|const|let|var)\s+\w+\s*=/,                       // JS binding
+  /\bfunction\s+\w+\s*\(/,                                      // JS function
+  /=>\s*[{(]/,                                                  // JS arrow
+  /\bdef\s+\w+\s*\(.*\)\s*:/,                                   // Python def
+  /\b(import|from)\s+[\w.]+\s+(import\b|;)/,                    // Py / Java import
+  /^\s*import\s+[\w.{}*\s]+from\s+['"]/m,                       // JS import … from
+  /\b(std::|console\.log|System\.out\.print|printf\s*\(|cout\s*<<|fmt\.Print)/, // stdlib calls
+  /\b(int|void|float|double|char|bool)\s+main\s*\(/,           // C/C++ main
+];
+
+// HTML/XML tag — only counts as a strong signal when there are >= 2 of them.
+const HTML_TAG_PATTERN = /<\/?[a-zA-Z][\w-]*(\s[^>]*)?>/g;
+
+// WEAK signals: per-line "code-ish" tests. Individually weak; only decisive in
+// multi-line aggregate (see looksLikeCode).
+const CODEISH_LINE_END = /[;{},:)]$/;          // line ends with a code punctuator
+const CODEISH_INDENT = /^(\s{2,}|\t)/;          // leading indentation
+const CODEISH_INLINE = /(\{.*\}|\w+\(|\[\]|=>|===|!==|==|&&|\|\||::|->)/; // call/operator syntax
+const CODEISH_KEYWORD = /\b(if|else|for|while|return|switch|case|break|continue|new|try|catch|throw|await|async|export|module|require|struct|enum|interface|typedef|namespace|using|val|fun|let|const|var|func|print|println)\b/;
+
+function looksLikeCode(text: string): boolean {
+  if (text.trim().length < 6) return false;
+
+  // STRONG signals → immediate yes (works even for single-line input).
+  for (const re of STRONG_CODE_PATTERNS) {
+    if (re.test(text)) return true;
+  }
+  // >= 2 HTML/XML tags is also a strong signal. Reset lastIndex defensively
+  // because HTML_TAG_PATTERN carries the global flag.
+  HTML_TAG_PATTERN.lastIndex = 0;
+  const tagMatches = text.match(HTML_TAG_PATTERN);
+  if (tagMatches && tagMatches.length >= 2) return true;
+
+  // WEAK signals: require multi-line context so single sentences never convert.
+  const lines = text.split('\n');
+  const nonEmpty = lines.filter(l => l.trim().length > 0);
+  if (nonEmpty.length < 2) return false;
+
+  let codeishCount = 0;
+  for (const line of nonEmpty) {
+    const trimmedRight = line.replace(/\s+$/, '');
+    const isCodeish =
+      CODEISH_LINE_END.test(trimmedRight) ||
+      CODEISH_INDENT.test(line) ||
+      CODEISH_INLINE.test(line) ||
+      CODEISH_KEYWORD.test(line);
+    if (isCodeish) codeishCount++;
+  }
+
+  return codeishCount >= 2 && codeishCount / nonEmpty.length >= 0.6;
 }

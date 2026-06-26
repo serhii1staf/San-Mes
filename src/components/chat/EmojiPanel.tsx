@@ -1,5 +1,5 @@
-import React, { memo, useCallback, useMemo } from 'react';
-import { View, Pressable, FlatList, Text as RNText, StyleSheet } from 'react-native';
+import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { View, Pressable, FlatList, Text as RNText, StyleSheet, InteractionManager } from 'react-native';
 import { useT } from '../../i18n/store';
 import { useLiquidGlassActive, GlassBg } from '../ui/LiquidGlass';
 
@@ -105,6 +105,22 @@ function EmojiPanelComponent({ height, onSelect, onLongPress, theme, bottomInset
   const t = useT();
   const glassActive = useLiquidGlassActive();
 
+  // ── List mount gate ────────────────────────────────────────────────────
+  // The panel mounts on the SAME React commit that sets liftSV=1 and dismisses
+  // the keyboard. Mounting the FlatList + its ~64 initial emoji cells on that
+  // open/lift frame is what stutters. Defer the heavy list by ONE frame (the
+  // same runAfterInteractions + RAF mechanism GifPanel uses for its decode
+  // gate): the container View/glass surface already covers the visible slide,
+  // so a one-frame-empty container is invisible during the ~300ms reveal.
+  const [listReady, setListReady] = useState(false);
+  useEffect(() => {
+    let raf = 0;
+    const handle = InteractionManager.runAfterInteractions(() => {
+      raf = requestAnimationFrame(() => setListReady(true));
+    });
+    return () => { handle.cancel(); if (raf) cancelAnimationFrame(raf); };
+  }, []);
+
   const renderCategory = useCallback(
     ({ item }: { item: { titleKey: string; emojis: string[] } }) => (
       <View style={styles.category}>
@@ -163,17 +179,19 @@ function EmojiPanelComponent({ height, onSelect, onLongPress, theme, bottomInset
           tintColor={theme.isDark ? 'rgba(26,26,31,0.55)' : 'rgba(255,255,255,0.55)'}
         />
       ) : null}
-      <FlatList
-        data={CATEGORIES}
-        keyExtractor={(it) => it.titleKey}
-        renderItem={renderCategory}
-        style={styles.list}
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={contentStyle}
-        keyboardShouldPersistTaps="always"
-        initialNumToRender={2}
-        windowSize={5}
-      />
+      {listReady ? (
+        <FlatList
+          data={CATEGORIES}
+          keyExtractor={(it) => it.titleKey}
+          renderItem={renderCategory}
+          style={styles.list}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={contentStyle}
+          keyboardShouldPersistTaps="always"
+          initialNumToRender={2}
+          windowSize={5}
+        />
+      ) : null}
     </View>
   );
 }
