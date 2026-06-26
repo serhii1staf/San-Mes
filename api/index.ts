@@ -10,7 +10,7 @@ const ADMIN_KEY = process.env.ADMIN_KEY || 'V7k!Qm9@Lp2#xR8$Tw6ZcD4%yN';
 // installed app. The page tries the scheme first, then falls back to the store.
 const APP_STORE_LINK = 'https://apps.apple.com/app/id6773943434';
 const APP_SCHEME = 'san-mes';
-const FALLBACK_OG_IMAGE = 'https://i.postimg.cc/k5jt7kL1/image.png';
+const FALLBACK_OG_IMAGE = 'https://san-m-app.com/og-icon.png';
 const IMAGE_SEP = '|';
 const SPOILER_PREFIX = '::spoiler::';
 const REPOST_PREFIX = '::repost::';

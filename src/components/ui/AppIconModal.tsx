@@ -29,12 +29,10 @@ export function AppIconModal({ visible, onClose }: AppIconModalProps) {
   // Build the icon list inside the component so labels follow the active locale.
   const ICONS: IconOption[] = useMemo(() => [
     { name: null, label: t('app_icon.default'), source: require('../../../assets/icon.png') },
-    { name: 'Classic', label: t('app_icon.classic'), source: require('../../../assets/app-icons/classic.png') },
-    { name: 'Dark', label: t('app_icon.dark'), source: require('../../../assets/app-icons/dark.png') },
-    { name: 'Blue', label: t('app_icon.blue'), source: require('../../../assets/app-icons/blue.png') },
-    { name: 'Orange', label: t('app_icon.orange'), source: require('../../../assets/app-icons/orange.png') },
-    { name: 'Mono', label: t('app_icon.mono'), source: require('../../../assets/app-icons/mono.png') },
-    { name: 'Gradient', label: t('app_icon.gradient'), source: require('../../../assets/app-icons/gradient.png') },
+    { name: 'Style1', label: t('app_icon.style1'), source: require('../../../assets/app-icons/style1.png') },
+    { name: 'Style2', label: t('app_icon.style2'), source: require('../../../assets/app-icons/style2.png') },
+    { name: 'Style3', label: t('app_icon.style3'), source: require('../../../assets/app-icons/style3.png') },
+    { name: 'Style4', label: t('app_icon.style4'), source: require('../../../assets/app-icons/style4.png') },
   ], [t]);
   const [current, setCurrent] = useState<string | null>(null);
   const [applying, setApplying] = useState<string | null>(null);

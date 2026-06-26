@@ -524,6 +524,10 @@ const ru: Record<string, string> = {
   'app_icon.orange': 'Оранжевая',
   'app_icon.mono': 'Моно',
   'app_icon.gradient': 'Градиент',
+  'app_icon.style1': 'Стиль 1',
+  'app_icon.style2': 'Стиль 2',
+  'app_icon.style3': 'Стиль 3',
+  'app_icon.style4': 'Стиль 4',
 
   // ─── GIF picker ────────────────────────────────────────────────────────
   'giphy.search_placeholder': 'Поиск GIF...',

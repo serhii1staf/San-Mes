@@ -68,51 +68,35 @@
         "expo-alternate-app-icons",
         [
           {
-            "name": "Classic",
-            "ios": "./assets/app-icons/classic.png",
+            "name": "Style1",
+            "ios": "./assets/app-icons/style1.png",
             "android": {
-              "foregroundImage": "./assets/app-icons/classic.png",
-              "backgroundColor": "#FFF8F0"
+              "foregroundImage": "./assets/app-icons/style1.png",
+              "backgroundColor": "#FFFFFF"
             }
           },
           {
-            "name": "Dark",
-            "ios": "./assets/app-icons/dark.png",
+            "name": "Style2",
+            "ios": "./assets/app-icons/style2.png",
             "android": {
-              "foregroundImage": "./assets/app-icons/dark.png",
-              "backgroundColor": "#141414"
+              "foregroundImage": "./assets/app-icons/style2.png",
+              "backgroundColor": "#FFFFFF"
             }
           },
           {
-            "name": "Blue",
-            "ios": "./assets/app-icons/blue.png",
+            "name": "Style3",
+            "ios": "./assets/app-icons/style3.png",
             "android": {
-              "foregroundImage": "./assets/app-icons/blue.png",
-              "backgroundColor": "#0A84FF"
+              "foregroundImage": "./assets/app-icons/style3.png",
+              "backgroundColor": "#FFFFFF"
             }
           },
           {
-            "name": "Orange",
-            "ios": "./assets/app-icons/orange.png",
+            "name": "Style4",
+            "ios": "./assets/app-icons/style4.png",
             "android": {
-              "foregroundImage": "./assets/app-icons/orange.png",
-              "backgroundColor": "#FF7A00"
-            }
-          },
-          {
-            "name": "Mono",
-            "ios": "./assets/app-icons/mono.png",
-            "android": {
-              "foregroundImage": "./assets/app-icons/mono.png",
-              "backgroundColor": "#141414"
-            }
-          },
-          {
-            "name": "Gradient",
-            "ios": "./assets/app-icons/gradient.png",
-            "android": {
-              "foregroundImage": "./assets/app-icons/gradient.png",
-              "backgroundColor": "#141414"
+              "foregroundImage": "./assets/app-icons/style4.png",
+              "backgroundColor": "#FFFFFF"
             }
           }
         ]

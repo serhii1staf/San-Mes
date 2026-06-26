@@ -19,7 +19,7 @@ const ADMIN_KEY = process.env.ADMIN_KEY || 'V7k!Qm9@Lp2#xR8$Tw6ZcD4%yN';
 
 export const APP_STORE_LINK = 'https://apps.apple.com/app/id6773943434';
 export const APP_SCHEME = 'san-mes';
-export const FALLBACK_OG_IMAGE = 'https://i.postimg.cc/k5jt7kL1/image.png';
+export const FALLBACK_OG_IMAGE = 'https://san-m-app.com/og-icon.png';
 
 export interface MiniAppPreview {
   id: string;
