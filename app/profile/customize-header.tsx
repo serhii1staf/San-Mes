@@ -259,13 +259,13 @@ export default function CustomizeHeaderScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
-      {/* Top bar */}
-      <View style={{ paddingTop: insets.top + 6, paddingHorizontal: 16, paddingBottom: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+      {/* Top bar — tight row with a subtle hairline divider underneath. */}
+      <View style={{ paddingTop: insets.top + 6, paddingHorizontal: 12, paddingBottom: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.colors.border.light }}>
         <Pressable onPress={() => router.back()} hitSlop={10} style={{ width: 40, height: 40, alignItems: 'center', justifyContent: 'center' }}>
           <Feather name="x" size={24} color={theme.colors.text.primary} />
         </Pressable>
         <Text variant="h3" weight="bold">{t('customize.title', 'Оформление')}</Text>
-        <Pressable onPress={onSave} disabled={saving} hitSlop={10} style={{ minWidth: 40, height: 40, alignItems: 'flex-end', justifyContent: 'center' }}>
+        <Pressable onPress={onSave} disabled={saving} hitSlop={10} style={{ minWidth: 40, height: 40, paddingHorizontal: 4, alignItems: 'flex-end', justifyContent: 'center' }}>
           {saving ? <ActivityIndicator color={theme.colors.accent.primary} /> : <Text variant="body" weight="bold" color={theme.colors.accent.primary}>{t('common.done', 'Готово')}</Text>}
         </Pressable>
       </View>
@@ -397,12 +397,12 @@ export default function CustomizeHeaderScreen() {
       {/* ── Library — group tabs + grids ──────────────────────────────── */}
       {!drawMode ? (
         <View style={{ flex: 1 }}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 12, gap: 8, paddingVertical: 6 }} style={{ flexGrow: 0 }}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 12, gap: 8, paddingVertical: 10 }} style={{ flexGrow: 0 }}>
             {[{ key: 'bg', label: t('customize.bg', 'Фон') }, ...STICKER_LIBRARY.map((g) => ({ key: g.key, label: g.label }))].map((g) => {
               const active = g.key === activeGroup;
               return (
-                <Pressable key={g.key} onPress={() => setActiveGroup(g.key)} style={{ height: 34, paddingHorizontal: 14, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? theme.colors.accent.primary : (theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)') }}>
-                  <RNText allowFontScaling={false} style={{ fontSize: 13, fontWeight: '700', includeFontPadding: false, color: active ? '#FFFFFF' : theme.colors.text.secondary }}>{g.label}</RNText>
+                <Pressable key={g.key} onPress={() => setActiveGroup(g.key)} style={{ height: 36, paddingHorizontal: 16, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? theme.colors.accent.primary : (theme.isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)'), borderWidth: active ? 0 : StyleSheet.hairlineWidth, borderColor: theme.colors.border.light }}>
+                  <RNText allowFontScaling={false} style={{ fontSize: 13.5, fontWeight: '700', includeFontPadding: false, color: active ? '#FFFFFF' : theme.colors.text.secondary }}>{g.label}</RNText>
                 </Pressable>
               );
             })}
@@ -424,13 +424,13 @@ export default function CustomizeHeaderScreen() {
                 contentContainerStyle={{ paddingBottom: insets.bottom + 16, gap: 10 }}
                 ListHeaderComponent={
                   <View style={{ flexDirection: 'row', gap: 10, paddingHorizontal: 12, marginTop: 6, marginBottom: 16 }}>
-                    <Pressable onPress={() => { triggerHaptic('light'); setSelectedId(null); setDrawMode(true); }} style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, height: 44, borderRadius: 14, backgroundColor: theme.colors.accent.primary }}>
+                    <Pressable onPress={() => { triggerHaptic('light'); setSelectedId(null); setDrawMode(true); }} style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, height: 46, borderRadius: 15, backgroundColor: theme.colors.accent.primary }}>
                       <Feather name="edit-2" size={16} color="#FFFFFF" />
-                      <RNText allowFontScaling={false} style={{ fontSize: 13, fontWeight: '700', color: '#FFFFFF', includeFontPadding: false }}>{t('customize.draw', 'Рисовать свой')}</RNText>
+                      <RNText allowFontScaling={false} style={{ fontSize: 13.5, fontWeight: '700', color: '#FFFFFF', includeFontPadding: false }}>{t('customize.draw', 'Рисовать свой')}</RNText>
                     </Pressable>
-                    <Pressable onPress={() => { triggerHaptic('light'); setBgBlend((b) => !b); }} style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, height: 44, borderRadius: 14, backgroundColor: bgBlend ? theme.colors.accent.primary : (theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)') }}>
+                    <Pressable onPress={() => { triggerHaptic('light'); setBgBlend((b) => !b); }} style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, height: 46, borderRadius: 15, backgroundColor: bgBlend ? theme.colors.accent.primary : (theme.isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)'), borderWidth: bgBlend ? 0 : StyleSheet.hairlineWidth, borderColor: theme.colors.border.light }}>
                       <Feather name="layers" size={16} color={bgBlend ? '#FFFFFF' : theme.colors.text.secondary} />
-                      <RNText allowFontScaling={false} style={{ fontSize: 13, fontWeight: '700', includeFontPadding: false, color: bgBlend ? '#FFFFFF' : theme.colors.text.secondary }}>{t('customize.blend', 'Слить с баннером')}</RNText>
+                      <RNText allowFontScaling={false} style={{ fontSize: 13.5, fontWeight: '700', includeFontPadding: false, color: bgBlend ? '#FFFFFF' : theme.colors.text.secondary }}>{t('customize.blend', 'Слить с баннером')}</RNText>
                     </Pressable>
                   </View>
                 }
@@ -439,13 +439,21 @@ export default function CustomizeHeaderScreen() {
                   const isSel = background === item.id;
                   return (
                     <Pressable onPress={() => { triggerHaptic('light'); setBackground(item.id); }} style={{ flex: 1 }}>
-                      <View style={{ aspectRatio: 1, borderRadius: 16, overflow: 'hidden', borderWidth: isSel ? 3 : 0, borderColor: theme.colors.accent.primary, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)', alignItems: 'center', justifyContent: 'center' }}>
+                      <View style={{ aspectRatio: 1, borderRadius: 18, overflow: 'hidden', borderWidth: isSel ? 2.5 : StyleSheet.hairlineWidth, borderColor: isSel ? theme.colors.accent.primary : theme.colors.border.light, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)', alignItems: 'center', justifyContent: 'center' }}>
                         {item.id ? (
                           <HeaderLandscape backgroundId={item.id} />
                         ) : (
-                          <Feather name="slash" size={24} color={theme.colors.text.tertiary} />
+                          <View style={{ alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                            <Feather name="slash" size={24} color={theme.colors.text.tertiary} />
+                            <RNText allowFontScaling={false} style={{ fontSize: 11.5, fontWeight: '700', includeFontPadding: false, color: theme.colors.text.tertiary }}>{t('customize.bg_none', 'Без фона')}</RNText>
+                          </View>
                         )}
                       </View>
+                      {isSel ? (
+                        <View style={{ position: 'absolute', top: 8, right: 8, width: 24, height: 24, borderRadius: 12, backgroundColor: theme.colors.accent.primary, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: theme.colors.background.primary }}>
+                          <Feather name="check" size={13} color="#FFFFFF" />
+                        </View>
+                      ) : null}
                     </Pressable>
                   );
                 }}
@@ -456,7 +464,7 @@ export default function CustomizeHeaderScreen() {
           ) : (
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 10, paddingBottom: insets.bottom + 16, paddingTop: 4 }} keyboardShouldPersistTaps="always">
               {(STICKER_LIBRARY.find((g) => g.key === activeGroup) || STICKER_LIBRARY[0]).items.map((g, i) => (
-                <Pressable key={g + i} onPress={() => addItem(g)} style={{ width: '12.5%', aspectRatio: 1, alignItems: 'center', justifyContent: 'center' }}>
+                <Pressable key={g + i} onPress={() => addItem(g)} style={({ pressed }) => ({ width: '12.5%', aspectRatio: 1, alignItems: 'center', justifyContent: 'center', borderRadius: 14, backgroundColor: pressed ? (theme.isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)') : 'transparent' })}>
                   <RNText allowFontScaling={false} style={{ fontSize: 30 }}>{g}</RNText>
                 </Pressable>
               ))}
@@ -546,9 +554,9 @@ function ToolBtn({ theme, icon, onPress, danger }: { theme: any; icon: any; onPr
 
 function AnimChip({ theme, icon, label, active, onPress }: { theme: any; icon: any; label: string; active: boolean; onPress: () => void }) {
   return (
-    <Pressable onPress={onPress} hitSlop={6} style={{ flexDirection: 'row', alignItems: 'center', gap: 5, height: 32, paddingHorizontal: 11, borderRadius: 16, backgroundColor: active ? theme.colors.accent.primary : (theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)') }}>
+    <Pressable onPress={onPress} hitSlop={6} style={{ flexDirection: 'row', alignItems: 'center', gap: 5, height: 34, paddingHorizontal: 13, borderRadius: 17, backgroundColor: active ? theme.colors.accent.primary : (theme.isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)'), borderWidth: active ? 0 : StyleSheet.hairlineWidth, borderColor: theme.colors.border.light }}>
       <Feather name={icon} size={13} color={active ? '#FFFFFF' : theme.colors.text.secondary} />
-      <RNText allowFontScaling={false} style={{ fontSize: 12, includeFontPadding: false, fontWeight: '600', color: active ? '#FFFFFF' : theme.colors.text.secondary }}>{label}</RNText>
+      <RNText allowFontScaling={false} style={{ fontSize: 12, includeFontPadding: false, fontWeight: '700', color: active ? '#FFFFFF' : theme.colors.text.secondary }}>{label}</RNText>
     </Pressable>
   );
 }

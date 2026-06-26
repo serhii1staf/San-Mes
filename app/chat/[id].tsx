@@ -67,7 +67,7 @@ const SCREEN_HEIGHT = Dimensions.get('window').height;
 // forcing its internal prop-diff/effect work to re-run needlessly. Both values
 // are compile-time constants, so hoisting them to module scope makes the
 // references stable across every render without changing any behaviour.
-const MVCP_FROM_BOTTOM = { startRenderingFromBottom: true } as const;
+const MVCP_FROM_BOTTOM = { startRenderingFromBottom: true, autoscrollToBottomThreshold: 0.1 } as const;
 const LIST_CONTENT_CONTAINER_STYLE = { paddingBottom: 8 } as const;
 
 // ── Telegram-style windowed message loading ───────────────────────────────
@@ -975,6 +975,27 @@ export default function ChatScreen() {
   // channel subscription).
   const hydrateFullHistoryRef = useRef(hydrateFullHistory);
   hydrateFullHistoryRef.current = hydrateFullHistory;
+
+  // ── Post-open: disable data windowing for the rest of the session ──────────
+  // The FIRST paint of a newly-opened chat uses the cheap bounded seed (the
+  // `setRenderWindow(INITIAL_WINDOW)` reset on conversation change). One tick
+  // AFTER the open transition we hydrate the full history ONCE and expand
+  // `renderWindow` to cover the entire conversation, so `windowedMessages`
+  // becomes the whole (stable) array for the rest of the session. FlashList v2
+  // virtualizes/recycles, so a large data array is cheap — and crucially there
+  // is no more `onStartReached`-driven prepend mid-scroll (which, with
+  // `startRenderingFromBottom`, re-anchored the list toward the bottom and
+  // yanked the view down when the user scrolled up fast). Runs once per
+  // conversation; subsequent appends grow the window via the effect above.
+  useEffect(() => {
+    if (!conversationId) return;
+    const h = InteractionManager.runAfterInteractions(() => {
+      if (historyHydratedRef.current !== conversationId) hydrateFullHistory();
+      const total = (useChatStore.getState().messages[conversationId] || []).length;
+      setRenderWindow((cur) => Math.max(cur, total || cur));
+    });
+    return () => h.cancel();
+  }, [conversationId, hydrateFullHistory]);
 
   // Push the bounded SEED into the store once (after paint) so edits/sends
   // work normally. We deliberately seed ONLY the `SEED_CAP` tail here — NOT
