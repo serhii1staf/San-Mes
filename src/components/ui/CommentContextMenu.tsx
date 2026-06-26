@@ -6,7 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme';
 import { Text } from './Text';
 import { Avatar } from './Avatar';
-import { FormattedText } from './FormattedText';
+import { FormattedText, hasCodeBlock } from './FormattedText';
 import { LinkPreview } from './LinkPreview';
 import { CachedImage } from './CachedImage';
 import Skeleton from './Skeleton';
@@ -119,7 +119,7 @@ export function CommentContextMenu({ visible, comment, isOwn, displayBody, reply
 
   const profile = comment.profiles || {};
   const body: string = displayBody ?? comment.content ?? '';
-  const link = !gifUrl ? extractFirstUrl(body) : null;
+  const link = (!gifUrl && !hasCodeBlock(body)) ? extractFirstUrl(body) : null;
   const isLong = body.length > LONG_TEXT_THRESHOLD;
 
   // Tapping a link from inside the modal must close THIS modal first, else

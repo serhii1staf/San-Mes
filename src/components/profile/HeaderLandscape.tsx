@@ -16,7 +16,7 @@ import { View, StyleSheet } from 'react-native';
 import Svg, {
   Defs, LinearGradient as SvgGradient, Stop, Rect, Polygon, Circle, Path,
 } from 'react-native-svg';
-import { backgroundScene, LandscapeKind, HeaderDrawStroke } from '../../services/headerScene';
+import { backgroundScene, LandscapeKind, HeaderDrawStroke, brushLayers } from '../../services/headerScene';
 
 function noise(seed: number, i: number): number {
   const v = Math.sin(seed * 12.9898 + i * 78.233) * 43758.5453;
@@ -251,9 +251,9 @@ function HeaderLandscapeComponent({
       ) : null}
       {hasDrawing ? (
         <Svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none">
-          {drawing!.map((s, i) => (
-            <Path key={`dr-${i}`} d={s.d} stroke={s.color} strokeWidth={s.w} strokeLinecap="round" strokeLinejoin="round" fill="none" />
-          ))}
+          {drawing!.flatMap((s, i) => brushLayers(s.brush).map((L, li) => (
+            <Path key={`dr-${i}-${li}`} d={s.d} stroke={s.color} strokeWidth={s.w * L.widthMul} strokeLinecap="round" strokeLinejoin="round" fill="none" opacity={L.opacity} strokeDasharray={L.dash} />
+          )))}
         </Svg>
       ) : null}
     </View>

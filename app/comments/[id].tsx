@@ -14,7 +14,7 @@ import { useLiquidGlassActive, NativeGlassView, GlassBg } from '../../src/compon
 import { Text, Avatar } from '../../src/components/ui';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { UserBadge } from '../../src/components/ui/UserBadge';
-import { FormattedText } from '../../src/components/ui/FormattedText';
+import { FormattedText, hasCodeBlock } from '../../src/components/ui/FormattedText';
 import { LinkPreview } from '../../src/components/ui/LinkPreview';
 import { extractFirstUrl } from '../../src/services/linkPreview';
 import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
@@ -216,7 +216,7 @@ const CommentRow = React.memo(function CommentRow({ item, onLongPress, onReply, 
     );
   }
 
-  const link = !gif ? extractFirstUrl(parsed.body) : null;
+  const link = (!gif && !hasCodeBlock(parsed.body)) ? extractFirstUrl(parsed.body) : null;
 
   const formatTime = (dateStr: string) => {
     const diff = Date.now() - new Date(dateStr).getTime();

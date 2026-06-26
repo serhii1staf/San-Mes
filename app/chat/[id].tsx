@@ -16,7 +16,7 @@ import { CachedImage } from '../../src/components/ui/CachedImage';
 import { proxiedImageUrl } from '../../src/components/ui/CachedImage';
 import Skeleton from '../../src/components/ui/Skeleton';
 import { ModalStatusBar } from '../../src/components/ui/ModalStatusBar';
-import { FormattedText } from '../../src/components/ui/FormattedText';
+import { FormattedText, hasCodeBlock } from '../../src/components/ui/FormattedText';
 import { LinkPreview } from '../../src/components/ui/LinkPreview';
 import { extractFirstUrl } from '../../src/services/linkPreview';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
@@ -511,7 +511,7 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
               <FormattedText color={bodyTextColor} linkColor={linkTextColor} style={{ fontSize, fontFamily: fontFamilyStyle }}>{message.text}</FormattedText>
             ) : null}
             {(() => {
-              const link = (!message.imageUrls || message.imageUrls.length === 0) ? extractFirstUrl(message.text) : null;
+              const link = (!message.imageUrls || message.imageUrls.length === 0) && !hasCodeBlock(message.text) ? extractFirstUrl(message.text) : null;
               return link ? (
                 <View style={bubbleStyles.linkPreviewWrap}>
                   <LinkPreview

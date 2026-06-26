@@ -12,6 +12,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { View, Pressable, ScrollView, FlatList, Text as RNText, StyleSheet, PanResponder, useWindowDimensions, ActivityIndicator, InteractionManager } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import Svg, { Path } from 'react-native-svg';
+import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../src/theme';
@@ -24,9 +25,9 @@ import { showToast } from '../../src/store/toastStore';
 import { HeaderLandscape } from '../../src/components/profile/HeaderLandscape';
 import { StickerGlyph } from '../../src/components/profile/StickerGlyph';
 import {
-  HeaderScene, HeaderItem, HeaderItemAnim, HeaderDrawStroke, BASE_ITEM_SIZE, MAX_ITEMS,
+  HeaderScene, HeaderItem, HeaderItemAnim, HeaderDrawStroke, HeaderBrush, BASE_ITEM_SIZE, MAX_ITEMS,
   STICKER_LIBRARY, HEADER_BACKGROUNDS,
-  getLocalScene, setLocalScene, normalizeScene,
+  getLocalScene, setLocalScene, normalizeScene, brushLayers,
 } from '../../src/services/headerScene';
 
 const PREVIEW_H = 300;
@@ -49,6 +50,31 @@ const DRAW_COLORS = [
 ];
 const DRAW_MIN_W = 1;
 const DRAW_MAX_W = 18;
+
+// Brush styles for the draw mode. Labels go through t() with Russian fallbacks.
+const BRUSH_OPTIONS: { key: HeaderBrush; icon: any; label: string; tKey: string }[] = [
+  { key: 'pen', icon: 'edit-2', label: 'Перо', tKey: 'customize.brush_pen' },
+  { key: 'marker', icon: 'edit-3', label: 'Маркер', tKey: 'customize.brush_marker' },
+  { key: 'neon', icon: 'zap', label: 'Неон', tKey: 'customize.brush_neon' },
+  { key: 'dashed', icon: 'more-horizontal', label: 'Пунктир', tKey: 'customize.brush_dashed' },
+];
+
+// Convert an HSL colour to a #RRGGBB hex string (used by the hue picker).
+function hslToHex(h: number, s: number, l: number): string {
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const hp = ((h % 360) + 360) % 360 / 60;
+  const x = c * (1 - Math.abs((hp % 2) - 1));
+  let r = 0, g = 0, b = 0;
+  if (hp >= 0 && hp < 1) { r = c; g = x; }
+  else if (hp < 2) { r = x; g = c; }
+  else if (hp < 3) { g = c; b = x; }
+  else if (hp < 4) { g = x; b = c; }
+  else if (hp < 5) { r = x; b = c; }
+  else { r = c; b = x; }
+  const m = l - c / 2;
+  const to = (v: number) => Math.round((v + m) * 255).toString(16).padStart(2, '0');
+  return `#${to(r)}${to(g)}${to(b)}`;
+}
 
 // Background swatch list: a "none" tile followed by every scene, PADDED to a
 // multiple of 3 with invisible spacers so the last FlatList row never stretches
@@ -89,6 +115,8 @@ export default function CustomizeHeaderScreen() {
   const [drawColor, setDrawColor] = useState(DRAW_COLORS[0]);
   const [drawWidth, setDrawWidth] = useState(4);
   const [eraser, setEraser] = useState(false);
+  const [brush, setBrush] = useState<HeaderBrush>('pen');
+  const [hue, setHue] = useState(210);
 
   // Defer the (heavy) library grid mount until the open transition fully
   // finishes. runAfterInteractions can resolve a frame or two before the nav
@@ -281,57 +309,70 @@ export default function CustomizeHeaderScreen() {
 
           {/* Drawing surface — on top, captures touches only in draw mode. */}
           {drawMode ? (
-            <DrawCanvas width={previewW} height={PREVIEW_H} color={drawColor} strokeWidth={drawWidth} strokes={strokes} onComplete={onStrokeComplete} eraser={eraser} onErase={eraseAt} />
+            <DrawCanvas width={previewW} height={PREVIEW_H} color={drawColor} strokeWidth={drawWidth} brush={brush} strokes={strokes} onComplete={onStrokeComplete} eraser={eraser} onErase={eraseAt} />
           ) : null}
         </View>
       </Pressable>
 
       {/* ── Contextual controls ───────────────────────────────────────── */}
       {drawMode ? (
-        // DRAW controls — left column = vertical size slider (no overlap with
-        // the canvas, so it never behaves weirdly); right column = colours +
-        // tools + done.
-        <View style={{ flex: 1, flexDirection: 'row', paddingTop: 10, paddingBottom: insets.bottom + 12, paddingHorizontal: 8 }}>
-          {/* Left: vertical brush-size slider */}
-          <View style={{ width: 60, alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-            <Feather name="maximize-2" size={14} color={theme.colors.text.tertiary} />
-            <VSizeSlider value={drawWidth} min={DRAW_MIN_W} max={DRAW_MAX_W} color={eraser ? theme.colors.text.secondary : drawColor} onChange={setDrawWidth} theme={theme} height={150} />
-            <RNText allowFontScaling={false} style={{ fontSize: 11, color: theme.colors.text.secondary, includeFontPadding: false }}>{Math.round(drawWidth)}</RNText>
-          </View>
-
-          {/* Right: hint + colours + tools + done */}
-          <View style={{ flex: 1, justifyContent: 'space-between', paddingLeft: 6 }}>
-            <Text variant="caption" color={theme.colors.text.tertiary} style={{ textAlign: 'center', paddingHorizontal: 8, paddingTop: 4 }}>
-              {eraser
-                ? t('customize.draw_erase_hint', 'Нажимай по линиям, чтобы стирать.')
-                : t('customize.draw_hint', 'Рисуй пальцем по превью сверху.')}
-            </Text>
-
-            <View style={{ gap: 12 }}>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 8, gap: 10, alignItems: 'center' }}>
-                {DRAW_COLORS.map((c) => {
-                  const active = !eraser && drawColor === c;
-                  return (
-                    <Pressable key={c} onPress={() => { triggerHaptic('light'); setEraser(false); setDrawColor(c); }} style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: c, borderWidth: active ? 3 : 1, borderColor: active ? theme.colors.accent.primary : 'rgba(127,127,127,0.4)' }} />
-                  );
-                })}
-              </ScrollView>
-
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
-                <Pressable onPress={() => { triggerHaptic('light'); setEraser((e) => !e); }} style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: eraser ? theme.colors.accent.primary : (theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)') }}>
-                  <Feather name="delete" size={19} color={eraser ? '#FFFFFF' : theme.colors.text.primary} />
-                </Pressable>
-                <ToolBtn theme={theme} icon="corner-up-left" onPress={undoStroke} />
-                <ToolBtn theme={theme} icon="corner-up-right" onPress={redoStroke} />
-                <ToolBtn theme={theme} icon="trash-2" danger onPress={clearStrokes} />
+        // DRAW controls — a clean vertical stack of rounded cards BELOW the
+        // preview: size slider on top, then brush styles, then colours (hue
+        // picker + quick swatches), then tools + done.
+        <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: 12, paddingBottom: insets.bottom + 16, gap: 12 }}>
+          <DrawCard theme={theme}>
+            <MiniLabel theme={theme} text={eraser ? t('customize.draw_erase_hint', 'Нажимай по линиям, чтобы стирать.') : t('customize.draw_size', 'Размер кисти')} />
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+              <HSizeSlider value={drawWidth} min={DRAW_MIN_W} max={DRAW_MAX_W} color={eraser ? theme.colors.text.secondary : drawColor} onChange={setDrawWidth} theme={theme} />
+              <View style={{ width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
+                <View style={{ width: Math.max(4, Math.min(34, drawWidth * 2)), height: Math.max(4, Math.min(34, drawWidth * 2)), borderRadius: 17, backgroundColor: eraser ? theme.colors.text.secondary : drawColor }} />
               </View>
-
-              <Pressable onPress={() => { triggerHaptic('light'); setEraser(false); setDrawMode(false); }} style={{ height: 46, marginHorizontal: 8, borderRadius: 15, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.accent.primary }}>
-                <RNText allowFontScaling={false} style={{ fontSize: 15, fontWeight: '700', color: '#FFFFFF', includeFontPadding: false }}>{t('customize.draw_done', 'Готово')}</RNText>
-              </Pressable>
+              <RNText allowFontScaling={false} style={{ width: 26, textAlign: 'right', fontSize: 13, fontWeight: '700', color: theme.colors.text.secondary, includeFontPadding: false }}>{Math.round(drawWidth)}</RNText>
             </View>
-          </View>
-        </View>
+          </DrawCard>
+
+          <DrawCard theme={theme}>
+            <MiniLabel theme={theme} text={t('customize.draw_brush', 'Кисть')} />
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              {BRUSH_OPTIONS.map((b) => {
+                const active = brush === b.key;
+                return (
+                  <Pressable key={b.key} onPress={() => { triggerHaptic('light'); setEraser(false); setBrush(b.key); }} style={{ flex: 1, height: 56, borderRadius: 14, alignItems: 'center', justifyContent: 'center', gap: 3, backgroundColor: active ? theme.colors.accent.primary : (theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)') }}>
+                    <Feather name={b.icon} size={17} color={active ? '#FFFFFF' : theme.colors.text.secondary} />
+                    <RNText allowFontScaling={false} style={{ fontSize: 10.5, fontWeight: '700', includeFontPadding: false, color: active ? '#FFFFFF' : theme.colors.text.secondary }}>{t(b.tKey, b.label)}</RNText>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </DrawCard>
+
+          <DrawCard theme={theme}>
+            <MiniLabel theme={theme} text={t('customize.draw_all_colors', 'Все цвета')} />
+            <HuePicker hue={hue} onChange={(h) => { triggerHaptic('light'); setEraser(false); setHue(h); setDrawColor(hslToHex(h, 0.85, 0.55)); }} theme={theme} />
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, alignItems: 'center', paddingVertical: 2 }} style={{ marginTop: 12 }}>
+              {DRAW_COLORS.map((c) => {
+                const active = !eraser && drawColor === c;
+                return (
+                  <Pressable key={c} onPress={() => { triggerHaptic('light'); setEraser(false); setDrawColor(c); }} style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: c, borderWidth: active ? 3 : 1, borderColor: active ? theme.colors.accent.primary : 'rgba(127,127,127,0.4)' }} />
+                );
+              })}
+            </ScrollView>
+          </DrawCard>
+
+          <DrawCard theme={theme}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
+              <Pressable onPress={() => { triggerHaptic('light'); setEraser((e) => !e); }} style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: eraser ? theme.colors.accent.primary : (theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)') }}>
+                <Feather name="delete" size={19} color={eraser ? '#FFFFFF' : theme.colors.text.primary} />
+              </Pressable>
+              <ToolBtn theme={theme} icon="corner-up-left" onPress={undoStroke} />
+              <ToolBtn theme={theme} icon="corner-up-right" onPress={redoStroke} />
+              <ToolBtn theme={theme} icon="trash-2" danger onPress={clearStrokes} />
+            </View>
+            <Pressable onPress={() => { triggerHaptic('light'); setEraser(false); setDrawMode(false); }} style={{ height: 46, marginTop: 12, borderRadius: 15, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.accent.primary }}>
+              <RNText allowFontScaling={false} style={{ fontSize: 15, fontWeight: '700', color: '#FFFFFF', includeFontPadding: false }}>{t('customize.draw_done', 'Готово')}</RNText>
+            </Pressable>
+          </DrawCard>
+        </ScrollView>
       ) : selected ? (
         // SELECTED-STICKER controls
         <View style={{ paddingVertical: 12, gap: 10 }}>
@@ -429,8 +470,8 @@ export default function CustomizeHeaderScreen() {
 
 // Isolated drawing surface: keeps the in-progress stroke in its OWN state so
 // the per-move re-renders don't touch the rest of the editor (smooth drawing).
-function DrawCanvas({ width, height, color, strokeWidth, strokes, onComplete, eraser, onErase }: {
-  width: number; height: number; color: string; strokeWidth: number;
+function DrawCanvas({ width, height, color, strokeWidth, brush, strokes, onComplete, eraser, onErase }: {
+  width: number; height: number; color: string; strokeWidth: number; brush: HeaderBrush;
   strokes: HeaderDrawStroke[]; onComplete: (s: HeaderDrawStroke) => void;
   eraser?: boolean; onErase?: (x: number, y: number) => void;
 }) {
@@ -472,22 +513,24 @@ function DrawCanvas({ width, height, color, strokeWidth, strokes, onComplete, er
     onPanResponderRelease: () => {
       // Only commit strokes that actually have a line (≥1 L command); the
       // scene normalizer sanitizes again before persisting.
-      if (!eraserRef.current && pathRef.current.includes('L')) onComplete({ d: pathRef.current, color, w: strokeWidth });
+      if (!eraserRef.current && pathRef.current.includes('L')) onComplete({ d: pathRef.current, color, w: strokeWidth, brush });
       pathRef.current = ''; lastRef.current = null; ptsRef.current = 0; setCur('');
     },
     onPanResponderTerminate: () => {
-      if (!eraserRef.current && pathRef.current.includes('L')) onComplete({ d: pathRef.current, color, w: strokeWidth });
+      if (!eraserRef.current && pathRef.current.includes('L')) onComplete({ d: pathRef.current, color, w: strokeWidth, brush });
       pathRef.current = ''; lastRef.current = null; ptsRef.current = 0; setCur('');
     },
-  }), [width, height, color, strokeWidth, onComplete, onErase]);
+  }), [width, height, color, strokeWidth, brush, onComplete, onErase]);
 
   return (
     <View {...pan.panHandlers} style={StyleSheet.absoluteFill}>
       <Svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none">
-        {strokes.map((s, i) => (
-          <Path key={i} d={s.d} stroke={s.color} strokeWidth={s.w} strokeLinecap="round" strokeLinejoin="round" fill="none" />
-        ))}
-        {cur ? <Path d={cur} stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" fill="none" /> : null}
+        {strokes.flatMap((s, i) => brushLayers(s.brush).map((L, li) => (
+          <Path key={`${i}-${li}`} d={s.d} stroke={s.color} strokeWidth={s.w * L.widthMul} strokeLinecap="round" strokeLinejoin="round" fill="none" opacity={L.opacity} strokeDasharray={L.dash} />
+        )))}
+        {cur ? brushLayers(brush).map((L, li) => (
+          <Path key={`cur-${li}`} d={cur} stroke={color} strokeWidth={strokeWidth * L.widthMul} strokeLinecap="round" strokeLinejoin="round" fill="none" opacity={L.opacity} strokeDasharray={L.dash} />
+        )) : null}
       </Svg>
     </View>
   );
@@ -510,36 +553,93 @@ function AnimChip({ theme, icon, label, active, onPress }: { theme: any; icon: a
   );
 }
 
-// Vertical brush-size slider used in the draw toolbar's left column. It is a
-// standalone control (NOT overlaid on the canvas), so dragging it never
-// conflicts with drawing. Top of the track = max size, bottom = min.
-function VSizeSlider({ value, min, max, color, onChange, theme, height }: { value: number; min: number; max: number; color: string; onChange: (v: number) => void; theme: any; height: number }) {
-  const H = height;
+// A subtle rounded surface card used to group the draw controls.
+function DrawCard({ theme, children }: { theme: any; children: React.ReactNode }) {
+  return (
+    <View style={{ borderRadius: 18, padding: 14, gap: 10, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
+      {children}
+    </View>
+  );
+}
+
+// Tiny section label in tertiary colour.
+function MiniLabel({ theme, text }: { theme: any; text: string }) {
+  return (
+    <RNText allowFontScaling={false} style={{ fontSize: 11.5, fontWeight: '700', letterSpacing: 0.3, textTransform: 'uppercase', color: theme.colors.text.tertiary, includeFontPadding: false }}>{text}</RNText>
+  );
+}
+
+// Horizontal brush-size slider. Left = min, right = max. Every inner View is
+// pointerEvents="none" so locationX is always measured against the track
+// container (same robustness trick as the old vertical slider).
+function HSizeSlider({ value, min, max, color, onChange, theme }: { value: number; min: number; max: number; color: string; onChange: (v: number) => void; theme: any }) {
+  const [w, setW] = useState(0);
   const frac = Math.max(0, Math.min(1, (value - min) / (max - min)));
-  const thumb = Math.max(12, Math.min(34, value * 2));
-  const set = (y: number) => {
-    const f = 1 - Math.max(0, Math.min(1, y / H));
+  const thumb = Math.max(14, Math.min(30, value * 2));
+  const wRef = useRef(0);
+  wRef.current = w;
+  const set = (x: number) => {
+    const W = wRef.current;
+    if (W <= 0) return;
+    const f = Math.max(0, Math.min(1, x / W));
     onChange(+(min + f * (max - min)).toFixed(1));
   };
   const pan = useMemo(() => PanResponder.create({
     onStartShouldSetPanResponder: () => true,
     onMoveShouldSetPanResponder: () => true,
     onPanResponderTerminationRequest: () => false,
-    onPanResponderGrant: (e) => set(e.nativeEvent.locationY),
-    onPanResponderMove: (e) => set(e.nativeEvent.locationY),
+    onPanResponderGrant: (e) => set(e.nativeEvent.locationX),
+    onPanResponderMove: (e) => set(e.nativeEvent.locationX),
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [H, min, max, onChange]);
-  // CRITICAL: every inner View is pointerEvents="none". Otherwise a move event
-  // whose finger drifts over the thumb (or the fill) reports nativeEvent.locationY
-  // relative to THAT child instead of the track container, which made the size
-  // jump around erratically once the user started dragging after drawing.
-  // Forcing all children non-interactive guarantees locationY is always measured
-  // against the panHandlers container, so dragging is smooth and predictable.
+  }), [min, max, onChange]);
   return (
-    <View {...pan.panHandlers} style={{ width: 44, height: H, alignItems: 'center', justifyContent: 'center' }}>
-      <View pointerEvents="none" style={{ position: 'absolute', top: 0, bottom: 0, width: 6, borderRadius: 3, backgroundColor: 'rgba(127,127,127,0.4)' }} />
-      <View pointerEvents="none" style={{ position: 'absolute', bottom: 0, width: 6, height: `${(1 - frac) * 100}%`, borderRadius: 3, backgroundColor: 'rgba(127,127,127,0.22)' }} />
-      <View pointerEvents="none" style={{ position: 'absolute', top: (1 - frac) * H - thumb / 2, width: thumb, height: thumb, borderRadius: thumb / 2, backgroundColor: color, borderWidth: 2, borderColor: theme.isDark ? 'rgba(0,0,0,0.5)' : 'rgba(255,255,255,0.9)' }} />
+    <View
+      {...pan.panHandlers}
+      onLayout={(e) => setW(e.nativeEvent.layout.width)}
+      style={{ flex: 1, height: 36, justifyContent: 'center' }}
+    >
+      <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, height: 6, borderRadius: 3, backgroundColor: 'rgba(127,127,127,0.3)' }} />
+      <View pointerEvents="none" style={{ position: 'absolute', left: 0, width: `${frac * 100}%`, height: 6, borderRadius: 3, backgroundColor: theme.colors.accent.primary }} />
+      <View pointerEvents="none" style={{ position: 'absolute', left: frac * w - thumb / 2, width: thumb, height: thumb, borderRadius: thumb / 2, backgroundColor: color, borderWidth: 2, borderColor: theme.isDark ? 'rgba(0,0,0,0.5)' : 'rgba(255,255,255,0.95)' }} />
+    </View>
+  );
+}
+
+// Full-spectrum hue picker: a rainbow bar; dragging maps touch x → hue 0..360.
+function HuePicker({ hue, onChange, theme }: { hue: number; onChange: (h: number) => void; theme: any }) {
+  const [w, setW] = useState(0);
+  const wRef = useRef(0);
+  wRef.current = w;
+  const frac = Math.max(0, Math.min(1, hue / 360));
+  const set = (x: number) => {
+    const W = wRef.current;
+    if (W <= 0) return;
+    const f = Math.max(0, Math.min(1, x / W));
+    onChange(Math.round(f * 360));
+  };
+  const pan = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: () => true,
+    onPanResponderTerminationRequest: () => false,
+    onPanResponderGrant: (e) => set(e.nativeEvent.locationX),
+    onPanResponderMove: (e) => set(e.nativeEvent.locationX),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [onChange]);
+  const thumbColor = hslToHex(hue, 0.85, 0.55);
+  return (
+    <View
+      {...pan.panHandlers}
+      onLayout={(e) => setW(e.nativeEvent.layout.width)}
+      style={{ height: 28, justifyContent: 'center' }}
+    >
+      <LinearGradient
+        pointerEvents="none"
+        colors={['#FF0000', '#FFFF00', '#00FF00', '#00FFFF', '#0000FF', '#FF00FF', '#FF0000']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 0 }}
+        style={{ position: 'absolute', left: 0, right: 0, height: 14, borderRadius: 7 }}
+      />
+      <View pointerEvents="none" style={{ position: 'absolute', left: frac * w - 12, width: 24, height: 24, borderRadius: 12, backgroundColor: thumbColor, borderWidth: 3, borderColor: '#FFFFFF', shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 2, shadowOffset: { width: 0, height: 1 } }} />
     </View>
   );
 }

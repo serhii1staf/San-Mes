@@ -194,6 +194,76 @@ export const FormattedText = memo(function FormattedText({ children, style, colo
 });
 
 /**
+ * True when `text` will render with at least one block-level CodeBlock
+ * (explicit ``` fence OR heuristic auto-detected code). Consumers use this
+ * to suppress a separate link-preview card for URLs that live inside code.
+ */
+export function hasCodeBlock(text: string | undefined | null): boolean {
+  if (!text) return false;
+  const segs = splitBlocks(text);
+  return !!segs && segs.some((s) => s.kind === 'code');
+}
+
+// ─── Deterministic decorative backdrop ──────────────────────────────────────
+// A faint, seeded scatter of colored rounded squares painted BEHIND the code.
+// Seeded by the code string so it never re-randomizes on re-render/scroll.
+function hashString(s: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+function mulberry32(a: number) {
+  return function () {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const SQUARE_COLORS = ['#FF6B6B', '#4ECDC4', '#FFD93D', '#6C5CE7', '#00B894', '#FD79A8', '#74B9FF', '#A29BFE', '#FDCB6E', '#55EFC4'];
+
+const CodeBackdrop = memo(function CodeBackdrop({ seed, isDark }: { seed: string; isDark: boolean }) {
+  const squares = React.useMemo(() => {
+    const rng = mulberry32(hashString(seed));
+    const n = 16;
+    return Array.from({ length: n }, () => ({
+      top: rng() * 100,
+      left: rng() * 100,
+      size: 14 + Math.floor(rng() * 26),
+      color: SQUARE_COLORS[Math.floor(rng() * SQUARE_COLORS.length)],
+      rot: Math.floor(rng() * 40) - 20,
+    }));
+  }, [seed]);
+
+  return (
+    <View style={StyleSheet.absoluteFill} pointerEvents="none">
+      {squares.map((sq, i) => (
+        <View
+          key={i}
+          style={{
+            position: 'absolute',
+            top: `${sq.top}%`,
+            left: `${sq.left}%`,
+            width: sq.size,
+            height: sq.size,
+            borderRadius: 6,
+            backgroundColor: sq.color,
+            opacity: isDark ? 0.14 : 0.12,
+            transform: [{ rotate: `${sq.rot}deg` }],
+          }}
+        />
+      ))}
+    </View>
+  );
+});
+
+/**
  * Telegram-style fenced code container: monospace, subtle themed background,
  * rounded corners, optional language header + copy affordance, and a
  * horizontal ScrollView so long lines extend off-screen and scroll rather
@@ -226,6 +296,7 @@ const CodeBlock = memo(function CodeBlock({ code, lang }: { code: string; lang: 
         borderColor: theme.isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)',
       }}
     >
+      <CodeBackdrop seed={code} isDark={theme.isDark} />
       {hasLang ? (
         <View
           style={{
@@ -261,7 +332,7 @@ const CodeBlock = memo(function CodeBlock({ code, lang }: { code: string; lang: 
           <Feather name="copy" size={13} color={theme.colors.text.tertiary} />
         </Pressable>
       )}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ padding: 10 }}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ backgroundColor: 'transparent' }} contentContainerStyle={{ padding: 10 }}>
         <RNText
           selectable
           style={{

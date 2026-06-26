@@ -42,11 +42,27 @@ export interface HeaderScene {
   drawing?: HeaderDrawStroke[];
 }
 
+/** Brush style a stroke is drawn with (default 'pen'). */
+export type HeaderBrush = 'pen' | 'marker' | 'neon' | 'dashed';
+
 /** One freehand stroke: an SVG path in a 0..100 viewBox, a colour and width. */
 export interface HeaderDrawStroke {
   d: string;
   color: string;
   w: number;
+  brush?: HeaderBrush; // optional brush style (default treated as 'pen')
+}
+
+/** Per-brush SVG layer specs. Returned back→front so callers stack them.
+ *  Each layer: widthMul (× stroke w), opacity, optional SVG dash array. */
+export function brushLayers(brush: HeaderBrush | undefined): { widthMul: number; opacity: number; dash?: string }[] {
+  switch (brush) {
+    case 'marker': return [{ widthMul: 1.8, opacity: 0.45 }];
+    case 'neon':   return [{ widthMul: 3.0, opacity: 0.16 }, { widthMul: 1.9, opacity: 0.28 }, { widthMul: 1, opacity: 1 }];
+    case 'dashed': return [{ widthMul: 1, opacity: 1, dash: '4 3' }];
+    case 'pen':
+    default:       return [{ widthMul: 1, opacity: 1 }];
+  }
 }
 
 export const BASE_ITEM_SIZE = 40;
@@ -222,6 +238,7 @@ export function normalizeScene(raw: unknown): HeaderScene {
         d,
         color: typeof s.color === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(s.color) ? s.color : '#FFFFFF',
         w: isFinite(Number(s.w)) ? Math.min(12, Math.max(0.5, Number(s.w))) : 2,
+        brush: (typeof s.brush === 'string' && ['pen', 'marker', 'neon', 'dashed'].includes(s.brush)) ? s.brush : 'pen',
       });
       if (strokes.length >= 60) break;
     }

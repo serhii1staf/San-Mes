@@ -5,7 +5,7 @@ import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme';
 import { Text } from './Text';
-import { FormattedText } from './FormattedText';
+import { FormattedText, hasCodeBlock } from './FormattedText';
 import { CachedImage } from './CachedImage';
 import { LinkPreview } from './LinkPreview';
 import Skeleton from './Skeleton';
@@ -258,7 +258,7 @@ export const MessageContextMenu = forwardRef<MessageContextMenuHandle, MessageCo
 
   const hasImages = !!message.imageUrls && message.imageUrls.length > 0;
   const imageCount = hasImages ? message.imageUrls!.length : 0;
-  const link = !hasImages ? extractFirstUrl(message.text) : null;
+  const link = (!hasImages && !hasCodeBlock(message.text)) ? extractFirstUrl(message.text) : null;
   const isLong = (message.text?.length || 0) > LONG_TEXT_THRESHOLD;
 
   // Tapping a link in the held-message preview must dismiss this overlay
