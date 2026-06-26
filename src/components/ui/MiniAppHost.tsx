@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react';
-import { View, Pressable, ActivityIndicator, Share, Linking, BackHandler, Animated, Dimensions, Easing } from 'react-native';
+import { View, Pressable, ActivityIndicator, Share, Linking, BackHandler, Animated, Dimensions, Easing, Alert } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -175,9 +175,26 @@ export function MiniAppHost() {
     if (lower.startsWith('blob:')) return true;
     if (lower.startsWith('http://')) return false;
     if (lower.startsWith('file:') || lower.startsWith('javascript:') || lower.startsWith('data:')) return false;
-    Linking.openURL(u).catch(() => {});
+    // Allowlist of safe external schemes that may open WITHOUT confirmation.
+    if (lower.startsWith('tel:') || lower.startsWith('mailto:') || lower.startsWith('sms:')) {
+      Linking.openURL(u).catch(() => {});
+      return false;
+    }
+    // Never let untrusted mini-app content drive in-app navigation/redirects
+    // via our own scheme — silently ignore it.
+    if (lower.startsWith('san-mes://')) return false;
+    // Any OTHER unknown scheme: confirm with the user before leaving the app.
+    // The WebView itself never navigates there (we always return false).
+    Alert.alert(
+      t('mini_app.external_link_title', 'Открыть ссылку? / Open link?'),
+      t('mini_app.external_link_message', '{url}', { url: u }),
+      [
+        { text: t('common.cancel', 'Отмена / Cancel'), style: 'cancel' },
+        { text: t('common.open', 'Открыть / Open'), onPress: () => { Linking.openURL(u).catch(() => {}); } },
+      ],
+    );
     return false;
-  }, []);
+  }, [t]);
 
   const displayName = name || 'App';
   const appEmoji = emoji || '📱';

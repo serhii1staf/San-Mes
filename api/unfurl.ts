@@ -1,4 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'http';
+import { promises as dns } from 'dns';
+import * as net from 'net';
 
 // Lightweight link "unfurl" service: given ?url=, fetch the target page and
 // extract Open Graph / oEmbed metadata (title, description, image, site, type)
@@ -13,6 +15,7 @@ import type { IncomingMessage, ServerResponse } from 'http';
 
 const MAX_HTML_BYTES = 256 * 1024; // read at most 256 KB of HTML
 const FETCH_TIMEOUT_MS = 5000;
+const MAX_REDIRECTS = 3; // manual redirect hops; each Location is re-validated
 const UA =
   'Mozilla/5.0 (compatible; SanBot/1.0; +https://san-m-app.com)';
 
@@ -108,14 +111,187 @@ function detectVideo(u: URL): { provider: 'youtube' | 'vimeo' | null; videoId: s
   return { provider: null, videoId: null };
 }
 
-function isBlockedHost(host: string): boolean {
-  const h = host.toLowerCase();
-  if (h === 'localhost' || h.endsWith('.local')) return true;
-  // Block private / loopback IP ranges (basic SSRF guard).
-  if (/^(127\.|10\.|192\.168\.|169\.254\.|0\.)/.test(h)) return true;
-  if (/^172\.(1[6-9]|2\d|3[0-1])\./.test(h)) return true;
-  if (h === '::1' || h.startsWith('fe80') || h.startsWith('fc') || h.startsWith('fd')) return true;
+// ---------------------------------------------------------------------------
+// SSRF hardening
+// ---------------------------------------------------------------------------
+// The endpoint fetches arbitrary user-supplied URLs, so we must make sure a URL
+// can never be used to reach loopback / private / link-local / metadata
+// addresses — directly, via alternate IP encodings, via DNS that resolves to a
+// private IP, or via an HTTP redirect to one of those. All of the checks below
+// run BEFORE every fetch (initial request + each redirect hop).
+
+// True if a *normalized* IPv4 dotted-quad is in a private/reserved range we
+// must never reach.
+function isPrivateIPv4(ip: string): boolean {
+  const o = ip.split('.').map(Number);
+  if (o.length !== 4 || o.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return true;
+  const [a, b] = o;
+  if (a === 0) return true; // 0.0.0.0/8 ("this" network)
+  if (a === 10) return true; // 10.0.0.0/8 private
+  if (a === 127) return true; // 127.0.0.0/8 loopback
+  if (a === 169 && b === 254) return true; // 169.254.0.0/16 link-local (incl. cloud metadata)
+  if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12 private
+  if (a === 192 && b === 168) return true; // 192.168.0.0/16 private
+  if (a === 100 && b >= 64 && b <= 127) return true; // 100.64.0.0/10 CGNAT
   return false;
+}
+
+// Expand an IPv6 string (already validated as family 6) into its eight 16-bit
+// groups, resolving "::" compression and any embedded IPv4 tail. Returns null
+// if the string can't be parsed (treated as blocked by the caller).
+function expandIPv6(ip: string): number[] | null {
+  let s = ip.split('%')[0]; // strip any zone id (fe80::1%eth0)
+  // Embedded IPv4 in the final segment (e.g. ::ffff:169.254.169.254).
+  const lastColon = s.lastIndexOf(':');
+  if (lastColon !== -1 && s.slice(lastColon + 1).includes('.')) {
+    const v4 = s.slice(lastColon + 1).split('.').map(Number);
+    if (v4.length !== 4 || v4.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return null;
+    const g6 = ((v4[0] << 8) | v4[1]).toString(16);
+    const g7 = ((v4[2] << 8) | v4[3]).toString(16);
+    s = s.slice(0, lastColon + 1) + g6 + ':' + g7;
+  }
+  const dbl = s.split('::');
+  if (dbl.length > 2) return null;
+  const headParts = dbl[0] ? dbl[0].split(':') : [];
+  const tailParts = dbl.length === 2 ? (dbl[1] ? dbl[1].split(':') : []) : null;
+  let groups: number[];
+  if (tailParts === null) {
+    if (headParts.length !== 8) return null;
+    groups = headParts.map((p) => parseInt(p, 16));
+  } else {
+    const missing = 8 - headParts.length - tailParts.length;
+    if (missing < 1) return null;
+    groups = [
+      ...headParts.map((p) => parseInt(p, 16)),
+      ...new Array(missing).fill(0),
+      ...tailParts.map((p) => parseInt(p, 16)),
+    ];
+  }
+  if (groups.length !== 8 || groups.some((g) => Number.isNaN(g) || g < 0 || g > 0xffff)) return null;
+  return groups;
+}
+
+function isPrivateIPv6(ip: string): boolean {
+  const g = expandIPv6(ip);
+  if (!g) return true;
+  if (g.every((x) => x === 0)) return true; // :: unspecified
+  if (g.slice(0, 7).every((x) => x === 0) && g[7] === 1) return true; // ::1 loopback
+  // IPv4-mapped (::ffff:a.b.c.d) and deprecated IPv4-compatible (::a.b.c.d).
+  if (g.slice(0, 5).every((x) => x === 0) && (g[5] === 0xffff || g[5] === 0)) {
+    if (!(g[6] === 0 && g[7] === 0)) {
+      const a = (g[6] >> 8) & 0xff;
+      const b = g[6] & 0xff;
+      const c = (g[7] >> 8) & 0xff;
+      const d = g[7] & 0xff;
+      return isPrivateIPv4(`${a}.${b}.${c}.${d}`);
+    }
+  }
+  if ((g[0] & 0xffc0) === 0xfe80) return true; // fe80::/10 link-local
+  if ((g[0] & 0xfe00) === 0xfc00) return true; // fc00::/7 unique-local
+  return false;
+}
+
+// Reject any private / loopback / link-local / reserved address. Unknown /
+// unparseable inputs are blocked (fail-closed).
+function isPrivateAddress(ip: string): boolean {
+  const fam = net.isIP(ip);
+  if (fam === 4) return isPrivateIPv4(ip);
+  if (fam === 6) return isPrivateIPv6(ip);
+  return true;
+}
+
+// Interpret a host string as an IP literal in ANY encoding curl/browsers
+// accept (dotted-quad, single 32-bit decimal, hex 0x..., octal 0..., or IPv6
+// incl. bracketed + IPv4-mapped) and return a normalized form for
+// isPrivateAddress. Returns null when the host is a real DNS name.
+function parseIpLiteral(host: string): string | null {
+  let h = host.trim();
+  if (h.startsWith('[') && h.endsWith(']')) h = h.slice(1, -1); // [::1] -> ::1
+  if (net.isIP(h) !== 0) return h; // valid IPv4 or IPv6 literal (incl. ::ffff:1.2.3.4)
+  return inetAton(h); // try decimal / hex / octal IPv4 encodings
+}
+
+// inet_aton-style parser: accepts 1–4 numeric parts, each decimal, hex (0x) or
+// octal (leading 0). Returns a normalized dotted-quad string or null.
+function inetAton(s: string): string | null {
+  if (!/^[0-9a-fA-FxX.]+$/.test(s)) return null;
+  const parts = s.split('.');
+  if (parts.length < 1 || parts.length > 4) return null;
+  const nums: number[] = [];
+  for (const p of parts) {
+    if (p === '') return null;
+    let n: number;
+    if (/^0[xX][0-9a-fA-F]+$/.test(p)) n = parseInt(p, 16);
+    else if (/^0[0-7]+$/.test(p)) n = parseInt(p, 8);
+    else if (/^[0-9]+$/.test(p)) n = parseInt(p, 10);
+    else return null;
+    if (!Number.isFinite(n) || n < 0) return null;
+    nums.push(n);
+  }
+  const last = nums[nums.length - 1];
+  const lead = nums.slice(0, -1);
+  for (const x of lead) if (x > 255) return null;
+  let value: number;
+  switch (nums.length) {
+    case 1:
+      value = nums[0];
+      break;
+    case 2:
+      if (last > 0xffffff) return null;
+      value = lead[0] * 0x1000000 + last;
+      break;
+    case 3:
+      if (last > 0xffff) return null;
+      value = lead[0] * 0x1000000 + lead[1] * 0x10000 + last;
+      break;
+    case 4:
+      if (last > 255) return null;
+      value = lead[0] * 0x1000000 + lead[1] * 0x10000 + lead[2] * 0x100 + last;
+      break;
+    default:
+      return null;
+  }
+  if (value < 0 || value > 0xffffffff) return null;
+  const a = Math.floor(value / 0x1000000) & 0xff;
+  const b = Math.floor(value / 0x10000) & 0xff;
+  const c = Math.floor(value / 0x100) & 0xff;
+  const d = value & 0xff;
+  return `${a}.${b}.${c}.${d}`;
+}
+
+// Full host gate. Async because real hostnames are DNS-resolved and EVERY
+// resolved address must be public. Returns true only for safe public targets.
+async function assertHostAllowed(host: string): Promise<boolean> {
+  const h = host.toLowerCase().replace(/\.$/, '');
+  if (!h) return false;
+  // Named internal hosts.
+  if (h === 'localhost' || h.endsWith('.localhost')) return false;
+  if (h.endsWith('.local') || h === 'internal' || h.endsWith('.internal')) return false;
+  if (h === 'metadata.google.internal') return false;
+
+  // IP literal in any encoding — normalize and check directly (no DNS).
+  const literal = parseIpLiteral(host);
+  if (literal !== null) return !isPrivateAddress(literal);
+
+  // Real hostname — resolve and reject if ANY answer is private/link-local.
+  let addrs: string[] = [];
+  const [v4, v6] = await Promise.allSettled([dns.resolve4(h), dns.resolve6(h)]);
+  if (v4.status === 'fulfilled') addrs.push(...v4.value);
+  if (v6.status === 'fulfilled') addrs.push(...v6.value);
+  if (addrs.length === 0) {
+    // Fall back to the system resolver (handles CNAME chains / hosts file).
+    try {
+      const looked = await dns.lookup(h, { all: true });
+      addrs = looked.map((a) => a.address);
+    } catch {
+      return false;
+    }
+  }
+  if (addrs.length === 0) return false;
+  for (const a of addrs) {
+    if (isPrivateAddress(a)) return false;
+  }
+  return true;
 }
 
 async function readLimited(resp: Response): Promise<string> {
@@ -167,7 +343,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     send(res, 400, { error: 'Only http/https allowed' });
     return;
   }
-  if (isBlockedHost(parsed.hostname)) {
+  if (!(await assertHostAllowed(parsed.hostname))) {
     send(res, 400, { error: 'Host not allowed' });
     return;
   }
@@ -220,9 +396,8 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
 
   // Generic Open Graph scrape.
   try {
-    const resp = await fetchWithTimeout(target, {
+    const resp = await fetchFollowingSafely(target, {
       headers: { 'User-Agent': UA, Accept: 'text/html,application/xhtml+xml' },
-      redirect: 'follow',
     });
     if (!resp || !resp.ok) {
       send(res, 200, { url: target, title: parsed.hostname }, 3600);
@@ -272,4 +447,40 @@ async function fetchWithTimeout(url: string, init?: RequestInit): Promise<Respon
   } finally {
     clearTimeout(t);
   }
+}
+
+// Fetch a URL while following redirects MANUALLY so we can re-run the full
+// SSRF host gate on every Location before following it. A public host that
+// 302s to an internal/metadata address is therefore caught at the redirect
+// hop. Capped at MAX_REDIRECTS hops; returns null if a hop is blocked, the
+// chain is too long, or a redirect leaves http/https.
+async function fetchFollowingSafely(
+  initialUrl: string,
+  init?: RequestInit,
+  maxHops = MAX_REDIRECTS
+): Promise<Response | null> {
+  let url = initialUrl;
+  for (let hop = 0; hop <= maxHops; hop++) {
+    const resp = await fetchWithTimeout(url, { ...init, redirect: 'manual' });
+    if (!resp) return null;
+    if (resp.status >= 300 && resp.status < 400) {
+      const loc = resp.headers.get('location');
+      if (!loc) return resp; // 3xx without a target — hand back as-is
+      let next: URL;
+      try {
+        next = new URL(loc, url);
+      } catch {
+        return null;
+      }
+      if (next.protocol !== 'http:' && next.protocol !== 'https:') return null;
+      if (!(await assertHostAllowed(next.hostname))) return null;
+      try {
+        await resp.body?.cancel();
+      } catch {}
+      url = next.toString();
+      continue;
+    }
+    return resp;
+  }
+  return null; // exceeded redirect cap
 }

@@ -12,10 +12,12 @@
 // queried.
 
 const WORKER_BASE_URL = 'https://san-mes-api.odi44972.workers.dev';
-// Hard-coded admin key — same string the in-app admin screen uses.
-// This is server-side code on Vercel; the key never reaches the
-// browser.
-const ADMIN_KEY = process.env.ADMIN_KEY || 'V7k!Qm9@Lp2#xR8$Tw6ZcD4%yN';
+// Admin key is read from the Vercel env ONLY — there is no baked-in
+// fallback. If it's missing, every admin-gated lookup fails closed
+// (see workerGet) rather than leaking a committed credential. The key
+// unlocks a Worker endpoint that returns every user's device_key /
+// pin_hash, so a cleartext fallback would be a critical exposure.
+const ADMIN_KEY = process.env.ADMIN_KEY;
 
 export const APP_STORE_LINK = 'https://apps.apple.com/app/id6773943434';
 export const APP_SCHEME = 'san-mes';
@@ -51,7 +53,13 @@ function jsonForScript(value: string): string {
 
 async function workerGet(path: string, admin = false): Promise<any> {
   const headers: Record<string, string> = { Accept: 'application/json' };
-  if (admin) headers['X-Admin-Key'] = ADMIN_KEY;
+  if (admin) {
+    // Fail closed: without a configured ADMIN_KEY we must NOT issue the
+    // admin-gated request at all. Returning null surfaces as the
+    // "mini-app unavailable" landing page instead of using a baked-in key.
+    if (!ADMIN_KEY) return null;
+    headers['X-Admin-Key'] = ADMIN_KEY;
+  }
   try {
     const r = await fetch(`${WORKER_BASE_URL}${path}`, { headers });
     if (!r.ok) return null;

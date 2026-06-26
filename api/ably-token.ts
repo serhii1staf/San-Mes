@@ -42,16 +42,27 @@ const TOKEN_TTL_MS = 60 * 60 * 1000;
 // profile-by-id endpoint instead of Supabase REST (Phase 5 of the
 // Cloudflare D1 migration).
 const WORKER_BASE_URL = 'https://san-mes-api.odi44972.workers.dev';
-const ADMIN_KEY = process.env.ADMIN_KEY || 'V7k!Qm9@Lp2#xR8$Tw6ZcD4%yN';
+// Admin key is read from the Vercel env ONLY — no baked-in fallback.
+// If it's missing, verifyAuth() fails closed (denies) instead of using
+// a committed credential. This key unlocks a Worker endpoint that
+// returns every user's device_key / pin_hash.
+const ADMIN_KEY = process.env.ADMIN_KEY;
+
+// Production web origin for the app. Used to scope CORS instead of a
+// wildcard so the device_key credential isn't echoed to arbitrary
+// origins. Override via APP_ORIGIN env if the deployed origin differs.
+const ALLOWED_ORIGIN = process.env.APP_ORIGIN || 'https://san-m-app.com';
 
 function send(res: ServerResponse, status: number, body: unknown): void {
   res.statusCode = status;
   res.setHeader('Content-Type', 'application/json');
   res.setHeader('Cache-Control', 'no-store');
-  // Permissive CORS so Expo dev clients on localhost can hit this during
-  // development. Production traffic is same-origin (the app's domain ==
-  // the Vercel project) so no preflight is needed.
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  // Restrict CORS to the app's own production origin (overridable via
+  // APP_ORIGIN) rather than a wildcard, so the device_key credential is
+  // never accepted from / echoed to arbitrary origins. Production
+  // traffic is same-origin (the app's domain == the Vercel project).
+  res.setHeader('Access-Control-Allow-Origin', ALLOWED_ORIGIN);
+  res.setHeader('Vary', 'Origin');
   res.setHeader('Access-Control-Allow-Headers', 'authorization, content-type');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.end(JSON.stringify(body));
@@ -83,13 +94,6 @@ function readJsonBody(req: IncomingMessage): Promise<any> {
   });
 }
 
-function getQueryParam(url: string | undefined, name: string): string | undefined {
-  if (!url) return undefined;
-  const idx = url.indexOf('?');
-  if (idx < 0) return undefined;
-  return new URLSearchParams(url.slice(idx + 1)).get(name) || undefined;
-}
-
 interface AuthInput {
   userId: string;
   deviceKey: string;
@@ -107,7 +111,10 @@ async function verifyAuth(input: AuthInput): Promise<boolean> {
 
   // Phase 5: profile lookup goes through the Worker's admin endpoint.
   // The X-Admin-Key gates the call so a leaked client can't hit this
-  // endpoint directly to enumerate profiles.
+  // endpoint directly to enumerate profiles. Fail closed: without a
+  // configured ADMIN_KEY we deny auth rather than issuing the request
+  // with a baked-in credential.
+  if (!ADMIN_KEY) return false;
   try {
     const url = `${WORKER_BASE_URL}/v1/admin/profiles/${encodeURIComponent(userId)}`;
     const resp = await fetch(url, {
@@ -171,7 +178,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   if (req.method === 'OPTIONS') {
     return send(res, 204, {});
   }
-  if (req.method !== 'POST' && req.method !== 'GET') {
+  if (req.method !== 'POST') {
     return send(res, 405, { error: 'method_not_allowed' });
   }
 
@@ -183,22 +190,18 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     });
   }
 
-  // Accept credentials in either the JSON body (POST) or as query params
-  // (GET) — Ably's SDK supports both methods for `authUrl`. JSON body is
-  // preferred because the deviceKey doesn't end up in CDN logs.
+  // Credentials are accepted ONLY via the JSON POST body. The deviceKey
+  // is a secret, so it must never travel in a query string where it
+  // lands in CDN/proxy/access logs. Non-POST methods are already
+  // rejected above (405), so there is no query-string credential path.
   let userId: string | undefined;
   let deviceKey: string | undefined;
-  if (req.method === 'POST') {
-    try {
-      const body = await readJsonBody(req);
-      userId = body?.userId;
-      deviceKey = body?.deviceKey;
-    } catch (e: any) {
-      return send(res, 400, { error: 'bad_body', message: e?.message?.slice(0, 200) });
-    }
-  } else {
-    userId = getQueryParam(req.url, 'userId');
-    deviceKey = getQueryParam(req.url, 'deviceKey');
+  try {
+    const body = await readJsonBody(req);
+    userId = body?.userId;
+    deviceKey = body?.deviceKey;
+  } catch (e: any) {
+    return send(res, 400, { error: 'bad_body', message: e?.message?.slice(0, 200) });
   }
 
   if (!userId || !deviceKey) {

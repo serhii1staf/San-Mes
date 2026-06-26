@@ -822,8 +822,12 @@ export default function ProfileScreen() {
   //
   // `tabsOffsetY` is the inline tabs row's offset within the scroll content
   // (captured via onLayout below, plus the content paddingTop). The pinned
-  // bar sits at `pinnedBarTop`; the inline row reaches it when
-  // `scrollY === tabsOffsetY - pinnedBarTop` — that's the reveal threshold.
+  // OVERLAY is anchored flush at the very top (top: 0) and its frosted/opaque
+  // backing fills the whole band down to the tab row; the pinned pills are
+  // pushed down by `paddingTop: pinnedBarTop` so they sit at viewport-y
+  // `pinnedBarTop` (insets.top + 8) — the SAME spot the inline row reaches
+  // when `scrollY === tabsOffsetY - pinnedBarTop`. That equality IS the reveal
+  // threshold, so the handoff is pixel-aligned with no empty gap above the bar.
   const pinnedBarTop = insets.top + 8;
   const [tabsOffsetY, setTabsOffsetY] = useState(0);
   const tabsOffsetYRef = useRef(0);
@@ -1244,7 +1248,16 @@ export default function ProfileScreen() {
           floating QR/settings chrome (zIndex 100) and ABOVE the list. */}
       <Animated.View
         pointerEvents={pinnedTabsVisible ? 'auto' : 'none'}
-        style={{ position: 'absolute', top: pinnedBarTop, left: 0, right: 0, zIndex: 50, opacity: pinnedTabsOpacity, transform: [{ translateY: pinnedTabsTranslateY }] }}
+        // FLUSH STICKY: the overlay is anchored to the VERY TOP of the screen
+        // (top: 0) — NOT at `pinnedBarTop`. The frosted/opaque backing below
+        // fills the entire band from y=0 (behind the status bar / safe-area)
+        // down through the tab row, so when the inline tabs scroll up under
+        // the chrome the pinned copy reads as the tabs simply STICKING to the
+        // top with content masked beneath it — no transparent empty band above
+        // the bar. The tab pills themselves are pushed down by `paddingTop:
+        // pinnedBarTop` so they land EXACTLY where the inline tabs sit at the
+        // reveal threshold (pixel-aligned handoff, no jump/gap).
+        style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 50, opacity: pinnedTabsOpacity, transform: [{ translateY: pinnedTabsTranslateY }] }}
       >
         <View style={{ overflow: 'hidden', borderBottomLeftRadius: 18, borderBottomRightRadius: 18 }}>
           {/* Solid + frosted backing so scrolling content never shows through —
@@ -1253,7 +1266,12 @@ export default function ProfileScreen() {
             <BlurView intensity={theme.isDark ? 55 : 75} tint={theme.isDark ? 'dark' : 'light'} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} />
           ) : null}
           <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: theme.colors.background.primary + (theme.isDark ? 'D9' : 'E6') }} />
-          <View style={{ flexDirection: 'row', paddingHorizontal: 20, paddingTop: 8, paddingBottom: 10 }}>{tabs.map((tab) => {
+          {/* `paddingTop: pinnedBarTop` drops the pills to the safe-area offset
+              (insets.top + 8) — the SAME viewport-y the inline tabs reach at the
+              reveal threshold (scrollY === tabsOffsetY - pinnedBarTop), so the
+              pinned copy takes over with no vertical jump. The backing above
+              fills the whole band from y=0, masking content above the pills. */}
+          <View style={{ flexDirection: 'row', paddingHorizontal: 20, paddingTop: pinnedBarTop, paddingBottom: 10 }}>{tabs.map((tab) => {
             const isActive = activeTab === tab.key;
             const content = (
               <>

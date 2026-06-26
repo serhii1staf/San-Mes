@@ -3425,7 +3425,7 @@ export default function ChatScreen() {
                   onChangeText={setSearchQuery}
                   placeholder={t('chat.search_placeholder')}
                   placeholderTextColor={theme.colors.text.tertiary}
-                  style={{ flex: 1, marginLeft: 8, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular }}
+                  style={{ flex: 1, marginLeft: 8, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular, paddingVertical: 0, textAlignVertical: 'center', includeFontPadding: false }}
                 />
                 {searchQuery.length > 0 && (
                   <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 12, marginRight: 4 }}>
@@ -3442,7 +3442,7 @@ export default function ChatScreen() {
                   onChangeText={setSearchQuery}
                   placeholder={t('chat.search_placeholder')}
                   placeholderTextColor={theme.colors.text.tertiary}
-                  style={{ flex: 1, marginLeft: 8, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular }}
+                  style={{ flex: 1, marginLeft: 8, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular, paddingVertical: 0, textAlignVertical: 'center', includeFontPadding: false }}
                 />
                 {searchQuery.length > 0 && (
                   <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 12, marginRight: 4 }}>

@@ -49,6 +49,50 @@ const MAX_MEM_PREVIEWS = 200;
 const memCache = new Map<string, CacheEntry>();
 const inflight = new Map<string, Promise<LinkPreviewData | null>>();
 
+// --- Global network-fetch concurrency semaphore ----------------------------
+// `inflight` only dedupes concurrent requests for the SAME url. It does NOT cap
+// how many DISTINCT urls hit the network at once. A screen "packed with links"
+// mounts N <LinkPreview> components that each call getLinkPreview on mount,
+// firing N concurrent /api/unfurl fetches (each with a 6s timeout) — an
+// unbounded burst. This semaphore caps the number of *actual network fetches*
+// in flight at any moment. It gates ONLY the cache-MISS network path
+// (`fetchFresh`); every synchronous cache read, cache-hit return, and the
+// per-url `inflight` dedup stay instant and are never delayed by it.
+const MAX_CONCURRENT_FETCHES = 4;
+
+let activeFetches = 0;
+const fetchWaiters: Array<() => void> = [];
+
+function acquire(): Promise<void> {
+  if (activeFetches < MAX_CONCURRENT_FETCHES) {
+    activeFetches++;
+    return Promise.resolve();
+  }
+  return new Promise<void>((resolve) => {
+    fetchWaiters.push(() => {
+      activeFetches++;
+      resolve();
+    });
+  });
+}
+
+function release(): void {
+  activeFetches--;
+  const next = fetchWaiters.shift();
+  if (next) next();
+}
+
+// Wraps a network fetch so at most MAX_CONCURRENT_FETCHES run concurrently.
+// release() runs in finally so a throw can never leak a permit (no deadlock).
+async function fetchFreshLimited(url: string): Promise<LinkPreviewData | null> {
+  await acquire();
+  try {
+    return await fetchFresh(url);
+  } finally {
+    release();
+  }
+}
+
 // --- Bounded-LRU bookkeeping around `memCache` -----------------------------
 // A Map preserves insertion order, so the first key is the least-recently-used.
 // Reads promote the entry to most-recently-used (delete + re-insert); writes
@@ -209,7 +253,7 @@ export async function getLinkPreview(url: string): Promise<LinkPreviewData | nul
     }
 
     // 4. Network fetch via our unfurl endpoint.
-    const data = await fetchFresh(url);
+    const data = await fetchFreshLimited(url);
     const entry: CacheEntry = { t: Date.now(), d: data };
     memCacheSet(url, entry);
     void writePersisted(url, entry);
@@ -230,7 +274,7 @@ export async function getLinkPreview(url: string): Promise<LinkPreviewData | nul
 async function revalidate(url: string): Promise<void> {
   if (inflight.has(url)) return;
   const task = (async () => {
-    const data = await fetchFresh(url);
+    const data = await fetchFreshLimited(url);
     const entry: CacheEntry = { t: Date.now(), d: data };
     memCacheSet(url, entry);
     void writePersisted(url, entry);

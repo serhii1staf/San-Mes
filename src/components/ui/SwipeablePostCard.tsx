@@ -1,5 +1,7 @@
-import React, { useRef, useCallback, useState, useEffect } from 'react';
-import { View, Pressable, Animated, PanResponder, InteractionManager } from 'react-native';
+import React, { useRef, useCallback, useEffect, useMemo } from 'react';
+import { View, Pressable, Animated } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { runOnJS } from 'react-native-reanimated';
 import { Feather } from '@expo/vector-icons';
 import { captureRef } from 'react-native-view-shot';
 import * as MediaLibrary from 'expo-media-library';
@@ -22,6 +24,10 @@ export function SwipeablePostCard({ children }: SwipeablePostCardProps) {
   const isOpen = useRef(false);
   const timer = useRef<any>(null);
   const cardRef = useRef<View>(null);
+  // Set on gesture start when the row was already open: we then just reset and
+  // swallow the rest of that gesture (matches the legacy PanResponder, which
+  // returned `false` from onMoveShouldSetPanResponder while open).
+  const ignoreGesture = useRef(false);
 
   const resetPosition = useCallback(() => {
     isOpen.current = false;
@@ -44,6 +50,34 @@ export function SwipeablePostCard({ children }: SwipeablePostCardProps) {
     }
   }, []);
 
+  // JS-side gesture handlers. The RNGH Pan worklet marshals to these via
+  // runOnJS because they touch the (JS-driven) Animated.Value, the auto-reset
+  // timer, and the open/closed ref state.
+  const handleGestureStart = useCallback(() => {
+    if (isOpen.current) {
+      // Swiping/tapping a row that's already open just closes it.
+      ignoreGesture.current = true;
+      resetPosition();
+    } else {
+      ignoreGesture.current = false;
+    }
+  }, [resetPosition]);
+
+  const handleGestureUpdate = useCallback((dx: number) => {
+    if (ignoreGesture.current || isOpen.current) return;
+    if (dx < 0) {
+      translateX.setValue(Math.max(dx, -BUTTON_WIDTH));
+    }
+  }, [translateX]);
+
+  const handleGestureEnd = useCallback((dx: number) => {
+    if (ignoreGesture.current) {
+      ignoreGesture.current = false;
+      return;
+    }
+    handleEnd(dx);
+  }, [handleEnd]);
+
   // Clear the 3-second auto-reset timer on unmount. Without this, if a
   // user swipes a card open then scrolls fast enough to recycle the row
   // before the timer fires, the closure keeps Animated.Value references
@@ -55,48 +89,41 @@ export function SwipeablePostCard({ children }: SwipeablePostCardProps) {
     };
   }, []);
 
-  // Lazy-init the PanResponder past the navigation/scroll interaction.
+  // Horizontal swipe-left to reveal the screenshot button, built on
+  // react-native-gesture-handler (same mechanism as the chat message swipe in
+  // useMessageGestures). This replaces the old PanResponder, which the parent
+  // vertical FlatList kept stealing — making the swipe very hard to trigger.
   //
-  // Why: every visible card was previously calling `PanResponder.create({ ... })`
-  // synchronously on mount, allocating 5 closures plus the responder object.
-  // For a fast scroll through 60 cards this added ~300 ms of cumulative
-  // closure-allocation work to the JS thread — the dominant cost behind the
-  // scroll-stutters users were reporting on (tabs)/profile. Wiring the
-  // handlers in only after `runAfterInteractions` means the swipe gesture
-  // becomes available a frame or two after the user lifts their finger, but
-  // mounting (which runs DURING scroll) costs almost nothing. The screenshot
-  // CTA still works because the user can only swipe once they've stopped
-  // scrolling anyway.
-  const [panHandlers, setPanHandlers] = useState<any>(null);
-  useEffect(() => {
-    const handle = InteractionManager.runAfterInteractions(() => {
-      const pr = PanResponder.create({
-        onStartShouldSetPanResponder: () => false,
-        onMoveShouldSetPanResponder: (_, g) => {
-          if (isOpen.current) {
-            resetPosition();
-            return false;
-          }
-          return g.dx < -20 && Math.abs(g.dx) > Math.abs(g.dy) * 4;
-        },
-        onPanResponderMove: (_, g) => {
-          if (!isOpen.current && g.dx < 0) {
-            translateX.setValue(Math.max(g.dx, -BUTTON_WIDTH));
-          }
-        },
-        onPanResponderRelease: (_, g) => {
-          if (!isOpen.current) handleEnd(g.dx);
-        },
-        onPanResponderTerminate: () => {
-          if (!isOpen.current) {
-            Animated.timing(translateX, { toValue: 0, duration: 150, useNativeDriver: true }).start();
-          }
-        },
-      });
-      setPanHandlers(pr.panHandlers);
-    });
-    return () => handle.cancel();
-  }, [handleEnd, resetPosition, translateX]);
+  //   • activeOffsetX([-15, 15]) → the pan only activates after ~15 px of
+  //     deliberate HORIZONTAL travel (right motion is still claimed but our
+  //     handlers ignore positive dx, so only left-swipe moves the card).
+  //   • failOffsetY([-12, 12])   → the pan FAILS the moment ~12 px of VERTICAL
+  //     movement occurs, cleanly handing the gesture back to the FlatList so
+  //     scrolling always wins over an accidental diagonal drag.
+  //
+  // Constructing the gesture unconditionally (RNGH gestures are far cheaper
+  // than the per-card PanResponder closures we used to allocate) also closes
+  // the old lazy-init gap where the swipe was unavailable for a frame or two
+  // right after a scroll settled.
+  const panGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .activeOffsetX([-15, 15])
+        .failOffsetY([-12, 12])
+        .onStart(() => {
+          'worklet';
+          runOnJS(handleGestureStart)();
+        })
+        .onUpdate((e) => {
+          'worklet';
+          runOnJS(handleGestureUpdate)(e.translationX);
+        })
+        .onEnd((e) => {
+          'worklet';
+          runOnJS(handleGestureEnd)(e.translationX);
+        }),
+    [handleGestureStart, handleGestureUpdate, handleGestureEnd],
+  );
 
   const handleScreenshot = async () => {
     triggerHaptic('medium');
@@ -141,11 +168,13 @@ export function SwipeablePostCard({ children }: SwipeablePostCardProps) {
         </Pressable>
       </Animated.View>
 
-      <Animated.View style={{ transform: [{ translateX }] }} {...(panHandlers || {})}>
-        <View ref={cardRef} collapsable={false}>
-          {children}
-        </View>
-      </Animated.View>
+      <GestureDetector gesture={panGesture}>
+        <Animated.View style={{ transform: [{ translateX }] }}>
+          <View ref={cardRef} collapsable={false}>
+            {children}
+          </View>
+        </Animated.View>
+      </GestureDetector>
     </View>
   );
 }

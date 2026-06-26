@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, Pressable, ActivityIndicator, ViewStyle, Linking } from 'react-native';
+import { View, Pressable, ActivityIndicator, ViewStyle, Linking, Alert } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { Feather } from '@expo/vector-icons';
 import { router, useLocalSearchParams, useNavigation } from 'expo-router';
@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../src/theme';
 import { Text } from '../src/components/ui';
 import { useBrowserStore } from '../src/store/browserStore';
+import { t } from '../src/i18n/store';
 
 export default function BrowserScreen() {
   const theme = useTheme();
@@ -81,7 +82,8 @@ export default function BrowserScreen() {
   // of loading them in-webview. http/https/blob/about/data load normally (this
   // is a general-purpose browser, unlike the https-only mini-app sandbox).
   const onShouldStartLoadWithRequest = (req: { url: string }) => {
-    const lower = (req?.url || '').toLowerCase();
+    const u = req?.url || '';
+    const lower = u.toLowerCase();
     if (lower.startsWith('file:') || lower.startsWith('javascript:')) return false;
     if (
       lower.startsWith('http://') ||
@@ -92,7 +94,24 @@ export default function BrowserScreen() {
     ) {
       return true;
     }
-    Linking.openURL(req.url).catch(() => {});
+    // Allowlist of safe external schemes that may open WITHOUT confirmation.
+    if (lower.startsWith('tel:') || lower.startsWith('mailto:') || lower.startsWith('sms:')) {
+      Linking.openURL(u).catch(() => {});
+      return false;
+    }
+    // Never let untrusted web content drive in-app navigation/redirects via
+    // our own scheme — silently ignore it.
+    if (lower.startsWith('san-mes://')) return false;
+    // Any OTHER unknown scheme: confirm with the user before leaving the app.
+    // The WebView itself never navigates there (we always return false).
+    Alert.alert(
+      t('mini_app.external_link_title', 'Открыть ссылку? / Open link?'),
+      t('mini_app.external_link_message', '{url}', { url: u }),
+      [
+        { text: t('common.cancel', 'Отмена / Cancel'), style: 'cancel' },
+        { text: t('common.open', 'Открыть / Open'), onPress: () => { Linking.openURL(u).catch(() => {}); } },
+      ],
+    );
     return false;
   };
 

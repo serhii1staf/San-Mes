@@ -36,6 +36,10 @@ const DPR = 2;
  *   - the response is resized to the device's actual display size;
  *   - the response is re-encoded as WebP at quality 70 (typically 30–60% smaller).
  *
+ * GIFs are also proxied (resized to the display-width cap) but kept ANIMATED
+ * via `&output=gif&n=-1` with NO WebP/q=70 re-encode, so a feed/chat full of
+ * large GIFs no longer downloads + decodes them at full original resolution.
+ *
  * Falls through to the original URL when:
  *   - the URI is local (file://, asset://, data:, etc.);
  *   - the URI is already wrapped in the proxy;
@@ -56,20 +60,27 @@ export function proxiedImageUrl(uri: string, displayWidth?: number): string {
   // ORIGINAL signed URL — so this can only ever be faster, never break loading.
   const isS3 = uri.indexOf('.amazonaws.com') !== -1;
   if (!isS3 && (uri.indexOf('token=') !== -1 || uri.indexOf('Signature=') !== -1)) return uri;
-  // GIFs must not be proxied: weserv re-encodes to WebP by default and
-  // animations get flattened to the first frame. Sending output=gif keeps
-  // them animated but breaks decoding on some devices, so we just skip the
-  // proxy entirely and serve the original URL — the upstream is fast enough
-  // for the small number of GIFs in chat.
+  // GIFs: route through weserv at a capped display width to kill the
+  // full-resolution download + decode cost (the dominant memory hit in
+  // GIF-heavy feeds/chats), WHILE preserving animation. weserv keeps all
+  // frames animated when we pass `n=-1` and force `output=gif` — we must NOT
+  // let it re-encode to WebP (which flattens to frame 1) and we do NOT apply
+  // the `q=70` WebP quality knob. If weserv ever mishandles a specific GIF,
+  // CachedImage's onError handler falls back to the ORIGINAL url (the
+  // `finalUri !== uri` fallback now also covers GIFs because finalUri is the
+  // proxied form), so worst case a GIF renders exactly as it does today.
   const lower = uri.toLowerCase();
   const qIdx = lower.indexOf('?');
   const path = qIdx >= 0 ? lower.slice(0, qIdx) : lower;
-  if (path.endsWith('.gif')) return uri;
+  const isGif = path.endsWith('.gif');
 
   const stripped = uri.replace(/^https?:\/\//, '');
   const w = displayWidth && displayWidth > 0
     ? Math.min(MAX_PROXY_WIDTH, Math.round(displayWidth * DPR))
     : DEFAULT_PROXY_WIDTH;
+  if (isGif) {
+    return `${PROXY_HOST}/?url=${encodeURIComponent(stripped)}&w=${w}&output=gif&n=-1`;
+  }
   return `${PROXY_HOST}/?url=${encodeURIComponent(stripped)}&w=${w}&output=webp&q=70`;
 }
 

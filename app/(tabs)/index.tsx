@@ -33,6 +33,39 @@ import { FadingBlurHeader, isFadingBlurAvailable } from '../../src/components/ui
 const FEED_CACHE_KEY = '@san:feed_posts';
 const FEED_LIMIT = 20;
 
+// Bounded-concurrency async mapper. Runs at most `limit` invocations of `fn`
+// in flight at any moment, walking `items` in order and slotting each result
+// back into its original index so the returned array preserves input order.
+//
+// Used for repost-chain resolution: a repost-heavy feed page can reference
+// 20–40 missing original posts, and firing all of those /v1/posts/{id} GETs
+// at once (the old `Promise.all(items.map(apiGet))`) saturates the connection
+// pool, delays first render, and starves image fetches. Capping at 5 keeps
+// the network responsive while still resolving the whole chain.
+//
+// `fn` is expected to already swallow its own errors (each call site does
+// `.catch(() => null)`), so this helper does not add a try/catch — it simply
+// awaits whatever `fn` returns and never throws on its own.
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i]);
+    }
+  };
+  const workerCount = Math.max(1, Math.min(limit, items.length));
+  const workers: Promise<void>[] = [];
+  for (let w = 0; w < workerCount; w++) workers.push(worker());
+  await Promise.all(workers);
+  return results;
+}
+
 // Tiny presence-only component that watches the unread-notifications count
 // and renders a subtle pill on the bell icon. Lives outside FeedScreen so it
 // re-renders independently when the count changes — the parent feed screen
@@ -563,8 +596,9 @@ export default function FeedScreen() {
       if (missingIds.size > 0) {
         const { apiGet } = await import('../../src/services/apiClient');
         const idList = Array.from(missingIds);
-        const fetched = await Promise.all(
-          idList.map((mid) => apiGet<any>(`/v1/posts/${encodeURIComponent(mid)}`).then((r) => r.data).catch(() => null)),
+        const fetched = await mapWithConcurrency(
+          idList, 5,
+          (mid) => apiGet<any>(`/v1/posts/${encodeURIComponent(mid)}`).then((r) => r.data).catch(() => null),
         );
         const missingPosts = fetched.filter(Boolean) as any[];
         if (missingPosts.length > 0) {
@@ -579,8 +613,9 @@ export default function FeedScreen() {
           // Second pass: fetch any newly discovered missing IDs (one level deeper)
           const newMissing = Array.from(missingIds).filter(id => !postsById[id]);
           if (newMissing.length > 0) {
-            const fetched2 = await Promise.all(
-              newMissing.map((nid) => apiGet<any>(`/v1/posts/${encodeURIComponent(nid)}`).then((r) => r.data).catch(() => null)),
+            const fetched2 = await mapWithConcurrency(
+              newMissing, 5,
+              (nid) => apiGet<any>(`/v1/posts/${encodeURIComponent(nid)}`).then((r) => r.data).catch(() => null),
             );
             for (const dp of fetched2) if (dp) postsById[dp.id] = dp;
           }
@@ -650,8 +685,9 @@ export default function FeedScreen() {
       if (missingIds.size > 0) {
         const { apiGet } = await import('../../src/services/apiClient');
         const idList = Array.from(missingIds);
-        const fetched = await Promise.all(
-          idList.map((mid) => apiGet<any>(`/v1/posts/${encodeURIComponent(mid)}`).then((r) => r.data).catch(() => null)),
+        const fetched = await mapWithConcurrency(
+          idList, 5,
+          (mid) => apiGet<any>(`/v1/posts/${encodeURIComponent(mid)}`).then((r) => r.data).catch(() => null),
         );
         const missingPosts = fetched.filter(Boolean) as any[];
         if (missingPosts.length > 0) {
@@ -662,8 +698,9 @@ export default function FeedScreen() {
           }
           const newMissing = Array.from(missingIds).filter(id => !postsById[id]);
           if (newMissing.length > 0) {
-            const fetched2 = await Promise.all(
-              newMissing.map((nid) => apiGet<any>(`/v1/posts/${encodeURIComponent(nid)}`).then((r) => r.data).catch(() => null)),
+            const fetched2 = await mapWithConcurrency(
+              newMissing, 5,
+              (nid) => apiGet<any>(`/v1/posts/${encodeURIComponent(nid)}`).then((r) => r.data).catch(() => null),
             );
             for (const dp of fetched2) if (dp) postsById[dp.id] = dp;
           }

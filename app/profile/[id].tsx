@@ -547,7 +547,21 @@ export default function UserProfileScreen() {
   // LIST_CONTENT_CONTAINER_STYLE). The pinned bar sits at `pinnedBarTop`; the
   // inline row reaches it when `scrollY === tabsOffsetY - pinnedBarTop` —
   // that's the reveal threshold.
-  const pinnedBarTop = insets.top + 8;
+  //
+  // STICKY FIX: the fixed top chrome (back / menu buttons row, below) is laid
+  // out at `insets.top + TOP_CHROME_INSET` and is `TOP_CHROME_BTN` px tall.
+  // `chromeHeight` is therefore the distance from the screen top to the BOTTOM
+  // edge of that chrome. Pinning the overlay at exactly that y makes it sit
+  // FLUSH under the chrome (no empty gap above it), so the tabs read as a true
+  // sticky header instead of a separate floating bar. Because the reveal
+  // threshold is `tabsOffsetY - pinnedBarTop` and `pinnedBarTop === chromeHeight`,
+  // the threshold is exactly "the measured inline-tabs offset minus the chrome
+  // height" — so the inline row hands off to the overlay pixel-aligned (no jump,
+  // no gap) the instant it reaches the bottom of the chrome.
+  const TOP_CHROME_INSET = 8; // vertical offset of the floating buttons row
+  const TOP_CHROME_BTN = 34;  // back / menu button height
+  const chromeHeight = insets.top + TOP_CHROME_INSET + TOP_CHROME_BTN;
+  const pinnedBarTop = chromeHeight;
   const [tabsOffsetY, setTabsOffsetY] = useState(0);
   const tabsOffsetYRef = useRef(0);
   const [pinnedTabsVisible, setPinnedTabsVisible] = useState(false);

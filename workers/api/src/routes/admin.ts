@@ -24,7 +24,19 @@ import { batch, exec, normalizeProfile, query, queryOne } from '../db';
 import { parseLimit, parseUuid } from '../util';
 import { readJson } from '../validate';
 
-const PROFILE_FULL_COLUMNS = `id, username, display_name, emoji, bio, pin_hash, device_key, banner_url, links, badge, is_verified, created_at, updated_at`;
+// Column sets for profile SELECTs. The full row carries two sensitive
+// credential columns — `pin_hash` and `device_key` — that must NEVER be
+// returned wholesale. `pin_hash` is never exposed by any admin endpoint.
+// `device_key` is only exposed by the by-id endpoint, which the Vercel
+// `api/ably-token.ts` `verifyAuth` path needs to verify (userId, deviceKey).
+//
+//   PROFILE_PUBLIC_COLUMNS — full set MINUS pin_hash AND device_key.
+//     Used by the list + by-username endpoints (listings never need creds)
+//     and by the PATCH response (admin UI doesn't need creds either).
+//   PROFILE_AUTH_COLUMNS   — full set MINUS pin_hash but WITH device_key.
+//     Used ONLY by the by-id endpoint for ably-token auth verification.
+const PROFILE_PUBLIC_COLUMNS = `id, username, display_name, emoji, bio, banner_url, links, badge, is_verified, created_at, updated_at`;
+const PROFILE_AUTH_COLUMNS = `id, username, display_name, emoji, bio, device_key, banner_url, links, badge, is_verified, created_at, updated_at`;
 
 function assertAdmin(req: Request, env: import('../db').Env): Response | null {
   const expected = env.ADMIN_KEY;
@@ -66,7 +78,7 @@ register('GET', '/v1/admin/profiles', async (req, env) => {
   const limit = parseLimit(url.searchParams.get('limit'), 200, 50);
   const rows = await query<Record<string, unknown>>(
     env,
-    `SELECT ${PROFILE_FULL_COLUMNS} FROM profiles ORDER BY created_at DESC LIMIT ?`,
+    `SELECT ${PROFILE_PUBLIC_COLUMNS} FROM profiles ORDER BY created_at DESC LIMIT ?`,
     [limit],
   );
   return ok(req, rows.map((r) => normalizeProfile(r)).filter(Boolean));
@@ -80,7 +92,7 @@ register('GET', '/v1/admin/profiles/by-username/:username', async (req, env, _ct
   if (!username) return fail(req, 'invalid username', 400);
   const row = await queryOne<Record<string, unknown>>(
     env,
-    `SELECT ${PROFILE_FULL_COLUMNS} FROM profiles WHERE username = ? LIMIT 1`,
+    `SELECT ${PROFILE_PUBLIC_COLUMNS} FROM profiles WHERE username = ? LIMIT 1`,
     [username],
   );
   return ok(req, normalizeProfile(row));
@@ -114,7 +126,7 @@ register('GET', '/v1/admin/profiles/:id', async (req, env, _ctx, params) => {
   if (!id) return fail(req, 'invalid profile id', 400);
   const row = await queryOne<Record<string, unknown>>(
     env,
-    `SELECT ${PROFILE_FULL_COLUMNS} FROM profiles WHERE id = ? LIMIT 1`,
+    `SELECT ${PROFILE_AUTH_COLUMNS} FROM profiles WHERE id = ? LIMIT 1`,
     [id],
   );
   return ok(req, normalizeProfile(row));
@@ -165,7 +177,7 @@ register('PATCH', '/v1/admin/profiles/:id', async (req, env, _ctx, params) => {
   if (sets.length === 0) {
     const cur = await queryOne<Record<string, unknown>>(
       env,
-      `SELECT ${PROFILE_FULL_COLUMNS} FROM profiles WHERE id = ? LIMIT 1`,
+      `SELECT ${PROFILE_PUBLIC_COLUMNS} FROM profiles WHERE id = ? LIMIT 1`,
       [id],
     );
     return ok(req, normalizeProfile(cur));
@@ -176,7 +188,7 @@ register('PATCH', '/v1/admin/profiles/:id', async (req, env, _ctx, params) => {
   await exec(env, `UPDATE profiles SET ${sets.join(', ')} WHERE id = ?`, binds);
   const updated = await queryOne<Record<string, unknown>>(
     env,
-    `SELECT ${PROFILE_FULL_COLUMNS} FROM profiles WHERE id = ? LIMIT 1`,
+    `SELECT ${PROFILE_PUBLIC_COLUMNS} FROM profiles WHERE id = ? LIMIT 1`,
     [id],
   );
   return ok(req, normalizeProfile(updated));

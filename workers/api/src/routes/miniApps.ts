@@ -12,6 +12,64 @@ import { exec, normalizeProfile, query, queryOne } from '../db';
 import { parseLimit, parseUuid } from '../util';
 import { readJson } from '../validate';
 
+// ── Mini-app target URL validation ─────────────────────────────────────
+//
+// Mini-apps render a user-supplied `url` inside an in-app WebView. Without
+// strict server-side validation a user could publish an app that points at
+// an internal/metadata address (SSRF-style surface) or a phishing page that
+// mimics our own login. This Worker runtime has no DNS module, so we do a
+// robust STRING/at-parse check rather than resolving the host:
+//   1. https: only (http is blocked by the WebView and violates ATS expectations).
+//   2. Must parse via `new URL()`.
+//   3. Reject IP literals (IPv4 + bracketed IPv6), localhost, *.local,
+//      *.internal, link-local and cloud-metadata hostnames.
+//   4. Reject embedded credentials (user:pass@host).
+// Length cap (2048) + trim are applied by the caller before this runs.
+function isAllowedMiniAppUrl(target: string): boolean {
+  // https only — reject http and everything else up front.
+  if (!/^https:\/\//i.test(target)) return false;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(target);
+  } catch {
+    return false;
+  }
+
+  // Enforce the protocol again from the parsed result (defends against
+  // odd inputs that slip past the prefix test).
+  if (parsed.protocol !== 'https:') return false;
+
+  // No embedded credentials: user:pass@host.
+  if (parsed.username || parsed.password) return false;
+
+  const host = parsed.hostname.toLowerCase().replace(/\.$/, '');
+  if (!host) return false;
+
+  // localhost and its subdomains.
+  if (host === 'localhost' || host.endsWith('.localhost')) return false;
+
+  // Private / non-routable TLD suffixes and cloud metadata hostnames.
+  if (
+    host.endsWith('.local') ||
+    host.endsWith('.internal') ||
+    host === 'metadata.google.internal' ||
+    host === 'metadata'
+  ) {
+    return false;
+  }
+
+  // Bracketed IPv6 literal, e.g. https://[::1]/ — URL strips the brackets
+  // from hostname, so detect by the presence of a colon.
+  if (host.includes(':')) return false;
+
+  // IPv4 dotted-quad literal (any value — public IPs are rejected too,
+  // mini-apps are expected to use hostnames, not raw IPs).
+  if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)) return false;
+
+  return true;
+}
+
 // ── GET /v1/mini-apps ──────────────────────────────────────────────────
 register('GET', '/v1/mini-apps', async (req, env) => {
   const url = new URL(req.url);
@@ -91,7 +149,7 @@ register('POST', '/v1/mini-apps', async (req, env, _ctx, _params, authedUserId) 
   const emoji = typeof body.value.emoji === 'string' ? body.value.emoji.slice(0, 16) : '🧩';
   const target = typeof body.value.url === 'string' ? body.value.url.slice(0, 2048).trim() : '';
   if (!name) return fail(req, 'invalid name', 400);
-  if (!target || !/^https?:\/\//i.test(target)) return fail(req, 'invalid url', 400);
+  if (!target || !isAllowedMiniAppUrl(target)) return fail(req, 'invalid url', 400);
 
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
@@ -146,7 +204,7 @@ register('PATCH', '/v1/mini-apps/:id', async (req, env, _ctx, params, authedUser
   }
   if (typeof body.value.url === 'string') {
     const u = body.value.url.slice(0, 2048).trim();
-    if (!/^https?:\/\//i.test(u)) return fail(req, 'invalid url', 400);
+    if (!isAllowedMiniAppUrl(u)) return fail(req, 'invalid url', 400);
     sets.push('url = ?');
     binds.push(u);
   }
