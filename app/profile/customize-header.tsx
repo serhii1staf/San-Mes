@@ -259,14 +259,15 @@ export default function CustomizeHeaderScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
-      {/* Top bar — tight row with a subtle hairline divider underneath. */}
-      <View style={{ paddingTop: insets.top + 6, paddingHorizontal: 12, paddingBottom: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.colors.border.light }}>
-        <Pressable onPress={() => router.back()} hitSlop={10} style={{ width: 40, height: 40, alignItems: 'center', justifyContent: 'center' }}>
-          <Feather name="x" size={24} color={theme.colors.text.primary} />
+      {/* Top bar — floating ghost close pill + filled accent save pill, no hard
+          divider (the rounded preview card below provides the separation). */}
+      <View style={{ paddingTop: insets.top + 8, paddingHorizontal: 14, paddingBottom: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+        <Pressable onPress={() => router.back()} hitSlop={10} style={{ width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' }}>
+          <Feather name="x" size={21} color={theme.colors.text.primary} />
         </Pressable>
         <Text variant="h3" weight="bold">{t('customize.title', 'Оформление')}</Text>
-        <Pressable onPress={onSave} disabled={saving} hitSlop={10} style={{ minWidth: 40, height: 40, paddingHorizontal: 4, alignItems: 'flex-end', justifyContent: 'center' }}>
-          {saving ? <ActivityIndicator color={theme.colors.accent.primary} /> : <Text variant="body" weight="bold" color={theme.colors.accent.primary}>{t('common.done', 'Готово')}</Text>}
+        <Pressable onPress={onSave} disabled={saving} hitSlop={10} style={{ minWidth: 78, height: 38, paddingHorizontal: 18, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.accent.primary, opacity: saving ? 0.7 : 1 }}>
+          {saving ? <ActivityIndicator color="#FFFFFF" size="small" /> : <RNText allowFontScaling={false} style={{ fontSize: 14.5, fontWeight: '700', color: '#FFFFFF', includeFontPadding: false }}>{t('common.done', 'Готово')}</RNText>}
         </Pressable>
       </View>
 
@@ -277,6 +278,11 @@ export default function CustomizeHeaderScreen() {
               NO SVG renders during the open transition (that was the 60→40
               drop on open). The in-progress drawing still shows via DrawCanvas. */}
           {libReady ? <HeaderLandscape backgroundId={background} drawing={strokes} /> : null}
+
+          {/* Soft scrims for depth — top fade for the floating chrome, bottom
+              fade to seat the card. Behind stickers, never capture touches. */}
+          <LinearGradient pointerEvents="none" colors={['rgba(0,0,0,0.12)', 'rgba(0,0,0,0)']} style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 56 }} />
+          <LinearGradient pointerEvents="none" colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.14)']} style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 72 }} />
 
           {/* Hint when empty */}
           {items.length === 0 && !background && strokes.length === 0 && !drawMode ? (
@@ -311,6 +317,9 @@ export default function CustomizeHeaderScreen() {
           {drawMode ? (
             <DrawCanvas width={previewW} height={PREVIEW_H} color={drawColor} strokeWidth={drawWidth} brush={brush} strokes={strokes} onComplete={onStrokeComplete} eraser={eraser} onErase={eraseAt} />
           ) : null}
+
+          {/* Crisp framing ring — sits above everything, never blocks touches. */}
+          <View pointerEvents="none" style={{ ...StyleSheet.absoluteFillObject, borderBottomLeftRadius: 30, borderBottomRightRadius: 30, borderWidth: StyleSheet.hairlineWidth, borderColor: theme.isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)' }} />
         </View>
       </Pressable>
 
@@ -374,21 +383,25 @@ export default function CustomizeHeaderScreen() {
           </DrawCard>
         </ScrollView>
       ) : selected ? (
-        // SELECTED-STICKER controls
-        <View style={{ paddingVertical: 12, gap: 10 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
-            <ToolBtn theme={theme} icon="minus" onPress={() => updateSelected({ scale: Math.max(0.4, +(selected.scale - 0.15).toFixed(2)) })} />
-            <ToolBtn theme={theme} icon="plus" onPress={() => updateSelected({ scale: Math.min(4, +(selected.scale + 0.15).toFixed(2)) })} />
-            <ToolBtn theme={theme} icon="rotate-ccw" onPress={() => updateSelected({ rotation: (selected.rotation - 15 + 360) % 360 })} />
-            <ToolBtn theme={theme} icon="rotate-cw" onPress={() => updateSelected({ rotation: (selected.rotation + 15) % 360 })} />
-            <ToolBtn theme={theme} icon="trash-2" danger onPress={deleteSelected} />
-          </View>
-          {/* Animation picker — horizontally scrollable so every option is reachable. */}
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 14, gap: 8, alignItems: 'center' }}>
-            {ANIM_OPTIONS.map((opt) => (
-              <AnimChip key={opt.key} theme={theme} icon={opt.icon} label={t(opt.tKey, opt.label)} active={(selected.anim || 'none') === opt.key} onPress={() => { triggerHaptic('light'); updateSelected({ anim: opt.key }); }} />
-            ))}
-          </ScrollView>
+        // SELECTED-STICKER controls — grouped in a rounded surface card so it
+        // shares the draw controls' visual language.
+        <View style={{ paddingHorizontal: 12, paddingTop: 12, paddingBottom: 2 }}>
+          <DrawCard theme={theme}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
+              <ToolBtn theme={theme} icon="minus" onPress={() => updateSelected({ scale: Math.max(0.4, +(selected.scale - 0.15).toFixed(2)) })} />
+              <ToolBtn theme={theme} icon="plus" onPress={() => updateSelected({ scale: Math.min(4, +(selected.scale + 0.15).toFixed(2)) })} />
+              <ToolBtn theme={theme} icon="rotate-ccw" onPress={() => updateSelected({ rotation: (selected.rotation - 15 + 360) % 360 })} />
+              <ToolBtn theme={theme} icon="rotate-cw" onPress={() => updateSelected({ rotation: (selected.rotation + 15) % 360 })} />
+              <ToolBtn theme={theme} icon="trash-2" danger onPress={deleteSelected} />
+            </View>
+            <MiniLabel theme={theme} text={t('customize.anim', 'Анимация')} />
+            {/* Animation picker — horizontally scrollable so every option is reachable. */}
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, alignItems: 'center' }}>
+              {ANIM_OPTIONS.map((opt) => (
+                <AnimChip key={opt.key} theme={theme} icon={opt.icon} label={t(opt.tKey, opt.label)} active={(selected.anim || 'none') === opt.key} onPress={() => { triggerHaptic('light'); updateSelected({ anim: opt.key }); }} />
+              ))}
+            </ScrollView>
+          </DrawCard>
         </View>
       ) : (
         <View style={{ height: 12 }} />
@@ -546,8 +559,8 @@ function DrawCanvas({ width, height, color, strokeWidth, brush, strokes, onCompl
 
 function ToolBtn({ theme, icon, onPress, danger }: { theme: any; icon: any; onPress: () => void; danger?: boolean }) {
   return (
-    <Pressable onPress={onPress} hitSlop={8} style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: danger ? '#FF3B3022' : (theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)') }}>
-      <Feather name={icon} size={20} color={danger ? '#FF3B30' : theme.colors.text.primary} />
+    <Pressable onPress={onPress} hitSlop={8} style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}>
+      <Feather name={icon} size={20} color={danger ? theme.colors.status.error : theme.colors.text.primary} />
     </Pressable>
   );
 }

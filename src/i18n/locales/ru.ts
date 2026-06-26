@@ -281,6 +281,7 @@ const ru: Record<string, string> = {
   'customize.bg_none': 'Без фона',
   'customize.draw': 'Рисовать свой',
   'customize.blend': 'Слить с баннером',
+  'customize.anim': 'Анимация',
   'customize.hint': 'Выбери фон, нарисуй свой или добавь стикеры снизу. Перетаскивай и настраивай.',
   'customize.max_items': 'Максимум 24 элементов',
   'customize.saved': 'Оформление сохранено',

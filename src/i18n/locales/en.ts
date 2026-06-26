@@ -279,6 +279,7 @@ const en: Record<string, string> = {
   'customize.bg_none': 'None',
   'customize.draw': 'Draw your own',
   'customize.blend': 'Blend with banner',
+  'customize.anim': 'Animation',
   'customize.hint': 'Pick a background, draw your own, or add stickers below. Drag and adjust.',
   'customize.max_items': 'Maximum 24 items',
   'customize.saved': 'Customization saved',
