@@ -86,21 +86,23 @@ export function AppIconModal({ visible, onClose }: AppIconModalProps) {
     if (!supportsAlternateIcons) { Alert.alert(t('app_icon.unavailable_title'), t('app_icon.unavailable_device')); return; }
     const isSame = (icon.name ?? null) === (current ?? null);
     if (isSame || applying) return;
+    const target = icon.name;
     setApplying(icon.name ?? 'default');
-    try {
-      await setAppIconWithRetry(icon.name);
-      setCurrent(icon.name ?? null);
-    } catch (e: any) {
-      // Surface the real iOS reason. The most common one right after a rename of
-      // the alternate-icon set is "The requested alternate icon was not found",
-      // which means the installed native binary predates these icon names — the
-      // user is still running an older build (or an OTA bundle on top of an old
-      // binary). A fresh native build that includes the current icons fixes it.
-      const detail = e?.message ? `\n\n${String(e.message)}` : '';
-      Alert.alert(t('app_icon.error_title'), `${t('app_icon.error_change')}${detail}`);
-    } finally {
-      setApplying(null);
-    }
+    // Close our React Native <Modal> BEFORE switching the icon. iOS shows a
+    // mandatory "You have changed the icon…" system alert, and it fails to
+    // acquire the alert token (NSPOSIXErrorDomain 35, "Resource temporarily
+    // unavailable") when another modal/window is on screen at call time. By
+    // dismissing first and switching after the close animation settles, iOS has
+    // a clean key window to present that alert on.
+    dismiss();
+    setTimeout(async () => {
+      try {
+        await setAppIconWithRetry(target);
+      } catch (e: any) {
+        const detail = e?.message ? `\n\n${String(e.message)}` : '';
+        Alert.alert(t('app_icon.error_title'), `${t('app_icon.error_change')}${detail}`);
+      }
+    }, 450);
   };
 
   return (
