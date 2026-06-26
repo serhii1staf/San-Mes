@@ -1,6 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { View, Pressable, Modal, Image, ActivityIndicator, Alert, Animated, Dimensions, Platform } from 'react-native';
-import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../../theme';
 import { Text } from './Text';
 import {
@@ -88,21 +87,18 @@ export function AppIconModal({ visible, onClose }: AppIconModalProps) {
     if (isSame || applying) return;
     const target = icon.name;
     setApplying(icon.name ?? 'default');
-    // Close our React Native <Modal> BEFORE switching the icon. iOS shows a
-    // mandatory "You have changed the icon…" system alert, and it fails to
-    // acquire the alert token (NSPOSIXErrorDomain 35, "Resource temporarily
-    // unavailable") when another modal/window is on screen at call time. By
-    // dismissing first and switching after the close animation settles, iOS has
-    // a clean key window to present that alert on.
-    dismiss();
-    setTimeout(async () => {
-      try {
-        await setAppIconWithRetry(target);
-      } catch (e: any) {
-        const detail = e?.message ? `\n\n${String(e.message)}` : '';
-        Alert.alert(t('app_icon.error_title'), `${t('app_icon.error_change')}${detail}`);
-      }
-    }, 450);
+    try {
+      // Keep the sheet open (with the spinner) until the icon actually applies,
+      // then close it. On failure we keep it open so the error shows in context.
+      await setAppIconWithRetry(target);
+      setCurrent(target ?? null);
+      setApplying(null);
+      dismiss();
+    } catch (e: any) {
+      setApplying(null);
+      const detail = e?.message ? `\n\n${String(e.message)}` : '';
+      Alert.alert(t('app_icon.error_title'), `${t('app_icon.error_change')}${detail}`);
+    }
   };
 
   return (
@@ -133,11 +129,6 @@ export function AppIconModal({ visible, onClose }: AppIconModalProps) {
                         {isApplying && (
                           <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.35)', alignItems: 'center', justifyContent: 'center' }}>
                             <ActivityIndicator color="#FFF" />
-                          </View>
-                        )}
-                        {selected && !isApplying && (
-                          <View style={{ position: 'absolute', top: 6, right: 6, width: 24, height: 24, borderRadius: 12, backgroundColor: theme.colors.accent.primary, alignItems: 'center', justifyContent: 'center' }}>
-                            <Feather name="check" size={14} color="#FFF" />
                           </View>
                         )}
                       </View>
