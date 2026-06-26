@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, StyleSheet, Animated, Text as RNText, Image as RNImage, Dimensions } from 'react-native';
+import { View, StyleSheet, Animated, Text as RNText, Image as RNImage, Dimensions, AppState, Pressable } from 'react-native';
 import { Stack, useRouter, useSegments, useNavigationContainerRef } from 'expo-router';
 import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
@@ -152,6 +152,80 @@ function ThemedShell({ children }: { children: React.ReactNode }) {
   return <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>{children}</View>;
 }
 
+// Themed fallback shown by ErrorBoundary when the screen tree throws during
+// render. Lives BELOW the theme/i18n providers (the boundary wraps the screen
+// tree, not the providers) so it can read the active theme + locale. Kept
+// dependency-free: just View/Text/Pressable + theme tokens.
+function ErrorBoundaryFallback({ onRetry }: { onRetry: () => void }) {
+  const theme = useTheme();
+  const t = useT();
+  return (
+    <View style={[styles.errorContainer, { backgroundColor: theme.colors.background.primary }]}>
+      <RNText style={{ fontSize: 44, marginBottom: 16 }}>😵‍💫</RNText>
+      <RNText style={{ fontSize: 18, fontWeight: '700', color: theme.colors.text.primary, textAlign: 'center', marginBottom: 8 }}>
+        {t('errors.boundary_title', 'Что-то пошло не так')}
+      </RNText>
+      <RNText style={{ fontSize: 14, color: theme.colors.text.secondary, textAlign: 'center', marginBottom: 24, paddingHorizontal: 8 }}>
+        {t('errors.boundary_body', 'Произошла непредвиденная ошибка. Попробуйте ещё раз.')}
+      </RNText>
+      <Pressable
+        onPress={onRetry}
+        accessibilityRole="button"
+        style={({ pressed }) => ({
+          backgroundColor: theme.colors.accent.primary,
+          paddingHorizontal: 28,
+          paddingVertical: 12,
+          borderRadius: 12,
+          opacity: pressed ? 0.85 : 1,
+        })}
+      >
+        <RNText style={{ color: '#FFFFFF', fontSize: 15, fontWeight: '600' }}>
+          {t('errors.boundary_retry', 'Попробовать снова')}
+        </RNText>
+      </Pressable>
+    </View>
+  );
+}
+
+// App-wide React error boundary. Catches render-time errors in the screen tree
+// (e.g. one bad cached record blowing up a list) and shows the themed fallback
+// above with a "try again" action that resets the boundary so the tree
+// re-renders — instead of a blank/crashed screen with no recovery. Reports to
+// Sentry when available (best-effort, never throws from the handler). It wraps
+// ONLY the screen tree; the theme/i18n providers stay outside so the fallback
+// stays themed.
+class ErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean }
+> {
+  state = { hasError: false };
+
+  static getDerivedStateFromError(): { hasError: boolean } {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error, info: { componentStack?: string }) {
+    try {
+      Sentry.captureException(error, {
+        extra: { componentStack: info?.componentStack },
+      });
+    } catch {
+      // Reporting is best-effort — never let it throw out of the boundary.
+    }
+  }
+
+  reset = () => {
+    this.setState({ hasError: false });
+  };
+
+  render() {
+    if (this.state.hasError) {
+      return <ErrorBoundaryFallback onRetry={this.reset} />;
+    }
+    return this.props.children;
+  }
+}
+
 function CustomSplash() {
   const t = useT();
   // Splash only needs the display name — subscribe to that field, not the
@@ -295,6 +369,20 @@ function RootLayout() {
           .then(({ syncFollows }) => syncFollows(currentUser.id))
           .catch(() => {});
       }
+
+      // Revalidate the persisted session once, AFTER first paint is unblocked.
+      // restoreSession() validates the stored JWT via /v1/auth/me and silently
+      // clears auth if it's dead — so a session that expired while the app sat
+      // unused for weeks gets confirmed or cleanly cleared here, instead of
+      // letting the first authed request 401 mid-use (the "open after weeks →
+      // see feed → get kicked to login" bug). Fire-and-forget + guarded; this
+      // sits in the deferred idle phase so it never blocks splash/first paint.
+      // No new logout path — restoreSession already owns the dead-token wipe.
+      if (useAuthStore.getState().user?.id) {
+        try {
+          useAuthStore.getState().restoreSession().catch(() => {});
+        } catch {}
+      }
     }, 0);
 
     // Phase 4 — boot-time image warming. Deferred well past first paint so it
@@ -360,6 +448,38 @@ function RootLayout() {
     return () => clearTimeout(timer);
   }, []);
 
+  // App foreground/background lifecycle. Single AppState listener for the whole
+  // session, cleaned up on unmount. Event-driven (never on the first-render
+  // path) and fully guarded so it can never throw:
+  //   • → 'active'  (returning from background, possibly after days): resume the
+  //                 connectivity poll (start() is idempotent-guarded), force an
+  //                 immediate connectivity re-check, and — if a user is logged
+  //                 in — silently revalidate the session via the EXISTING
+  //                 restoreSession (confirms or cleanly clears a stale token).
+  //   • → 'background': pause the 20s connectivity poll so we don't burn cycles
+  //                 / battery while the app isn't visible.
+  // All calls are fire-and-forget; none block anything.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (next) => {
+      try {
+        if (next === 'active') {
+          try { useConnectivityStore.getState().start(); } catch {}
+          try { useConnectivityStore.getState().checkNow().catch(() => {}); } catch {}
+          if (useAuthStore.getState().user?.id) {
+            try { useAuthStore.getState().restoreSession().catch(() => {}); } catch {}
+          }
+        } else if (next === 'background') {
+          try { useConnectivityStore.getState().stop(); } catch {}
+        }
+      } catch {
+        // Never let a lifecycle transition throw.
+      }
+    });
+    return () => {
+      try { sub.remove(); } catch {}
+    };
+  }, []);
+
   if (!ready) return null;
 
   return (
@@ -368,6 +488,7 @@ function RootLayout() {
     <KeyboardProvider>
     <ThemeProvider>
       <NavigationBarController />
+      <ErrorBoundary>
       <AuthNavigationGuard>
         <BrowserMiniBar />
         <MusicBottomIndicator />
@@ -408,6 +529,7 @@ function RootLayout() {
             `insets.top`. */}
         <DynamicOverlayHost />
       </AuthNavigationGuard>
+      </ErrorBoundary>
     </ThemeProvider>
     </KeyboardProvider>
     </BottomSheetModalProvider>
@@ -470,6 +592,7 @@ function AppStack() {
 
 const styles = StyleSheet.create({
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#141414' },
+  errorContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 32 },
   rootColumn: { flex: 1 },
   stackWrapper: { flex: 1 },
   gestureRoot: { flex: 1 },

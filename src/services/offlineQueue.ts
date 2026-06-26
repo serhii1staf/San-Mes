@@ -41,6 +41,12 @@ export interface MutationRecord {
 const MAX_IMAGE_RETRIES = 3;
 const BATCH_THRESHOLD = 50;
 const BATCH_SIZE = 10;
+// Maximum number of send attempts before a mutation is considered
+// unrecoverable and dropped from the queue entirely. This is the safety
+// ceiling that (a) stops failed mutations accumulating in the persisted
+// queue forever and (b) bounds transient retries so they can't loop
+// indefinitely.
+const MAX_RETRIES = 5;
 
 // ─── Temp ID Generation ──────────────────────────────────────────────────────
 
@@ -67,8 +73,28 @@ export async function removeMutation(id: string): Promise<void> {
 
 export async function markFailed(id: string): Promise<void> {
   const queue = await getQueue();
+  const target = queue.find((m) => m.id === id);
+  if (!target) return;
+
+  const nextRetryCount = target.retryCount + 1;
+
+  if (nextRetryCount >= MAX_RETRIES) {
+    // Exhausted the retry ceiling — drop the unrecoverable mutation
+    // entirely. Leaving it as a permanent 'failed' record would mean it is
+    // never re-processed (processQueue only looks at 'pending') and never
+    // removed, so the persisted @san:mutation_queue blob would grow forever.
+    const updated = queue.filter((m) => m.id !== id);
+    await cacheSet(KEYS.mutations, updated);
+    return;
+  }
+
+  // Still under the ceiling — bump the counter and keep it 'pending' so the
+  // next processQueue cycle actually retries it. (Marking it 'failed' here
+  // is what previously stranded these records: failed items were never
+  // re-processed, so retryCount never advanced and they never reached the
+  // ceiling to be cleaned up.)
   const updated = queue.map((m) =>
-    m.id === id ? { ...m, status: 'failed' as const, retryCount: m.retryCount + 1 } : m
+    m.id === id ? { ...m, status: 'pending' as const, retryCount: nextRetryCount } : m
   );
   await cacheSet(KEYS.mutations, updated);
 }
@@ -173,6 +199,29 @@ function applyOptimisticUpdate(type: MutationType, payload: any): void {
   }
 }
 
+// ─── Coalescing ──────────────────────────────────────────────────────────────
+
+// Returns a "coalescing key" for idempotent, toggle-style mutations whose
+// repeated enqueues should collapse instead of piling up in the queue.
+// Returns null for mutation types that MUST NOT be coalesced (create_post,
+// create_comment, create_repost, delete_post, update_profile, send_message)
+// — those are not idempotent toggles and every record must be preserved.
+//
+// follow and unfollow intentionally share the same key for a given
+// (follower, following) pair: they are inverse operations on the same
+// target, so the latest one should win.
+function coalesceKey(type: MutationType, payload: any): string | null {
+  switch (type) {
+    case 'toggle_like':
+      return `toggle_like:${payload?.userId}:${payload?.postId}`;
+    case 'follow':
+    case 'unfollow':
+      return `follow:${payload?.followerId}:${payload?.followingId}`;
+    default:
+      return null;
+  }
+}
+
 // ─── Queue Mutation ──────────────────────────────────────────────────────────
 
 export async function queueMutation(type: MutationType, payload: any): Promise<void> {
@@ -237,6 +286,46 @@ export async function queueMutation(type: MutationType, payload: any): Promise<v
 
   // 3. Persist mutation to AsyncStorage queue for retry on reconnect.
   const queue = await getQueue();
+
+  // Coalesce idempotent toggle-style mutations so rapid offline toggles
+  // (like→unlike→like, follow→unfollow→follow) don't pile up as separate
+  // records that would each replay on reconnect and risk a double-apply.
+  // Non-toggle types (create_*/delete_post/update_profile/send_message)
+  // have a null key and fall straight through to the plain push below.
+  const key = coalesceKey(type, payload);
+  if (key !== null) {
+    if (type === 'toggle_like') {
+      // toggleLike is a *relative* server toggle (it flips whatever the
+      // current like state is). Two queued toggles for the same post
+      // therefore cancel out. Pair this enqueue with one pending toggle for
+      // the same (user, post): if one exists, drop it and DON'T enqueue the
+      // new one (net effect = zero); otherwise enqueue this one. This keeps
+      // the queued net effect equal to the parity of the user's taps, which
+      // is the only way to stay correct against a relative-toggle endpoint.
+      const idx = queue.findIndex(
+        (m) => m.type === 'toggle_like' && coalesceKey(m.type, m.payload) === key
+      );
+      if (idx !== -1) {
+        queue.splice(idx, 1);
+        await cacheSet(KEYS.mutations, queue);
+        return;
+      }
+      queue.push(mutation);
+      await cacheSet(KEYS.mutations, queue);
+      return;
+    }
+
+    // follow / unfollow are *absolute*, idempotent operations ("ensure
+    // following" / "ensure not following"). Last-write-wins: drop any queued
+    // follow/unfollow for this (follower, following) pair and enqueue only
+    // the newest action.
+    const filtered = queue.filter((m) => coalesceKey(m.type, m.payload) !== key);
+    filtered.push(mutation);
+    await cacheSet(KEYS.mutations, filtered);
+    return;
+  }
+
+  // Non-coalescable mutation type — preserve every record.
   queue.push(mutation);
   await cacheSet(KEYS.mutations, queue);
 }
@@ -420,10 +509,18 @@ export async function processQueue(): Promise<void> {
         if (result.success) {
           await removeMutation(mutation.id);
         } else if (result.retryable) {
-          // 5xx/network error — retain pending, stop batch
+          // 5xx/network error — the link is likely down. Bump the retry
+          // counter (markFailed drops the mutation if it has now exhausted
+          // MAX_RETRIES, otherwise leaves it 'pending') and stop the batch
+          // so we retry on the next cycle. The ceiling prevents an
+          // unbounded retry loop against a persistently failing server.
+          await markFailed(mutation.id);
           break;
         } else {
-          // 4xx — mark as failed, continue to next
+          // 4xx — record the failure and continue. markFailed bumps the
+          // retry counter and drops the mutation once it exhausts
+          // MAX_RETRIES, so it no longer lingers as a permanent 'failed'
+          // record.
           await markFailed(mutation.id);
         }
       } catch (e) {

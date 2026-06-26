@@ -87,9 +87,34 @@ function getAuthHeader(): string | null {
  * caps the work to one logout per second per cold-started JS
  * runtime, which is more than enough for the actual "your token
  * expired" case.
+ *
+ * Silent refresh: before nuking the session we try ONE silent token
+ * refresh (`authClient.refresh()` → POST /v1/auth/refresh). A token
+ * that's merely expired-but-refreshable should NOT bounce the user —
+ * especially after the app has been backgrounded for a while. On
+ * success the new token is written to MMKV by `refresh()` itself and
+ * the next request picks it up; we deliberately do NOT replay the
+ * original failed request (no retry/replay queue — out of scope). On
+ * failure we fall back to the exact clear-token + logout path as
+ * before.
+ *
+ * Recursion / storm safety:
+ *   - `authClient.refresh()` talks to the Worker through `authClient`'s
+ *     own `call()` helper, NOT back through this module, so the refresh
+ *     POST can never re-enter `handleUnauthorised` even if it itself
+ *     returns 401.
+ *   - `_refreshInFlight` is a belt-and-suspenders latch ensuring at most
+ *     one refresh attempt is ever in progress; a refresh attempt can
+ *     never trigger another refresh attempt.
+ *   - The existing `_unauthInFlight` latch + `_lastUnauthAt` 1-second
+ *     throttle are preserved and now also gate the refresh attempt, so a
+ *     burst of parallel 401s still results in at most one refresh +
+ *     logout per second.
+ *   - The whole flow is wrapped in try/catch so it can never throw.
  */
 let _unauthInFlight = false;
 let _lastUnauthAt = 0;
+let _refreshInFlight = false;
 async function handleUnauthorised(): Promise<void> {
   const now = Date.now();
   if (_unauthInFlight) return;
@@ -97,15 +122,39 @@ async function handleUnauthorised(): Promise<void> {
   _unauthInFlight = true;
   _lastUnauthAt = now;
   try {
-    clearAuthToken();
-  } catch {}
-  try {
-    const { useAuthStore } = await import('../store/authStore');
-    // Skip the dispatch when the store already reflects the
-    // logged-out state — saves the entire root re-render path.
-    if (useAuthStore.getState().isAuthenticated) {
-      useAuthStore.getState().logout();
+    // 1) Attempt a single silent refresh before falling back to logout.
+    //    Guarded so a refresh can never re-enter the refresh logic.
+    if (!_refreshInFlight) {
+      _refreshInFlight = true;
+      let refreshed = false;
+      try {
+        const { refresh } = await import('./authClient');
+        const { token } = await refresh();
+        refreshed = !!token;
+      } catch {
+        refreshed = false;
+      } finally {
+        _refreshInFlight = false;
+      }
+      if (refreshed) {
+        // New token persisted by `refresh()`. Subsequent requests use
+        // it; the original request is intentionally not auto-retried.
+        return;
+      }
     }
+
+    // 2) Refresh unavailable or failed → original logout path, verbatim.
+    try {
+      clearAuthToken();
+    } catch {}
+    try {
+      const { useAuthStore } = await import('../store/authStore');
+      // Skip the dispatch when the store already reflects the
+      // logged-out state — saves the entire root re-render path.
+      if (useAuthStore.getState().isAuthenticated) {
+        useAuthStore.getState().logout();
+      }
+    } catch {}
   } catch {}
   finally {
     _unauthInFlight = false;

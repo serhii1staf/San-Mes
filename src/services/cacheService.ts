@@ -66,6 +66,13 @@ export const KEYS = {
 
 export const MAX_FEED_POSTS = 200;
 
+// Upper safety bound on how many messages we cache per conversation. Messages
+// are stored oldest→newest (the API orders `created_at` ASC), so when a
+// conversation exceeds this we keep the TAIL — the most recent messages, which
+// is what the chat screen seeds for first paint. High enough that normal users
+// never notice; purely a guard against pathological unbounded growth.
+export const MAX_CACHED_MESSAGES = 500;
+
 // ─── Per-account namespacing ─────────────────────────────────────────────────
 // Namespacing lives in cacheAccount.ts (shared with kvStore.ts to avoid a cycle).
 // Re-exported here so existing imports from cacheService keep working unchanged.
@@ -167,7 +174,9 @@ export async function getCachedConversations(): Promise<LocalConversation[]> {
 }
 
 export async function cacheMessages(convId: string, messages: LocalMessage[]): Promise<void> {
-  await cacheSet(KEYS.messages(convId), messages);
+  const trimmed =
+    messages.length > MAX_CACHED_MESSAGES ? messages.slice(-MAX_CACHED_MESSAGES) : messages;
+  await cacheSet(KEYS.messages(convId), trimmed);
 }
 
 export async function getCachedMessages(convId: string): Promise<LocalMessage[]> {
