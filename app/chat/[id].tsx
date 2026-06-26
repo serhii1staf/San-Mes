@@ -393,7 +393,17 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
   // frames instead of bursting. The placeholder skeleton below is sized to the
   // remembered dims, so the Skeleton → CachedImage swap is layout-identical
   // (no jump). This mirrors the comments screen, which always gates GIF reveal.
-  const singleImgKnown = hasImages && message.imageUrls!.length === 1 && !isGifBubble && !!getImageDims(message.imageUrls![0]);
+  //
+  // LOCAL (`file://`) images are ALSO excluded from this fast path (the
+  // `.startsWith('http')` test below): pickImages stamps their dimensions the
+  // moment they're picked, so a rapid photo-send burst would otherwise have
+  // every fresh local bubble satisfy `singleImgKnown` and decode its full
+  // bitmap on the SAME mount frame — the decode storm behind the FPS crash.
+  // Forcing local images through `imgReveal` (the one-per-frame photo pump)
+  // spreads those decodes across frames; they still appear promptly (correctly-
+  // sized skeleton → photo, no jump), just not all on one frame. Once uploaded,
+  // the bubble's url becomes http and re-mounts cached → instant, as before.
+  const singleImgKnown = hasImages && message.imageUrls!.length === 1 && !isGifBubble && message.imageUrls![0].startsWith('http') && !!getImageDims(message.imageUrls![0]);
 
   return (
     <View style={bubbleStyles.row}>
@@ -520,7 +530,7 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
                 ) : (
                   message.imageUrls.map((uri, idx) => (
                     <Pressable key={idx} onPress={() => onImagePress(message.imageUrls!, idx)}>
-                      {imgReveal || (!isGifBubble && getImageDims(uri)) ? (
+                      {imgReveal || (!isGifBubble && uri.startsWith('http') && getImageDims(uri)) ? (
                         <CachedImage
                           uri={uri}
                           style={bubbleStyles.imageMulti}
@@ -2021,12 +2031,20 @@ export default function ChatScreen() {
     // Downscale picked images immediately to a display-friendly size so rendering
     // (thumbnails, context-menu preview, viewer) stays smooth even offline, and the
     // eventual upload is light. GIFs are left untouched to preserve animation.
+    //
+    // Resize width is 1080 (was 1600): the chat bubble renders at ≤CHAT_IMG_MAX_W
+    // (≤270pt → ~810px at DPR 3) and the remote copy is additionally weserv-
+    // proxied down to CHAT_IMG_MAX_W, so 1600px was pure waste that the OPTIMISTIC
+    // LOCAL bubble paid in full (a local file:// bypasses the proxy and decodes
+    // the whole bitmap). 1080px keeps the bubble (and the full-screen viewer)
+    // visually identical while cutting the local decode cost ~55% (pixel area
+    // (1080/1600)² ≈ 0.46) — a big chunk of the rapid-send decode storm.
     const { manipulateAsync, SaveFormat } = await import('expo-image-manipulator');
     const processed = await Promise.all(result.assets.map(async (a) => {
       const isGif = (a.uri.split('.').pop() || '').toLowerCase() === 'gif';
       if (isGif) return a.uri;
       try {
-        const r = await manipulateAsync(a.uri, [{ resize: { width: 1600 } }], { compress: 0.85, format: SaveFormat.JPEG });
+        const r = await manipulateAsync(a.uri, [{ resize: { width: 1080 } }], { compress: 0.85, format: SaveFormat.JPEG });
         // Remember the processed dimensions so the optimistic bubble (and every
         // future open) mounts at the correct aspect-ratio box — no size jump.
         if (r.width && r.height) setImageDims(r.uri, r.width, r.height);
@@ -2910,6 +2928,10 @@ export default function ChatScreen() {
   // call rate at ~30 Hz on iOS; the JS-side guard here is belt-and-suspenders
   // so a chatty Android scroll listener can't churn `setState` either.
   const lastScrollEventAt = useRef(0);
+  // Latest scroll metrics (offset / viewport height / content height) captured
+  // on each scroll event. `onScrollBtnTap` reads these to decide whether to do
+  // an instant pre-jump before the animated settle (see below).
+  const scrollMetricsRef = useRef<{ y: number; layoutH: number; contentH: number } | null>(null);
   // Idle timer that releases the GIF-animation pause shortly after the last
   // scroll event (covers both drag and momentum/fling uniformly).
   const scrollIdleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -2937,6 +2959,7 @@ export default function ChatScreen() {
     // Non-inverted list: the newest message is at the BOTTOM. Show the
     // scroll-to-bottom button when the user has scrolled UP away from it.
     const distanceFromBottom = contentH - (y + layoutH);
+    scrollMetricsRef.current = { y, layoutH, contentH };
     const next = distanceFromBottom > SCROLL_BTN_THRESHOLD;
     setScrollBtnVisible((prev) => (prev === next ? prev : next));
   }, []);
@@ -2950,7 +2973,33 @@ export default function ChatScreen() {
   }, [scrollBtnVisible, scrollBtnOpacity]);
   const onScrollBtnTap = useCallback(() => {
     triggerHaptic('light');
-    try { flatListRef.current?.scrollToEnd({ animated: true }); } catch {}
+    const fl = flatListRef.current;
+    if (!fl) return;
+    // Root cause of the "stalls near the end then finishes" jank: with FlashList
+    // v2 + maintainVisibleContentPosition.startRenderingFromBottom, an animated
+    // `scrollToEnd` issued from far up the list animates ACROSS many not-yet-
+    // laid-out, variable-height bubbles. Their real heights only resolve mid-
+    // flight, so the target offset keeps moving and the animation re-anchors
+    // near the end (the visible stall).
+    //
+    // Fix: when we're more than ~1.5 viewports from the bottom, INSTANTLY jump
+    // to within one viewport of the newest message first (cheap — the bottom
+    // cells stay warm under startRenderingFromBottom), then animate ONLY that
+    // final short, fully-measured distance. The list lands cleanly on the newest
+    // message with no mid-scroll stall and no overshoot (`near` is strictly
+    // above the true bottom, so the settle never overscrolls). Closer than that,
+    // a plain animated scrollToEnd is already smooth, so keep it.
+    const m = scrollMetricsRef.current;
+    const distanceFromBottom = m ? m.contentH - (m.y + m.layoutH) : 0;
+    if (m && m.layoutH > 0 && distanceFromBottom > m.layoutH * 1.5) {
+      const near = Math.max(0, m.contentH - m.layoutH * 1.2);
+      try { fl.scrollToOffset({ offset: near, animated: false }); } catch {}
+      requestAnimationFrame(() => {
+        try { flatListRef.current?.scrollToEnd({ animated: true }); } catch {}
+      });
+    } else {
+      try { fl.scrollToEnd({ animated: true }); } catch {}
+    }
   }, []);
 
   const banner = editing || replyTo;
@@ -3328,10 +3377,10 @@ export default function ChatScreen() {
           </View>
         ) : (
           <View style={[styles.headerContent, { paddingTop: insets.top }]} pointerEvents="auto">
-            {/* Left column flexes equally with the right (avatar) column so the
-                centered title stays SCREEN-centered even though the back button
-                — now an auto-width pill with the localized "Назад" label — is
-                wider than the avatar circle. iOS-style chevron + label. */}
+            {/* Left column hugs the back pill and never shrinks, so the
+                localized "Назад" label is always shown in full. The center
+                title column (flex:1) absorbs all the squeeze and truncates the
+                conversation name instead. iOS-style chevron + label. */}
             <View style={styles.headerSide}>
               {glassActive ? (
                 <Pressable onPress={() => router.back()} style={{ borderRadius: 18 }}>
@@ -3353,7 +3402,7 @@ export default function ChatScreen() {
                   onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId, fromChat: '1' } })}
                   onLongPress={openSearch}
                   delayLongPress={300}
-                  style={{ borderRadius: 18 }}
+                  style={{ borderRadius: 18, maxWidth: '100%' }}
                 >
                   {/* The name Text + badges are CHILDREN of the interactive
                       glass; with no fixed width the children drive the pill's
@@ -3456,21 +3505,29 @@ const styles = StyleSheet.create({
   headerWrapper: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100 },
   headerContent: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingBottom: 8, gap: 10 },
   headerCircle: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
-  // Equal-flex left/right columns keep the centered title SCREEN-centered even
-  // though the back button (left) is now a wider chevron+label pill than the
-  // avatar circle (right). Both columns flex:1 so they grow to equal width.
-  headerSide: { flex: 1, alignItems: 'flex-start', justifyContent: 'center' },
-  headerTitleWrap: { flexShrink: 1, minWidth: 0, alignItems: 'center' },
+  // Side columns hug their content and NEVER shrink, so the back pill's "Назад"
+  // label is always shown in full and the avatar stays fixed. The center title
+  // takes the remaining space (flex:1) and the NAME pill truncates within it —
+  // this is what stops the back label from being squeezed by a long name. iOS-
+  // style approximate centering (the title is centered in the gap between the
+  // back pill and the avatar, not the full screen) is intentional + sufficient.
+  headerSide: { flexShrink: 0, alignItems: 'flex-start', justifyContent: 'center' },
+  headerTitleWrap: { flex: 1, minWidth: 0, alignItems: 'center', justifyContent: 'center' },
   // iOS-style back pill: chevron + "Назад" label. Auto width (no fixed circle
   // size) so it grows to fit the localized label; keeps the 36pt height and
-  // rounded geometry of the other header chrome.
-  backPill: { flexDirection: 'row', alignItems: 'center', height: 36, borderRadius: 18, borderWidth: 1, paddingLeft: 6, paddingRight: 14, gap: 2 },
-  backPillGlass: { flexDirection: 'row', alignItems: 'center', height: 36, borderRadius: 18, paddingLeft: 8, paddingRight: 16, gap: 2 },
-  backLabel: { marginLeft: -2 },
-  headerPill: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, height: 36, borderRadius: 18, borderWidth: 1, paddingHorizontal: 16 },
+  // rounded geometry of the other header chrome. flexShrink:0 so it is never
+  // squeezed below its content width (the label must never truncate).
+  backPill: { flexShrink: 0, flexDirection: 'row', alignItems: 'center', height: 36, borderRadius: 18, borderWidth: 1, paddingLeft: 6, paddingRight: 14, gap: 2 },
+  backPillGlass: { flexShrink: 0, flexDirection: 'row', alignItems: 'center', height: 36, borderRadius: 18, paddingLeft: 8, paddingRight: 16, gap: 2 },
+  // flexShrink:0 + no width cap so the localized "Назад" label is never clipped.
+  backLabel: { marginLeft: -2, flexShrink: 0 },
+  // maxWidth:'100%' bounds the name pill to the available middle space so a long
+  // name TRUNCATES (numberOfLines={1}) instead of overflowing or squeezing the
+  // back button; short names still hug their content and stay centered.
+  headerPill: { maxWidth: '100%', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, height: 36, borderRadius: 18, borderWidth: 1, paddingHorizontal: 16 },
   // Interactive-glass shape variants: same geometry as the flat chrome but with
   // NO border and NO overflow clipping, so the liquid glass can morph OUTWARD
   // over content on touch. The icon/content lives INSIDE the glass as children.
   headerCircleGlass: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
-  headerPillGlass: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, height: 36, borderRadius: 18, paddingHorizontal: 16 },
+  headerPillGlass: { maxWidth: '100%', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, height: 36, borderRadius: 18, paddingHorizontal: 16 },
 });

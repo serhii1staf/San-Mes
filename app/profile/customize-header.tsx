@@ -17,6 +17,7 @@ import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
+import { useLiquidGlassActive, NativeGlassView } from '../../src/components/ui/LiquidGlass';
 import { useT } from '../../src/i18n/store';
 import { useAuthStore } from '../../src/store/authStore';
 import { updateProfile as updateRemoteProfile } from '../../src/lib/supabase';
@@ -91,6 +92,7 @@ export default function CustomizeHeaderScreen() {
   const t = useT();
   const insets = useSafeAreaInsets();
   const { width: screenW } = useWindowDimensions();
+  const glassActive = useLiquidGlassActive();
   const user = useAuthStore((s) => s.user);
   const updateLocalUser = useAuthStore((s) => s.updateProfile);
 
@@ -276,8 +278,16 @@ export default function CustomizeHeaderScreen() {
         <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, top: insets.top + 8, height: 34, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 84 }}>
           <Text variant="h3" weight="bold" numberOfLines={1}>{t('customize.title', 'Оформление')}</Text>
         </View>
-        <Pressable onPress={() => router.back()} hitSlop={10} style={({ pressed }) => ({ width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.04)', opacity: pressed ? 0.6 : 1 })}>
-          <Feather name="x" size={20} color={theme.colors.text.primary} />
+        <Pressable onPress={() => router.back()} hitSlop={10} style={({ pressed }) => ({ width: 34, height: 34, borderRadius: 17, transform: [{ scale: pressed ? 0.92 : 1 }], opacity: glassActive ? 1 : (pressed ? 0.6 : 1) })}>
+          {glassActive ? (
+            <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={{ width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' }}>
+              <Feather name="x" size={20} color={theme.colors.text.primary} />
+            </NativeGlassView>
+          ) : (
+            <View style={{ width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.04)' }}>
+              <Feather name="x" size={20} color={theme.colors.text.primary} />
+            </View>
+          )}
         </Pressable>
         <Pressable onPress={onSave} disabled={saving} hitSlop={10} style={({ pressed }) => ({ minWidth: 64, height: 34, paddingHorizontal: 16, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.accent.primary, opacity: saving ? 0.7 : (pressed ? 0.85 : 1) })}>
           {saving ? <ActivityIndicator color="#FFFFFF" size="small" /> : <RNText allowFontScaling={false} style={{ fontSize: 14, fontWeight: '600', color: '#FFFFFF', includeFontPadding: false }}>{t('common.done', 'Готово')}</RNText>}
@@ -386,9 +396,9 @@ export default function CustomizeHeaderScreen() {
               <Pressable onPress={() => { triggerHaptic('light'); setEraser((e) => !e); }} style={({ pressed }) => ({ width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: eraser ? accentTint : (pressed ? neutralSurface : 'transparent'), borderWidth: StyleSheet.hairlineWidth, borderColor: eraser ? 'transparent' : theme.colors.border.light, opacity: pressed ? 0.85 : 1, transform: [{ scale: pressed ? 0.94 : 1 }] })}>
                 <Feather name="delete" size={18} color={eraser ? theme.colors.accent.primary : theme.colors.text.secondary} />
               </Pressable>
-              <ToolBtn theme={theme} icon="corner-up-left" onPress={undoStroke} />
-              <ToolBtn theme={theme} icon="corner-up-right" onPress={redoStroke} />
-              <ToolBtn theme={theme} icon="trash-2" danger onPress={clearStrokes} />
+              <ToolBtn theme={theme} glassActive={glassActive} icon="corner-up-left" onPress={undoStroke} />
+              <ToolBtn theme={theme} glassActive={glassActive} icon="corner-up-right" onPress={redoStroke} />
+              <ToolBtn theme={theme} glassActive={glassActive} icon="trash-2" danger onPress={clearStrokes} />
             </View>
             <Pressable onPress={() => { triggerHaptic('light'); setEraser(false); setDrawMode(false); }} style={({ pressed }) => ({ height: 46, marginTop: 12, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.accent.primary, opacity: pressed ? 0.9 : 1, transform: [{ scale: pressed ? 0.99 : 1 }] })}>
               <RNText allowFontScaling={false} style={{ fontSize: 15, fontWeight: '600', color: '#FFFFFF', includeFontPadding: false }}>{t('customize.draw_done', 'Готово')}</RNText>
@@ -401,11 +411,11 @@ export default function CustomizeHeaderScreen() {
         <View style={{ paddingHorizontal: 12, paddingTop: 12, paddingBottom: 2 }}>
           <DrawCard theme={theme}>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
-              <ToolBtn theme={theme} icon="minus" onPress={() => updateSelected({ scale: Math.max(0.4, +(selected.scale - 0.15).toFixed(2)) })} />
-              <ToolBtn theme={theme} icon="plus" onPress={() => updateSelected({ scale: Math.min(4, +(selected.scale + 0.15).toFixed(2)) })} />
-              <ToolBtn theme={theme} icon="rotate-ccw" onPress={() => updateSelected({ rotation: (selected.rotation - 15 + 360) % 360 })} />
-              <ToolBtn theme={theme} icon="rotate-cw" onPress={() => updateSelected({ rotation: (selected.rotation + 15) % 360 })} />
-              <ToolBtn theme={theme} icon="trash-2" danger onPress={deleteSelected} />
+              <ToolBtn theme={theme} glassActive={glassActive} icon="minus" onPress={() => updateSelected({ scale: Math.max(0.4, +(selected.scale - 0.15).toFixed(2)) })} />
+              <ToolBtn theme={theme} glassActive={glassActive} icon="plus" onPress={() => updateSelected({ scale: Math.min(4, +(selected.scale + 0.15).toFixed(2)) })} />
+              <ToolBtn theme={theme} glassActive={glassActive} icon="rotate-ccw" onPress={() => updateSelected({ rotation: (selected.rotation - 15 + 360) % 360 })} />
+              <ToolBtn theme={theme} glassActive={glassActive} icon="rotate-cw" onPress={() => updateSelected({ rotation: (selected.rotation + 15) % 360 })} />
+              <ToolBtn theme={theme} glassActive={glassActive} icon="trash-2" danger onPress={deleteSelected} />
             </View>
             <MiniLabel theme={theme} text={t('customize.anim', 'Анимация')} />
             {/* Animation picker — horizontally scrollable so every option is reachable. */}
@@ -417,18 +427,26 @@ export default function CustomizeHeaderScreen() {
           </DrawCard>
         </View>
       ) : (
-        <View style={{ height: 6 }} />
+        <View style={{ height: 10 }} />
       )}
 
       {/* ── Library — group tabs + grids ──────────────────────────────── */}
       {!drawMode ? (
         <View style={{ flex: 1 }}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 12, gap: 8, paddingTop: 2, paddingBottom: 10 }} style={{ flexGrow: 0, marginTop: -12 }}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 12, gap: 8, paddingTop: 8, paddingBottom: 10 }} style={{ flexGrow: 0, marginTop: 0 }}>
             {[{ key: 'bg', label: t('customize.bg', 'Фон') }, ...STICKER_LIBRARY.map((g) => ({ key: g.key, label: g.label }))].map((g) => {
               const active = g.key === activeGroup;
               return (
-                <Pressable key={g.key} onPress={() => setActiveGroup(g.key)} style={({ pressed }) => ({ height: 36, paddingHorizontal: 16, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? accentTint : neutralSurface, borderWidth: active ? 0 : StyleSheet.hairlineWidth, borderColor: theme.colors.border.light, opacity: pressed ? 0.7 : 1 })}>
-                  <RNText allowFontScaling={false} style={{ fontSize: 13.5, fontWeight: '600', includeFontPadding: false, color: active ? theme.colors.accent.primary : theme.colors.text.secondary }}>{g.label}</RNText>
+                <Pressable key={g.key} onPress={() => setActiveGroup(g.key)} style={({ pressed }) => (glassActive
+                  ? { height: 36, borderRadius: 18, transform: [{ scale: pressed ? 0.96 : 1 }] }
+                  : { height: 36, paddingHorizontal: 16, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? accentTint : neutralSurface, borderWidth: active ? 0 : StyleSheet.hairlineWidth, borderColor: theme.colors.border.light, opacity: pressed ? 0.7 : 1 })}>
+                  {glassActive ? (
+                    <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} tintColor={active ? theme.colors.accent.primary + '33' : undefined} style={{ height: 36, paddingHorizontal: 16, borderRadius: 18, alignItems: 'center', justifyContent: 'center' }}>
+                      <RNText allowFontScaling={false} style={{ fontSize: 13.5, fontWeight: '600', includeFontPadding: false, color: active ? theme.colors.accent.primary : theme.colors.text.secondary }}>{g.label}</RNText>
+                    </NativeGlassView>
+                  ) : (
+                    <RNText allowFontScaling={false} style={{ fontSize: 13.5, fontWeight: '600', includeFontPadding: false, color: active ? theme.colors.accent.primary : theme.colors.text.secondary }}>{g.label}</RNText>
+                  )}
                 </Pressable>
               );
             })}
@@ -565,7 +583,16 @@ function DrawCanvas({ width, height, color, strokeWidth, brush, strokes, onCompl
   );
 }
 
-function ToolBtn({ theme, icon, onPress, danger }: { theme: any; icon: any; onPress: () => void; danger?: boolean }) {
+function ToolBtn({ theme, icon, onPress, danger, glassActive }: { theme: any; icon: any; onPress: () => void; danger?: boolean; glassActive?: boolean }) {
+  if (glassActive) {
+    return (
+      <Pressable onPress={onPress} hitSlop={8} style={({ pressed }) => ({ width: 42, height: 42, borderRadius: 21, transform: [{ scale: pressed ? 0.94 : 1 }] })}>
+        <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={{ width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' }}>
+          <Feather name={icon} size={18} color={danger ? theme.colors.status.error : theme.colors.text.secondary} />
+        </NativeGlassView>
+      </Pressable>
+    );
+  }
   return (
     <Pressable onPress={onPress} hitSlop={8} style={({ pressed }) => ({ width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: pressed ? (theme.isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.045)') : 'transparent', borderWidth: StyleSheet.hairlineWidth, borderColor: theme.colors.border.light, opacity: pressed ? 0.85 : 1, transform: [{ scale: pressed ? 0.94 : 1 }] })}>
       <Feather name={icon} size={18} color={danger ? theme.colors.status.error : theme.colors.text.secondary} />
