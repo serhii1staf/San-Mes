@@ -51,7 +51,7 @@
  *  - Auto-dismiss is a single setTimeout cleared eagerly on interaction.
  */
 
-import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   Platform,
   Pressable,
@@ -84,7 +84,6 @@ import { useSettingsStore } from '../../store/settingsStore';
 import { useNotificationsBadge } from '../../store/notificationsBadgeStore';
 import { useDynamicOverlayStore } from '../../store/dynamicOverlayStore';
 import { useThemeStore, ACCENT_COLORS } from '../../store/themeStore';
-import { perfMonitor } from '../../services/perfMonitor';
 import { kvGetJSONSync } from '../../services/kvStore';
 import { CachedImage } from '../ui/CachedImage';
 import { PixelIcon } from '../pixel-icons/PixelIcon';
@@ -123,7 +122,7 @@ const SCALE_KICK_EXPAND = 1.03;
 
 // ─── Glass material — single BlurView per surface, no stacking ─────────────
 
-function GlassBackdrop({ isDark, radius }: { isDark: boolean; radius: number }) {
+const GlassBackdrop = memo(function GlassBackdrop({ isDark, radius }: { isDark: boolean; radius: number }) {
   // NOTE: we deliberately use the BlurView chrome-material here rather than the
   // native `expo-glass-effect` GlassView. The native liquid-glass surface does
   // NOT render a visible material in this floating root overlay (it composited
@@ -149,9 +148,9 @@ function GlassBackdrop({ isDark, radius }: { isDark: boolean; radius: number }) 
       style={[StyleSheet.absoluteFill, { borderRadius: radius }]}
     />
   );
-}
+});
 
-function TopReflection({ isDark, radius }: { isDark: boolean; radius: number }) {
+const TopReflection = memo(function TopReflection({ isDark, radius }: { isDark: boolean; radius: number }) {
   return (
     <LinearGradient
       colors={
@@ -166,7 +165,7 @@ function TopReflection({ isDark, radius }: { isDark: boolean; radius: number }) 
       pointerEvents="none"
     />
   );
-}
+});
 
 // ─── Theme tile preview — stylish mini-mockup of the active theme ──────────
 //
@@ -176,7 +175,7 @@ function TopReflection({ isDark, radius }: { isDark: boolean; radius: number }) 
 // accent action chip. Same idea as `ThemePreviewCard` in
 // `app/settings/appearance.tsx` but stripped down to fit a 4×4 tile.
 
-function ThemeTilePreview({
+const ThemeTilePreview = memo(function ThemeTilePreview({
   accent,
   isDark,
   themeName,
@@ -226,7 +225,7 @@ function ThemeTilePreview({
       </RNText>
     </View>
   );
-}
+});
 
 // ─── Generic tile ───────────────────────────────────────────────────────────
 
@@ -611,6 +610,10 @@ function DynamicOverlayHostInner() {
     startDismiss();
   }, [startDismiss]);
 
+  const onClosePress = useCallback(() => {
+    startDismiss();
+  }, [startDismiss]);
+
   if (!visible) return null;
 
   const tileBorder = isDark ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.55)';
@@ -662,7 +665,7 @@ function DynamicOverlayHostInner() {
             {userAvatar ? (
               <CachedImage
                 uri={userAvatar}
-                style={{ width: 22, height: 22, borderRadius: 11 }}
+                style={styles.avatarImage}
                 proxyWidth={22}
               />
             ) : (
@@ -689,7 +692,7 @@ function DynamicOverlayHostInner() {
             </View>
           ) : null}
 
-          <View style={{ flex: 1 }} />
+          <View style={styles.flexSpacer} />
 
           <Pressable onPress={onChevron} hitSlop={8} style={styles.chevron}>
             <Animated.View style={chevronStyle}>
@@ -701,7 +704,7 @@ function DynamicOverlayHostInner() {
             </Animated.View>
           </Pressable>
           <Pressable
-            onPress={() => startDismiss()}
+            onPress={onClosePress}
             hitSlop={8}
             style={styles.chevron}
             accessibilityRole="button"
@@ -855,6 +858,8 @@ const styles = StyleSheet.create({
     includeFontPadding: false,
     textAlign: 'center',
   },
+  avatarImage: { width: 22, height: 22, borderRadius: 11 },
+  flexSpacer: { flex: 1 },
   name: { fontSize: 13, fontWeight: '600', maxWidth: 90 },
   themeDot: { width: 8, height: 8, borderRadius: 4 },
   pixelWrap: { width: 18, height: 18, alignItems: 'center', justifyContent: 'center' },

@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { View, TextInput, Pressable, ViewStyle, ScrollView, Alert, Image, ActivityIndicator, StyleSheet } from 'react-native';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { View, TextInput, Pressable, ViewStyle, ScrollView, Alert, ActivityIndicator, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useNavigation } from '@react-navigation/native';
@@ -15,7 +15,6 @@ import { useConnectivityStore } from '../../src/store';
 import { createRepost, createPost, uploadPostImage, joinImageUrls } from '../../src/lib/supabase';
 import { queueMutation, generateTempId } from '../../src/services/offlineQueue';
 import { sanitizeUserText } from '../../src/utils/sanitizeText';
-import { useEntityStore } from '../../src/services/entityStore';
 import { accountKey } from '../../src/services/cacheService';
 import { FormatHelpModal } from '../../src/components/ui/FormatHelpModal';
 import { useT } from '../../src/i18n/store';
@@ -26,6 +25,9 @@ import { validatePost } from '../../src/services/moderation';
 const MAX_CHARS = 500;
 const MAX_IMAGES = 6;
 const MAX_IMAGE_SIZE_BYTES = 20 * 1024 * 1024; // 20 MB
+// Truly-constant gradient stops for the header fade — hoisted so the
+// LinearGradient doesn't receive a fresh array identity on every render.
+const HEADER_GRADIENT_LOCATIONS = [0, 0.55, 1] as const;
 
 type Audience = 'public' | 'friends';
 
@@ -559,10 +561,10 @@ export default function CreateScreen() {
   // Keep handlePostRef in sync with latest handlePost
   handlePostRef.current = handlePost;
 
-  const containerStyle: ViewStyle = {
+  const containerStyle: ViewStyle = useMemo(() => ({
     flex: 1,
     backgroundColor: theme.colors.background.primary,
-  };
+  }), [theme.colors.background.primary]);
 
   const bgColor = theme.colors.background.primary;
   const bgTransparent = bgColor + '00';
@@ -574,7 +576,7 @@ export default function CreateScreen() {
     <View style={containerStyle}>
       {/* Custom gradient header like feed screen */}
       <View style={[createStyles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">
-        <LinearGradient colors={[bgColor, bgColor, bgTransparent]} locations={[0, 0.55, 1]} style={StyleSheet.absoluteFill} />
+        <LinearGradient colors={[bgColor, bgColor, bgTransparent]} locations={HEADER_GRADIENT_LOCATIONS} style={StyleSheet.absoluteFill} />
         <View style={[createStyles.headerContent, { paddingTop: insets.top }]} pointerEvents="auto">
           <Text variant="body" weight="bold">{headerTitle}</Text>
           <Pressable
