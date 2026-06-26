@@ -1,8 +1,13 @@
 import React, { memo, useState } from 'react';
-import { View, Text as RNText, Pressable, TextStyle } from 'react-native';
+import { View, Text as RNText, Pressable, TextStyle, Platform, ScrollView, StyleSheet } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
+import * as Clipboard from 'expo-clipboard';
 import { useTheme } from '../../theme';
+import { useT } from '../../i18n/store';
 import { openUrl } from '../../utils/openUrl';
+import { triggerHaptic } from '../../utils/haptics';
+import { showToast } from '../../store/toastStore';
 
 interface FormattedTextProps {
   children: string;
@@ -38,6 +43,8 @@ interface FormattedTextProps {
  * ~~strike~~ — strikethrough
  * __underline__ — underlined text
  * #hashtag — clickable hashtag (accent color)
+ * ```fenced``` — Telegram-style multi-line code block (only when not
+ *   truncating, see the block-split path below)
  */
 export const FormattedText = memo(function FormattedText({ children, style, color, linkColor, numberOfLines, onLinkPress }: FormattedTextProps) {
   const theme = useTheme();
@@ -55,7 +62,12 @@ export const FormattedText = memo(function FormattedText({ children, style, colo
   // Parsing runs a regex over the text; memoize per-string so re-renders (theme,
   // scroll, sibling updates) don't re-parse. Big win for long feeds/chats.
   const parts = React.useMemo(() => parseFormatting(children), [children]);
-  let spoilerIdx = 0;
+
+  // Block-split runs on EVERY render (hook order must stay stable), but it
+  // returns null instantly for the overwhelmingly common case of text that
+  // has no triple-backtick fence — so the cost is a single `includes('```')`.
+  // Memoized per-string just like the inline parse above.
+  const blockSegments = React.useMemo(() => splitBlocks(children), [children]);
 
   // FIX (regression in 9d62fa3): only forward `numberOfLines` to the
   // root <Text> when the caller actually passed a value. Spreading it
@@ -72,71 +84,196 @@ export const FormattedText = memo(function FormattedText({ children, style, colo
   // ProfileReplyCard caller (which DOES pass a number) keeps working.
   const truncationProps = numberOfLines !== undefined ? { numberOfLines } : null;
 
-  return (
-    <RNText {...truncationProps} style={[{ color: textColor, fontSize: 14 * (theme.fontScale || 1) }, style]}>
-      {parts.map((part, i) => {
-        switch (part.type) {
-          case 'text':
-            return <RNText key={i}>{part.content}</RNText>;
+  // Shared inline renderer. Pulled out of the JSX so the EXACT same inline
+  // logic (bold/italic/spoiler/mention/link/inline-code/…) can be reused for
+  // every text segment of the block-split path. The `spoilerCounter` is a
+  // mutable object so a single component-level spoiler index is shared across
+  // all segments — keeping `revealedSpoilers`/`revealSpoiler` working even
+  // when text is split around fenced code blocks.
+  const renderInline = (inlineParts: TextPart[], spoilerCounter: { value: number }): React.ReactNode => {
+    return inlineParts.map((part, i) => {
+      switch (part.type) {
+        case 'text':
+          return <RNText key={i}>{part.content}</RNText>;
 
-          case 'bold':
-            return <RNText key={i} style={{ fontWeight: '700' }}>{part.content}</RNText>;
+        case 'bold':
+          return <RNText key={i} style={{ fontWeight: '700' }}>{part.content}</RNText>;
 
-          case 'italic':
-            return <RNText key={i} style={{ fontStyle: 'italic' }}>{part.content}</RNText>;
+        case 'italic':
+          return <RNText key={i} style={{ fontStyle: 'italic' }}>{part.content}</RNText>;
 
-          case 'strike':
-            return <RNText key={i} style={{ textDecorationLine: 'line-through' }}>{part.content}</RNText>;
+        case 'strike':
+          return <RNText key={i} style={{ textDecorationLine: 'line-through' }}>{part.content}</RNText>;
 
-          case 'underline':
-            return <RNText key={i} style={{ textDecorationLine: 'underline' }}>{part.content}</RNText>;
+        case 'underline':
+          return <RNText key={i} style={{ textDecorationLine: 'underline' }}>{part.content}</RNText>;
 
-          case 'code':
-            return (
-              <RNText key={i} style={{ fontFamily: 'Courier', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)', paddingHorizontal: 3, borderRadius: 3, fontSize: 13 * (theme.fontScale || 1) }}>
-                {part.content}
-              </RNText>
-            );
+        case 'code':
+          return (
+            <RNText key={i} style={{ fontFamily: 'Courier', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)', paddingHorizontal: 3, borderRadius: 3, fontSize: 13 * (theme.fontScale || 1) }}>
+              {part.content}
+            </RNText>
+          );
 
-          case 'spoiler': {
-            const idx = spoilerIdx++;
-            const revealed = revealedSpoilers.has(idx);
-            if (revealed) {
-              return <RNText key={i} style={{ backgroundColor: theme.isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)', borderRadius: 3 }}>{part.content}</RNText>;
-            }
-            return (
-              <RNText key={i} onPress={() => revealSpoiler(idx)} style={{ backgroundColor: theme.isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.2)', color: 'transparent', borderRadius: 3, overflow: 'hidden' }}>
-                {part.content}
-              </RNText>
-            );
+        case 'spoiler': {
+          const idx = spoilerCounter.value++;
+          const revealed = revealedSpoilers.has(idx);
+          if (revealed) {
+            return <RNText key={i} style={{ backgroundColor: theme.isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)', borderRadius: 3 }}>{part.content}</RNText>;
           }
-
-          case 'mention':
-            return (
-              <RNText key={i} onPress={() => { /* search user by username and navigate */ }} style={{ color: theme.colors.accent.primary, fontWeight: '600' }}>
-                @{part.content}
-              </RNText>
-            );
-
-          case 'hashtag':
-            return (
-              <RNText key={i} style={{ color: theme.colors.accent.primary, fontWeight: '500' }}>
-                #{part.content}
-              </RNText>
-            );
-
-          case 'link':
-            return (
-              <RNText key={i} onPress={() => handleLinkTap(part.content)} style={{ color: resolvedLinkColor, textDecorationLine: 'underline' }}>
-                {shortenUrl(part.content)}
-              </RNText>
-            );
-
-          default:
-            return <RNText key={i}>{part.content}</RNText>;
+          return (
+            <RNText key={i} onPress={() => revealSpoiler(idx)} style={{ backgroundColor: theme.isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.2)', color: 'transparent', borderRadius: 3, overflow: 'hidden' }}>
+              {part.content}
+            </RNText>
+          );
         }
+
+        case 'mention':
+          return (
+            <RNText key={i} onPress={() => { /* search user by username and navigate */ }} style={{ color: theme.colors.accent.primary, fontWeight: '600' }}>
+              @{part.content}
+            </RNText>
+          );
+
+        case 'hashtag':
+          return (
+            <RNText key={i} style={{ color: theme.colors.accent.primary, fontWeight: '500' }}>
+              #{part.content}
+            </RNText>
+          );
+
+        case 'link':
+          return (
+            <RNText key={i} onPress={() => handleLinkTap(part.content)} style={{ color: resolvedLinkColor, textDecorationLine: 'underline' }}>
+              {shortenUrl(part.content)}
+            </RNText>
+          );
+
+        default:
+          return <RNText key={i}>{part.content}</RNText>;
+      }
+    });
+  };
+
+  // Branch selection:
+  //  - Single-<Text> path when the caller asked for truncation
+  //    (numberOfLines set) OR there is no fenced code block. This is the
+  //    original, unchanged render — fenced markers fall through to the inline
+  //    parser as plain text, exactly as before.
+  //  - Block path otherwise: a <View> column mixing inline text segments and
+  //    standalone <CodeBlock> containers.
+  const useSingleTextPath = truncationProps !== null || blockSegments === null;
+
+  if (useSingleTextPath) {
+    const spoilerCounter = { value: 0 };
+    return (
+      <RNText {...truncationProps} style={[{ color: textColor, fontSize: 14 * (theme.fontScale || 1) }, style]}>
+        {renderInline(parts, spoilerCounter)}
+      </RNText>
+    );
+  }
+
+  // Block render path. A single shared spoiler counter spans all text
+  // segments so spoiler reveal indices stay stable across the column.
+  const spoilerCounter = { value: 0 };
+  return (
+    <View style={{ width: '100%' }}>
+      {blockSegments!.map((seg, i) => {
+        if (seg.kind === 'code') {
+          return <CodeBlock key={i} code={seg.value} lang={seg.lang} />;
+        }
+        const segParts = parseFormatting(seg.value);
+        return (
+          <RNText key={i} style={[{ color: textColor, fontSize: 14 * (theme.fontScale || 1) }, style]}>
+            {renderInline(segParts, spoilerCounter)}
+          </RNText>
+        );
       })}
-    </RNText>
+    </View>
+  );
+});
+
+/**
+ * Telegram-style fenced code container: monospace, subtle themed background,
+ * rounded corners, optional language header + copy affordance, and a
+ * horizontal ScrollView so long lines extend off-screen and scroll rather
+ * than wrap. Memoized — the code/lang only change when the source string does.
+ */
+const CodeBlock = memo(function CodeBlock({ code, lang }: { code: string; lang: string }) {
+  const theme = useTheme();
+  const t = useT();
+  const textColor = theme.colors.text.primary;
+  const hasLang = lang.trim().length > 0;
+
+  const handleCopy = async () => {
+    try {
+      await Clipboard.setStringAsync(code);
+      triggerHaptic('light');
+      showToast(t('toast.copied'), 'copy');
+    } catch {
+      // Clipboard can reject (rare); fail silently so the bubble stays usable.
+    }
+  };
+
+  return (
+    <View
+      style={{
+        marginVertical: 4,
+        borderRadius: 12,
+        overflow: 'hidden',
+        backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)',
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: theme.isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)',
+      }}
+    >
+      {hasLang ? (
+        <View
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            paddingHorizontal: 10,
+            paddingTop: 8,
+            paddingBottom: 2,
+          }}
+        >
+          <RNText
+            style={{
+              fontSize: 11,
+              color: theme.colors.text.tertiary,
+              fontWeight: '600',
+              textTransform: 'lowercase',
+            }}
+          >
+            {lang}
+          </RNText>
+          <Pressable hitSlop={8} onPress={handleCopy} style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Feather name="copy" size={13} color={theme.colors.text.tertiary} />
+          </Pressable>
+        </View>
+      ) : (
+        // No language token: keep a subtle copy affordance in the top-right.
+        <Pressable
+          hitSlop={8}
+          onPress={handleCopy}
+          style={{ position: 'absolute', top: 6, right: 6, zIndex: 1, padding: 2 }}
+        >
+          <Feather name="copy" size={13} color={theme.colors.text.tertiary} />
+        </Pressable>
+      )}
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ padding: 10 }}>
+        <RNText
+          selectable
+          style={{
+            fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+            fontSize: 13 * (theme.fontScale || 1),
+            color: textColor,
+          }}
+        >
+          {code}
+        </RNText>
+      </ScrollView>
+    </View>
   );
 });
 
@@ -144,6 +281,11 @@ interface TextPart {
   type: 'text' | 'bold' | 'italic' | 'strike' | 'underline' | 'code' | 'spoiler' | 'mention' | 'hashtag' | 'link';
   content: string;
 }
+
+/** One segment of the block-split: either inline text or a fenced code body. */
+type BlockSegment =
+  | { kind: 'text'; value: string }
+  | { kind: 'code'; lang: string; value: string };
 
 // Display links compactly: strip protocol/www and, for our own deep links,
 // show just the domain + section (e.g. "san-m-app.com/post") instead of the
@@ -220,4 +362,57 @@ function parseFormattingUncached(text: string): TextPart[] {
   }
 
   return parts.length > 0 ? parts : [{ type: 'text', content: text }];
+}
+
+// Block-split cache, mirroring parseCache and bounded the same way. Splits a
+// string into ordered text/code segments around triple-backtick fences.
+// Returns null when there is no fence (the common case) so callers can take
+// the original single-<Text> path with zero allocation.
+const blockCache = new Map<string, BlockSegment[] | null>();
+const BLOCK_CACHE_MAX = 500;
+
+function splitBlocks(text: string): BlockSegment[] | null {
+  // Fast bail-out: no fence → no block work. Don't even touch the cache.
+  if (text.indexOf('```') === -1) return null;
+
+  const cached = blockCache.get(text);
+  if (cached !== undefined) return cached;
+
+  const result = splitBlocksUncached(text);
+  if (blockCache.size >= BLOCK_CACHE_MAX) {
+    const firstKey = blockCache.keys().next().value;
+    if (firstKey !== undefined) blockCache.delete(firstKey);
+  }
+  blockCache.set(text, result);
+  return result;
+}
+
+function splitBlocksUncached(text: string): BlockSegment[] | null {
+  // Optional language token, optional leading newline, then a non-greedy body
+  // up to the closing fence.
+  const fenceRegex = /```([a-zA-Z0-9+#-]*)\n?([\s\S]*?)```/g;
+  const segments: BlockSegment[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  let found = false;
+
+  while ((match = fenceRegex.exec(text)) !== null) {
+    found = true;
+    if (match.index > lastIndex) {
+      segments.push({ kind: 'text', value: text.slice(lastIndex, match.index) });
+    }
+    // Trim a single leading/trailing newline from the code body.
+    const body = match[2].replace(/^\n/, '').replace(/\n$/, '');
+    segments.push({ kind: 'code', lang: match[1] || '', value: body });
+    lastIndex = match.index + match[0].length;
+  }
+
+  // No actual closing fence matched (e.g. a lone "```") — behave as no-fence.
+  if (!found) return null;
+
+  if (lastIndex < text.length) {
+    segments.push({ kind: 'text', value: text.slice(lastIndex) });
+  }
+
+  return segments;
 }

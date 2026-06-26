@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useRef } from 'react';
 import { View, Modal, Pressable, FlatList, StyleSheet, Animated, Dimensions, PanResponder, Share } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -30,6 +30,11 @@ export function PlaylistSheet({ visible, tracks, onClose }: PlaylistSheetProps) 
   const play = useMusicStore((s) => s.play);
   const current = useMusicStore((s) => s.current);
   const isPlaying = useMusicStore((s) => s.isPlaying);
+
+  // Stable play handler so the memoized TrackRow's `onPlay` prop identity
+  // doesn't change on every sheet re-render — keeps the row comparator from
+  // tripping when only `current`/`isPlaying` ticked.
+  const handlePlay = useCallback((item: Track) => { triggerHaptic('light'); play(item); }, [play]);
 
   // Off-screen offset is generous so the slide-out fully clears even on tall
   // phones; the value never drives layout, only translateY.
@@ -85,34 +90,17 @@ export function PlaylistSheet({ visible, tracks, onClose }: PlaylistSheetProps) 
     try { await Share.share({ message }); } catch {}
   };
 
-  const renderTrack = ({ item, index }: { item: Track; index: number }) => {
-    const active = current?.id === item.id;
-    return (
-      <Pressable
-        onPress={() => { triggerHaptic('light'); play(item); }}
-        style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, paddingHorizontal: 4, borderRadius: 12, backgroundColor: active ? theme.colors.accent.primary + '15' : 'transparent' }}
-      >
-        <Text variant="caption" color={theme.colors.text.tertiary} style={{ width: 22, textAlign: 'center', fontSize: 11 }}>{index + 1}</Text>
-        {/* Tracks beyond the first ~6 are off-screen on initial paint —
-            `priority="low"` keeps their decodes behind anything visible
-            (e.g. the player's own artwork, header icons) so opening the
-            sheet stays smooth on populated playlists. */}
-        <CachedImage uri={item.artwork} style={{ width: 40, height: 40, borderRadius: 8, marginLeft: 6, backgroundColor: 'rgba(0,0,0,0.1)' }} resizeMode="cover" priority={index < 3 ? 'normal' : 'low'} />
-        <View style={{ flex: 1, marginLeft: 10, marginRight: 6 }}>
-          <Text variant="caption" weight="semibold" numberOfLines={1} style={{ fontSize: 13 }}>{item.title}</Text>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ flexShrink: 1, fontSize: 11 }}>{item.artist}</Text>
-            {item.isPreview ? (
-              <View style={{ paddingHorizontal: 5, paddingVertical: 1, borderRadius: 5, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}>
-                <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 8 }}>{t('music_player.preview_seconds')}</Text>
-              </View>
-            ) : null}
-          </View>
-        </View>
-        <Feather name={active && isPlaying ? 'volume-2' : 'play'} size={14} color={active ? theme.colors.accent.primary : theme.colors.text.tertiary} />
-      </Pressable>
-    );
-  };
+  const renderTrack = ({ item, index }: { item: Track; index: number }) => (
+    <TrackRow
+      item={item}
+      index={index}
+      active={current?.id === item.id}
+      isPlaying={isPlaying}
+      theme={theme}
+      t={t}
+      onPlay={handlePlay}
+    />
+  );
 
   const sheetBg = theme.isDark ? theme.colors.background.elevated : '#FFFFFF';
 
@@ -189,6 +177,61 @@ export function PlaylistSheet({ visible, tracks, onClose }: PlaylistSheetProps) 
     </Modal>
   );
 }
+
+// ─── Row ─────────────────────────────────────────────────────────────────────
+// Memoized at module scope so it has a stable component type across parent
+// re-renders. When the music store ticks (track change / play-pause) the sheet
+// re-renders, but the comparator below means only the rows whose `active` flag
+// actually flipped (the newly-active row and the previously-active one) rebuild
+// — every other visible row is skipped instead of having its JSX recreated.
+interface TrackRowProps {
+  item: Track;
+  index: number;
+  active: boolean;
+  isPlaying: boolean;
+  theme: ReturnType<typeof useTheme>;
+  t: ReturnType<typeof useT>;
+  onPlay: (item: Track) => void;
+}
+
+const TrackRow = React.memo(
+  function TrackRow({ item, index, active, isPlaying, theme, t, onPlay }: TrackRowProps) {
+    return (
+      <Pressable
+        onPress={() => onPlay(item)}
+        style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, paddingHorizontal: 4, borderRadius: 12, backgroundColor: active ? theme.colors.accent.primary + '15' : 'transparent' }}
+      >
+        <Text variant="caption" color={theme.colors.text.tertiary} style={{ width: 22, textAlign: 'center', fontSize: 11 }}>{index + 1}</Text>
+        {/* Tracks beyond the first ~6 are off-screen on initial paint —
+            `priority="low"` keeps their decodes behind anything visible
+            (e.g. the player's own artwork, header icons) so opening the
+            sheet stays smooth on populated playlists. The `skeleton` prop
+            shimmers each rounded 40×40 box until its artwork loads, then
+            reveals it smoothly instead of popping in. */}
+        <CachedImage uri={item.artwork} style={{ width: 40, height: 40, borderRadius: 8, marginLeft: 6, backgroundColor: 'rgba(0,0,0,0.1)' }} resizeMode="cover" priority={index < 3 ? 'normal' : 'low'} skeleton />
+        <View style={{ flex: 1, marginLeft: 10, marginRight: 6 }}>
+          <Text variant="caption" weight="semibold" numberOfLines={1} style={{ fontSize: 13 }}>{item.title}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ flexShrink: 1, fontSize: 11 }}>{item.artist}</Text>
+            {item.isPreview ? (
+              <View style={{ paddingHorizontal: 5, paddingVertical: 1, borderRadius: 5, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}>
+                <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 8 }}>{t('music_player.preview_seconds')}</Text>
+              </View>
+            ) : null}
+          </View>
+        </View>
+        <Feather name={active && isPlaying ? 'volume-2' : 'play'} size={14} color={active ? theme.colors.accent.primary : theme.colors.text.tertiary} />
+      </Pressable>
+    );
+  },
+  (prev, next) =>
+    prev.item.id === next.item.id &&
+    prev.active === next.active &&
+    prev.isPlaying === next.isPlaying &&
+    prev.index === next.index &&
+    prev.theme === next.theme &&
+    prev.onPlay === next.onPlay,
+);
 
 function pluralize(n: number, locale: 'ru' | 'en', t: (key: string, fallback?: string, vars?: Record<string, string | number>) => string): string {
   if (locale === 'en') return n === 1 ? t('playlist.tracks_one') : t('playlist.tracks_many');
