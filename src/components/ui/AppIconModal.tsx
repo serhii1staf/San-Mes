@@ -50,17 +50,6 @@ async function setAppIconWithRetry(name: string | null): Promise<void> {
   throw lastError;
 }
 
-// Recognize the specific iOS 26.1+ platform bug so we can show a friendly
-// message instead of the raw "Resource temporarily unavailable" technical text.
-function isIosIconChangeBug(e: any): boolean {
-  const code = e?.code;
-  const msg = String(e?.message ?? '');
-  return (
-    code === 35 || code === '35' ||
-    /temporarily unavailable|NSPOSIXErrorDomain|resource temporarily/i.test(msg)
-  );
-}
-
 interface IconOption {
   name: string | null; // null = default app icon
   label: string;
@@ -123,14 +112,11 @@ export function AppIconModal({ visible, onClose }: AppIconModalProps) {
       dismiss();
     } catch (e: any) {
       setApplying(null);
-      // Show a friendly explanation for the known iOS 26.1+ icon-change bug;
-      // fall back to the raw reason for any other (unexpected) failure.
-      if (isIosIconChangeBug(e)) {
-        Alert.alert(t('app_icon.error_title'), t('app_icon.error_ios_bug'));
-      } else {
-        const detail = e?.message ? `\n\n${String(e.message)}` : '';
-        Alert.alert(t('app_icon.error_title'), `${t('app_icon.error_change')}${detail}`);
-      }
+      // In normal use the only realistic failure here is the iOS 26.1+
+      // icon-change platform bug (the system can't present its mandatory
+      // confirmation alert). The native error message is localized, so we don't
+      // pattern-match it — we just show our friendly explanation on any failure.
+      Alert.alert(t('app_icon.error_title'), t('app_icon.error_ios_bug'));
     }
   };
 
