@@ -12,6 +12,29 @@ import { useT } from '../../i18n/store';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
+// iOS (18/26) intermittently rejects `setAlternateIconName` with
+// NSPOSIXErrorDomain code 35 ("Resource temporarily unavailable" / EAGAIN)
+// coming from LSIconAlertManager — it couldn't acquire the icon-change system
+// alert token in time. It's transient: a short delay + retry almost always
+// succeeds on the next attempt. We retry a few times before surfacing an error.
+const ICON_SET_RETRIES = 4;
+const ICON_SET_RETRY_DELAY_MS = 350;
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+async function setAppIconWithRetry(name: string | null): Promise<void> {
+  let lastError: any;
+  for (let attempt = 0; attempt < ICON_SET_RETRIES; attempt++) {
+    try {
+      await setAlternateAppIcon(name);
+      return;
+    } catch (e) {
+      lastError = e;
+      if (attempt < ICON_SET_RETRIES - 1) await sleep(ICON_SET_RETRY_DELAY_MS);
+    }
+  }
+  throw lastError;
+}
+
 interface IconOption {
   name: string | null; // null = default app icon
   label: string;
@@ -65,7 +88,7 @@ export function AppIconModal({ visible, onClose }: AppIconModalProps) {
     if (isSame || applying) return;
     setApplying(icon.name ?? 'default');
     try {
-      await setAlternateAppIcon(icon.name);
+      await setAppIconWithRetry(icon.name);
       setCurrent(icon.name ?? null);
     } catch (e: any) {
       // Surface the real iOS reason. The most common one right after a rename of
