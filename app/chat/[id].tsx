@@ -1549,6 +1549,13 @@ export default function ChatScreen() {
     let cancelled = false;
     const handle = InteractionManager.runAfterInteractions(() => {
       void (async () => {
+        // Collect every successful swap first, then commit ONE batched
+        // setMessages at the end. Previously this wrote a full-array
+        // replacement PER stuck photo (N writes), which churned renders and
+        // disturbed FlashList's scroll anchoring (perceived as being yanked to
+        // the bottom while reading history). A single write yields an identical
+        // final state with at most one array replacement per heal pass.
+        const healed: Record<string, string[]> = {};
         for (const m of stuck) {
           if (cancelled) return;
           healingIdsRef.current.add(m.id);
@@ -1575,14 +1582,20 @@ export default function ChatScreen() {
               healingIdsRef.current.delete(m.id);
               continue;
             }
-            const current = useChatStore.getState().messages[conversationId] || [];
-            setMessages(
-              conversationId,
-              current.map((mm) => (mm.id === m.id ? { ...mm, imageUrls: swapped } : mm)) as any,
-            );
+            // Record the swap; the single batched write below applies them all.
+            healed[m.id] = swapped;
           } catch {
             healingIdsRef.current.delete(m.id);
           }
+        }
+        // One array replacement for the whole heal pass, reading the freshest
+        // store array once so concurrent updates aren't clobbered.
+        if (!cancelled && Object.keys(healed).length > 0) {
+          const current = useChatStore.getState().messages[conversationId] || [];
+          setMessages(
+            conversationId,
+            current.map((mm) => (healed[mm.id] ? { ...mm, imageUrls: healed[mm.id] } : mm)) as any,
+          );
         }
       })();
     });
@@ -2904,7 +2917,7 @@ export default function ChatScreen() {
         onViewableItemsChanged={onViewableItemsChanged}
         // Load OLDER history when the user nears the TOP (oldest) of the list.
         onStartReached={onStartReached}
-        onStartReachedThreshold={0.5}
+        onStartReachedThreshold={0.15}
         // Scroll-to-bottom button visibility — onChatScroll computes distance
         // from the bottom (newest) from the scroll event.
         onScroll={onChatScroll}
