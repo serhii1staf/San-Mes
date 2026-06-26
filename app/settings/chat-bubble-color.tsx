@@ -97,7 +97,8 @@ export default function ChatBubbleColorScreen() {
   const borderLight = theme.colors.border.light;
 
   // A message-bubble-shaped tile (rounded with a tail corre­sponding to the
-  // side being edited) — replaces the old circles for a Telegram-like read.
+  // side being edited) — Telegram-like read. Selected state lifts the bubble
+  // with a soft accent ring + check; idle state stays clean and minimal.
   const Tile = ({ colors, selected, emoji, label, onPress, defaultFill }: {
     colors: string[] | null; selected: boolean; emoji?: string; label: string; onPress: () => void; defaultFill?: string;
   }) => {
@@ -105,38 +106,53 @@ export default function ChatBubbleColorScreen() {
     const solid = colors && colors.length === 1 ? colors[0] : undefined;
     const fill = colors ? undefined : defaultFill;
     const tail = target === 'out'
-      ? { borderBottomRightRadius: 5 }
-      : { borderBottomLeftRadius: 5 };
+      ? { borderBottomRightRadius: 7 }
+      : { borderBottomLeftRadius: 7 };
     const checkColor = readableTextOn(colors ? colors : (defaultFill || accent));
     return (
       <Pressable onPress={onPress} style={styles.tileWrap}>
-        <View style={[styles.tile, tail, { borderColor: textPrimary, borderWidth: selected ? 2.5 : 0, backgroundColor: solid || fill || 'transparent' }]}>
-          {grad ? (
-            <LinearGradient colors={colors as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
-          ) : null}
-          {selected ? <Feather name="check" size={18} color={checkColor} /> : (emoji ? <RNText style={styles.tileEmoji} allowFontScaling={false}>{emoji}</RNText> : null)}
+        <View style={[styles.tileRing, { borderColor: selected ? accent : 'transparent', backgroundColor: selected ? accent + '14' : 'transparent' }]}>
+          <View style={[styles.tile, tail, { backgroundColor: solid || fill || 'transparent' }]}>
+            {grad ? (
+              <LinearGradient colors={colors as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
+            ) : null}
+            <View style={[StyleSheet.absoluteFill, tail, styles.tileHairline]} pointerEvents="none" />
+            {selected ? (
+              <View style={styles.tileCheck}>
+                <Feather name="check" size={16} color={checkColor} />
+              </View>
+            ) : (emoji ? <RNText style={styles.tileEmoji} allowFontScaling={false}>{emoji}</RNText> : null)}
+          </View>
         </View>
-        <RNText style={[styles.tileLabel, { color: textTertiary }]} numberOfLines={1} allowFontScaling={false}>{label}</RNText>
+        <RNText style={[styles.tileLabel, { color: selected ? textPrimary : textTertiary }]} numberOfLines={1} allowFontScaling={false}>{label}</RNText>
       </Pressable>
     );
   };
 
   return (
     <View style={[styles.root, { backgroundColor: bgPrimary }]}>
-      <ChatPreviewBubbles
-        height={PREVIEW_HEIGHT}
-        fontSize={applied.fontSize}
-        fontFamily={applied.fontFamily === 'mono' ? 'monospace' : applied.fontFamily === 'serif' ? 'serif' : undefined}
-        bubbleRadius={applied.bubbleRadius}
-        backgroundImage={applied.backgroundImage}
-        topPadding={72}
-        bubbleColors={previewOut}
-        bubbleOpacity={opOut}
-        bubbleTextColor={previewOutText}
-        inColors={pendingIn || []}
-        inOpacity={opIn}
-        inTextColor={pendingIn && pendingIn.length ? readableTextOn(pendingIn) : undefined}
-      />
+      <View style={styles.previewWrap}>
+        <ChatPreviewBubbles
+          height={PREVIEW_HEIGHT}
+          fontSize={applied.fontSize}
+          fontFamily={applied.fontFamily === 'mono' ? 'monospace' : applied.fontFamily === 'serif' ? 'serif' : undefined}
+          bubbleRadius={applied.bubbleRadius}
+          backgroundImage={applied.backgroundImage}
+          topPadding={72}
+          bubbleColors={previewOut}
+          bubbleOpacity={opOut}
+          bubbleTextColor={previewOutText}
+          inColors={pendingIn || []}
+          inOpacity={opIn}
+          inTextColor={pendingIn && pendingIn.length ? readableTextOn(pendingIn) : undefined}
+        />
+        {/* Soft fade so the preview melts into the sheet body. */}
+        <LinearGradient
+          colors={['transparent', bgPrimary]}
+          style={styles.previewFade}
+          pointerEvents="none"
+        />
+      </View>
 
       {/* ── Floating header pills (X / title / Apply) — top:28 like the
           other chat modals so the controls sit at the same level. ─────── */}
@@ -183,12 +199,12 @@ export default function ChatBubbleColorScreen() {
 
       {/* Target toggle: which side am I editing? */}
       <View style={styles.targetRow}>
-        <View style={[styles.targetSeg, { backgroundColor: bgElevated, borderColor: borderLight }]}>
+        <View style={[styles.targetSeg, { backgroundColor: tertiary }]}>
           {([['out', 'chat_settings.side_mine', 'Мои'], ['in', 'chat_settings.side_peer', 'Собеседника']] as const).map(([k, key, fb]) => {
             const on = target === k;
             return (
-              <Pressable key={k} onPress={() => { triggerHaptic('selection'); setTarget(k); }} style={[styles.targetBtn, on && { backgroundColor: accent }]}>
-                <RNText allowFontScaling={false} style={[styles.targetText, { color: on ? readableTextOn(accent) : textPrimary }]}>{t(key, fb)}</RNText>
+              <Pressable key={k} onPress={() => { triggerHaptic('selection'); setTarget(k); }} style={[styles.targetBtn, on && { backgroundColor: bgElevated }]}>
+                <RNText allowFontScaling={false} style={[styles.targetText, { color: on ? textPrimary : textTertiary }]}>{t(key, fb)}</RNText>
               </Pressable>
             );
           })}
@@ -197,26 +213,26 @@ export default function ChatBubbleColorScreen() {
 
       <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 16 }}>
         {/* ── Custom creator ──────────────────────────────────────── */}
-        <View style={[styles.sectionHead, { marginTop: 6 }]}>
+        <View style={[styles.sectionHead, { marginTop: 8 }]}>
           <RNText style={[styles.sectionTitle, { color: textTertiary }]} allowFontScaling={false}>{t('chat_settings.custom', 'Свой цвет')}</RNText>
-          <View style={[styles.segment, { borderColor: borderLight }]}>
+          <View style={[styles.segment, { backgroundColor: tertiary }]}>
             {([['solid', 'chat_settings.solid_colors', 'Однотонный'], ['grad', 'chat_settings.gradients', 'Градиент']] as const).map(([k, key, fb]) => {
               const on = (k === 'grad') === customGradient;
               return (
-                <Pressable key={k} onPress={() => { triggerHaptic('selection'); const g = k === 'grad'; setCustomGradient(g); setActivePending(g ? [hslToHex(hue1), hslToHex(hue2)] : [hslToHex(hue1)]); }} style={[styles.segmentBtn, on && { backgroundColor: accent }]}>
-                  <RNText allowFontScaling={false} style={[styles.segmentText, { color: on ? readableTextOn(accent) : textTertiary }]}>{t(key, fb)}</RNText>
+                <Pressable key={k} onPress={() => { triggerHaptic('selection'); const g = k === 'grad'; setCustomGradient(g); setActivePending(g ? [hslToHex(hue1), hslToHex(hue2)] : [hslToHex(hue1)]); }} style={[styles.segmentBtn, on && { backgroundColor: bgElevated }]}>
+                  <RNText allowFontScaling={false} style={[styles.segmentText, { color: on ? textPrimary : textTertiary }]}>{t(key, fb)}</RNText>
                 </Pressable>
               );
             })}
           </View>
         </View>
-        <View style={[styles.customCard, { backgroundColor: bgElevated, borderColor: isCustomSel ? accent : borderLight, borderWidth: isCustomSel ? 1.5 : 0.5 }]}>
+        <View style={[styles.customCard, { backgroundColor: bgElevated, borderColor: isCustomSel ? accent : borderLight, borderWidth: isCustomSel ? 1.5 : StyleSheet.hairlineWidth }]}>
           <View style={styles.customRow}>
             <View style={[styles.customSwatch, { backgroundColor: hslToHex(hue1) }]} />
             <HueSlider value={hue1} onChange={(h) => { setHue1(h); setActivePending(customGradient ? [hslToHex(h), hslToHex(hue2)] : [hslToHex(h)]); }} />
           </View>
           {customGradient ? (
-            <View style={[styles.customRow, { marginTop: 12 }]}>
+            <View style={[styles.customRow, { marginTop: 14 }]}>
               <View style={[styles.customSwatch, { backgroundColor: hslToHex(hue2) }]} />
               <HueSlider value={hue2} onChange={(h) => { setHue2(h); setActivePending([hslToHex(hue1), hslToHex(h)]); }} />
             </View>
@@ -229,11 +245,13 @@ export default function ChatBubbleColorScreen() {
           <RNText style={[styles.sectionValue, { color: textPrimary }]} allowFontScaling={false}>{Math.round(activeOpacity * 100)}%</RNText>
         </View>
         <View style={[styles.sliderCard, { backgroundColor: bgElevated, borderColor: borderLight }]}>
-          <ValueSlider min={MIN_OPACITY} max={1} value={activeOpacity} onChange={setActiveOpacity} color={(activePending && activePending[0]) || accent} trackColor={borderLight} rainbow={false} />
+          <ValueSlider min={MIN_OPACITY} max={1} value={activeOpacity} onChange={setActiveOpacity} color={(activePending && activePending[0]) || accent} trackColor={tertiary} rainbow={false} />
         </View>
 
         {/* ── Gradient combinations ───────────────────────────────── */}
-        <RNText style={[styles.sectionTitle, { color: textTertiary, marginTop: 18, marginBottom: 10 }]} allowFontScaling={false}>{t('chat_settings.gradients', 'Комбинации')}</RNText>
+        <View style={styles.sectionHead}>
+          <RNText style={[styles.sectionTitle, { color: textTertiary }]} allowFontScaling={false}>{t('chat_settings.gradients', 'Комбинации')}</RNText>
+        </View>
         <View style={styles.grid}>
           <Tile
             colors={null}
@@ -256,7 +274,9 @@ export default function ChatBubbleColorScreen() {
         </View>
 
         {/* ── Solid colors ────────────────────────────────────────── */}
-        <RNText style={[styles.sectionTitle, { color: textTertiary, marginTop: 18, marginBottom: 10 }]} allowFontScaling={false}>{t('chat_settings.solid_colors', 'Однотонные')}</RNText>
+        <View style={styles.sectionHead}>
+          <RNText style={[styles.sectionTitle, { color: textTertiary }]} allowFontScaling={false}>{t('chat_settings.solid_colors', 'Однотонные')}</RNText>
+        </View>
         <View style={styles.grid}>
           {BUBBLE_COLORS.map((sw) => (
             <Tile
@@ -272,10 +292,10 @@ export default function ChatBubbleColorScreen() {
 
       {/* Footer */}
       <View style={[styles.footerRow, { paddingBottom: insets.bottom + 12, paddingHorizontal: 16, backgroundColor: bgPrimary, borderTopColor: borderLight }]}>
-        <Pressable onPress={onCancel} style={[styles.footerBtn, { backgroundColor: bgElevated, borderColor: borderLight }]}>
+        <Pressable onPress={onCancel} style={[styles.footerBtn, styles.footerBtnGhost, { backgroundColor: tertiary }]}>
           <RNText allowFontScaling={false} style={[styles.footerBtnText, { color: textPrimary }]}>{t('common.cancel')}</RNText>
         </Pressable>
-        <Pressable onPress={onApply} style={[styles.footerBtn, { backgroundColor: previewOut[0], borderColor: previewOut[0] }]}>
+        <Pressable onPress={onApply} style={[styles.footerBtn, { backgroundColor: previewOut[0] }]}>
           <RNText allowFontScaling={false} style={[styles.footerBtnText, { color: previewOutText }]}>{t('common.apply')}</RNText>
         </Pressable>
       </View>
@@ -330,6 +350,10 @@ const sliderStyles = StyleSheet.create({
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
+
+  previewWrap: { position: 'relative' },
+  previewFade: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 28 },
+
   headerRow: {
     position: 'absolute', left: 0, right: 0, height: 36, flexDirection: 'row',
     alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, zIndex: 100,
@@ -342,36 +366,43 @@ const styles = StyleSheet.create({
   headerTitleText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' },
   headerApplyText: { color: '#FFFFFF', fontSize: 14, fontWeight: '600' },
 
-  targetRow: { paddingHorizontal: 16, paddingTop: 10, paddingBottom: 4, alignItems: 'center' },
-  targetSeg: { flexDirection: 'row', borderRadius: 12, borderWidth: 0.5, padding: 3 },
-  targetBtn: { paddingHorizontal: 20, paddingVertical: 7, borderRadius: 9 },
+  targetRow: { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 4, alignItems: 'center' },
+  targetSeg: { flexDirection: 'row', borderRadius: 12, padding: 3 },
+  targetBtn: { paddingHorizontal: 24, paddingVertical: 7, borderRadius: 9 },
   targetText: { fontSize: 13, fontWeight: '600' },
 
-  sectionHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 16, marginBottom: 8 },
-  sectionTitle: { fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 },
-  sectionValue: { fontSize: 13, fontWeight: '600', fontVariant: ['tabular-nums'] },
+  sectionHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 22, marginBottom: 12, minHeight: 24 },
+  sectionTitle: { fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.7 },
+  sectionValue: { fontSize: 13, fontWeight: '700', fontVariant: ['tabular-nums'] },
 
-  segment: { flexDirection: 'row', borderWidth: 0.5, borderRadius: 10, overflow: 'hidden' },
-  segmentBtn: { paddingHorizontal: 12, paddingVertical: 5 },
+  segment: { flexDirection: 'row', borderRadius: 9, padding: 2 },
+  segmentBtn: { paddingHorizontal: 12, paddingVertical: 5, borderRadius: 7 },
   segmentText: { fontSize: 12, fontWeight: '600' },
 
-  customCard: { padding: 14, borderRadius: 14 },
-  customRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  customSwatch: { width: 30, height: 30, borderRadius: 15 },
+  customCard: { padding: 16, borderRadius: 18 },
+  customRow: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  customSwatch: { width: 34, height: 34, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(127,127,127,0.18)' },
 
-  sliderCard: { paddingHorizontal: 16, paddingVertical: 6, borderRadius: 14, borderWidth: 0.5 },
+  sliderCard: { paddingHorizontal: 18, paddingVertical: 8, borderRadius: 18, borderWidth: StyleSheet.hairlineWidth },
 
-  grid: { flexDirection: 'row', flexWrap: 'wrap', rowGap: 14 },
-  tileWrap: { width: '25%', alignItems: 'center', gap: 5 },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', rowGap: 18 },
+  tileWrap: { width: '25%', alignItems: 'center', gap: 8 },
+  tileRing: { padding: 3, borderRadius: 20, borderWidth: 2 },
   tile: {
-    width: 58, height: 40, borderRadius: 16, overflow: 'hidden',
+    width: 58, height: 42, borderRadius: 15, overflow: 'hidden',
     alignItems: 'center', justifyContent: 'center',
-    shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 3, shadowOffset: { width: 0, height: 1 }, elevation: 2,
+    shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, elevation: 2,
+  },
+  tileHairline: { borderRadius: 15, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(127,127,127,0.2)' },
+  tileCheck: {
+    width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.16)',
   },
   tileEmoji: { fontSize: 18 },
-  tileLabel: { fontSize: 10, fontWeight: '500' },
+  tileLabel: { fontSize: 10.5, fontWeight: '500', letterSpacing: 0.1 },
 
-  footerRow: { flexDirection: 'row', gap: 10, paddingTop: 10, borderTopWidth: 0.5 },
-  footerBtn: { flex: 1, paddingVertical: 14, borderRadius: 14, alignItems: 'center', justifyContent: 'center', borderWidth: 0.5 },
+  footerRow: { flexDirection: 'row', gap: 10, paddingTop: 12, borderTopWidth: StyleSheet.hairlineWidth },
+  footerBtn: { flex: 1, paddingVertical: 14, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
+  footerBtnGhost: {},
   footerBtnText: { fontSize: 15, fontWeight: '600' },
 });

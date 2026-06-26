@@ -131,8 +131,15 @@ export default function ChatBackgroundScreen() {
         topPadding={insets.top + 60}
       />
 
+      {/* Soft top scrim keeps the floating pills legible over bright wallpapers */}
+      <LinearGradient
+        colors={['rgba(0,0,0,0.28)', 'transparent']}
+        style={[styles.topScrim, { height: insets.top + 96 }]}
+        pointerEvents="none"
+      />
+
       {/* ── Floating header pills ───────────────────────────────────── */}
-      <View style={[styles.headerRow, { top: 28 }]} pointerEvents="box-none">
+      <View style={[styles.headerRow, { top: insets.top + 8 }]} pointerEvents="box-none">
         <Pressable onPress={onCancel} hitSlop={10} style={glassActive ? [styles.headerPill, { overflow: 'visible' }] : styles.headerPill}>
           {glassActive ? (
             <NativeGlassView glassStyle="regular" isInteractive colorScheme="dark" style={[styles.headerPillInner, { borderRadius: 18 }]}>
@@ -183,6 +190,11 @@ export default function ChatBackgroundScreen() {
 
       {/* ── Controls + footer ───────────────────────────────────────── */}
       <View style={[styles.controlsWrap, { paddingBottom: insets.bottom + 16 }]}>
+        {/* Sheet grabber — modern bottom-panel affordance */}
+        <View style={styles.grabberWrap} pointerEvents="none">
+          <View style={[styles.grabber, { backgroundColor: borderLight }]} />
+        </View>
+
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -248,7 +260,11 @@ export default function ChatBackgroundScreen() {
         <View style={styles.footerRow}>
           <Pressable
             onPress={onCancel}
-            style={[styles.footerBtn, { backgroundColor: bgElevated, borderColor: borderLight }]}
+            style={({ pressed }) => [
+              styles.footerBtn,
+              styles.footerBtnGhost,
+              { backgroundColor: bgElevated, borderColor: borderLight, opacity: pressed ? 0.6 : 1 },
+            ]}
           >
             <RNText allowFontScaling={false} style={[styles.footerBtnText, { color: textPrimary }]}>
               {t('common.cancel')}
@@ -256,7 +272,11 @@ export default function ChatBackgroundScreen() {
           </Pressable>
           <Pressable
             onPress={onApply}
-            style={[styles.footerBtn, { backgroundColor: accent, borderColor: accent }]}
+            style={({ pressed }) => [
+              styles.footerBtn,
+              styles.footerBtnPrimary,
+              { backgroundColor: accent, shadowColor: accent, opacity: pressed ? 0.85 : 1 },
+            ]}
           >
             <RNText allowFontScaling={false} style={[styles.footerBtnText, { color: '#FFFFFF' }]}>
               {t('common.apply')}
@@ -293,19 +313,27 @@ function BgTile({
   return (
     <Pressable
       onPress={onPress}
-      style={[
+      style={({ pressed }) => [
         styles.tile,
         {
           backgroundColor: bgElevated,
           borderColor: active ? accent : borderLight,
-          borderWidth: active ? 2 : 0.5,
+          borderWidth: active ? 2 : StyleSheet.hairlineWidth,
+          opacity: pressed ? 0.85 : 1,
         },
       ]}
     >
-      <View style={styles.tileInner}>{children}</View>
+      <View style={styles.tileInner}>
+        {children}
+        {active ? (
+          <View style={[styles.tileCheck, { backgroundColor: accent }]}>
+            <Feather name="check" size={12} color="#FFFFFF" />
+          </View>
+        ) : null}
+      </View>
       <RNText
         allowFontScaling={false}
-        style={[styles.tileLabel, { color: active ? accent : textPrimary }]}
+        style={[styles.tileLabel, { color: active ? accent : textPrimary, fontWeight: active ? '600' : '500' }]}
         numberOfLines={1}
       >
         {label}
@@ -314,11 +342,18 @@ function BgTile({
   );
 }
 
-const TILE_WIDTH = 88;
-const TILE_HEIGHT = 120;
+const TILE_WIDTH = 84;
+const TILE_HEIGHT = 128;
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
+  topScrim: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 50,
+  },
   headerRow: {
     position: 'absolute',
     left: 0,
@@ -330,7 +365,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     zIndex: 100,
   },
-  headerPill: { borderRadius: 18, overflow: 'hidden' },
+  headerPill: {
+    borderRadius: 18,
+    overflow: 'hidden',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.18,
+    shadowRadius: 8,
+  },
   headerPillInner: {
     height: 36,
     minWidth: 36,
@@ -363,49 +405,88 @@ const styles = StyleSheet.create({
 
   controlsWrap: {
     flex: 1,
-    paddingTop: 16,
-    gap: 16,
+    paddingTop: 8,
+    gap: 18,
     justifyContent: 'flex-start',
+  },
+  grabberWrap: {
+    alignItems: 'center',
+    paddingTop: 8,
+    paddingBottom: 2,
+  },
+  grabber: {
+    width: 38,
+    height: 5,
+    borderRadius: 3,
+    opacity: 0.9,
   },
   tilesRow: {
     flexDirection: 'row',
     paddingHorizontal: 16,
-    gap: 10,
+    paddingVertical: 8,
+    gap: 12,
     alignItems: 'center',
   },
   tile: {
     width: TILE_WIDTH,
     height: TILE_HEIGHT,
-    borderRadius: 14,
+    borderRadius: 18,
     overflow: 'hidden',
     paddingBottom: 6,
     alignItems: 'center',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
   },
   tileInner: {
     width: '100%',
-    height: TILE_HEIGHT - 24,
+    height: TILE_HEIGHT - 28,
     overflow: 'hidden',
+  },
+  tileCheck: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
   },
   tileFill: { width: '100%', height: '100%' },
   tileLabel: {
-    fontSize: 11,
+    fontSize: 11.5,
     paddingHorizontal: 6,
-    paddingTop: 4,
+    paddingTop: 6,
     fontWeight: '500',
   },
   footerRow: {
     flexDirection: 'row',
-    gap: 10,
+    gap: 12,
     marginTop: 'auto',
     paddingHorizontal: 16,
   },
   footerBtn: {
     flex: 1,
-    paddingVertical: 14,
-    borderRadius: 14,
+    paddingVertical: 15,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 0.5,
+  },
+  footerBtnGhost: {
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  footerBtnPrimary: {
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.28,
+    shadowRadius: 12,
+    elevation: 4,
   },
   footerBtnText: { fontSize: 15, fontWeight: '600' },
 });

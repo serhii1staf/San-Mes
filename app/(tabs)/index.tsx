@@ -1,5 +1,5 @@
 import React, { useEffect, useCallback, useState, useRef, useMemo } from 'react';
-import { View, RefreshControl, Pressable, StyleSheet, ActivityIndicator, Modal, InteractionManager } from 'react-native';
+import { View, RefreshControl, Pressable, StyleSheet, ActivityIndicator, Modal, InteractionManager, Animated, Easing } from 'react-native';
 import { FlashList } from '@shopify/flash-list';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -386,6 +386,59 @@ export default function FeedScreen() {
     router.push('/settings/pixel-icons?purpose=home-header');
   }, []);
 
+  // --- Custom header refresh spinner --------------------------------------
+  // Drives a small, theme-accent spinner that lives next to the "San"
+  // wordmark. The native RefreshControl spinner is neutralised (transparent
+  // tint) below so the only visible refresh affordance is this one, which
+  // sits ABOVE the blurred header instead of behind it.
+  //
+  // Two Animated.Values, created once via useRef so their identity is stable
+  // across renders (these refs are unconditional top-level hooks — they sit
+  // alongside every other hook and never move relative to a conditional or
+  // early return, so hook order/count is preserved):
+  //   • spinValue   — continuous 0→1 rotation loop while refreshing.
+  //   • appearValue — 0 (hidden) → 1 (shown) fade+scale envelope.
+  // Both animate exclusively on opacity/transform so useNativeDriver works.
+  const spinValue = useRef(new Animated.Value(0)).current;
+  const appearValue = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    let loop: Animated.CompositeAnimation | null = null;
+    if (isRefreshing) {
+      // Gentle fade + scale in.
+      Animated.spring(appearValue, {
+        toValue: 1,
+        useNativeDriver: true,
+        friction: 7,
+        tension: 90,
+      }).start();
+      // Continuous, linear rotation — restart from 0 so the loop is seamless.
+      spinValue.setValue(0);
+      loop = Animated.loop(
+        Animated.timing(spinValue, {
+          toValue: 1,
+          duration: 750,
+          easing: Easing.linear,
+          useNativeDriver: true,
+        }),
+      );
+      loop.start();
+    } else {
+      // Fade + scale out, then halt the rotation once it's invisible so we
+      // don't keep a driver running off-screen.
+      Animated.timing(appearValue, {
+        toValue: 0,
+        duration: 220,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }).start(() => {
+        spinValue.stopAnimation();
+      });
+    }
+    return () => {
+      if (loop) loop.stop();
+    };
+  }, [isRefreshing, spinValue, appearValue]);
+
   // Reload from cache when tab gains focus (picks up new posts from create screen).
   // Synchronous MMKV read deferred via InteractionManager so the tab-switch frame
   // is never blocked — keeps navigation buttery on weak devices.
@@ -677,6 +730,11 @@ export default function FeedScreen() {
   const headerContentHeight = insets.top + 48;
   const headerGradientHeight = headerContentHeight + 28;
 
+  // Render-time (non-hook) derived value: maps the 0→1 spin loop to a full
+  // rotation. Computed inline on the stable Animated.Value ref.
+  const spinRotate = spinValue.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
+  const spinScale = appearValue.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1] });
+
   // Stable contentContainerStyle — the previous inline object literal was a
   // new reference every render, busting FlashList's prop comparison and
   // contributing avoidable work whenever FeedScreen re-rendered for unrelated
@@ -725,6 +783,30 @@ export default function FeedScreen() {
               {homeHeaderIcon ? <PixelIcon id={homeHeaderIcon} size={26} /> : null}
               <Text variant="subheading" weight="bold">San</Text>
             </Pressable>
+            {/* Custom pull-to-refresh spinner — sits right next to the "San"
+                wordmark, above the blur. Fades + scales in and rotates while
+                refreshing, then fades out. The classic ring (faint full circle
+                + solid accent top arc) reads as a clean, compact spinner. */}
+            <Animated.View
+              pointerEvents="none"
+              style={{
+                width: 16,
+                height: 16,
+                opacity: appearValue,
+                transform: [{ scale: spinScale }, { rotate: spinRotate }],
+              }}
+            >
+              <View
+                style={{
+                  width: 16,
+                  height: 16,
+                  borderRadius: 8,
+                  borderWidth: 2,
+                  borderColor: theme.colors.accent.primary + '33',
+                  borderTopColor: theme.colors.accent.primary,
+                }}
+              />
+            </Animated.View>
             {!isOnline && (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(255,59,48,0.12)', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 }}>
                 <ActivityIndicator size={10} color="#FF3B30" />
@@ -762,7 +844,7 @@ export default function FeedScreen() {
         // resizes a card above the viewport" jump (replaces the old FlatList
         // `{ minIndexForVisible: 0 }` shape).
         drawDistance={250}
-        refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={theme.colors.accent.primary} progressViewOffset={headerContentHeight} />}
+        refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor="transparent" colors={['transparent']} progressBackgroundColor="transparent" progressViewOffset={headerContentHeight} />}
       />
 
       <PostMenuModal visible={!!menuPost} post={menuPost} onClose={() => setMenuPost(null)} />
