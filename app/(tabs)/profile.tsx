@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
-import { View, Pressable, ActivityIndicator, Dimensions, Image, Animated, Modal, Share, Alert, RefreshControl, ScrollView, InteractionManager, Text as RNText } from 'react-native';
+import { View, Pressable, ActivityIndicator, Dimensions, Image, Animated, Modal, Share, Alert, ScrollView, InteractionManager, Text as RNText } from 'react-native';
 import { Feather, FontAwesome5 } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -12,20 +12,15 @@ import { LinkedText } from '../../src/components/ui/LinkedText';
 import { CachedImage } from '../../src/components/ui/CachedImage';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { UserBadge } from '../../src/components/ui/UserBadge';
-import { FormattedText } from '../../src/components/ui/FormattedText';
-import { LinkPreview } from '../../src/components/ui/LinkPreview';
-import { EmojiPattern } from '../../src/components/ui/EmojiPattern';
 import { ProfilePostCard } from '../../src/components/profile/ProfilePostCard';
 import { UserProfilePostCard } from '../../src/components/ui/UserProfilePostCard';
 import { ProfileReplyCard, ProfileReply } from '../../src/components/profile/ProfileReplyCard';
-import { AdaptiveProfileText } from '../../src/components/profile/AdaptiveProfileText';
 import { EditProfileTabModal } from '../../src/components/profile/EditProfileTabModal';
 import { useProfileAppearanceStore } from '../../src/store/profileAppearanceStore';
 import { extractFirstUrl } from '../../src/services/linkPreview';
 import { kvGetJSONSync, kvSetJSON } from '../../src/services/kvStore';
 import { AccountSwitcher } from '../../src/components/ui/AccountSwitcher';
 import { PostContextMenu } from '../../src/components/ui/PostContextMenu';
-import { SwipeablePostCard } from '../../src/components/ui/SwipeablePostCard';
 import { FollowsListModal, FollowsListMode } from '../../src/components/profile/FollowsListModal';
 import { showToast } from '../../src/store/toastStore';
 import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
@@ -36,7 +31,6 @@ import { openUrl } from '../../src/utils/openUrl';
 import { Post } from '../../src/types';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { formatTimeAgo } from '../../src/utils/mockData';
-import { accountKey } from '../../src/services/cacheService';
 import { shouldSync, resetThrottle } from '../../src/services/syncThrottle';
 import { useT } from '../../src/i18n/store';
 import { perfMonitor } from '../../src/services/perfMonitor';
@@ -46,7 +40,6 @@ import { parseBannerTransform, stripBannerTransform } from '../../src/utils/bann
 import { useBannerBrightness } from '../../src/hooks/useBannerBrightness';
 import { useScreenCaptureGuard } from '../../src/hooks/useScreenCaptureGuard';
 import { ScreenshotShield } from '../../src/components/ui/ScreenshotShield';
-import { BannerFloatingLinks } from '../../src/components/profile/BannerFloatingLinks';
 import { HeaderSceneLayer } from '../../src/components/profile/HeaderSceneLayer';
 import { HeaderBackgroundLayer } from '../../src/components/profile/HeaderBackgroundLayer';
 import { getLocalScene, normalizeScene } from '../../src/services/headerScene';
@@ -58,7 +51,6 @@ import { useIsFocused } from '@react-navigation/native';
 import { resolveProfileTheme, PROFILE_THEMES_ENABLED, DEFAULT_THEME } from '../../src/theme/profileThemes';
 import { ProfileThemeScope } from '../../src/components/profile/ProfileThemeScope';
 import { ProfileThemeBackground } from '../../src/components/profile/ProfileThemeBackground';
-import { AmbientAnimationLayer } from '../../src/components/profile/AmbientAnimationLayer';
 import { useAmbientAnimationGate } from '../../src/hooks/useAmbientAnimationGate';
 import { useActiveProfileThemeId } from '../../src/store/profileThemeStore';
 
@@ -85,30 +77,6 @@ function detectLinkType(url: string): string {
   if (lower.includes('reddit.com')) return 'reddit';
   if (lower.includes('vk.com')) return 'vk';
   return 'website';
-}
-
-function SocialLinkIcon({ type, url }: { type: string; url: string }) {
-  const theme = useTheme();
-  const brandIcons: Record<string, { name: string; color: string; isBrand: boolean }> = {
-    github: { name: 'github', color: theme.isDark ? '#FFFFFF' : '#333333', isBrand: true },
-    twitter: { name: 'twitter', color: '#1DA1F2', isBrand: true },
-    instagram: { name: 'instagram', color: '#E4405F', isBrand: true },
-    youtube: { name: 'youtube', color: '#FF0000', isBrand: true },
-    telegram: { name: 'telegram-plane', color: '#0088CC', isBrand: true },
-    linkedin: { name: 'linkedin-in', color: '#0A66C2', isBrand: true },
-    twitch: { name: 'twitch', color: '#9146FF', isBrand: true },
-    spotify: { name: 'spotify', color: '#1DB954', isBrand: true },
-    tiktok: { name: 'tiktok', color: theme.isDark ? '#FFFFFF' : '#000000', isBrand: true },
-    discord: { name: 'discord', color: '#5865F2', isBrand: true },
-    website: { name: 'globe', color: '#2563EB', isBrand: false },
-  };
-  const detected = detectLinkType(url);
-  const icon = brandIcons[detected] || brandIcons[type] || brandIcons.website;
-  return (
-    <Pressable onPress={() => { triggerHaptic('light'); openUrl(url); }} style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: icon.color + '18', alignItems: 'center', justifyContent: 'center' }}>
-      {icon.isBrand ? <FontAwesome5 name={icon.name} size={13} color={icon.color} brand /> : <Feather name={icon.name as any} size={13} color={icon.color} />}
-    </Pressable>
-  );
 }
 
 // Compact count formatter for the inline profile stats ("14.8K", "1.2M").

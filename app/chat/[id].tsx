@@ -59,6 +59,16 @@ const REPLY_THRESHOLD = 60;
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const SCREEN_HEIGHT = Dimensions.get('window').height;
 
+// Stable FlashList prop objects. The chat screen re-renders frequently
+// (reply/edit banner, keyboard frames, scroll-to-bottom toggle, store
+// message updates), and passing FRESH inline object literals for these props
+// on every one of those renders handed FlashList a new identity each time —
+// forcing its internal prop-diff/effect work to re-run needlessly. Both values
+// are compile-time constants, so hoisting them to module scope makes the
+// references stable across every render without changing any behaviour.
+const MVCP_FROM_BOTTOM = { startRenderingFromBottom: true } as const;
+const LIST_CONTENT_CONTAINER_STYLE = { paddingBottom: 8 } as const;
+
 // ── Telegram-style windowed message loading ───────────────────────────────
 // Very long conversations must NOT mount/parse their whole history on open.
 // We render only the most-recent `INITIAL_WINDOW` messages and grow the
@@ -2215,7 +2225,7 @@ export default function ChatScreen() {
     }
   }, [handleMenuAction, closeMenu]);
 
-  const handleSend = async (rawText: string) => {
+  const handleSend = useCallback(async (rawText: string) => {
     const hasImages = pendingImages.length > 0;
     if ((!rawText.trim() && !hasImages) || !conversationId) return;
     triggerHaptic('medium');
@@ -2385,7 +2395,7 @@ export default function ChatScreen() {
       // participant, migrates optimistic messages, and re-keys the route.
       reconcileConversation(convId, text || (uploadedUrls.length > 0 ? '📷' : ''));
     } catch {}
-  };
+  }, [pendingImages, conversationId, editing, replyTo, currentUserId, chatSettings.replyPixelIcon, participantId, id, t, addMessage, scrollToEnd, setMessages, reconcileConversation]);
 
   // ── Media-panel long-press actions (Task B) ───────────────────────────────
   // Additive callbacks wired down through MediaPanel → Emoji/Gif panels. A
@@ -2878,8 +2888,8 @@ export default function ChatScreen() {
         // virtualization knob — and it's exactly what removes the heavy
         // per-bubble mount-on-scroll cost (gestures + Reanimated layers) that
         // FlatList re-paid on every row scrolling into view.
-        maintainVisibleContentPosition={{ startRenderingFromBottom: true }}
-        contentContainerStyle={{ paddingBottom: 8 }}
+        maintainVisibleContentPosition={MVCP_FROM_BOTTOM}
+        contentContainerStyle={LIST_CONTENT_CONTAINER_STYLE}
         // Non-inverted: ListHeaderComponent is the TOP (oldest) spacer under the
         // header gradient; ListFooterComponent is the BOTTOM spacer above the
         // input bar. (Swapped from the old inverted layout.)
