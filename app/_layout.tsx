@@ -275,6 +275,15 @@ function RootLayout() {
       initRateLimits();
       cacheCleanup();
       useConnectivityStore.getState().start();
+      // Proactively cap expo-image's unbounded on-disk cache so a long-running
+      // image-heavy session can't grow it into storage-exhaustion / crash
+      // territory. Dynamically imported + fully guarded so it never blocks
+      // startup and degrades gracefully on an older binary. Internally
+      // throttled to once per session and best-effort (clears only when over
+      // the cap; images re-download cheaply via the CDN proxy).
+      import('../src/services/imageDiskCacheGuard')
+        .then(({ enforceImageDiskCacheCap }) => enforceImageDiskCacheCap())
+        .catch(() => {});
       // Refresh the viewer's follow graph from the server once on boot so
       // follow buttons reconcile to server truth app-wide (the entity store
       // only rehydrates the cached follow set synchronously above).
