@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useCallback, forwardRef, useImperativeHandle } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback, forwardRef, useImperativeHandle } from 'react';
 import { View, Pressable, Animated, Dimensions, ScrollView, StyleSheet } from 'react-native';
 import Reanimated, { useAnimatedStyle, type SharedValue } from 'react-native-reanimated';
 import { Feather } from '@expo/vector-icons';
@@ -8,6 +8,7 @@ import { Text } from './Text';
 import { FormattedText } from './FormattedText';
 import { CachedImage } from './CachedImage';
 import { LinkPreview } from './LinkPreview';
+import Skeleton from './Skeleton';
 import { extractFirstUrl } from '../../services/linkPreview';
 import { openUrl } from '../../utils/openUrl';
 import { ChatMessage } from '../../types';
@@ -130,6 +131,15 @@ export const MessageContextMenu = forwardRef<MessageContextMenuHandle, MessageCo
   // Latest measure fn, read by the animation-completion callback. Kept in a ref
   // so the open effect doesn't need `items` (declared below) in its deps.
   const measureZonesRef = useRef<() => void>(() => {});
+  // Defer the heavy preview leaves (CachedImage photos / image grid,
+  // LinkPreview) by one paint after open. They mount behind same-size
+  // Skeleton placeholders so the slide-up frame stays light and the
+  // open animation never janks (mirrors the CommentContextMenu fix).
+  const [contentReady, setContentReady] = useState(false);
+  // RAF handles for the two-frame defer, tracked so they can be cancelled
+  // on unmount / re-close and never fire after the component is gone.
+  const rafOuter = useRef<number | null>(null);
+  const rafInner = useRef<number | null>(null);
 
   useEffect(() => {
     if (visible) {
@@ -145,13 +155,24 @@ export const MessageContextMenu = forwardRef<MessageContextMenuHandle, MessageCo
         // translateY transform, so measuring mid-animation would be wrong.
         measureZonesRef.current();
       });
+      // Mount the heavy preview leaves one paint AFTER kicking off the
+      // animation (two RAFs = after the first slide frame has painted), so
+      // the expensive image/link work never lands on the slide-up frame.
+      rafOuter.current = requestAnimationFrame(() => {
+        rafInner.current = requestAnimationFrame(() => setContentReady(true));
+      });
+    } else {
+      setContentReady(false);
     }
   }, [visible]);
 
   // Reset shared coordination state when the menu unmounts so a stale hover /
-  // active flag / zone list can never leak into the next open.
+  // active flag / zone list can never leak into the next open. Also cancel any
+  // pending defer RAFs so setContentReady can never fire after unmount.
   useEffect(() => {
     return () => {
+      if (rafOuter.current != null) cancelAnimationFrame(rafOuter.current);
+      if (rafInner.current != null) cancelAnimationFrame(rafInner.current);
       if (actionZones) actionZones.value = [];
       if (hoveredAction) hoveredAction.value = '';
       if (dragActive) dragActive.value = false;
@@ -256,7 +277,11 @@ export const MessageContextMenu = forwardRef<MessageContextMenuHandle, MessageCo
     if (imageCount === 1) {
       return (
         <View style={{ marginBottom: message.text ? 6 : 0 }}>
-          <CachedImage uri={message.imageUrls![0]} style={{ width: 220, height: 220, borderRadius: 12 }} resizeMode="cover" />
+          {contentReady ? (
+            <CachedImage uri={message.imageUrls![0]} style={{ width: 220, height: 220, borderRadius: 12 }} resizeMode="cover" />
+          ) : (
+            <Skeleton width={220} height={220} radius={12} />
+          )}
         </View>
       );
     }
@@ -270,7 +295,11 @@ export const MessageContextMenu = forwardRef<MessageContextMenuHandle, MessageCo
     return (
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap, marginBottom: message.text ? 6 : 0, width: containerWidth }}>
         {message.imageUrls!.map((uri, idx) => (
-          <CachedImage key={idx} uri={uri} style={{ width: cellSize, height: cellSize, borderRadius: 10 }} resizeMode="cover" />
+          contentReady ? (
+            <CachedImage key={idx} uri={uri} style={{ width: cellSize, height: cellSize, borderRadius: 10 }} resizeMode="cover" />
+          ) : (
+            <Skeleton key={idx} width={cellSize} height={cellSize} radius={10} />
+          )
         ))}
       </View>
     );
@@ -293,7 +322,11 @@ export const MessageContextMenu = forwardRef<MessageContextMenuHandle, MessageCo
         // the rare case where a tall video preview + long text exceeds the
         // 45% cap.
         <View style={{ marginTop: 6 }}>
-          <LinkPreview url={link} emoji={linkEmoji} static />
+          {contentReady ? (
+            <LinkPreview url={link} emoji={linkEmoji} static />
+          ) : (
+            <Skeleton width={'100%'} height={64} radius={12} />
+          )}
         </View>
       ) : null}
     </>

@@ -5,6 +5,7 @@ import { router } from 'expo-router';
 import { useTheme } from '../../theme';
 import { Text } from './Text';
 import { CachedImage, prefetchImages } from './CachedImage';
+import Skeleton from './Skeleton';
 import { EmojiPattern } from './EmojiPattern';
 import { MediaViewerModal, MediaViewerSource, InlineVideoPlayer } from './MediaViewerModal';
 import { MiniAppPreviewCard } from './MiniAppPreviewCard';
@@ -260,10 +261,12 @@ const LinkPreviewInner = React.memo(function LinkPreviewInner({ url, onError, te
                   transition={0}
                 />
               ) : (
-                // Flat black placeholder until the post-RAF mount swap.
-                // The 16:9 box keeps layout stable so the play button
-                // doesn't shift when CachedImage finally commits.
-                <View style={{ width: '100%', aspectRatio: 16 / 9, backgroundColor: '#000' }} />
+                // Shimmer skeleton until the post-RAF mount swap. The 16:9
+                // box keeps layout stable so the play button doesn't shift
+                // when CachedImage finally commits — the Skeleton fills it.
+                <View style={{ width: '100%', aspectRatio: 16 / 9 }}>
+                  <Skeleton width={'100%'} height={'100%' as any} radius={0} />
+                </View>
               )}
               {/* Play button */}
               <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
@@ -314,10 +317,10 @@ const LinkPreviewInner = React.memo(function LinkPreviewInner({ url, onError, te
             <CachedImage uri={ytThumb(data.image) as string} style={{ width: '100%', height: '100%' }} resizeMode="cover" proxyWidth={60} priority="low" />
           </View>
         ) : data.image ? (
-          // Flat tinted box reserves the layout slot until the next-RAF
+          // Shimmer skeleton reserves the layout slot until the next-RAF
           // swap. Same rationale as the video layout above — the network
           // + decode races on a frame after the parent screen's mount.
-          <View style={{ width: 60, height: 60, borderRadius: THUMB_RADIUS, backgroundColor: bg }} />
+          <Skeleton width={60} height={60} radius={THUMB_RADIUS} />
         ) : null}
 
         <View style={{ flex: 1, paddingVertical: 2 }}>

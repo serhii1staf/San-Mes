@@ -1,8 +1,9 @@
 import React, { memo, useState, useEffect, useRef } from 'react';
-import { ImageStyle, StyleProp, StyleSheet } from 'react-native';
+import { ImageStyle, StyleProp, StyleSheet, View } from 'react-native';
 import { Image, ImageLoadEventData, ImageErrorEventData } from 'expo-image';
 import { perfMonitor } from '../../services/perfMonitor';
 import { useSettingsStore } from '../../store/settingsStore';
+import Skeleton from './Skeleton';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Image proxy via images.weserv.nl
@@ -154,6 +155,19 @@ interface CachedImageProps {
   onLoad?: (event: ImageLoadEventData) => void;
   /** Forwarded after our proxy-fallback + gauge-release runs. */
   onError?: (event: ImageErrorEventData) => void;
+  /**
+   * OPT-IN shimmer placeholder. When omitted/falsy (the default for every
+   * existing caller) the rendered output is byte-for-byte unchanged — the
+   * `<Image>` is the single returned node with identical props, no wrapper.
+   *
+   * When `true`, the image is wrapped in a container that flattens the
+   * caller's `style` (width/height/aspectRatio/margin/position/borderRadius
+   * all apply to the container exactly as they did to the image) and the
+   * image fades in over a `<Skeleton>` shimmer that is removed once the image
+   * has loaded. All existing Image props/behaviour are preserved on the inner
+   * image.
+   */
+  skeleton?: boolean;
   [key: string]: any;
 }
 
@@ -164,12 +178,22 @@ export const CachedImage = memo(function CachedImage({
   proxyWidth,
   noProxy,
   autoplay,
+  skeleton,
   ...props
 }: CachedImageProps) {
   // Reset proxy-failure state when the source URL changes — otherwise a row
   // recycled in a list would keep falling back forever after a single bad URL.
   const [proxyFailed, setProxyFailed] = useState(false);
   useEffect(() => { setProxyFailed(false); }, [uri]);
+
+  // OPT-IN skeleton reveal: track whether the image has loaded so the shimmer
+  // overlay can be removed once it has. Reset to false whenever the source URL
+  // changes — mirrors the `proxyFailed` reset so a recycled row re-shows its
+  // shimmer for the new image. These hooks run unconditionally (and before the
+  // `if (!uri) return null` early return) so hook order/count stays identical
+  // for skeleton and non-skeleton callers alike.
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => { setLoaded(false); }, [uri]);
 
   // Imperative handle to the underlying expo-image, used only when the caller
   // opts into animation control via the `autoplay` prop. expo-image exposes
@@ -248,6 +272,78 @@ export const CachedImage = memo(function CachedImage({
   delete restProps.onLoad;
   delete restProps.onError;
 
+  // Factored handlers so BOTH the default and skeleton paths share the exact
+  // same perf-monitor instrumentation + proxy-fallback behaviour. In the
+  // skeleton path `handleLoad` additionally flips `loaded` to reveal the image
+  // and tear down the shimmer overlay.
+  const handleLoad = (e: ImageLoadEventData) => {
+    // Perf-monitor: per-host load latency + release the gauge. Gated
+    // here at the call site so the disabled case skips the function
+    // call entirely.
+    if (
+      pendingHere.current &&
+      useSettingsStore.getState().perfMonitorEnabled
+    ) {
+      perfMonitor.markImageDecode(uri, Date.now() - decodeStart.current);
+      perfMonitor.decrementPendingDecodes();
+      pendingHere.current = false;
+    }
+    if (skeleton) setLoaded(true);
+    externalOnLoad?.(e);
+  };
+
+  const handleError = (e: ImageErrorEventData) => {
+    if (!noProxy && !proxyFailed && finalUri !== uri) {
+      setProxyFailed(true);
+    }
+    // Release the in-flight decode counter on error too — otherwise a
+    // single broken URL would pin the gauge at +1 forever.
+    if (pendingHere.current) {
+      perfMonitor.decrementPendingDecodes();
+      pendingHere.current = false;
+    }
+    externalOnError?.(e);
+  };
+
+  // ── OPT-IN skeleton path ──────────────────────────────────────────────────
+  // Wrap the SAME image in a container that takes the caller's flattened style
+  // (so width/height/aspectRatio/margin/position/borderRadius land on the
+  // container exactly as they did on the image) and reveal it over a shimmer.
+  // The inner Image keeps every prop it has in the default path — the
+  // container does not swallow any of them. `imageRef` still points at the
+  // inner Image so the autoplay effect keeps working.
+  if (skeleton) {
+    const flattenedStyle = StyleSheet.flatten(style);
+    return (
+      <View style={[flattenedStyle, { overflow: 'hidden' }]}>
+        <Image
+          ref={imageRef as any}
+          source={{ uri: finalUri }}
+          style={StyleSheet.absoluteFill}
+          autoplay={autoplay}
+          contentFit={resizeMode === 'contain' ? 'contain' : resizeMode === 'fill' ? 'fill' : 'cover'}
+          cachePolicy="memory-disk"
+          transition={0}
+          recyclingKey={uri}
+          onLoad={handleLoad}
+          onError={handleError}
+          {...restProps}
+        />
+        {!loaded && (
+          <Skeleton
+            width={'100%'}
+            height={'100%'}
+            radius={0}
+            style={StyleSheet.absoluteFill}
+          />
+        )}
+      </View>
+    );
+  }
+
+  // ── Default path ────────────────────────────────────────────────────────
+  // Byte-for-byte identical to the original: the <Image> is the single
+  // returned node, with the same props in the same order. No wrapper.
   return (
     <Image
       ref={imageRef as any}
@@ -271,36 +367,8 @@ export const CachedImage = memo(function CachedImage({
       // image and force expo-image to drop its cached bitmap, manifesting
       // as a brief reload when switching tabs / scrolling lists.
       recyclingKey={uri}
-      onLoad={(e) => {
-        // Perf-monitor: per-host load latency + release the gauge. Gated
-        // here at the call site so the disabled case skips the function
-        // call entirely.
-        if (
-          pendingHere.current &&
-          useSettingsStore.getState().perfMonitorEnabled
-        ) {
-          perfMonitor.markImageDecode(uri, Date.now() - decodeStart.current);
-          perfMonitor.decrementPendingDecodes();
-          pendingHere.current = false;
-        }
-        externalOnLoad?.(e);
-      }}
-      // If the proxy fails (e.g. weserv can't fetch a private/odd host), fall
-      // back to the original URL so the image still loads. Without this any
-      // URL the proxy can't see (private buckets, signed URLs, less-common
-      // CDNs in unfurl thumbnails) silently shows nothing.
-      onError={(e) => {
-        if (!noProxy && !proxyFailed && finalUri !== uri) {
-          setProxyFailed(true);
-        }
-        // Release the in-flight decode counter on error too — otherwise a
-        // single broken URL would pin the gauge at +1 forever.
-        if (pendingHere.current) {
-          perfMonitor.decrementPendingDecodes();
-          pendingHere.current = false;
-        }
-        externalOnError?.(e);
-      }}
+      onLoad={handleLoad}
+      onError={handleError}
       {...restProps}
     />
   );
