@@ -67,8 +67,14 @@ export function AppIconModal({ visible, onClose }: AppIconModalProps) {
     try {
       await setAlternateAppIcon(icon.name);
       setCurrent(icon.name ?? null);
-    } catch {
-      Alert.alert(t('app_icon.error_title'), t('app_icon.error_change'));
+    } catch (e: any) {
+      // Surface the real iOS reason. The most common one right after a rename of
+      // the alternate-icon set is "The requested alternate icon was not found",
+      // which means the installed native binary predates these icon names — the
+      // user is still running an older build (or an OTA bundle on top of an old
+      // binary). A fresh native build that includes the current icons fixes it.
+      const detail = e?.message ? `\n\n${String(e.message)}` : '';
+      Alert.alert(t('app_icon.error_title'), `${t('app_icon.error_change')}${detail}`);
     } finally {
       setApplying(null);
     }
