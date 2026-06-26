@@ -23,27 +23,25 @@ import { useSettingsStore } from '../../store/settingsStore';
 import { useIsBlocked } from '../../store/blockedUsersStore';
 import { BlockedContentPlaceholder } from '../feed/BlockedContentPlaceholder';
 
-// ─── Module-level "first frame" latch ──────────────────────────────────
-// Same pattern as `ProfilePostCard.tsx`: the ENTIRE card body is lazy-
-// hydrated past the first paint. The first commit renders only a sized
-// placeholder View; one RAF later the latch flips and every card hydrates
-// with real content. Cards mounting after the first frame initialize with
-// `hydrated = true` directly via the latch, paying zero deferral cost.
-// Collapses initial-mount UI-thread work from ~11ms/card to ~1ms/card.
-let __firstFrameDone = false;
-let __firstFramePending: ((b: boolean) => void)[] = [];
-function __scheduleFirstFrameFlush() {
-  if (__firstFrameDone) return;
-  // Only the first card to mount kicks off the RAF. Later cards just
-  // append themselves to the wait list; the RAF callback drains the array.
-  if (__firstFramePending.length !== 1) return;
-  requestAnimationFrame(() => {
-    __firstFrameDone = true;
-    const list = __firstFramePending;
-    __firstFramePending = [];
-    for (const fn of list) fn(true);
-  });
-}
+// ─── Per-card lazy hydrate ──────────────────────────────────────────────
+// Each card defers its body ONE RAF after its own mount so the FlatList
+// commit that lands a freshly-virtualized card carries only an empty
+// placeholder, with the heavy subtree (FormattedText, LinkPreview,
+// EmojiPattern/PixelIconPattern, SwipeablePostCard wrapper, image grid)
+// committing on the NEXT frame.
+//
+// Why per-card (instead of a module-level "first frame done" latch): the
+// previous module-level latch flipped to `true` once the initial 2 cards
+// had finished their first paint, which meant every subsequent card —
+// including ones mounted DURING SCROLL as FlatList virtualization ran —
+// initialized with `hydrated = true` and committed its full body in a
+// single frame. With ~11 ms of native shadow-tree work per card body, a
+// scroll batch landing 2-3 cards on the same frame storms the UI thread
+// — that was the perceived "~1 second hang" users reported when they
+// opened the profile tab cold and immediately scrolled. Per-card RAF
+// spreads each card's mount across two frames regardless of where it
+// lands in the session, so no scroll-induced commit ever carries more
+// than a handful of empty placeholders + at most one full body.
 
 interface UserProfilePostCardProps {
   post: any;
@@ -135,17 +133,16 @@ function UserProfilePostCardBase({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [perfEnabled]);
 
-  // Lazy-hydrate the whole card body past the first paint via the
-  // module-level latch (see top of file). Cards mounted after the first
-  // card's RAF initialize `hydrated` directly with `true` — zero re-
-  // renders for the bulk of cards in any list-mount storm.
-  const [hydrated, setHydrated] = useState(__firstFrameDone);
+  // Lazy-hydrate the WHOLE card body past the first paint. Each card runs
+  // its OWN RAF after mounting — see the header comment for the full
+  // rationale. The placeholder fallback below collapses an initial-mount
+  // commit from a full subtree to a single empty View, which is what
+  // gives each scroll-induced card mount one cheap "warm-up" frame
+  // before the real subtree commits.
+  const [hydrated, setHydrated] = useState(false);
   useEffect(() => {
-    if (__firstFrameDone) return;
-    __firstFramePending.push(setHydrated);
-    __scheduleFirstFrameFlush();
-    // No cleanup — calling setHydrated on an unmounted component is a
-    // benign no-op in React 18+.
+    const handle = requestAnimationFrame(() => setHydrated(true));
+    return () => cancelAnimationFrame(handle);
   }, []);
 
   const postImages: string[] = useMemo(() => {

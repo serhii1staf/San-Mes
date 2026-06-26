@@ -173,7 +173,7 @@ export function AuthorInfoModal({ visible, track, onClose }: AuthorInfoModalProp
                 {/* Identity */}
                 <View style={{ alignItems: 'center', paddingTop: 4, paddingBottom: 14 }}>
                   {info?.avatar ? (
-                    <CachedImage uri={info.avatar} style={{ width: 76, height: 76, borderRadius: 38, backgroundColor: theme.colors.background.secondary }} resizeMode="cover" />
+                    <CachedImage uri={info.avatar} style={{ width: 76, height: 76, borderRadius: 38, backgroundColor: theme.colors.background.secondary }} resizeMode="cover" skeleton />
                   ) : (
                     <View style={{ width: 76, height: 76, borderRadius: 38, backgroundColor: theme.colors.background.secondary, alignItems: 'center', justifyContent: 'center' }}>
                       <Feather name="user" size={30} color={theme.colors.text.tertiary} />

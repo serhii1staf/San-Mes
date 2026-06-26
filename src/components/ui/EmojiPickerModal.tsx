@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import { View, Pressable, Modal, Animated, Dimensions, ScrollView, Text as RNText, Easing, Platform } from 'react-native';
 import { useTheme } from '../../theme';
 import { Text } from './Text';
@@ -33,6 +33,16 @@ export function EmojiPickerModal({ visible, onClose, onSelect }: EmojiPickerModa
   // snapping up — combined with a gentle cubic-out timing this removes the
   // abrupt "pop" the spring entrance produced.
   const scaleAnim = useRef(new Animated.Value(0.96)).current;
+  // Defer mounting the 48 emoji cells (Pressable + RNText each) by one paint
+  // after the open animation starts, so the open/slide-in frame carries only
+  // the cheap handle + title. The ScrollView itself still mounts immediately
+  // to keep layout/height stable; only its heavy children appear one frame
+  // later — invisible since the slide-in runs 300ms. (Mirrors PostMenuModal.)
+  const [contentReady, setContentReady] = useState(false);
+  // RAF handles for the deferred content reveal — tracked so they can be
+  // cancelled on cleanup / when `visible` flips before they fire.
+  const rafA = useRef<number | null>(null);
+  const rafB = useRef<number | null>(null);
 
   useEffect(() => {
     if (visible) {
@@ -44,7 +54,18 @@ export function EmojiPickerModal({ visible, onClose, onSelect }: EmojiPickerModa
         Animated.timing(scaleAnim, { toValue: 1, duration: 300, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
         Animated.timing(backdropAnim, { toValue: 1, duration: 260, easing: Easing.out(Easing.quad), useNativeDriver: true }),
       ]).start();
+      // Reveal the heavy emoji grid one paint after the open animation has
+      // been kicked off, keeping the first (open) frame cheap.
+      rafA.current = requestAnimationFrame(() => {
+        rafB.current = requestAnimationFrame(() => setContentReady(true));
+      });
+    } else {
+      setContentReady(false);
     }
+    return () => {
+      if (rafA.current != null) { cancelAnimationFrame(rafA.current); rafA.current = null; }
+      if (rafB.current != null) { cancelAnimationFrame(rafB.current); rafB.current = null; }
+    };
   }, [visible]);
 
   const dismiss = () => {
@@ -97,7 +118,7 @@ export function EmojiPickerModal({ visible, onClose, onSelect }: EmojiPickerModa
               </View>
               <Text variant="body" weight="bold" align="center" style={{ marginBottom: 12 }}>{t('emoji_picker.title')}</Text>
               <ScrollView contentContainerStyle={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', paddingHorizontal: 16, paddingBottom: 24 }} showsVerticalScrollIndicator={false}>
-                {EMOJIS.map((e) => (
+                {contentReady && EMOJIS.map((e) => (
                   <Pressable
                     key={e}
                     onPress={() => pick(e)}

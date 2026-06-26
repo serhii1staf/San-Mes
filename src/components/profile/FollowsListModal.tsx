@@ -217,8 +217,11 @@ export function FollowsListModal({ visible, onClose, userId, mode }: FollowsList
           renderItem={renderItem}
           // List can be hundreds of rows — keep the initial mount tiny so
           // the open-spring stays smooth. The rest of the rows mount
-          // batched as the user scrolls into them.
-          initialNumToRender={12}
+          // batched as the user scrolls into them. 7 ≈ one screenful at
+          // maxHeight 480 (~52px/row), so the first paint fills the
+          // visible area with no empty space while cutting open-frame
+          // mount cost ~40%.
+          initialNumToRender={7}
           maxToRenderPerBatch={8}
           windowSize={5}
           removeClippedSubviews

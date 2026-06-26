@@ -907,6 +907,7 @@ export default function ProfileScreen() {
             }}
             resizeMode="cover"
             proxyWidth={SCREEN_WIDTH}
+            skeleton
           />
           <LinearGradient
             colors={[theme.colors.background.primary + '00', theme.colors.background.primary + '55']}
