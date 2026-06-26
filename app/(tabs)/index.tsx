@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback, useState, useRef } from 'react';
+import React, { useEffect, useCallback, useState, useRef, useMemo } from 'react';
 import { View, RefreshControl, Pressable, StyleSheet, ActivityIndicator, Modal, InteractionManager } from 'react-native';
 import { FlashList } from '@shopify/flash-list';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -20,7 +20,6 @@ import { useUpdateStore } from '../../src/store/updateStore';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { useConnectivityStore } from '../../src/services/connectivityMonitor';
 import { resetThrottle, shouldSync } from '../../src/services/syncThrottle';
-import { accountKey } from '../../src/services/cacheService';
 import { kvGetJSONSync, kvGetStringSync, kvSetJSON } from '../../src/services/kvStore';
 import { updateFeedWidget } from '../../src/services/widgetBridge';
 import { useWidgetSettingsStore } from '../../src/store/widgetSettingsStore';
@@ -38,7 +37,7 @@ const FEED_LIMIT = 20;
 // and renders a subtle pill on the bell icon. Lives outside FeedScreen so it
 // re-renders independently when the count changes — the parent feed screen
 // doesn't need to re-flow on every bell update.
-function NotificationBellBadge({ accent, bg }: { accent: string; bg: string }) {
+const NotificationBellBadge = React.memo(function NotificationBellBadge({ accent, bg }: { accent: string; bg: string }) {
   const unread = useNotificationsBadge((s) => s.unread);
   const recompute = useNotificationsBadge((s) => s.recompute);
   // Recompute on tab focus so the count refreshes whenever the user lands
@@ -73,7 +72,7 @@ function NotificationBellBadge({ accent, bg }: { accent: string; bg: string }) {
       <Text variant="caption" weight="bold" color="#FFFFFF" style={{ fontSize: 10, lineHeight: 12 }}>{label}</Text>
     </View>
   );
-}
+});
 
 function FeedHeader() {
   const theme = useTheme();
@@ -669,10 +668,23 @@ export default function FeedScreen() {
     />
   ), [userId, handleComment, handleToggleLike, handleFollow, handleShare, handleMenu]);
 
+  // Stable keyExtractor so FlashList doesn't see a fresh function ref on
+  // every FeedScreen render.
+  const keyExtractor = useCallback((item: Post) => item.id, []);
+
   const bgColor = theme.colors.background.primary;
   const bgTransparent = bgColor + '00';
   const headerContentHeight = insets.top + 48;
   const headerGradientHeight = headerContentHeight + 28;
+
+  // Stable contentContainerStyle — the previous inline object literal was a
+  // new reference every render, busting FlashList's prop comparison and
+  // contributing avoidable work whenever FeedScreen re-rendered for unrelated
+  // reasons (e.g. OTA progress ticks).
+  const listContentContainerStyle = useMemo(
+    () => ({ paddingHorizontal: theme.spacing.base, paddingBottom: 100, paddingTop: headerContentHeight }),
+    [theme.spacing.base, headerContentHeight],
+  );
 
   if (isLoading && posts.length === 0) {
     return (
@@ -735,10 +747,10 @@ export default function FeedScreen() {
 
       <FlashList
         data={posts}
-        keyExtractor={(item) => item.id}
+        keyExtractor={keyExtractor}
         renderItem={renderPost}
         ListHeaderComponent={posts.length === 0 ? FeedHeader : undefined}
-        contentContainerStyle={{ paddingHorizontal: theme.spacing.base, paddingBottom: 100, paddingTop: headerContentHeight }}
+        contentContainerStyle={listContentContainerStyle}
         showsVerticalScrollIndicator={false}
         // FlashList v2 (cell recycling): no FlatList virtualization knobs
         // (initialNumToRender/maxToRenderPerBatch/windowSize/removeClippedSubviews)

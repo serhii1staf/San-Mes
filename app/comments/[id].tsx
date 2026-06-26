@@ -3,7 +3,6 @@ import { View, FlatList, TextInput, Pressable, Platform, ActivityIndicator, Styl
 import { useReanimatedKeyboardAnimation, useKeyboardHandler } from 'react-native-keyboard-controller';
 import { FlashList, type FlashListRef } from '@shopify/flash-list';
 import Reanimated, { useAnimatedStyle, useSharedValue, withTiming, runOnJS, Easing } from 'react-native-reanimated';
-import type { ScrollViewProps } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import * as Clipboard from 'expo-clipboard';
 import { useLocalSearchParams, router } from 'expo-router';
@@ -44,7 +43,6 @@ import { useSettingsStore } from '../../src/store/settingsStore';
 import { useBrowserStore } from '../../src/store/browserStore';
 import { useIsBlocked } from '../../src/store/blockedUsersStore';
 import { BlockedContentPlaceholder } from '../../src/components/feed/BlockedContentPlaceholder';
-import { ChatKeyboardScrollView } from '../../src/components/ui/ChatKeyboardScrollView';
 const SCREEN_WIDTH = Dimensions.get('window').width;
 
 // Delete one full user-perceived character from the end of a string. Handles
@@ -1015,15 +1013,128 @@ export default function CommentsScreen() {
   );
   const keyExtractor = useCallback((item: any) => item.id, []);
 
-  // Stable renderScrollComponent — the comments list is NON-inverted, so the
-  // wrapper gets inverted={false}. KeyboardChatScrollView repositions the list
-  // content on keyboard open/close natively (default "always" lift). A stable
-  // useCallback reference is required so FlatList doesn't rebuild the scroll
-  // view on every render.
-  const renderScrollComponent = useCallback(
-    (p: ScrollViewProps) => <ChatKeyboardScrollView {...p} inverted={false} />,
-    [],
+  // Memoized FlashList content-container padding — a fresh inline object here
+  // would hand FlashList a new contentContainerStyle reference on every
+  // CommentsScreen render (every keystroke, keyboard/panel animation), so this
+  // hoists it behind its real inputs.
+  const listContentStyle = useMemo(
+    () => ({ paddingHorizontal: 20, paddingTop: headerContentHeight, paddingBottom: 80 + insets.bottom }),
+    [headerContentHeight, insets.bottom],
   );
+
+  // Memoized empty-state element — inline JSX rebuilt the element tree on every
+  // render; it only depends on the theme + locale.
+  const listEmpty = useMemo(
+    () => (
+      <View style={{ alignItems: 'center', paddingTop: 40 }}>
+        <RNText style={{ fontSize: 32 }} allowFontScaling={false}>💬</RNText>
+        <Text variant="body" color={theme.colors.text.tertiary} style={{ marginTop: 8 }}>{t('comments.empty')}</Text>
+      </View>
+    ),
+    [theme, t],
+  );
+
+  // Memoized post-header element. Previously an inline IIFE that ran on EVERY
+  // CommentsScreen render (typing, keyboard/panel lift, GIF-gate flips) —
+  // re-parsing the repost marker + image URLs and rebuilding the whole header
+  // subtree each time. It only changes with the post payload, the resolved
+  // repost original, the theme, or the locale.
+  const listHeader = useMemo(() => {
+    if (!postData) return null;
+    const repostInfo = isRepost(postData.content || '');
+    const repostComment = repostInfo.isRepost ? (repostInfo.comment || '') : '';
+    const mainContent = repostInfo.isRepost ? repostComment : (postData.content || '');
+    const origProfile = repostOriginal ? (Array.isArray(repostOriginal.profiles) ? repostOriginal.profiles[0] : repostOriginal.profiles) : null;
+    const origImages = repostOriginal ? parseImageUrls(repostOriginal.image_url) : [];
+    return (
+      <View style={{ marginBottom: 16, paddingBottom: 16, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border.light }}>
+        {repostInfo.isRepost && (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 8 }}>
+            <Feather name="repeat" size={12} color={theme.colors.text.tertiary} />
+            <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ flexShrink: 1 }}>{postData.profiles?.display_name || 'User'} {t('comments.repost_label')}</Text>
+          </View>
+        )}
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+          <Avatar emoji={postData.profiles?.emoji || '😊'} size="sm" />
+          <View style={{ marginLeft: 10, flex: 1 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+              <Text variant="body" weight="bold" numberOfLines={1} style={{ flexShrink: 1 }}>{postData.profiles?.display_name || 'User'}</Text>
+              {postData.profiles?.is_verified && <VerifiedBadge size={12} />}
+              {postData.profiles?.badge && <UserBadge badge={postData.profiles.badge} size="sm" />}
+            </View>
+            <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>@{postData.profiles?.username}</Text>
+          </View>
+        </View>
+        {mainContent ? <FormattedText style={{ fontSize: 15, lineHeight: 21, marginBottom: 8 }}>{mainContent}</FormattedText> : null}
+        {!repostInfo.isRepost && parseImageUrls(postData.image_url).length === 0 && (() => {
+          const link = extractFirstUrl(mainContent);
+          return link ? <View style={{ marginBottom: 8 }}><LinkPreview url={link} /></View> : null;
+        })()}
+        {!repostInfo.isRepost && (() => {
+          const imgs = parseImageUrls(postData.image_url);
+          if (imgs.length === 0) return null;
+          if (imgs.length === 1) return (
+            <Pressable onPress={() => setViewingImage({ uri: imgs[0], images: imgs, index: 0 })}>
+              <CachedImage uri={imgs[0]} style={{ width: '100%', height: 200, borderRadius: 12, marginBottom: 8 }} resizeMode="cover" />
+            </Pressable>
+          );
+          return (
+            <FlatList
+              data={imgs}
+              horizontal
+              keyExtractor={(u, i) => u + i}
+              showsHorizontalScrollIndicator={false}
+              style={{ marginBottom: 8 }}
+              renderItem={({ item, index }) => (
+                <Pressable onPress={() => setViewingImage({ uri: item, images: imgs, index })}>
+                  <CachedImage uri={item} style={{ width: 200, height: 200, borderRadius: 12, marginRight: 8 }} resizeMode="cover" />
+                </Pressable>
+              )}
+            />
+          );
+        })()}
+
+        {/* Repost — embedded original post preview */}
+        {repostInfo.isRepost && (
+          repostOriginal ? (
+            <View style={{ borderWidth: 1, borderColor: theme.colors.border.light, borderRadius: 14, padding: 10, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)' }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 6 }}>
+                <Avatar emoji={origProfile?.emoji || '😊'} size="xs" />
+                <Text variant="caption" weight="semibold" numberOfLines={1} style={{ flexShrink: 1 }}>{origProfile?.display_name || 'User'}</Text>
+                {origProfile?.is_verified && <VerifiedBadge size={10} />}
+                {origProfile?.badge && <UserBadge badge={origProfile.badge} size="sm" />}
+                {origProfile?.username ? <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 11, flexShrink: 0 }}>@{origProfile.username}</Text> : null}
+              </View>
+              {repostOriginal.content ? <FormattedText style={{ fontSize: 13 }} color={theme.colors.text.secondary}>{repostOriginal.content}</FormattedText> : null}
+              {origImages.length === 1 && (
+                <Pressable onPress={() => setViewingImage({ uri: origImages[0], images: origImages, index: 0 })}>
+                  <CachedImage uri={origImages[0]} style={{ width: '100%', height: 160, borderRadius: 10, marginTop: 6 }} resizeMode="cover" />
+                </Pressable>
+              )}
+              {origImages.length > 1 && (
+                <FlatList
+                  data={origImages}
+                  horizontal
+                  keyExtractor={(u, i) => u + i}
+                  showsHorizontalScrollIndicator={false}
+                  style={{ marginTop: 6 }}
+                  renderItem={({ item, index }) => (
+                    <Pressable onPress={() => setViewingImage({ uri: item, images: origImages, index })}>
+                      <CachedImage uri={item} style={{ width: 150, height: 150, borderRadius: 10, marginRight: 6 }} resizeMode="cover" />
+                    </Pressable>
+                  )}
+                />
+              )}
+            </View>
+          ) : (
+            <View style={{ borderWidth: 1, borderColor: theme.colors.border.light, borderRadius: 14, padding: 14, alignItems: 'center' }}>
+              <ActivityIndicator size="small" color={theme.colors.accent.primary} />
+            </View>
+          )
+        )}
+      </View>
+    );
+  }, [postData, repostOriginal, theme, t]);
 
   return (
     <View style={{ flex: 1, backgroundColor: bgColor }}>
@@ -1055,113 +1166,14 @@ export default function CommentsScreen() {
             data={comments}
             keyExtractor={keyExtractor}
             renderItem={renderComment}
-            contentContainerStyle={{ paddingHorizontal: 20, paddingTop: headerContentHeight, paddingBottom: 80 + insets.bottom }}
+            contentContainerStyle={listContentStyle}
             showsVerticalScrollIndicator={false}
             onScroll={onCommentsScroll}
             scrollEventThrottle={64}
             onViewableItemsChanged={onCommentsViewable}
             viewabilityConfig={commentsViewabilityConfig}
-            ListHeaderComponent={postData ? (() => {
-              const repostInfo = isRepost(postData.content || '');
-              const repostComment = repostInfo.isRepost ? (repostInfo.comment || '') : '';
-              const mainContent = repostInfo.isRepost ? repostComment : (postData.content || '');
-              const origProfile = repostOriginal ? (Array.isArray(repostOriginal.profiles) ? repostOriginal.profiles[0] : repostOriginal.profiles) : null;
-              const origImages = repostOriginal ? parseImageUrls(repostOriginal.image_url) : [];
-              return (
-              <View style={{ marginBottom: 16, paddingBottom: 16, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border.light }}>
-                {repostInfo.isRepost && (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 8 }}>
-                    <Feather name="repeat" size={12} color={theme.colors.text.tertiary} />
-                    <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ flexShrink: 1 }}>{postData.profiles?.display_name || 'User'} {t('comments.repost_label')}</Text>
-                  </View>
-                )}
-                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-                  <Avatar emoji={postData.profiles?.emoji || '😊'} size="sm" />
-                  <View style={{ marginLeft: 10, flex: 1 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-                      <Text variant="body" weight="bold" numberOfLines={1} style={{ flexShrink: 1 }}>{postData.profiles?.display_name || 'User'}</Text>
-                      {postData.profiles?.is_verified && <VerifiedBadge size={12} />}
-                      {postData.profiles?.badge && <UserBadge badge={postData.profiles.badge} size="sm" />}
-                    </View>
-                    <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>@{postData.profiles?.username}</Text>
-                  </View>
-                </View>
-                {mainContent ? <FormattedText style={{ fontSize: 15, lineHeight: 21, marginBottom: 8 }}>{mainContent}</FormattedText> : null}
-                {!repostInfo.isRepost && parseImageUrls(postData.image_url).length === 0 && (() => {
-                  const link = extractFirstUrl(mainContent);
-                  return link ? <View style={{ marginBottom: 8 }}><LinkPreview url={link} /></View> : null;
-                })()}
-                {!repostInfo.isRepost && (() => {
-                  const imgs = parseImageUrls(postData.image_url);
-                  if (imgs.length === 0) return null;
-                  if (imgs.length === 1) return (
-                    <Pressable onPress={() => setViewingImage({ uri: imgs[0], images: imgs, index: 0 })}>
-                      <CachedImage uri={imgs[0]} style={{ width: '100%', height: 200, borderRadius: 12, marginBottom: 8 }} resizeMode="cover" />
-                    </Pressable>
-                  );
-                  return (
-                    <FlatList
-                      data={imgs}
-                      horizontal
-                      keyExtractor={(u, i) => u + i}
-                      showsHorizontalScrollIndicator={false}
-                      style={{ marginBottom: 8 }}
-                      renderItem={({ item, index }) => (
-                        <Pressable onPress={() => setViewingImage({ uri: item, images: imgs, index })}>
-                          <CachedImage uri={item} style={{ width: 200, height: 200, borderRadius: 12, marginRight: 8 }} resizeMode="cover" />
-                        </Pressable>
-                      )}
-                    />
-                  );
-                })()}
-
-                {/* Repost — embedded original post preview */}
-                {repostInfo.isRepost && (
-                  repostOriginal ? (
-                    <View style={{ borderWidth: 1, borderColor: theme.colors.border.light, borderRadius: 14, padding: 10, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)' }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 6 }}>
-                        <Avatar emoji={origProfile?.emoji || '😊'} size="xs" />
-                        <Text variant="caption" weight="semibold" numberOfLines={1} style={{ flexShrink: 1 }}>{origProfile?.display_name || 'User'}</Text>
-                        {origProfile?.is_verified && <VerifiedBadge size={10} />}
-                        {origProfile?.badge && <UserBadge badge={origProfile.badge} size="sm" />}
-                        {origProfile?.username ? <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 11, flexShrink: 0 }}>@{origProfile.username}</Text> : null}
-                      </View>
-                      {repostOriginal.content ? <FormattedText style={{ fontSize: 13 }} color={theme.colors.text.secondary}>{repostOriginal.content}</FormattedText> : null}
-                      {origImages.length === 1 && (
-                        <Pressable onPress={() => setViewingImage({ uri: origImages[0], images: origImages, index: 0 })}>
-                          <CachedImage uri={origImages[0]} style={{ width: '100%', height: 160, borderRadius: 10, marginTop: 6 }} resizeMode="cover" />
-                        </Pressable>
-                      )}
-                      {origImages.length > 1 && (
-                        <FlatList
-                          data={origImages}
-                          horizontal
-                          keyExtractor={(u, i) => u + i}
-                          showsHorizontalScrollIndicator={false}
-                          style={{ marginTop: 6 }}
-                          renderItem={({ item, index }) => (
-                            <Pressable onPress={() => setViewingImage({ uri: item, images: origImages, index })}>
-                              <CachedImage uri={item} style={{ width: 150, height: 150, borderRadius: 10, marginRight: 6 }} resizeMode="cover" />
-                            </Pressable>
-                          )}
-                        />
-                      )}
-                    </View>
-                  ) : (
-                    <View style={{ borderWidth: 1, borderColor: theme.colors.border.light, borderRadius: 14, padding: 14, alignItems: 'center' }}>
-                      <ActivityIndicator size="small" color={theme.colors.accent.primary} />
-                    </View>
-                  )
-                )}
-              </View>
-              );
-            })() : null}
-            ListEmptyComponent={
-              <View style={{ alignItems: 'center', paddingTop: 40 }}>
-                <RNText style={{ fontSize: 32 }} allowFontScaling={false}>💬</RNText>
-                <Text variant="body" color={theme.colors.text.tertiary} style={{ marginTop: 8 }}>{t('comments.empty')}</Text>
-              </View>
-            }
+            ListHeaderComponent={listHeader}
+            ListEmptyComponent={listEmpty}
           />
           </GestureDetector>
           </Reanimated.View>
