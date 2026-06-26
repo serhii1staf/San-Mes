@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { View, Pressable, Modal, Animated, Dimensions, ScrollView, Easing } from 'react-native';
 import { ModalStatusBar } from './ModalStatusBar';
 import { Feather } from '@expo/vector-icons';
@@ -9,6 +9,7 @@ import { Avatar } from './Avatar';
 import { FormattedText } from './FormattedText';
 import { LinkPreview } from './LinkPreview';
 import { CachedImage } from './CachedImage';
+import Skeleton from './Skeleton';
 import { VerifiedBadge } from './VerifiedBadge';
 import { UserBadge } from './UserBadge';
 import { extractFirstUrl } from '../../services/linkPreview';
@@ -52,6 +53,13 @@ export function CommentContextMenu({ visible, comment, isOwn, displayBody, reply
   // debounces `visible` (true→false→true bursts from rapid long-press).
   const isOpenRef = useRef(false);
   const isTransitioningRef = useRef(false);
+  // Defer the heavy preview leaves (GIF decode via CachedImage, LinkPreview
+  // unfurl) by one paint after open so the open-animation frame stays cheap.
+  // Same-size Skeletons hold their boxes meanwhile (no layout jump).
+  const [contentReady, setContentReady] = useState(false);
+  // RAF handles for the deferred reveal — cancelled on cleanup / re-close.
+  const rafA = useRef<number | null>(null);
+  const rafB = useRef<number | null>(null);
 
   useEffect(() => {
     if (visible) {
@@ -68,16 +76,29 @@ export function CommentContextMenu({ visible, comment, isOwn, displayBody, reply
         Animated.timing(slideAnim, { toValue: 0, duration: 240, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
         Animated.timing(fade, { toValue: 1, duration: 180, easing: Easing.out(Easing.quad), useNativeDriver: true }),
       ]).start(() => { isTransitioningRef.current = false; });
+      // Reveal the heavy preview leaves one paint after kicking off the open
+      // animation, keeping the first (open) frame cheap.
+      rafA.current = requestAnimationFrame(() => {
+        rafB.current = requestAnimationFrame(() => setContentReady(true));
+      });
     } else {
       // Already closed and idle → no-op (avoid re-entering on redundant flips).
       if (!isOpenRef.current && !isTransitioningRef.current) return;
       isOpenRef.current = false;
+      setContentReady(false);
       // Close animation runs via internal dismiss(); when `visible` flips false
       // externally (parent cleared it) the modal simply unmounts on the next
       // render and the transition flag is cleared by either dismiss() or the
       // open-animation completion callback above.
     }
   }, [visible]);
+
+  // Cancel any pending deferred-reveal RAFs on unmount so they don't fire
+  // against an unmounted component.
+  useEffect(() => () => {
+    if (rafA.current != null) { cancelAnimationFrame(rafA.current); rafA.current = null; }
+    if (rafB.current != null) { cancelAnimationFrame(rafB.current); rafB.current = null; }
+  }, []);
 
   const dismiss = (cb?: () => void) => {
     if (dismissing.current) return;
@@ -133,13 +154,17 @@ export function CommentContextMenu({ visible, comment, isOwn, displayBody, reply
         </View>
       ) : null}
       {gifUrl ? (
-        <CachedImage uri={gifUrl} style={{ width: 160, height: 160, borderRadius: 14, backgroundColor: theme.colors.background.secondary }} resizeMode="cover" />
+        contentReady
+          ? <CachedImage uri={gifUrl} style={{ width: 160, height: 160, borderRadius: 14, backgroundColor: theme.colors.background.secondary }} resizeMode="cover" />
+          : <Skeleton width={160} height={160} radius={14} />
       ) : body ? (
         <FormattedText color={theme.colors.text.primary} linkColor={theme.colors.accent.primary} style={{ fontSize: 15 }} onLinkPress={handleLinkPress}>{body}</FormattedText>
       ) : null}
       {link ? (
         <View style={{ marginTop: 6 }}>
-          <LinkPreview url={link} static />
+          {contentReady
+            ? <LinkPreview url={link} static />
+            : <Skeleton width={'100%'} height={64} radius={12} />}
         </View>
       ) : null}
     </>

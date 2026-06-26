@@ -10,6 +10,7 @@ import { Avatar } from '../ui/Avatar';
 import { CachedImage } from '../ui/CachedImage';
 import { VerifiedBadge } from '../ui/VerifiedBadge';
 import { UserBadge } from '../ui/UserBadge';
+import Skeleton from '../ui/Skeleton';
 import { Post } from '../../types';
 import { triggerHaptic } from '../../utils/haptics';
 import { useAuthStore } from '../../store/authStore';
@@ -45,11 +46,19 @@ export function PostMenuModal({ visible, post, onClose }: PostMenuModalProps) {
   const user = useAuthStore((s) => s.user);
   const removePost = useFeedStore((s) => s.removePost);
   const [mode, setMode] = useState<'menu' | 'report'>('menu');
+  // Defer the heavy preview thumbnail (CachedImage decode) by one paint after
+  // the open animation starts, so the open-animation frame carries only cheap
+  // views. A same-size Skeleton holds the box meanwhile (no layout jump).
+  const [contentReady, setContentReady] = useState(false);
 
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
   const backdropAnim = useRef(new Animated.Value(0)).current;
   const dragY = useRef(new Animated.Value(0)).current;
   const isClosing = useRef(false);
+  // RAF handles for the deferred content reveal — tracked so they can be
+  // cancelled on cleanup / when `visible` flips before they fire.
+  const rafA = useRef<number | null>(null);
+  const rafB = useRef<number | null>(null);
 
   const panResponder = useRef(
     PanResponder.create({
@@ -67,6 +76,7 @@ export function PostMenuModal({ visible, post, onClose }: PostMenuModalProps) {
     if (visible) {
       isClosing.current = false;
       setMode('menu');
+      setContentReady(false);
       dragY.setValue(0);
       slideAnim.setValue(SCREEN_HEIGHT);
       backdropAnim.setValue(0);
@@ -74,7 +84,18 @@ export function PostMenuModal({ visible, post, onClose }: PostMenuModalProps) {
         Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 50, friction: 9 }),
         Animated.timing(backdropAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
       ]).start();
+      // Reveal the heavy preview thumbnail one paint after the open animation
+      // has been kicked off, keeping the first (open) frame cheap.
+      rafA.current = requestAnimationFrame(() => {
+        rafB.current = requestAnimationFrame(() => setContentReady(true));
+      });
+    } else {
+      setContentReady(false);
     }
+    return () => {
+      if (rafA.current != null) { cancelAnimationFrame(rafA.current); rafA.current = null; }
+      if (rafB.current != null) { cancelAnimationFrame(rafB.current); rafB.current = null; }
+    };
   }, [visible]);
 
   const dismiss = () => {
@@ -193,7 +214,10 @@ export function PostMenuModal({ visible, post, onClose }: PostMenuModalProps) {
                   </View>
                   <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>{previewContent}</Text>
                 </View>
-                {previewImage && <CachedImage uri={previewImage} style={{ width: 40, height: 40, borderRadius: 10, marginLeft: 8 }} resizeMode="cover" />}
+                {previewImage && (contentReady
+                  ? <CachedImage uri={previewImage} style={{ width: 40, height: 40, borderRadius: 10, marginLeft: 8 }} resizeMode="cover" />
+                  : <Skeleton width={40} height={40} radius={10} style={{ marginLeft: 8 }} />
+                )}
               </View>
               <MenuItem icon="link" label={t('post_menu.copy_link')} onPress={handleCopyLink} theme={theme} />
               <MenuItem icon="share-2" label={t('post_menu.share')} onPress={handleShare} theme={theme} />
