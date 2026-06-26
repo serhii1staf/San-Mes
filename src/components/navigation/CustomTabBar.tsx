@@ -282,7 +282,7 @@ const TabBarButton = React.memo(function TabBarButton({
 // signed off on the lens look as "fine, not bad", so we trade a sliver of
 // frostiness for a buttery transition.
 
-function SlidingLens({
+const SlidingLens = React.memo(function SlidingLens({
   pillX,
   pillY,
   pillScale,
@@ -419,11 +419,11 @@ function SlidingLens({
       )}
     </Animated.View>
   );
-}
+});
 
 // ─── Glass Backdrop & Reflection ─────────────────────────────────────────────
 
-function GlassBackdrop({ isDark, interactive, radius }: { isDark: boolean; interactive?: boolean; radius?: number }) {
+const GlassBackdrop = React.memo(function GlassBackdrop({ isDark, interactive, radius }: { isDark: boolean; interactive?: boolean; radius?: number }) {
   // Native iOS-26 liquid glass when the user has it enabled and the device
   // supports it; otherwise the existing BlurView (iOS) / gradient (Android).
   // The GlassView fully replaces the backdrop — when the toggle is off it is
@@ -470,9 +470,9 @@ function GlassBackdrop({ isDark, interactive, radius }: { isDark: boolean; inter
       fallback={Platform.OS === 'ios' ? iosFallback : androidFallback}
     />
   );
-}
+});
 
-function TopReflection({ isDark }: { isDark: boolean }) {
+const TopReflection = React.memo(function TopReflection({ isDark }: { isDark: boolean }) {
   return (
     <LinearGradient
       colors={
@@ -484,7 +484,7 @@ function TopReflection({ isDark }: { isDark: boolean }) {
       pointerEvents="none"
     />
   );
-}
+});
 
 // ─── Profile Capsule (detached, standalone glass button) ─────────────────────
 //
@@ -494,7 +494,7 @@ function TopReflection({ isDark }: { isDark: boolean }) {
 // it's a plain tappable button that navigates to the profile route and shows
 // an active state (accent-colored icon + subtle active fill) when focused.
 
-function ProfileCapsule({
+const ProfileCapsule = React.memo(function ProfileCapsule({
   isFocused,
   onPress,
   onLongPress,
@@ -572,7 +572,7 @@ function ProfileCapsule({
       </Pressable>
     </Animated.View>
   );
-}
+});
 
 // ─── Main Tab Bar ────────────────────────────────────────────────────────────
 
@@ -750,6 +750,16 @@ export const CustomTabBar = React.memo(function CustomTabBar({
     },
     [navigation]
   );
+
+  // Stable handlers for the detached Profile capsule. Hoisting these out of
+  // the JSX (where they were inline arrows) keeps their identity steady across
+  // renders so the memoized ProfileCapsule isn't re-rendered by fresh closures.
+  const handleProfilePress = useCallback(() => {
+    if (profileRoute) handleTabPress(profileRoute, isProfileFocused);
+  }, [handleTabPress, profileRoute, isProfileFocused]);
+  const handleProfileLongPress = useCallback(() => {
+    if (profileRoute) navigation.emit({ type: 'tabLongPress', target: profileRoute.key });
+  }, [navigation, profileRoute]);
 
   // ─── JS-thread navigation triggered from the gesture (declared BEFORE pan
   //     so the worklet captures a defined function and not a TDZ binding). ─
@@ -988,10 +998,8 @@ export const CustomTabBar = React.memo(function CustomTabBar({
         {profileRoute && (
           <ProfileCapsule
             isFocused={isProfileFocused}
-            onPress={() => handleTabPress(profileRoute, isProfileFocused)}
-            onLongPress={() =>
-              navigation.emit({ type: 'tabLongPress', target: profileRoute.key })
-            }
+            onPress={handleProfilePress}
+            onLongPress={handleProfileLongPress}
             isDark={isDark}
             glassActive={glassActive}
             activeColor={theme.colors.accent.primary}

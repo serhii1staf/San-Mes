@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { View, Pressable, ViewStyle, TextInput, FlatList, ActivityIndicator, Text as RNText } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -27,6 +27,47 @@ interface ProfileResult {
   badge?: string;
   is_verified?: boolean;
 }
+
+type AppTheme = ReturnType<typeof useTheme>;
+
+// Pure presentational result row. Memoized so unchanged rows don't re-render
+// when the parent re-renders on each keystroke. `theme` is stable across
+// renders and `onSelect` is a stable useCallback, so memo only re-renders a
+// row when its `item` actually changes. Markup/styles are identical to the
+// previous inline renderItem — no visual or behavioral change.
+const SearchResultRow = React.memo(function SearchResultRow({
+  item,
+  theme,
+  onSelect,
+}: {
+  item: ProfileResult;
+  theme: AppTheme;
+  onSelect: (item: ProfileResult) => void;
+}) {
+  return (
+    <Pressable
+      onPress={() => onSelect(item)}
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 12,
+        borderBottomWidth: 0.5,
+        borderBottomColor: theme.colors.border.light,
+      }}
+    >
+      <Avatar emoji={item.emoji} size="md" />
+      <View style={{ marginLeft: 12, flex: 1, overflow: 'hidden' }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+          <Text variant="body" weight="semibold" numberOfLines={1} style={{ flexShrink: 1 }}>{item.display_name}</Text>
+          {item.is_verified && <VerifiedBadge size={12} />}
+          {item.badge && <UserBadge badge={item.badge} size="sm" />}
+        </View>
+        <Text variant="caption" color={theme.colors.text.secondary} numberOfLines={1}>@{item.username}</Text>
+      </View>
+      <Feather name="chevron-right" size={18} color={theme.colors.text.tertiary} />
+    </Pressable>
+  );
+});
 
 export default function SearchScreen() {
   const theme = useTheme();
@@ -118,16 +159,58 @@ export default function SearchScreen() {
     await AsyncStorage.removeItem(accountKey(SEARCH_HISTORY_KEY));
   };
 
-  const handleSelect = (item: ProfileResult) => {
+  const handleSelect = useCallback((item: ProfileResult) => {
     addToHistory(item);
     router.push({ pathname: '/profile/[id]', params: { id: item.id } });
-  };
+  }, [addToHistory]);
 
-  const containerStyle: ViewStyle = {
+  const containerStyle = useMemo<ViewStyle>(() => ({
     flex: 1,
     backgroundColor: theme.colors.background.primary,
     paddingTop: insets.top,
-  };
+  }), [theme, insets.top]);
+
+  // Stable list props so FlatList doesn't see new identities each keystroke.
+  const keyExtractor = useCallback((item: ProfileResult) => item.id, []);
+
+  const renderItem = useCallback(
+    ({ item }: { item: ProfileResult }) => (
+      <SearchResultRow item={item} theme={theme} onSelect={handleSelect} />
+    ),
+    [theme, handleSelect]
+  );
+
+  const listContentStyle = useMemo(() => ({
+    paddingHorizontal: theme.spacing.base,
+    paddingTop: 16,
+    paddingBottom: 100,
+  }), [theme]);
+
+  const ListHeader = useCallback(() => {
+    const searchTerm = query.startsWith('#') ? query.slice(1) : query;
+    const lower = searchTerm.toLowerCase();
+    const matchedApps = miniApps.filter(a => a.name.toLowerCase().includes(lower) || a.description.toLowerCase().includes(lower));
+    if (matchedApps.length === 0) return null;
+    return (
+      <View style={{ marginBottom: 16 }}>
+        <Text variant="caption" weight="semibold" color={theme.colors.text.secondary} style={{ marginBottom: 8 }}>{t('search.mini_apps')}</Text>
+        {matchedApps.slice(0, 3).map(app => (
+          <Pressable key={app.id} onPress={() => router.push({ pathname: '/mini-app', params: { url: encodeURIComponent(app.url), name: app.name, emoji: app.emoji } })} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8 }}>
+            <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: theme.colors.accent.primary + '12', alignItems: 'center', justifyContent: 'center', overflow: 'visible' }}>
+              <RNText style={{ fontSize: 18 }} allowFontScaling={false}>{app.emoji}</RNText>
+            </View>
+            <Text variant="body" weight="medium" style={{ marginLeft: 10 }}>{app.name}</Text>
+          </Pressable>
+        ))}
+      </View>
+    );
+  }, [query, miniApps, theme, t]);
+
+  const listEmpty = useMemo(() => (
+    <View style={{ alignItems: 'center', paddingTop: 40 }}>
+      <Text variant="body" color={theme.colors.text.tertiary}>{t('search.empty')}</Text>
+    </View>
+  ), [theme, t]);
 
   const showHistory = !query.trim() && history.length > 0;
 
@@ -213,8 +296,8 @@ export default function SearchScreen() {
       ) : query.trim() ? (
         <FlatList
           data={profiles}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={{ paddingHorizontal: theme.spacing.base, paddingTop: 16, paddingBottom: 100 }}
+          keyExtractor={keyExtractor}
+          contentContainerStyle={listContentStyle}
           // Virtualization props were absent here — a username search that
           // matches a large slice of the profile directory would mount every
           // matched row at once on each keystroke (search-as-you-type is the
@@ -226,53 +309,9 @@ export default function SearchScreen() {
           initialNumToRender={10}
           maxToRenderPerBatch={8}
           windowSize={7}
-          ListHeaderComponent={() => {
-            const searchTerm = query.startsWith('#') ? query.slice(1) : query;
-            const lower = searchTerm.toLowerCase();
-            const matchedApps = miniApps.filter(a => a.name.toLowerCase().includes(lower) || a.description.toLowerCase().includes(lower));
-            if (matchedApps.length === 0) return null;
-            return (
-              <View style={{ marginBottom: 16 }}>
-                <Text variant="caption" weight="semibold" color={theme.colors.text.secondary} style={{ marginBottom: 8 }}>{t('search.mini_apps')}</Text>
-                {matchedApps.slice(0, 3).map(app => (
-                  <Pressable key={app.id} onPress={() => router.push({ pathname: '/mini-app', params: { url: encodeURIComponent(app.url), name: app.name, emoji: app.emoji } })} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8 }}>
-                    <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: theme.colors.accent.primary + '12', alignItems: 'center', justifyContent: 'center', overflow: 'visible' }}>
-                      <RNText style={{ fontSize: 18 }} allowFontScaling={false}>{app.emoji}</RNText>
-                    </View>
-                    <Text variant="body" weight="medium" style={{ marginLeft: 10 }}>{app.name}</Text>
-                  </Pressable>
-                ))}
-              </View>
-            );
-          }}
-          renderItem={({ item }) => (
-            <Pressable
-              onPress={() => handleSelect(item)}
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                paddingVertical: 12,
-                borderBottomWidth: 0.5,
-                borderBottomColor: theme.colors.border.light,
-              }}
-            >
-              <Avatar emoji={item.emoji} size="md" />
-              <View style={{ marginLeft: 12, flex: 1, overflow: 'hidden' }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-                  <Text variant="body" weight="semibold" numberOfLines={1} style={{ flexShrink: 1 }}>{item.display_name}</Text>
-                  {item.is_verified && <VerifiedBadge size={12} />}
-                  {item.badge && <UserBadge badge={item.badge} size="sm" />}
-                </View>
-                <Text variant="caption" color={theme.colors.text.secondary} numberOfLines={1}>@{item.username}</Text>
-              </View>
-              <Feather name="chevron-right" size={18} color={theme.colors.text.tertiary} />
-            </Pressable>
-          )}
-          ListEmptyComponent={
-            <View style={{ alignItems: 'center', paddingTop: 40 }}>
-              <Text variant="body" color={theme.colors.text.tertiary}>{t('search.empty')}</Text>
-            </View>
-          }
+          ListHeaderComponent={ListHeader}
+          renderItem={renderItem}
+          ListEmptyComponent={listEmpty}
         />
       ) : null}
     </View>

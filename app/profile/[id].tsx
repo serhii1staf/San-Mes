@@ -28,7 +28,6 @@ import { PostContextMenu } from '../../src/components/ui/PostContextMenu';
 import { UserProfilePostCard } from '../../src/components/ui/UserProfilePostCard';
 import { FollowsListModal, FollowsListMode } from '../../src/components/profile/FollowsListModal';
 import { ProfileReplyCard, ProfileReply } from '../../src/components/profile/ProfileReplyCard';
-import { AdaptiveProfileText } from '../../src/components/profile/AdaptiveProfileText';
 import { EditProfileTabModal } from '../../src/components/profile/EditProfileTabModal';
 import { useProfileAppearanceStore } from '../../src/store/profileAppearanceStore';
 import { useScreenCaptureGuard } from '../../src/hooks/useScreenCaptureGuard';
@@ -43,7 +42,6 @@ import { parseBannerTransform, stripBannerTransform } from '../../src/utils/bann
 import { useBannerBrightness } from '../../src/hooks/useBannerBrightness';
 import { kvGetJSONSync, kvSetJSON } from '../../src/services/kvStore';
 import { useLiquidGlassActive, NativeGlassView } from '../../src/components/ui/LiquidGlass';
-import { BannerFloatingLinks } from '../../src/components/profile/BannerFloatingLinks';
 import { HeaderSceneLayer } from '../../src/components/profile/HeaderSceneLayer';
 import { HeaderBackgroundLayer } from '../../src/components/profile/HeaderBackgroundLayer';
 import { normalizeScene } from '../../src/services/headerScene';
@@ -54,15 +52,18 @@ import { useIsFocused } from '@react-navigation/native';
 import { resolveProfileTheme, PROFILE_THEMES_ENABLED, DEFAULT_THEME } from '../../src/theme/profileThemes';
 import { ProfileThemeScope } from '../../src/components/profile/ProfileThemeScope';
 import { ProfileThemeBackground } from '../../src/components/profile/ProfileThemeBackground';
-import { AmbientAnimationLayer } from '../../src/components/profile/AmbientAnimationLayer';
 import { useAmbientAnimationGate } from '../../src/hooks/useAmbientAnimationGate';
 import { ThemedMenuTrigger } from '../../src/components/profile/ThemedMenuTrigger';
-import { ThemedFollowButton } from '../../src/components/profile/ThemedFollowButton';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const SCREEN_HEIGHT = Dimensions.get('window').height;
 const LIKED_POSTS_CACHE_PREFIX = '@san:liked_posts:';
 const USER_REPLIES_CACHE_PREFIX = '@san:user_replies:';
+// Truly-constant, theme-independent values hoisted to module scope so they
+// are allocated once instead of re-created on every screen render (a fresh
+// `contentContainerStyle` / `data` reference makes FlatList do extra work).
+const LIST_CONTENT_CONTAINER_STYLE = { paddingBottom: 100, paddingHorizontal: 16, paddingTop: 12 } as const;
+const EMPTY_LIST: any[] = [];
 type TabName = 'posts' | 'replies' | 'media' | 'likes';
 
 // Report category KEYS — labels come from the dictionary at render time
@@ -88,30 +89,6 @@ function detectLinkType(url: string): string {
   if (lower.includes('twitch.tv')) return 'twitch';
   if (lower.includes('spotify.com') || lower.includes('open.spotify.com')) return 'spotify';
   return 'website';
-}
-
-function SocialLinkIcon({ type, url }: { type: string; url: string }) {
-  const theme = useTheme();
-  const icons: Record<string, { name: string; color: string; isBrand: boolean }> = {
-    github: { name: 'github', color: theme.isDark ? '#FFF' : '#333', isBrand: true },
-    twitter: { name: 'twitter', color: '#1DA1F2', isBrand: true },
-    instagram: { name: 'instagram', color: '#E4405F', isBrand: true },
-    youtube: { name: 'youtube', color: '#FF0000', isBrand: true },
-    telegram: { name: 'telegram-plane', color: '#0088CC', isBrand: true },
-    tiktok: { name: 'tiktok', color: theme.isDark ? '#FFF' : '#000', isBrand: true },
-    linkedin: { name: 'linkedin-in', color: '#0A66C2', isBrand: true },
-    discord: { name: 'discord', color: '#5865F2', isBrand: true },
-    twitch: { name: 'twitch', color: '#9146FF', isBrand: true },
-    spotify: { name: 'spotify', color: '#1DB954', isBrand: true },
-    website: { name: 'globe', color: '#2563EB', isBrand: false },
-  };
-  const detected = detectLinkType(url);
-  const icon = icons[detected] || icons[type] || icons.website;
-  return (
-    <Pressable onPress={() => { triggerHaptic('light'); openUrl(url); }} style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: icon.color + '18', alignItems: 'center', justifyContent: 'center' }}>
-      {icon.isBrand ? <FontAwesome5 name={icon.name} size={13} color={icon.color} brand /> : <Feather name={icon.name as any} size={13} color={icon.color} />}
-    </Pressable>
-  );
 }
 
 // Compact count formatter for the inline profile stats row ("14.8K", "1.2M").
@@ -1376,6 +1353,18 @@ export default function UserProfileScreen() {
     return <>{bannerHeader}{tabsRow}</>;
   }, [bannerHeader, tabsRow]);
 
+  // Memoize the scroll plumbing handed to Animated.FlatList. A fresh
+  // `Animated.event` / drag lambda on every render makes the list re-wire its
+  // scroll handlers; these references are now stable (scrollY is a ref,
+  // onProfileScrollY/setScrollActive are stable). Declared before the guards
+  // below so the hook count stays identical on every render path.
+  const onProfileScroll = useMemo(
+    () => Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true, listener: onProfileScrollY }),
+    [scrollY, onProfileScrollY],
+  );
+  const handleScrollBeginDrag = useCallback(() => setScrollActive(true), []);
+  const handleScrollSettle = useCallback(() => setScrollActive(false), []);
+
   // Loading / not-found guards — placed AFTER every hook so hook count is
   // identical on every render (see the rules-of-hooks note above).
   if (isLoading && !displayProfile) {
@@ -1465,12 +1454,12 @@ export default function UserProfileScreen() {
         // though the underlying tab data hadn't actually changed.
         data={
           activeTab === 'posts'
-            ? (postsReady ? displayPosts : [])
+            ? (postsReady ? displayPosts : EMPTY_LIST)
             : activeTab === 'likes'
               ? likedPosts
               : activeTab === 'replies'
                 ? userReplies
-                : []
+                : EMPTY_LIST
         }
         keyExtractor={keyExtractor}
         renderItem={
@@ -1491,18 +1480,18 @@ export default function UserProfileScreen() {
         removeClippedSubviews={true}
         showsVerticalScrollIndicator={false}
         bounces={false}
-        onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true, listener: onProfileScrollY })}
+        onScroll={onProfileScroll}
         scrollEventThrottle={16}
         // Seasonal theme ambient pause: freeze particles while a scroll gesture
         // is in progress and resume when it settles (Req 6.2, 6.3). These are
         // lightweight JS handlers that fire only on drag start/end, so they do
         // not contend with the native-driven `onScroll` above.
-        onScrollBeginDrag={() => setScrollActive(true)}
-        onScrollEndDrag={() => setScrollActive(false)}
-        onMomentumScrollEnd={() => setScrollActive(false)}
+        onScrollBeginDrag={handleScrollBeginDrag}
+        onScrollEndDrag={handleScrollSettle}
+        onMomentumScrollEnd={handleScrollSettle}
         // Posts get a 16px gutter; the banner + tabs in the header extend
         // edge-to-edge via negative horizontal margins below.
-        contentContainerStyle={{ paddingBottom: 100, paddingHorizontal: 16, paddingTop: 12 }}
+        contentContainerStyle={LIST_CONTENT_CONTAINER_STYLE}
         ListHeaderComponent={listHeader}
         ListEmptyComponent={(
           <View style={{ alignItems: 'center', paddingVertical: 40 }}>
