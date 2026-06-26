@@ -15,6 +15,7 @@ import { MiniAppHost } from '../src/components/ui/MiniAppHost';
 import { Toast } from '../src/components/ui/Toast';
 import { initRateLimits } from '../src/services/rateLimit';
 import { cacheCleanup } from '../src/services/cacheManager';
+import { installImageMemoryManager } from '../src/services/imageMemoryManager';
 import { useConnectivityStore } from '../src/services/connectivityMonitor';
 import { useEntityStore } from '../src/services/entityStore';
 import { setCacheAccount } from '../src/services/cacheService';
@@ -237,6 +238,16 @@ function RootLayout() {
   useEffect(() => {
     const timer = setTimeout(() => setFontTimeout(true), 3000);
     return () => clearTimeout(timer);
+  }, []);
+
+  // Install the global image-memory pressure handler ONCE for the whole
+  // session. On an OS low-memory warning (or a sustained background) it drops
+  // expo-image's decoded-bitmap memory cache so an image-heavy marathon
+  // session can't grow native memory into an OOM-kill — disk bytes are kept,
+  // so visible images repaint instantly from local cache. Best-effort + guarded.
+  useEffect(() => {
+    const dispose = installImageMemoryManager();
+    return dispose;
   }, []);
 
   const ready = fontsLoaded || fontError !== null || fontTimeout;
