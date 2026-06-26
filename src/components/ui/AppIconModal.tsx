@@ -97,7 +97,7 @@ export function AppIconModal({ visible, onClose }: AppIconModalProps) {
                   const isApplying = applying === (icon.name ?? 'default');
                   return (
                     <Pressable key={icon.label} onPress={() => handleSelect(icon)} style={{ width: '31%', alignItems: 'center', marginBottom: 12 }}>
-                      <View style={{ width: '100%', aspectRatio: 1, borderRadius: 22, overflow: 'hidden', borderWidth: selected ? 3 : 1, borderColor: selected ? theme.colors.accent.primary : theme.colors.border.light }}>
+                      <View style={{ width: '100%', aspectRatio: 1, borderRadius: 34, overflow: 'hidden', borderWidth: selected ? 3 : 1, borderColor: selected ? theme.colors.accent.primary : theme.colors.border.light }}>
                         <Image source={icon.source} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
                         {isApplying && (
                           <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.35)', alignItems: 'center', justifyContent: 'center' }}>
