@@ -754,6 +754,14 @@ export default function AIChatScreen() {
     Animated.timing(commandExpand, {
       toValue: input.length === 0 ? 1 : 0,
       duration: 220,
+      // INTENTIONAL JS-DRIVEN LAYOUT TWEEN — do not flag.
+      // This animates `width` (a layout prop), which physically cannot run on
+      // the native driver. A transform (scaleX) or opacity can't replace it
+      // without changing the look: the pill REFLOWS from a 110px label-pill to
+      // a 40px icon circle, and scaleX would squish the icon/label instead of
+      // reflowing. It's a one-shot that fires only on the empty↔non-empty
+      // input transition (≈once per typing session), so the JS-thread cost is
+      // negligible. Left as-is deliberately.
       useNativeDriver: false,
     }).start();
   }, [input.length === 0]);

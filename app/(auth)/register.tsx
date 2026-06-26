@@ -19,21 +19,42 @@ function EmojiStep({ selected, onSelect }: { selected: string; onSelect: (e: str
   const glow = useRef(new Animated.Value(0)).current;
 
   // Continuously animate the dashed ring through accent colours.
+  // NATIVE-DRIVER CONVERSION: previously this drove `borderColor` directly
+  // (useNativeDriver:false → JS-thread interpolation every frame for the life
+  // of the emoji step). borderColor can't run on the native driver, so instead
+  // we drive `opacity` (which CAN) of three stacked, identically-shaped dashed
+  // rings that cross-fade. Because the bottom ring is fully opaque, alpha
+  // compositing (top*a + bottom*(1-a)) yields exactly the same RGB that RN's
+  // linear color interpolation produced — same glow, zero JS-thread work.
   useEffect(() => {
     const loop = Animated.loop(
       Animated.sequence([
-        Animated.timing(glow, { toValue: 1, duration: 1600, useNativeDriver: false }),
-        Animated.timing(glow, { toValue: 0, duration: 1600, useNativeDriver: false }),
+        Animated.timing(glow, { toValue: 1, duration: 1600, useNativeDriver: true }),
+        Animated.timing(glow, { toValue: 0, duration: 1600, useNativeDriver: true }),
       ])
     );
     loop.start();
     return () => loop.stop();
   }, []);
 
-  const borderColor = glow.interpolate({
-    inputRange: [0, 0.5, 1],
-    outputRange: ['#F09458', '#8B5CF6', '#22C55E'],
-  });
+  // Cross-fade opacities derived from the single `glow` value. Stacking order
+  // (bottom→top) is green → purple → orange, mirroring the original
+  // interpolation [0→#F09458 (orange), 0.5→#8B5CF6 (purple), 1→#22C55E (green)]:
+  //   glow 0→0.5: orange fades out over opaque purple  ⇒ lerp(orange,purple)
+  //   glow 0.5→1: purple fades out over opaque green    ⇒ lerp(purple,green)
+  // Green (bottom) stays fully opaque, so it needs no animated opacity.
+  const orangeOpacity = glow.interpolate({ inputRange: [0, 0.5, 1], outputRange: [1, 0, 0] });
+  const purpleOpacity = glow.interpolate({ inputRange: [0, 0.5, 1], outputRange: [1, 1, 0] });
+  const ringStyle = {
+    position: 'absolute' as const,
+    top: 0,
+    left: 0,
+    width: 180,
+    height: 180,
+    borderRadius: 90,
+    borderWidth: 3,
+    borderStyle: 'dashed' as const,
+  };
 
   return (
     <View>
@@ -52,13 +73,15 @@ function EmojiStep({ selected, onSelect }: { selected: string; onSelect: (e: str
 
         {/* Dashed circle with + or selected emoji — opens the emoji modal */}
         <Pressable onPress={() => setPickerOpen(true)}>
+          {/* Base ring (bottom of the cross-fade stack): green, always opaque.
+              Holds the background fill + centred content exactly as before. */}
           <Animated.View
             style={{
               width: 180,
               height: 180,
               borderRadius: 90,
               borderWidth: 3,
-              borderColor,
+              borderColor: '#22C55E',
               borderStyle: 'dashed',
               alignItems: 'center',
               justifyContent: 'center',
@@ -71,6 +94,11 @@ function EmojiStep({ selected, onSelect }: { selected: string; onSelect: (e: str
               <Feather name="plus" size={64} color={theme.colors.text.tertiary} />
             )}
           </Animated.View>
+          {/* Cross-fading colour overlays — identical geometry, transparent
+              centre, opacity driven on the native driver. pointerEvents="none"
+              so the Pressable underneath still receives the tap. */}
+          <Animated.View pointerEvents="none" style={{ ...ringStyle, borderColor: '#8B5CF6', opacity: purpleOpacity }} />
+          <Animated.View pointerEvents="none" style={{ ...ringStyle, borderColor: '#F09458', opacity: orangeOpacity }} />
         </Pressable>
 
         <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginTop: 28, fontSize: 12 }}>

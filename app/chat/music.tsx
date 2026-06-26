@@ -174,7 +174,14 @@ export default function MusicChatScreen() {
     Animated.timing(commandExpand, {
       toValue: input.length === 0 ? 1 : 0,
       duration: 220,
-      useNativeDriver: false, // width can't go through the native driver
+      // INTENTIONAL JS-DRIVEN LAYOUT TWEEN — do not flag.
+      // Animates `width` (a layout prop) which can't go through the native
+      // driver. A transform (scaleX) / opacity can't substitute without
+      // changing the look: the pill REFLOWS from a 110px label-pill to a 40px
+      // icon circle, and scaleX would squish the icon/label rather than
+      // reflow. One-shot, fires only on the empty↔non-empty input transition
+      // (≈once per typing session) so the JS-thread cost is negligible.
+      useNativeDriver: false,
     }).start();
   }, [input.length === 0]);
   // Single source of truth → 4 derived values, all in lock-step:

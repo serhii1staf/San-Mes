@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { View, Pressable, ViewStyle, TextInput, FlatList, ActivityIndicator, Text as RNText } from 'react-native';
+import { View, Pressable, ViewStyle, TextInput, FlatList, ActivityIndicator, Text as RNText, InteractionManager } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -86,26 +86,32 @@ export default function SearchScreen() {
   }, []);
   const [isFocused, setIsFocused] = useState(false);
   const [query, setQuery] = useState('');
+  // Debounced mirror of `query`. The text input stays fully controlled by
+  // `query` (responsive on every keystroke); only the heavy profile filter
+  // reads `debouncedQuery`, so the directory scan runs at most once per
+  // ~160 ms idle window instead of on every keystroke. See the debounce
+  // effect below.
+  const [debouncedQuery, setDebouncedQuery] = useState('');
   const [profiles, setProfiles] = useState<ProfileResult[]>([]);
   // Cache-first hydrate: `@san:all_profiles` is a GLOBAL (un-namespaced) key
-  // stored raw in MMKV, so we can read the batch profile list synchronously on
-  // first render. That lets the user search cached profiles instantly while
-  // the network refresh runs in the background (stale-while-revalidate) — no
-  // spinner flash when a cache exists. Falls back to [] when the cache is
-  // empty or MMKV is unavailable.
-  const [allProfiles, setAllProfiles] = useState<ProfileResult[]>(() => {
+  // stored raw in MMKV. We start EMPTY and defer the full JSON.parse off the
+  // mount frame (see the InteractionManager hydrate effect below) so a large
+  // directory never lands a synchronous parse on the navigation-transition
+  // frame. The network refresh in loadProfiles() also fills this in.
+  const [allProfiles, setAllProfiles] = useState<ProfileResult[]>([]);
+  // Only show the loading spinner when there's genuinely nothing to display.
+  // We do a CHEAP synchronous existence check on the cache (just reading the
+  // raw string — no JSON.parse) so that, when a cache exists, the spinner is
+  // never shown even though `allProfiles` is still empty for the brief window
+  // before the deferred hydrate runs. This preserves the no-flash behavior.
+  const [isLoading, setIsLoading] = useState(() => {
     try {
       const raw = kvGetStringRawSync('@san:all_profiles');
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) return parsed as ProfileResult[];
-      }
-    } catch {}
-    return [];
+      return !(raw && raw.length > 2);
+    } catch {
+      return true;
+    }
   });
-  // Only show the loading spinner when there's genuinely no cached data to
-  // display. With a warm cache the list is interactive immediately.
-  const [isLoading, setIsLoading] = useState(() => allProfiles.length === 0);
   const [history, setHistory] = useState<ProfileResult[]>([]);
 
   useEffect(() => {
@@ -114,28 +120,75 @@ export default function SearchScreen() {
     useMiniAppsStore.getState().loadApps();
   }, []);
 
+  // Deferred full hydrate of the cached profile directory. Mirrors the feed
+  // cache hydrate in (tabs)/index.tsx: the heavy JSON.parse of the entire
+  // `@san:all_profiles` blob runs AFTER the navigation transition settles via
+  // InteractionManager, so it never blocks first paint. Uses a functional
+  // setState so it won't clobber fresher data already set by the network
+  // refresh in loadProfiles().
+  useEffect(() => {
+    const handle = InteractionManager.runAfterInteractions(() => {
+      try {
+        const raw = kvGetStringRawSync('@san:all_profiles');
+        if (!raw) return;
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setAllProfiles((prev) => (prev.length > 0 ? prev : (parsed as ProfileResult[])));
+        }
+      } catch {}
+    });
+    return () => handle.cancel();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Debounce `query` → `debouncedQuery`. Keeps the input responsive while
+  // collapsing bursts of keystrokes into a single filter pass. The timer is
+  // cleared on every change (and on unmount) so no stale timeout leaks.
+  useEffect(() => {
+    const id = setTimeout(() => setDebouncedQuery(query), 160);
+    return () => clearTimeout(id);
+  }, [query]);
+
   // Get mini-apps from store (reactive)
   const miniApps = useMiniAppsStore((s) => s.apps);
 
+  // Prebuilt lowercase search index. Lowercasing each profile's username and
+  // display name ONCE here (recomputed only when `allProfiles` changes) means
+  // the per-search filter does cheap includes() against precomputed strings
+  // instead of calling toLowerCase() twice per profile on every pass.
+  const searchIndex = useMemo(
+    () =>
+      allProfiles.map((p) => ({
+        profile: p,
+        username_lc: (p.username || '').toLowerCase(),
+        display_name_lc: (p.display_name || '').toLowerCase(),
+      })),
+    [allProfiles]
+  );
+
   useEffect(() => {
-    if (query.trim()) {
-      const searchTerm = query.startsWith('#') ? query.slice(1) : query;
+    if (debouncedQuery.trim()) {
+      const searchTerm = debouncedQuery.startsWith('#') ? debouncedQuery.slice(1) : debouncedQuery;
       const lower = searchTerm.toLowerCase();
-      const filtered = allProfiles.filter(p =>
-        p.username.toLowerCase().includes(lower) ||
-        p.display_name.toLowerCase().includes(lower)
-      );
+      const filtered = searchIndex
+        .filter((e) => e.username_lc.includes(lower) || e.display_name_lc.includes(lower))
+        .map((e) => e.profile);
       setProfiles(filtered);
     } else {
       setProfiles([]);
     }
-  }, [query, allProfiles]);
+  }, [debouncedQuery, searchIndex]);
 
   const loadProfiles = async () => {
     // Only gate the UI behind a spinner when we have nothing cached to show.
-    // With a warm cache we refresh silently in the background so the already-
-    // rendered list never flashes a loading state.
-    if (allProfiles.length === 0) setIsLoading(true);
+    // Cheap existence check (no JSON.parse) so a warm cache never flips the
+    // spinner on and flashes the already-interactive screen.
+    let hasCache = false;
+    try {
+      const raw = kvGetStringRawSync('@san:all_profiles');
+      hasCache = !!(raw && raw.length > 2);
+    } catch {}
+    if (!hasCache) setIsLoading(true);
     const { profiles: data } = await getProfiles();
     if (Array.isArray(data) && data.length > 0) setAllProfiles(data as any[]);
     setIsLoading(false);

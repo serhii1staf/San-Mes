@@ -1104,6 +1104,24 @@ export default function CommentsScreen() {
     [openCommentMenu, startReply, openImageViewer, gifTracker],
   );
   const keyExtractor = useCallback((item: any) => item.id, []);
+  // Recycle pools by comment row SHAPE so FlashList v2 reuses a text cell only
+  // as another text cell, a GIF cell as another GIF cell, and a link-preview
+  // cell as another link-preview cell. Without this, scrolling reshapes a
+  // recycled text row into a GIF/link row (and back), forcing a full re-layout
+  // of that cell on the scroll frame — the same image/GIF-mixed scroll jank
+  // fixed in the chat screen (`chatGetItemType`). The discriminator MIRRORS
+  // CommentRow's own content-shape decision: parse the reply wrapper, then a
+  // GIF body wins, else a non-code link body, else plain text. All helpers are
+  // module-level + pure, so the deps array is empty (stable identity across
+  // every CommentsScreen render — keystrokes, keyboard/panel lifts, GIF gate).
+  const getItemType = useCallback((item: any) => {
+    const parsed = parseReply(item.content || '');
+    const gif = parseGif(parsed.body);
+    if (gif) return 'gif';
+    const link = (!gif && !hasCodeBlock(parsed.body)) ? extractFirstUrl(parsed.body) : null;
+    if (link) return 'link';
+    return 'text';
+  }, []);
 
   // Memoized FlashList content-container padding — a fresh inline object here
   // would hand FlashList a new contentContainerStyle reference on every
@@ -1257,6 +1275,7 @@ export default function CommentsScreen() {
             ref={listRef}
             data={comments}
             keyExtractor={keyExtractor}
+            getItemType={getItemType}
             renderItem={renderComment}
             contentContainerStyle={listContentStyle}
             showsVerticalScrollIndicator={false}
