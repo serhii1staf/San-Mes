@@ -40,10 +40,20 @@ const FEED_LIMIT = 20;
 const NotificationBellBadge = React.memo(function NotificationBellBadge({ accent, bg }: { accent: string; bg: string }) {
   const unread = useNotificationsBadge((s) => s.unread);
   const recompute = useNotificationsBadge((s) => s.recompute);
+  const refresh = useNotificationsBadge((s) => s.refresh);
   // Recompute on tab focus so the count refreshes whenever the user lands
   // back on the home tab — picks up any new notifications written to the
-  // cache by the notifications screen since the last visit.
-  useFocusEffect(useCallback(() => { recompute(); return () => {}; }, [recompute]));
+  // cache by the notifications screen since the last visit. ALSO kick off a
+  // throttled BACKGROUND refetch (deferred past the navigation transition so
+  // it never blocks the feed) so the badge reflects server truth even before
+  // the user ever opens the notifications screen. The store throttles the
+  // network call (~45s) and recompute is cheap, so this is loop-safe: it only
+  // fires on focus, never on the unread state change it produces.
+  useFocusEffect(useCallback(() => {
+    recompute();
+    const task = InteractionManager.runAfterInteractions(() => { void refresh(); });
+    return () => task.cancel();
+  }, [recompute, refresh]));
   if (unread <= 0) return null;
   const label = unread > 99 ? '99+' : String(unread);
   return (

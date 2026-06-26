@@ -122,6 +122,9 @@ export function renderMiniAppPage(opts: RenderOpts): string {
   <meta name="twitter:description" content="${escapeHtml(description)}">
   <meta name="twitter:image" content="${escapeHtml(ogImage)}">
   <meta name="theme-color" content="#E37857">
+  <link rel="icon" type="image/png" href="${escapeHtml(FALLBACK_OG_IMAGE)}">
+  <link rel="shortcut icon" type="image/png" href="${escapeHtml(FALLBACK_OG_IMAGE)}">
+  <link rel="apple-touch-icon" href="${escapeHtml(FALLBACK_OG_IMAGE)}">
   <style>
     *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
     html{scrollbar-width:none;-ms-overflow-style:none;}

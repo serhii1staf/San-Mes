@@ -7,9 +7,8 @@ import { router } from 'expo-router';
 import { useTheme } from '../src/theme';
 import { Text, Avatar } from '../src/components/ui';
 import { VerifiedBadge } from '../src/components/ui/VerifiedBadge';
-import { apiGet } from '../src/services/apiClient';
 import { useAuthStore } from '../src/store';
-import { kvGetJSONSync, kvSetJSON } from '../src/services/kvStore';
+import { kvGetJSONSync } from '../src/services/kvStore';
 import { useNotificationsBadge } from '../src/store/notificationsBadgeStore';
 import { formatTimeAgo } from '../src/utils/mockData';
 import { triggerHaptic } from '../src/utils/haptics';
@@ -128,98 +127,17 @@ export default function NotificationsScreen() {
   const load = useCallback(async () => {
     if (!userId) return;
     try {
-      // Phase 5: one Worker round-trip instead of three Supabase calls.
-      // The endpoint synthesises likes/comments/follows targeting the
-      // current authed user and returns them with the actor profile
-      // already embedded.
-      const { data, error } = await apiGet<{
-        likes: any[];
-        comments: any[];
-        follows: any[];
-      }>('/v1/notifications');
-      if (error || !data) {
-        setLoading(false);
-        setRefreshing(false);
-        return;
+      // Phase 5: one Worker round-trip instead of three Supabase calls,
+      // shared with the home-tab badge's background refresh so the cache
+      // format never diverges. The helper fetches, normalises, and writes
+      // the `@san:notifications` cache; here we mirror it into screen state
+      // and mark everything seen (clears the bell badge).
+      const { fetchAndCacheNotifications } = await import('../src/services/notificationsFeed');
+      const items = await fetchAndCacheNotifications();
+      if (items) {
+        setItems(items);
+        useNotificationsBadge.getState().markAllSeen();
       }
-
-      // The post-preview map is built client-side. We only need it for
-      // the rows attached to the user's own posts, which the Worker
-      // already filtered down to — but the post text isn't in the
-      // notifications payload (the screen only shows a short preview),
-      // so we re-fetch the matching post bodies from the entity store
-      // when present and leave them blank otherwise. The entity store
-      // already holds every post the user has rendered recently.
-      const { useEntityStore } = await import('../src/store');
-      const postsById = useEntityStore.getState().posts;
-      const previewFor = (postId: string | undefined): string | undefined => {
-        if (!postId) return undefined;
-        const p = postsById[postId];
-        if (!p) return undefined;
-        return (p.content || '').replace(/^::[a-z]+::[^:]+::/i, '').trim().slice(0, 80);
-      };
-
-      const profileOf = (row: any) => Array.isArray(row?.profiles) ? row.profiles[0] : row?.profiles;
-
-      const merged: Notification[] = [];
-      for (const r of data.likes || []) {
-        const p = profileOf(r);
-        if (!p) continue;
-        merged.push({
-          id: `like:${p.id}:${r.post_id}:${r.created_at}`,
-          kind: 'like',
-          ts: r.created_at,
-          actorId: p.id,
-          actorName: p.display_name || 'User',
-          actorUsername: p.username || 'user',
-          actorEmoji: p.emoji || '😊',
-          actorVerified: !!p.is_verified,
-          postId: r.post_id,
-          postPreview: previewFor(r.post_id),
-        });
-      }
-      for (const r of data.comments || []) {
-        const p = profileOf(r);
-        if (!p) continue;
-        merged.push({
-          id: `comment:${r.id}`,
-          kind: 'comment',
-          ts: r.created_at,
-          actorId: p.id,
-          actorName: p.display_name || 'User',
-          actorUsername: p.username || 'user',
-          actorEmoji: p.emoji || '😊',
-          actorVerified: !!p.is_verified,
-          postId: r.post_id,
-          postPreview: previewFor(r.post_id),
-          // Keep the FULL content here — stripMediaTokens must see the closing
-          // "::" terminator of a reply marker, which a premature slice would
-          // chop off (the cause of the raw "::re::eyJ1..." leak). The row
-          // strips + display-slices for rendering.
-          commentText: (r.content || ''),
-        });
-      }
-      for (const r of data.follows || []) {
-        const p = profileOf(r);
-        if (!p) continue;
-        merged.push({
-          id: `follow:${p.id}:${r.created_at}`,
-          kind: 'follow',
-          ts: r.created_at,
-          actorId: p.id,
-          actorName: p.display_name || 'User',
-          actorUsername: p.username || 'user',
-          actorEmoji: p.emoji || '😊',
-          actorVerified: !!p.is_verified,
-        });
-      }
-
-      // Newest first.
-      merged.sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
-      const trimmed = merged.slice(0, 150);
-      setItems(trimmed);
-      try { kvSetJSON(CACHE_KEY, { ts: Date.now(), data: trimmed }); } catch {}
-      useNotificationsBadge.getState().markAllSeen();
     } catch {
       // Network error — keep whatever was on screen.
     } finally {

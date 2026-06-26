@@ -31,6 +31,14 @@ interface NotificationsBadgeState {
   // Recompute the badge from the MMKV-backed notifications cache + lastSeenTs.
   // Cheap (sync MMKV reads + filter), call freely on mount/focus.
   recompute: () => void;
+  // Background-refresh the notifications cache from the server, then
+  // recompute. This is what makes the badge show "you have N new" on the
+  // home screen WITHOUT the user opening the notifications list first —
+  // the only writer of the `@san:notifications` cache used to be the
+  // notifications screen itself. Network-backed, so it's async, fire-and-
+  // forget, and THROTTLED (see REFRESH_THROTTLE_MS) so rapid home-tab
+  // focus events can't hammer the Worker. Does NOT mark anything seen.
+  refresh: () => Promise<void>;
   // Optimistically bump the unread count by `by` (default 1). Used by the
   // realtime bridge when a live `notif.*` ping arrives before the
   // notifications cache (the source `recompute` reads from) has been
@@ -60,35 +68,60 @@ function readCachedNotifications(): NotificationsCache | null {
   }
 }
 
+// Count cached notifications newer than the last-seen watermark. Shared by
+// the synchronous initial value and `recompute` so they can never drift.
+function computeUnread(): number {
+  const cache = readCachedNotifications();
+  if (!cache?.data) return 0;
+  const lastSeen = readLastSeenTs();
+  let n = 0;
+  for (const item of cache.data) {
+    const t = new Date(item.ts).getTime();
+    if (Number.isFinite(t) && t > lastSeen) n++;
+  }
+  return n;
+}
+
+// Throttle window for the background `refresh()`. Home-tab focus can fire
+// often (every tab switch back to home); we don't want a Worker round-trip
+// each time. ~45s keeps the badge fresh without hammering the server.
+const REFRESH_THROTTLE_MS = 45 * 1000;
+let lastRefreshAt = 0;
+
 export const useNotificationsBadge = create<NotificationsBadgeState>((set) => ({
-  unread: (() => {
-    // Compute initial value synchronously so the first render of the bell
-    // shows the correct count (no flash of empty badge while a useEffect
-    // catches up).
-    const cache = readCachedNotifications();
-    if (!cache?.data) return 0;
-    const lastSeen = readLastSeenTs();
-    let n = 0;
-    for (const item of cache.data) {
-      const t = new Date(item.ts).getTime();
-      if (Number.isFinite(t) && t > lastSeen) n++;
-    }
-    return n;
-  })(),
+  // Compute initial value synchronously so the first render of the bell
+  // shows the correct count (no flash of empty badge while a useEffect
+  // catches up).
+  unread: computeUnread(),
 
   recompute: () => {
-    const cache = readCachedNotifications();
-    if (!cache?.data) {
-      set({ unread: 0 });
-      return;
+    set({ unread: computeUnread() });
+  },
+
+  refresh: async () => {
+    const now = Date.now();
+    if (now - lastRefreshAt < REFRESH_THROTTLE_MS) return;
+    // Claim the window BEFORE awaiting so concurrent focus events can't
+    // stampede a burst of parallel fetches.
+    lastRefreshAt = now;
+    try {
+      const { fetchAndCacheNotifications } = await import('../services/notificationsFeed');
+      const items = await fetchAndCacheNotifications();
+      if (items) {
+        // Cache is now server-truth → recompute sets the ABSOLUTE unread
+        // count, reconciling any transient `increment()` bumps from the
+        // realtime bridge. Never additive.
+        set({ unread: computeUnread() });
+      } else {
+        // Network/offline failure wrote nothing — release the throttle so
+        // the next home-tab focus can retry rather than waiting the full
+        // window. (Not a loop: refresh only fires on focus, not on render
+        // or on the unread state change.)
+        lastRefreshAt = 0;
+      }
+    } catch {
+      lastRefreshAt = 0;
     }
-    const lastSeen = readLastSeenTs();
-    let n = 0;
-    for (const item of cache.data) {
-      const t = new Date(item.ts).getTime();
-      if (Number.isFinite(t) && t > lastSeen) n++;
-    }
-    set({ unread: n });
   },
 
   markAllSeen: () => {

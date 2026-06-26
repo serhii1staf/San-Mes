@@ -812,6 +812,64 @@ export default function ProfileScreen() {
   useEffect(() => { setIllustrationFailed(false); }, [profileThemeId]);
   const themeIllustration = illustrationFailed ? null : resolvedProfileTheme.backgroundIllustration;
 
+  // ─── Pinned (sticky) category tab bar ──────────────────────────────────
+  // The inline tabs row inside `listHeader` scrolls away with the banner.
+  // We mirror it in an absolutely-positioned OVERLAY that reveals once the
+  // user scrolls the inline row up under the top chrome, so tab switching
+  // stays reachable while posts keep scrolling. All hooks here are
+  // unconditional and declared BEFORE the `if (!user)` guard to keep the
+  // hook order stable across renders.
+  //
+  // `tabsOffsetY` is the inline tabs row's offset within the scroll content
+  // (captured via onLayout below, plus the content paddingTop). The pinned
+  // bar sits at `pinnedBarTop`; the inline row reaches it when
+  // `scrollY === tabsOffsetY - pinnedBarTop` — that's the reveal threshold.
+  const pinnedBarTop = insets.top + 8;
+  const [tabsOffsetY, setTabsOffsetY] = useState(0);
+  const tabsOffsetYRef = useRef(0);
+  const [pinnedTabsVisible, setPinnedTabsVisible] = useState(false);
+  const pinnedTabsVisibleRef = useRef(false);
+  const onTabsRowLayout = useCallback((e: any) => {
+    // onLayout `y` is relative to the FlatList header container, which sits
+    // below the content paddingTop (12). Add it back to recover the absolute
+    // scroll-content offset at which the tabs row begins.
+    const y = 12 + (e?.nativeEvent?.layout?.y ?? 0);
+    if (Math.abs(y - tabsOffsetYRef.current) > 0.5) {
+      tabsOffsetYRef.current = y;
+      setTabsOffsetY(y);
+    }
+  }, []);
+  // Native-driven reveal: opacity + a small downward slide. Recomputed only
+  // when the measured offset changes (rare), so per-frame scrolling never
+  // touches the JS thread — the interpolation runs entirely on the native side.
+  // Until the row is measured (`tabsOffsetY` still <= the pin position) we push
+  // the reveal point out of reach so the bar stays hidden on first paint.
+  const pinnedTabsOpacity = useMemo(() => {
+    const end = tabsOffsetY > pinnedBarTop ? tabsOffsetY - pinnedBarTop : Number.MAX_SAFE_INTEGER;
+    const start = Math.max(0, end - 24);
+    return scrollY.interpolate({ inputRange: [start, end], outputRange: [0, 1], extrapolate: 'clamp' });
+  }, [scrollY, tabsOffsetY, pinnedBarTop]);
+  const pinnedTabsTranslateY = useMemo(() => {
+    const end = tabsOffsetY > pinnedBarTop ? tabsOffsetY - pinnedBarTop : Number.MAX_SAFE_INTEGER;
+    const start = Math.max(0, end - 24);
+    return scrollY.interpolate({ inputRange: [start, end], outputRange: [-8, 0], extrapolate: 'clamp' });
+  }, [scrollY, tabsOffsetY, pinnedBarTop]);
+  // Gate tappability to when the bar is actually visible. A single listener
+  // flips a boolean ONLY when scrollY crosses the threshold (compared against
+  // a ref), so we never setState on every scroll frame. Removed on unmount,
+  // re-created when the measured offset changes.
+  useEffect(() => {
+    const threshold = tabsOffsetY > pinnedBarTop ? tabsOffsetY - pinnedBarTop : Number.MAX_SAFE_INTEGER;
+    const id = scrollY.addListener(({ value }: { value: number }) => {
+      const shouldShow = value >= threshold;
+      if (shouldShow !== pinnedTabsVisibleRef.current) {
+        pinnedTabsVisibleRef.current = shouldShow;
+        setPinnedTabsVisible(shouldShow);
+      }
+    });
+    return () => scrollY.removeListener(id);
+  }, [scrollY, tabsOffsetY, pinnedBarTop]);
+
   if (!user) return <View style={{ flex: 1, backgroundColor: theme.colors.background.primary, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator size="large" color={theme.colors.accent.primary} /></View>;
 
   const userLinks = useMemo<{ type: string; url: string }[]>(() => (user as any)?.links || [], [user]);
@@ -1031,7 +1089,7 @@ export default function ProfileScreen() {
           sliding accent underline are removed for a cleaner "open" profile.
           The active tab now reads as a rounded pill: interactive liquid glass
           when enabled, otherwise a soft accent-tinted rounded fill. */}
-      <View style={{ marginTop: 16 }}>
+      <View style={{ marginTop: 16 }} onLayout={onTabsRowLayout}>
         <View style={{ flexDirection: 'row', paddingHorizontal: 4 }}>{tabs.map((tab) => {
           const isActive = activeTab === tab.key;
           const content = (
@@ -1177,6 +1235,62 @@ export default function ProfileScreen() {
           </View>
         )}
       />
+      {/* ── Pinned (sticky) category tabs overlay ──────────────────────────
+          Mirrors the inline tabs row (same labels, active styling, haptic,
+          setActiveTab + long-press editor) so the two stay in sync — both
+          read `activeTab` and call `setActiveTab`. Reveal is native-driven
+          (opacity + slide off `scrollY`); `pointerEvents` is gated to the
+          visible state so it's only tappable once shown. Sits BELOW the
+          floating QR/settings chrome (zIndex 100) and ABOVE the list. */}
+      <Animated.View
+        pointerEvents={pinnedTabsVisible ? 'auto' : 'none'}
+        style={{ position: 'absolute', top: pinnedBarTop, left: 0, right: 0, zIndex: 50, opacity: pinnedTabsOpacity, transform: [{ translateY: pinnedTabsTranslateY }] }}
+      >
+        <View style={{ overflow: 'hidden', borderBottomLeftRadius: 18, borderBottomRightRadius: 18 }}>
+          {/* Solid + frosted backing so scrolling content never shows through —
+              reuses the same BlurView glass pattern as the rest of the chrome. */}
+          {chromeReady ? (
+            <BlurView intensity={theme.isDark ? 55 : 75} tint={theme.isDark ? 'dark' : 'light'} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} />
+          ) : null}
+          <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: theme.colors.background.primary + (theme.isDark ? 'D9' : 'E6') }} />
+          <View style={{ flexDirection: 'row', paddingHorizontal: 20, paddingTop: 8, paddingBottom: 10 }}>{tabs.map((tab) => {
+            const isActive = activeTab === tab.key;
+            const content = (
+              <>
+                {tab.emoji ? (
+                  <RNText allowFontScaling={false} style={{ fontSize: 14, lineHeight: 18, includeFontPadding: false, textAlignVertical: 'center' }}>{tab.emoji}</RNText>
+                ) : null}
+                <Text variant="caption" weight={isActive ? 'bold' : 'regular'} color={isActive ? theme.colors.text.primary : theme.colors.text.tertiary} numberOfLines={1} style={{ flexShrink: 1 }}>{tab.label}</Text>
+              </>
+            );
+            return (
+              <Pressable
+                key={tab.key}
+                onPress={() => { triggerHaptic('selection'); setActiveTab(tab.key); }}
+                onLongPress={() => { triggerHaptic('medium'); setEditingTabKey(tab.key); }}
+                delayLongPress={300}
+                style={{ flex: 1, paddingHorizontal: 4 }}
+              >
+                {glassActive && isActive ? (
+                  <NativeGlassView
+                    glassStyle="regular"
+                    isInteractive
+                    colorScheme={theme.isDark ? 'dark' : 'light'}
+                    tintColor={theme.colors.accent.primary + '33'}
+                    style={{ alignSelf: 'stretch', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 9, paddingHorizontal: 8, borderRadius: 16, overflow: 'hidden' }}
+                  >
+                    {content}
+                  </NativeGlassView>
+                ) : (
+                  <View style={{ alignSelf: 'stretch', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 9, paddingHorizontal: 8, borderRadius: 16, overflow: 'hidden', backgroundColor: isActive ? theme.colors.accent.primary + '1F' : 'transparent' }}>
+                    {content}
+                  </View>
+                )}
+              </Pressable>
+            );
+          })}</View>
+        </View>
+      </Animated.View>
       <Modal visible={showQR} transparent animationType="fade" onRequestClose={() => setShowQR(false)} statusBarTranslucent>
         <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', alignItems: 'center', justifyContent: 'center' }} onPress={() => setShowQR(false)}>
           <Text variant="body" weight="bold" color="#FFFFFF" style={{ marginBottom: 20 }}>{t('profile.qr_title')}</Text>
