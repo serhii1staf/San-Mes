@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, useSyncExternalStore } from 'react';
-import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, Alert, Animated, Modal, Dimensions, Keyboard, InteractionManager, ActivityIndicator, type ViewToken } from 'react-native';
+import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, Alert, Animated, Modal, Dimensions, Keyboard, InteractionManager, type ViewToken } from 'react-native';
 import { useReanimatedKeyboardAnimation, useKeyboardHandler } from 'react-native-keyboard-controller';
 import { FlashList, type FlashListRef } from '@shopify/flash-list';
 import Reanimated, { useAnimatedStyle, interpolate, Extrapolation, useSharedValue, withSpring, withTiming, withSequence, withDelay, runOnJS, useAnimatedRef, measure, Easing, type SharedValue } from 'react-native-reanimated';
@@ -14,6 +14,7 @@ import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { CachedImage } from '../../src/components/ui/CachedImage';
 import { proxiedImageUrl } from '../../src/components/ui/CachedImage';
+import Skeleton from '../../src/components/ui/Skeleton';
 import { ModalStatusBar } from '../../src/components/ui/ModalStatusBar';
 import { FormattedText } from '../../src/components/ui/FormattedText';
 import { LinkPreview } from '../../src/components/ui/LinkPreview';
@@ -255,7 +256,7 @@ function SingleChatImage({ uri, isVisible, onPress }: { uri: string; isVisible?:
         />
         {loading ? (
           <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
-            <ActivityIndicator size="small" color={theme.colors.accent.primary} />
+            <Skeleton width={'100%'} height={'100%'} radius={0} />
           </View>
         ) : null}
       </View>
@@ -473,7 +474,7 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
                         const d = getImageDims(message.imageUrls![0]);
                         const box = d ? fitChatImageBox(d.w, d.h) : { w: 220, h: 220 };
                         return (
-                          <View style={[{ width: box.w, height: box.h, borderRadius: 12 }, { backgroundColor: theme.colors.background.tertiary }]} />
+                          <Skeleton width={box.w} height={box.h} radius={12} />
                         );
                       })()}
                     </Pressable>
@@ -499,7 +500,7 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
                         // Same-sized placeholder until the open transition
                         // settles — keeps the multi-image grid layout identical
                         // while deferring the decode storm off the nav frame.
-                        <View style={[bubbleStyles.imageMulti, { backgroundColor: theme.colors.background.tertiary }]} />
+                        <Skeleton width={120} height={120} radius={12} />
                       )}
                     </Pressable>
                   ))

@@ -20,6 +20,7 @@ import { extractFirstUrl } from '../../src/services/linkPreview';
 import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
 import { useChatKeyboardMode } from '../../src/hooks/useChatKeyboardMode';
 import { CachedImage } from '../../src/components/ui/CachedImage';
+import Skeleton from '../../src/components/ui/Skeleton';
 import { useStaggeredReveal, useStaggeredGifReveal, setRevealScrollPaused } from '../../src/hooks/useStaggeredReveal';
 import { CommentContextMenu, CommentAction } from '../../src/components/ui/CommentContextMenu';
 import { SlideUpSheet } from '../../src/components/ui/SlideUpSheet';
@@ -263,7 +264,7 @@ const CommentRow = React.memo(function CommentRow({ item, onLongPress, onReply, 
             {gifReveal ? (
               <CachedImage uri={gif} style={{ width: 160, height: 160, borderRadius: 14, backgroundColor: theme.colors.background.secondary }} resizeMode="cover" autoplay={gifActive} />
             ) : (
-              <View style={{ width: 160, height: 160, borderRadius: 14, backgroundColor: theme.colors.background.secondary }} />
+              <Skeleton width={160} height={160} radius={14} />
             )}
           </Pressable>
         ) : link ? (
