@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
-import { View, Pressable, TextInput, FlatList, ActivityIndicator, Text as RNText, Platform, LayoutAnimation, UIManager, Alert, Animated, InteractionManager } from 'react-native';
+import { View, Pressable, TextInput, FlatList, ActivityIndicator, Text as RNText, Platform, LayoutAnimation, UIManager, Alert, Animated, InteractionManager, StyleSheet } from 'react-native';
 import type { ScrollViewProps } from 'react-native';
 import { KeyboardStickyView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
 import Reanimated, { useAnimatedStyle } from 'react-native-reanimated';
@@ -35,6 +35,12 @@ interface CommandDef { id: CommandId; icon: string; label: string; description: 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
+
+// Truly-constant list content padding — hoisted to module scope so the
+// FlatList doesn't receive a fresh style object on every keystroke re-render.
+const styles = StyleSheet.create({
+  listContent: { paddingHorizontal: 16, paddingTop: 8 },
+});
 
 export default function MusicChatScreen() {
   const theme = useTheme();
@@ -322,6 +328,25 @@ export default function MusicChatScreen() {
     );
   }, [theme, t]);
 
+  // Stable keyExtractor — FlatList re-keys/re-renders less when the reference
+  // is stable across the per-keystroke re-renders of this screen.
+  const keyExtractor = useCallback((item: MusicMessage) => item.id, []);
+
+  // Memoized list chrome elements. These are static per their inputs, so
+  // memoizing keeps FlatList from re-mounting the header/footer/empty subtrees
+  // on every input change. Behaviour and layout are identical.
+  const listHeader = useMemo(() => <View style={{ height: LIST_BOTTOM_SPACER }} />, [LIST_BOTTOM_SPACER]);
+  const listFooter = useMemo(() => <View style={{ height: insets.top + 72 }} />, [insets.top]);
+  const listEmpty = useMemo(() => (
+    <View style={{ alignItems: 'center', paddingVertical: 60, transform: [{ scaleY: -1 }] }}>
+      <RNText style={{ fontSize: 48 }} allowFontScaling={false}>🎵</RNText>
+      <Text variant="body" weight="bold" style={{ marginTop: 12 }}>{t('music_chat.title')}</Text>
+      <Text variant="caption" color={theme.colors.text.tertiary} align="center" style={{ marginTop: 8, paddingHorizontal: 40, lineHeight: 18 }}>
+        {t('music_chat.empty_hint')}
+      </Text>
+    </View>
+  ), [theme, t]);
+
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
       <View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100 }}>
@@ -357,10 +382,10 @@ export default function MusicChatScreen() {
       <FlatList
         ref={listRef}
         data={invertedData}
-        keyExtractor={(item) => item.id}
+        keyExtractor={keyExtractor}
         inverted
         renderScrollComponent={renderScrollComponent}
-        contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8 }}
+        contentContainerStyle={styles.listContent}
         renderItem={renderItem}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
@@ -374,17 +399,9 @@ export default function MusicChatScreen() {
         initialNumToRender={6}
         maxToRenderPerBatch={4}
         windowSize={5}
-        ListHeaderComponent={<View style={{ height: LIST_BOTTOM_SPACER }} />}
-        ListFooterComponent={<View style={{ height: insets.top + 72 }} />}
-        ListEmptyComponent={
-          <View style={{ alignItems: 'center', paddingVertical: 60, transform: [{ scaleY: -1 }] }}>
-            <RNText style={{ fontSize: 48 }} allowFontScaling={false}>🎵</RNText>
-            <Text variant="body" weight="bold" style={{ marginTop: 12 }}>{t('music_chat.title')}</Text>
-            <Text variant="caption" color={theme.colors.text.tertiary} align="center" style={{ marginTop: 8, paddingHorizontal: 40, lineHeight: 18 }}>
-              {t('music_chat.empty_hint')}
-            </Text>
-          </View>
-        }
+        ListHeaderComponent={listHeader}
+        ListFooterComponent={listFooter}
+        ListEmptyComponent={listEmpty}
       />
 
       {/* Static under-input fade — pinned to the screen bottom and kept

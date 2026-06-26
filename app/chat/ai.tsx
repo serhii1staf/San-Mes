@@ -256,6 +256,13 @@ function ManageListBubble({ ownerId, onEdit, onDelete, onShare }: ManageListBubb
   );
 }
 
+// Stable FlatList props hoisted to module scope so their identity never
+// changes across screen re-renders. Each keystroke re-renders AIChatScreen;
+// keeping keyExtractor + the contentContainer style constant avoids FlatList
+// re-running prop diffs / a content-container relayout on every render.
+const keyExtractor = (item: ChatItem) => item.id;
+const LIST_CONTENT_CONTAINER_STYLE = { paddingHorizontal: 16, paddingTop: 8 };
+
 export default function AIChatScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
@@ -840,6 +847,50 @@ export default function AIChatScreen() {
     [handleActionUpdate, theme.isDark, theme.colors.text.primary, user?.id, startEditFlow, handleDeleteApp, handleShareApp],
   );
 
+  // Memoize the list's header / footer / empty elements so a screen re-render
+  // (e.g. every keystroke updating `input`) doesn't hand FlatList three brand
+  // new element references and force it to reconcile them. Deps match exactly
+  // the values each element reads — no behavior/visual change.
+  const listHeader = useMemo(
+    () => (
+      <>
+        {isLoading ? (
+          <View style={{ paddingBottom: 8 }}>
+            <View style={{ borderRadius: 14, overflow: 'hidden', alignSelf: 'flex-start' }}>
+              <BlurView intensity={80} tint="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 7 }}>
+                <ActivityIndicator size="small" color="#FFFFFF" />
+                <Text style={{ fontSize: 11, color: '#FFFFFF', fontWeight: '500' }}>{t('ai_chat.thinking')}</Text>
+              </BlurView>
+            </View>
+          </View>
+        ) : null}
+        <View style={{ height: LIST_BOTTOM_SPACER }} />
+      </>
+    ),
+    [isLoading, LIST_BOTTOM_SPACER, t],
+  );
+
+  const listFooter = useMemo(
+    () => <View style={{ height: insets.top + 72 }} />,
+    [insets.top],
+  );
+
+  const listEmpty = useMemo(
+    () => (
+      <View style={{ alignItems: 'center', paddingVertical: 60, transform: [{ scaleY: -1 }] }}>
+        <RNText style={{ fontSize: 48 }} allowFontScaling={false}>🤖</RNText>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 12 }}>
+          <Text variant="body" weight="bold">{t('ai_chat.title')}</Text>
+          <VerifiedBadge size={14} />
+        </View>
+        <Text variant="caption" color={theme.colors.text.tertiary} align="center" style={{ marginTop: 8, paddingHorizontal: 40, lineHeight: 18 }}>
+          {t('ai_chat.empty_hint')}
+        </Text>
+      </View>
+    ),
+    [t, theme.colors.text.tertiary],
+  );
+
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
       {/* Header */}
@@ -881,10 +932,10 @@ export default function AIChatScreen() {
       <FlatList
         ref={flatListRef}
         data={invertedData}
-        keyExtractor={item => item.id}
+        keyExtractor={keyExtractor}
         inverted
         renderScrollComponent={renderScrollComponent}
-        contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8 }}
+        contentContainerStyle={LIST_CONTENT_CONTAINER_STYLE}
         renderItem={renderItem}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
@@ -895,34 +946,9 @@ export default function AIChatScreen() {
         initialNumToRender={6}
         maxToRenderPerBatch={4}
         windowSize={5}
-        ListHeaderComponent={
-          <>
-            {isLoading ? (
-              <View style={{ paddingBottom: 8 }}>
-                <View style={{ borderRadius: 14, overflow: 'hidden', alignSelf: 'flex-start' }}>
-                  <BlurView intensity={80} tint="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 7 }}>
-                    <ActivityIndicator size="small" color="#FFFFFF" />
-                    <Text style={{ fontSize: 11, color: '#FFFFFF', fontWeight: '500' }}>{t('ai_chat.thinking')}</Text>
-                  </BlurView>
-                </View>
-              </View>
-            ) : null}
-            <View style={{ height: LIST_BOTTOM_SPACER }} />
-          </>
-        }
-        ListFooterComponent={<View style={{ height: insets.top + 72 }} />}
-        ListEmptyComponent={
-          <View style={{ alignItems: 'center', paddingVertical: 60, transform: [{ scaleY: -1 }] }}>
-            <RNText style={{ fontSize: 48 }} allowFontScaling={false}>🤖</RNText>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 12 }}>
-              <Text variant="body" weight="bold">{t('ai_chat.title')}</Text>
-              <VerifiedBadge size={14} />
-            </View>
-            <Text variant="caption" color={theme.colors.text.tertiary} align="center" style={{ marginTop: 8, paddingHorizontal: 40, lineHeight: 18 }}>
-              {t('ai_chat.empty_hint')}
-            </Text>
-          </View>
-        }
+        ListHeaderComponent={listHeader}
+        ListFooterComponent={listFooter}
+        ListEmptyComponent={listEmpty}
       />
 
       {/* Static under-input fade — pinned to the screen bottom and kept
