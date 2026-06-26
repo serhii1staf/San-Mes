@@ -81,6 +81,29 @@ const INITIAL_WINDOW = 30;
 const WINDOW_CHUNK = 30;
 const SEED_CAP = 60;
 
+// ── Bounded recent-tail cache ──────────────────────────────────────────────
+// First paint only needs the most-recent `SEED_CAP` messages, yet the full
+// `chat_messages:<id>` blob can hold hundreds/thousands of messages. Parsing
+// that whole blob synchronously on the open frame is the dominant chat-open
+// stall and scales with chat length. To make first-paint seeding cheap and
+// O(SEED_CAP) regardless of total history, we keep a SEPARATE, tiny cache key
+// holding ONLY the last `SEED_CAP` messages. `seedMessages` reads this (a small
+// parse); the full blob stays the authoritative store for lazy hydration.
+const tailKey = (conversationId: string) => `chat_tail:${conversationId}`;
+
+// Write the bounded recent-tail cache from an authoritative (oldest→newest)
+// array. Called right next to every full `chat_messages:<id>` write so the seed
+// stays correct on every send/receive/edit/delete, and once off-frame after
+// open (via hydrateFullHistory) so pre-existing chats warm their tail too.
+function writeTailCache(conversationId: string, full: ChatMessage[]): void {
+  try {
+    const tail = full.length > SEED_CAP ? full.slice(full.length - SEED_CAP) : full;
+    kvSetJSON(tailKey(conversationId), tail);
+  } catch {
+    // ignore — the full blob remains the durable source of truth
+  }
+}
+
 // How many of the most-recent messages the chat-open warm prefetches. Bounded
 // low (the first screen is only a handful of bubbles) so opening a chat never
 // front-loads a burst of image fetches onto the navigation frame. The rest
@@ -891,16 +914,26 @@ export default function ChatScreen() {
     const fromStore = useChatStore.getState().messages[conversationId];
     if (fromStore && fromStore.length > 0) return fromStore as ChatMessage[];
     try {
+      // Cheap first-paint path: read the bounded recent-tail cache (only the
+      // last ~SEED_CAP messages), NOT the full history blob. This keeps the
+      // open-frame parse O(SEED_CAP) regardless of how long the chat is.
+      const tail = kvGetJSONSync<ChatMessage[]>(tailKey(conversationId), []);
+      if (tail.length > 0) {
+        return tail.map((m) => healLegacySender(m, currentUserId, participantId));
+      }
+      // Fallback (existing chats that predate the tail cache, or the very first
+      // open after this change before any write warms the tail): read the full
+      // blob ONCE so existing chats still seed with no blank flash. Still bound
+      // first paint to the SEED_CAP newest (the cache is oldest→newest, so the
+      // tail is newest). The tail key is then warmed off the critical path by
+      // hydrateFullHistory, so subsequent opens take the cheap path above. The
+      // FULL history is hydrated into the store off the critical path (see the
+      // deferred effect below), so scroll-up and reply-jump to older messages
+      // still work — we just don't parse/hold all of it on the open frame.
       const cached = kvGetJSONSync<ChatMessage[]>(`chat_messages:${conversationId}`, []);
       if (cached.length > 0) {
-        // First-paint parse bound: heal only the most-recent `SEED_CAP`
-        // messages (the cache is oldest→newest, so the tail is newest). The
-        // FULL history is hydrated into the store off the critical path (see
-        // the deferred effect below), so scroll-up and reply-jump to older
-        // messages still work — we just don't parse/hold all of it on the
-        // open-the-chat frame.
-        const tail = cached.length > SEED_CAP ? cached.slice(cached.length - SEED_CAP) : cached;
-        return tail.map((m) => healLegacySender(m, currentUserId, participantId));
+        const tailFromFull = cached.length > SEED_CAP ? cached.slice(cached.length - SEED_CAP) : cached;
+        return tailFromFull.map((m) => healLegacySender(m, currentUserId, participantId));
       }
       if (mockMessages[conversationId]) return mockMessages[conversationId] as ChatMessage[];
     } catch {}
@@ -982,6 +1015,11 @@ export default function ChatScreen() {
       }
     }
     setMessages(conversationId, healed as any);
+    // Warm the bounded recent-tail cache off the critical path so a chat that
+    // predates this cache (or was just opened the first time) takes the cheap
+    // tail path on its NEXT open instead of re-parsing the full blob. Runs once
+    // per conversation (guarded by historyHydratedRef above).
+    writeTailCache(conversationId, healed);
     return healed;
   }, [conversationId, currentUserId, participantId, setMessages]);
   // Always-current ref so handlers living in long-lived subscription effects
@@ -1427,18 +1465,24 @@ export default function ChatScreen() {
     // devices where MMKV is unavailable and we need the AsyncStorage
     // fallback. One tick of latency is invisible there too.
     const cacheKey = `chat_messages:${conversationId}`;
+    const tKey = tailKey(conversationId);
     const handle = InteractionManager.runAfterInteractions(() => {
-      kvWarm([cacheKey]).then(() => {
-        const cached = kvGetJSONSync<ChatMessage[]>(cacheKey, []);
-        if (cached.length > 0 && (useChatStore.getState().messages[conversationId] || []).length === 0) {
+      kvWarm([tKey, cacheKey]).then(() => {
+        // Prefer the bounded tail (small parse); fall back to the full blob if
+        // the tail key hasn't been written yet (existing chats).
+        let tail = kvGetJSONSync<ChatMessage[]>(tKey, []);
+        if (tail.length === 0) {
+          const cached = kvGetJSONSync<ChatMessage[]>(cacheKey, []);
+          tail = cached.length > SEED_CAP ? cached.slice(cached.length - SEED_CAP) : cached;
+        }
+        if (tail.length > 0 && (useChatStore.getState().messages[conversationId] || []).length === 0) {
           // Seed only the bounded `SEED_CAP` tail (newest), mirroring the
           // synchronous `seedMessages` path — the full history loads lazily on
           // demand. Record the seed reference for the persistence guard.
-          const tail = cached.length > SEED_CAP ? cached.slice(cached.length - SEED_CAP) : cached;
           const healedTail = tail.map((m) => healLegacySender(m, currentUserId, participantId));
           seededArrayRef.current = healedTail;
           setMessages(conversationId, healedTail as any);
-        } else if (cached.length === 0 && mockMessages[conversationId] && (useChatStore.getState().messages[conversationId] || []).length === 0) {
+        } else if (tail.length === 0 && mockMessages[conversationId] && (useChatStore.getState().messages[conversationId] || []).length === 0) {
           setMessages(conversationId, mockMessages[conversationId]);
         }
       }).catch(() => {});
@@ -1507,6 +1551,7 @@ export default function ChatScreen() {
     if (!myMessages || myMessages.length === 0) return;
     if (historyHydratedRef.current === conversationId) {
       kvSetJSON(`chat_messages:${conversationId}`, myMessages);
+      writeTailCache(conversationId, myMessages);
       return;
     }
     if (myMessages === seededArrayRef.current) return; // untouched seed — already on disk
@@ -1531,9 +1576,11 @@ export default function ChatScreen() {
           else { merged[at] = sm; }
         }
         kvSetJSON(`chat_messages:${conversationId}`, merged);
+        writeTailCache(conversationId, merged);
       } else {
         // Brand-new chat (no cached history yet) → the store is the whole truth.
         kvSetJSON(`chat_messages:${conversationId}`, myMessages);
+        writeTailCache(conversationId, myMessages);
       }
     } catch {}
 
@@ -3281,18 +3328,26 @@ export default function ChatScreen() {
           </View>
         ) : (
           <View style={[styles.headerContent, { paddingTop: insets.top }]} pointerEvents="auto">
-            {glassActive ? (
-              <Pressable onPress={() => router.back()} style={{ borderRadius: 18 }}>
-                <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.headerCircleGlass}>
+            {/* Left column flexes equally with the right (avatar) column so the
+                centered title stays SCREEN-centered even though the back button
+                — now an auto-width pill with the localized "Назад" label — is
+                wider than the avatar circle. iOS-style chevron + label. */}
+            <View style={styles.headerSide}>
+              {glassActive ? (
+                <Pressable onPress={() => router.back()} style={{ borderRadius: 18 }}>
+                  <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.backPillGlass}>
+                    <Feather name="chevron-left" size={22} color={theme.colors.text.primary} />
+                    <Text variant="caption" weight="semibold" numberOfLines={1} color={theme.colors.text.primary} style={styles.backLabel}>{t('common.back')}</Text>
+                  </NativeGlassView>
+                </Pressable>
+              ) : (
+                <Pressable onPress={() => router.back()} style={[styles.backPill, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
                   <Feather name="chevron-left" size={22} color={theme.colors.text.primary} />
-                </NativeGlassView>
-              </Pressable>
-            ) : (
-              <Pressable onPress={() => router.back()} style={[styles.headerCircle, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
-                <Feather name="chevron-left" size={22} color={theme.colors.text.primary} />
-              </Pressable>
-            )}
-            <View style={{ flex: 1, alignItems: 'center' }}>
+                  <Text variant="caption" weight="semibold" numberOfLines={1} color={theme.colors.text.primary} style={styles.backLabel}>{t('common.back')}</Text>
+                </Pressable>
+              )}
+            </View>
+            <View style={styles.headerTitleWrap}>
               {glassActive ? (
                 <Pressable
                   onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId, fromChat: '1' } })}
@@ -3322,9 +3377,11 @@ export default function ChatScreen() {
                 </Pressable>
               )}
             </View>
-            <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId, fromChat: '1' } })} style={[styles.headerCircle, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light, overflow: 'hidden' }]}>
-              <Avatar emoji={displayEmoji} name={displayName} size="xs" />
-            </Pressable>
+            <View style={[styles.headerSide, { alignItems: 'flex-end' }]}>
+              <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId, fromChat: '1' } })} style={[styles.headerCircle, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light, overflow: 'hidden' }]}>
+                <Avatar emoji={displayEmoji} name={displayName} size="xs" />
+              </Pressable>
+            </View>
           </View>
         )}
       </View>
@@ -3399,6 +3456,17 @@ const styles = StyleSheet.create({
   headerWrapper: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100 },
   headerContent: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingBottom: 8, gap: 10 },
   headerCircle: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
+  // Equal-flex left/right columns keep the centered title SCREEN-centered even
+  // though the back button (left) is now a wider chevron+label pill than the
+  // avatar circle (right). Both columns flex:1 so they grow to equal width.
+  headerSide: { flex: 1, alignItems: 'flex-start', justifyContent: 'center' },
+  headerTitleWrap: { flexShrink: 1, minWidth: 0, alignItems: 'center' },
+  // iOS-style back pill: chevron + "Назад" label. Auto width (no fixed circle
+  // size) so it grows to fit the localized label; keeps the 36pt height and
+  // rounded geometry of the other header chrome.
+  backPill: { flexDirection: 'row', alignItems: 'center', height: 36, borderRadius: 18, borderWidth: 1, paddingLeft: 6, paddingRight: 14, gap: 2 },
+  backPillGlass: { flexDirection: 'row', alignItems: 'center', height: 36, borderRadius: 18, paddingLeft: 8, paddingRight: 16, gap: 2 },
+  backLabel: { marginLeft: -2 },
   headerPill: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, height: 36, borderRadius: 18, borderWidth: 1, paddingHorizontal: 16 },
   // Interactive-glass shape variants: same geometry as the flat chrome but with
   // NO border and NO overflow clipping, so the liquid glass can morph OUTWARD

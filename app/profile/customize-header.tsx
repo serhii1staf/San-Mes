@@ -268,10 +268,17 @@ export default function CustomizeHeaderScreen() {
       {/* Top bar — floating ghost close pill + filled accent save pill, no hard
           divider (the rounded preview card below provides the separation). */}
       <View style={{ paddingTop: insets.top + 8, paddingHorizontal: 14, paddingBottom: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+        {/* Title lives in its OWN absolutely-positioned, full-width layer so it
+            is truly centered on screen regardless of the close/save button
+            widths. pointerEvents="none" keeps both buttons fully tappable
+            underneath; symmetric horizontal padding clears the side buttons so a
+            long title truncates (numberOfLines={1}) instead of overlapping. */}
+        <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, top: insets.top + 8, height: 34, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 84 }}>
+          <Text variant="h3" weight="bold" numberOfLines={1}>{t('customize.title', 'Оформление')}</Text>
+        </View>
         <Pressable onPress={() => router.back()} hitSlop={10} style={({ pressed }) => ({ width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.04)', opacity: pressed ? 0.6 : 1 })}>
           <Feather name="x" size={20} color={theme.colors.text.primary} />
         </Pressable>
-        <Text variant="h3" weight="bold">{t('customize.title', 'Оформление')}</Text>
         <Pressable onPress={onSave} disabled={saving} hitSlop={10} style={({ pressed }) => ({ minWidth: 64, height: 34, paddingHorizontal: 16, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.accent.primary, opacity: saving ? 0.7 : (pressed ? 0.85 : 1) })}>
           {saving ? <ActivityIndicator color="#FFFFFF" size="small" /> : <RNText allowFontScaling={false} style={{ fontSize: 14, fontWeight: '600', color: '#FFFFFF', includeFontPadding: false }}>{t('common.done', 'Готово')}</RNText>}
         </Pressable>
@@ -339,10 +346,10 @@ export default function CustomizeHeaderScreen() {
             <MiniLabel theme={theme} text={eraser ? t('customize.draw_erase_hint', 'Нажимай по линиям, чтобы стирать.') : t('customize.draw_size', 'Размер кисти')} />
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
               <HSizeSlider value={drawWidth} min={DRAW_MIN_W} max={DRAW_MAX_W} color={eraser ? theme.colors.text.secondary : drawColor} onChange={setDrawWidth} theme={theme} />
-              <View style={{ width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
+              <View style={{ width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.022)', borderWidth: StyleSheet.hairlineWidth, borderColor: theme.colors.border.light }}>
                 <View style={{ width: Math.max(4, Math.min(34, drawWidth * 2)), height: Math.max(4, Math.min(34, drawWidth * 2)), borderRadius: 17, backgroundColor: eraser ? theme.colors.text.secondary : drawColor }} />
               </View>
-              <RNText allowFontScaling={false} style={{ width: 26, textAlign: 'right', fontSize: 13, fontWeight: '600', color: theme.colors.text.secondary, includeFontPadding: false }}>{Math.round(drawWidth)}</RNText>
+              <RNText allowFontScaling={false} style={{ width: 26, textAlign: 'right', fontSize: 13, fontWeight: '500', color: theme.colors.text.secondary, includeFontPadding: false }}>{Math.round(drawWidth)}</RNText>
             </View>
           </DrawCard>
 
@@ -352,9 +359,9 @@ export default function CustomizeHeaderScreen() {
               {BRUSH_OPTIONS.map((b) => {
                 const active = brush === b.key;
                 return (
-                  <Pressable key={b.key} onPress={() => { triggerHaptic('light'); setEraser(false); setBrush(b.key); }} style={({ pressed }) => ({ flex: 1, height: 56, borderRadius: 12, alignItems: 'center', justifyContent: 'center', gap: 3, backgroundColor: active ? accentTint : neutralSurface, opacity: pressed ? 0.7 : 1 })}>
+                  <Pressable key={b.key} onPress={() => { triggerHaptic('light'); setEraser(false); setBrush(b.key); }} style={({ pressed }) => ({ flex: 1, height: 54, borderRadius: 14, alignItems: 'center', justifyContent: 'center', gap: 5, backgroundColor: active ? accentTint : (pressed ? neutralSurface : 'transparent'), borderWidth: StyleSheet.hairlineWidth, borderColor: active ? 'transparent' : theme.colors.border.light, opacity: pressed ? 0.85 : 1, transform: [{ scale: pressed ? 0.97 : 1 }] })}>
                     <Feather name={b.icon} size={17} color={active ? theme.colors.accent.primary : theme.colors.text.secondary} />
-                    <RNText allowFontScaling={false} style={{ fontSize: 10.5, fontWeight: '600', includeFontPadding: false, color: active ? theme.colors.accent.primary : theme.colors.text.secondary }}>{t(b.tKey, b.label)}</RNText>
+                    <RNText allowFontScaling={false} style={{ fontSize: 10.5, fontWeight: '500', includeFontPadding: false, color: active ? theme.colors.accent.primary : theme.colors.text.secondary }}>{t(b.tKey, b.label)}</RNText>
                   </Pressable>
                 );
               })}
@@ -368,7 +375,7 @@ export default function CustomizeHeaderScreen() {
               {DRAW_COLORS.map((c) => {
                 const active = !eraser && drawColor === c;
                 return (
-                  <Pressable key={c} onPress={() => { triggerHaptic('light'); setEraser(false); setDrawColor(c); }} style={({ pressed }) => ({ width: 32, height: 32, borderRadius: 16, backgroundColor: c, borderWidth: active ? 2.5 : 1, borderColor: active ? theme.colors.accent.primary : 'rgba(127,127,127,0.4)', opacity: pressed ? 0.7 : 1 })} />
+                  <Pressable key={c} onPress={() => { triggerHaptic('light'); setEraser(false); setDrawColor(c); }} style={({ pressed }) => ({ width: 30, height: 30, borderRadius: 15, backgroundColor: c, borderWidth: active ? 2.5 : StyleSheet.hairlineWidth, borderColor: active ? theme.colors.accent.primary : 'rgba(127,127,127,0.22)', opacity: pressed ? 0.7 : 1, transform: [{ scale: pressed ? 0.9 : 1 }] })} />
                 );
               })}
             </ScrollView>
@@ -376,14 +383,14 @@ export default function CustomizeHeaderScreen() {
 
           <DrawCard theme={theme}>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
-              <Pressable onPress={() => { triggerHaptic('light'); setEraser((e) => !e); }} style={({ pressed }) => ({ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: eraser ? accentTint : neutralSurface, opacity: pressed ? 0.7 : 1 })}>
-                <Feather name="delete" size={19} color={eraser ? theme.colors.accent.primary : theme.colors.text.primary} />
+              <Pressable onPress={() => { triggerHaptic('light'); setEraser((e) => !e); }} style={({ pressed }) => ({ width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: eraser ? accentTint : (pressed ? neutralSurface : 'transparent'), borderWidth: StyleSheet.hairlineWidth, borderColor: eraser ? 'transparent' : theme.colors.border.light, opacity: pressed ? 0.85 : 1, transform: [{ scale: pressed ? 0.94 : 1 }] })}>
+                <Feather name="delete" size={18} color={eraser ? theme.colors.accent.primary : theme.colors.text.secondary} />
               </Pressable>
               <ToolBtn theme={theme} icon="corner-up-left" onPress={undoStroke} />
               <ToolBtn theme={theme} icon="corner-up-right" onPress={redoStroke} />
               <ToolBtn theme={theme} icon="trash-2" danger onPress={clearStrokes} />
             </View>
-            <Pressable onPress={() => { triggerHaptic('light'); setEraser(false); setDrawMode(false); }} style={({ pressed }) => ({ height: 46, marginTop: 12, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.accent.primary, opacity: pressed ? 0.85 : 1 })}>
+            <Pressable onPress={() => { triggerHaptic('light'); setEraser(false); setDrawMode(false); }} style={({ pressed }) => ({ height: 46, marginTop: 12, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.accent.primary, opacity: pressed ? 0.9 : 1, transform: [{ scale: pressed ? 0.99 : 1 }] })}>
               <RNText allowFontScaling={false} style={{ fontSize: 15, fontWeight: '600', color: '#FFFFFF', includeFontPadding: false }}>{t('customize.draw_done', 'Готово')}</RNText>
             </Pressable>
           </DrawCard>
@@ -410,13 +417,13 @@ export default function CustomizeHeaderScreen() {
           </DrawCard>
         </View>
       ) : (
-        <View style={{ height: 12 }} />
+        <View style={{ height: 6 }} />
       )}
 
       {/* ── Library — group tabs + grids ──────────────────────────────── */}
       {!drawMode ? (
         <View style={{ flex: 1 }}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 12, gap: 8, paddingVertical: 10 }} style={{ flexGrow: 0 }}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 12, gap: 8, paddingTop: 2, paddingBottom: 10 }} style={{ flexGrow: 0, marginTop: -12 }}>
             {[{ key: 'bg', label: t('customize.bg', 'Фон') }, ...STICKER_LIBRARY.map((g) => ({ key: g.key, label: g.label }))].map((g) => {
               const active = g.key === activeGroup;
               return (
@@ -560,8 +567,8 @@ function DrawCanvas({ width, height, color, strokeWidth, brush, strokes, onCompl
 
 function ToolBtn({ theme, icon, onPress, danger }: { theme: any; icon: any; onPress: () => void; danger?: boolean }) {
   return (
-    <Pressable onPress={onPress} hitSlop={8} style={({ pressed }) => ({ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', opacity: pressed ? 0.6 : 1 })}>
-      <Feather name={icon} size={20} color={danger ? theme.colors.status.error : theme.colors.text.primary} />
+    <Pressable onPress={onPress} hitSlop={8} style={({ pressed }) => ({ width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: pressed ? (theme.isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.045)') : 'transparent', borderWidth: StyleSheet.hairlineWidth, borderColor: theme.colors.border.light, opacity: pressed ? 0.85 : 1, transform: [{ scale: pressed ? 0.94 : 1 }] })}>
+      <Feather name={icon} size={18} color={danger ? theme.colors.status.error : theme.colors.text.secondary} />
     </Pressable>
   );
 }
@@ -576,10 +583,12 @@ function AnimChip({ theme, icon, label, active, onPress }: { theme: any; icon: a
   );
 }
 
-// A subtle rounded surface card used to group the draw controls.
+// A subtle rounded surface card used to group the draw controls. Light tint,
+// tight padding and a small radius so cards read as clean grouped surfaces
+// rather than chunky blocks.
 function DrawCard({ theme, children }: { theme: any; children: React.ReactNode }) {
   return (
-    <View style={{ borderRadius: 16, padding: 14, gap: 10, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
+    <View style={{ borderRadius: 16, padding: 14, gap: 12, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.035)' : 'rgba(0,0,0,0.018)', borderWidth: StyleSheet.hairlineWidth, borderColor: theme.colors.border.light }}>
       {children}
     </View>
   );
@@ -662,7 +671,7 @@ function HuePicker({ hue, onChange, theme }: { hue: number; onChange: (h: number
         end={{ x: 1, y: 0 }}
         style={{ position: 'absolute', left: 0, right: 0, height: 14, borderRadius: 7 }}
       />
-      <View pointerEvents="none" style={{ position: 'absolute', left: frac * w - 12, width: 24, height: 24, borderRadius: 12, backgroundColor: thumbColor, borderWidth: 3, borderColor: '#FFFFFF', shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 2, shadowOffset: { width: 0, height: 1 } }} />
+      <View pointerEvents="none" style={{ position: 'absolute', left: frac * w - 12, width: 24, height: 24, borderRadius: 12, backgroundColor: thumbColor, borderWidth: 3, borderColor: '#FFFFFF', shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 1, shadowOffset: { width: 0, height: 1 } }} />
     </View>
   );
 }

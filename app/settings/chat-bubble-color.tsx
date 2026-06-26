@@ -96,32 +96,30 @@ export default function ChatBubbleColorScreen() {
   const textTertiary = theme.colors.text.tertiary;
   const borderLight = theme.colors.border.light;
 
-  // A message-bubble-shaped tile (rounded with a tail corre­sponding to the
-  // side being edited) — Telegram-like read. Selection is shown ONLY by the
-  // accent ring + subtle tint; idle tiles stay clean and show their emoji.
-  // Pressing scales the rounded bubble down with a soft accent tint that's
-  // clipped to the tile's border-radius so the feedback feels tactile.
+  // A clean rounded-rectangle swatch tile (uniform corners — no asymmetric
+  // bubble "tail"). Selection is shown ONLY by the accent ring + subtle tint;
+  // idle tiles stay clean and show their emoji. Pressing scales the tile down
+  // with a soft accent tint that's clipped (overflow hidden) to the SAME
+  // uniform radius, so the press feedback matches the tile shape exactly. The
+  // ring radius is concentric (tile radius + ring padding) for clean nesting.
   const Tile = ({ colors, selected, emoji, label, onPress, defaultFill }: {
     colors: string[] | null; selected: boolean; emoji?: string; label: string; onPress: () => void; defaultFill?: string;
   }) => {
     const grad = colors && colors.length > 1;
     const solid = colors && colors.length === 1 ? colors[0] : undefined;
     const fill = colors ? undefined : defaultFill;
-    const tail = target === 'out'
-      ? { borderBottomRightRadius: 7 }
-      : { borderBottomLeftRadius: 7 };
     return (
       <Pressable onPress={onPress} style={styles.tileWrap}>
         {({ pressed }) => (
           <>
             <View style={[styles.tileRing, { borderColor: selected ? accent : 'transparent', backgroundColor: selected ? accent + '14' : 'transparent', transform: [{ scale: pressed ? 0.96 : 1 }] }]}>
-              <View style={[styles.tile, tail, { backgroundColor: solid || fill || 'transparent' }]}>
+              <View style={[styles.tile, { backgroundColor: solid || fill || 'transparent' }]}>
                 {grad ? (
                   <LinearGradient colors={colors as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
                 ) : null}
-                <View style={[StyleSheet.absoluteFill, tail, styles.tileHairline]} pointerEvents="none" />
+                <View style={[StyleSheet.absoluteFill, styles.tileHairline]} pointerEvents="none" />
                 {emoji ? <RNText style={styles.tileEmoji} allowFontScaling={false}>{emoji}</RNText> : null}
-                {pressed ? <View style={[StyleSheet.absoluteFill, tail, styles.tilePress, { backgroundColor: accent + '1F' }]} pointerEvents="none" /> : null}
+                {pressed ? <View style={[StyleSheet.absoluteFill, styles.tilePress, { backgroundColor: accent + '1F' }]} pointerEvents="none" /> : null}
               </View>
             </View>
             <RNText style={[styles.tileLabel, { color: selected ? textPrimary : textTertiary }]} numberOfLines={1} allowFontScaling={false}>{label}</RNText>
@@ -389,6 +387,8 @@ const styles = StyleSheet.create({
 
   grid: { flexDirection: 'row', flexWrap: 'wrap', rowGap: 16 },
   tileWrap: { width: '25%', alignItems: 'center', gap: 7 },
+  // Concentric corners: ring radius (18) = tile radius (15) + ring padding (3).
+  // Tile, hairline and press overlay all share the same uniform 15 radius.
   tileRing: { padding: 3, borderRadius: 18, borderWidth: 1.5 },
   tile: {
     width: 58, height: 42, borderRadius: 15, overflow: 'hidden',

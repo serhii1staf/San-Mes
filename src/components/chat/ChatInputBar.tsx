@@ -54,6 +54,33 @@ const EXPAND_PAD_LEFT = BASE_PAD_LEFT + SWALLOW_DX; // 66
 // the expanded overlap (≈0) clearly fuses them.
 const GLASS_MERGE_SPACING = 4;
 
+// ── Native paste wrapper (expo-paste-input) — crash-safe SYNC load ─────────
+//
+// PERF / FOCUS-STEALING REMOUNT FIX (#1): the wrapper used to be lazy-loaded in
+// a `useEffect` and flipped into state, which UNMOUNTED the bare <TextInput>
+// and MOUNTED a fresh one inside the wrapper — if that landed on the first tap,
+// focus/keyboard was dropped (the "dead first tap"). Instead we resolve the
+// native wrapper SYNCHRONOUSLY (and cache it module-wide) on first access, so
+// the TextInput's tree position is decided BEFORE the first paint and never
+// changes for the life of the field → no remount, taps always focus instantly.
+//
+// Crash-safety is preserved: on older binaries that lack the native view
+// (`ExpoPasteInput`), `requireNativeView` throws while the module evaluates —
+// we swallow it and fall back to the plain TextInput, exactly as before.
+let pasteWrapperResolved = false;
+let cachedPasteWrapper: React.ComponentType<any> | null = null;
+function loadPasteWrapper(): React.ComponentType<any> | null {
+  if (pasteWrapperResolved) return cachedPasteWrapper;
+  pasteWrapperResolved = true;
+  try {
+    const m = require('expo-paste-input');
+    cachedPasteWrapper = m && m.TextInputWrapper ? m.TextInputWrapper : null;
+  } catch {
+    cachedPasteWrapper = null;
+  }
+  return cachedPasteWrapper;
+}
+
 // ── Isolated chat input bar ───────────────────────────────────────────────
 //
 // Performance: owns the text-input state LOCALLY so typing re-renders only this
@@ -109,6 +136,97 @@ interface ChatInputBarProps {
   onOpenEmoji?: () => void;
 }
 
+// ── Isolated text field (PER-KEYSTROKE RECONCILIATION FIX #4) ──────────────
+//
+// The <TextInput> + its local `text` state live HERE, in a memoized child, so a
+// keystroke re-renders ONLY this component — never the parent's glass chrome
+// (GlassContainerView + NativeGlassViews), the send button, or the overlays.
+// The parent drives/observes text purely through this child's imperative handle
+// (setText/clear/getText/insert/backspace/focus) and learns about send-enable
+// transitions through `onHasTextChange`, which fires ONLY when the field flips
+// between empty and non-empty (not on every keystroke), so the glass surfaces
+// reconcile at most once per transition instead of per character.
+interface ChatFieldHandle {
+  setText: (text: string) => void;
+  clear: () => void;
+  getText: () => string;
+  insert: (s: string) => void;
+  backspace: () => void;
+  focus: () => void;
+}
+
+interface ChatFieldProps {
+  onContentSizeChange: (e: { nativeEvent: { contentSize: { height: number } } }) => void;
+  // Fires only when emptiness flips (true ⇄ false) — drives `canSend` without a
+  // per-keystroke parent render.
+  onHasTextChange: (hasText: boolean) => void;
+  onFocus: () => void;
+  onPaste: (payload: any) => void;
+}
+
+const ChatField = memo(forwardRef<ChatFieldHandle, ChatFieldProps>(function ChatField(
+  { onContentSizeChange, onHasTextChange, onFocus, onPaste },
+  ref,
+) {
+  const theme = useTheme();
+  const t = useT();
+  const [text, setText] = useState('');
+  const textInputRef = useRef<TextInput>(null);
+  // Resolved ONCE, synchronously — the wrapper (or null) never changes, so the
+  // TextInput below keeps a stable tree position and never remounts (#1).
+  const [PasteWrapper] = useState(() => loadPasteWrapper());
+
+  // Notify the parent only when emptiness flips — keeps the glass chrome out of
+  // the per-keystroke render path while keeping send-enable correct (#4).
+  const hadTextRef = useRef(false);
+  useEffect(() => {
+    const has = text.trim().length > 0;
+    if (has !== hadTextRef.current) {
+      hadTextRef.current = has;
+      onHasTextChange(has);
+    }
+  }, [text, onHasTextChange]);
+
+  useImperativeHandle(ref, () => ({
+    setText: (val: string) => setText(val),
+    clear: () => setText(''),
+    getText: () => text,
+    insert: (s: string) => setText((prev) => prev + s),
+    backspace: () => setText((prev) => deleteLastGrapheme(prev)),
+    focus: () => { textInputRef.current?.focus(); },
+  }), [text]);
+
+  const handleChangeText = useCallback((val: string) => setText(val), []);
+
+  const textInputEl = (
+    <TextInput
+      ref={textInputRef}
+      value={text}
+      onChangeText={handleChangeText}
+      placeholder={t('chat.input_placeholder')}
+      placeholderTextColor={theme.colors.text.tertiary}
+      style={{ flex: 1, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular, maxHeight: 100, paddingTop: 0, paddingBottom: 0, minHeight: 22, lineHeight: 20, alignSelf: 'stretch', textAlign: 'left' }}
+      multiline
+      textAlignVertical="center"
+      autoCorrect={false}
+      autoComplete="off"
+      spellCheck={false}
+      onContentSizeChange={onContentSizeChange}
+      onFocus={onFocus}
+    />
+  );
+
+  // Tree shape is identical on both branches from the very first render (the
+  // wrapper decision is fixed at mount), so the TextInput never remounts.
+  return PasteWrapper ? (
+    <PasteWrapper style={{ flex: 1 }} onPaste={onPaste}>
+      {textInputEl}
+    </PasteWrapper>
+  ) : (
+    textInputEl
+  );
+}));
+
 export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProps>(function ChatInputBar(
   { isEditing, hasPendingImages, onSend, onPickImages, onPasteImage, onPasteImages, onOpenGif, inputRowStyle, emojiOpen, gifOpen, onToggleEmoji, onOpenEmoji },
   ref,
@@ -116,10 +234,12 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
   const theme = useTheme();
   const t = useT();
   const glassActive = useLiquidGlassActive();
-  const [text, setText] = useState('');
-  // Ref to the underlying TextInput so the parent (via the handle) can focus
-  // it to re-open the keyboard when leaving the emoji panel.
-  const textInputRef = useRef<TextInput>(null);
+  // Imperative handle to the isolated text field. The parent screen's handle
+  // forwards to this; keystrokes never reach the parent render path.
+  const fieldRef = useRef<ChatFieldHandle>(null);
+  // Lightweight mirror of "field has text" — flips at most once per empty⇄
+  // non-empty transition (see ChatField.onHasTextChange), NOT per keystroke.
+  const [hasText, setHasText] = useState(false);
 
   // Swallow progress 0→1 (UI thread). Runs on BOTH glass and flat now — on
   // glass the surfaces liquid-merge; on flat the photo capsule slides under the
@@ -127,52 +247,60 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
   // expansion + the top-left emoji button behave identically.
   const sw = useSharedValue(0);
   const expandedRef = useRef(false);
-  // JS mirror of the expanded flag — drives the emoji button's `pointerEvents`
-  // so the (fully transparent) button can't intercept taps while collapsed.
-  const [fieldExpanded, setFieldExpanded] = useState(false);
   const setExpanded = useCallback((next: boolean) => {
     if (next === expandedRef.current) return;
     expandedRef.current = next;
-    setFieldExpanded(next);
-    // Soft spring → "liquid" feel as the field expands/collapses.
-    sw.value = withSpring(next ? 1 : 0, { damping: 17, stiffness: 120, mass: 0.8, overshootClamping: false });
+    // EXPAND RE-RENDER FIX (#2): no JS state flip here anymore — the emoji
+    // overlay's interactivity is derived from `sw` on the UI thread (see
+    // emojiBtnStyle), so expanding no longer reconciles the glass surfaces.
+    // SLOW SWALLOW SPRING FIX (#3): snappier spring (was damping 17 / stiffness
+    // 120 / mass 0.8 ≈ 500-700ms) so it settles quickly but still feels liquid.
+    sw.value = withSpring(next ? 1 : 0, { damping: 24, stiffness: 260, mass: 0.7, overshootClamping: false });
   }, [sw]);
 
-  // ── Native paste wrapper (expo-paste-input) — crash-safe lazy load ──────
-  const [PasteWrapper, setPasteWrapper] = useState<React.ComponentType<any> | null>(null);
-  useEffect(() => {
-    let mounted = true;
-    import('expo-paste-input')
-      .then((m) => {
-        const W = (m as any)?.TextInputWrapper;
-        if (mounted && W) setPasteWrapper(() => W);
-      })
-      .catch(() => {});
-    return () => { mounted = false; };
-  }, []);
-
+  // Native paste payload → parent. Stable so the memoized ChatField never
+  // re-renders just because the bar re-rendered.
   const handleNativePaste = useCallback((payload: any) => {
     if (payload?.type === 'images' && Array.isArray(payload.uris) && payload.uris.length > 0) {
       onPasteImages?.(payload.uris);
     }
   }, [onPasteImages]);
 
-  useImperativeHandle(ref, () => ({
-    setText: (val: string) => { setText(val); if (!val) setExpanded(false); },
-    clear: () => { setText(''); lastHeightRef.current = 0; setExpanded(false); },
-    getText: () => text,
-    insert: (s: string) => { setText((prev) => prev + s); },
-    backspace: () => { setText((prev) => deleteLastGrapheme(prev)); },
-    focus: () => { textInputRef.current?.focus(); },
-  }), [text, setExpanded]);
+  // Latest panel state held in refs so the field's focus handler can stay a
+  // STABLE callback (keeps ChatField from re-rendering on panel toggles).
+  const emojiOpenRef = useRef(emojiOpen);
+  emojiOpenRef.current = emojiOpen;
+  const gifOpenRef = useRef(gifOpen);
+  gifOpenRef.current = gifOpen;
+  const onToggleEmojiRef = useRef(onToggleEmoji);
+  onToggleEmojiRef.current = onToggleEmoji;
+  const handleFieldFocus = useCallback(() => {
+    perfMonitor.markInputFocus('chat');
+    // Tapping the field while a panel is open should close it and return to the
+    // keyboard (which is already coming up).
+    if (emojiOpenRef.current || gifOpenRef.current) onToggleEmojiRef.current?.();
+  }, []);
 
-  const canSend = text.trim().length > 0 || hasPendingImages;
+  const handleHasTextChange = useCallback((next: boolean) => setHasText(next), []);
+
+  useImperativeHandle(ref, () => ({
+    setText: (val: string) => { fieldRef.current?.setText(val); if (!val) setExpanded(false); },
+    clear: () => { fieldRef.current?.clear(); lastHeightRef.current = 0; setExpanded(false); },
+    getText: () => fieldRef.current?.getText() ?? '',
+    insert: (s: string) => { fieldRef.current?.insert(s); },
+    backspace: () => { fieldRef.current?.backspace(); },
+    focus: () => { fieldRef.current?.focus(); },
+  }), [setExpanded]);
+
+  const canSend = hasText || hasPendingImages;
 
   const handleSend = useCallback(() => {
-    const val = text;
-    setText('');
+    const val = fieldRef.current?.getText() ?? '';
+    // Match prior behavior: clear text WITHOUT forcing collapse (the field's
+    // content-size change collapses it via hysteresis as the text shrinks).
+    fieldRef.current?.setText('');
     onSend(val);
-  }, [text, onSend]);
+  }, [onSend]);
 
   // Detect 1↔multi-line with hysteresis (expand >34px, collapse <28px). Height
   // itself snaps (no LayoutAnimation) so nothing competes with the swallow.
@@ -193,46 +321,28 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
   }));
   // Emoji button reveal — tied to the SAME `sw` expansion shared value so it
   // fades + scales in on the UI thread exactly as the field expands to 2+
-  // lines, and out as it collapses. No new per-frame JS.
+  // lines, and out as it collapses. `pointerEvents` rides `sw` too (#2): the
+  // button is interactive ONLY while visible (sw>0), so the fully transparent
+  // collapsed button can never intercept taps over the text — and there is NO
+  // JS re-render driving it.
   const emojiBtnStyle = useAnimatedStyle(() => ({
     opacity: sw.value,
     transform: [{ scale: interpolate(sw.value, [0, 1], [0.55, 1]) }],
+    pointerEvents: sw.value > 0.01 ? 'auto' : 'none',
   }));
 
-  const textInputEl = (
-    <TextInput
-      ref={textInputRef}
-      value={text}
-      onChangeText={setText}
-      placeholder={t('chat.input_placeholder')}
-      placeholderTextColor={theme.colors.text.tertiary}
-      style={{ flex: 1, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular, maxHeight: 100, paddingTop: 0, paddingBottom: 0, minHeight: 22, lineHeight: 20, alignSelf: 'stretch', textAlign: 'left' }}
-      multiline
-      textAlignVertical="center"
-      autoCorrect={false}
-      autoComplete="off"
-      spellCheck={false}
-      onContentSizeChange={handleContentSizeChange}
-      onFocus={() => {
-        perfMonitor.markInputFocus('chat');
-        // Tapping the field while a panel is open should close it and
-        // return to the keyboard (which is already coming up).
-        if (emojiOpen || gifOpen) onToggleEmoji?.();
-      }}
-    />
-  );
-
   // Field content (TextInput + GIF) with the animated left padding that keeps
-  // the text pinned while the field swallows the button.
+  // the text pinned while the field swallows the button. The TextInput lives in
+  // the memoized <ChatField> so keystrokes don't reconcile this glass chrome.
   const fieldContent = (
     <Reanimated.View style={[styles.fieldContent, fieldPadStyle]}>
-      {PasteWrapper ? (
-        <PasteWrapper style={{ flex: 1 }} onPaste={handleNativePaste}>
-          {textInputEl}
-        </PasteWrapper>
-      ) : (
-        textInputEl
-      )}
+      <ChatField
+        ref={fieldRef}
+        onContentSizeChange={handleContentSizeChange}
+        onHasTextChange={handleHasTextChange}
+        onFocus={handleFieldFocus}
+        onPaste={handleNativePaste}
+      />
       {emojiOpen || gifOpen ? (
         // A panel is open → this slot returns the user to the keyboard. Fixed
         // height matches the GIF state so swapping GIF↔keyboard never resizes
@@ -250,15 +360,11 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
 
   // Emoji button — overlaid at the field's TOP-LEFT, OUTSIDE the padded
   // `fieldContent` so the animated left padding can't shove it over the text.
-  // It anchors to the field wrapper's own left edge. Opacity/scale ride `sw`
-  // on the UI thread (visible when sw≈1 / multiline); `pointerEvents` is gated
-  // on the JS expansion mirror so the transparent button never eats taps while
-  // collapsed. Rendered as a sibling inside each field wrapper below.
+  // It anchors to the field wrapper's own left edge. Opacity/scale AND
+  // pointerEvents ride `sw` on the UI thread (visible + tappable when sw>0,
+  // inert when collapsed). Rendered as a sibling inside each field wrapper.
   const emojiOverlay = (
-    <Reanimated.View
-      style={[styles.emojiBtnWrap, emojiBtnStyle]}
-      pointerEvents={fieldExpanded ? 'auto' : 'none'}
-    >
+    <Reanimated.View style={[styles.emojiBtnWrap, emojiBtnStyle]}>
       <Pressable onPress={onOpenEmoji} hitSlop={8} style={styles.emojiBtn}>
         <AnimatedEmojiIcon size={22} color={theme.colors.accent.primary} />
       </Pressable>

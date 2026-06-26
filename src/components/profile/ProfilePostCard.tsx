@@ -20,25 +20,67 @@ import { useT } from '../../i18n/store';
 import { perfMonitor } from '../../services/perfMonitor';
 import { useSettingsStore } from '../../store/settingsStore';
 
-// ─── Per-card lazy hydrate ──────────────────────────────────────────────
-// Each card defers its body ONE RAF after its own mount so the FlatList
-// commit that lands a freshly-virtualized card carries only an empty
-// placeholder, with the heavy subtree (FormattedText, LinkPreview,
-// EmojiPattern/PixelIconPattern, SwipeablePostCard wrapper, image grid)
-// committing on the NEXT frame.
+// ─── Shared frame-paced hydrate scheduler ───────────────────────────────
+// Each card mounts as an empty same-size placeholder and asks a SHARED FIFO
+// "reveal permit" scheduler (the module-level singleton below) for
+// permission to hydrate its heavy body (FormattedText, LinkPreview,
+// EmojiPattern/PixelIconPattern, SwipeablePostCard wrapper, image grid).
 //
-// Why per-card (instead of a module-level "first frame done" latch): the
-// previous module-level latch flipped to `true` once the initial 2 cards
-// had finished their first paint, which meant every subsequent card —
-// including ones mounted DURING SCROLL as FlatList virtualization ran —
-// initialized with `hydrated = true` and committed its full body in a
-// single frame. With ~11 ms of native shadow-tree work per card body, a
-// scroll batch landing 2-3 cards on the same frame storms the UI thread
-// — that was the perceived "~1 second hang" users reported when they
-// opened the profile tab cold and immediately scrolled. Per-card RAF
-// spreads each card's mount across two frames regardless of where it
-// lands in the session, so no scroll-induced commit ever carries more
-// than a handful of empty placeholders + at most one full body.
+// Why a shared queue instead of a bare per-card RAF: a plain
+// `requestAnimationFrame(() => setHydrated(true))` only delays each card by
+// ONE frame — it does NOT serialize cards relative to each other. Every card
+// that FlatList mounts in the same virtualization batch schedules its RAF
+// for the SAME next frame, so all of their heavy bodies commit together one
+// frame later = N × ~11-36 ms of native shadow-tree work stacked into a
+// single long task. That was the "~1 second hang" (ui < 30 markers) the perf
+// audit flagged when the profile tab mounts/scrolls a batch of cards.
+//
+// The scheduler below grants hydration to at most REVEAL_CARDS_PER_FRAME
+// cards PER animation frame, in mount order (FIFO). A single rAF "pump"
+// releases the next waiter(s) each frame and re-arms itself while the queue
+// is non-empty. Each card enqueues on mount and REMOVES itself from the queue
+// on unmount (cancel-on-unmount), so a fast scroll that recycles cards before
+// their turn never hydrates an offscreen card and never leaks queue slots.
+// A card that unmounts while queued simply drops its slot; the pump shifts
+// the next waiter, so the queue can never deadlock. Mirrors the proven
+// `useStaggeredReveal` pump and `scheduleRowArm` one-per-frame pattern.
+const __revealQueue: Array<() => void> = [];
+let __revealPumpScheduled = false;
+// At most this many card bodies hydrate per frame. Two keeps the cascade
+// fast (a screenful reveals in a handful of frames) while guaranteeing no
+// single frame ever commits more than ~2 full card bodies — so the stacked
+// long task is gone whether cards land on cold open or mid-scroll.
+const REVEAL_CARDS_PER_FRAME = 2;
+
+function __pumpRevealQueue() {
+  __revealPumpScheduled = false;
+  // Release up to REVEAL_CARDS_PER_FRAME waiters this frame, in FIFO order.
+  for (let i = 0; i < REVEAL_CARDS_PER_FRAME; i++) {
+    const fn = __revealQueue.shift();
+    if (!fn) break;
+    try { fn(); } catch { /* card unmounted between enqueue + pump */ }
+  }
+  // Re-arm while there is still pending work — one waiter (batch) per frame.
+  if (__revealQueue.length > 0) {
+    __revealPumpScheduled = true;
+    requestAnimationFrame(__pumpRevealQueue);
+  }
+}
+
+// Enqueue a hydration waiter; returns a canceller that drops this card's slot
+// if it unmounts (recycles) before its turn. Safe to call the canceller after
+// the waiter already fired — it just finds nothing to remove.
+function enqueueReveal(fn: () => void): () => void {
+  __revealQueue.push(fn);
+  if (!__revealPumpScheduled) {
+    __revealPumpScheduled = true;
+    requestAnimationFrame(__pumpRevealQueue);
+  }
+  return () => {
+    const i = __revealQueue.indexOf(fn);
+    if (i >= 0) __revealQueue.splice(i, 1);
+  };
+}
 
 interface ProfilePostCardProps {
   post: any;
@@ -110,16 +152,22 @@ function ProfilePostCardBase({ post, authorName, authorEmoji, authorVerified, au
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [perfEnabled]);
 
-  // Lazy-hydrate the WHOLE card body past the first paint. Each card runs
-  // its OWN RAF after mounting — see the header comment for the full
-  // rationale. The placeholder fallback below collapses an initial-mount
-  // commit from a full subtree to a single empty View, which is what
-  // gives each scroll-induced card mount one cheap "warm-up" frame
-  // before the real subtree commits.
+  // Lazy-hydrate the WHOLE card body past the first paint via the SHARED
+  // frame-paced reveal scheduler (module-level, top of file). On mount this
+  // card joins the FIFO queue; the pump flips `hydrated` to true on the
+  // card's staggered turn (≤ REVEAL_CARDS_PER_FRAME cards per frame, in mount
+  // order). The placeholder fallback below keeps the initial commit to a
+  // single empty View, and the shared queue guarantees that even when a whole
+  // FlatList batch mounts on one frame their bodies commit a few-per-frame
+  // instead of all-at-once — eliminating the stacked long-task hang.
+  //
+  // Cancel-on-unmount: if this card recycles (fast scroll) before its turn,
+  // the canceller drops its queue slot so it never hydrates offscreen and
+  // never leaks. Empty deps → enqueue exactly once per mount.
   const [hydrated, setHydrated] = useState(false);
   useEffect(() => {
-    const handle = requestAnimationFrame(() => setHydrated(true));
-    return () => cancelAnimationFrame(handle);
+    const cancel = enqueueReveal(() => setHydrated(true));
+    return cancel;
   }, []);
 
   // Pull derived data through `useMemo` so re-renders (theme flip,
@@ -158,6 +206,13 @@ function ProfilePostCardBase({ post, authorName, authorEmoji, authorVerified, au
     [hasImage, hydrated, content],
   );
   const timeAgo = useMemo(() => formatTimeAgo(post.createdAt), [post.createdAt]);
+
+  // Parse the decoration ONCE per emoji input instead of re-walking the
+  // prefix logic inside an IIFE on every commit. `parseDecoration` is cheap
+  // per call, but with a screenful of cards re-rendering (theme flip, sibling
+  // updates) it added up to needless work on the hot commit path. Keyed on
+  // the raw `postEmoji` string so it only recomputes when the emoji changes.
+  const decoration = useMemo(() => parseDecoration(postEmoji), [postEmoji]);
 
   // Theme-dependent style overrides, batched into a single memoed
   // object so each card commits only ONE composite style array per
@@ -203,20 +258,16 @@ function ProfilePostCardBase({ post, authorName, authorEmoji, authorVerified, au
         delayLongPress={400}
         style={[styles.container, themedContainer]}
       >
-        {/* Decoration: parsed from the postEmoji string. Legacy raw
-            emoji ("🌸") and explicit "emoji:🌸" both render as
+        {/* Decoration: parsed from the postEmoji string (memoized above as
+            `decoration` so the prefix logic isn't re-walked per commit).
+            Legacy raw emoji ("🌸") and explicit "emoji:🌸" both render as
             EmojiPattern; "pixel:<id>" routes to PixelIconPattern.
             Keeps the store schema unchanged while supporting both. */}
-        {(() => {
-          const dec = parseDecoration(postEmoji);
-          if (dec.kind === 'emoji') {
-            return <EmojiPattern emoji={dec.value} opacity={theme.isDark ? 0.12 : 0.10} />;
-          }
-          if (dec.kind === 'pixel') {
-            return <PixelIconPattern id={dec.id} opacity={theme.isDark ? 0.18 : 0.14} />;
-          }
-          return null;
-        })()}
+        {decoration.kind === 'emoji' ? (
+          <EmojiPattern emoji={decoration.value} opacity={theme.isDark ? 0.12 : 0.10} />
+        ) : decoration.kind === 'pixel' ? (
+          <PixelIconPattern id={decoration.id} opacity={theme.isDark ? 0.18 : 0.14} />
+        ) : null}
 
         {hasImage ? (
           <Pressable onPress={() => onImagePress(imgs[0], post.id, imgs)}>
