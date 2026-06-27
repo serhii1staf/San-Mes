@@ -13,9 +13,10 @@ interface AvatarProps {
   size?: AvatarSize;
   style?: ViewStyle;
   /**
-   * When true (default), emoji avatars get a soft, deterministic per-user
-   * circular container (tint fill + hairline ring). Set to false to render
-   * the bare emoji with no background.
+   * OPT-IN (default false). When false, emoji avatars render as the bare,
+   * centered emoji with no background (the original look). Set to true only
+   * where the soft, deterministic per-user circular container (tint fill +
+   * hairline ring) is wanted — e.g. the chat list and home feed.
    */
   tint?: boolean;
 }
@@ -56,7 +57,7 @@ export const Avatar = memo(function Avatar({
   emoji,
   size = 'md',
   style,
-  tint = true,
+  tint = false,
 }: AvatarProps) {
   const theme = useTheme();
 

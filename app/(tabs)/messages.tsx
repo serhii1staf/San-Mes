@@ -352,7 +352,7 @@ function ConversationItemBase({ item, tab }: { item: Conversation; index: number
       onPress={openChat}
       onLongPress={onRowLongPress}
     >
-      <Avatar emoji={item.participantEmoji} name={item.participantName} size="md" />
+      <Avatar emoji={item.participantEmoji} name={item.participantName} size="md" tint />
       <View style={{ flex: 1, marginLeft: 12 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
           <Text variant="body" weight={item.unreadCount > 0 ? 'semibold' : 'regular'} numberOfLines={1} style={{ flexShrink: 1 }}>

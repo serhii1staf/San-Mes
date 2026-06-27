@@ -253,11 +253,11 @@ export const PostCard = memo(function PostCard({ post, currentUserId, onLike, on
       {/* Header: avatar + name + username + time + icons */}
       <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: post.isRepost ? 8 : 14, paddingBottom: 8 }}>
         <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: post.authorId } })}>
-          <Avatar emoji={post.authorEmoji} name={post.authorName} size="sm" />
+          <Avatar emoji={post.authorEmoji} name={post.authorName} size="sm" tint />
         </Pressable>
         <View style={styles.headerNameWrap}>
           <View style={styles.headerNameRow}>
-            <Text weight="bold" variant="body" numberOfLines={1} style={{ fontSize: 15, flexShrink: 1 }}>{post.authorName}</Text>
+            <Text weight="bold" variant="body" numberOfLines={1} style={{ fontSize: 15, flexShrink: 1, minWidth: 0 }}>{post.authorName}</Text>
             {post.authorVerified && <VerifiedBadge size={13} />}
             {post.authorBadge && <UserBadge badge={post.authorBadge} size="sm" />}
           </View>

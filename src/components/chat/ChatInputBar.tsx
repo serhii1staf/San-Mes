@@ -17,6 +17,18 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
 
+// Gentle, warm one-shot layout config fired ONLY at the 1↔multiline toggle.
+// A soft, high-damping spring on `update` (~260ms) gives an organic, slightly
+// cushioned grow/collapse — warm, not bouncy, not abrupt — replacing the old
+// quick 170ms easeInEaseOut that felt too sharp. Still a single layout commit,
+// so it never reintroduces per-frame glass relayout.
+const INPUT_GROW_ANIM = {
+  duration: 260,
+  create: { type: LayoutAnimation.Types.easeInEaseOut, property: LayoutAnimation.Properties.opacity },
+  update: { type: LayoutAnimation.Types.spring, springDamping: 0.82 },
+  delete: { type: LayoutAnimation.Types.easeInEaseOut, property: LayoutAnimation.Properties.opacity },
+};
+
 // Delete the last user-perceived character (grapheme) from a string. Handles
 // astral emoji (surrogate pairs), variation selectors, skin-tone modifiers and
 // ZWJ-joined sequences (👨‍👩‍👧, ❤️‍🔥, 🏳️‍🌈) so one backspace removes one emoji.
@@ -312,7 +324,7 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
   // Detect 1↔multi-line with hysteresis (expand >34px, collapse <28px). At the
   // 1↔multiline TRANSITION (and ONLY then) we fire a single, gentle one-shot
   // LayoutAnimation so the input wrap's height/position eases smoothly as it
-  // grows/collapses. This is a ONE-SHOT layout commit (≈170ms easeInEaseOut),
+  // grows/collapses. This is a ONE-SHOT layout commit (~260ms soft spring),
   // NOT a per-frame interpolation, so it does NOT reintroduce the per-frame
   // liquid-glass union recompute the perf comments warn about — it animates the
   // single layout change at the toggle, exactly like app/comments/[id].tsx.
@@ -323,10 +335,10 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
     if (h === lastHeightRef.current) return;
     lastHeightRef.current = h;
     if (!expandedRef.current && h > 34) {
-      LayoutAnimation.configureNext(LayoutAnimation.create(170, LayoutAnimation.Types.easeInEaseOut, LayoutAnimation.Properties.opacity));
+      LayoutAnimation.configureNext(INPUT_GROW_ANIM);
       setExpanded(true);
     } else if (expandedRef.current && h < 28) {
-      LayoutAnimation.configureNext(LayoutAnimation.create(170, LayoutAnimation.Types.easeInEaseOut, LayoutAnimation.Properties.opacity));
+      LayoutAnimation.configureNext(INPUT_GROW_ANIM);
       setExpanded(false);
     }
   }, [setExpanded]);

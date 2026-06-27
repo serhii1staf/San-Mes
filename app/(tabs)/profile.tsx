@@ -60,6 +60,15 @@ const MY_POSTS_CACHE_KEY = '@san:my_posts';
 // Built lazily via accountKey() so signing in/out swaps cache scopes.
 const LIKED_POSTS_CACHE_PREFIX = '@san:liked_posts:';
 const USER_REPLIES_CACHE_PREFIX = '@san:user_replies:';
+// Truly-constant, theme-independent list values hoisted to module scope so
+// they are allocated ONCE instead of re-created on every screen render. A
+// fresh `contentContainerStyle` / `data` reference makes the Animated.FlatList
+// re-run extra reconciliation/virtualization work on each parent re-render
+// (tab switch, follow-count update, refreshing flag, viewingImage toggle…),
+// even when the underlying rows are unchanged. Mirrors the same constants
+// already used by app/profile/[id].tsx.
+const LIST_CONTENT_CONTAINER_STYLE = { paddingBottom: 100, paddingHorizontal: 16, paddingTop: 12 } as const;
+const EMPTY_LIST: any[] = [];
 type TabName = 'posts' | 'replies' | 'media' | 'likes';
 
 function detectLinkType(url: string): string {
@@ -1211,12 +1220,12 @@ export default function ProfileScreen() {
         // replies tabs render as soon as their loader returns.
         data={
           activeTab === 'posts'
-            ? (postsReady ? userPosts : [])
+            ? (postsReady ? userPosts : EMPTY_LIST)
             : activeTab === 'likes'
               ? likedPosts
               : activeTab === 'replies'
                 ? userReplies
-                : []
+                : EMPTY_LIST
         }
         keyExtractor={activeTab === 'replies' ? keyExtractorReply : keyExtractorPost}
         renderItem={
@@ -1252,7 +1261,7 @@ export default function ProfileScreen() {
         onScrollBeginDrag={() => setScrollActive(true)}
         onScrollEndDrag={() => setScrollActive(false)}
         onMomentumScrollEnd={() => setScrollActive(false)}
-        contentContainerStyle={{ paddingBottom: 100, paddingHorizontal: 16, paddingTop: 12 }}
+        contentContainerStyle={LIST_CONTENT_CONTAINER_STYLE}
         ListHeaderComponent={listHeader}
         ListEmptyComponent={(
           <View style={{ alignItems: 'center', paddingVertical: 40 }}>
