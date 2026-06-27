@@ -15,6 +15,22 @@ import { CachedImage } from './CachedImage';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 
+// --- Vimeo WebView hardening (module-scope pure helpers, NOT hooks) ---
+// Allowed origins for the embedded Vimeo player WebView.
+const VIMEO_ORIGIN_WHITELIST = ['https://*.vimeo.com', 'https://vimeo.com'];
+
+// Vimeo video ids are digits only. Return a safe numeric id or '' when invalid.
+function getSafeVimeoId(videoId: unknown): string {
+  return /^\d+$/.test(String(videoId)) ? String(videoId) : '';
+}
+
+// Only allow navigation to Vimeo (or about:blank) inside the player WebView so
+// the embedded page can't be used to navigate elsewhere.
+function isAllowedVimeoNavigation(url: string): boolean {
+  if (!url || url === 'about:blank') return true;
+  return /^https:\/\/([a-z0-9-]+\.)*vimeo\.com(\/|$|\?|#)/i.test(url);
+}
+
 export type MediaViewerSource =
   | { kind: 'youtube'; videoId: string }
   | { kind: 'vimeo'; videoId: string }
@@ -50,21 +66,28 @@ export function MediaViewerModal({ visible, source, onClose }: MediaViewerModalP
               <YoutubePlayer height={playerH} width={playerW} play videoId={source.videoId} webViewProps={{ allowsInlineMediaPlayback: true }} />
             ) : (
               <View style={{ width: playerW, height: playerH, backgroundColor: '#000' }}>
-                <WebView
-                  source={{ uri: `https://player.vimeo.com/video/${source.videoId}?autoplay=1&playsinline=1` }}
-                  style={{ flex: 1, backgroundColor: '#000' }}
-                  allowsInlineMediaPlayback
-                  mediaPlaybackRequiresUserAction={false}
-                  javaScriptEnabled
-                  allowsFullscreenVideo
-                  originWhitelist={['*']}
-                  startInLoadingState
-                  renderLoading={() => (
-                    <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: '#000' }}>
-                      <ActivityIndicator color="#FFFFFF" />
-                    </View>
-                  )}
-                />
+                {getSafeVimeoId(source.videoId) ? (
+                  <WebView
+                    source={{ uri: `https://player.vimeo.com/video/${getSafeVimeoId(source.videoId)}?autoplay=1&playsinline=1` }}
+                    style={{ flex: 1, backgroundColor: '#000' }}
+                    allowsInlineMediaPlayback
+                    mediaPlaybackRequiresUserAction={false}
+                    javaScriptEnabled
+                    allowsFullscreenVideo
+                    originWhitelist={VIMEO_ORIGIN_WHITELIST}
+                    onShouldStartLoadWithRequest={(req) => isAllowedVimeoNavigation(req.url)}
+                    startInLoadingState
+                    renderLoading={() => (
+                      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: '#000' }}>
+                        <ActivityIndicator color="#FFFFFF" />
+                      </View>
+                    )}
+                  />
+                ) : (
+                  <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: '#000' }}>
+                    <ActivityIndicator color="#FFFFFF" />
+                  </View>
+                )}
               </View>
             )}
           </View>
@@ -90,17 +113,21 @@ export function InlineVideoPlayer({ source, width }: { source: MediaViewerSource
     );
   }
   if (source.kind === 'vimeo') {
+    const safeVimeoId = getSafeVimeoId(source.videoId);
     return (
       <View style={{ width: '100%', height, backgroundColor: '#000' }}>
-        <WebView
-          source={{ uri: `https://player.vimeo.com/video/${source.videoId}?autoplay=1&playsinline=1` }}
-          style={{ flex: 1, backgroundColor: '#000' }}
-          allowsInlineMediaPlayback
-          mediaPlaybackRequiresUserAction={false}
-          javaScriptEnabled
-          allowsFullscreenVideo
-          originWhitelist={['*']}
-        />
+        {safeVimeoId ? (
+          <WebView
+            source={{ uri: `https://player.vimeo.com/video/${safeVimeoId}?autoplay=1&playsinline=1` }}
+            style={{ flex: 1, backgroundColor: '#000' }}
+            allowsInlineMediaPlayback
+            mediaPlaybackRequiresUserAction={false}
+            javaScriptEnabled
+            allowsFullscreenVideo
+            originWhitelist={VIMEO_ORIGIN_WHITELIST}
+            onShouldStartLoadWithRequest={(req) => isAllowedVimeoNavigation(req.url)}
+          />
+        ) : null}
       </View>
     );
   }

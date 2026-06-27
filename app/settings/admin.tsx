@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { View, ScrollView, Pressable, TextInput, Alert, Modal, FlatList, ActivityIndicator } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -9,12 +9,17 @@ import { Text, Avatar } from '../../src/components/ui';
 import { CachedImage } from '../../src/components/ui/CachedImage';
 import { parseImageUrls, adminDeletePost } from '../../src/lib/supabase';
 import { apiGet, apiPatch } from '../../src/services/apiClient';
+import { kvGetStringRawSync, kvSetStringRaw, kvDeleteRaw } from '../../src/services/kvStore';
 import { useFeedStore } from '../../src/store/feedStore';
 import { accountKey } from '../../src/services/cacheService';
 import { formatTimeAgo } from '../../src/utils/mockData';
 import { t as tStatic, useT, useI18nStore } from '../../src/i18n/store';
 
-const ADMIN_PASSWORD = 'V7k!Qm9@Lp2#xR8$Tw6ZcD4%yN';
+// The admin key is NEVER hardcoded in the client bundle. The operator enters it
+// once; after a successful validation request it is persisted to the on-device
+// secure store (raw MMKV key, not account-scoped) under `admin_key` and read
+// back into component state on subsequent visits.
+const ADMIN_KEY_STORAGE_KEY = 'admin_key';
 const STATUS_ENDPOINT = 'https://san-m-app.com/api/admin/status';
 
 interface ServiceStatus {
@@ -55,6 +60,11 @@ export default function AdminScreen() {
   const t = useT();
   const [authenticated, setAuthenticated] = useState(false);
   const [password, setPassword] = useState('');
+  const [unlocking, setUnlocking] = useState(false);
+  // Holds the validated admin key for the lifetime of the unlocked session.
+  // A ref (not just state) so the data-loading callbacks read the freshest
+  // value without a stale closure right after unlock / hydration.
+  const adminKeyRef = useRef<string | null>(null);
   const [users, setUsers] = useState<any[]>([]);
   const [selectedUser, setSelectedUser] = useState<any>(null);
   const [userPosts, setUserPosts] = useState<any[]>([]);
@@ -73,7 +83,7 @@ export default function AdminScreen() {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 12000);
       const resp = await fetch(STATUS_ENDPOINT, {
-        headers: { 'x-admin-key': ADMIN_PASSWORD },
+        headers: { 'x-admin-key': adminKeyRef.current ?? '' },
         signal: controller.signal,
       });
       clearTimeout(timer);
@@ -92,22 +102,75 @@ export default function AdminScreen() {
     loadStatus();
   };
 
-  const handleLogin = () => {
-    if (password === ADMIN_PASSWORD) {
-      setAuthenticated(true);
-      loadUsers();
-    } else {
-      Alert.alert(t('common.error'), t('admin.error.wrong_password'));
+  // Validate the entered key against a real admin endpoint before trusting it.
+  // We deliberately use the plain `fetch` status endpoint (NOT the apiClient
+  // helpers) because apiClient treats a 401 as "the user's session died" and
+  // logs them out of the whole app — which would be wrong for a mistyped admin
+  // key. Only on a 200 do we persist the key to the secure on-device store.
+  const handleUnlock = async () => {
+    const candidate = password.trim();
+    if (!candidate || unlocking) return;
+    setUnlocking(true);
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 12000);
+      const resp = await fetch(STATUS_ENDPOINT, {
+        headers: { 'x-admin-key': candidate },
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      if (resp.ok) {
+        kvSetStringRaw(ADMIN_KEY_STORAGE_KEY, candidate);
+        adminKeyRef.current = candidate;
+        setPassword('');
+        setAuthenticated(true);
+        loadUsers();
+      } else if (resp.status === 401 || resp.status === 403) {
+        Alert.alert(t('common.error'), t('admin.error.wrong_password'));
+      } else {
+        Alert.alert(t('common.error'), tStatic('admin.error.server_returned', undefined, { code: String(resp.status) }));
+      }
+    } catch (e: any) {
+      Alert.alert(t('common.error'), e?.message || t('admin.error.load_status'));
+    } finally {
+      setUnlocking(false);
     }
   };
+
+  // Forget the stored admin key and return to the locked gate. Clears all
+  // in-memory admin data so nothing lingers after "logout".
+  const handleAdminLogout = () => {
+    kvDeleteRaw(ADMIN_KEY_STORAGE_KEY);
+    adminKeyRef.current = null;
+    setAuthenticated(false);
+    setPassword('');
+    setUsers([]);
+    setSelectedUser(null);
+    setUserPosts([]);
+    setShowStatus(false);
+    setStatusData(null);
+  };
+
+  // On mount: if a validated admin key was previously persisted, hydrate it
+  // and open the panel straight away. Reading the raw MMKV value is synchronous.
+  useEffect(() => {
+    const stored = kvGetStringRawSync(ADMIN_KEY_STORAGE_KEY);
+    if (stored) {
+      adminKeyRef.current = stored;
+      setAuthenticated(true);
+      loadUsers();
+    }
+    // loadUsers is a stable useCallback([]); run this once on mount only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const loadUsers = useCallback(async () => {
     setLoading(true);
     // Phase 5: admin reads route through the Worker behind the
-    // X-Admin-Key header (the same value as the existing
-    // ADMIN_PASSWORD constant). Returns the same row shape Supabase did.
+    // X-Admin-Key header (the operator-supplied admin key, held in
+    // adminKeyRef after unlock). Returns the same row shape Supabase did.
     const { data } = await apiGet<any[]>('/v1/admin/profiles?limit=50', {
-      headers: { 'X-Admin-Key': ADMIN_PASSWORD },
+      headers: { 'X-Admin-Key': adminKeyRef.current ?? '' },
     });
     if (data) setUsers(data);
     setLoading(false);
@@ -117,7 +180,7 @@ export default function AdminScreen() {
     setLoading(true);
     const { data } = await apiGet<any[]>(
       `/v1/admin/profiles/${encodeURIComponent(userId)}/posts?limit=30`,
-      { headers: { 'X-Admin-Key': ADMIN_PASSWORD } },
+      { headers: { 'X-Admin-Key': adminKeyRef.current ?? '' } },
     );
     if (data) setUserPosts(data);
     setLoading(false);
@@ -133,7 +196,7 @@ export default function AdminScreen() {
       { text: t('common.cancel'), style: 'cancel' },
       { text: t('common.delete'), style: 'destructive', onPress: async () => {
         // Delete from server (+ images + reposts + likes + comments)
-        const { error } = await adminDeletePost(postId);
+        const { error } = await adminDeletePost(postId, adminKeyRef.current ?? '');
         if (error) {
           Alert.alert(t('common.error'), error);
           return;
@@ -168,7 +231,7 @@ export default function AdminScreen() {
     await apiPatch(
       `/v1/admin/profiles/${encodeURIComponent(userId)}`,
       { is_verified: !currentlyVerified },
-      { headers: { 'X-Admin-Key': ADMIN_PASSWORD } },
+      { headers: { 'X-Admin-Key': adminKeyRef.current ?? '' } },
     );
     setUsers(prev => prev.map(u => u.id === userId ? { ...u, is_verified: !currentlyVerified } : u));
     if (selectedUser?.id === userId) setSelectedUser({ ...selectedUser, is_verified: !currentlyVerified });
@@ -178,7 +241,7 @@ export default function AdminScreen() {
     await apiPatch(
       `/v1/admin/profiles/${encodeURIComponent(userId)}`,
       { badge },
-      { headers: { 'X-Admin-Key': ADMIN_PASSWORD } },
+      { headers: { 'X-Admin-Key': adminKeyRef.current ?? '' } },
     );
     setUsers(prev => prev.map(u => u.id === userId ? { ...u, badge } : u));
     if (selectedUser?.id === userId) setSelectedUser({ ...selectedUser, badge });
@@ -214,10 +277,10 @@ export default function AdminScreen() {
             borderColor: theme.colors.border.light,
             marginBottom: 16,
           }}
-          onSubmitEditing={handleLogin}
+          onSubmitEditing={handleUnlock}
         />
-        <Pressable onPress={handleLogin} style={{ backgroundColor: theme.colors.accent.primary, borderRadius: 14, paddingVertical: 14, alignItems: 'center' }}>
-          <Text variant="body" weight="semibold" color="#FFFFFF">{t('auth.signin')}</Text>
+        <Pressable onPress={handleUnlock} disabled={unlocking} style={{ backgroundColor: theme.colors.accent.primary, borderRadius: 14, paddingVertical: 14, alignItems: 'center', opacity: unlocking ? 0.6 : 1 }}>
+          {unlocking ? <ActivityIndicator color="#FFFFFF" /> : <Text variant="body" weight="semibold" color="#FFFFFF">{t('auth.signin')}</Text>}
         </Pressable>
       </View>
     );
@@ -412,6 +475,9 @@ export default function AdminScreen() {
         <Pressable onPress={openStatus} hitSlop={8} style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10, backgroundColor: theme.colors.accent.primary + '18' }}>
           <Feather name="activity" size={14} color={theme.colors.accent.primary} />
           <Text variant="caption" weight="semibold" color={theme.colors.accent.primary}>{t('admin.services_btn')}</Text>
+        </Pressable>
+        <Pressable onPress={handleAdminLogout} hitSlop={8} accessibilityLabel="Forget admin key" style={{ padding: 6, borderRadius: 10, backgroundColor: '#FF3B3018' }}>
+          <Feather name="log-out" size={16} color="#FF3B30" />
         </Pressable>
       </View>
 

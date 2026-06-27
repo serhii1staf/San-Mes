@@ -50,6 +50,49 @@ function normalizeUrl(raw0: string): string {
   return `https://${raw}`;
 }
 
+// ── WebView navigation hardening helpers (anti-malware / anti-phishing) ──────
+// These are pure functions (no hooks) so they don't affect React hook order.
+
+// Executable / installer file extensions we must never let a mini-app or a
+// linked page download — distributing these would turn the app into a malware
+// vector. Matched against the URL path with query/hash stripped.
+const EXECUTABLE_DOWNLOAD_RE = /\.(ipa|apk|exe|dmg|pkg|msi|bat|sh|scr)$/i;
+
+function isExecutableDownload(rawUrl: string): boolean {
+  let path = rawUrl;
+  try { path = new URL(rawUrl).pathname; } catch { path = rawUrl.split('#')[0].split('?')[0]; }
+  return EXECUTABLE_DOWNLOAD_RE.test(path);
+}
+
+function hostOf(rawUrl: string): string {
+  try { return new URL(rawUrl).hostname.toLowerCase().replace(/^www\./, ''); } catch { return ''; }
+}
+
+// Registrable-domain approximation (eTLD+1) used ONLY for phishing friction:
+// navigations that stay on the same base domain (incl. subdomains) don't
+// prompt; a jump to a different base domain surfaces the destination host.
+function baseDomain(host: string): string {
+  const parts = host.split('.').filter(Boolean);
+  return parts.length <= 2 ? host : parts.slice(-2).join('.');
+}
+
+// Per-session set of destination base-domains the user already approved leaving
+// to — keyed by sessionKey so a new mini-app starts clean. Module-scoped to
+// avoid adding a React hook (preserves hook order/count).
+const miniAppApprovedHosts = new Map<string, Set<string>>();
+
+// External / custom schemes are NEVER auto-opened — always confirm first.
+function confirmExternalOpen(u: string, t: (k: string, d?: string, p?: Record<string, unknown>) => string) {
+  Alert.alert(
+    t('mini_app.external_link_title', 'Открыть ссылку? / Open link?'),
+    t('mini_app.external_link_message', '{url}', { url: u }),
+    [
+      { text: t('common.cancel', 'Отмена / Cancel'), style: 'cancel' },
+      { text: t('common.open', 'Открыть / Open'), onPress: () => { Linking.openURL(u).catch(() => {}); } },
+    ],
+  );
+}
+
 export function MiniAppHost() {
   const insets = useSafeAreaInsets();
   const theme = useTheme();
@@ -76,6 +119,8 @@ export function MiniAppHost() {
     setIsLoading(true);
     setCurrentUrl('');
     setReportOpen(false);
+    // Clear any "leave-origin" approvals from the previous session.
+    miniAppApprovedHosts.clear();
   }, [sessionKey]);
 
   const armLoadTimeout = useCallback(() => {
@@ -168,34 +213,80 @@ export function MiniAppHost() {
     return () => sub.remove();
   }, [mode]);
 
-  const onShouldStartLoadWithRequest = useCallback((req: { url: string }) => {
+  const onShouldStartLoadWithRequest = useCallback((req: { url: string; isTopFrame?: boolean }) => {
     const u = (req?.url || '');
     const lower = u.toLowerCase();
+    // iOS provides isTopFrame; on Android it's undefined — treat unknown as
+    // top-level so the strict guards still apply.
+    const isTopFrame = req?.isTopFrame !== false;
+
+    // Internal blank/about pages used by WebKit during init — always safe.
     if (u === 'about:blank' || lower.startsWith('about:')) return true;
-    if (lower.startsWith('https://')) return true;
-    if (lower.startsWith('blob:')) return true;
-    if (lower.startsWith('http://')) return false;
-    if (lower.startsWith('file:') || lower.startsWith('javascript:') || lower.startsWith('data:')) return false;
-    // Allowlist of safe external schemes that may open WITHOUT confirmation.
-    if (lower.startsWith('tel:') || lower.startsWith('mailto:') || lower.startsWith('sms:')) {
-      Linking.openURL(u).catch(() => {});
+
+    // Anti-malware: block executable/installer downloads on ANY scheme.
+    if (isExecutableDownload(u)) {
+      Alert.alert(
+        t('mini_app.blocked_download_title', 'Download blocked'),
+        t('mini_app.blocked_download_message', "This link points to a file that can't be opened safely in the app."),
+      );
       return false;
     }
-    // Never let untrusted mini-app content drive in-app navigation/redirects
-    // via our own scheme — silently ignore it.
+
+    if (lower.startsWith('https://')) {
+      // Phishing friction: a top-level jump to a DIFFERENT base domain than the
+      // mini-app's declared origin is surfaced (with the destination host)
+      // before navigating, instead of silently following the redirect.
+      if (isTopFrame) {
+        const origin = baseDomain(hostOf(decodedUrl));
+        const dest = baseDomain(hostOf(u));
+        const approved = miniAppApprovedHosts.get(sessionKey) || new Set<string>();
+        if (origin && dest && dest !== origin && !approved.has(dest)) {
+          Alert.alert(
+            t('mini_app.leaving_origin_title', 'Leave this app?'),
+            t('mini_app.leaving_origin_message', 'This is trying to open {host}, which is outside the app.', { host: hostOf(u) }),
+            [
+              { text: t('common.cancel', 'Отмена / Cancel'), style: 'cancel' },
+              {
+                text: t('common.continue', 'Продолжить / Continue'),
+                onPress: () => {
+                  approved.add(dest);
+                  miniAppApprovedHosts.set(sessionKey, approved);
+                  webViewRef.current?.injectJavaScript(`window.location.href = ${JSON.stringify(u)}; true;`);
+                },
+              },
+            ],
+          );
+          return false;
+        }
+      }
+      return true;
+    }
+
+    // blob: is generated by the page itself — safe to render.
+    if (lower.startsWith('blob:')) return true;
+
+    // http: upgrade top-level navigations to https instead of loading cleartext.
+    if (lower.startsWith('http://')) {
+      if (isTopFrame) {
+        const upgraded = 'https://' + u.slice('http://'.length);
+        webViewRef.current?.injectJavaScript(`window.location.replace(${JSON.stringify(upgraded)}); true;`);
+      }
+      return false;
+    }
+
+    // Hard-blocked: local file access, script injection, and data: URLs
+    // (data: is a known top-level phishing/exfil vector — block outright here).
+    if (lower.startsWith('file:') || lower.startsWith('javascript:') || lower.startsWith('data:')) return false;
+
+    // Our own deep-link scheme must never be driven by untrusted mini-app
+    // content — silently ignore it.
     if (lower.startsWith('san-mes://')) return false;
-    // Any OTHER unknown scheme: confirm with the user before leaving the app.
-    // The WebView itself never navigates there (we always return false).
-    Alert.alert(
-      t('mini_app.external_link_title', 'Открыть ссылку? / Open link?'),
-      t('mini_app.external_link_message', '{url}', { url: u }),
-      [
-        { text: t('common.cancel', 'Отмена / Cancel'), style: 'cancel' },
-        { text: t('common.open', 'Открыть / Open'), onPress: () => { Linking.openURL(u).catch(() => {}); } },
-      ],
-    );
+
+    // Every external/custom scheme (tel:, mailto:, sms:, app-store, deep links):
+    // NEVER auto-open — require explicit user confirmation before handing to OS.
+    confirmExternalOpen(u, t);
     return false;
-  }, [t]);
+  }, [t, decodedUrl, sessionKey]);
 
   const displayName = name || 'App';
   const appEmoji = emoji || '📱';

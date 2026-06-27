@@ -9,6 +9,32 @@ import { Text } from '../src/components/ui';
 import { useBrowserStore } from '../src/store/browserStore';
 import { t } from '../src/i18n/store';
 
+// ── WebView navigation hardening helpers (anti-malware / anti-phishing) ──────
+// Pure functions (no hooks) so they don't affect React hook order/count.
+
+// Executable / installer extensions we must never let a linked page download —
+// distributing these would turn the app into a malware vector. Matched against
+// the URL path with query/hash stripped.
+const EXECUTABLE_DOWNLOAD_RE = /\.(ipa|apk|exe|dmg|pkg|msi|bat|sh|scr)$/i;
+
+function isExecutableDownload(rawUrl: string): boolean {
+  let path = rawUrl;
+  try { path = new URL(rawUrl).pathname; } catch { path = rawUrl.split('#')[0].split('?')[0]; }
+  return EXECUTABLE_DOWNLOAD_RE.test(path);
+}
+
+// External / custom schemes are NEVER auto-opened — always confirm first.
+function confirmExternalOpen(u: string) {
+  Alert.alert(
+    t('mini_app.external_link_title', 'Открыть ссылку? / Open link?'),
+    t('mini_app.external_link_message', '{url}', { url: u }),
+    [
+      { text: t('common.cancel', 'Отмена / Cancel'), style: 'cancel' },
+      { text: t('common.open', 'Открыть / Open'), onPress: () => { Linking.openURL(u).catch(() => {}); } },
+    ],
+  );
+}
+
 export default function BrowserScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
@@ -81,37 +107,48 @@ export default function BrowserScreen() {
   // hand non-web schemes (tel:, mailto:, app deep links, …) to the OS instead
   // of loading them in-webview. http/https/blob/about/data load normally (this
   // is a general-purpose browser, unlike the https-only mini-app sandbox).
-  const onShouldStartLoadWithRequest = (req: { url: string }) => {
+  const onShouldStartLoadWithRequest = (req: { url: string; isTopFrame?: boolean }) => {
     const u = req?.url || '';
     const lower = u.toLowerCase();
-    if (lower.startsWith('file:') || lower.startsWith('javascript:')) return false;
-    if (
-      lower.startsWith('http://') ||
-      lower.startsWith('https://') ||
-      lower.startsWith('blob:') ||
-      lower.startsWith('about:') ||
-      lower.startsWith('data:')
-    ) {
-      return true;
-    }
-    // Allowlist of safe external schemes that may open WITHOUT confirmation.
-    if (lower.startsWith('tel:') || lower.startsWith('mailto:') || lower.startsWith('sms:')) {
-      Linking.openURL(u).catch(() => {});
+    // iOS provides isTopFrame; on Android it's undefined — treat unknown as
+    // top-level so the strict guards still apply.
+    const isTopFrame = req?.isTopFrame !== false;
+
+    // Anti-malware: block executable/installer downloads on ANY scheme.
+    if (isExecutableDownload(u)) {
+      Alert.alert(
+        t('mini_app.blocked_download_title', 'Download blocked'),
+        t('mini_app.blocked_download_message', "This link points to a file that can't be opened safely in the app."),
+      );
       return false;
     }
-    // Never let untrusted web content drive in-app navigation/redirects via
-    // our own scheme — silently ignore it.
+
+    // Hard-blocked schemes: local file access + script injection.
+    if (lower.startsWith('file:') || lower.startsWith('javascript:')) return false;
+
+    // Top-level data: URLs are a phishing/exfil vector — block (allow only as
+    // subframe content, e.g. inline images/iframes the page renders itself).
+    if (lower.startsWith('data:')) return !isTopFrame;
+
+    // http: upgrade top-level navigations to https instead of loading cleartext.
+    if (lower.startsWith('http://')) {
+      if (isTopFrame) {
+        const upgraded = 'https://' + u.slice('http://'.length);
+        webViewRef.current?.injectJavaScript(`window.location.replace(${JSON.stringify(upgraded)}); true;`);
+      }
+      return false;
+    }
+
+    // https / blob / about load normally (general-purpose browser).
+    if (lower.startsWith('https://') || lower.startsWith('blob:') || lower.startsWith('about:')) return true;
+
+    // Our own deep-link scheme must never be driven by untrusted web content.
     if (lower.startsWith('san-mes://')) return false;
-    // Any OTHER unknown scheme: confirm with the user before leaving the app.
+
+    // Every external/custom scheme (tel:, mailto:, sms:, app-store, deep links):
+    // NEVER auto-open — require explicit user confirmation before handing to OS.
     // The WebView itself never navigates there (we always return false).
-    Alert.alert(
-      t('mini_app.external_link_title', 'Открыть ссылку? / Open link?'),
-      t('mini_app.external_link_message', '{url}', { url: u }),
-      [
-        { text: t('common.cancel', 'Отмена / Cancel'), style: 'cancel' },
-        { text: t('common.open', 'Открыть / Open'), onPress: () => { Linking.openURL(u).catch(() => {}); } },
-      ],
-    );
+    confirmExternalOpen(u);
     return false;
   };
 

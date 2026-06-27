@@ -1,18 +1,21 @@
 import { KEYS, cacheGet, cacheSet } from './cacheService';
 import { useEntityStore } from './entityStore';
 import {
-  createPost,
   deletePost,
   toggleLike,
-  createComment,
   followUser,
   unfollowUser,
   updateProfile,
-  createRepost,
   uploadPostImage,
   joinImageUrls,
-  sendMessage,
 } from '../lib/supabase';
+// apiPost is imported directly so create/insert mutations can carry a
+// `clientMutationId` field in their request body (see H2 below). The thin
+// supabase.ts wrappers (createPost/createComment/sendMessage/createRepost)
+// build their bodies internally and don't accept this field; since this task
+// must not edit those files, the create-path requests are issued here via
+// apiClient instead — same endpoints + bodies, plus the idempotency key.
+import { apiPost } from './apiClient';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -34,6 +37,14 @@ export interface MutationRecord {
   timestamp: string;
   status: 'pending' | 'failed';
   retryCount: number;
+  /**
+   * Stable, per-mutation idempotency key (RFC4122-ish v4 string). Generated
+   * exactly ONCE when the mutation is enqueued and persisted with the record,
+   * so every retry of the SAME logical mutation reuses the SAME id. Attached
+   * to the outgoing request body for create/insert mutations so the server can
+   * dedupe a retry of a request whose success response was lost (see H2).
+   */
+  clientMutationId: string;
 }
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -41,17 +52,48 @@ export interface MutationRecord {
 const MAX_IMAGE_RETRIES = 3;
 const BATCH_THRESHOLD = 50;
 const BATCH_SIZE = 10;
-// Maximum number of send attempts before a mutation is considered
-// unrecoverable and dropped from the queue entirely. This is the safety
-// ceiling that (a) stops failed mutations accumulating in the persisted
-// queue forever and (b) bounds transient retries so they can't loop
-// indefinitely.
+// Per-ITEM transient-retry ceiling. After this many failed send attempts a
+// mutation stops being auto-retried and is PARKED as a terminal 'failed'
+// record (see markFailed). It is deliberately NOT dropped — user mutations
+// must never be silently discarded (M1 constraint). Parked items are surfaced
+// via a console.warn so a permanent failure is visible rather than looping.
 const MAX_RETRIES = 5;
+
+// ─── Online retry/backoff (M1) ─────────────────────────────────────────────
+//
+// When a queued item fails transiently while the connection is otherwise
+// stable (a 5xx or a single dropped request), we no longer wait for the next
+// offline→online edge or app restart. processQueue schedules its own drain
+// with exponential backoff: 2s, 4s, 8s, 16s, 32s, capped at 60s. The backoff
+// resets to the base the moment a drain makes any progress, and is cleared
+// entirely when the queue empties or the device goes offline (the connectivity
+// monitor's online edge resumes draining from there).
+const RETRY_BACKOFF_BASE_MS = 2000;
+const RETRY_BACKOFF_CAP_MS = 60000;
+// Short delay used to continue draining a large queue across batches when no
+// failure occurred (e.g. >BATCH_THRESHOLD items split into BATCH_SIZE chunks).
+const CONTINUE_DRAIN_MS = 250;
 
 // ─── Temp ID Generation ──────────────────────────────────────────────────────
 
 export function generateTempId(): string {
   return `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+}
+
+// ─── Client Mutation Id (idempotency key) ─────────────────────────────────────
+
+// Generates an RFC4122-ish v4 UUID string. No uuid dependency exists in the
+// app (only fast-check's fc.uuid() in tests), so this small inline generator is
+// used. It is NOT cryptographically strong, but is collision-resistant enough
+// to dedupe retries of the same logical mutation — which is its only job. The
+// authoritative dedup will live server-side; until then the server ignores the
+// unknown field, so sending it is safe and forward-compatible.
+export function generateClientMutationId(): string {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
 }
 
 // ─── Queue CRUD ──────────────────────────────────────────────────────────────
@@ -79,20 +121,27 @@ export async function markFailed(id: string): Promise<void> {
   const nextRetryCount = target.retryCount + 1;
 
   if (nextRetryCount >= MAX_RETRIES) {
-    // Exhausted the retry ceiling — drop the unrecoverable mutation
-    // entirely. Leaving it as a permanent 'failed' record would mean it is
-    // never re-processed (processQueue only looks at 'pending') and never
-    // removed, so the persisted @san:mutation_queue blob would grow forever.
-    const updated = queue.filter((m) => m.id !== id);
+    // Per-item retry ceiling reached. PARK the mutation as a terminal 'failed'
+    // record instead of dropping it: the M1 constraint forbids silently
+    // discarding user mutations. processQueue only auto-processes 'pending'
+    // records, so a 'failed' item stops looping but is preserved in the
+    // persisted queue (e.g. for a future manual retry / inspection). Surface
+    // it so a permanent failure is visible rather than vanishing.
+    const updated = queue.map((m) =>
+      m.id === id ? { ...m, status: 'failed' as const, retryCount: nextRetryCount } : m
+    );
     await cacheSet(KEYS.mutations, updated);
+    console.warn(
+      '[OfflineQueue] Mutation exhausted retries — parked as failed (kept, not dropped):',
+      { id: target.id, type: target.type, retryCount: nextRetryCount }
+    );
     return;
   }
 
   // Still under the ceiling — bump the counter and keep it 'pending' so the
-  // next processQueue cycle actually retries it. (Marking it 'failed' here
-  // is what previously stranded these records: failed items were never
-  // re-processed, so retryCount never advanced and they never reached the
-  // ceiling to be cleaned up.)
+  // next drain cycle actually retries it. (Marking it 'failed' here is what
+  // previously stranded these records: failed items are never re-processed, so
+  // retryCount never advanced.)
   const updated = queue.map((m) =>
     m.id === id ? { ...m, status: 'pending' as const, retryCount: nextRetryCount } : m
   );
@@ -232,6 +281,9 @@ export async function queueMutation(type: MutationType, payload: any): Promise<v
     timestamp: new Date().toISOString(),
     status: 'pending',
     retryCount: 0,
+    // Generated ONCE here and persisted with the record so retries of this
+    // same logical mutation reuse the same idempotency key (H2).
+    clientMutationId: generateClientMutationId(),
   };
 
   // 1. Apply optimistic update to entity store immediately so the UI flips.
@@ -372,7 +424,13 @@ async function sendToServer(mutation: MutationRecord): Promise<SendResult> {
           imageUrl = joinImageUrls(uploadedUrls);
         }
 
-        const { post, error } = await createPost(payload.authorId, payload.content, imageUrl || undefined);
+        // Issued via apiClient (not the createPost wrapper) so the idempotency
+        // key rides along in the body. Same endpoint + fields as createPost.
+        const { data: post, error } = await apiPost<any>('/v1/posts', {
+          content: payload.content,
+          image_url: imageUrl ?? null,
+          clientMutationId: mutation.clientMutationId,
+        });
         if (error) {
           return classifyError(error);
         }
@@ -407,7 +465,12 @@ async function sendToServer(mutation: MutationRecord): Promise<SendResult> {
       }
 
       case 'create_comment': {
-        const { error } = await createComment(payload.postId, payload.authorId, payload.content);
+        // Via apiClient so clientMutationId is in the body. Same endpoint/body
+        // as createComment.
+        const { error } = await apiPost(
+          `/v1/posts/${encodeURIComponent(payload.postId)}/comments`,
+          { content: payload.content, clientMutationId: mutation.clientMutationId }
+        );
         if (error) return classifyError(error);
         return { success: true, retryable: false };
       }
@@ -431,13 +494,24 @@ async function sendToServer(mutation: MutationRecord): Promise<SendResult> {
       }
 
       case 'send_message': {
-        const { error } = await sendMessage(payload.conversationId, payload.senderId, payload.text);
+        // Via apiClient so clientMutationId is in the body. Same endpoint/body
+        // as sendMessage.
+        const { error } = await apiPost(
+          `/v1/conversations/${encodeURIComponent(payload.conversationId)}/messages`,
+          { text: payload.text, clientMutationId: mutation.clientMutationId }
+        );
         if (error) return classifyError(error);
         return { success: true, retryable: false };
       }
 
       case 'create_repost': {
-        const { post, error } = await createRepost(payload.authorId, payload.originalPostId, payload.comment);
+        // Via apiClient so clientMutationId is in the body. Same endpoint/body
+        // as createRepost.
+        const { data: post, error } = await apiPost<any>('/v1/posts/repost', {
+          originalPostId: payload.originalPostId,
+          comment: payload.comment ?? '',
+          clientMutationId: mutation.clientMutationId,
+        });
         if (error) return classifyError(error);
         // Replace temp repost with real one
         if (post && payload.tempId) {
@@ -493,44 +567,163 @@ function classifyError(error: string): SendResult {
 
 // ─── Process Queue ───────────────────────────────────────────────────────────
 
-export async function processQueue(): Promise<void> {
+// In-flight guard: prevents overlapping concurrent drains (e.g. the
+// connectivity online-edge trigger firing while a backoff-scheduled drain is
+// mid-flight). Only one drain runs at a time.
+let draining = false;
+
+// Handle for the self-scheduled backoff/continuation drain. Non-null means a
+// future drain is pending. Cleared when the queue empties or we go offline.
+let drainTimer: ReturnType<typeof setTimeout> | null = null;
+
+// Exponential-backoff step counter. Grows on each consecutive retryable
+// failure, resets to 0 the moment a drain makes progress or the queue drains.
+let backoffAttempt = 0;
+
+function clearScheduledDrain(): void {
+  if (drainTimer) {
+    clearTimeout(drainTimer);
+    drainTimer = null;
+  }
+}
+
+// Schedule the next drain after `delayMs`, replacing any already-scheduled one.
+function scheduleDrain(delayMs: number): void {
+  clearScheduledDrain();
+  drainTimer = setTimeout(() => {
+    drainTimer = null;
+    // Fire-and-forget; processQueue guards its own reentrancy.
+    void processQueue();
+  }, delayMs);
+}
+
+// Cheap read of the current connectivity state (no network ping). Optimistic at
+// very early startup before the store is initialised.
+async function isOnlineNow(): Promise<boolean> {
   try {
+    const { useConnectivityStore } = await import('./connectivityMonitor');
+    return useConnectivityStore.getState().isOnline;
+  } catch {
+    return true;
+  }
+}
+
+// Ordering key for mutations whose relative order must be preserved within a
+// group. Messages within a single conversation must arrive in order, so a
+// transient failure of one message must NOT let a later message in the SAME
+// conversation jump ahead. Returns null for types with no ordering constraint
+// (likes, follows, profile edits, independent posts) — those keep draining.
+function orderingKey(mutation: MutationRecord): string | null {
+  switch (mutation.type) {
+    case 'send_message':
+      return `conv:${mutation.payload?.conversationId}`;
+    default:
+      return null;
+  }
+}
+
+export async function processQueue(): Promise<void> {
+  // Guard against overlapping drains.
+  if (draining) return;
+  draining = true;
+
+  try {
+    // If we're offline, stop any pending backoff and bail. The connectivity
+    // monitor's offline→online edge re-triggers processQueue, so we resume
+    // from there rather than burning retries against a dead link.
+    if (!(await isOnlineNow())) {
+      clearScheduledDrain();
+      backoffAttempt = 0;
+      return;
+    }
+
     const queue = await getQueue();
     const pending = queue.filter((m) => m.status === 'pending');
-    if (pending.length === 0) return;
+    if (pending.length === 0) {
+      // Nothing left to do — clear any scheduled backoff.
+      clearScheduledDrain();
+      backoffAttempt = 0;
+      return;
+    }
 
     // Batch size: 10 if queue > 50, otherwise process all
     const batchSize = pending.length > BATCH_THRESHOLD ? BATCH_SIZE : pending.length;
     const batch = pending.slice(0, batchSize);
 
+    let sawSuccess = false;
+    let sawRetryableFailure = false;
+    // Ordering groups that hit a transient failure this pass: subsequent
+    // items in the same group are skipped to preserve order; they retry on
+    // the next (backoff) drain behind the still-failing head.
+    const blockedGroups = new Set<string>();
+
     for (const mutation of batch) {
+      const group = orderingKey(mutation);
+      if (group && blockedGroups.has(group)) {
+        // Head of this ordering group failed transiently — preserve order by
+        // not sending later items in the group ahead of it.
+        continue;
+      }
+
       try {
         const result = await sendToServer(mutation);
         if (result.success) {
           await removeMutation(mutation.id);
+          sawSuccess = true;
         } else if (result.retryable) {
-          // 5xx/network error — the link is likely down. Bump the retry
-          // counter (markFailed drops the mutation if it has now exhausted
-          // MAX_RETRIES, otherwise leaves it 'pending') and stop the batch
-          // so we retry on the next cycle. The ceiling prevents an
-          // unbounded retry loop against a persistently failing server.
+          // 5xx/network/transient. Bump the retry counter (markFailed parks
+          // the item once it exhausts MAX_RETRIES, otherwise keeps it
+          // 'pending'). Do NOT abort the whole batch — keep draining other
+          // independent items so one stuck mutation can't block the rest.
           await markFailed(mutation.id);
-          break;
+          sawRetryableFailure = true;
+          if (group) blockedGroups.add(group);
         } else {
-          // 4xx — record the failure and continue. markFailed bumps the
-          // retry counter and drops the mutation once it exhausts
-          // MAX_RETRIES, so it no longer lingers as a permanent 'failed'
-          // record.
+          // 4xx — non-retryable. Record the failure and continue; markFailed
+          // bumps the counter and eventually parks it.
           await markFailed(mutation.id);
         }
       } catch (e) {
-        // Unexpected error — stop processing, retry next cycle
+        // Unexpected error — treat as transient for this item and keep going.
         console.warn('[OfflineQueue] Unexpected error in processQueue:', e);
-        break;
+        await markFailed(mutation.id);
+        sawRetryableFailure = true;
+        if (group) blockedGroups.add(group);
       }
+    }
+
+    // Any progress resets the backoff so the next transient blip starts from
+    // the base delay rather than an already-grown one.
+    if (sawSuccess) backoffAttempt = 0;
+
+    // Re-read to decide whether more draining is warranted.
+    const after = await getQueue();
+    const stillPending = after.filter((m) => m.status === 'pending');
+
+    if (stillPending.length === 0) {
+      clearScheduledDrain();
+      backoffAttempt = 0;
+      return;
+    }
+
+    if (sawRetryableFailure) {
+      // Schedule a bounded exponential-backoff retry instead of waiting for an
+      // offline→online edge: 2s, 4s, 8s … capped at RETRY_BACKOFF_CAP_MS.
+      const delayMs = Math.min(
+        RETRY_BACKOFF_BASE_MS * 2 ** backoffAttempt,
+        RETRY_BACKOFF_CAP_MS
+      );
+      backoffAttempt += 1;
+      scheduleDrain(delayMs);
+    } else {
+      // No failure, but items remain (large queue split across batches, or
+      // ordering-skipped items behind nothing). Continue promptly.
+      scheduleDrain(CONTINUE_DRAIN_MS);
     }
   } catch (e) {
     console.warn('[OfflineQueue] processQueue failed:', e);
+  } finally {
+    draining = false;
   }
 }
 

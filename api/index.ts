@@ -4,7 +4,12 @@ import type { IncomingMessage, ServerResponse } from 'http';
 // Worker's admin endpoints (gated by the X-Admin-Key header). Supabase
 // is no longer queried from the server.
 const WORKER_BASE_URL = 'https://san-mes-api.odi44972.workers.dev';
-const ADMIN_KEY = process.env.ADMIN_KEY || 'V7k!Qm9@Lp2#xR8$Tw6ZcD4%yN';
+// Admin key is read from the Vercel env ONLY — there is no baked-in
+// fallback. If it's missing, every admin-gated lookup fails closed
+// (see workerGet) rather than leaking a committed credential. The key
+// unlocks Worker endpoints that return arbitrary users' data, so a
+// cleartext fallback would be a critical exposure.
+const ADMIN_KEY = process.env.ADMIN_KEY;
 
 // App Store link (app not published yet) + custom scheme deep link for the
 // installed app. The page tries the scheme first, then falls back to the store.
@@ -32,6 +37,10 @@ function firstImage(imageUrl?: string | null): string | null {
 }
 
 async function workerGet(path: string): Promise<any> {
+  // Fail closed: without a configured ADMIN_KEY we must NOT issue the
+  // admin-gated request at all. Returning null surfaces as the generic
+  // SSR fallback page instead of sending an empty/garbage key.
+  if (!ADMIN_KEY) return null;
   try {
     const r = await fetch(`${WORKER_BASE_URL}${path}`, {
       headers: { Accept: 'application/json', 'X-Admin-Key': ADMIN_KEY },

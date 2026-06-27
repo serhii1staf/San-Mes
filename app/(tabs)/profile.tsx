@@ -1189,7 +1189,16 @@ export default function ProfileScreen() {
       {/* (The old scroll-in dark gradient / overlay blur was removed — the
           frosted look now lives ON the rounded header card itself, see
           `bannerHeader` below.) */}
-      <View style={{ position: 'absolute', top: insets.top + 8, left: 16, right: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', zIndex: 100 }}>
+      {/* `pointerEvents="box-none"`: this absolute chrome container sits at
+          zIndex 100 — ABOVE the pinned category-tab overlay (zIndex 50) — and
+          spans the full width across the SAME vertical band the pinned pills
+          occupy. As a plain `auto` View it was the topmost hit-test target over
+          that whole band, so taps on the pinned pills landed on this (now empty,
+          since the QR/settings buttons translate off-screen on scroll) container
+          and died. `box-none` makes the container itself transparent to touches
+          (taps fall through to the pinned overlay below) while its real children
+          — the QR + settings Pressables — still capture their own taps. */}
+      <View pointerEvents="box-none" style={{ position: 'absolute', top: insets.top + 8, left: 16, right: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', zIndex: 100 }}>
         <Animated.View style={{ transform: [{ translateX: buttonsTranslateX }] }}><Pressable onPress={() => { triggerHaptic('light'); setShowQR(true); }} style={{ borderRadius: 17 }}>{glassActive ? (<NativeGlassView glassStyle="regular" isInteractive colorScheme="dark" style={{ width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' }}><FontAwesome5 name="qrcode" size={15} color="#FFFFFF" /></NativeGlassView>) : chromeReady ? (<BlurView intensity={80} tint="dark" style={{ width: 34, height: 34, borderRadius: 17, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' }}><FontAwesome5 name="qrcode" size={15} color="#FFFFFF" /></BlurView>) : (<View style={{ width: 34, height: 34, borderRadius: 17, overflow: 'hidden', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.4)' }}><FontAwesome5 name="qrcode" size={15} color="#FFFFFF" /></View>)}</Pressable></Animated.View>
         {/* Follow stats moved into the redesigned header module below. */}
         <View pointerEvents="none" />

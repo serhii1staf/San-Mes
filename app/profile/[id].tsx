@@ -1500,7 +1500,16 @@ export default function UserProfileScreen() {
           regardless of scroll position; they fade out via
           `centerStatsOpacity` once the banner has scrolled past, which
           is also when the floating "follow" badge takes over. */}
-      <View style={{ position: 'absolute', top: insets.top + 8, left: 16, right: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', zIndex: 100 }}>
+      <View
+        // box-none: the container itself must NOT capture touches. It spans the
+        // full width at the very top and overlaps the pinned category-tab band
+        // below it (which sits at a lower zIndex). With the default
+        // pointerEvents="auto" this row swallowed taps in its empty middle
+        // region, so the pinned Posts/Replies/Media/Likes pills could not be
+        // tapped. box-none keeps the back/menu Pressables (children) tappable
+        // while letting taps in the gap fall through to the pinned tab bar.
+        pointerEvents="box-none"
+        style={{ position: 'absolute', top: insets.top + 8, left: 16, right: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', zIndex: 100 }}>
         <Animated.View style={{ transform: [{ translateX: buttonsTranslateX }] }}>
           <Pressable onPress={() => router.back()} style={{ borderRadius: 17, overflow: glassActive ? undefined : 'hidden' }}>
             {glassActive ? (

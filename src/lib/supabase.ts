@@ -14,7 +14,7 @@
 
 import { createClient } from '@supabase/supabase-js';
 import { Platform } from 'react-native';
-import { uploadToR2, isR2PublicConfigured } from './r2';
+import { uploadToR2 } from './r2';
 import {
   apiDelete,
   apiGet,
@@ -25,16 +25,23 @@ import {
 import * as authClient from '../services/authClient';
 import { perfMonitor } from '../services/perfMonitor';
 
-// ─── Legacy Supabase clients ──────────────────────────────────────────
+// ─── Legacy Supabase client (ANON key only) ───────────────────────────
 //
-// Kept ONLY for storage uploads to existing buckets (`post-images`,
-// `avatars`). When R2 is configured every new upload lands there
-// first; the Supabase fallback survives so old image URLs keep
-// resolving. There are NO database queries through this client.
+// SECURITY: the `service_role` key (and the `storageClient` built from
+// it) was removed from the client bundle. A service_role JWT bypasses
+// all row-level security and grants full read/write/delete on the whole
+// project — it must never ship in the app binary. All image uploads now
+// go exclusively through Cloudflare R2 via `uploadToR2`, which streams
+// bytes through our server-side Vercel function and holds no secret in
+// the client.
+//
+// The public client below uses ONLY the low-sensitivity ANON key. It is
+// retained as a `getPublicUrl()` formatter for legacy image URLs and to
+// keep the exported surface stable. There are NO database queries
+// through this client.
 
 const SUPABASE_URL = 'https://ycwadqglcykcpucembjn.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inljd2FkcWdsY3lrY3B1Y2VtYmpuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4Mjc2OTYsImV4cCI6MjA5NTQwMzY5Nn0.ZUr1YfN6pBp_AaUC1pZLKGApwgEXEiVw_w6w-yQjE_U';
-const SUPABASE_SERVICE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inljd2FkcWdsY3lrY3B1Y2VtYmpuIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3OTgyNzY5NiwiZXhwIjoyMDk1NDAzNjk2fQ._fyRtcHahnaTL-SBYElzBOupPJk2u40yfjcbUwKQ43I';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: {
@@ -44,13 +51,9 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   },
 });
 
-const storageClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
-  auth: { persistSession: false, autoRefreshToken: false },
-});
-
 export { SUPABASE_URL, SUPABASE_ANON_KEY };
 
-// ─── Image upload helpers (R2 primary, Supabase fallback) ────────────
+// ─── Image upload helpers (R2 only) ──────────────────────────────────
 
 /** Upload a chat image: aggressively compressed to keep files in KB. GIFs preserved. */
 export async function uploadChatImage(imageUri: string): Promise<{ url: string | null; error: string | null }> {
@@ -71,24 +74,9 @@ export async function uploadChatImage(imageUri: string): Promise<{ url: string |
       } catch {}
     }
     const filename = `chat_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.${fileExt}`;
-    if (isR2PublicConfigured()) {
-      const r2 = await uploadToR2(finalUri, `chat/${filename}`, contentType);
-      if (r2.url) return { url: r2.url, error: null };
-    }
-    const formData = new FormData();
-    formData.append('', { uri: finalUri, name: filename, type: contentType } as any);
-    const uploadUrl = `${SUPABASE_URL}/storage/v1/object/post-images/${filename}`;
-    const response = await fetch(uploadUrl, {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}`, 'x-upsert': 'true' },
-      body: formData,
-    });
-    if (!response.ok) {
-      const errText = await response.text();
-      return { url: null, error: `Upload failed: ${errText}` };
-    }
-    const { data } = supabase.storage.from('post-images').getPublicUrl(filename);
-    return { url: data.publicUrl, error: null };
+    const r2 = await uploadToR2(finalUri, `chat/${filename}`, contentType);
+    if (r2.url) return { url: r2.url, error: null };
+    return { url: null, error: r2.error || 'Upload failed' };
   } catch (e: any) {
     return { url: null, error: e?.message || 'Unknown error' };
   }
@@ -112,24 +100,9 @@ export async function uploadPostImage(imageUri: string): Promise<{ url: string |
       } catch {}
     }
     const filename = `post_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.${fileExt}`;
-    if (isR2PublicConfigured()) {
-      const r2 = await uploadToR2(finalUri, `post/${filename}`, contentType);
-      if (r2.url) return { url: r2.url, error: null };
-    }
-    const formData = new FormData();
-    formData.append('', { uri: finalUri, name: filename, type: contentType } as any);
-    const uploadUrl = `${SUPABASE_URL}/storage/v1/object/post-images/${filename}`;
-    const response = await fetch(uploadUrl, {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}`, 'x-upsert': 'true' },
-      body: formData,
-    });
-    if (!response.ok) {
-      const errText = await response.text();
-      return { url: null, error: `Upload failed: ${errText}` };
-    }
-    const { data } = supabase.storage.from('post-images').getPublicUrl(filename);
-    return { url: data.publicUrl, error: null };
+    const r2 = await uploadToR2(finalUri, `post/${filename}`, contentType);
+    if (r2.url) return { url: r2.url, error: null };
+    return { url: null, error: r2.error || 'Upload failed' };
   } catch (e: any) {
     return { url: null, error: e?.message || 'Unknown error' };
   }
@@ -357,10 +330,21 @@ export async function deletePost(postId: string, _authorId: string): Promise<{ e
   return { error };
 }
 
-export async function adminDeletePost(postId: string): Promise<{ error: string | null }> {
+/**
+ * Delete any post as an admin (also removes its images, reposts, likes and
+ * comments server-side).
+ *
+ * The admin key is NOT hardcoded — it is provided by the caller, which reads
+ * it from the on-device secure store after the operator has unlocked the admin
+ * panel. This keeps the secret out of the shipped client bundle.
+ *
+ * @param postId   id of the post to delete
+ * @param adminKey the admin key entered by the operator, sent as `X-Admin-Key`
+ */
+export async function adminDeletePost(postId: string, adminKey: string): Promise<{ error: string | null }> {
   const { error } = await apiDelete<{ deleted: boolean }>(
     `/v1/admin/posts/${encodeURIComponent(postId)}`,
-    { headers: { 'X-Admin-Key': 'V7k!Qm9@Lp2#xR8$Tw6ZcD4%yN' } },
+    { headers: { 'X-Admin-Key': adminKey } },
   );
   return { error };
 }
