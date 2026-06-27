@@ -233,6 +233,12 @@ class PerfMonitor {
     // burst that follows and we drop it on publish. Reset on each publish.
     let maxDtInWindow = 0;
     const tick = () => {
+      // If the monitor was stopped (toggled off / app backgrounded) between
+      // the last requestAnimationFrame schedule and this callback firing,
+      // bail without doing any per-frame work AND without re-arming the
+      // rAF chain. cancelAnimationFrame in stop() handles the common case;
+      // this guard guarantees zero work even if a frame was already queued.
+      if (!this._started) return;
       const now = Date.now();
       const dt = lastFrameTs ? now - lastFrameTs : 0;
       if (dt > maxDtInWindow) maxDtInWindow = dt;

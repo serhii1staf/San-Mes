@@ -16,6 +16,7 @@ import { useAuthStore } from '../../src/store';
 import { useEntityStore } from '../../src/store';
 import { useFeedStore } from '../../src/store/feedStore';
 import { syncProfile, syncUserPosts } from '../../src/services/syncService';
+import { shouldSync } from '../../src/services/syncThrottle';
 import { queueMutation } from '../../src/services/offlineQueue';
 import { openUrl } from '../../src/utils/openUrl';
 import { triggerHaptic } from '../../src/utils/haptics';
@@ -682,8 +683,15 @@ export default function UserProfileScreen() {
         if (p?.banner_url) prefetchImages([p.banner_url]);
       }).catch(() => {});
 
-      // Load follow counts from Supabase (keep direct call for counts display)
-      getFollowCounts(id).then((counts) => setFollowCounts(counts)).catch(() => {});
+      // Load follow counts from Supabase (keep direct call for counts display).
+      // Gated behind the per-profile sync throttle (5-min window) so rapid
+      // revisits don't re-hit the network — the cached `followCounts` state
+      // stays on screen when skipped (we don't clear it).
+      (async () => {
+        if (await shouldSync('follow_counts:' + id, 5 * 60 * 1000)) {
+          getFollowCounts(id).then((counts) => setFollowCounts(counts)).catch(() => {});
+        }
+      })();
 
       // Resolve the REAL follow state from the server and write it into the
       // entity store. The store only knew about follows set optimistically
@@ -691,15 +699,21 @@ export default function UserProfileScreen() {
       // start the button could show "Подписаться" even though the DB row
       // exists. Reconciling here makes the button reflect server truth on
       // every profile open, regardless of session or cache. Self-profiles
-      // are skipped (you can't follow yourself).
+      // are skipped (you can't follow yourself). Gated behind the per-profile
+      // sync throttle (5-min window): when skipped, the entity-store follow
+      // state already drives the button, so there's no visual regression.
       if (currentUser?.id && id && currentUser.id !== id) {
-        import('../../src/lib/supabase').then(({ isFollowing }) =>
-          isFollowing(currentUser.id, id).then((following) => {
-            const entity = useEntityStore.getState();
-            if (following) entity.setFollow(currentUser.id, id);
-            else entity.removeFollow(currentUser.id, id);
-          }).catch(() => {})
-        ).catch(() => {});
+        (async () => {
+          if (await shouldSync('is_following:' + id, 5 * 60 * 1000)) {
+            import('../../src/lib/supabase').then(({ isFollowing }) =>
+              isFollowing(currentUser.id, id).then((following) => {
+                const entity = useEntityStore.getState();
+                if (following) entity.setFollow(currentUser.id, id);
+                else entity.removeFollow(currentUser.id, id);
+              }).catch(() => {})
+            ).catch(() => {});
+          }
+        })();
       }
     });
     return () => handle.cancel();

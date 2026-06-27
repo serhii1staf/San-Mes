@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo, useRef } from 'react';
-import { View, Pressable, Animated, Easing, Dimensions } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { View, Pressable, Animated, Easing, Dimensions, AppState } from 'react-native';
+import { useIsFocused } from '@react-navigation/native';
 import { Feather, FontAwesome5 } from '@expo/vector-icons';
 import { useTheme } from '../../theme';
 import { triggerHaptic } from '../../utils/haptics';
@@ -68,11 +69,21 @@ interface Placement {
   delay: number;
 }
 
-function FloatingChip({ p }: { p: Placement }) {
+function FloatingChip({ p, active }: { p: Placement; active: boolean }) {
   const theme = useTheme();
   const anim = useRef(new Animated.Value(0)).current;
 
+  // Gate the infinite float loop on `active` (foreground + focused). When the
+  // app is backgrounded or the screen is blurred we stop the loop and reset the
+  // value so nothing keeps churning the UI thread / battery. Mirrors the proven
+  // pattern in StickerGlyph.tsx.
   useEffect(() => {
+    if (!active) {
+      anim.stopAnimation();
+      anim.setValue(0);
+      return;
+    }
+    anim.setValue(0);
     const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(anim, { toValue: 1, duration: p.dur, delay: p.delay, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
@@ -81,7 +92,7 @@ function FloatingChip({ p }: { p: Placement }) {
     );
     loop.start();
     return () => loop.stop();
-  }, [anim, p.dur, p.delay]);
+  }, [active, anim, p.dur, p.delay]);
 
   const translateX = anim.interpolate({ inputRange: [0, 1], outputRange: [-p.ampX, p.ampX] });
   const translateY = anim.interpolate({ inputRange: [0, 1], outputRange: [p.ampY, -p.ampY] });
@@ -125,6 +136,22 @@ function FloatingChip({ p }: { p: Placement }) {
  * clipped to the banner). `bannerHeight` is the banner's height in px.
  */
 export function BannerFloatingLinks({ links, bannerHeight }: { links: BannerLink[]; bannerHeight: number }) {
+  // ── Visibility gating ─────────────────────────────────────────────────────
+  // Pause the chips' float loops whenever the app is backgrounded or this
+  // screen is blurred, so we don't burn the UI thread / battery animating
+  // off-screen. `active` is threaded down to every FloatingChip.
+  const isFocused = useIsFocused();
+  const [isForeground, setIsForeground] = useState(() => AppState.currentState === 'active');
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (next) => {
+      setIsForeground(next === 'active');
+    });
+    return () => sub.remove();
+  }, []);
+
+  const active = isForeground && isFocused;
+
   // Vertical safe band: below the top chrome (QR / settings / stat pills sit
   // around the top ~60px) and above the avatar/name/identity row that overlaps
   // the banner's lower ~140px. Keep chips in the clear middle strip.
@@ -158,7 +185,7 @@ export function BannerFloatingLinks({ links, bannerHeight }: { links: BannerLink
   if (placements.length === 0) return null;
   return (
     <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: bannerHeight }} pointerEvents="box-none">
-      {placements.map((p, i) => <FloatingChip key={i} p={p} />)}
+      {placements.map((p, i) => <FloatingChip key={i} p={p} active={active} />)}
     </View>
   );
 }

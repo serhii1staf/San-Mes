@@ -383,6 +383,20 @@ function RootLayout() {
           useAuthStore.getState().restoreSession().catch(() => {});
         } catch {}
       }
+
+      // Hydrate the blocked-user set from the server's authoritative list
+      // (GET /v1/blocks) once on boot, AFTER first paint is unblocked. This
+      // merges blocks made on ANOTHER device into this device's local set —
+      // without it, a block created elsewhere wouldn't take effect here until
+      // the next manual block action. Lazy-imported (the store may already be
+      // imported elsewhere; a dynamic import here keeps boot order safe) and
+      // fully guarded fire-and-forget so it never blocks splash/first paint.
+      // Guarded on a logged-in user — there's nothing to reconcile when signed out.
+      if (useAuthStore.getState().user?.id) {
+        import('../src/store/blockedUsersStore')
+          .then(({ useBlockedUsersStore }) => useBlockedUsersStore.getState().hydrateFromServer())
+          .catch(() => {});
+      }
     }, 0);
 
     // Phase 4 — boot-time image warming. Deferred well past first paint so it

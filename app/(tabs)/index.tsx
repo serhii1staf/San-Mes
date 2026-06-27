@@ -15,7 +15,7 @@ import { PostMenuModal } from '../../src/components/feed/PostMenuModal';
 import { useFeedStore, useAuthStore, useEntityStore } from '../../src/store';
 import { useNotificationsBadge } from '../../src/store/notificationsBadgeStore';
 import { Post } from '../../src/types';
-import { getPosts, isRepost, parseImageUrls, isImageSpoiler, toggleLike as apiToggleLike } from '../../src/lib/supabase';
+import { getPosts, isRepost, parseImageUrls, isImageSpoiler } from '../../src/lib/supabase';
 import { useUpdateStore } from '../../src/store/updateStore';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { useConnectivityStore } from '../../src/services/connectivityMonitor';
@@ -189,7 +189,17 @@ function postsShallowEqual(a: Post[], b: Post[]): boolean {
 }
 
 // Map raw Supabase post to Post type
-function mapRawPost(p: any, postsById: Record<string, any>): Post | null {
+//
+// `viewerId` (optional, additive) is the id of the signed-in user. When
+// provided, the post's `isLiked` is seeded from the entity store's persisted
+// like set (`useEntityStore.getState().isLiked`) instead of the old
+// unconditional `false`, so hearts render in their correct state on the very
+// first paint after load/hydrate. The entity store is the canonical liked-state
+// source — `handleToggleLike` routes through the offline queue, whose optimistic
+// path flips this same set — so reading it here keeps the feed in sync without
+// a separate per-post network call. When `viewerId` is undefined (e.g. mapped
+// before auth resolves) we fall back to `false`, matching prior behaviour.
+function mapRawPost(p: any, postsById: Record<string, any>, viewerId?: string): Post | null {
   const repostInfo = isRepost(p.content || '');
   const parsedImages = parseImageUrls(p.image_url);
   const spoiler = isImageSpoiler(p.image_url);
@@ -210,7 +220,7 @@ function mapRawPost(p: any, postsById: Record<string, any>): Post | null {
     likesCount: p.likes_count || 0,
     commentsCount: p.comments_count || 0,
     sharesCount: p.shares_count || 0,
-    isLiked: false,
+    isLiked: viewerId ? useEntityStore.getState().isLiked(viewerId, p.id) : false,
     isBookmarked: false,
     createdAt: p.created_at,
     isRepost: repostInfo.isRepost,
@@ -407,6 +417,30 @@ export default function FeedScreen() {
   // (or the full hydrate effect above) clears it.
   const [isLoading, setIsLoading] = useState(() => posts.length === 0);
   const hasFetched = useRef(false);
+
+  // --- Incremental (infinite-scroll) pagination state (FIX 1) -------------
+  // The feed loads EVERYTHING, just in FEED_LIMIT-sized pages instead of a
+  // single hard-capped page. These live alongside the other top-level hooks
+  // (added here, never reordered) so hook order/count stays stable.
+  //   • loadingMoreRef   — guards against duplicate concurrent page loads.
+  //   • hasMoreRef       — set false once a page returns < FEED_LIMIT rows
+  //                        (we've reached the oldest post). Reset to true on
+  //                        pull-to-refresh so older pages are reachable again.
+  //   • lastEndReachedRef — timestamp throttle so a burst of onEndReached
+  //                         callbacks near the tail doesn't fan out fetches.
+  //   • isLoadingMore    — drives the footer spinner only.
+  const loadingMoreRef = useRef(false);
+  const hasMoreRef = useRef(true);
+  const lastEndReachedRef = useRef(0);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  // Mirror refs kept in sync on every render (plain assignment, NOT hooks) so
+  // the empty-dep `loadMore` callback always sees the current posts length
+  // (its paging offset) and the current viewer id (for isLiked mapping)
+  // without being recreated on every change.
+  const postsRef = useRef<Post[]>(posts);
+  postsRef.current = posts;
+  const userIdRef = useRef(userId);
+  userIdRef.current = userId;
 
   // Subscribe to update store fields individually so the feed screen doesn't
   // re-render on every progress tick of an OTA download.
@@ -624,7 +658,7 @@ export default function FeedScreen() {
 
       const mapped: Post[] = [];
       for (const p of rawPosts) {
-        const post = mapRawPost(p, postsById);
+        const post = mapRawPost(p, postsById, userIdRef.current);
         if (post) mapped.push(post);
       }
 
@@ -662,6 +696,10 @@ export default function FeedScreen() {
 
   const handleRefresh = useCallback(async () => {
     resetThrottle('feed');
+    // Refresh re-loads page 0 (the newest FEED_LIMIT posts), so reset the
+    // pagination cursor: older pages become reachable again from the top.
+    hasMoreRef.current = true;
+    lastEndReachedRef.current = 0;
     setRefreshing(true);
     try {
       const { posts: rawPosts, error } = await getPosts(FEED_LIMIT, 0);
@@ -709,7 +747,7 @@ export default function FeedScreen() {
 
       const mapped: Post[] = [];
       for (const p of rawPosts) {
-        const post = mapRawPost(p, postsById);
+        const post = mapRawPost(p, postsById, userIdRef.current);
         if (post) mapped.push(post);
       }
 
@@ -738,13 +776,108 @@ export default function FeedScreen() {
 
   const handleToggleLike = useCallback((postId: string) => {
     if (!userId) return;
-    // Optimistic update locally
+    // The entity store is the canonical liked-state source (seeded into each
+    // post's `isLiked` by mapRawPost). Derive the NEW desired state from it so
+    // the optimistic UI and the queued mutation agree.
+    const newLiked = !useEntityStore.getState().isLiked(userId, postId);
+    // Optimistic local update for instant heart + count feedback.
     setPosts(prev => prev.map(p =>
-      p.id === postId ? { ...p, isLiked: !p.isLiked, likesCount: p.isLiked ? p.likesCount - 1 : p.likesCount + 1 } : p
+      p.id === postId ? { ...p, isLiked: newLiked, likesCount: newLiked ? p.likesCount + 1 : Math.max(p.likesCount - 1, 0) } : p
     ));
-    // Send to server (fire and forget)
-    apiToggleLike(userId, postId).catch(() => {});
+    // Route through the offline queue (like `handleFollow`) so the like
+    // survives offline/failed sends via replay, and rapid double-taps coalesce
+    // against the relative-toggle endpoint. The queue's optimistic path already
+    // flips the entity-store like set + likes_count, so we do NOT toggle it
+    // here (that would double-count).
+    queueMutation('toggle_like', { userId, postId, liked: newLiked });
   }, [userId]);
+
+  // Incremental page loader (FIX 1). Fetches the NEXT page of posts at the
+  // current offset and APPENDS them (deduped by id) to the existing list,
+  // running the exact same repost-chain resolution as `loadFeed` /
+  // `handleRefresh` (reusing `mapWithConcurrency(..., 5, ...)` for missing
+  // originals). Stable (empty deps) — it reads the live posts length and
+  // viewer id from mirror refs, so it never needs recreating. Concurrency and
+  // burst protection come from `loadingMoreRef` + the timestamp throttle.
+  const loadMore = useCallback(async () => {
+    if (loadingMoreRef.current || !hasMoreRef.current) return;
+    const now = Date.now();
+    // Throttle bursts of onEndReached near the tail.
+    if (now - lastEndReachedRef.current < 400) return;
+    // Nothing loaded yet — page 0 is owned by loadFeed/cache hydrate, not here.
+    const currentCount = postsRef.current.length;
+    if (currentCount === 0) return;
+    lastEndReachedRef.current = now;
+    loadingMoreRef.current = true;
+    setIsLoadingMore(true);
+    try {
+      const { posts: rawPosts, error } = await getPosts(FEED_LIMIT, currentCount);
+      if (error || !rawPosts) return;
+      if (rawPosts.length === 0) { hasMoreRef.current = false; return; }
+
+      const postsById: Record<string, any> = {};
+      for (const p of rawPosts) postsById[p.id] = p;
+
+      // Collect referenced original post IDs missing from this page.
+      const missingIds = new Set<string>();
+      for (const p of rawPosts) {
+        const ri = isRepost(p.content || '');
+        if (ri.isRepost && ri.originalPostId && !postsById[ri.originalPostId]) {
+          missingIds.add(ri.originalPostId);
+        }
+      }
+      // Resolve missing originals with bounded concurrency (same as loadFeed).
+      if (missingIds.size > 0) {
+        const { apiGet } = await import('../../src/services/apiClient');
+        const idList = Array.from(missingIds);
+        const fetched = await mapWithConcurrency(
+          idList, 5,
+          (mid) => apiGet<any>(`/v1/posts/${encodeURIComponent(mid)}`).then((r) => r.data).catch(() => null),
+        );
+        const missingPosts = fetched.filter(Boolean) as any[];
+        if (missingPosts.length > 0) {
+          for (const mp of missingPosts) {
+            postsById[mp.id] = mp;
+            const mri = isRepost(mp.content || '');
+            if (mri.isRepost && mri.originalPostId && !postsById[mri.originalPostId]) missingIds.add(mri.originalPostId);
+          }
+          const newMissing = Array.from(missingIds).filter((id) => !postsById[id]);
+          if (newMissing.length > 0) {
+            const fetched2 = await mapWithConcurrency(
+              newMissing, 5,
+              (nid) => apiGet<any>(`/v1/posts/${encodeURIComponent(nid)}`).then((r) => r.data).catch(() => null),
+            );
+            for (const dp of fetched2) if (dp) postsById[dp.id] = dp;
+          }
+        }
+      }
+
+      const mapped: Post[] = [];
+      for (const p of rawPosts) {
+        const post = mapRawPost(p, postsById, userIdRef.current);
+        if (post) mapped.push(post);
+      }
+
+      // Reached the oldest post once the server returns a short page.
+      if (rawPosts.length < FEED_LIMIT) hasMoreRef.current = false;
+
+      // Append, deduped by id (a repost original embedded earlier, or an
+      // overlapping row from the offset boundary, must not appear twice).
+      if (mapped.length > 0) {
+        setPosts((prev) => {
+          const seen = new Set(prev.map((p) => p.id));
+          const additions = mapped.filter((p) => !seen.has(p.id));
+          if (additions.length === 0) return prev;
+          return [...prev, ...additions];
+        });
+      }
+    } catch {
+      // Network error: keep what we have; the next onEndReached can retry.
+    } finally {
+      loadingMoreRef.current = false;
+      setIsLoadingMore(false);
+    }
+  }, []);
 
   // Stable callbacks for PostCard so its React.memo isn't busted by new function
   // references on every render of FeedScreen.
@@ -943,6 +1076,18 @@ export default function FeedScreen() {
         // resizes a card above the viewport" jump (replaces the old FlatList
         // `{ minIndexForVisible: 0 }` shape).
         drawDistance={250}
+        // Incremental loading (FIX 1): when the user nears the tail, fetch and
+        // APPEND the next page. `loadMore` self-guards against concurrent/burst
+        // triggers and stops once a short page signals the oldest post. This
+        // removes the old hard 20-post cap — the feed now loads everything, just
+        // paged. A small footer spinner shows while a page is in flight.
+        onEndReached={loadMore}
+        onEndReachedThreshold={0.6}
+        ListFooterComponent={isLoadingMore ? (
+          <View style={{ paddingVertical: 24, alignItems: 'center' }}>
+            <ActivityIndicator size="small" color={theme.colors.accent.primary} />
+          </View>
+        ) : null}
         // Native/custom indicator conflict resolution: KEEP RefreshControl so
         // the native pull gesture + refresh trigger stay intact, but render its
         // OWN indicator fully invisible — `tintColor="transparent"` hides the

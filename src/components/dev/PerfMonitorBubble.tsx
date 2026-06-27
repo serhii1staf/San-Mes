@@ -15,7 +15,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { StyleSheet, Text, View, useWindowDimensions, Modal } from 'react-native';
+import { AppState, StyleSheet, Text, View, useWindowDimensions, Modal } from 'react-native';
 import Animated, {
   useAnimatedStyle,
   useFrameCallback,
@@ -96,6 +96,13 @@ function PerfMonitorBubbleInner() {
 
   const [panelOpen, setPanelOpenLocal] = useState(false);
 
+  // Foreground flag. Drives whether the JS rAF sampler and the UI-thread
+  // frame-callback worklet are allowed to run at all. Initialised from the
+  // current AppState so a cold start while foregrounded begins active.
+  const [isForeground, setIsForeground] = useState(
+    () => AppState.currentState === 'active',
+  );
+
   // Allow the panel to be opened externally (e.g. from the Dynamic Island
   // companion overlay's FPS tile) via a tiny external store. We mirror the
   // local `panelOpen` flag with the store so legacy callers (the bubble's
@@ -130,17 +137,41 @@ function PerfMonitorBubbleInner() {
     }
   }, []);
 
-  // Keep sampler running while the bubble is mounted.
+  // Single AppState listener: pause everything when the app goes to the
+  // background, resume when it returns to the foreground. Added once on
+  // mount, removed on unmount. We only flip the `isForeground` flag here;
+  // the start/stop effect below reacts to it so there's one source of truth.
   useEffect(() => {
-    try {
-      perfMonitor.start();
-    } catch {}
+    const sub = AppState.addEventListener('change', (next) => {
+      setIsForeground(next === 'active');
+    });
     return () => {
-      // Don't stop on unmount — the user might toggle the bubble off but
-      // still want to see history when they re-enable it. Stopping is only
-      // appropriate if we're sure no consumer will read fps later.
+      sub.remove();
     };
   }, []);
+
+  // Run the JS rAF sampler ONLY while the monitor is enabled AND the app is
+  // foregrounded. `start()` is idempotent and `stop()` fully cancels the rAF
+  // chain, so this effect can fire freely on every enabled/foreground change:
+  //  - enabled + foreground  → start()  (resume)
+  //  - disabled OR background → stop()   (zero per-frame work)
+  // On unmount we always stop so no rAF loop outlives the bubble.
+  useEffect(() => {
+    if (enabled && isForeground) {
+      try {
+        perfMonitor.start();
+      } catch {}
+    } else {
+      try {
+        perfMonitor.stop();
+      } catch {}
+    }
+    return () => {
+      try {
+        perfMonitor.stop();
+      } catch {}
+    };
+  }, [enabled, isForeground]);
 
   // Throttled subscription so the label re-renders at most twice per second.
   useEffect(() => {
@@ -173,7 +204,7 @@ function PerfMonitorBubbleInner() {
       uiLastSampleAt.value = frame.timestamp;
       runOnJS(reportUiFps)(fps);
     }
-  }, enabled);
+  }, enabled && isForeground);
 
   // Drag gesture moves the bubble; tap gesture opens the panel. They live in
   // a Race composition so a quick press resolves cleanly to "tap" without

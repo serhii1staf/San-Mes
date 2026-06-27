@@ -249,6 +249,9 @@ export default function ProfileScreen() {
   useEffect(() => {
     if (!user?.id) return;
     (async () => {
+      // Throttle gate (10-min, per-account): tab revisits reuse the existing
+      // `user` state instead of re-hitting the profile endpoint every mount.
+      if (!(await shouldSync('self_badge:' + user.id, 10 * 60 * 1000))) return;
       const { apiGet } = await import('../../src/services/apiClient');
       const { data } = await apiGet<{ badge: string | null; is_verified: boolean }>(
         `/v1/profiles/${encodeURIComponent(user.id)}`,
@@ -433,7 +436,12 @@ export default function ProfileScreen() {
 
   const loadFollows = useCallback(async () => {
     if (!user?.id) return;
-    try { const counts = await getFollowCounts(user.id); setFollowCounts(counts); } catch {}
+    try {
+      // Throttle gate (5-min, per-account): keep the cached `followCounts`
+      // when recently synced instead of re-hitting getFollowCounts on revisit.
+      if (!(await shouldSync('self_follow_counts:' + user.id, 5 * 60 * 1000))) return;
+      const counts = await getFollowCounts(user.id); setFollowCounts(counts);
+    } catch {}
   }, [user?.id]);
 
   // ─── Likes tab loader ─────────────────────────────────────────────────
@@ -747,10 +755,16 @@ export default function ProfileScreen() {
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     resetThrottle('my_posts');
+    // Force-fresh the throttled self-syncs too so pull-to-refresh always
+    // re-pulls follow counts and the badge/verified reconcile.
+    if (user?.id) {
+      resetThrottle('self_follow_counts:' + user.id);
+      resetThrottle('self_badge:' + user.id);
+    }
     await loadMyPosts();
     await loadFollows();
     setRefreshing(false);
-  }, [loadMyPosts, loadFollows]);
+  }, [loadMyPosts, loadFollows, user?.id]);
 
   // Animated values for the scroll-based header. Created once and memoized so
   // each interpolation is allocated only one node instead of one-per-render.

@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { AppState, type AppStateStatus } from 'react-native';
 import { useAuthStore } from '../../store/authStore';
 import { useEntityStore } from '../../services/entityStore';
 import { useChatStore } from '../../store/chatStore';
@@ -7,6 +8,7 @@ import { useNotificationsBadge } from '../../store/notificationsBadgeStore';
 import {
   feedPublicChannelName,
   getRealtime,
+  disconnectRealtime,
   userFollowsChannelName,
   userNotificationsChannelName,
   userProfileChannelName,
@@ -61,12 +63,30 @@ export function RealtimeAccountBridge(): null {
     // perceive a 0–16 ms delay before realtime starts listening, but
     // they do feel the cold-open freeze if it doesn't.
     let cancelled = false;
-    const cleanups: Array<() => void> = [];
+    let activeCleanups: Array<() => void> = [];
+    let bgTimer: ReturnType<typeof setTimeout> | null = null;
+    let deferTimer: ReturnType<typeof setTimeout> | null = null;
 
-    const timer = setTimeout(() => {
-      if (cancelled) return;
+    // Tear down any live channel subscriptions. Safe to call repeatedly;
+    // it always leaves `activeCleanups` empty so a follow-up
+    // buildAndSubscribe can never double-unsubscribe or double-subscribe.
+    const teardownSubscriptions = () => {
+      const fns = activeCleanups;
+      activeCleanups = [];
+      for (const fn of fns) {
+        try { fn(); } catch {}
+      }
+    };
+
+    // Build the Ably client + (re)subscribe every channel. Tears down any
+    // previous subscriptions FIRST so a foreground re-run lands on a clean
+    // slate (no duplicate handlers). Called from the initial deferred
+    // mount and from the foreground (AppState 'active') handler.
+    const buildAndSubscribe = () => {
+      teardownSubscriptions();
       const realtime = getRealtime();
       if (!realtime) return; // No deviceKey or auth not ready — degrade silently.
+      const cleanups: Array<() => void> = [];
 
       // ─── notifications ─────────────────────────────────────────────
       // Existing flow: new conversation rows + new-message previews.
@@ -389,12 +409,68 @@ export function RealtimeAccountBridge(): null {
       cleanups.push(() => {
         try { feedChannel.unsubscribe(onFeed); } catch {}
       });
-    }, 0);
+
+      activeCleanups = cleanups;
+    };
+
+    // Deferred (macrotask) subscribe. The 0 ms timeout pushes the Ably
+    // client construction + channel.subscribes past the current commit +
+    // RAF so the cold-open critical path is never blocked by the
+    // WebSocket handshake. Reused verbatim for the foreground re-subscribe.
+    const scheduleSubscribe = () => {
+      if (deferTimer) clearTimeout(deferTimer);
+      deferTimer = setTimeout(() => {
+        deferTimer = null;
+        if (cancelled) return;
+        try { buildAndSubscribe(); } catch {}
+      }, 0);
+    };
+
+    scheduleSubscribe();
+
+    // ─── app-lifecycle handling ─────────────────────────────────────
+    // Background message delivery is covered by Expo push notifications,
+    // so holding the socket + 30s heartbeats open while backgrounded is
+    // wasted battery/radio. Release the connection shortly after the app
+    // is backgrounded and rebuild it on foreground. Fully guarded so a
+    // lifecycle transition can never throw.
+    const onAppStateChange = (next: AppStateStatus) => {
+      try {
+        if (next === 'active') {
+          // Foregrounded. If a disconnect was pending but hadn't fired,
+          // cancel it — a quick app-switch-and-return keeps the socket.
+          if (bgTimer) { clearTimeout(bgTimer); bgTimer = null; }
+          if (!userId) return;
+          // Re-run the SAME subscription setup on a (possibly fresh)
+          // connection. buildAndSubscribe tears down any previous subs
+          // first, so this never double-subscribes.
+          scheduleSubscribe();
+        } else if (next === 'background') {
+          // Grace delay (~10s) so a quick app-switch-and-return doesn't
+          // churn the connection. When it fires, drop subscriptions and
+          // close the socket via disconnectRealtime().
+          if (bgTimer) clearTimeout(bgTimer);
+          bgTimer = setTimeout(() => {
+            bgTimer = null;
+            try {
+              teardownSubscriptions();
+              disconnectRealtime();
+            } catch {}
+          }, 10000);
+        }
+        // 'inactive' (iOS app-switcher / transient) is intentionally
+        // ignored to avoid churn — only a real 'background' disconnects.
+      } catch {}
+    };
+
+    const appStateSub = AppState.addEventListener('change', onAppStateChange);
 
     return () => {
       cancelled = true;
-      clearTimeout(timer);
-      for (const fn of cleanups) fn();
+      if (deferTimer) clearTimeout(deferTimer);
+      if (bgTimer) clearTimeout(bgTimer);
+      try { appStateSub.remove(); } catch {}
+      teardownSubscriptions();
     };
   }, [userId]);
 
