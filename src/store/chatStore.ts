@@ -26,6 +26,27 @@ interface ChatStoreState {
 const MAX_CACHED_CONVERSATIONS = 8;
 
 /**
+ * Per-conversation ARRAY-level cap on the number of messages retained in memory.
+ * Matches the chat screen's on-disk MAX_PERSISTED_MESSAGES (1000) so a long-lived,
+ * very active chat (realtime echoes + sends appending via `addMessage`) cannot
+ * grow its in-memory array unboundedly. Messages are stored oldest→newest, so we
+ * keep the LAST `MAX_MEMORY_MESSAGES` (the newest) and slice the oldest off the
+ * front. Scroll-up into older history is unaffected: the chat screen re-hydrates
+ * older messages from disk on demand (disk is bounded at the same 1000), so this
+ * cap loses nothing the disk doesn't already bound.
+ */
+const MAX_MEMORY_MESSAGES = 1000;
+
+/**
+ * Return an array capped to the newest `MAX_MEMORY_MESSAGES` entries. No-op (same
+ * reference, no allocation) when the array is within the cap.
+ */
+function capMessages(arr: Message[]): Message[] {
+  if (arr.length <= MAX_MEMORY_MESSAGES) return arr;
+  return arr.slice(arr.length - MAX_MEMORY_MESSAGES);
+}
+
+/**
  * Module-level LRU access-order tracker, kept OUTSIDE the zustand state so it
  * never triggers re-renders. Ordered most-recently-used LAST. We only ever store
  * conversation ids that currently exist (or are being added to) the map.
@@ -95,7 +116,9 @@ export const useChatStore = create<ChatStoreState>()((set) => ({
       // Apply the update first, then mark MRU + evict whole least-recently-used
       // conversation entries from the map (arrays are never truncated).
       touch(conversationId);
-      const updated = { ...state.messages, [conversationId]: messages };
+      // Cap the per-conversation array to the newest MAX_MEMORY_MESSAGES in case
+      // an over-cap array is passed in (no-op when within the cap).
+      const updated = { ...state.messages, [conversationId]: capMessages(messages) };
       return { messages: evictIfNeeded(updated, conversationId) };
     }),
   addMessage: (conversationId, message) =>
@@ -114,9 +137,12 @@ export const useChatStore = create<ChatStoreState>()((set) => ({
       // Apply the update first, then mark MRU + evict whole least-recently-used
       // conversation entries from the map (arrays are never truncated).
       touch(conversationId);
+      // Append first, then cap the array to the newest MAX_MEMORY_MESSAGES. The
+      // cap runs AFTER the id-dedupe guard above so deduping is never affected;
+      // it only slices the OLDEST entries off the front when over the cap.
       const updated = {
         ...state.messages,
-        [conversationId]: [...existing, message],
+        [conversationId]: capMessages([...existing, message]),
       };
       return { messages: evictIfNeeded(updated, conversationId) };
     }),

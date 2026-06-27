@@ -496,6 +496,13 @@ class PerfMonitor {
     }
     // Drop entries outside the throttle window in place — array stays tiny.
     while (seen.length && now - seen[0] > IMG_THROTTLE_WINDOW_MS) seen.shift();
+    // Memory hygiene: if trimming drained the bucket, drop the host key
+    // instead of leaving an empty array behind. Otherwise every distinct
+    // image host seen during the session lingers as a dead entry, a slow
+    // monotonic growth of the Map. The next decode from this host just
+    // re-creates the entry via the get/`!seen` branch above, so the throttle
+    // behavior is unchanged.
+    if (seen.length === 0) this._imgHostThrottle.delete(host);
     if (seen.length >= IMG_THROTTLE_MAX_PER_WINDOW) return;
     seen.push(now);
     this._routeStat(this._currentRoute).imgCount += 1;

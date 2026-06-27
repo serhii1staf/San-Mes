@@ -59,6 +59,23 @@ const BATCH_SIZE = 10;
 // via a console.warn so a permanent failure is visible rather than looping.
 const MAX_RETRIES = 5;
 
+// ─── Failed-record cleanup (bounded parking) ───────────────────────────────
+//
+// markFailed parks retry-exhausted mutations as terminal `status:'failed'`
+// records and (correctly) never drops them inline — the no-silent-drop
+// contract protects pending/in-flight user mutations. But terminal 'failed'
+// records are already permanently dead (they exceeded MAX_RETRIES and are
+// never re-processed), so letting them accumulate forever bloats the MMKV
+// queue and slows EVERY queueMutation (each does a full getQueue parse +
+// cacheSet stringify). These two bounds keep ONLY the 'failed' pile in check;
+// 'pending' records are NEVER eligible for this cleanup.
+//
+//  - TTL: drop failed records older than 7 days (compared vs record.timestamp).
+//  - Cap: keep at most the 100 most-recent failed records; drop the oldest
+//    beyond that.
+const FAILED_RECORD_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+const MAX_FAILED_RECORDS = 100;
+
 // ─── Online retry/backoff (M1) ─────────────────────────────────────────────
 //
 // When a queued item fails transiently while the connection is otherwise
@@ -622,6 +639,50 @@ function orderingKey(mutation: MutationRecord): string | null {
   }
 }
 
+// Bounded cleanup of terminal 'failed' records. Removes failed records that
+// are either older than FAILED_RECORD_TTL_MS, or beyond the MAX_FAILED_RECORDS
+// most-recent cap (oldest dropped first). 'pending' records are ALWAYS kept —
+// they are never TTL'd or capped (no-silent-drop contract). The queue is only
+// rewritten when something was actually removed, so a clean queue costs a
+// single read with no redundant cacheSet. Runs from processQueue (already
+// throttled/guarded), never from queueMutation.
+async function sweepFailedRecords(): Promise<void> {
+  const queue = await getQueue();
+
+  // Fast path: nothing parked → nothing to sweep, no write.
+  const failedCount = queue.reduce((n, m) => (m.status === 'failed' ? n + 1 : n), 0);
+  if (failedCount === 0) return;
+
+  const now = Date.now();
+
+  // Rank failed records newest-first so the cap keeps the most recent ones.
+  const failedByRecencyDesc = queue
+    .filter((m) => m.status === 'failed')
+    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+  // Decide which failed records survive (within TTL AND within cap). An
+  // unparseable timestamp is treated as expired so it can't linger forever.
+  const survivors = new Set<string>();
+  failedByRecencyDesc.forEach((rec, index) => {
+    const ts = new Date(rec.timestamp).getTime();
+    const tooOld = !Number.isFinite(ts) || now - ts > FAILED_RECORD_TTL_MS;
+    const beyondCap = index >= MAX_FAILED_RECORDS;
+    if (!tooOld && !beyondCap) survivors.add(rec.id);
+  });
+
+  // Keep every pending record untouched + only the surviving failed records.
+  const updated = queue.filter((m) => m.status !== 'failed' || survivors.has(m.id));
+  const removed = queue.length - updated.length;
+
+  // Only rewrite the persisted queue if we actually pruned something.
+  if (removed > 0) {
+    await cacheSet(KEYS.mutations, updated);
+    console.warn(
+      `[OfflineQueue] Swept ${removed} terminal failed record(s) (TTL ${FAILED_RECORD_TTL_MS}ms / cap ${MAX_FAILED_RECORDS}); pending records preserved.`
+    );
+  }
+}
+
 export async function processQueue(): Promise<void> {
   // Guard against overlapping drains.
   if (draining) return;
@@ -636,6 +697,11 @@ export async function processQueue(): Promise<void> {
       backoffAttempt = 0;
       return;
     }
+
+    // Bounded cleanup of the terminal 'failed' pile before draining. Cheap
+    // (single read, no write unless it pruned), and only runs here — not on
+    // every enqueue — so it can't slow individual mutations.
+    await sweepFailedRecords();
 
     const queue = await getQueue();
     const pending = queue.filter((m) => m.status === 'pending');

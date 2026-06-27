@@ -94,6 +94,17 @@ function readJsonBody(req: IncomingMessage): Promise<any> {
   });
 }
 
+// Constant-time string comparison. A raw `===`/`!==` on a secret can leak
+// its length/prefix through early-exit timing; this folds every char into an
+// accumulator so the comparison cost doesn't depend on where the first
+// mismatch is. Returns false (fail-closed) on non-strings or length mismatch.
+function timingSafeEqualStr(a: string, b: string): boolean {
+  if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
+  let d = 0;
+  for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return d === 0;
+}
+
 interface AuthInput {
   userId: string;
   deviceKey: string;
@@ -123,7 +134,10 @@ async function verifyAuth(input: AuthInput): Promise<boolean> {
     if (!resp.ok) return false;
     const body = (await resp.json()) as { data?: { id?: string; device_key?: string } | null };
     const row = body?.data;
-    return !!row && row.id === userId && row.device_key === deviceKey;
+    // device_key is the shared secret for this auth pair, so compare it in
+    // constant time. row.id is just the lookup identifier (not secret), so a
+    // plain equality check is fine there.
+    return !!row && row.id === userId && timingSafeEqualStr(row.device_key ?? '', deviceKey);
   } catch {
     return false;
   }

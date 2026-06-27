@@ -116,40 +116,86 @@ function hasCyrillic(s: string): boolean {
   return /[а-яёіїєґ]/i.test(s);
 }
 
+// Precomputed, query-derived inputs for `scoreTrackRelevance`. Building these
+// (normalization + transliteration + per-word RegExp compilation) is identical
+// for every track in a single search, so we do it ONCE per `searchTracks` call
+// instead of O(tracks × words) times. Behaviour is unchanged: the same
+// candidates, words, and regex patterns the per-call path would have built.
+interface RelevanceQueryCandidate {
+  q: string;
+  // new RegExp(`\\b${escapeRegex(q)}`) — word-boundary prefix match on the candidate.
+  prefixRegex: RegExp;
+  // Query words (length >= 2, preserving order), each with its precompiled
+  // whole-word RegExp (`\\b${escapeRegex(w)}\\b`). Words shorter than 2 chars
+  // are excluded here because the scoring loop skips them.
+  words: { w: string; boundary: RegExp }[];
+}
+export interface RelevancePrecomputed {
+  candidates: RelevanceQueryCandidate[];
+}
+
+// Build the per-query scoring inputs once. Mirrors exactly what
+// `scoreTrackRelevance` computes internally when no precomputed value is given.
+export function precomputeRelevance(query: string): RelevancePrecomputed {
+  const candStrings: string[] = [normalize(query)].filter(Boolean);
+  if (hasCyrillic(query)) {
+    const tl = normalize(transliterate(query));
+    if (tl && !candStrings.includes(tl)) candStrings.push(tl);
+  }
+  const candidates: RelevanceQueryCandidate[] = candStrings.map((q) => {
+    const words = q
+      .split(' ')
+      .filter(Boolean)
+      .filter((w) => w.length >= 2)
+      .map((w) => ({ w, boundary: new RegExp(`\\b${escapeRegex(w)}\\b`) }));
+    return {
+      q,
+      prefixRegex: new RegExp(`\\b${escapeRegex(q)}`),
+      words,
+    };
+  });
+  return { candidates };
+}
+
 // Score a track against the query. Higher is more relevant. Title matches weigh
 // more than artist matches; exact > prefix > word-boundary > substring. The
 // query is matched against BOTH the original text and (when it contained
 // cyrillic) the transliteration, so an English track title matched via
 // transliteration of a russian query still scores well.
-export function scoreTrackRelevance(track: Track, query: string): number {
-  const candidates: string[] = [normalize(query)].filter(Boolean);
-  if (hasCyrillic(query)) {
-    const tl = normalize(transliterate(query));
-    if (tl && !candidates.includes(tl)) candidates.push(tl);
-  }
-  if (candidates.length === 0) return 0;
+//
+// `precomputed` is an optional perf optimization: when a caller scores many
+// tracks against one query it can build the query-derived inputs once via
+// `precomputeRelevance` and pass them in. When omitted they're computed
+// internally, so standalone callers behave exactly as before. The resulting
+// score for a given (track, query) is identical either way.
+export function scoreTrackRelevance(
+  track: Track,
+  query: string,
+  precomputed?: RelevancePrecomputed,
+): number {
+  const pc = precomputed ?? precomputeRelevance(query);
+  if (pc.candidates.length === 0) return 0;
   const title = normalize(track.title);
   const artist = normalize(track.artist);
 
   let best = 0;
-  for (const q of candidates) {
-    const qWords = q.split(' ').filter(Boolean);
+  for (const cand of pc.candidates) {
+    const q = cand.q;
     let score = 0;
 
     if (title === q) score += 1000;
     else if (title.startsWith(q)) score += 600;
-    else if (new RegExp(`\\b${escapeRegex(q)}`).test(title)) score += 400;
+    else if (cand.prefixRegex.test(title)) score += 400;
     else if (title.includes(q)) score += 250;
 
     if (artist === q) score += 300;
     else if (artist.startsWith(q)) score += 180;
     else if (artist.includes(q)) score += 90;
 
-    for (const w of qWords) {
-      if (w.length < 2) continue;
-      if (new RegExp(`\\b${escapeRegex(w)}\\b`).test(title)) score += 40;
+    for (const { w, boundary } of cand.words) {
+      if (boundary.test(title)) score += 40;
       else if (title.includes(w)) score += 15;
-      if (new RegExp(`\\b${escapeRegex(w)}\\b`).test(artist)) score += 20;
+      if (boundary.test(artist)) score += 20;
     }
 
     if (score > best) best = score;
@@ -474,6 +520,12 @@ export async function searchTracks(query: string, limit = 20): Promise<Track[]> 
 
   if (byId.size === 0) return [];
 
+  // Precompute the query-derived scoring inputs ONCE for this search. Both the
+  // dedupe pass and the ranking pass below score many tracks against the same
+  // `q`, so building the normalized candidates + per-word regexes a single time
+  // avoids recompiling them per (track × word).
+  const relevancePc = precomputeRelevance(q);
+
   // Dedupe by (normalized title, normalized artist). Same song can come back
   // as both an Audius full-length and an iTunes preview — keep the higher
   // scoring one; on a tie prefer the full-length (isPreview: false).
@@ -485,8 +537,8 @@ export async function searchTracks(query: string, limit = 20): Promise<Track[]> 
       dedupedByTitleArtist.set(key, t);
       continue;
     }
-    const sExisting = scoreTrackRelevance(existing, q);
-    const sNew = scoreTrackRelevance(t, q);
+    const sExisting = scoreTrackRelevance(existing, q, relevancePc);
+    const sNew = scoreTrackRelevance(t, q, relevancePc);
     if (sNew > sExisting) {
       dedupedByTitleArtist.set(key, t);
     } else if (sNew === sExisting && existing.isPreview && !t.isPreview) {
@@ -504,7 +556,7 @@ export async function searchTracks(query: string, limit = 20): Promise<Track[]> 
   // results that came back for unrelated reasons (their search is loose). If
   // EVERY result scores 0 we keep them all so the user still sees something.
   const scored = Array.from(dedupedByTitleArtist.values())
-    .map((t) => ({ t, score: scoreTrackRelevance(t, q) }));
+    .map((t) => ({ t, score: scoreTrackRelevance(t, q, relevancePc) }));
   const hasMatch = scored.some((x) => x.score > 0);
   const filtered = hasMatch ? scored.filter((x) => x.score > 0) : scored;
   const ranked = filtered

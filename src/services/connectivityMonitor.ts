@@ -33,6 +33,15 @@ export interface ConnectivityState {
 // non-null means the poll loop is live (matches the old setInterval semantics).
 let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
+// Generation counter that invalidates in-flight poll continuations. Every
+// start() and stop() bumps it. scheduleNext() captures the current generation
+// when it arms a timer; after the awaited check completes, the continuation
+// only reschedules if its captured generation still matches `runGen`. This
+// prevents a stale continuation from a previous start/stop cycle (e.g. a
+// background → foreground stop()/start() that races an in-flight
+// performCheck()) from spawning a SECOND parallel poll loop.
+let runGen = 0;
+
 // Count of consecutive checks where the online state did NOT change. Drives the
 // adaptive back-off; reset to 0 on any detected change so reactions stay fast.
 let stableCount = 0;
@@ -42,13 +51,15 @@ let stableCount = 0;
 async function checkConnectivity(): Promise<boolean> {
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), PING_TIMEOUT);
+    // Named `abortTimer` (not `timeoutId`) so it can never shadow/clobber the
+    // module-level poll-loop handle `timeoutId` declared above.
+    const abortTimer = setTimeout(() => controller.abort(), PING_TIMEOUT);
     const response = await fetch(PING_URL, {
       method: 'HEAD',
       signal: controller.signal,
       cache: 'no-store',
     });
-    clearTimeout(timeoutId);
+    clearTimeout(abortTimer);
     // Google's generate_204 returns 204, any response means online
     return response.status === 204 || response.ok;
   } catch {
@@ -98,13 +109,18 @@ export const useConnectivityStore = create<ConnectivityState>((set, get) => {
     }
   };
 
-  // Self-rescheduling loop. Reschedules only while the loop is live (timeoutId
-  // not cleared by stop()), at the current adaptive interval.
+  // Self-rescheduling loop. Captures the current generation when arming the
+  // timer; after the awaited check it reschedules only if (a) the loop is still
+  // live (timeoutId not cleared by stop()) AND (b) the generation is unchanged
+  // (no start()/stop() ran during the in-flight check). Either condition failing
+  // means this continuation belongs to a superseded cycle and must die quietly.
   const scheduleNext = (): void => {
+    const gen = runGen;
     timeoutId = setTimeout(async () => {
       await performCheck();
-      // stop() may have run during the in-flight check — only reschedule if not.
-      if (timeoutId !== null) {
+      // stop()/start() may have run during the in-flight check. Only this
+      // generation's live loop is allowed to continue.
+      if (gen === runGen && timeoutId !== null) {
         scheduleNext();
       }
     }, nextInterval());
@@ -115,7 +131,17 @@ export const useConnectivityStore = create<ConnectivityState>((set, get) => {
     lastChecked: null,
 
     start: () => {
-      if (timeoutId) return;
+      // Bump the generation so any in-flight continuation from a previous
+      // start/stop cycle is invalidated (it will see gen !== runGen and die).
+      runGen += 1;
+
+      // Idempotent: if a loop is already live, tear down its timer before
+      // arming a fresh one. Combined with the runGen bump above this guarantees
+      // we never leave two parallel loops running.
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
 
       // Fresh session starts at the base cadence.
       stableCount = 0;
@@ -143,6 +169,9 @@ export const useConnectivityStore = create<ConnectivityState>((set, get) => {
     },
 
     stop: () => {
+      // Bump the generation so an in-flight continuation that resumes after
+      // this stop() sees gen !== runGen and does NOT reschedule.
+      runGen += 1;
       if (timeoutId) {
         clearTimeout(timeoutId);
         timeoutId = null;

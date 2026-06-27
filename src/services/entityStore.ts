@@ -81,6 +81,97 @@ function schedulePostsFlush(getPosts: () => LocalPost[]) {
   }, 600);
 }
 
+// ─── In-memory eviction caps ─────────────────────────────────────────────────
+// The persisted cache blobs (cacheFeed / cacheAllProfiles) and `feedIds`
+// (sliced to 200 elsewhere) are already bounded. The in-RAM `posts` /
+// `profiles` maps were NOT: every viewed post/profile stayed resident for the
+// whole session, so a long browsing session grew the heap unboundedly and made
+// the debounced posts flush sort an ever-larger `Object.values(posts)` array on
+// every coalesced write (O(n) over a growing n).
+//
+// These caps are deliberately GENEROUS — far above what a normal session
+// touches — so eviction effectively never triggers in typical usage and
+// behaviour is preserved. They only act as a backstop against pathological
+// long sessions. Eviction NEVER drops anything the UI is actively rendering:
+// for posts, ids in `feedIds` / `myPostIds` are protected; for profiles,
+// authors of kept posts and ids in `follows` are protected.
+const MAX_MEMORY_POSTS = 1000;
+const MAX_MEMORY_PROFILES = 1200;
+
+// Pure helper: trim the posts map back to MAX_MEMORY_POSTS by evicting the
+// OLDEST (by `created_at`) posts that are NOT protected. Protected = any id in
+// `feedIds` or `myPostIds` (these back the rendered feed/profile and must never
+// be dropped). Returns the SAME reference when no eviction is needed so the
+// common path stays allocation-free and triggers no extra render.
+function evictPosts(
+  posts: Record<string, LocalPost>,
+  feedIds: string[],
+  myPostIds: string[]
+): Record<string, LocalPost> {
+  const keys = Object.keys(posts);
+  if (keys.length <= MAX_MEMORY_POSTS) return posts; // early-return under cap
+
+  const protectedIds = new Set<string>(feedIds);
+  for (const id of myPostIds) protectedIds.add(id);
+
+  // Only the unprotected posts are eviction candidates. Sort just these
+  // (not the whole map) oldest-first so we evict least-recent content first.
+  const candidates = keys.filter((id) => !protectedIds.has(id));
+  if (candidates.length === 0) return posts; // everything over cap is protected
+
+  candidates.sort(
+    (a, b) =>
+      new Date(posts[a].created_at).getTime() -
+      new Date(posts[b].created_at).getTime()
+  );
+
+  const targetEvictions = keys.length - MAX_MEMORY_POSTS;
+  const evictCount = Math.min(targetEvictions, candidates.length);
+  if (evictCount <= 0) return posts;
+
+  const next = { ...posts };
+  for (let i = 0; i < evictCount; i++) {
+    delete next[candidates[i]];
+  }
+  return next;
+}
+
+// Pure helper: trim the profiles map back to MAX_MEMORY_PROFILES. Profiles have
+// no per-entry timestamp, so we evict in insertion order (oldest-inserted
+// first — JS preserves insertion order for non-integer string keys, and profile
+// ids are UUIDs). We PROTECT profiles that are authors of any currently-kept
+// post and any id present in `follows` (people the viewer follows), so nothing
+// backing the rendered UI is dropped. A cache miss on an evicted profile just
+// triggers a cheap refetch (no crash); the generous cap means this is rare.
+function evictProfiles(
+  profiles: Record<string, LocalProfile>,
+  posts: Record<string, LocalPost>,
+  follows: Record<string, string[]>
+): Record<string, LocalProfile> {
+  const keys = Object.keys(profiles);
+  if (keys.length <= MAX_MEMORY_PROFILES) return profiles; // early-return under cap
+
+  const protectedIds = new Set<string>();
+  for (const id in posts) protectedIds.add(posts[id].author_id);
+  for (const followerId in follows) {
+    for (const followingId of follows[followerId]) protectedIds.add(followingId);
+    protectedIds.add(followerId);
+  }
+
+  const targetEvictions = keys.length - MAX_MEMORY_PROFILES;
+  const next = { ...profiles };
+  let evicted = 0;
+  // Insertion order: front of `keys` is oldest-inserted.
+  for (let i = 0; i < keys.length && evicted < targetEvictions; i++) {
+    const id = keys[i];
+    if (protectedIds.has(id)) continue; // never drop UI-backing profiles
+    delete next[id];
+    evicted++;
+  }
+  if (evicted === 0) return profiles; // everything over cap is protected
+  return next;
+}
+
 // ─── Validation Guards ───────────────────────────────────────────────────────
 
 export function isValidPost(data: unknown): data is LocalPost {
@@ -203,9 +294,10 @@ export const useEntityStore = create<EntityState>()((set, get) => ({
   upsertPost: (post: LocalPost) => {
     if (!isValidPost(post)) return;
 
-    set((state) => ({
-      posts: { ...state.posts, [post.id]: post },
-    }));
+    set((state) => {
+      const posts = { ...state.posts, [post.id]: post };
+      return { posts: evictPosts(posts, state.feedIds, state.myPostIds) };
+    });
 
     // Persist to cache in background (non-blocking)
     const state = get();
@@ -222,7 +314,7 @@ export const useEntityStore = create<EntityState>()((set, get) => ({
       for (const post of validPosts) {
         newPosts[post.id] = post;
       }
-      return { posts: newPosts };
+      return { posts: evictPosts(newPosts, state.feedIds, state.myPostIds) };
     });
 
     // Coalesced persist of the most-recent posts (capped in cacheFeed) so viewed
@@ -237,7 +329,11 @@ export const useEntityStore = create<EntityState>()((set, get) => ({
     if (!isValidProfile(profile)) return;
 
     set((state) => ({
-      profiles: { ...state.profiles, [profile.id]: profile },
+      profiles: evictProfiles(
+        { ...state.profiles, [profile.id]: profile },
+        state.posts,
+        state.follows
+      ),
     }));
 
     // Persist this profile individually + schedule a coalesced write of the full

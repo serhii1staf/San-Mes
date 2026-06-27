@@ -15,7 +15,11 @@ const ADMIN_KEY = process.env.ADMIN_KEY;
 // installed app. The page tries the scheme first, then falls back to the store.
 const APP_STORE_LINK = 'https://apps.apple.com/app/id6773943434';
 const APP_SCHEME = 'san-mes';
-const FALLBACK_OG_IMAGE = 'https://san-m-app.com/og-icon.png';
+// `?v=2` is a cache-buster for external unfurlers (iMessage, Telegram,
+// WhatsApp, Discord, Twitter/X, Slack) which cache the OG image keyed by
+// URL. Bump to v3 next time the icon file changes so scrapers re-fetch it.
+// Vercel serves the static file and ignores the query string, so it still resolves.
+const FALLBACK_OG_IMAGE = 'https://san-m-app.com/og-icon.png?v=2';
 const IMAGE_SEP = '|';
 const SPOILER_PREFIX = '::spoiler::';
 const REPOST_PREFIX = '::repost::';

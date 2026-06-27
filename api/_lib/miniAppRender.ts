@@ -21,7 +21,11 @@ const ADMIN_KEY = process.env.ADMIN_KEY;
 
 export const APP_STORE_LINK = 'https://apps.apple.com/app/id6773943434';
 export const APP_SCHEME = 'san-mes';
-export const FALLBACK_OG_IMAGE = 'https://san-m-app.com/og-icon.png';
+// `?v=2` is a cache-buster for external unfurlers (iMessage, Telegram,
+// WhatsApp, Discord, Twitter/X, Slack) which cache the OG image keyed by
+// URL. Bump to v3 next time the icon file changes so scrapers re-fetch it.
+// Vercel serves the static file and ignores the query string, so it still resolves.
+export const FALLBACK_OG_IMAGE = 'https://san-m-app.com/og-icon.png?v=2';
 
 export interface MiniAppPreview {
   id: string;

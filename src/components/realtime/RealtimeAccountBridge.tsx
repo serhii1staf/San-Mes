@@ -179,7 +179,9 @@ export function RealtimeAccountBridge(): null {
               : payload.message_id
                 ? String(payload.message_id)
                 : '';
-            const stableId = dbMessageId || `peer-${conversationId}-${ts}`;
+            const stableId =
+              dbMessageId ||
+              `peer-${conversationId}-${ts}-${senderId || 'x'}-${Math.random().toString(36).slice(2, 8)}`;
             // Prefer the full `text` field; fall back to the legacy rich text,
             // then the trimmed preview for pre-backstop publishes.
             const previewText = String(rich?.text ?? payload.text ?? payload.preview ?? '');
