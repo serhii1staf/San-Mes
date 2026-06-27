@@ -148,6 +148,27 @@ export const useAuthStore = create<AuthStoreState>()(
             token: tok,
             isAuthenticated: true,
           });
+          // Re-scope the per-account cache + sync throttle to the
+          // token's profile id. If the persisted zustand user and the
+          // token's user disagree (interrupted account switch / token
+          // rotation), the cache namespace may still point at a stale
+          // account; this realigns it to the authoritative /me id.
+          // Idempotent when already pointing there. Guarded +
+          // fire-and-forget so it can never throw or block boot. Note:
+          // entityStore.hydrate is intentionally NOT called here — boot
+          // already handles hydration.
+          try {
+            void (async () => {
+              try {
+                const { setCacheAccount } = await import('../services/cacheService');
+                setCacheAccount(profile.id);
+              } catch {}
+              try {
+                const { setThrottleAccount } = await import('../services/syncThrottle');
+                setThrottleAccount(profile.id);
+              } catch {}
+            })();
+          } catch {}
           return true;
         } catch {
           // Unexpected throw is treated as transient, NOT an auth

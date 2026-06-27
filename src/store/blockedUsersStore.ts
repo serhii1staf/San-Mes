@@ -43,6 +43,15 @@ interface BlockedUsersState {
    */
   hydrate: () => void;
   /**
+   * Pull the server's authoritative block list and MERGE it into the
+   * local set (union — never drops a locally-blocked id the server
+   * hasn't confirmed yet). Complementary to the local `hydrate()`:
+   * call it after auth resolves so blocks made on another device show
+   * up here, while a just-made local block that hasn't reached the
+   * server is preserved. Guarded — best-effort, never throws.
+   */
+  hydrateFromServer: () => Promise<void>;
+  /**
    * Drop in-memory state. Used by the account switcher right before
    * `hydrate()` so a stale list never bleeds across accounts.
    */
@@ -77,6 +86,13 @@ export const useBlockedUsersStore = create<BlockedUsersState>((set, get) => ({
     const next = [...prev, userId];
     set({ ids: next });
     persist(next);
+    // Mirror to the server (best-effort). Lazy-imported to avoid an
+    // import cycle (moderation → apiClient is fine, but keep this
+    // store free of eager service deps) and fire-and-forget so the
+    // optimistic UI flip never waits on the network.
+    import('../services/moderation')
+      .then((m) => m.blockUserRemote(userId))
+      .catch(() => {});
   },
   unblock: (userId) => {
     if (!userId) return;
@@ -85,6 +101,10 @@ export const useBlockedUsersStore = create<BlockedUsersState>((set, get) => ({
     const next = prev.filter((id) => id !== userId);
     set({ ids: next });
     persist(next);
+    // Mirror to the server (best-effort), lazy + fire-and-forget.
+    import('../services/moderation')
+      .then((m) => m.unblockUserRemote(userId))
+      .catch(() => {});
   },
   isBlocked: (userId) => {
     if (!userId) return false;
@@ -92,6 +112,27 @@ export const useBlockedUsersStore = create<BlockedUsersState>((set, get) => ({
   },
   hydrate: () => {
     set({ ids: readInitial() });
+  },
+  hydrateFromServer: async () => {
+    try {
+      const { fetchBlockedIds } = await import('../services/moderation');
+      const serverIds = await fetchBlockedIds();
+      if (!serverIds.length) return;
+      const prev = get().ids;
+      // Union — keep every locally-blocked id (the server may not have
+      // confirmed a just-made block yet) and add any the server knows
+      // about that we don't.
+      const merged = [...prev];
+      for (const id of serverIds) {
+        if (id && !merged.includes(id)) merged.push(id);
+      }
+      if (merged.length !== prev.length) {
+        set({ ids: merged });
+        persist(merged);
+      }
+    } catch {
+      // best-effort — local state stands.
+    }
   },
   reset: () => {
     set({ ids: [] });

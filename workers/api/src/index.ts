@@ -42,6 +42,7 @@ import './routes/conversations';
 import './routes/messages';
 import './routes/miniApps';
 import './routes/notifications';
+import './routes/reports';
 import './routes/admin';
 import './routes/push';
 

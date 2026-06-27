@@ -155,6 +155,16 @@ async function handleUnauthorised(): Promise<void> {
         useAuthStore.getState().logout();
       }
     } catch {}
+    // 3) Centralised teardown of the previous account: disconnect the
+    //    Ably realtime socket and wipe the in-memory stores
+    //    (feed/chat/entity/blocked) so a stale connection can't keep
+    //    pushing — and the next account can't briefly surface — the
+    //    prior account's data. Order matters: clear token → logout →
+    //    switchAccount(null). Guarded so it can never throw.
+    try {
+      const { switchAccount } = await import('./accountSwitch');
+      switchAccount(null);
+    } catch {}
   } catch {}
   finally {
     _unauthInFlight = false;

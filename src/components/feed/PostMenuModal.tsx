@@ -18,6 +18,7 @@ import { useFeedStore } from '../../store/feedStore';
 import { useBlockedUsersStore } from '../../store/blockedUsersStore';
 import { deletePost } from '../../lib/supabase';
 import { showToast } from '../../store/toastStore';
+import { submitReport } from '../../services/moderation';
 import { sharePost } from '../../utils/sharePost';
 import { useT } from '../../i18n/store';
 
@@ -230,7 +231,7 @@ export function PostMenuModal({ visible, post, onClose }: PostMenuModalProps) {
             <>
               <Text variant="body" weight="semibold" align="center" style={{ paddingVertical: 10 }}>{t('report.title')}</Text>
               {REPORT_CATS.map((cat) => (
-                <Pressable key={cat.key} onPress={() => { triggerHaptic('medium'); showToast(t('toast.report_sent'), 'flag'); dismiss(); }} style={{ paddingVertical: 14, paddingHorizontal: 20, borderTopWidth: 0.5, borderTopColor: theme.colors.border.light }}>
+                <Pressable key={cat.key} onPress={() => { triggerHaptic('medium'); void submitReport({ targetType: 'post', targetId: post.id, category: cat.key }); showToast(t('toast.report_sent'), 'flag'); dismiss(); }} style={{ paddingVertical: 14, paddingHorizontal: 20, borderTopWidth: 0.5, borderTopColor: theme.colors.border.light }}>
                   <Text variant="body">{t(cat.labelKey)}</Text>
                 </Pressable>
               ))}

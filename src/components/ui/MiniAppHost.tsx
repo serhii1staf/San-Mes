@@ -14,6 +14,7 @@ import { buildMiniAppShareUrl } from '../../utils/miniAppShare';
 import { useT } from '../../i18n/store';
 import { triggerHaptic } from '../../utils/haptics';
 import { showToast } from '../../store/toastStore';
+import { submitReport } from '../../services/moderation';
 import { useTheme } from '../../theme';
 
 const SCREEN_H = Dimensions.get('window').height;
@@ -215,9 +216,12 @@ export function MiniAppHost() {
       await Share.share({ message: `${appEmoji} ${displayName}\n${buildMiniAppShareUrl({ id: shareableId })}` });
     } catch {}
   };
-  const handleReport = (_categoryKey: string) => {
+  const handleReport = (categoryKey: string) => {
     triggerHaptic('medium');
     setReportOpen(false);
+    if (shareableId) {
+      void submitReport({ targetType: 'mini_app', targetId: shareableId, category: categoryKey });
+    }
     showToast(t('toast.report_sent'), 'flag');
   };
 

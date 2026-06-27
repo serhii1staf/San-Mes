@@ -1266,12 +1266,14 @@ export default function ProfileScreen() {
             <BlurView intensity={theme.isDark ? 55 : 75} tint={theme.isDark ? 'dark' : 'light'} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} />
           ) : null}
           <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: theme.colors.background.primary + (theme.isDark ? 'D9' : 'E6') }} />
-          {/* `paddingTop: pinnedBarTop` drops the pills to the safe-area offset
-              (insets.top + 8) — the SAME viewport-y the inline tabs reach at the
-              reveal threshold (scrollY === tabsOffsetY - pinnedBarTop), so the
-              pinned copy takes over with no vertical jump. The backing above
-              fills the whole band from y=0, masking content above the pills. */}
-          <View style={{ flexDirection: 'row', paddingHorizontal: 20, paddingTop: pinnedBarTop, paddingBottom: 10 }}>{tabs.map((tab) => {
+          {/* Pills sit HIGH in the bar — `paddingTop: insets.top + 6` places them
+              just below the safe area, in the row the floating QR/settings chrome
+              buttons vacate as they slide off on scroll. The frosted/opaque backing
+              above is anchored top:0 and fills the whole band from y=0 down through
+              the pills (no transparent gap). The reveal threshold math
+              (tabsOffsetY - pinnedBarTop) is intentionally left unchanged so the
+              inline→pinned handoff stays pixel-aligned. */}
+          <View style={{ flexDirection: 'row', paddingHorizontal: 20, paddingTop: insets.top + 6, paddingBottom: 10 }}>{tabs.map((tab) => {
             const isActive = activeTab === tab.key;
             const content = (
               <>

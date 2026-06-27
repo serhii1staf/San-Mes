@@ -38,6 +38,7 @@ import { useT } from '../../src/i18n/store';
 import { perfMonitor } from '../../src/services/perfMonitor';
 import { useSettingsStore } from '../../src/store/settingsStore';
 import { useBlockedUsersStore, useIsBlocked } from '../../src/store/blockedUsersStore';
+import { submitReport } from '../../src/services/moderation';
 import { parseBannerTransform, stripBannerTransform } from '../../src/utils/bannerTransform';
 import { useBannerBrightness } from '../../src/hooks/useBannerBrightness';
 import { kvGetJSONSync, kvSetJSON } from '../../src/services/kvStore';
@@ -235,6 +236,10 @@ function ProfileMenuModalImpl({ visible, profile, onClose }: { visible: boolean;
 
   const handleReport = (cat: string) => {
     triggerHaptic('medium');
+    // Fire-and-forget server submission — `submitReport` never throws, but
+    // guard anyway so a rejected promise can't surface as an unhandled
+    // rejection. The block flow stays separate (the store syncs that).
+    void submitReport({ targetType: 'profile', targetId: profile.id, category: cat }).catch(() => {});
     showToast(t('toast.report_sent'), 'flag');
     handleClose();
   };
@@ -1588,7 +1593,12 @@ export default function UserProfileScreen() {
           BELOW the floating back/menu chrome (zIndex 100) and ABOVE the list. */}
       <Animated.View
         pointerEvents={pinnedTabsVisible ? 'auto' : 'none'}
-        style={{ position: 'absolute', top: pinnedBarTop, left: 0, right: 0, zIndex: 50, opacity: pinnedTabsOpacity, transform: [{ translateY: pinnedTabsTranslateY }] }}
+        // Visual top is pinned to y=0 so the frosted backing fills the ENTIRE
+        // top region (status-bar / safe-area zone included) as one solid bar.
+        // The reveal threshold math still anchors off `pinnedBarTop`
+        // (= chromeHeight) via the opacity/translateY interpolations above, so
+        // the inline tabs hand off pixel-aligned — only the visual top changed.
+        style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 50, opacity: pinnedTabsOpacity, transform: [{ translateY: pinnedTabsTranslateY }] }}
       >
         <View style={{ overflow: 'hidden', borderBottomLeftRadius: 18, borderBottomRightRadius: 18 }}>
           {/* Solid + frosted backing so scrolling content never shows through —
@@ -1597,7 +1607,7 @@ export default function UserProfileScreen() {
             <BlurView intensity={theme.isDark ? 55 : 75} tint={theme.isDark ? 'dark' : 'light'} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} />
           ) : null}
           <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: theme.colors.background.primary + (theme.isDark ? 'D9' : 'E6') }} />
-          <View style={{ flexDirection: 'row', paddingHorizontal: 20, paddingTop: 8, paddingBottom: 10 }}>{tabs.map((tab) => {
+          <View style={{ flexDirection: 'row', paddingHorizontal: 20, paddingTop: insets.top + 6, paddingBottom: 10 }}>{tabs.map((tab) => {
             const isActive = activeTab === tab.key;
             const content = (
               <>
