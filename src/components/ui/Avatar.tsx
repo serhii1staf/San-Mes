@@ -1,5 +1,5 @@
 import React, { memo } from 'react';
-import { View, ViewStyle, TextStyle, Text as RNText, Platform } from 'react-native';
+import { View, ViewStyle, TextStyle, Text as RNText, Platform, StyleSheet } from 'react-native';
 import { useTheme } from '../../theme';
 import { Text } from './Text';
 import { CachedImage } from './CachedImage';
@@ -12,6 +12,42 @@ interface AvatarProps {
   emoji?: string;
   size?: AvatarSize;
   style?: ViewStyle;
+  /**
+   * When true (default), emoji avatars get a soft, deterministic per-user
+   * circular container (tint fill + hairline ring). Set to false to render
+   * the bare emoji with no background.
+   */
+  tint?: boolean;
+}
+
+/**
+ * Deterministic, hook-free tint for emoji avatars.
+ *
+ * A stable seed string (name || emoji) is hashed into a hue (0..360) so a
+ * given user keeps the same color everywhere in the app. The fill stays very
+ * soft so it complements the emoji rather than competing with it.
+ *
+ *   Light: fill `hsl(hue, 70%, 92%)`   border `hsl(hue, 60%, 82%)`
+ *   Dark:  fill `hsla(hue, 55%, 55%, 0.18)`  border `hsla(hue, 55%, 60%, 0.30)`
+ */
+function getEmojiTint(seed: string, isDark: boolean): { fill: string; border: string } {
+  // Cheap, stable string hash (djb2-style) → non-negative integer.
+  let hash = 5381;
+  for (let i = 0; i < seed.length; i++) {
+    hash = ((hash << 5) + hash + seed.charCodeAt(i)) | 0;
+  }
+  const hue = Math.abs(hash) % 360;
+
+  if (isDark) {
+    return {
+      fill: `hsla(${hue}, 55%, 55%, 0.18)`,
+      border: `hsla(${hue}, 55%, 60%, 0.30)`,
+    };
+  }
+  return {
+    fill: `hsl(${hue}, 70%, 92%)`,
+    border: `hsl(${hue}, 60%, 82%)`,
+  };
 }
 
 export const Avatar = memo(function Avatar({
@@ -20,6 +56,7 @@ export const Avatar = memo(function Avatar({
   emoji,
   size = 'md',
   style,
+  tint = true,
 }: AvatarProps) {
   const theme = useTheme();
 
@@ -50,33 +87,63 @@ export const Avatar = memo(function Avatar({
 
   const dimension = sizeMap[size];
 
-  // Emoji avatar — perfectly centered
+  // Emoji avatar — centered inside a soft, deterministic circular container
   if (emoji) {
     const emojiSize = emojiSizeMap[size];
+    const innerText = (
+      <RNText
+        style={{
+          fontSize: emojiSize,
+          lineHeight: Platform.OS === 'android' ? emojiSize + 4 : undefined,
+          includeFontPadding: false,
+          textAlignVertical: 'center',
+          textAlign: 'center',
+        }}
+        allowFontScaling={false}
+      >
+        {emoji}
+      </RNText>
+    );
+
+    if (!tint) {
+      return (
+        <View
+          style={[
+            {
+              width: dimension,
+              height: dimension,
+              alignItems: 'center',
+              justifyContent: 'center',
+            },
+            style,
+          ]}
+        >
+          {innerText}
+        </View>
+      );
+    }
+
+    const seed = name || emoji || '';
+    const { fill, border } = getEmojiTint(seed, theme.isDark);
+
     return (
       <View
         style={[
           {
             width: dimension,
             height: dimension,
+            borderRadius: dimension / 2,
+            overflow: 'hidden',
             alignItems: 'center',
             justifyContent: 'center',
+            backgroundColor: fill,
+            borderWidth: StyleSheet.hairlineWidth * 1.5,
+            borderColor: border,
           },
           style,
         ]}
       >
-        <RNText
-          style={{
-            fontSize: emojiSize,
-            lineHeight: Platform.OS === 'android' ? emojiSize + 4 : undefined,
-            includeFontPadding: false,
-            textAlignVertical: 'center',
-            textAlign: 'center',
-          }}
-          allowFontScaling={false}
-        >
-          {emoji}
-        </RNText>
+        {innerText}
       </View>
     );
   }
@@ -89,6 +156,9 @@ export const Avatar = memo(function Avatar({
     backgroundColor: theme.colors.accent.secondary,
     alignItems: 'center',
     justifyContent: 'center',
+    // Subtle hairline ring to match the emoji container treatment.
+    borderWidth: StyleSheet.hairlineWidth * 1.5,
+    borderColor: theme.isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)',
   };
 
   if (source) {

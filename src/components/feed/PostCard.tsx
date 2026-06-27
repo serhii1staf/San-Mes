@@ -1,5 +1,5 @@
 import React, { useState, useRef, useMemo, useEffect, useCallback, memo } from 'react';
-import { View, Pressable, ViewStyle, ImageStyle, Dimensions, ScrollView, NativeSyntheticEvent, NativeScrollEvent, Text as RNText } from 'react-native';
+import { View, Pressable, ViewStyle, ImageStyle, Dimensions, ScrollView, NativeSyntheticEvent, NativeScrollEvent, Text as RNText, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { ImageLoadEventData } from 'expo-image';
@@ -187,6 +187,14 @@ export const PostCard = memo(function PostCard({ post, currentUserId, onLike, on
     [post.isRepost, hasImages, hasSpoiler, post.content],
   );
 
+  // Memoize the relative timestamp. `formatTimeAgo` allocates two Date objects
+  // plus arithmetic; it previously ran on EVERY render of EVERY card, including
+  // the rapid re-renders FlashList drives as it recycles cells during scroll.
+  // Keying on `createdAt` recomputes only when the row is recycled to a new
+  // post — behaviour is unchanged because the relative string only ever
+  // refreshes on a re-render anyway (it has no internal ticker).
+  const timeAgo = useMemo(() => formatTimeAgo(post.createdAt), [post.createdAt]);
+
   // Card colors — blend with theme background
   const cardBg = theme.isDark ? theme.colors.background.elevated : 'rgba(255,255,255,0.95)';
   const cardBorder = theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
@@ -236,8 +244,8 @@ export const PostCard = memo(function PostCard({ post, currentUserId, onLike, on
     <View style={{ marginBottom: 12, borderRadius: 28, backgroundColor: cardBg, borderWidth: 1, borderColor: cardBorder, overflow: 'hidden' }}>
       {/* Repost indicator */}
       {post.isRepost && (
-        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: 10, gap: 6 }}>
-          <Feather name="repeat" size={12} color={theme.colors.text.tertiary} style={{ flexShrink: 0 }} />
+        <View style={styles.repostRow}>
+          <Feather name="repeat" size={12} color={theme.colors.text.tertiary} style={styles.repostIcon} />
           <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11, flexShrink: 1 }} numberOfLines={1}>{t('post.reposted_by', undefined, { name: post.authorName })}</Text>
         </View>
       )}
@@ -247,17 +255,17 @@ export const PostCard = memo(function PostCard({ post, currentUserId, onLike, on
         <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: post.authorId } })}>
           <Avatar emoji={post.authorEmoji} name={post.authorName} size="sm" />
         </Pressable>
-        <View style={{ marginLeft: 10, flex: 1 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+        <View style={styles.headerNameWrap}>
+          <View style={styles.headerNameRow}>
             <Text weight="bold" variant="body" numberOfLines={1} style={{ fontSize: 15, flexShrink: 1 }}>{post.authorName}</Text>
             {post.authorVerified && <VerifiedBadge size={13} />}
             {post.authorBadge && <UserBadge badge={post.authorBadge} size="sm" />}
           </View>
-          <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 12 }}>@{post.authorUsername} · {formatTimeAgo(post.createdAt)}</Text>
+          <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 12 }}>@{post.authorUsername} · {timeAgo}</Text>
         </View>
         {/* Right icons */}
         {currentUserId !== post.authorId && (
-          <Pressable onPress={() => { triggerHaptic('light'); onFollow?.(post.authorId); }} hitSlop={8} style={{ padding: 4 }}>
+          <Pressable onPress={() => { triggerHaptic('light'); onFollow?.(post.authorId); }} hitSlop={8} style={styles.iconBtn}>
             <Feather
               name={isFollowingAuthor ? 'user-check' : 'user-plus'}
               size={16}
@@ -265,7 +273,7 @@ export const PostCard = memo(function PostCard({ post, currentUserId, onLike, on
             />
           </Pressable>
         )}
-        <Pressable onPress={() => { triggerHaptic('light'); onMenu?.(post); }} hitSlop={8} style={{ padding: 4, marginLeft: 6 }}>
+        <Pressable onPress={() => { triggerHaptic('light'); onMenu?.(post); }} hitSlop={8} style={styles.menuBtn}>
           <Feather name="more-vertical" size={16} color={theme.colors.text.tertiary} />
         </Pressable>
       </View>
@@ -336,27 +344,27 @@ export const PostCard = memo(function PostCard({ post, currentUserId, onLike, on
       )}
 
       {/* Action bar */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 10, gap: 4 }}>
+      <View style={styles.actionBar}>
         {/* Star (like) */}
-        <Pressable onPress={handleLike} style={{ flexDirection: 'row', alignItems: 'center', marginRight: 12 }}>
+        <Pressable onPress={handleLike} style={styles.actionBtn}>
           <Feather name="star" size={16} color={post.isLiked ? theme.colors.accent.primary : theme.colors.text.tertiary} />
           <Text variant="caption" color={post.isLiked ? theme.colors.accent.primary : theme.colors.text.tertiary} style={{ marginLeft: 4, fontSize: 12 }}>{post.likesCount || ''}</Text>
         </Pressable>
 
         {/* Comments */}
-        <Pressable onPress={() => onComment?.(post.id)} style={{ flexDirection: 'row', alignItems: 'center', marginRight: 12 }}>
+        <Pressable onPress={() => onComment?.(post.id)} style={styles.actionBtn}>
           <Feather name="message-square" size={16} color={theme.colors.text.tertiary} />
           <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginLeft: 4, fontSize: 12 }}>{post.commentsCount || ''}</Text>
         </Pressable>
 
         {/* Repost */}
-        <Pressable onPress={() => { triggerHaptic('light'); onShare?.(post.id); }} style={{ flexDirection: 'row', alignItems: 'center', marginRight: 12 }}>
+        <Pressable onPress={() => { triggerHaptic('light'); onShare?.(post.id); }} style={styles.actionBtn}>
           <Feather name="corner-up-right" size={16} color={theme.colors.text.tertiary} />
           <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginLeft: 4, fontSize: 12 }}>{post.sharesCount || ''}</Text>
         </Pressable>
 
         {/* Share */}
-        <Pressable onPress={async () => { triggerHaptic('light'); try { const { sharePost } = require('../../utils/sharePost'); await sharePost(post); } catch {} }} style={{ flexDirection: 'row', alignItems: 'center' }}>
+        <Pressable onPress={async () => { triggerHaptic('light'); try { const { sharePost } = require('../../utils/sharePost'); await sharePost(post); } catch {} }} style={styles.actionBtnLast}>
           <Feather name="send" size={15} color={theme.colors.text.tertiary} />
         </Pressable>
       </View>
@@ -422,3 +430,22 @@ function ImageCarousel({ imageUrls, onDoubleTap, heroPriority }: { imageUrls: st
     </View>
   );
 }
+
+// Static, prop-independent styles hoisted out of render. These objects were
+// previously inline literals re-allocated on every card commit — and FlashList
+// recycles cells aggressively during scroll, so each fast flick re-rendered a
+// handful of cards per frame, each minting a fresh copy of every structural
+// style. Hoisting them to a single frozen StyleSheet removes that per-recycle
+// allocation/GC churn. Only styles that depend on nothing (no theme, no post,
+// no measured aspect ratio) live here; dynamic styles stay inline.
+const styles = StyleSheet.create({
+  repostRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: 10, gap: 6 },
+  repostIcon: { flexShrink: 0 },
+  headerNameWrap: { marginLeft: 10, flex: 1 },
+  headerNameRow: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  iconBtn: { padding: 4 },
+  menuBtn: { padding: 4, marginLeft: 6 },
+  actionBar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 10, gap: 4 },
+  actionBtn: { flexDirection: 'row', alignItems: 'center', marginRight: 12 },
+  actionBtnLast: { flexDirection: 'row', alignItems: 'center' },
+});

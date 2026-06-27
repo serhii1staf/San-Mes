@@ -1,5 +1,5 @@
 import React, { memo, useState, useImperativeHandle, forwardRef, useCallback, useRef, useEffect } from 'react';
-import { View, TextInput, Pressable, StyleSheet, Text } from 'react-native';
+import { View, TextInput, Pressable, StyleSheet, Text, LayoutAnimation, UIManager, Platform } from 'react-native';
 import Reanimated, { useSharedValue, useAnimatedStyle, withSpring, interpolate } from 'react-native-reanimated';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../../theme';
@@ -9,6 +9,13 @@ import { useLiquidGlassActive, NativeGlassView, GlassContainerView } from '../ui
 import { AnimatedKeyboardIcon } from './AnimatedKeyboardIcon';
 import { AnimatedEmojiIcon } from './AnimatedEmojiIcon';
 import { AnimatedGifIcon } from './AnimatedGifIcon';
+
+// Enable LayoutAnimation on Android (no-op on iOS where it's already on by
+// default). Same pattern as app/comments/[id].tsx — needed for the one-shot
+// expand/collapse layout animation fired at the 1↔multiline transition.
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 
 // Delete the last user-perceived character (grapheme) from a string. Handles
 // astral emoji (surrogate pairs), variation selectors, skin-tone modifiers and
@@ -302,15 +309,26 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
     onSend(val);
   }, [onSend]);
 
-  // Detect 1↔multi-line with hysteresis (expand >34px, collapse <28px). Height
-  // itself snaps (no LayoutAnimation) so nothing competes with the swallow.
+  // Detect 1↔multi-line with hysteresis (expand >34px, collapse <28px). At the
+  // 1↔multiline TRANSITION (and ONLY then) we fire a single, gentle one-shot
+  // LayoutAnimation so the input wrap's height/position eases smoothly as it
+  // grows/collapses. This is a ONE-SHOT layout commit (≈170ms easeInEaseOut),
+  // NOT a per-frame interpolation, so it does NOT reintroduce the per-frame
+  // liquid-glass union recompute the perf comments warn about — it animates the
+  // single layout change at the toggle, exactly like app/comments/[id].tsx.
+  // The per-frame `sw`/glass-swallow + emoji-reveal logic below is untouched.
   const lastHeightRef = useRef(0);
   const handleContentSizeChange = useCallback((e: { nativeEvent: { contentSize: { height: number } } }) => {
     const h = Math.round(e.nativeEvent.contentSize.height);
     if (h === lastHeightRef.current) return;
     lastHeightRef.current = h;
-    if (!expandedRef.current && h > 34) setExpanded(true);
-    else if (expandedRef.current && h < 28) setExpanded(false);
+    if (!expandedRef.current && h > 34) {
+      LayoutAnimation.configureNext(LayoutAnimation.create(170, LayoutAnimation.Types.easeInEaseOut, LayoutAnimation.Properties.opacity));
+      setExpanded(true);
+    } else if (expandedRef.current && h < 28) {
+      LayoutAnimation.configureNext(LayoutAnimation.create(170, LayoutAnimation.Types.easeInEaseOut, LayoutAnimation.Properties.opacity));
+      setExpanded(false);
+    }
   }, [setExpanded]);
 
   // PERCEIVED-LAG FIX (glass only) ─────────────────────────────────────────
