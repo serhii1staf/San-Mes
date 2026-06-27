@@ -94,12 +94,14 @@ export function SwipeablePostCard({ children }: SwipeablePostCardProps) {
   // useMessageGestures). This replaces the old PanResponder, which the parent
   // vertical FlatList kept stealing — making the swipe very hard to trigger.
   //
-  //   • activeOffsetX([-15, 15]) → the pan only activates after ~15 px of
-  //     deliberate HORIZONTAL travel (right motion is still claimed but our
-  //     handlers ignore positive dx, so only left-swipe moves the card).
-  //   • failOffsetY([-12, 12])   → the pan FAILS the moment ~12 px of VERTICAL
-  //     movement occurs, cleanly handing the gesture back to the FlatList so
-  //     scrolling always wins over an accidental diagonal drag.
+  // The thresholds now mirror useMessageGestures EXACTLY, so the post-card
+  // swipe feels identical to the chat message swipe:
+  //   • activeOffsetX([-12, 9999]) → only a deliberate LEFT pull (>= 12 px)
+  //     activates the pan; rightward motion never activates it at all, so the
+  //     gesture is reserved purely for the left swipe-to-screenshot action.
+  //   • failOffsetY([-10, 10])     → the pan FAILS the moment >= 10 px of
+  //     VERTICAL movement occurs, cleanly handing the gesture back to the
+  //     FlatList so vertical scrolling always wins over a diagonal drag.
   //
   // Constructing the gesture unconditionally (RNGH gestures are far cheaper
   // than the per-card PanResponder closures we used to allocate) also closes
@@ -108,8 +110,8 @@ export function SwipeablePostCard({ children }: SwipeablePostCardProps) {
   const panGesture = useMemo(
     () =>
       Gesture.Pan()
-        .activeOffsetX([-15, 15])
-        .failOffsetY([-12, 12])
+        .activeOffsetX([-12, 9999])
+        .failOffsetY([-10, 10])
         .onStart(() => {
           'worklet';
           runOnJS(handleGestureStart)();
