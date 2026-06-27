@@ -224,6 +224,7 @@ const ru: Record<string, string> = {
   'toast.no_clipboard_image': 'В буфере обмена нет изображения',
   'toast.link_copied': 'Ссылка скопирована',
   'toast.report_sent': 'Жалоба отправлена',
+  'toast.will_send_offline': 'Отправится при подключении',
   'toast.post_deleted': 'Пост удалён',
   'toast.saved': 'Сохранено',
 

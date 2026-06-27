@@ -10,7 +10,7 @@ import { EmojiPickerModal } from '../../src/components/ui/EmojiPickerModal';
 import { useAuthStore } from '../../src/store';
 import { registerUser } from '../../src/lib/supabase';
 import { useT } from '../../src/i18n/store';
-import { validateName } from '../../src/services/moderation';
+import { validateName } from '../../src/services/moderation/index';
 
 function EmojiStep({ selected, onSelect }: { selected: string; onSelect: (e: string) => void }) {
   const theme = useTheme();

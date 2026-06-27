@@ -222,6 +222,7 @@ const en: Record<string, string> = {
   'toast.no_clipboard_image': 'No image in the clipboard',
   'toast.link_copied': 'Link copied',
   'toast.report_sent': 'Report sent',
+  'toast.will_send_offline': 'Will send when online',
   'toast.post_deleted': 'Post deleted',
   'toast.saved': 'Saved',
 

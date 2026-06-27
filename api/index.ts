@@ -40,6 +40,17 @@ function firstImage(imageUrl?: string | null): string | null {
   return parts[0] || null;
 }
 
+// The app appends a `#x=&y=&s=` position hash to banner_url (used for
+// in-app cover positioning). A URL fragment is invalid in an og:image and
+// breaks external scrapers, and it also pollutes the rendered card cover.
+// Strip anything from the first `#` onward (and any leading marker) so we
+// only ever use the clean URL.
+function cleanBannerUrl(raw?: string | null): string | null {
+  if (!raw) return null;
+  const clean = raw.split('#')[0].trim();
+  return clean || null;
+}
+
 async function workerGet(path: string): Promise<any> {
   // Fail closed: without a configured ADMIN_KEY we must NOT issue the
   // admin-gated request at all. Returning null surfaces as the generic
@@ -235,17 +246,22 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
           const title = `${name} в San`;
           const description = (profile.bio || `Профиль @${profile.username} в San`).slice(0, 160);
           const bodyHtml = profile.bio ? `<div class="content">${escapeHtml(profile.bio)}</div>` : '';
+          // Use the profile BANNER (cleaned of any `#...` position hash) as the
+          // preview image when it's a valid http(s) URL; otherwise the app icon.
+          const cleanBanner = cleanBannerUrl(profile.banner_url);
+          const bannerOgImage =
+            cleanBanner && /^https?:\/\//i.test(cleanBanner) ? cleanBanner : FALLBACK_OG_IMAGE;
           res.end(
             renderPage({
               kind: 'profile',
               title,
               description,
-              ogImage: FALLBACK_OG_IMAGE,
+              ogImage: bannerOgImage,
               heading: name,
               emoji: profile.emoji,
               verified: !!profile.is_verified,
               subline: profile.username ? `@${profile.username}` : undefined,
-              banner: profile.banner_url || null,
+              banner: cleanBanner,
               deepLink: `${APP_SCHEME}://profile/${profile.id || id}`,
               bodyHtml,
             })

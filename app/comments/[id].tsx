@@ -34,6 +34,7 @@ import { getRecentGif, pushRecentGif } from '../../src/services/recentGif';
 import { kvGetJSONSync, kvSetJSON } from '../../src/services/kvStore';
 import { useAuthStore, useConnectivityStore } from '../../src/store';
 import { getComments, createComment, updateComment, deleteComment, isRepost, parseImageUrls } from '../../src/lib/supabase';
+import { generateClientMutationId, queueMutation } from '../../src/services/offlineQueue';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { sanitizeUserText } from '../../src/utils/sanitizeText';
 import { playSendSound } from '../../src/utils/sounds';
@@ -769,17 +770,22 @@ export default function CommentsScreen() {
         if (msg.name === 'comment.new') {
           const c = payload.comment;
           if (!c || !c.id) return;
+          // SANITIZE inbound realtime text so a malicious client can't inject
+          // bidi/zero-width/control characters into rendered comments.
+          const safe = { ...c, content: sanitizeUserText(c.content || '') };
           // De-dupe — the author's own create path already inserted
           // the row optimistically via `loadComments` after the POST
           // succeeded.
-          setComments((prev) => (prev.some((x) => x.id === c.id) ? prev : [...prev, c]));
+          setComments((prev) => (prev.some((x) => x.id === safe.id) ? prev : [...prev, safe]));
           return;
         }
         if (msg.name === 'comment.edit') {
           const id = String(payload.id || '');
           if (!id) return;
+          // SANITIZE the incoming edited text before applying it locally.
+          const safeContent = sanitizeUserText(payload.content ?? '');
           setComments((prev) =>
-            prev.map((c) => (c.id === id ? { ...c, content: payload.content ?? c.content } : c)),
+            prev.map((c) => (c.id === id ? { ...c, content: payload.content != null ? safeContent : c.content } : c)),
           );
           return;
         }
@@ -901,6 +907,9 @@ export default function CommentsScreen() {
   }, [postData?.content]);
 
   const handleSend = async () => {
+    // RE-ENTRY GUARD: prevent a double-send if invoked again while a send is
+    // already in flight (the button is also disabled, but this is belt-and-braces).
+    if (isSending) return;
     const draft = inputRef.current?.getText() ?? '';
     if (!draft.trim() || !user?.id || !postId) return;
     playSendSound();
@@ -931,11 +940,17 @@ export default function CommentsScreen() {
     const sendText = replyTo
       ? encodeReply(replyTo.profiles?.username || 'user', quotedSnippet, body, quotedGif || undefined)
       : body;
-    inputRef.current?.clear();
+    // ONE idempotency key shared by the online attempt AND the queued retry
+    // below — the server dedupes on it so a reconnect retry can't double-post.
+    const cmid = generateClientMutationId();
+    // DRAFT PRESERVATION: do NOT clear the input yet. We only clear once the
+    // comment is safely sent (online success) or safely queued (offline). On a
+    // transient failure with no queue the draft stays in the composer.
     setReplyTo(null);
     setIsSending(true);
-    const { error } = await createComment(postId, user.id, sendText);
+    const { error } = await createComment(postId, user.id, sendText, cmid);
     if (!error) {
+      inputRef.current?.clear();
       const { comments: data } = await getComments(postId);
       setComments((prev) => reconcileComments(prev, data));
       // Defer the cache serialize past the send interaction — JSON.stringify of
@@ -943,6 +958,13 @@ export default function CommentsScreen() {
       // list re-render + scroll-to-end.
       InteractionManager.runAfterInteractions(() => kvSetJSON(`comments:${postId}`, data));
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
+    } else {
+      // OFFLINE / TRANSIENT FAILURE FALLBACK: queue with the SAME cmid so a
+      // later retry shares the idempotency key (server dedupes → no double
+      // post). The comment is now safely persisted, so clear the draft.
+      await queueMutation('create_comment', { postId, content: sendText }, cmid);
+      inputRef.current?.clear();
+      showToast(t('toast.will_send_offline', 'Will send when online'), 'clock');
     }
     setIsSending(false);
   };
@@ -986,23 +1008,31 @@ export default function CommentsScreen() {
   // Send a GIF as a comment — stored with the ::gif:: marker, rendered as an
   // animated image. No upload to our storage (GIPHY URL sent directly).
   const sendGifComment = async (url: string) => {
+    if (isSending) return;
     if (!url || !user?.id || !postId) return;
     triggerHaptic('light');
     const content = `::gif::${url}`;
+    // ONE idempotency key shared by the online attempt AND any queued retry.
+    const cmid = generateClientMutationId();
     setReplyTo(null);
     setIsSending(true);
-    const { error } = await createComment(postId, user.id, content);
+    const { error } = await createComment(postId, user.id, content, cmid);
     if (!error) {
       const { comments: data } = await getComments(postId);
       setComments((prev) => reconcileComments(prev, data));
       InteractionManager.runAfterInteractions(() => kvSetJSON(`comments:${postId}`, data));
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
+    } else {
+      // OFFLINE / TRANSIENT FALLBACK: queue with the SAME cmid (server dedupes).
+      await queueMutation('create_comment', { postId, content }, cmid);
+      showToast(t('toast.will_send_offline', 'Will send when online'), 'clock');
     }
     setIsSending(false);
   };
 
   // Send a single emoji as its own comment (long-press → Send in the panel).
   const sendEmojiComment = async (emoji: string) => {
+    if (isSending) return;
     if (!emoji || !user?.id || !postId) return;
     triggerHaptic('light');
     playSendSound();
@@ -1011,14 +1041,20 @@ export default function CommentsScreen() {
     const sendText = replyTo
       ? encodeReply(replyTo.profiles?.username || 'user', quotedGif ? '' : quoted, emoji, quotedGif || undefined)
       : emoji;
+    // ONE idempotency key shared by the online attempt AND any queued retry.
+    const cmid = generateClientMutationId();
     setReplyTo(null);
     setIsSending(true);
-    const { error } = await createComment(postId, user.id, sendText);
+    const { error } = await createComment(postId, user.id, sendText, cmid);
     if (!error) {
       const { comments: data } = await getComments(postId);
       setComments((prev) => reconcileComments(prev, data));
       InteractionManager.runAfterInteractions(() => kvSetJSON(`comments:${postId}`, data));
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
+    } else {
+      // OFFLINE / TRANSIENT FALLBACK: queue with the SAME cmid (server dedupes).
+      await queueMutation('create_comment', { postId, content: sendText }, cmid);
+      showToast(t('toast.will_send_offline', 'Will send when online'), 'clock');
     }
     setIsSending(false);
   };

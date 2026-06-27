@@ -355,8 +355,8 @@ export async function toggleLike(_userId: string, postId: string): Promise<{ lik
   return { liked: !!data?.liked, error: null };
 }
 
-export async function createComment(postId: string, _authorId: string, content: string): Promise<{ error: string | null }> {
-  const { error } = await apiPost(`/v1/posts/${encodeURIComponent(postId)}/comments`, { content });
+export async function createComment(postId: string, _authorId: string, content: string, clientMutationId?: string): Promise<{ error: string | null }> {
+  const { error } = await apiPost(`/v1/posts/${encodeURIComponent(postId)}/comments`, { content, ...(clientMutationId ? { clientMutationId } : {}) });
   return { error };
 }
 

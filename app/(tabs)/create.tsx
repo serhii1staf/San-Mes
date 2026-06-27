@@ -20,7 +20,7 @@ import { FormatHelpModal } from '../../src/components/ui/FormatHelpModal';
 import { useT } from '../../src/i18n/store';
 import { perfMonitor } from '../../src/services/perfMonitor';
 import { useSettingsStore } from '../../src/store/settingsStore';
-import { validatePost } from '../../src/services/moderation';
+import { validatePost } from '../../src/services/moderation/index';
 
 const MAX_CHARS = 500;
 const MAX_IMAGES = 6;

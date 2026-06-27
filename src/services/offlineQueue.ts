@@ -290,7 +290,11 @@ function coalesceKey(type: MutationType, payload: any): string | null {
 
 // ─── Queue Mutation ──────────────────────────────────────────────────────────
 
-export async function queueMutation(type: MutationType, payload: any): Promise<void> {
+export async function queueMutation(
+  type: MutationType,
+  payload: any,
+  clientMutationId?: string,
+): Promise<void> {
   const mutation: MutationRecord = {
     id: generateTempId(),
     type,
@@ -298,9 +302,12 @@ export async function queueMutation(type: MutationType, payload: any): Promise<v
     timestamp: new Date().toISOString(),
     status: 'pending',
     retryCount: 0,
-    // Generated ONCE here and persisted with the record so retries of this
-    // same logical mutation reuse the same idempotency key (H2).
-    clientMutationId: generateClientMutationId(),
+    // Idempotency key. When the caller already made (or attempted) an online
+    // send with its own key, it passes that SAME key here so the queued retry
+    // shares one idempotency key across the online attempt AND the queued
+    // retry (the server dedupes on it). When omitted, generate one as before
+    // so every other call site keeps its existing behavior unchanged (H2).
+    clientMutationId: clientMutationId ?? generateClientMutationId(),
   };
 
   // 1. Apply optimistic update to entity store immediately so the UI flips.

@@ -24,7 +24,15 @@ import { useAuthStore, UserLink } from '../../src/store/authStore';
 import { updateProfile as updateSupabaseProfile, uploadBanner, loadProfileMeta } from '../../src/lib/supabase';
 import { currentUser } from '../../src/utils/mockData';
 import { useT } from '../../src/i18n/store';
-import { validateName, validateBio } from '../../src/services/moderation';
+// Import the validators from the moderation PACKAGE INDEX explicitly.
+// A sibling file `src/services/moderation.ts` (report/block helpers) shadows
+// the `moderation/` directory under default Metro resolution (a file beats a
+// directory), and that file does NOT export validateName/validateBio. The
+// bare specifier therefore resolved to `undefined` at runtime, so the first
+// line of handleSave (`validateName(name)`) threw before its try/catch and
+// the whole save silently no-opped. Pointing at `/index` resolves to the
+// real validators on every bundler/TS path.
+import { validateName, validateBio } from '../../src/services/moderation/index';
 import { sanitizeUserText } from '../../src/utils/sanitizeText';
 import { showToast } from '../../src/store/toastStore';
 import {
@@ -233,17 +241,41 @@ export default function EditProfileScreen() {
   const handleBannerEditorCancel = () => setShowBannerEditor(false);
 
   const handleSave = async () => {
-    // Moderation: validate display name + bio BEFORE persisting. Toast on
-    // reject so the existing field UI doesn't need an inline error slot.
-    const nameCheck = validateName(name);
-    if (!nameCheck.ok) {
-      showToast(t(nameCheck.reasonKey || 'moderation.reason.profanity'), 'alert-circle');
-      return;
-    }
-    const bioCheck = validateBio(bio);
-    if (!bioCheck.ok) {
-      showToast(t(bioCheck.reasonKey || 'moderation.reason.profanity'), 'alert-circle');
-      return;
+    // Moderation: validate display name + bio BEFORE persisting — but ONLY
+    // the fields the user actually changed this session. A name/bio that was
+    // already accepted and saved previously must never block a link-only (or
+    // emoji-only) re-save; otherwise an over-strict false positive on
+    // pre-existing content silently swallows the save and it looks like
+    // "nothing happens". New/edited content is still fully moderated, and the
+    // server stays the backstop. Wrapped in try/catch so a validator fault
+    // can never dead-end the save with no feedback (it fails OPEN).
+    const nameChanged = name !== displayUser.displayName;
+    const bioChanged = bio !== (displayUser.bio || '');
+    try {
+      if (nameChanged) {
+        const nameCheck = validateName(name);
+        if (!nameCheck.ok) {
+          // Name the offending field so the toast isn't a mystery.
+          showToast(
+            t('edit_profile.name_label') + ': ' + t(nameCheck.reasonKey || 'moderation.reason.profanity'),
+            'alert-circle',
+          );
+          return;
+        }
+      }
+      if (bioChanged) {
+        const bioCheck = validateBio(bio);
+        if (!bioCheck.ok) {
+          showToast(
+            t('edit_profile.bio_label') + ': ' + t(bioCheck.reasonKey || 'moderation.reason.profanity'),
+            'alert-circle',
+          );
+          return;
+        }
+      }
+    } catch {
+      // Validator threw unexpectedly — never let moderation dead-end the save
+      // silently. Fall through and persist; server-side moderation backstops.
     }
     setIsSaving(true);
     try {
@@ -302,6 +334,11 @@ export default function EditProfileScreen() {
       // Local update already applied; ignore network failure.
     }
     setIsSaving(false);
+    // Always confirm the save so the action is never a silent no-op. The
+    // local optimistic updateProfile above (which includes `links`) has
+    // already applied, so this is truthful even if the network round-trip
+    // failed — the link shows on the profile immediately after router.back().
+    showToast(t('toast.saved'), 'check-circle');
     router.back();
   };
 
