@@ -1621,7 +1621,7 @@ export default function UserProfileScreen() {
         // The reveal threshold math still anchors off `pinnedBarTop`
         // (= chromeHeight) via the opacity/translateY interpolations above, so
         // the inline tabs hand off pixel-aligned — only the visual top changed.
-        style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 50, opacity: pinnedTabsOpacity, transform: [{ translateY: pinnedTabsTranslateY }] }}
+        style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 110, opacity: pinnedTabsOpacity, transform: [{ translateY: pinnedTabsTranslateY }] }}
       >
         <View style={{ overflow: 'hidden', borderBottomLeftRadius: 18, borderBottomRightRadius: 18 }}>
           {/* Solid + frosted backing so scrolling content never shows through —

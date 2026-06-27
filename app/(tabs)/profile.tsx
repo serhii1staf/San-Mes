@@ -1289,7 +1289,7 @@ export default function ProfileScreen() {
         // the bar. The tab pills themselves are pushed down by `paddingTop:
         // pinnedBarTop` so they land EXACTLY where the inline tabs sit at the
         // reveal threshold (pixel-aligned handoff, no jump/gap).
-        style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 50, opacity: pinnedTabsOpacity, transform: [{ translateY: pinnedTabsTranslateY }] }}
+        style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 110, opacity: pinnedTabsOpacity, transform: [{ translateY: pinnedTabsTranslateY }] }}
       >
         <View style={{ overflow: 'hidden', borderBottomLeftRadius: 18, borderBottomRightRadius: 18 }}>
           {/* Solid + frosted backing so scrolling content never shows through —

@@ -156,6 +156,15 @@ export const PostCard = memo(function PostCard({ post, currentUserId, onLike, on
   // onLoad (fires once per image — no per-frame cost). Null until the bitmap
   // dimensions arrive, at which point the card resizes to fit the photo.
   const [heroAspect, setHeroAspect] = useState<number | null>(null);
+  // FlashList v2 recycles cells across posts. Reset the measured hero aspect
+  // ratio whenever the hero image URI changes so a recycled card never paints
+  // the new photo inside the previous post's aspect-ratio box (which caused a
+  // one-frame height jump + list reflow mid-scroll). Starts from the neutral
+  // placeholder ratio until the new image's onLoad reports its real dimensions.
+  const heroUri = imageUrls[0];
+  useEffect(() => {
+    setHeroAspect(null);
+  }, [heroUri]);
   const handleHeroLoad = useCallback((e: ImageLoadEventData) => {
     const w = e?.source?.width;
     const h = e?.source?.height;
