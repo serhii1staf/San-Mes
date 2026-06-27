@@ -27,6 +27,7 @@ import { parseUuid } from '../util';
 import { asStr, readJson } from '../validate';
 import { channels, publishEvent } from '../realtime';
 import { sendPushToUser, cleanPushBody } from '../push';
+import { findDedupResultId, maybeCleanupDedup, parseClientMutationId, recordDedup } from '../dedup';
 
 interface PostRow {
   id: string;
@@ -94,11 +95,27 @@ function shapePost(row: PostRow) {
 // future `:id` capture we add. Body: { originalPostId, comment? }.
 register('POST', '/v1/posts/repost', async (req, env, ctx, _params, authedUserId) => {
   if (!authedUserId) return fail(req, 'unauthorised', 401);
-  const body = await readJson<{ originalPostId?: unknown; comment?: unknown }>(req);
+  const body = await readJson<{ originalPostId?: unknown; comment?: unknown; clientMutationId?: unknown }>(req);
   if (!body.ok) return fail(req, body.error, 400);
   const originalPostId = parseUuid(asStr(body.value.originalPostId, 64) || '');
   if (!originalPostId) return fail(req, 'invalid original post id', 400);
   const comment = typeof body.value.comment === 'string' ? body.value.comment.slice(0, 4000) : '';
+
+  // Idempotency: a retry of the same repost (same clientMutationId from
+  // this account) returns the original repost row instead of inserting a
+  // second `::repost::` post and double-bumping shares_count.
+  const clientMutationId = parseClientMutationId(body.value.clientMutationId);
+  if (clientMutationId) {
+    const priorId = await findDedupResultId(env, authedUserId, clientMutationId);
+    if (priorId) {
+      const prior = await queryOne<PostRow>(
+        env,
+        `${POST_SELECT_WITH_AUTHOR} WHERE p.id = ? LIMIT 1`,
+        [priorId],
+      );
+      return ok(req, prior ? shapePost(prior) : null);
+    }
+  }
 
   // The repost row uses the marker scheme the client already parses
   // (`isRepost` in `src/lib/supabase.ts`):
@@ -118,6 +135,11 @@ register('POST', '/v1/posts/repost', async (req, env, ctx, _params, authedUserId
       params: [originalPostId],
     },
   ]);
+
+  if (clientMutationId) {
+    await recordDedup(env, authedUserId, clientMutationId, id);
+    maybeCleanupDedup(env, ctx);
+  }
 
   const created = await queryOne<PostRow>(
     env,
@@ -147,12 +169,28 @@ register('POST', '/v1/posts/repost', async (req, env, ctx, _params, authedUserId
 // embedded author profile so callers can render without a refetch.
 register('POST', '/v1/posts', async (req, env, ctx, _params, authedUserId) => {
   if (!authedUserId) return fail(req, 'unauthorised', 401);
-  const body = await readJson<{ content?: unknown; image_url?: unknown }>(req);
+  const body = await readJson<{ content?: unknown; image_url?: unknown; clientMutationId?: unknown }>(req);
   if (!body.ok) return fail(req, body.error, 400);
 
   const content = typeof body.value.content === 'string' ? body.value.content.slice(0, 8000) : '';
   const imageUrl = typeof body.value.image_url === 'string' ? body.value.image_url.slice(0, 4000) : null;
   if (!content && !imageUrl) return fail(req, 'empty post', 400);
+
+  // Idempotency: a retry of the same create (same clientMutationId from
+  // this account) returns the originally-created post instead of a
+  // duplicate row.
+  const clientMutationId = parseClientMutationId(body.value.clientMutationId);
+  if (clientMutationId) {
+    const priorId = await findDedupResultId(env, authedUserId, clientMutationId);
+    if (priorId) {
+      const prior = await queryOne<PostRow>(
+        env,
+        `${POST_SELECT_WITH_AUTHOR} WHERE p.id = ? LIMIT 1`,
+        [priorId],
+      );
+      return ok(req, prior ? shapePost(prior) : null);
+    }
+  }
 
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
@@ -161,6 +199,11 @@ register('POST', '/v1/posts', async (req, env, ctx, _params, authedUserId) => {
      VALUES (?, ?, ?, ?, 0, 0, 0, ?)`,
   );
   await stmt.bind(id, authedUserId, content, imageUrl, now).run();
+
+  if (clientMutationId) {
+    await recordDedup(env, authedUserId, clientMutationId, id);
+    maybeCleanupDedup(env, ctx);
+  }
 
   const created = await queryOne<PostRow>(
     env,
@@ -384,10 +427,79 @@ register('POST', '/v1/posts/:id/comments', async (req, env, ctx, params, authedU
   const postId = parseUuid(params.id);
   if (!postId) return fail(req, 'invalid post id', 400);
 
-  const body = await readJson<{ content?: unknown }>(req);
+  const body = await readJson<{ content?: unknown; clientMutationId?: unknown }>(req);
   if (!body.ok) return fail(req, body.error, 400);
   const content = typeof body.value.content === 'string' ? body.value.content.slice(0, 4000) : '';
   if (!content) return fail(req, 'empty comment', 400);
+
+  // Re-read a comment by id with its author profile embedded, shaped
+  // exactly like a fresh create response. Shared by the normal create
+  // path and the idempotent-retry path below.
+  interface Row {
+    id: string;
+    post_id: string;
+    author_id: string;
+    content: string;
+    created_at: string;
+    profile_id: string | null;
+    profile_username: string | null;
+    profile_display_name: string | null;
+    profile_emoji: string | null;
+    profile_badge: string | null;
+    profile_is_verified: number | null;
+  }
+  const readComment = async (commentId: string) => {
+    const row = await queryOne<Row>(
+      env,
+      `SELECT c.id, c.post_id, c.author_id, c.content, c.created_at,
+              pr.id            AS profile_id,
+              pr.username      AS profile_username,
+              pr.display_name  AS profile_display_name,
+              pr.emoji         AS profile_emoji,
+              pr.badge         AS profile_badge,
+              pr.is_verified   AS profile_is_verified
+         FROM comments c
+    LEFT JOIN profiles pr ON pr.id = c.author_id
+        WHERE c.id = ?
+        LIMIT 1`,
+      [commentId],
+    );
+    if (!row) return null;
+    return {
+      row,
+      shaped: {
+        id: row.id,
+        post_id: row.post_id,
+        author_id: row.author_id,
+        content: row.content,
+        created_at: row.created_at,
+        profiles: row.profile_id
+          ? normalizeProfile({
+              id: row.profile_id,
+              username: row.profile_username,
+              display_name: row.profile_display_name,
+              emoji: row.profile_emoji,
+              badge: row.profile_badge,
+              is_verified: row.profile_is_verified,
+              links: null,
+            })
+          : null,
+      },
+    };
+  };
+
+  // Idempotency: a retry of the same comment (same clientMutationId from
+  // this account) returns the originally-created comment instead of
+  // inserting a duplicate and double-bumping comments_count. We skip the
+  // realtime/push fan-out on a retry so the post author isn't re-notified.
+  const clientMutationId = parseClientMutationId(body.value.clientMutationId);
+  if (clientMutationId) {
+    const priorId = await findDedupResultId(env, authedUserId, clientMutationId);
+    if (priorId) {
+      const prior = await readComment(priorId);
+      return ok(req, prior ? prior.shaped : null);
+    }
+  }
 
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
@@ -403,56 +515,17 @@ register('POST', '/v1/posts/:id/comments', async (req, env, ctx, params, authedU
     },
   ]);
 
+  if (clientMutationId) {
+    await recordDedup(env, authedUserId, clientMutationId, id);
+    maybeCleanupDedup(env, ctx);
+  }
+
   // Re-read with the author profile embed so the client can render
   // immediately. One extra query is cheap; saves a roundtrip on the
   // optimistic UI side.
-  interface Row {
-    id: string;
-    post_id: string;
-    author_id: string;
-    content: string;
-    created_at: string;
-    profile_id: string | null;
-    profile_username: string | null;
-    profile_display_name: string | null;
-    profile_emoji: string | null;
-    profile_badge: string | null;
-    profile_is_verified: number | null;
-  }
-  const row = await queryOne<Row>(
-    env,
-    `SELECT c.id, c.post_id, c.author_id, c.content, c.created_at,
-            pr.id            AS profile_id,
-            pr.username      AS profile_username,
-            pr.display_name  AS profile_display_name,
-            pr.emoji         AS profile_emoji,
-            pr.badge         AS profile_badge,
-            pr.is_verified   AS profile_is_verified
-       FROM comments c
-  LEFT JOIN profiles pr ON pr.id = c.author_id
-      WHERE c.id = ?
-      LIMIT 1`,
-    [id],
-  );
-  if (!row) return ok(req, null);
-  const shaped = {
-    id: row.id,
-    post_id: row.post_id,
-    author_id: row.author_id,
-    content: row.content,
-    created_at: row.created_at,
-    profiles: row.profile_id
-      ? normalizeProfile({
-          id: row.profile_id,
-          username: row.profile_username,
-          display_name: row.profile_display_name,
-          emoji: row.profile_emoji,
-          badge: row.profile_badge,
-          is_verified: row.profile_is_verified,
-          links: null,
-        })
-      : null,
-  };
+  const read = await readComment(id);
+  if (!read) return ok(req, null);
+  const { row, shaped } = read;
 
   publishEvent(env, channels.post(postId), 'comment.new', { comment: shaped }, ctx);
 

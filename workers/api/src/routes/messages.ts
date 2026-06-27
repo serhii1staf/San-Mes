@@ -19,6 +19,7 @@ import { parseUuid } from '../util';
 import { asStr, readJson } from '../validate';
 import { channels, publishEvent } from '../realtime';
 import { sendPushToUser, cleanPushBody } from '../push';
+import { findDedupResultId, maybeCleanupDedup, parseClientMutationId, recordDedup } from '../dedup';
 
 // ── POST /v1/conversations ────────────────────────────────────────────
 //
@@ -77,7 +78,7 @@ register('POST', '/v1/conversations/:id/messages', async (req, env, ctx, params,
   const conversationId = parseUuid(params.id);
   if (!conversationId) return fail(req, 'invalid conversation id', 400);
 
-  const body = await readJson<{ text?: unknown }>(req);
+  const body = await readJson<{ text?: unknown; clientMutationId?: unknown }>(req);
   if (!body.ok) return fail(req, body.error, 400);
   const text = typeof body.value.text === 'string' ? body.value.text.slice(0, 16000) : '';
   if (!text) return fail(req, 'empty message', 400);
@@ -91,6 +92,31 @@ register('POST', '/v1/conversations/:id/messages', async (req, env, ctx, params,
   );
   if (!participant) return fail(req, 'forbidden', 403);
 
+  // Idempotency: a retry of the same send (same clientMutationId from
+  // this account) returns the originally-created message instead of
+  // inserting a duplicate and re-firing realtime/push fan-out.
+  const clientMutationId = parseClientMutationId(body.value.clientMutationId);
+  if (clientMutationId) {
+    const priorId = await findDedupResultId(env, authedUserId, clientMutationId);
+    if (priorId) {
+      const prior = await queryOne<{
+        id: string;
+        conversation_id: string;
+        sender_id: string;
+        text: string;
+        created_at: string;
+      }>(
+        env,
+        `SELECT id, conversation_id, sender_id, text, created_at
+           FROM messages WHERE id = ? LIMIT 1`,
+        [priorId],
+      );
+      if (prior) return ok(req, prior);
+      // Mapping existed but the row is gone (e.g. deleted) — fall through
+      // and create a fresh message rather than returning an empty body.
+    }
+  }
+
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
   await exec(
@@ -98,6 +124,11 @@ register('POST', '/v1/conversations/:id/messages', async (req, env, ctx, params,
     `INSERT INTO messages (id, conversation_id, sender_id, text, created_at) VALUES (?, ?, ?, ?, ?)`,
     [id, conversationId, authedUserId, text, now],
   );
+
+  if (clientMutationId) {
+    await recordDedup(env, authedUserId, clientMutationId, id);
+    maybeCleanupDedup(env, ctx);
+  }
 
   // The chat:<id> channel is published from the SENDER'S client (see
   // app/chat/[id].tsx) — both peers' chat-screen subscriptions get the

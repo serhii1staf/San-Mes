@@ -38,11 +38,29 @@ import { readJson } from '../validate';
 const PROFILE_PUBLIC_COLUMNS = `id, username, display_name, emoji, bio, banner_url, links, badge, is_verified, created_at, updated_at`;
 const PROFILE_AUTH_COLUMNS = `id, username, display_name, emoji, bio, device_key, banner_url, links, badge, is_verified, created_at, updated_at`;
 
+/**
+ * Constant-time string comparison for the admin key. A raw `!==` leaks
+ * how many leading characters matched via its early-exit timing, which a
+ * patient attacker can use to recover the secret byte-by-byte. This
+ * returns `false` fast only on a length mismatch (lengths aren't secret),
+ * then XORs every char code into an accumulator and checks it's zero — so
+ * the comparison time doesn't depend on the position of the first
+ * differing character.
+ */
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
 function assertAdmin(req: Request, env: import('../db').Env): Response | null {
   const expected = env.ADMIN_KEY;
   if (!expected) return fail(req, 'admin not configured', 503);
   const provided = req.headers.get('X-Admin-Key') || req.headers.get('x-admin-key');
-  if (provided !== expected) return fail(req, 'unauthorised', 401);
+  if (!timingSafeEqual(provided || '', expected)) return fail(req, 'unauthorised', 401);
   return null;
 }
 
