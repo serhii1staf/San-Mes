@@ -176,17 +176,26 @@ export const PostCard = memo(function PostCard({ post, currentUserId, onLike, on
   // taller than the clamp band, or one so tall that even the clamped box would
   // exceed the height cap (then we pin to MAX_IMAGE_HEIGHT and let cover trim).
   const heroImageStyle = useMemo<ImageStyle>(() => {
+    // Flat neutral placeholder background. CachedImage's default (non-skeleton)
+    // path returns a bare expo-image with no `placeholder` and no background,
+    // so the box would be transparent until the bitmap paints. Warm/prefetched
+    // heroes paint within ~1 frame, but a cold/uncached photo would otherwise
+    // flash a transparent gap. Painting this subtle theme-aware fill behind the
+    // image removes that flash — and is far cheaper than the old `skeleton`
+    // shimmer (LinearGradient + Reanimated loop) that FlashList had to
+    // mount/unmount for every recycled cell during scroll.
+    const placeholderBg = theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)';
     if (heroAspect == null) {
       // Pre-load: portrait-ish placeholder so layout barely shifts on load.
-      return { width: '100%', aspectRatio: PLACEHOLDER_ASPECT_RATIO, borderRadius: 18 };
+      return { width: '100%', aspectRatio: PLACEHOLDER_ASPECT_RATIO, borderRadius: 18, backgroundColor: placeholderBg };
     }
     const clamped = clampAspectRatio(heroAspect);
     const derivedHeight = CARD_CONTENT_WIDTH / clamped;
     if (derivedHeight > MAX_IMAGE_HEIGHT) {
-      return { width: '100%', height: MAX_IMAGE_HEIGHT, borderRadius: 18 };
+      return { width: '100%', height: MAX_IMAGE_HEIGHT, borderRadius: 18, backgroundColor: placeholderBg };
     }
-    return { width: '100%', aspectRatio: clamped, borderRadius: 18 };
-  }, [heroAspect]);
+    return { width: '100%', aspectRatio: clamped, borderRadius: 18, backgroundColor: placeholderBg };
+  }, [heroAspect, theme.isDark]);
 
   // Memoize the URL extraction so the regex only runs when the post text
   // actually changes. The IIFE below previously ran extractFirstUrl on every
@@ -339,7 +348,7 @@ export const PostCard = memo(function PostCard({ post, currentUserId, onLike, on
                 is `'100%'` (non-numeric) — without it CachedImage falls back to
                 the proxy DEFAULT (800px), a different cache key than the feed's
                 warm + the carousel, so the warmed bytes would never hit. */}
-            <CachedImage uri={imageUrls[0]} style={heroImageStyle} resizeMode="cover" proxyWidth={HERO_IMG_WIDTH} priority={heroPriority} onLoad={handleHeroLoad} skeleton />
+            <CachedImage uri={imageUrls[0]} style={heroImageStyle} resizeMode="cover" proxyWidth={HERO_IMG_WIDTH} priority={heroPriority} onLoad={handleHeroLoad} />
           </Pressable>
         ) : (
           <ImageCarousel imageUrls={imageUrls} onDoubleTap={handleDoubleTap} heroPriority={heroPriority} />
@@ -425,7 +434,7 @@ function ImageCarousel({ imageUrls, onDoubleTap, heroPriority }: { imageUrls: st
                 queues them behind the first page's decode. The first slide
                 also reports its dimensions so the shared carousel height
                 matches the set's orientation. */}
-            <CachedImage uri={url} style={{ width: slideImgWidth, height: carouselHeight, borderRadius: 18 }} resizeMode="cover" priority={i === 0 ? heroPriority : 'low'} onLoad={i === 0 ? handleFirstLoad : undefined} skeleton />
+            <CachedImage uri={url} style={{ width: slideImgWidth, height: carouselHeight, borderRadius: 18, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)' }} resizeMode="cover" priority={i === 0 ? heroPriority : 'low'} onLoad={i === 0 ? handleFirstLoad : undefined} />
           </Pressable>
         ))}
       </ScrollView>
