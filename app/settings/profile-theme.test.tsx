@@ -23,7 +23,8 @@
 
 import React from 'react';
 import { ActivityIndicator, FlatList, InteractionManager } from 'react-native';
-import TestRenderer, { act, ReactTestInstance } from 'react-test-renderer';
+import TestRenderer, { act } from 'react-test-renderer';
+type ReactTestInstance = ReturnType<typeof TestRenderer.create>['root'];
 
 import {
   BUILT_IN_THEME_LIST,

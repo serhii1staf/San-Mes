@@ -13,7 +13,8 @@
 //   _Requirements: 9.1, 9.2_
 
 import React from 'react';
-import TestRenderer, { act, ReactTestInstance } from 'react-test-renderer';
+import TestRenderer, { act } from 'react-test-renderer';
+type ReactTestInstance = ReturnType<typeof TestRenderer.create>['root'];
 
 import { ThemeProvider } from '../../src/theme';
 import { useI18nStore, Locale } from '../../src/i18n/store';

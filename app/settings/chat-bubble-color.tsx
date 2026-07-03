@@ -34,7 +34,7 @@ import { useT } from '../../src/i18n/store';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 const PREVIEW_HEIGHT = Math.round(SCREEN_HEIGHT * 0.34);
-const RAINBOW = ['#FF0000', '#FFFF00', '#00FF00', '#00FFFF', '#0000FF', '#FF00FF', '#FF0000'];
+const RAINBOW = ['#FF0000', '#FFFF00', '#00FF00', '#00FFFF', '#0000FF', '#FF00FF', '#FF0000'] as const;
 
 type Side = 'out' | 'in';
 

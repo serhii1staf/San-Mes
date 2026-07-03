@@ -79,10 +79,10 @@ function baseDomain(host: string): string {
 // Per-session set of destination base-domains the user already approved leaving
 // to — keyed by sessionKey so a new mini-app starts clean. Module-scoped to
 // avoid adding a React hook (preserves hook order/count).
-const miniAppApprovedHosts = new Map<string, Set<string>>();
+const miniAppApprovedHosts = new Map<number, Set<string>>();
 
 // External / custom schemes are NEVER auto-opened — always confirm first.
-function confirmExternalOpen(u: string, t: (k: string, d?: string, p?: Record<string, unknown>) => string) {
+function confirmExternalOpen(u: string, t: (k: string, d?: string, p?: Record<string, string | number>) => string) {
   Alert.alert(
     t('mini_app.external_link_title', 'Открыть ссылку? / Open link?'),
     t('mini_app.external_link_message', '{url}', { url: u }),

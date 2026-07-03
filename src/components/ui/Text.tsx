@@ -2,7 +2,7 @@ import React from 'react';
 import { Text as RNText, TextStyle, StyleSheet } from 'react-native';
 import { useTheme } from '../../theme';
 
-type TextVariant = 'heading' | 'subheading' | 'body' | 'caption' | 'label';
+type TextVariant = 'heading' | 'h2' | 'h3' | 'subheading' | 'body' | 'caption' | 'label';
 type TextWeight = 'light' | 'regular' | 'medium' | 'semibold' | 'bold';
 
 interface TextProps {
@@ -32,6 +32,14 @@ export function Text({
     heading: {
       fontSize: theme.typography.sizes['2xl'] * theme.fontScale,
       lineHeight: theme.typography.sizes['2xl'] * theme.fontScale * theme.typography.lineHeights.tight,
+    },
+    h2: {
+      fontSize: theme.typography.sizes['2xl'] * theme.fontScale,
+      lineHeight: theme.typography.sizes['2xl'] * theme.fontScale * theme.typography.lineHeights.tight,
+    },
+    h3: {
+      fontSize: theme.typography.sizes.lg * theme.fontScale,
+      lineHeight: theme.typography.sizes.lg * theme.fontScale * theme.typography.lineHeights.tight,
     },
     subheading: {
       fontSize: theme.typography.sizes.lg * theme.fontScale,

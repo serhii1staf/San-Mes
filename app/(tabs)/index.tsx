@@ -886,6 +886,7 @@ export default function FeedScreen() {
   }, []);
 
   const handleFollow = useCallback((targetUserId: string) => {
+    if (!userId) return;
     triggerHaptic('medium');
     // Toggle: if already following, unfollow; otherwise follow. Both paths
     // update the entity store optimistically inside queueMutation, so the

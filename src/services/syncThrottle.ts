@@ -17,8 +17,8 @@ interface ThrottleMap { [key: string]: number; }
 // what the TTL is measured against. `attempts` holds the last *attempt* time
 // per key and only backs the anti-spam guard; it is intentionally in-memory
 // only (never persisted) so an app restart never blocks a fresh attempt.
-let cache: ThrottleMap = {};
-let attempts: ThrottleMap = {};
+let cache: ThrottleMap = Object.create(null);
+let attempts: ThrottleMap = Object.create(null);
 let loaded = false;
 
 // Throttle keys are scoped to the active account so switching accounts doesn't
@@ -28,8 +28,8 @@ export function setThrottleAccount(accountId: string | null | undefined): void {
   const next = accountId || 'anon';
   if (next !== activeAccountId) {
     activeAccountId = next;
-    cache = {};
-    attempts = {};
+    cache = Object.create(null);
+    attempts = Object.create(null);
     loaded = false;
   }
 }
@@ -42,7 +42,21 @@ async function loadThrottles(): Promise<void> {
   if (loaded) return;
   try {
     const raw = await AsyncStorage.getItem(storageKey());
-    if (raw) cache = JSON.parse(raw);
+    if (raw) {
+      // Rebuild into a null-prototype map, copying only finite numeric
+      // timestamps. This makes dangerous keys ("__proto__", "constructor", …)
+      // behave as ordinary data keys and hardens the load path against a
+      // corrupt or tampered cache blob (prototype-pollution defence).
+      const parsed = JSON.parse(raw);
+      const next: ThrottleMap = Object.create(null);
+      if (parsed && typeof parsed === 'object') {
+        for (const k of Object.keys(parsed)) {
+          const v = (parsed as Record<string, unknown>)[k];
+          if (typeof v === 'number' && Number.isFinite(v)) next[k] = v;
+        }
+      }
+      cache = next;
+    }
   } catch {}
   loaded = true;
 }

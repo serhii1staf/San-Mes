@@ -96,8 +96,8 @@ export function FadingBlurHeader({ isDark, direction = 'down', fadeStart = 0.55,
       pointerEvents="none"
       maskElement={
         <LinearGradient
-          colors={maskColors as unknown as string[]}
-          locations={maskLocations as unknown as number[]}
+          colors={maskColors}
+          locations={maskLocations}
           style={StyleSheet.absoluteFill}
         />
       }

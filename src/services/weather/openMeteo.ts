@@ -14,9 +14,11 @@ import { kvGetStringRawSync, kvSetStringRaw, isMMKVAvailable } from '../kvStore'
 const FETCH_TIMEOUT_MS = 6000;
 // 15-min weather cache per location, keyed on rounded lat/lon. Open-Meteo
 // refreshes its data every ~15 minutes; using the same TTL keeps the chip
-// in lock-step with upstream and avoids stale-looking values.
+// in lock-step with upstream and avoids stale-looking values. (Open-Meteo
+// refreshes every ~15 min and users complained about stale-looking values,
+// so we never serve a snapshot older than this.)
 const CACHE_PREFIX = '@san:wx:';
-const CACHE_TTL_MS = CACHE_TTL_MS_DEFAULT;
+const CACHE_TTL_MS = 15 * 60 * 1000;
 
 export interface GeoResult {
   id: number;
@@ -41,11 +43,6 @@ export interface WeatherSnapshot {
   /** ISO timestamp of the underlying observation. */
   observedAt: string;
 }
-
-// Shorten cache to 15 minutes — Open-Meteo refreshes every ~15 min and the
-// user explicitly complained about stale-looking values. Stale beyond 15
-// minutes increases the perceived "this is wrong" gap.
-const CACHE_TTL_MS_DEFAULT = 15 * 60 * 1000;
 
 interface CacheEntry {
   t: number;

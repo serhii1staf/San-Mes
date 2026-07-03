@@ -18,7 +18,7 @@
  */
 
 import React, { useState, useCallback, useMemo } from 'react';
-import { View, Pressable, StyleSheet, ScrollView, Text as RNText, Platform } from 'react-native';
+import { View, Pressable, StyleSheet, ScrollView, Text as RNText, Platform, type ImageSourcePropType } from 'react-native';
 import { Image } from 'expo-image';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -154,7 +154,7 @@ function DemoRow({
   t,
   theme,
 }: {
-  source: number | null;
+  source: ImageSourcePropType | null;
   isSelected: boolean;
   isNone: boolean;
   onPress: () => void;

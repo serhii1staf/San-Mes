@@ -33,7 +33,25 @@ function readPersisted(accountId: string): string | undefined {
   return raw == null ? undefined : raw;
 }
 
-interface ProfileThemeState {
+// Per-account map helpers. `byAccount` is a NULL-PROTOTYPE object so an account
+// id that happens to equal a reserved key ("__proto__", "constructor", …) is
+// stored and read as ordinary data instead of colliding with Object.prototype.
+// Real account ids are UUIDs, but the per-account isolation invariant (Req 9.5,
+// Property 11) must hold for ANY string key. Note: assigning a plain string to a
+// computed `["__proto__"]` key on a normal object is silently dropped by the
+// prototype setter after Babel transpilation, which is exactly the bug this
+// avoids.
+function emptyAccounts(): Record<string, string> {
+  return Object.create(null) as Record<string, string>;
+}
+function cloneAccounts(map: Record<string, string>): Record<string, string> {
+  return Object.assign(Object.create(null), map) as Record<string, string>;
+}
+function hasAccount(map: Record<string, string>, accountId: string): boolean {
+  return Object.prototype.hasOwnProperty.call(map, accountId);
+}
+
+export interface ProfileThemeState {
   /** accountId → last-known Theme_Id mirror. */
   byAccount: Record<string, string>;
   /** Read the stored Theme_Id for an account (in-memory, falling back to MMKV). */
@@ -47,11 +65,14 @@ interface ProfileThemeState {
 }
 
 export const useProfileThemeStore = create<ProfileThemeState>((set, get) => ({
-  byAccount: {},
+  byAccount: emptyAccounts(),
 
   getThemeId: (accountId) => {
     if (!accountId) return undefined;
-    const inMem = get().byAccount[accountId];
+    const map = get().byAccount;
+    // Own-property check so a reserved key never resolves to an inherited
+    // Object.prototype member (e.g. `map["__proto__"]`).
+    const inMem = hasAccount(map, accountId) ? map[accountId] : undefined;
     if (inMem !== undefined) return inMem;
     // Pure read — no state mutation, safe to call during render. The reactive
     // hook below hydrates the map via `hydrateFromStorage` in an effect.
@@ -60,7 +81,11 @@ export const useProfileThemeStore = create<ProfileThemeState>((set, get) => ({
 
   setThemeId: (accountId, themeId) => {
     if (!accountId) return;
-    set((s) => ({ byAccount: { ...s.byAccount, [accountId]: themeId } }));
+    set((s) => {
+      const next = cloneAccounts(s.byAccount);
+      next[accountId] = themeId;
+      return { byAccount: next };
+    });
     kvSetStringRaw(persistKey(accountId), themeId);
   },
 
@@ -68,25 +93,31 @@ export const useProfileThemeStore = create<ProfileThemeState>((set, get) => ({
     if (!accountId) return;
     if (prev === undefined) {
       set((s) => {
-        if (!(accountId in s.byAccount)) return s;
-        const next = { ...s.byAccount };
+        if (!hasAccount(s.byAccount, accountId)) return s;
+        const next = cloneAccounts(s.byAccount);
         delete next[accountId];
         return { byAccount: next };
       });
       kvDeleteRaw(persistKey(accountId));
       return;
     }
-    set((s) => ({ byAccount: { ...s.byAccount, [accountId]: prev } }));
+    set((s) => {
+      const next = cloneAccounts(s.byAccount);
+      next[accountId] = prev;
+      return { byAccount: next };
+    });
     kvSetStringRaw(persistKey(accountId), prev);
   },
 
   hydrateFromStorage: (accountId) => {
     if (!accountId) return;
     set((s) => {
-      if (s.byAccount[accountId] !== undefined) return s;
+      if (hasAccount(s.byAccount, accountId) && s.byAccount[accountId] !== undefined) return s;
       const persisted = readPersisted(accountId);
       if (persisted === undefined) return s;
-      return { byAccount: { ...s.byAccount, [accountId]: persisted } };
+      const next = cloneAccounts(s.byAccount);
+      next[accountId] = persisted;
+      return { byAccount: next };
     });
   },
 }));

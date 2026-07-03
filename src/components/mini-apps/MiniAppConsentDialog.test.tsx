@@ -14,7 +14,8 @@
 
 import React from 'react';
 import * as RN from 'react-native';
-import TestRenderer, { act, ReactTestInstance } from 'react-test-renderer';
+import TestRenderer, { act } from 'react-test-renderer';
+type ReactTestInstance = ReturnType<typeof TestRenderer.create>['root'];
 
 // The compiled component reads named exports from the real module object
 // returned by require('react-native'). The `import * as RN` above is an interop

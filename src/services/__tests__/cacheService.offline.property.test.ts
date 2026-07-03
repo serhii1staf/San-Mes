@@ -25,6 +25,7 @@ import {
   getCachedFeed,
   cacheGet,
   cacheSet,
+  cacheRemove,
   KEYS,
   MAX_FEED_POSTS,
   type LocalPost,
@@ -99,6 +100,16 @@ describe('async-storage-offline cacheService properties', () => {
         fc.uniqueArray(nonEmptyId, { maxLength: 20 }),
         fc.uniqueArray(nonEmptyId, { maxLength: 20 }),
         async (profile, conversations, messages, likeIds, followIds) => {
+          // fast-check v4 can clone array elements with a *null* prototype,
+          // whereas the cache round-trips every value through JSON, so real
+          // app data always carries `Object.prototype`. Normalise the generated
+          // inputs the same way before comparing so `toStrictEqual` checks the
+          // DATA, not fast-check's synthetic prototype. (Mirrors the JSON
+          // normalisation the Property 3 arbitrary already applies below.)
+          profile = JSON.parse(JSON.stringify(profile));
+          conversations = JSON.parse(JSON.stringify(conversations));
+          messages = JSON.parse(JSON.stringify(messages));
+
           // Profile round-trip
           await cacheProfile(profile.id, profile);
           expect(await getCachedProfile(profile.id)).toStrictEqual(profile);
@@ -214,6 +225,14 @@ describe('async-storage-offline cacheService properties', () => {
         fallbackVal,
         fc.constantFrom('read-throws', 'write-throws', 'corrupted-json'),
         async (key, fallback, scenario) => {
+          // Isolate this iteration from prior ones. `cacheSet` writes to BOTH
+          // MMKV and AsyncStorage, and MMKV is NOT reset between fast-check
+          // iterations (jest.setup.js only clears AsyncStorage per-test), so a
+          // previous iteration's write to the same key could otherwise leak in
+          // (e.g. the `write-throws` case still lands a value in MMKV before the
+          // mocked AsyncStorage failure). Clearing both stores first makes the
+          // "read fails → fallback" assertion deterministic.
+          await cacheRemove(key);
           if (scenario === 'read-throws') {
             const spy = jest.spyOn(AsyncStorage, 'getItem').mockRejectedValueOnce(new Error('boom'));
             const read = await cacheGet(key, fallback);

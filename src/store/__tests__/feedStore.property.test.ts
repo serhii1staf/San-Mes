@@ -23,7 +23,7 @@ const postArb: fc.Arbitrary<Post> = fc.record({
   sharesCount: fc.integer({ min: 0, max: 10000 }),
   isLiked: fc.boolean(),
   isBookmarked: fc.boolean(),
-  createdAt: fc.date().map((d) => d.toISOString()),
+  createdAt: fc.date({ noInvalidDate: true }).map((d) => d.toISOString()),
 });
 
 // A list of posts with unique ids so id-based lookups are unambiguous.

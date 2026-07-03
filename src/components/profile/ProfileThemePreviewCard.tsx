@@ -57,8 +57,9 @@ function ProfileThemePreviewCardBase({
   const height = Math.round(width * 1.3);
 
   // The registry guarantees ≥2 gradient stops for every theme, so this cast to
-  // the tuple type `LinearGradient` expects is always satisfied.
-  const gradientColors = palette.gradient as readonly [string, string, ...string[]];
+  // the tuple type `LinearGradient` expects is always satisfied. Cast via
+  // `unknown` because a plain `string[]`→tuple conversion is otherwise rejected.
+  const gradientColors = palette.gradient as unknown as readonly [string, string, ...string[]];
 
   return (
     <Pressable

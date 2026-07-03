@@ -80,7 +80,14 @@ describe('profileThemeStore — per-account isolation (Property 11 / Req 9.5)', 
           }
 
           // Snapshot every account's value immediately before the update.
-          const before = { ...useProfileThemeStore.getState().byAccount };
+          // Use a null-prototype clone (not `{ ...map }`): object spread routes
+          // a `"__proto__"` key through the prototype setter and silently drops
+          // it, which would make the snapshot diverge from the store's own
+          // null-prototype map for that (pathological but valid) account id.
+          const before = Object.assign(
+            Object.create(null),
+            useProfileThemeStore.getState().byAccount
+          );
 
           // The single update under test.
           store.setThemeId(accountId, newId);

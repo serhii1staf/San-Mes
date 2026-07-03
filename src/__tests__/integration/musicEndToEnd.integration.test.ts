@@ -193,6 +193,14 @@ afterEach(() => {
   delete (global as any).fetch;
 });
 
+// This is a heavy end-to-end integration suite (real searchTracks + real
+// music store + real widget render, several `act()` async passes per test).
+// In isolation each test is ~1.5s, but under the full parallel suite the
+// machine is contended and a single test can drift past Jest's default 5s
+// per-test limit, producing a flaky timeout. Give the integration tests
+// generous headroom so they stay deterministic in CI.
+jest.setTimeout(20000);
+
 // ───────────────────────────────────────────────────────────────────────────
 // Scenario tests
 // ───────────────────────────────────────────────────────────────────────────

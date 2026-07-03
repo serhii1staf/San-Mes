@@ -35,6 +35,8 @@ export interface DBProfileLike {
   links?: any;
   badge?: string | null;
   is_verified?: boolean;
+  theme_id?: string | null;
+  screenshots_disabled?: boolean | null;
   created_at?: string;
   updated_at?: string;
 }
