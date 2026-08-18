@@ -1,24 +1,33 @@
 // Local declaration shim for `react-test-renderer`.
 //
-// `react-test-renderer` is pulled in as a transitive dependency of `react`
-// (peer of `jest-expo`), but `@types/react-test-renderer` is not installed
-// in this project to keep devDependencies minimal. This shim covers the
-// narrow surface our test files actually use:
+// `react-test-renderer` is a transitive dependency of `react` (peer of
+// `jest-expo`) and ships NO bundled declarations. Because `expo/tsconfig.base`
+// enables `allowJs`, TypeScript resolves its untyped `index.js` and never falls
+// back to `@types/react-test-renderer`, so this ambient shim is the only thing
+// that types the test suite.
 //
+// Two rejected alternatives, for the next person who wonders:
+//   - Installing `@types/react-test-renderer`: it is never consulted (the `.js`
+//     resolution wins), so it changes nothing on its own.
+//   - A tsconfig `paths` remap onto that types package: `jest-expo` mirrors
+//     tsconfig `paths` into Jest's `moduleNameMapper`, which redirects the
+//     RUNTIME import at a types-only folder and breaks every suite.
+//
+// Surface covered — exactly what the test files use:
 //   - `TestRenderer.create(element, options?)`
 //   - `act(cb)` — both `import { act }` and `TestRenderer.act`
-//   - `renderer.toJSON()`, `renderer.root`, `renderer.unmount()`
-//   - `root.findAll(predicate)` / `root.find(predicate)` for property tests
-//   - Type references like `TestRenderer.ReactTestRenderer` /
-//     `TestRenderer.ReactTestInstance`
+//   - `renderer.toJSON()`, `.toTree()`, `.update()`, `.root`, `.unmount()`
+//   - `root.find*` / `root.findAll*` for the property tests
 //
-// Pattern: declare a namespace AND a default const that share the same name.
-// This mirrors the historical `@types/react-test-renderer` shape and lets
-// the existing test files use both `TestRenderer.X` as a type AND named
-// imports (`import TestRenderer, { act } from 'react-test-renderer'`).
+// SHAPE: a `namespace TestRenderer` merged with a same-named `const` that is
+// the default export. That merge is what makes the single imported identifier
+// usable as a VALUE (`TestRenderer.create(...)`) *and* as a TYPE namespace
+// (`TestRenderer.ReactTestRenderer`) — both spellings appear across the suite.
+// The namespace members are ALSO re-exported at module top level so
+// `import type { ReactTestInstance } from 'react-test-renderer'` works.
 //
-// If a future test needs more API, extend this file rather than installing
-// the upstream types — keeps devDependencies frozen.
+// If a future test needs more API, extend this file rather than installing the
+// upstream types — keeps devDependencies frozen.
 
 declare module 'react-test-renderer' {
   namespace TestRenderer {
@@ -28,12 +37,18 @@ declare module 'react-test-renderer' {
       parent: ReactTestInstance | null;
       children: Array<ReactTestInstance | string>;
       instance: any;
-      findAll(predicate: (node: ReactTestInstance) => boolean): ReactTestInstance[];
+      findAll(
+        predicate: (node: ReactTestInstance) => boolean,
+        options?: { deep: boolean },
+      ): ReactTestInstance[];
       find(predicate: (node: ReactTestInstance) => boolean): ReactTestInstance;
       findByType(type: any): ReactTestInstance;
-      findAllByType(type: any): ReactTestInstance[];
+      findAllByType(type: any, options?: { deep: boolean }): ReactTestInstance[];
       findByProps(props: Record<string, any>): ReactTestInstance;
-      findAllByProps(props: Record<string, any>): ReactTestInstance[];
+      findAllByProps(
+        props: Record<string, any>,
+        options?: { deep: boolean },
+      ): ReactTestInstance[];
     }
 
     interface ReactTestRendererJSON {
@@ -56,18 +71,23 @@ declare module 'react-test-renderer' {
     }
   }
 
+  // Top-level type re-exports — covers
+  // `import type { ReactTestInstance } from 'react-test-renderer'`.
+  export type ReactTestInstance = TestRenderer.ReactTestInstance;
+  export type ReactTestRendererJSON = TestRenderer.ReactTestRendererJSON;
+  export type ReactTestRenderer = TestRenderer.ReactTestRenderer;
+  export type TestRendererOptions = TestRenderer.TestRendererOptions;
+
   // Named exports — covers `import { act, create } from 'react-test-renderer'`.
   export function create(
     element: any,
-    options?: TestRenderer.TestRendererOptions
+    options?: TestRenderer.TestRendererOptions,
   ): TestRenderer.ReactTestRenderer;
 
   export function act<T = void>(cb: () => T | Promise<T>): Promise<T>;
 
   // Default export — covers `import TestRenderer from 'react-test-renderer'`.
-  // The const carries the same identifier as the namespace above, so
-  // `TestRenderer.ReactTestRenderer` resolves both as a value access and as
-  // a type reference (declaration merging).
+  // Shares the namespace's identifier so both meanings travel with the import.
   const TestRenderer: {
     create: typeof create;
     act: typeof act;

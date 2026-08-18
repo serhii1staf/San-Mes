@@ -58,6 +58,22 @@ expo-env.d.ts
 telegram_ios_settings_icon_pack*.zip
 pixel_characters_pack*.zip
 
+# Raw logo/icon iteration exports and Apple's SF Symbols installer. Same rule
+# as above: only the optimized, shipped assets under `assets/` belong in git.
+logoappekpan/
+sanemageekon.zip
+SF-Symbols-*.dmg
+
+# Local-only Worker scratch: a dump of the LIVE deployed bundle plus the
+# prepend/extract helpers used to hot-patch it, and the wrangler state that
+# comes with them. The real Worker source is `workers/api/src/` (committed).
+/worker/
+worker_dump.txt
+worker_live_check.txt
+
+# Scratch commit-message buffer.
+.git_commit_msg.txt
+
 # Cloudflare Worker scaffold — the Worker has its own package.json and
 # package-lock.json (committed). Local-only state must stay out of git.
 workers/api/node_modules/

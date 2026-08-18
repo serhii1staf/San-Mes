@@ -886,6 +886,8 @@ export default function FeedScreen() {
   }, []);
 
   const handleFollow = useCallback((targetUserId: string) => {
+    // Guard: without a signed-in id the mutation would be queued with an
+    // `undefined` followerId and silently fail on the server.
     if (!userId) return;
     triggerHaptic('medium');
     // Toggle: if already following, unfollow; otherwise follow. Both paths

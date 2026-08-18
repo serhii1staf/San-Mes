@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useMemo, ReactNode } from 'react';
 import { lightTheme, darkTheme, ThemeColors, colors, spacing, borderRadius, typography } from './tokens';
-import { fontFamily } from './fonts';
+import { fontFamily, type FontFamily } from './fonts';
 import { shadows, getShadow } from './shadows';
 import { timingConfigs, springConfigs } from './animations';
 import { useThemeStore, ACCENT_COLORS, FONT_SIZES } from '../store/themeStore';
@@ -40,8 +40,10 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
   const fontSizeConfig = FONT_SIZES.find(f => f.key === fontSize);
   const fontScale = fontSizeConfig?.scale || 1.0;
 
-  // Font family mapping based on user selection
-  const fontFamilyMap: Record<string, typeof fontFamily> = {
+  // Font family mapping based on user selection. Typed as plain strings per
+  // weight — `typeof fontFamily` narrows each slot to the literal Inter face
+  // name, which the System/Georgia/Courier alternates can never satisfy.
+  const fontFamilyMap: Record<string, FontFamily> = {
     inter: fontFamily, // loaded Inter fonts
     system: { light: 'System', regular: 'System', medium: 'System', semibold: 'System', bold: 'System' },
     serif: { light: 'Georgia', regular: 'Georgia', medium: 'Georgia', semibold: 'Georgia', bold: 'Georgia' },

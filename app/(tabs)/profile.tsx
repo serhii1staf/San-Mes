@@ -897,7 +897,18 @@ export default function ProfileScreen() {
     return () => scrollY.removeListener(id);
   }, [scrollY, tabsOffsetY, pinnedBarTop]);
 
-  if (!user) return <View style={{ flex: 1, backgroundColor: theme.colors.background.primary, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator size="large" color={theme.colors.accent.primary} /></View>;
+  // NOTE: the "no user yet" spinner used to early-return HERE, above the ~12
+  // hooks that follow (useMemo / useState / useSettingsStore /
+  // useBannerBrightness). That is a rules-of-hooks violation: the hook COUNT
+  // changed the moment `user` flipped between null and set — i.e. on every
+  // login, logout and session restore — and React aborts the render with
+  // "Rendered more hooks than during the previous render", taking the profile
+  // tab down to the error boundary.
+  //
+  // The guard now lives immediately before the JSX return at the bottom, so the
+  // hook order is identical on every render. Everything between here and there
+  // reads `user` optionally; the values computed during the brief null window
+  // are simply discarded by that guard.
 
   const userLinks = useMemo<{ type: string; url: string }[]>(() => (user as any)?.links || [], [user]);
   // "Build-your-own" header decorations. Prefer the in-memory user value (set
@@ -957,7 +968,7 @@ export default function ProfileScreen() {
   const setProfileTabCustom = useSettingsStore((s) => s.setProfileTabCustom);
   const clearProfileTabCustom = useSettingsStore((s) => s.clearProfileTabCustom);
   const editingTabEntry = editingTabKey ? tabs.find((tt) => tt.key === editingTabKey) : null;
-  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(`https://san-m-app.com/profile/${user.id}`)}`;
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(`https://san-m-app.com/profile/${user?.id ?? ''}`)}`;
 
   // ─── ListHeaderComponent — memoized ────────────────────────────────────
   // Why memoize: FlatList passes the JSX through untouched, so React still
@@ -1014,12 +1025,12 @@ export default function ProfileScreen() {
         <Pressable onPress={() => setShowAccountSwitcher(true)} style={{ borderRadius: 26, alignSelf: 'flex-start' }}>
           {glassActive ? (
             <NativeGlassView glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} style={{ width: 84, height: 84, borderRadius: 26, alignItems: 'center', justifyContent: 'center' }}>
-              <Avatar emoji={user.emoji} size="lg" />
+              <Avatar emoji={user?.emoji ?? ''} size="lg" />
             </NativeGlassView>
           ) : (
             <View style={{ width: 84, height: 84, borderRadius: 26, overflow: 'hidden' }}>
               <BlurView intensity={70} tint={theme.isDark ? 'dark' : 'light'} style={{ width: 84, height: 84, alignItems: 'center', justifyContent: 'center' }}>
-                <Avatar emoji={user.emoji} size="lg" />
+                <Avatar emoji={user?.emoji ?? ''} size="lg" />
               </BlurView>
             </View>
           )}
@@ -1027,12 +1038,12 @@ export default function ProfileScreen() {
 
         {/* Name + verified + badge */}
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 12 }}>
-          <Text variant="h2" weight="bold" color="#FFFFFF" numberOfLines={1} style={{ flexShrink: 1, fontSize: 24, lineHeight: 28, textShadowColor: 'rgba(0,0,0,0.35)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 }}>{user.displayName}</Text>
-          {user.is_verified && <VerifiedBadge size={18} />}
-          {user.badge && <UserBadge badge={user.badge} size="md" />}
+          <Text variant="heading" weight="bold" color="#FFFFFF" numberOfLines={1} style={{ flexShrink: 1, fontSize: 24, lineHeight: 28, textShadowColor: 'rgba(0,0,0,0.35)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 }}>{user?.displayName}</Text>
+          {user?.is_verified && <VerifiedBadge size={18} />}
+          {user?.badge && <UserBadge badge={user.badge} size="md" />}
         </View>
         {/* @handle */}
-        <Text variant="body" color="rgba(255,255,255,0.85)" numberOfLines={1} style={{ marginTop: 2, textShadowColor: 'rgba(0,0,0,0.35)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 }}>@{user.username}</Text>
+        <Text variant="body" color="rgba(255,255,255,0.85)" numberOfLines={1} style={{ marginTop: 2, textShadowColor: 'rgba(0,0,0,0.35)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 }}>@{user?.username}</Text>
 
         {/* Social link chips */}
         {userLinks.length > 0 && (
@@ -1044,7 +1055,7 @@ export default function ProfileScreen() {
         )}
 
         {/* Bio */}
-        {user.bio ? (
+        {user?.bio ? (
           <View style={{ marginTop: 14 }}>
             <LinkedText style={{ color: theme.colors.text.secondary, fontSize: 15, lineHeight: 21 }}>
               {user.bio}
@@ -1074,7 +1085,7 @@ export default function ProfileScreen() {
           <ActionPill glassActive={glassActive} theme={theme} square onPress={() => { triggerHaptic('light'); router.push('/profile/customize-header'); }}>
             <Feather name="smile" size={16} color={theme.colors.text.primary} />
           </ActionPill>
-          <ActionPill glassActive={glassActive} theme={theme} square onPress={async () => { triggerHaptic('light'); try { await Share.share({ message: `https://san-m-app.com/profile/${user.id}` }); } catch {} }}>
+          <ActionPill glassActive={glassActive} theme={theme} square onPress={async () => { triggerHaptic('light'); try { await Share.share({ message: `https://san-m-app.com/profile/${user?.id ?? ''}` }); } catch {} }}>
             <Feather name="share" size={16} color={theme.colors.text.primary} />
           </ActionPill>
         </View>
@@ -1180,6 +1191,16 @@ export default function ProfileScreen() {
     <>{bannerHeader}{tabsRow}</>
   ), [bannerHeader, tabsRow]);
 
+  // "No user yet" spinner. Deliberately placed AFTER every hook above so the
+  // hook order/count is identical whether or not a session is loaded — see the
+  // long note where this guard used to live.
+  if (!user) {
+    return (
+      <View style={{ flex: 1, backgroundColor: theme.colors.background.primary, alignItems: 'center', justifyContent: 'center' }}>
+        <ActivityIndicator size="large" color={theme.colors.accent.primary} />
+      </View>
+    );
+  }
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>

@@ -68,11 +68,11 @@ function SettingsRow({
         style={{
           width: 32,
           height: 32,
-          // Round-rectangle iOS-Settings-style tile (~28% radius — closer to
-          // an iOS app-icon shape than a fully rounded squircle). The user
-          // said the previous 14 px (~44%) read as too circle-like; 9 keeps
-          // the corners obviously rounded but the silhouette stays a square.
-          borderRadius: 9,
+          // Round-rectangle iOS-Settings-style tile. Bumped 9 -> 12 (~37%
+          // radius) per the follow-up UX request to soften the corners a bit
+          // more (squircle-leaning) while keeping the silhouette square rather
+          // than fully circular.
+          borderRadius: 12,
           backgroundColor: tint.bg,
           alignItems: 'center',
           justifyContent: 'center',

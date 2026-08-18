@@ -1,6 +1,6 @@
 import React, { memo, useState, useImperativeHandle, forwardRef, useCallback, useRef, useEffect } from 'react';
-import { View, TextInput, Pressable, StyleSheet, Text, LayoutAnimation, UIManager, Platform } from 'react-native';
-import Reanimated, { useSharedValue, useAnimatedStyle, withSpring, interpolate } from 'react-native-reanimated';
+import { View, TextInput, Pressable, StyleSheet, Text } from 'react-native';
+import Reanimated, { useSharedValue, useAnimatedStyle, withSpring, withTiming, interpolate, Easing } from 'react-native-reanimated';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../../theme';
 import { useT } from '../../i18n/store';
@@ -10,24 +10,17 @@ import { AnimatedKeyboardIcon } from './AnimatedKeyboardIcon';
 import { AnimatedEmojiIcon } from './AnimatedEmojiIcon';
 import { AnimatedGifIcon } from './AnimatedGifIcon';
 
-// Enable LayoutAnimation on Android (no-op on iOS where it's already on by
-// default). Same pattern as app/comments/[id].tsx — needed for the one-shot
-// expand/collapse layout animation fired at the 1↔multiline transition.
-if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
-  UIManager.setLayoutAnimationEnabledExperimental(true);
-}
-
-// Gentle, warm one-shot layout config fired ONLY at the 1↔multiline toggle.
-// A soft, high-damping spring on `update` (~260ms) gives an organic, slightly
-// cushioned grow/collapse — warm, not bouncy, not abrupt — replacing the old
-// quick 170ms easeInEaseOut that felt too sharp. Still a single layout commit,
-// so it never reintroduces per-frame glass relayout.
-const INPUT_GROW_ANIM = {
-  duration: 260,
-  create: { type: LayoutAnimation.Types.easeInEaseOut, property: LayoutAnimation.Properties.opacity },
-  update: { type: LayoutAnimation.Types.spring, springDamping: 0.82 },
-  delete: { type: LayoutAnimation.Types.easeInEaseOut, property: LayoutAnimation.Properties.opacity },
-};
+// Field height clamp bounds — mirror the inner TextInput's minHeight/maxHeight.
+// The field's height is now an explicit, component-owned Reanimated value
+// (`fieldHeight`) animated with `withTiming`, rather than the implicit
+// TextInput height cushioned by a fragile one-shot `LayoutAnimation`. withTiming
+// is interruptible: a new target mid-animation retargets smoothly from the
+// current value instead of snapping, and it runs isolated on the UI thread so it
+// can't race the keyboard frame, the swallow spring (`sw`), or the list.
+const MIN_FIELD_HEIGHT = 22;
+const MAX_FIELD_HEIGHT = 100;
+// Duration/easing for the smooth height retarget (short + standard ease-out).
+const HEIGHT_ANIM = { duration: 160, easing: Easing.out(Easing.quad) };
 
 // Delete the last user-perceived character (grapheme) from a string. Handles
 // astral emoji (surrogate pairs), variation selectors, skin-tone modifiers and
@@ -265,6 +258,11 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
   // opaque field (lower zIndex) so the field simply covers it. Either way the
   // expansion + the top-left emoji button behave identically.
   const sw = useSharedValue(0);
+  // Explicit, component-owned animated field height. Initializes to the
+  // collapsed base (MIN_FIELD_HEIGHT) so the bar mounts at rest — no
+  // measure-then-animate on mount, so chat-open adds zero height work to the
+  // navigation frame. handleContentSizeChange retargets it via withTiming.
+  const fieldHeight = useSharedValue(MIN_FIELD_HEIGHT);
   const expandedRef = useRef(false);
   const setExpanded = useCallback((next: boolean) => {
     if (next === expandedRef.current) return;
@@ -303,13 +301,25 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
   const handleHasTextChange = useCallback((next: boolean) => setHasText(next), []);
 
   useImperativeHandle(ref, () => ({
-    setText: (val: string) => { fieldRef.current?.setText(val); if (!val) setExpanded(false); },
-    clear: () => { fieldRef.current?.clear(); lastHeightRef.current = 0; setExpanded(false); },
+    setText: (val: string) => {
+      fieldRef.current?.setText(val);
+      if (!val) {
+        setExpanded(false);
+        lastHeightRef.current = 0;
+        fieldHeight.value = withTiming(MIN_FIELD_HEIGHT, HEIGHT_ANIM);
+      }
+    },
+    clear: () => {
+      fieldRef.current?.clear();
+      lastHeightRef.current = 0;
+      setExpanded(false);
+      fieldHeight.value = withTiming(MIN_FIELD_HEIGHT, HEIGHT_ANIM);
+    },
     getText: () => fieldRef.current?.getText() ?? '',
     insert: (s: string) => { fieldRef.current?.insert(s); },
     backspace: () => { fieldRef.current?.backspace(); },
     focus: () => { fieldRef.current?.focus(); },
-  }), [setExpanded]);
+  }), [setExpanded, fieldHeight]);
 
   const canSend = hasText || hasPendingImages;
 
@@ -321,27 +331,32 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
     onSend(val);
   }, [onSend]);
 
-  // Detect 1↔multi-line with hysteresis (expand >34px, collapse <28px). At the
-  // 1↔multiline TRANSITION (and ONLY then) we fire a single, gentle one-shot
-  // LayoutAnimation so the input wrap's height/position eases smoothly as it
-  // grows/collapses. This is a ONE-SHOT layout commit (~260ms soft spring),
-  // NOT a per-frame interpolation, so it does NOT reintroduce the per-frame
-  // liquid-glass union recompute the perf comments warn about — it animates the
-  // single layout change at the toggle, exactly like app/comments/[id].tsx.
-  // The per-frame `sw`/glass-swallow + emoji-reveal logic below is untouched.
+  // Smoothly ease EVERY height change as the field grows/shrinks across lines.
+  // `onContentSizeChange` fires once per line added/removed (NOT per frame). We
+  // clamp the measured content height to [MIN_FIELD_HEIGHT, MAX_FIELD_HEIGHT]
+  // and retarget the explicit `fieldHeight` shared value via `withTiming`.
+  // withTiming is INTERRUPTIBLE: a new target arriving mid-animation (fast
+  // typing/deleting across lines) retargets smoothly from the current value
+  // instead of snapping, and it animates only this field wrapper's own height on
+  // the UI thread — so it never reintroduces the per-frame liquid-glass union
+  // recompute and never races the keyboard frame or the `sw` swallow spring. The
+  // hysteresis below still drives ONLY the horizontal `sw`/glass-swallow
+  // expand/collapse + emoji reveal (unchanged).
   const lastHeightRef = useRef(0);
   const handleContentSizeChange = useCallback((e: { nativeEvent: { contentSize: { height: number } } }) => {
     const h = Math.round(e.nativeEvent.contentSize.height);
     if (h === lastHeightRef.current) return;
     lastHeightRef.current = h;
+    // Clamp to the animatable range (past the cap the TextInput scrolls
+    // internally) and ease the height commit for this line change.
+    const target = Math.min(MAX_FIELD_HEIGHT, Math.max(MIN_FIELD_HEIGHT, h));
+    fieldHeight.value = withTiming(target, HEIGHT_ANIM);
     if (!expandedRef.current && h > 34) {
-      LayoutAnimation.configureNext(INPUT_GROW_ANIM);
       setExpanded(true);
     } else if (expandedRef.current && h < 28) {
-      LayoutAnimation.configureNext(INPUT_GROW_ANIM);
       setExpanded(false);
     }
-  }, [setExpanded]);
+  }, [setExpanded, fieldHeight]);
 
   // PERCEIVED-LAG FIX (glass only) ─────────────────────────────────────────
   // The swallow used to drive LAYOUT props (`marginRight` on the photo wrapper
@@ -394,11 +409,17 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
     pointerEvents: sw.value > 0.01 ? 'auto' : 'none',
   }));
 
+  // Explicit animated height for the field content row. This is the single
+  // value that smoothly grows/shrinks the composer; it animates only this
+  // wrapper's own height (not a global layout transaction), so the glass-merge
+  // still flips once-per-transition on `sw` and is never recomputed per frame.
+  const heightStyle = useAnimatedStyle(() => ({ height: fieldHeight.value }));
+
   // Field content (TextInput + GIF) with the animated left padding that keeps
   // the text pinned while the field swallows the button. The TextInput lives in
   // the memoized <ChatField> so keystrokes don't reconcile this glass chrome.
   const fieldContent = (
-    <Reanimated.View style={[styles.fieldContent, fieldPadStyle]}>
+    <Reanimated.View style={[styles.fieldContent, fieldPadStyle, heightStyle]}>
       <ChatField
         ref={fieldRef}
         onContentSizeChange={handleContentSizeChange}

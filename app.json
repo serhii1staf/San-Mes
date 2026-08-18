@@ -18,6 +18,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.sanmes.app",
+      "appleTeamId": "SY2H67GC49",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "UIBackgroundModes": [

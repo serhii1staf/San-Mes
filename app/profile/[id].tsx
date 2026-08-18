@@ -1291,7 +1291,7 @@ export default function UserProfileScreen() {
 
         {/* Name + verified + badge */}
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 12 }}>
-          <Text variant="h2" weight="bold" color="#FFFFFF" numberOfLines={1} style={{ flexShrink: 1, fontSize: 24, lineHeight: 28, textShadowColor: 'rgba(0,0,0,0.35)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 }}>{displayProfile.display_name}</Text>
+          <Text variant="heading" weight="bold" color="#FFFFFF" numberOfLines={1} style={{ flexShrink: 1, fontSize: 24, lineHeight: 28, textShadowColor: 'rgba(0,0,0,0.35)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 }}>{displayProfile.display_name}</Text>
           {displayProfile.is_verified && <VerifiedBadge size={18} />}
           {displayProfile.badge && <UserBadge badge={displayProfile.badge} size="md" />}
         </View>

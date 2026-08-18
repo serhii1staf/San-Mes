@@ -2998,20 +2998,11 @@ export default function ChatScreen() {
     if (n === 0) return 'text';
     return n === 1 ? 'media1' : 'mediaN';
   }, []);
-  const onScrollToIndexFailedCb = useCallback((info: { index: number; averageItemLength: number; highestMeasuredFrameIndex: number }) => {
-    // Far/unmeasured target (no getItemLayout + variable heights): grow the
-    // render window to include the target, then retry with an INCREASING delay
-    // so the rows between the current position and the target get a chance to
-    // mount/measure on each pass. Capped so a genuinely unreachable index can't
-    // loop forever. Each failed `scrollToIndex` re-invokes this callback, which
-    // is what drives the loop forward until the row lands.
-    const attempt = jumpAttemptRef.current++;
-    if (attempt > 12) return;
-    const delay = 80 + attempt * 80;
-    setTimeout(() => {
-      try { flatListRef.current?.scrollToIndex({ index: info.index, animated: true, viewPosition: 0.5 }); } catch {}
-    }, delay);
-  }, []);
+  // NOTE: the old `onScrollToIndexFailed` retry ladder lived here. FlashList v2
+  // has no such prop — it resolves unmeasured targets internally — so the
+  // callback was dead code being handed to a list that never calls it. Kept the
+  // `jumpAttemptRef` reset at the jump sites (harmless, and still useful if we
+  // ever need to reinstate a bounded retry on top of scrollToIndex).
 
   // ── Scroll-to-bottom button ────────────────────────────────────────────
   // Telegram-style floating affordance that appears when the user has

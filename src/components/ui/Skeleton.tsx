@@ -45,7 +45,11 @@ import { useTheme } from '../../theme';
 export interface SkeletonProps {
   /** Width of the placeholder box. Default `'100%'`. */
   width?: number | string;
-  /** Height of the placeholder box. Default `16`. */
+  /**
+   * Height of the placeholder box. Default `16`. Accepts a percentage string
+   * too (callers fill image slots with `height="100%"`), matching what RN's
+   * `ViewStyle` allows at runtime.
+   */
   height?: number | string;
   /** Corner radius. Default `8`. */
   radius?: number;
@@ -200,9 +204,14 @@ function SkeletonBase({
     <View
       style={[
         styles.container,
-        // Cast: RN's ViewStyle accepts `number | string` for width/height at
+        // Cast: RN's ViewStyle accepts `number | string` for width at
         // runtime; the public prop type mirrors that flexibility.
-        { width: width as ViewStyle['width'], height: height as ViewStyle['height'], borderRadius: radius, backgroundColor: base },
+        {
+          width: width as ViewStyle['width'],
+          height: height as ViewStyle['height'],
+          borderRadius: radius,
+          backgroundColor: base,
+        },
         style,
       ]}
       // Measure the box so the sweep worklet can use a numeric

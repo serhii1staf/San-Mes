@@ -36,8 +36,11 @@ export type ProfileThemeId =
 export type AmbientAnimationType = 'snow' | 'leaves';
 
 export interface ThemePalette {
-  /** 2–5 gradient stops, top→bottom. */
-  gradient: string[];
+  /**
+   * 2–5 gradient stops, top→bottom. Tuple-typed (≥2 stops) so consumers can
+   * hand it straight to expo-linear-gradient's `colors` prop without a cast.
+   */
+  gradient: [string, string, ...string[]];
   text: string; // primary text
   secondaryText: string; // secondary text
   accent: string; // accent color

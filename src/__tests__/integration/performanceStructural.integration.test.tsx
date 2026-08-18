@@ -358,11 +358,18 @@ function detectFlatListVirt(source: string): ListVirt {
 //     virtualization knobs needed: sizing + recycling are automatic), OR
 //   • a FlatList configured with the full set of virtualization knobs.
 // The feed and conversations list were migrated to FlashList v2 (native
-// recycling) — they no longer carry the FlatList knobs by design. The feed
-// renders the `AnimatedFlashList` variant (a Reanimated-wrapped FlashList that
-// still cell-recycles), so both `<FlashList` and `<AnimatedFlashList` count.
+// recycling) — they no longer carry the FlatList knobs by design.
+//
+// The element may be rendered either as `<FlashList>` or as the Reanimated
+// wrapper `<AnimatedFlashList>` (the feed needs the latter to drive its header
+// via a native-driver `Animated.event` on `onScroll`). Both are the same
+// recycling list, so both satisfy the invariant — matching only `<FlashList`
+// silently passed the feed as "not virtualised" after that switch.
 function usesFlashList(source: string): boolean {
-  return /@shopify\/flash-list/.test(source) && /<(?:Animated)?FlashList\b/.test(source);
+  return (
+    /@shopify\/flash-list/.test(source) &&
+    /<(?:Animated)?FlashList\b/.test(source)
+  );
 }
 
 describe('Performance integration — heavy screens declare FlatList virtualization', () => {

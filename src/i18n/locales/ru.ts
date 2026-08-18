@@ -407,6 +407,10 @@ const ru: Record<string, string> = {
   'chat.menu.delete': 'Удалить',
   'chat.menu.translate': 'Перевести',
 
+  // NOTE: the `translation.*` keys live in the "Translation sheet" block higher
+  // up in this file. A duplicate block used to sit here and silently shadowed
+  // it (and was missing `translation.copy_a11y`).
+
   // ─── AI chat ───────────────────────────────────────────────────────────
   'ai_chat.title': 'San AI',
   'ai_chat.input_placeholder': 'Сообщение',

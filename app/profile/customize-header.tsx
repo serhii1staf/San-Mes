@@ -274,7 +274,7 @@ export default function CustomizeHeaderScreen() {
           symmetric horizontal padding clears the side buttons so a long title
           truncates (numberOfLines={1}) instead of overlapping. */}
       <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, top: insets.top + 8, height: 34, zIndex: 10, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 84 }}>
-        <Text variant="h3" weight="bold" numberOfLines={1} style={{ textAlign: 'center' }}>{t('customize.title', 'Оформление')}</Text>
+        <Text variant="subheading" weight="bold" numberOfLines={1} style={{ textAlign: 'center' }}>{t('customize.title', 'Оформление')}</Text>
       </View>
 
       {/* Top bar — floating ghost close pill + filled accent save pill, no hard
