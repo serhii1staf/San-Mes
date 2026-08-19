@@ -2155,14 +2155,21 @@ export default function ChatScreen() {
     };
 
     // Edit — peer changed text / images of a message we already have.
-    // Match by id; if not found (e.g. message loaded from Supabase has a
-    // different UUID-form id), the update is a silent no-op.
+    //
+    // Matches on EITHER identity. A message may be held locally under its stable
+    // local id with the server uuid in `serverId` (an optimistic send of ours) or
+    // under the server uuid directly (received via realtime, or loaded from history),
+    // and the incoming payload carries whichever id the sender published. Comparing
+    // only `m.id` silently missed half the cases.
+    const matchesPayload = (m: ChatMessage, payloadId: string) =>
+      m.id === payloadId || (!!m.serverId && m.serverId === payloadId);
+
     const onEdit = (msg: { data?: any }) => {
       const payload = msg?.data;
       if (!payload || typeof payload !== 'object' || !payload.id) return;
       const current = useChatStore.getState().messages[conversationId] || [];
       const next = current.map((m) =>
-        m.id === payload.id
+        matchesPayload(m, payload.id)
           ? { ...m, text: typeof payload.text === 'string' ? payload.text : m.text, imageUrls: Array.isArray(payload.imageUrls) ? payload.imageUrls : m.imageUrls }
           : m,
       );
@@ -2181,7 +2188,9 @@ export default function ChatScreen() {
       // only deleted from the bounded seed would otherwise survive in cache).
       hydrateFullHistoryRef.current();
       const current = useChatStore.getState().messages[conversationId] || [];
-      setMessages(conversationId, current.filter((m) => m.id !== payload.id) as any);
+      // Same either-identity match as `onEdit` — a delete published with the server
+      // uuid has to find a row we hold under a local id.
+      setMessages(conversationId, current.filter((m) => !matchesPayload(m, payload.id)) as any);
     };
 
     void channel.subscribe('msg', onNewMessage);
@@ -2456,14 +2465,16 @@ export default function ChatScreen() {
             `/v1/conversations/${encodeURIComponent(convId)}/messages`,
             { text: `::img::${url}::` },
           );
-          // Reconcile optimistic id → server id so a later history fetch
-          // dedupes instead of duplicating the GIF (same fix as handleSend).
+          // Record the server uuid alongside the stable local id so a later history
+          // fetch dedupes instead of duplicating the GIF. Deliberately NOT an
+          // overwrite of `id` — that would change a mounted row's key and remount the
+          // cell mid-scroll (same reasoning as `handleSend`).
           const serverGifId = sentGifData?.id || newMessage.id;
           if (serverGifId !== newMessage.id) {
             setMessages(
               conversationId,
               (useChatStore.getState().messages[conversationId] || []).map((m) =>
-                m.id === newMessage.id ? { ...m, id: serverGifId } : m,
+                m.id === newMessage.id ? { ...m, serverId: serverGifId } : m,
               ) as any,
             );
           }
@@ -2622,7 +2633,10 @@ export default function ChatScreen() {
               const realtime = getRealtime();
               if (realtime && conversationId) {
                 const channel = realtime.channels.get(chatChannelName(conversationId));
-                void channel.publish('msg.delete', { id: message.id });
+                // Publish the SERVER id when we have one: that is the id the peer
+                // stored the message under (it is what `handleSend` published), so a
+                // local `m-<ts>` id would never match on their side.
+                void channel.publish('msg.delete', { id: message.serverId || message.id });
               }
             } catch {}
           },
@@ -2749,7 +2763,9 @@ export default function ChatScreen() {
         if (realtime && conversationId) {
           const channel = realtime.channels.get(chatChannelName(conversationId));
           void channel.publish('msg.edit', {
-            id: editing.id,
+            // Prefer the server uuid — that is the id the peer stored the message
+            // under, so a local `m-<ts>` id would never match on their side.
+            id: editing.serverId || editing.id,
             text,
             imageUrls: finalImages,
           });
@@ -2825,17 +2841,24 @@ export default function ChatScreen() {
         );
         // Reconcile the optimistic row's id with the server's canonical id.
         // The optimistic message was added with a client id (`m-<ts>`), but
-        // the Worker stores it under a fresh uuid. Without this, a later
-        // history fetch (which carries the server uuid) fails to dedupe
-        // against the optimistic row and renders a SECOND copy — the chat
-        // message-duplication bug. We rewrite the local id to the server id
-        // here, and publish that same id so the peer dedupes too.
+        // the Worker stores it under a fresh uuid. Without recording that uuid, a
+        // later history fetch (which carries it) fails to dedupe against the
+        // optimistic row and renders a SECOND copy — the chat message-duplication
+        // bug.
+        //
+        // We RECORD the server uuid in `serverId` rather than overwriting `id`.
+        // Overwriting it changed a mounted row's React key, which forces FlashList to
+        // unmount and remount that cell; remounting the newest (often tallest,
+        // image-bearing) bubble re-measures it with `autoscrollToBottomThreshold`
+        // armed, so the list re-autoscrolled — a visible nudge on every single send.
+        // `chatStore.addMessage` dedupes on EITHER identity (see `isSameMessage`), so
+        // keeping the local id stable loses nothing.
         const serverMessageId = sentData?.id || newMessage.id;
         if (serverMessageId !== newMessage.id) {
           setMessages(
             conversationId,
             (useChatStore.getState().messages[conversationId] || []).map((m) =>
-              m.id === newMessage.id ? { ...m, id: serverMessageId } : m,
+              m.id === newMessage.id ? { ...m, serverId: serverMessageId } : m,
             ) as any,
           );
         }

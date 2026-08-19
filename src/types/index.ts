@@ -81,6 +81,24 @@ export interface ChatMessage {
    *  `chatSettings.replyPixelIcon` at compose time. */
   replyPixelIconId?: string;
   imageUrls?: string[];
+  /**
+   * The server's canonical uuid, when it differs from `id`.
+   *
+   * WHY BOTH: an optimistic send is created locally with `id = 'm-<timestamp>'` and
+   * rendered immediately. When the POST resolves the server returns its own uuid.
+   * The old behaviour was to REWRITE `id` to that uuid — but `id` is the list's
+   * `keyExtractor` output, so rewriting it changes a mounted row's React key, which
+   * forces FlashList to unmount and remount that cell. Remounting the newest (often
+   * tallest, image-bearing) bubble re-measures it while
+   * `autoscrollToBottomThreshold` is armed, so the list re-autoscrolls: a visible
+   * nudge on every single send.
+   *
+   * Keeping `id` stable for the row's whole life and recording the server uuid
+   * alongside it removes that nudge. Deduplication is what actually needs the server
+   * id, and `chatStore.addMessage` matches on EITHER field — so the realtime echo,
+   * a history fetch and a cache merge all still collapse onto the one local row.
+   */
+  serverId?: string;
 }
 
 export interface Conversation {

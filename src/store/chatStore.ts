@@ -64,6 +64,36 @@ function bumpConversationPreview(
 }
 
 /**
+ * Is `candidate` already present in `list`, under either of its two identities?
+ *
+ * A message can be known by its stable local id (`m-<ts>` for an optimistic send) and
+ * by the server's uuid. Two copies of the same logical message may therefore arrive
+ * with the ids swapped between the `id` and `serverId` fields depending on which path
+ * produced them, so every combination is checked:
+ *
+ *   local.id       === candidate.id
+ *   local.serverId === candidate.id          (echo arrives keyed by the server uuid)
+ *   local.id       === candidate.serverId    (cache copy keyed by the local id)
+ *   local.serverId === candidate.serverId    (two server-keyed copies)
+ *
+ * Exported for tests: this predicate is the whole defence against duplicated
+ * messages, and it is easy to break silently.
+ */
+export function isSameMessage(list: Message[], candidate: Message): boolean {
+  const id = candidate.id;
+  const serverId = candidate.serverId;
+  for (const m of list) {
+    if (m.id === id) return true;
+    if (m.serverId && m.serverId === id) return true;
+    if (serverId) {
+      if (m.id === serverId) return true;
+      if (m.serverId && m.serverId === serverId) return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Per-conversation ARRAY-level cap on the number of messages retained in memory.
  * Matches the chat screen's on-disk MAX_PERSISTED_MESSAGES (1000) so a long-lived,
  * very active chat (realtime echoes + sends appending via `addMessage`) cannot
@@ -168,14 +198,19 @@ export const useChatStore = create<ChatStoreState>()((set) => ({
   addMessage: (conversationId, message) =>
     set((state) => {
       const existing = state.messages[conversationId] || [];
-      // Dedup by id: never append a message whose id is already present.
-      // This is the universal safety net against the chat duplication bug —
-      // optimistic send, realtime echo, canonical-id reconcile re-keying and
-      // cache merges can all try to add the same logical message. The send
-      // path reconciles the optimistic client id (`m-<ts>`) to the server's
-      // uuid so the server copy and the optimistic copy share an id and
-      // collapse here instead of rendering twice.
-      if (message?.id && existing.some((m) => m.id === message.id)) {
+      // ── Dedupe on EITHER identity ──────────────────────────────────────────
+      //
+      // The universal safety net against the chat duplication bug: an optimistic
+      // send, a realtime echo, a history fetch and a cache merge can all try to add
+      // the same logical message.
+      //
+      // A message now has up to TWO identities — the stable local `id` a row keeps
+      // for its whole life, and the server's `serverId` (see the note on
+      // `ChatMessage.serverId` for why the local id is no longer overwritten). So the
+      // check has to consider both, in both directions: an incoming copy carrying the
+      // server uuid as its `id` must collapse onto the local row that has that uuid
+      // as its `serverId`, and vice versa.
+      if (message?.id && isSameMessage(existing, message)) {
         return state;
       }
       // Apply the update first, then mark MRU + evict whole least-recently-used
