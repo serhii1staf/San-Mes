@@ -48,6 +48,12 @@ const EMPTY_SELECTION: ReadonlySet<string> = new Set<string>();
 // right by exactly this much, so nothing ever overlaps the avatar.
 const SELECT_COLUMN_WIDTH = 34;
 
+// Resting height of the search row (field + its vertical padding). The
+// collapse-on-scroll animation interpolates the container between this and 0, so
+// it has to be a constant rather than measured — measuring would need an
+// onLayout round-trip before the first collapse could animate.
+const SEARCH_ROW_HEIGHT = 46;
+
 // Hoisted to module scope: these are referenced from inside memoized rows, so a
 // fresh object per render would defeat their prop-equality bail-outs.
 const styles = StyleSheet.create({
@@ -359,6 +365,12 @@ function ConversationItemBase({
   const localName = useChatSettingsStore((s) => s.settings[item.id]?.localName);
   const displayName = localName || item.participantName;
 
+  // Preview line under the name. A message with no text but a real timestamp is a
+  // photo/GIF message (the derived preview keeps the timestamp and leaves the text
+  // empty on purpose — the store must not do i18n), so label it here rather than
+  // rendering a blank line that reads as "no messages".
+  const previewText = item.lastMessage || (item.lastMessageAt ? t('chat.photo') : '');
+
   // Defer the native ContextMenu wrapper off the cold-mount frame. iOS's
   // `UIContextMenuInteraction` is set up per-view by the ContextMenu library;
   // arming all visible rows in one commit (the previous one-RAF-after-mount
@@ -531,7 +543,7 @@ function ConversationItemBase({
           {item.participantVerified && <VerifiedBadge size={13} />}
           {item.participantBadge && <UserBadge badge={item.participantBadge} size="sm" />}
         </View>
-        {item.lastMessage ? (
+        {previewText ? (
           <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
             <Text
               variant="caption"
@@ -539,7 +551,7 @@ function ConversationItemBase({
               numberOfLines={1}
               style={{ flex: 1 }}
             >
-              {item.lastMessage}
+              {previewText}
             </Text>
             {item.unreadCount > 0 && (
               <View
@@ -781,6 +793,10 @@ const ConversationItem = React.memo(ConversationItemBase, (prev, next) =>
   prev.onToggleSelect === next.onToggleSelect &&
   prev.item.id === next.item.id &&
   prev.item.lastMessage === next.item.lastMessage &&
+  // Also compared, because the preview line falls back to a "Photo" label keyed
+  // off the TIMESTAMP when the text is empty — without this a photo arriving into
+  // a chat whose last text was also empty would not repaint the row.
+  prev.item.lastMessageAt === next.item.lastMessageAt &&
   prev.item.unreadCount === next.item.unreadCount &&
   prev.item.participantName === next.item.participantName &&
   prev.item.participantEmoji === next.item.participantEmoji &&
@@ -965,6 +981,41 @@ export default function MessagesScreen() {
     });
   }, []);
 
+  // ── Collapse-on-scroll for the search field ───────────────────────────────
+  //
+  // 0 = fully open, 1 = fully collapsed. Flipped ONLY when the scroll offset
+  // crosses `SEARCH_COLLAPSE_AT`, so a long flick starts at most one animation
+  // per direction instead of doing work on every scroll event.
+  //
+  // The threshold has hysteresis (collapse at 56, re-open at 12) so a list
+  // resting near the boundary cannot oscillate.
+  const searchCollapse = useSharedValue(0);
+  const searchCollapsedRef = useRef(false);
+  const onListScroll = useCallback((e: any) => {
+    const y = e?.nativeEvent?.contentOffset?.y ?? 0;
+    const shouldCollapse = searchCollapsedRef.current ? y > 12 : y > 56;
+    if (shouldCollapse === searchCollapsedRef.current) return;
+    searchCollapsedRef.current = shouldCollapse;
+    searchCollapse.value = withTiming(shouldCollapse ? 1 : 0, {
+      duration: 200,
+      easing: REasing.out(REasing.cubic),
+    });
+  }, [searchCollapse]);
+
+  const searchCollapseStyle = useAnimatedStyle(() => ({
+    height: interpolate(searchCollapse.value, [0, 1], [SEARCH_ROW_HEIGHT, 0]),
+    opacity: interpolate(searchCollapse.value, [0, 1], [1, 0]),
+    marginBottom: interpolate(searchCollapse.value, [0, 1], [8, 0]),
+  }));
+
+  // Typing in the field must not let a stray scroll collapse it out from under
+  // the keyboard, and clearing the query should bring it back.
+  useEffect(() => {
+    if (!searchQuery) return;
+    searchCollapsedRef.current = false;
+    searchCollapse.value = withTiming(0, { duration: 160 });
+  }, [searchQuery, searchCollapse]);
+
   // Compose menu (mini-apps / AI / music / chat settings). State lives here
   // because its trigger is now the header button while the menu itself renders
   // as an overlay sibling — the two can no longer share a component's local
@@ -1121,27 +1172,67 @@ export default function MessagesScreen() {
     return () => handle.cancel();
   }, [entityConversations]);
 
+  // ── Last-message preview, derived locally ─────────────────────────────────
+  //
+  // `syncConversations` does not carry `lastMessage` / `lastMessageAt` at all, so
+  // the line under a contact's name was permanently blank on the cached path (the
+  // one that wins whenever the entity store has rows — i.e. essentially always).
+  // That is why the preview "never appears, or appears and then disappears".
+  //
+  // Rather than wait on a server field that isn't sent, derive it from the
+  // transcripts we ALREADY hold: the newest message of each conversation in the
+  // chat store. This is cache-first by construction —
+  //   * sending updates it instantly, because `addMessage` appends here;
+  //   * a realtime message updates it for the same reason;
+  //   * it survives a cold start for every chat whose tail was re-seeded from
+  //     MMKV, with no request of any kind.
+  //
+  // Keyed on the messages map, so it recomputes only when a transcript actually
+  // changes — not on every render of this screen.
+  const messagesByConv = useChatStore((s) => s.messages);
+  const previewByConv = useMemo(() => {
+    const out = new Map<string, { text: string; at: string }>();
+    for (const convId in messagesByConv) {
+      const list = messagesByConv[convId];
+      if (!list || list.length === 0) continue;
+      // Transcripts are stored oldest → newest, so the newest is the tail.
+      const last = list[list.length - 1];
+      if (!last?.createdAt) continue;
+      out.set(convId, { text: last.text || '', at: last.createdAt });
+    }
+    return out;
+  }, [messagesByConv]);
+
   // Use entityStore conversations as cache layer; fall back to chatStore if empty
   const conversations: Conversation[] = useMemo(() => {
     if (entityConversations.length > 0) {
       const profiles = useEntityStore.getState().profiles;
       // Map LocalConversation to Conversation type with defaults for missing fields
-      return entityConversations.map((c) => ({
-        id: c.id,
-        participantId: c.participantId,
-        participantName: c.participantName,
-        participantUsername: c.participantUsername,
-        participantEmoji: c.participantEmoji,
-        participantVerified: (c as any).participantVerified ?? profiles[c.participantId]?.is_verified ?? false,
-        participantBadge: (c as any).participantBadge ?? profiles[c.participantId]?.badge ?? null,
-        lastMessage: c.lastMessage || '',
-        lastMessageAt: c.lastMessageAt || '',
-        unreadCount: 0,
-        isOnline: false,
-      }));
+      return entityConversations.map((c) => {
+        // Prefer the locally-derived preview: it is at least as fresh as anything
+        // stored on the row, and unlike the row it is never blank for a chat we
+        // have messages for. Falls back to the stored value so a conversation with
+        // no cached transcript still shows whatever it had.
+        const local = previewByConv.get(c.id);
+        const storedAt = c.lastMessageAt || '';
+        const useLocal = !!local && (!storedAt || local.at >= storedAt);
+        return {
+          id: c.id,
+          participantId: c.participantId,
+          participantName: c.participantName,
+          participantUsername: c.participantUsername,
+          participantEmoji: c.participantEmoji,
+          participantVerified: (c as any).participantVerified ?? profiles[c.participantId]?.is_verified ?? false,
+          participantBadge: (c as any).participantBadge ?? profiles[c.participantId]?.badge ?? null,
+          lastMessage: useLocal ? local!.text : (c.lastMessage || ''),
+          lastMessageAt: useLocal ? local!.at : storedAt,
+          unreadCount: 0,
+          isOnline: false,
+        };
+      });
     }
     return chatStoreConversations;
-  }, [entityConversations, chatStoreConversations]);
+  }, [entityConversations, chatStoreConversations, previewByConv]);
 
   // ─── Bucket filter (openedAt-INDEPENDENT) ─────────────────────────────────
   // Each chat belongs to exactly one bucket. The "apps" tab shows no chats.
@@ -1403,10 +1494,18 @@ export default function MessagesScreen() {
     <View style={containerStyle}>
       {/* Gradient fade header */}
       <View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100, height: headerGradientHeight }} pointerEvents="box-none">
+        {/* `pointerEvents="none"` is REQUIRED, not decorative.
+            This header is absolutely positioned and 28 pt TALLER than its own
+            content, so its bottom edge overhangs the search field below. The
+            wrapper is `box-none` (it passes touches through itself) but that does
+            NOT apply to children — so this gradient was swallowing every tap that
+            landed in that 28 pt band, i.e. the top of the search field. That is
+            why the chat search "didn't press". */}
         <LinearGradient
           colors={[bgColor, bgColor, bgTransparent]}
           locations={[0, 0.55, 1]}
           style={StyleSheet.absoluteFill}
+          pointerEvents="none"
         />
         {/* ── Top bar ────────────────────────────────────────────────────────
             Three slots: [Изм.] · [active-today avatars + title] · [actions].
@@ -1460,7 +1559,25 @@ export default function MessagesScreen() {
         </View>
       </View>
 
-      <View style={{ paddingHorizontal: theme.spacing.base, marginBottom: theme.spacing.sm, marginTop: headerContentHeight }}>
+      {/* ── Search field, collapses on scroll ────────────────────────────────
+          Telegram behaviour: scrolling down shrinks the field away and the
+          category chips take its place; returning to the top brings it back.
+
+          Driven by a THRESHOLD, not per frame. `searchCollapse` is a single
+          shared value flipped by `withTiming` only when the scroll crosses the
+          threshold, so a whole flick costs at most one animation start per
+          direction — never a relayout per scroll event. Height is animated (this
+          genuinely has to reflow, so the chips really do move up), but only for
+          the ~200 ms of the transition.
+
+          `overflow: 'hidden'` clips the field as the container closes instead of
+          letting it spill over the chips. */}
+      <Reanimated.View
+        style={[
+          { paddingHorizontal: theme.spacing.base, marginTop: headerContentHeight, overflow: 'hidden' },
+          searchCollapseStyle,
+        ]}
+      >
         <View
           style={{
             flexDirection: 'row',
@@ -1489,7 +1606,7 @@ export default function MessagesScreen() {
             }}
           />
         </View>
-      </View>
+      </Reanimated.View>
 
       {/* Category tabs */}
       <View style={{ marginBottom: 8 }}>
@@ -1549,6 +1666,12 @@ export default function MessagesScreen() {
               windowSize={9}
               updateCellsBatchingPeriod={60}
               getItemLayout={MESSAGES_ITEM_LAYOUT}
+              // Drives the search-field collapse. `onListScroll` returns early
+              // unless the threshold is actually crossed, so this costs a couple
+              // of property reads per event and never a state update.
+              onScroll={onListScroll}
+              scrollEventThrottle={32}
+              keyboardShouldPersistTaps="handled"
             />
           )}
         </View>

@@ -26,6 +26,43 @@ interface ChatStoreState {
 const MAX_CACHED_CONVERSATIONS = 8;
 
 /**
+ * Return `conversations` with the matching row's preview advanced to `message`,
+ * or the SAME array reference when nothing changed.
+ *
+ * Returning the identical reference matters: the chat list subscribes to
+ * `conversations`, so allocating a new array on every message would re-render the
+ * whole list even when no row's content moved.
+ *
+ * Rules:
+ *  - Unknown conversation id → no-op. A brand-new chat is added by its own flow;
+ *    inventing a row here would produce one with no participant data.
+ *  - Older or same-age message → no-op, so a late realtime echo or a merge of
+ *    older cached history can never drag the preview backwards.
+ *  - Empty text (a photo-only message) still updates the TIMESTAMP, so recency
+ *    sorting stays right, and leaves the text empty for the row to render its own
+ *    fallback — presentation and i18n stay out of the store.
+ */
+function bumpConversationPreview(
+  conversations: Conversation[],
+  conversationId: string,
+  message: Message,
+): Conversation[] {
+  const at = message?.createdAt;
+  if (!conversationId || !at) return conversations;
+
+  const idx = conversations.findIndex((c) => c.id === conversationId);
+  if (idx === -1) return conversations;
+
+  const current = conversations[idx];
+  // ISO-8601 strings compare lexicographically in chronological order.
+  if (current.lastMessageAt && current.lastMessageAt >= at) return conversations;
+
+  const next = conversations.slice();
+  next[idx] = { ...current, lastMessage: message.text || '', lastMessageAt: at };
+  return next;
+}
+
+/**
  * Per-conversation ARRAY-level cap on the number of messages retained in memory.
  * Matches the chat screen's on-disk MAX_PERSISTED_MESSAGES (1000) so a long-lived,
  * very active chat (realtime echoes + sends appending via `addMessage`) cannot
@@ -144,7 +181,26 @@ export const useChatStore = create<ChatStoreState>()((set) => ({
         ...state.messages,
         [conversationId]: capMessages([...existing, message]),
       };
-      return { messages: evictIfNeeded(updated, conversationId) };
+
+      // ── Keep the chat-list preview in step ────────────────────────────────
+      //
+      // `addMessage` is the single choke point every message addition flows
+      // through — optimistic send, realtime echo, canonical-id reconcile, cache
+      // merge — so updating the conversation row here means the list preview can
+      // never drift from the transcript.
+      //
+      // It was not updated at all before, and `syncConversations` does not carry
+      // `lastMessage` either, so the line under a contact's name only ever
+      // changed when a whole conversation object happened to be replaced. That is
+      // the "I send a message and the preview doesn't appear / disappears again"
+      // report: there was no local write, and the next sync overwrote the row
+      // with a preview-less copy.
+      //
+      // Guarded by timestamp so an out-of-order arrival (a late realtime echo, a
+      // cache merge of older history) can never move the preview BACKWARDS.
+      const conversations = bumpConversationPreview(state.conversations, conversationId, message);
+
+      return { messages: evictIfNeeded(updated, conversationId), conversations };
     }),
   markAsRead: (conversationId) =>
     set((state) => ({
