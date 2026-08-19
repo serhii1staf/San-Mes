@@ -242,6 +242,22 @@ export default function ProfileScreen() {
   const [userReplies, setUserReplies] = useState<ProfileReply[]>([]);
   const [repliesLoaded, setRepliesLoaded] = useState(false);
   const [repliesFetching, setRepliesFetching] = useState(false);
+  // ── Media tab ───────────────────────────────────────────────────────────────
+  // Derived from the posts already in the store, not fetched. The tab used to
+  // render `EMPTY_LIST` unconditionally with no loader behind it, so it was
+  // permanently empty — it looked broken rather than simply unimplemented.
+  //
+  // A post counts as media when it carries at least one image. `imageUrls` is the
+  // current shape and `imageUrl` the legacy single-image one; both are checked so
+  // older cached posts are not silently dropped.
+  //
+  // Deriving instead of fetching also means this tab needs no cache, no loading
+  // state and no network — switching to it is instant, which is the behaviour the
+  // other tabs were reworked towards.
+  const mediaPosts = useMemo(
+    () => userPosts.filter((p: any) => (p?.imageUrls && p.imageUrls.length > 0) || !!p?.imageUrl),
+    [userPosts],
+  );
   const [followCounts, setFollowCounts] = useState({ followers: 0, following: 0 });
   const [showQR, setShowQR] = useState(false);
   // Native iOS-26 liquid glass for the floating QR / settings chrome buttons.
@@ -1273,7 +1289,11 @@ export default function ProfileScreen() {
               ? likedPosts
               : activeTab === 'replies'
                 ? userReplies
-                : EMPTY_LIST
+                // Media shares the posts renderer and the same `postsReady` gate,
+                // since it is a filtered view of exactly those cards.
+                : activeTab === 'media'
+                  ? (postsReady ? mediaPosts : EMPTY_LIST)
+                  : EMPTY_LIST
         }
         keyExtractor={activeTab === 'replies' ? keyExtractorReply : keyExtractorPost}
         renderItem={

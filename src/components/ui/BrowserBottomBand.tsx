@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Pressable, Text as RNText } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -6,6 +6,7 @@ import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withTiming,
+  runOnJS,
   Easing,
 } from 'react-native-reanimated';
 import { useTheme } from '../../theme';
@@ -19,21 +20,35 @@ import { triggerHaptic } from '../../utils/haptics';
 
 // Bottom-docked browser/mini-app session band.
 //
-// Animation strategy: a SINGLE Reanimated shared value (`heightSV`) drives
-// the band's outer height between 0 and BAND_HEIGHT. Because this height
-// lives in a flex column above the band's parent, the surrounding layout
-// reflows on every frame — the floating tab bar inside the Stack rides
-// upward/downward in lockstep, with no separate animation.
+// ── ANIMATION STRATEGY (rewritten — this was the "widget lags horribly when it
+//    rises in a chat" bug) ────────────────────────────────────────────────────
 //
-// The component is ALWAYS mounted (no `return null`). When the session is
-// dismissed the height collapses to 0 (and content fades to 0 first), so
-// nothing unmounts mid-animation. That's what removed the previous
-// "white flash" — LayoutAnimation was scheduling unmount slightly out of
-// step with the height change, briefly leaving an empty rectangle on
-// screen.
+// This band is a sibling of the whole navigator inside the root flex column
+// (see app/_layout.tsx), so its height is what pushes the app content up. The
+// previous version ANIMATED that height from 0 → 56 over 380 ms. Every frame of
+// that animation therefore invalidated the root column's layout, which re-laid
+// out the Stack, the active screen and everything inside it — roughly 23 full
+// layout+commit passes over the entire tree. On a light screen that is survivable;
+// in a chat, where the tree contains a FlashList of live message cells, glass
+// surfaces, gradients and the Reanimated input bar, it is not, and the rise
+// stuttered badly. The height animation was never about the band itself — it was
+// there so the surrounding layout would "ride along" — but the ride is exactly
+// what cost the frames.
 //
-// All animation runs on the UI thread (Reanimated worklets), so weak
-// devices stay smooth.
+// Now the layout changes EXACTLY TWICE per session: once when the band is shown
+// (0 → 56) and once when it has finished leaving (56 → 0). That is owned by React
+// state (`reserved`). The visible motion is a pure `translateY` on an inner view
+// inside an `overflow: hidden` box, which is compositor-only — no layout, no
+// shadow-tree churn, so it holds 60 fps regardless of what screen is behind it.
+// Apple Music's own mini player behaves the same way: the content inset changes
+// in one step and the bar slides into the reserved space.
+//
+// The solid background + rounded corners live on the INNER (sliding) view, so the
+// outer box is an invisible clip window. That removes the old "white line at the
+// bottom" artefact by construction rather than by racing two opacity timings.
+//
+// The component is ALWAYS mounted (no `return null`), so nothing unmounts
+// mid-animation — the original reason LayoutAnimation was dropped.
 
 const BAND_HEIGHT = 56;
 const ENTER_DURATION = 380;
@@ -54,61 +69,59 @@ export function BrowserBottomBand() {
 
   const visible = !!minimizedUrl && position === 'bottom';
 
-  const heightSV = useSharedValue(0);
-  const opacitySV = useSharedValue(0);
+  // The ONE piece of layout state. `true` reserves BAND_HEIGHT in the root flex
+  // column; it is set on show and cleared only after the exit slide has finished,
+  // so the gap never collapses out from under a still-visible band.
+  const [reserved, setReserved] = useState(visible);
+
+  // Slide offset in points: 0 = docked, BAND_HEIGHT = fully below the clip box.
+  const slideSV = useSharedValue(visible ? 0 : BAND_HEIGHT);
+  const opacitySV = useSharedValue(visible ? 1 : 0);
 
   useEffect(() => {
     if (visible) {
-      heightSV.value = withTiming(BAND_HEIGHT, {
+      // Reserve the space first (single layout commit). The band starts fully
+      // below its own clip box, so nothing is visible until the slide brings it
+      // in — no flash of a solid rectangle in the reserved gap.
+      setReserved(true);
+      slideSV.value = BAND_HEIGHT;
+      slideSV.value = withTiming(0, {
         duration: ENTER_DURATION,
-        // ease-out cubic: starts fast, ends slowly — matches a sheet rising
-        // from below into place, with no abrupt landing.
+        // ease-out cubic: starts fast, ends slowly — matches a sheet rising into
+        // place with no abrupt landing.
         easing: Easing.out(Easing.cubic),
       });
       opacitySV.value = withTiming(1, { duration: FADE_IN_DURATION, easing: Easing.out(Easing.cubic) });
     } else {
-      // Fade content slightly faster than the height collapse so the moving
-      // strip is empty by the time it finishes shrinking — no half-shown
-      // text mid-fold.
       opacitySV.value = withTiming(0, { duration: FADE_OUT_DURATION, easing: Easing.in(Easing.cubic) });
-      heightSV.value = withTiming(0, {
-        duration: EXIT_DURATION,
-        // ease-in cubic: starts gently, ends fast — feels like the band
-        // tucks itself away under the tab bar.
-        easing: Easing.in(Easing.cubic),
-      });
+      slideSV.value = withTiming(
+        BAND_HEIGHT,
+        {
+          duration: EXIT_DURATION,
+          // ease-in cubic: gentle start, fast finish — the band tucks itself away.
+          easing: Easing.in(Easing.cubic),
+        },
+        (finished) => {
+          // Release the reserved height only once the band is off-screen, so the
+          // app content settles back down in a single step instead of chasing the
+          // slide.
+          if (finished) runOnJS(setReserved)(false);
+        },
+      );
     }
-  }, [visible, heightSV, opacitySV]);
+  }, [visible, slideSV, opacitySV]);
 
-  const containerStyle = useAnimatedStyle(() => {
-    // Tighten the gap to the floating tab bar — but ONLY while the band is
-    // actually showing. We use translateY (a transform, handled by the
-    // native compositor) instead of marginTop, because animating margin
-    // causes the parent flex column to reflow on every frame, which in
-    // practice produced occasional 1-pixel "white seams" between the
-    // band and the tab bar mid-animation. Transforms don't affect layout
-    // so the parent stays still; only the band's pixels shift.
-    //
-    // Outer opacity is bound to `opacitySV` too so the BAND ITSELF (the
-    // solid `background.primary` rectangle) fades alongside the inner
-    // content. Without this the inner content faded over 180 ms while
-    // the outer background stayed at full opacity until the height
-    // collapse finished (320 ms) — so for the last ~140 ms the user
-    // saw a band-shaped solid colour rectangle thinning down to a
-    // sliver, which on dark themes against a light parent (or on
-    // light themes anywhere) read as a "white line" flickering at
-    // the bottom of the screen. Driving the entire surface from one
-    // opacity SV erases that residual artefact.
-    const progress = heightSV.value / BAND_HEIGHT;
+  const innerStyle = useAnimatedStyle(() => {
+    // `-14` tightens the gap to the floating tab bar once docked, scaled by how
+    // far in the band is so it never overlaps mid-slide. Transform only: the
+    // parent column's layout is untouched, which is the whole point of this
+    // rewrite.
+    const progress = 1 - slideSV.value / BAND_HEIGHT;
     return {
-      height: heightSV.value,
       opacity: opacitySV.value,
-      transform: [{ translateY: -14 * progress }],
+      transform: [{ translateY: slideSV.value - 14 * progress }],
     };
   });
-  const innerStyle = useAnimatedStyle(() => ({
-    opacity: opacitySV.value,
-  }));
 
   const handleOpen = () => {
     if (!visible) return;
@@ -130,26 +143,29 @@ export function BrowserBottomBand() {
     clearMinimized();
   };
 
-  // Negative top margin is now driven by the animation (see containerStyle
-  // above) so the band only "trims" the gap while it's actually visible.
   return (
-    <Animated.View
-      style={[
-        {
-          overflow: 'hidden',
-          backgroundColor: theme.colors.background.primary,
-          borderTopLeftRadius: 22,
-          borderTopRightRadius: 22,
-          // No hairline borders — on dark themes the light border color
-          // appeared as bright UV-style streaks running down the rounded
-          // corners during the collapse animation. The solid background
-          // alone reads cleanly against the screen.
-        },
-        containerStyle,
-      ]}
+    // Outer box: pure layout + clip window. No background, no radius, no
+    // animation — its height is plain React state so it commits once per
+    // transition instead of once per frame.
+    <View
+      style={{ height: reserved ? BAND_HEIGHT : 0, overflow: 'hidden' }}
       pointerEvents={visible ? 'auto' : 'none'}
     >
-      <Animated.View style={[{ height: BAND_HEIGHT }, innerStyle]}>
+      <Animated.View
+        style={[
+          {
+            height: BAND_HEIGHT,
+            backgroundColor: theme.colors.background.primary,
+            borderTopLeftRadius: 22,
+            borderTopRightRadius: 22,
+            // No hairline borders — on dark themes the light border color
+            // appeared as bright UV-style streaks running down the rounded
+            // corners during the collapse animation. The solid background
+            // alone reads cleanly against the screen.
+          },
+          innerStyle,
+        ]}
+      >
         <Pressable
           onPress={handleOpen}
           style={{
@@ -215,6 +231,6 @@ export function BrowserBottomBand() {
           </Pressable>
         </Pressable>
       </Animated.View>
-    </Animated.View>
+    </View>
   );
 }

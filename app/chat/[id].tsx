@@ -894,19 +894,31 @@ export default function ChatScreen() {
     const handle = InteractionManager.runAfterInteractions(() => setChromeReady(true));
     return () => handle.cancel();
   }, []);
-  // Defer the message-list mount itself past the open slide-in. Mounting the
-  // FlatList + its first batch of HEAVY bubbles (each carries gestures +
-  // several Reanimated layers) on the navigation frame is the dominant
-  // ~150-190 ms `LONG @ (tabs)/messages` long task that fires on EVERY chat
-  // open (perf snapshots). Holding the list back one InteractionManager tick
-  // lets the slide-in animation complete smoothly, THEN mounts the list — the
-  // heavy work no longer lands on the transition frame, so opening a chat no
-  // longer freezes. The keyboard/composer chrome stays mounted immediately so
-  // the screen never looks empty-broken; only the scrollback defers ~1 frame.
+  // Defer the message-list mount by exactly ONE FRAME.
+  //
+  // Mounting the list plus its first batch of heavy bubbles (each carries
+  // gestures and several Reanimated layers) in the same commit as the screen's
+  // chrome is a ~150-190 ms JS task, so it must not be on the first commit.
+  //
+  // It used to be deferred with `InteractionManager.runAfterInteractions`, and
+  // that is what produced "I open a chat, there are no messages, then bam, they
+  // appear — as if they reload every time". `runAfterInteractions` does not mean
+  // "next frame": it waits for every registered interaction handle to clear, so
+  // with any JS-driven `Animated` timing or pan responder in flight the scrollback
+  // could stay unmounted for hundreds of milliseconds — long enough to read as an
+  // empty chat that then re-populates.
+  //
+  // A single `requestAnimationFrame` keeps the ONLY property that mattered — the
+  // heavy mount is not in the first commit — while bounding the blank window to
+  // one frame, which is imperceptible. It is also safe for the transition itself:
+  // this is expo-router's native stack, so the push animation runs on the UI
+  // thread in UIKit and is not affected by JS work at all. The remaining
+  // decode-heavy part (real images instead of sized placeholders) is still gated
+  // separately by `imagesReady` below.
   const [listReady, setListReady] = useState(false);
   useEffect(() => {
-    const handle = InteractionManager.runAfterInteractions(() => setListReady(true));
-    return () => handle.cancel();
+    const raf = requestAnimationFrame(() => setListReady(true));
+    return () => cancelAnimationFrame(raf);
   }, []);
 
   // ── Telegram-style deferred image decode (open-frame protection) ───────

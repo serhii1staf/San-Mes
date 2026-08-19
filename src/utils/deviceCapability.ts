@@ -1,6 +1,5 @@
 import { Platform } from 'react-native';
 import * as Device from 'expo-device';
-import { isNativeGlassCapable } from '../components/ui/LiquidGlass';
 
 /**
  * Privacy-safe weak-device heuristic (Apple §3.3.3 compliant).
@@ -45,6 +44,27 @@ const MIN_TOTAL_MEMORY_BYTES = 3 * 1024 * 1024 * 1024;
  */
 const MAX_WEAK_ANDROID_API_LEVEL = 30;
 
+/**
+ * iOS year-class floor.
+ *
+ * Separate from (and higher than) the Android floor because the two platforms'
+ * supported-hardware ranges are nothing alike: an Android device still on the
+ * shelf can be year class 2013, whereas the OLDEST iPhone that runs a current iOS
+ * is only a few generations back. 2020 puts the A13-and-older end of the
+ * supported range (iPhone 11 / SE 2nd gen and earlier) on the weak path and
+ * leaves A14+ (iPhone 12 and newer) alone — the generation where Apple moved to
+ * 5 nm and GPU headroom jumped.
+ *
+ * WHY THIS EXISTS AT ALL: this module used to return `false` outright for any iOS
+ * device that could render native liquid glass, on the reasoning that such a
+ * device "has ample rendering headroom". That is wrong — glass capability is an
+ * OS-VERSION test, not a silicon test. An iPhone 11 updated to iOS 26 passed that
+ * check and therefore never had a single ambient animation gated, on precisely
+ * the hardware that most needs the relief. The early return is gone; iOS is now
+ * classified from the same coarse device-class inputs as everything else.
+ */
+const MIN_IOS_DEVICE_YEAR_CLASS = 2020;
+
 /** Memoized per-session result; computed once on first read. */
 let cachedIsWeak: boolean | null = null;
 
@@ -54,16 +74,11 @@ let cachedIsWeak: boolean | null = null;
  * `isWeakDevice()` stays a thin cache wrapper.
  */
 function computeIsWeakDevice(): boolean {
-  // iOS devices capable of native liquid glass (iOS 26+) have ample rendering
-  // headroom — never weak.
-  if (Platform.OS === 'ios' && isNativeGlassCapable()) {
-    return false;
-  }
-
-  // From here on we classify Android and non-glass devices using only coarse,
-  // already-available device-class info.
+  // Coarse, already-available device-class info only — no new inputs, nothing
+  // persisted, nothing transmitted.
   const yearClass = Device.deviceYearClass;
-  if (typeof yearClass === 'number' && yearClass < MIN_DEVICE_YEAR_CLASS) {
+  const yearFloor = Platform.OS === 'ios' ? MIN_IOS_DEVICE_YEAR_CLASS : MIN_DEVICE_YEAR_CLASS;
+  if (typeof yearClass === 'number' && yearClass < yearFloor) {
     return true;
   }
 

@@ -862,6 +862,20 @@ export default function UserProfileScreen() {
     });
   }, [userPosts, resolvedOriginals]);
 
+  // ── Media tab ───────────────────────────────────────────────────────────────
+  // A filtered view of `displayPosts` — posts carrying at least one image. The
+  // tab previously fell through to `EMPTY_LIST` with no loader behind it, so it
+  // was permanently empty and read as broken rather than unimplemented.
+  //
+  // Derived rather than fetched: no request, no cache, no loading state, and it is
+  // built from the SAME objects the posts tab renders, so the two can never
+  // disagree about a post's images. Both the current `imageUrls` shape and the
+  // legacy single `imageUrl` are checked so older cached posts are not dropped.
+  const mediaPosts = React.useMemo(
+    () => displayPosts.filter((p: any) => (p?.imageUrls && p.imageUrls.length > 0) || !!p?.imageUrl),
+    [displayPosts],
+  );
+
   // Stable callbacks for the memoized post card so it can short-circuit on
   // reference equality instead of receiving fresh inline lambdas every render.
   const handlePostLongPress = useCallback((enrichedPost: any) => {
@@ -1583,7 +1597,12 @@ export default function UserProfileScreen() {
               ? likedPosts
               : activeTab === 'replies'
                 ? userReplies
-                : EMPTY_LIST
+                // Media is a filtered view of the posts already loaded — derived,
+                // never fetched — so switching to it is instant and it no longer
+                // renders permanently empty.
+                : activeTab === 'media'
+                  ? (postsReady ? mediaPosts : EMPTY_LIST)
+                  : EMPTY_LIST
         }
         keyExtractor={keyExtractor}
         renderItem={
