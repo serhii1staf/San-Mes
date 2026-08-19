@@ -332,6 +332,10 @@ const en: Record<string, string> = {
   'messages.bulk.select_all': 'All',
   'messages.bulk.delete_title': 'Delete chats?',
   'messages.bulk.delete_message': 'The selected chats move to Deleted.',
+  // Mini-apps delete is a real server-side delete, not a move to a bucket — so
+  // it gets its own, blunter warning.
+  'messages.bulk.delete_apps_title': 'Delete mini-apps?',
+  'messages.bulk.delete_apps_message': 'This cannot be undone.',
   'messages.tab.chats': 'Chats',
   'messages.tab.apps': 'Apps',
   'messages.tab.archive': 'Archive',

@@ -1,0 +1,71 @@
+name: iOS Submit (existing build → TestFlight)
+
+# Submits an ALREADY-BUILT binary to TestFlight without rebuilding.
+#
+# Why this exists separately from build-ios.yml: EAS Submit has its own outages
+# (run #26 built 1.2.0 build 91 successfully, then died on "EAS Submit is
+# experiencing a partial outage — iOS Submissions hanging on App Store Connect
+# build uploads"). Re-running the combined workflow would burn a full 30-40 min
+# native build just to retry a ~2 min upload. This retries only the upload.
+#
+# Defaults to the most recent finished build; pass a build id to submit a
+# specific one.
+
+on:
+  workflow_dispatch:
+    inputs:
+      buildId:
+        description: 'EAS build id to submit (blank = latest finished build)'
+        required: false
+        default: ''
+
+jobs:
+  submit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # Same reason as build-ios.yml: the lock file is generated on Windows and
+      # lacks the platform-specific optional binaries, so `npm ci` fails with
+      # EUSAGE. Submitting needs nothing but eas-cli + the app config, so
+      # optional deps are omitted to keep this fast.
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund --omit=optional
+
+      - name: Setup Expo
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Write ASC API Key
+        run: echo "${{ secrets.ASC_API_KEY_P8 }}" > ./AuthKey_PN7B743Y4X.p8
+
+      - name: Submit to TestFlight
+        run: |
+          if [ -n "${BUILD_ID}" ]; then
+            eas submit --platform ios --profile production --id "${BUILD_ID}" --non-interactive
+          else
+            eas submit --platform ios --profile production --latest --non-interactive
+          fi
+        env:
+          BUILD_ID: ${{ github.event.inputs.buildId }}
+          EXPO_ASC_API_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          EXPO_ASC_API_KEY_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          EXPO_ASC_API_KEY_PATH: ./AuthKey_PN7B743Y4X.p8
+
+      # The key is written into the workspace, so remove it even if the submit
+      # fails. The runner is ephemeral, but leaving a private key on disk for the
+      # remaining steps is a habit worth not having.
+      - name: Remove ASC API Key
+        if: always()
+        run: rm -f ./AuthKey_PN7B743Y4X.p8

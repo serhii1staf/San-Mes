@@ -947,17 +947,34 @@ export default function UserProfileScreen() {
   );
 
   // ─── Likes / Replies tab loaders ───────────────────────────────────────
+  // Cache-only hydration, split out of the loaders so it can run on the
+  // tab-switch frame while the network call stays deferred. This matters MORE
+  // here than on the own-profile tab: this is a pushed route, so `likedPosts` /
+  // `userReplies` are discarded on back-navigation and re-entering the profile
+  // would otherwise show the empty state again on every visit.
+  const hydrateLikedFromCache = useCallback(() => {
+    if (!id || likedPosts.length > 0) return;
+    try {
+      const cached = kvGetJSONSync<any[] | null>(LIKED_POSTS_CACHE_PREFIX + id, null);
+      if (Array.isArray(cached) && cached.length > 0) setLikedPosts(cached);
+    } catch {}
+  }, [id, likedPosts.length]);
+
+  const hydrateRepliesFromCache = useCallback(() => {
+    if (!id || userReplies.length > 0) return;
+    try {
+      const cached = kvGetJSONSync<ProfileReply[] | null>(USER_REPLIES_CACHE_PREFIX + id, null);
+      if (Array.isArray(cached) && cached.length > 0) setUserReplies(cached);
+    } catch {}
+  }, [id, userReplies.length]);
+
   // Same lazy-fetch + per-account cache pattern as the home profile tab.
   // Fires only when the user flips into the corresponding tab.
   const loadLikedPosts = useCallback(async () => {
     if (!id || likedFetching) return;
     setLikedFetching(true);
     try {
-      const cacheKey = LIKED_POSTS_CACHE_PREFIX + id;
-      const cached = kvGetJSONSync<any[] | null>(cacheKey, null);
-      if (Array.isArray(cached) && cached.length > 0 && likedPosts.length === 0) {
-        setLikedPosts(cached);
-      }
+      hydrateLikedFromCache();
 
       const { posts: rows, error } = await getLikedPosts(id, { limit: 25 });
       if (error || !rows) {
@@ -1000,7 +1017,7 @@ export default function UserProfileScreen() {
       setLikedPosts(mapped);
       setLikedLoaded(true);
       InteractionManager.runAfterInteractions(() => {
-        try { kvSetJSON(cacheKey, mapped); } catch {}
+        try { kvSetJSON(LIKED_POSTS_CACHE_PREFIX + id, mapped); } catch {}
       });
     } catch {
       setLikedLoaded(true);
@@ -1013,11 +1030,7 @@ export default function UserProfileScreen() {
     if (!id || repliesFetching) return;
     setRepliesFetching(true);
     try {
-      const cacheKey = USER_REPLIES_CACHE_PREFIX + id;
-      const cached = kvGetJSONSync<ProfileReply[] | null>(cacheKey, null);
-      if (Array.isArray(cached) && cached.length > 0 && userReplies.length === 0) {
-        setUserReplies(cached);
-      }
+      hydrateRepliesFromCache();
 
       const { replies: rows, error } = await getUserComments(id, { limit: 25 });
       if (error || !rows) {
@@ -1101,7 +1114,7 @@ export default function UserProfileScreen() {
       setUserReplies(mapped);
       setRepliesLoaded(true);
       InteractionManager.runAfterInteractions(() => {
-        try { kvSetJSON(cacheKey, mapped); } catch {}
+        try { kvSetJSON(USER_REPLIES_CACHE_PREFIX + id, mapped); } catch {}
       });
     } catch {
       setRepliesLoaded(true);
@@ -1110,16 +1123,22 @@ export default function UserProfileScreen() {
     }
   }, [id, repliesFetching, userReplies.length]);
 
+  // First open of a secondary tab: paint cache on THIS frame, fetch after the
+  // transition. See `hydrateLikedFromCache` for why the read cannot stay inside
+  // the deferred loader.
   useEffect(() => {
-    if (activeTab === 'likes' && !likedLoaded && !likedFetching && id) {
+    if (!id) return;
+    if (activeTab === 'likes' && !likedLoaded && !likedFetching) {
+      hydrateLikedFromCache();
       const handle = InteractionManager.runAfterInteractions(() => loadLikedPosts());
       return () => handle.cancel();
     }
-    if (activeTab === 'replies' && !repliesLoaded && !repliesFetching && id) {
+    if (activeTab === 'replies' && !repliesLoaded && !repliesFetching) {
+      hydrateRepliesFromCache();
       const handle = InteractionManager.runAfterInteractions(() => loadUserReplies());
       return () => handle.cancel();
     }
-  }, [activeTab, likedLoaded, likedFetching, repliesLoaded, repliesFetching, id, loadLikedPosts, loadUserReplies]);
+  }, [activeTab, likedLoaded, likedFetching, repliesLoaded, repliesFetching, id, loadLikedPosts, loadUserReplies, hydrateLikedFromCache, hydrateRepliesFromCache]);
 
   // Stable close handler so the memoized ProfileMenuModal doesn't see a fresh
   // function on every parent render and skip its memo bailout.

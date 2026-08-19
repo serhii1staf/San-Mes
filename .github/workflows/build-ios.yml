@@ -75,3 +75,19 @@ jobs:
           EXPO_ASC_API_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           EXPO_ASC_API_KEY_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           EXPO_ASC_API_KEY_PATH: ./AuthKey_PN7B743Y4X.p8
+
+      # If the upload fails while the BUILD succeeded (EAS Submit has its own
+      # outages — that is exactly what happened on run #26), the binary is
+      # already on EAS. Retry just the upload with the `iOS Submit` workflow
+      # instead of paying for another 30-40 min native build.
+      - name: Note on submit failure
+        if: failure()
+        run: |
+          echo "If 'Build iOS (EAS)' succeeded and only the submit failed, do NOT"
+          echo "re-run this workflow. Run the 'iOS Submit (existing build ->"
+          echo "TestFlight)' workflow instead — it uploads the existing binary."
+
+      # The key is written into the workspace; remove it even on failure.
+      - name: Remove ASC API Key
+        if: always()
+        run: rm -f ./AuthKey_PN7B743Y4X.p8

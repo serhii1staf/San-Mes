@@ -46,6 +46,17 @@ interface MessageContextMenuProps {
   bubbleTextColor?: string;
   bubbleRadius?: number;
   linkEmoji?: string;
+  /**
+   * Proxy width the CHAT BUBBLE already requested for this message's photos.
+   *
+   * Passing it makes the preview below request the byte-identical proxied URL,
+   * so the image the user is holding is served straight from expo-image's memory
+   * cache instead of being re-fetched and re-decoded at a menu-specific size.
+   * Without it the menu asked for its own display width (220 px / grid cell),
+   * which is a DIFFERENT cache key — that is why holding a photo looked like it
+   * was "loading from the server again".
+   */
+  imageProxyWidth?: number;
   onClose: () => void;
   onAction: (action: MessageAction, message: ChatMessage) => void;
   // ── Press-drag-release coordination (all UI-thread) ──────────────────
@@ -117,7 +128,7 @@ function ActionRow({
 //     View so they shrink-wrap to their content.
 //   - Action sheet underneath ALWAYS stays fully on screen — that's what the
 //     45% cap guarantees.
-export const MessageContextMenu = forwardRef<MessageContextMenuHandle, MessageContextMenuProps>(function MessageContextMenu({ visible, message, isOwn, linkEmoji, onClose, onAction, dragActive, hoveredAction, actionZones }, ref) {
+export const MessageContextMenu = forwardRef<MessageContextMenuHandle, MessageContextMenuProps>(function MessageContextMenu({ visible, message, isOwn, linkEmoji, imageProxyWidth, onClose, onAction, dragActive, hoveredAction, actionZones }, ref) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
@@ -278,7 +289,7 @@ export const MessageContextMenu = forwardRef<MessageContextMenuHandle, MessageCo
       return (
         <View style={{ marginBottom: message.text ? 6 : 0 }}>
           {contentReady ? (
-            <CachedImage uri={message.imageUrls![0]} style={{ width: 220, height: 220, borderRadius: 12 }} resizeMode="cover" />
+            <CachedImage uri={message.imageUrls![0]} style={{ width: 220, height: 220, borderRadius: 12 }} resizeMode="cover" proxyWidth={imageProxyWidth} />
           ) : (
             <Skeleton width={220} height={220} radius={12} />
           )}
@@ -296,7 +307,7 @@ export const MessageContextMenu = forwardRef<MessageContextMenuHandle, MessageCo
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap, marginBottom: message.text ? 6 : 0, width: containerWidth }}>
         {message.imageUrls!.map((uri, idx) => (
           contentReady ? (
-            <CachedImage key={idx} uri={uri} style={{ width: cellSize, height: cellSize, borderRadius: 10 }} resizeMode="cover" />
+            <CachedImage key={idx} uri={uri} style={{ width: cellSize, height: cellSize, borderRadius: 10 }} resizeMode="cover" proxyWidth={imageProxyWidth} />
           ) : (
             <Skeleton key={idx} width={cellSize} height={cellSize} radius={10} />
           )

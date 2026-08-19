@@ -330,6 +330,10 @@ const ru: Record<string, string> = {
   'messages.bulk.select_all': 'Все',
   'messages.bulk.delete_title': 'Удалить чаты?',
   'messages.bulk.delete_message': 'Выбранные чаты переедут в «Удалённые».',
+  // Mini-apps delete is a real server-side delete, not a move to a bucket — so
+  // it gets its own, blunter warning.
+  'messages.bulk.delete_apps_title': 'Удалить мини-приложения?',
+  'messages.bulk.delete_apps_message': 'Это действие нельзя отменить.',
   'messages.tab.chats': 'Чаты',
   'messages.tab.apps': 'Приложения',
   'messages.tab.archive': 'Архив',

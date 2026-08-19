@@ -459,17 +459,33 @@ export default function ProfileScreen() {
   // single block. Skips chain-walking on reposts of liked content for
   // now — the row renders as-is. Follow-up will resolve repost chains
   // here too.
+  // Cache-only hydration for the Likes tab. Split out of the loader so it can
+  // run on the tab-switch frame while the network call stays deferred.
+  // Idempotent and cheap: bails out the moment there is anything on screen.
+  const hydrateLikedFromCache = useCallback(() => {
+    if (!user?.id || likedPosts.length > 0) return;
+    try {
+      const cached = kvGetJSONSync<any[] | null>(LIKED_POSTS_CACHE_PREFIX + user.id, null);
+      if (Array.isArray(cached) && cached.length > 0) setLikedPosts(cached);
+    } catch {}
+  }, [user?.id, likedPosts.length]);
+
+  const hydrateRepliesFromCache = useCallback(() => {
+    if (!user?.id || userReplies.length > 0) return;
+    try {
+      const cached = kvGetJSONSync<ProfileReply[] | null>(USER_REPLIES_CACHE_PREFIX + user.id, null);
+      if (Array.isArray(cached) && cached.length > 0) setUserReplies(cached);
+    } catch {}
+  }, [user?.id, userReplies.length]);
+
   const loadLikedPosts = useCallback(async () => {
     if (!user?.id || likedFetching) return;
     setLikedFetching(true);
     try {
-      // Synchronous MMKV warm-up so re-opening the tab paints instantly
-      // even if the network round-trip hasn't returned.
-      const cacheKey = LIKED_POSTS_CACHE_PREFIX + user.id;
-      const cached = kvGetJSONSync<any[] | null>(cacheKey, null);
-      if (Array.isArray(cached) && cached.length > 0 && likedPosts.length === 0) {
-        setLikedPosts(cached);
-      }
+      // The cache read now happens on the tab-switch frame via
+      // `hydrateLikedFromCache`; kept here too so a caller that bypasses the tab
+      // effect (pull-to-refresh) still shows something while the request runs.
+      hydrateLikedFromCache();
 
       const { posts: rows, error } = await getLikedPosts(user.id, { limit: 25 });
       if (error || !rows) {
@@ -518,7 +534,7 @@ export default function ProfileScreen() {
       setLikedPosts(mapped);
       setLikedLoaded(true);
       InteractionManager.runAfterInteractions(() => {
-        try { kvSetJSON(cacheKey, mapped); } catch {}
+        try { kvSetJSON(LIKED_POSTS_CACHE_PREFIX + user.id, mapped); } catch {}
       });
     } catch {
       setLikedLoaded(true);
@@ -532,11 +548,9 @@ export default function ProfileScreen() {
     if (!user?.id || repliesFetching) return;
     setRepliesFetching(true);
     try {
-      const cacheKey = USER_REPLIES_CACHE_PREFIX + user.id;
-      const cached = kvGetJSONSync<ProfileReply[] | null>(cacheKey, null);
-      if (Array.isArray(cached) && cached.length > 0 && userReplies.length === 0) {
-        setUserReplies(cached);
-      }
+      // See `loadLikedPosts` — the tab-switch frame already hydrated from cache
+      // via `hydrateRepliesFromCache`; this covers callers that bypass that path.
+      hydrateRepliesFromCache();
 
       const { replies: rows, error } = await getUserComments(user.id, { limit: 25 });
       if (error || !rows) {
@@ -629,7 +643,7 @@ export default function ProfileScreen() {
       setUserReplies(mapped);
       setRepliesLoaded(true);
       InteractionManager.runAfterInteractions(() => {
-        try { kvSetJSON(cacheKey, mapped); } catch {}
+        try { kvSetJSON(USER_REPLIES_CACHE_PREFIX + user.id, mapped); } catch {}
       });
     } catch {
       setRepliesLoaded(true);
@@ -638,19 +652,32 @@ export default function ProfileScreen() {
     }
   }, [user?.id, repliesFetching, userReplies.length]);
 
-  // Trigger lazy loaders the first time the user opens each secondary
-  // tab. Deferred via InteractionManager so the tab-highlight switch
-  // and the network call don't compete for the same frame.
+  // ── First open of a secondary tab: paint cache NOW, fetch after ──────────
+  //
+  // The MMKV read used to live INSIDE `loadLikedPosts` / `loadUserReplies`, and
+  // both loaders are deferred behind `InteractionManager.runAfterInteractions`.
+  // So even with a warm cache the tab switched to the EMPTY state first, the
+  // transition played over it, and the cached rows only appeared once the
+  // deferred callback ran. That is the "everything reloads every time I switch
+  // tabs" report — the data was already on the device, it just was not allowed
+  // to paint on the tap frame.
+  //
+  // Reading ~25 cached rows is ~1-2 ms, well inside one frame, so it happens
+  // SYNCHRONOUSLY on the same commit as the tab switch — the same reasoning (and
+  // the same fix) as the posts path above. Only the network call stays deferred.
   useEffect(() => {
-    if (activeTab === 'likes' && !likedLoaded && !likedFetching && user?.id) {
+    if (!user?.id) return;
+    if (activeTab === 'likes' && !likedLoaded && !likedFetching) {
+      hydrateLikedFromCache();
       const handle = InteractionManager.runAfterInteractions(() => loadLikedPosts());
       return () => handle.cancel();
     }
-    if (activeTab === 'replies' && !repliesLoaded && !repliesFetching && user?.id) {
+    if (activeTab === 'replies' && !repliesLoaded && !repliesFetching) {
+      hydrateRepliesFromCache();
       const handle = InteractionManager.runAfterInteractions(() => loadUserReplies());
       return () => handle.cancel();
     }
-  }, [activeTab, likedLoaded, likedFetching, repliesLoaded, repliesFetching, user?.id, loadLikedPosts, loadUserReplies]);
+  }, [activeTab, likedLoaded, likedFetching, repliesLoaded, repliesFetching, user?.id, loadLikedPosts, loadUserReplies, hydrateLikedFromCache, hydrateRepliesFromCache]);
 
   // Restore scroll position when tab regains focus. We deliberately do NOT
   // bypass the throttle here anymore — refetching ~100 posts + walking them

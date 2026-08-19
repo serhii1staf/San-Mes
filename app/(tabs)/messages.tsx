@@ -26,7 +26,7 @@ import { useBlockedUsersStore } from '../../src/store/blockedUsersStore';
 import { syncConversations, syncProfiles } from '../../src/services/syncService';
 import { prefetchRecentChatMedia } from '../../src/services/messagesPrefetch';
 import { kvGetJSONSync, kvSetJSON, kvWarm } from '../../src/services/kvStore';
-import { useMiniAppsStore } from '../../src/store/miniAppsStore';
+import { useMiniAppsStore, type MiniApp } from '../../src/store/miniAppsStore';
 import { useChatSettingsStore, GLOBAL_CHAT_SETTINGS_KEY } from '../../src/store/chatSettingsStore';
 import { useSettingsStore } from '../../src/store/settingsStore';
 import { triggerHaptic } from '../../src/utils/haptics';
@@ -100,19 +100,31 @@ const styles = StyleSheet.create({
   // Compact on purpose: this bar stands in for the tab bar, so it should read as
   // the same weight of chrome rather than a taller slab. 52 pt still clears
   // Apple's 44 pt minimum touch target because each button fills the full height.
+  //
+  // LENGTH: it no longer spans the display. Three controls stretched edge-to-edge
+  // left a lot of dead space between them and read as a wide, empty slab. The bar
+  // now shrink-wraps its buttons (`alignSelf: 'center'` + no `right`), so the
+  // controls sit close together in a centred pill — and it stays inside
+  // `maxWidth` so four controls or a long localized label can still fit without
+  // overflowing on a small device.
   actionBar: {
     position: 'absolute',
-    left: 12,
-    right: 12,
+    alignSelf: 'center',
     flexDirection: 'row',
     alignItems: 'stretch',
     height: 52,
     borderRadius: 22,
     overflow: 'hidden',
+    paddingHorizontal: 6,
+    maxWidth: '92%',
     zIndex: 210,
   },
+  // Fixed-width columns rather than `flex: 1`: with a shrink-wrapping bar, flex
+  // children would collapse to their content and the spacing would drift with
+  // label length. A fixed 76 pt keeps the icons evenly pitched and comfortably
+  // above the 44 pt touch minimum.
   actionBtn: {
-    flex: 1,
+    width: 76,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 1,
@@ -152,7 +164,31 @@ const MESSAGES_ITEM_LAYOUT = (_data: ArrayLike<Conversation> | null | undefined,
 const MESSAGES_KEY_EXTRACTOR = (item: Conversation) => item.id;
 const MESSAGES_LIST_CONTENT_STYLE = { paddingBottom: 100 } as const;
 
-function MiniAppsRow() {
+/**
+ * Only the viewer's OWN mini-apps.
+ *
+ * The list endpoint (`/v1/mini-apps`) returns the newest apps across ALL
+ * creators, so the list must be scoped by `creator_id` — without it the launcher
+ * surfaces strangers' apps, and "select all → delete" would target them.
+ *
+ * Shared by the launcher rows and the screen's select-all so the two can never
+ * disagree about what is on screen.
+ */
+function selectOwnMiniApps(apps: readonly MiniApp[], userId: string | undefined): MiniApp[] {
+  if (!userId) return [];
+  return apps.filter((a) => a.creator_id === userId);
+}
+
+interface MiniAppsRowProps {
+  /** True while the list is in selection ("Изм.") mode. */
+  editMode: boolean;
+  selectedIds: ReadonlySet<string>;
+  /** Shared 0→1 selection-mode progress — the SAME value the chat rows read. */
+  editProgress: SharedValue<number>;
+  onToggleSelect: (id: string) => void;
+}
+
+function MiniAppsRow({ editMode, selectedIds, editProgress, onToggleSelect }: MiniAppsRowProps) {
   const theme = useTheme();
   const t = useT();
   // Native iOS-26 liquid glass for the "open" button. iOS-only + opt-in;
@@ -175,14 +211,7 @@ function MiniAppsRow() {
     return () => handle.cancel();
   }, []);
 
-  // Only the viewer's OWN mini-apps. The list endpoint (`/v1/mini-apps`)
-  // returns the newest apps across ALL creators, so we scope by creator_id —
-  // identical to the AI-chat "Управление" manage list (the working reference).
-  // Without this scope the launcher would surface strangers' apps.
-  const myApps = useMemo(
-    () => (userId ? apps.filter((a) => a.creator_id === userId) : []),
-    [apps, userId],
-  );
+  const myApps = useMemo(() => selectOwnMiniApps(apps, userId), [apps, userId]);
 
   // Genuine empty state lives HERE so the Apps tab has a single source of
   // truth. The screen's generic empty-state block skips the Apps tab, which
@@ -203,7 +232,23 @@ function MiniAppsRow() {
   return (
     <View style={{ paddingHorizontal: 16, paddingBottom: 8 }}>
       {myApps.slice(0, 5).map(app => (
-        <Pressable key={app.id} onPress={() => router.push({ pathname: '/mini-app', params: { url: encodeURIComponent(app.url), name: app.name, emoji: app.emoji } })} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border.light }}>
+        <Pressable
+          key={app.id}
+          // In selection mode a tap ticks the app instead of launching it —
+          // otherwise picking apps to delete would keep opening them.
+          onPress={
+            editMode
+              ? () => onToggleSelect(app.id)
+              : () => router.push({ pathname: '/mini-app', params: { url: encodeURIComponent(app.url), name: app.name, emoji: app.emoji } })
+          }
+          style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border.light }}
+        >
+          <SelectionCheckbox
+            editProgress={editProgress}
+            selected={selectedIds.has(app.id)}
+            accent={theme.colors.accent.primary}
+            borderColor={theme.colors.border.medium}
+          />
           <View style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: theme.colors.accent.primary + '12', alignItems: 'center', justifyContent: 'center', overflow: 'visible' }}>
             <RNText style={{ fontSize: 20 }} allowFontScaling={false}>{app.emoji}</RNText>
           </View>
@@ -213,7 +258,10 @@ function MiniAppsRow() {
           </View>
           {/* "Open" button → interactive liquid glass holding the label as a
               CHILD so it morphs outward on touch (no overflow clip, own
-              borderRadius). Falls back to the flat accent chip when glass off. */}
+              borderRadius). Falls back to the flat accent chip when glass off.
+              Hidden in selection mode: a launch affordance inside a row whose
+              tap now means "select" is a trap. */}
+          {editMode ? null : (
           <Pressable onPress={() => router.push({ pathname: '/mini-app', params: { url: encodeURIComponent(app.url), name: app.name, emoji: app.emoji } })} style={glassActive ? { borderRadius: 14 } : { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, backgroundColor: theme.colors.accent.primary + '15' }}>
             {glassActive ? (
               <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} tintColor={theme.colors.accent.primary + '38'} style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, alignItems: 'center', justifyContent: 'center' }}>
@@ -223,6 +271,7 @@ function MiniAppsRow() {
               <Text variant="caption" weight="semibold" color={theme.colors.accent.primary} style={{ fontSize: 11 }}>{t('messages.miniapp.open')}</Text>
             )}
           </Pressable>
+          )}
         </Pressable>
       ))}
     </View>
@@ -780,11 +829,17 @@ export default function MessagesScreen() {
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(EMPTY_SELECTION);
   const editProgress = useSharedValue(0);
   const setTabBarHidden = useTabBarStore((s) => s.setHidden);
-  // Mirror of the currently-visible rows, so "select all" can stay a STABLE
-  // callback. Depending on `filtered` directly would hand every row a fresh
-  // `onToggleSelect`/`onSelectAll` identity on each list recompute and defeat
-  // the row memo. (Assigned right after `filtered` is computed below.)
+  // ── Mirrors for stable callbacks ──────────────────────────────────────────
+  //
+  // Several callbacks below (`handleSelectAll`, the swipe gesture) need the
+  // latest tab / rows but must keep a STABLE identity: depending on `filtered`
+  // or `activeTab` directly would hand every row a fresh `onToggleSelect` on
+  // each list recompute and defeat the row memo.
+  //
+  // `filteredRef` is assigned right after `filtered` is computed further down.
   const filteredRef = useRef<Conversation[]>([]);
+  const activeTabRef = useRef(activeTab);
+  activeTabRef.current = activeTab;
 
   useEffect(() => {
     editProgress.value = withTiming(editMode ? 1 : 0, {
@@ -838,26 +893,43 @@ export default function MessagesScreen() {
   const handleBulkDelete = useCallback(() => {
     const ids = [...selectedIds];
     if (ids.length === 0) return;
+
+    // The Apps tab deletes MINI-APPS, not chats — a different store and a
+    // genuinely irreversible server-side delete, so it gets its own copy and
+    // its own warning rather than reusing the "moves to Deleted" wording.
+    const isApps = activeTab === 'apps';
+
     Alert.alert(
-      t('messages.bulk.delete_title', 'Удалить чаты?'),
-      t('messages.bulk.delete_message', 'Выбранные чаты переедут в «Удалённые».'),
+      isApps
+        ? t('messages.bulk.delete_apps_title', 'Удалить мини-приложения?')
+        : t('messages.bulk.delete_title', 'Удалить чаты?'),
+      isApps
+        ? t('messages.bulk.delete_apps_message', 'Это действие нельзя отменить.')
+        : t('messages.bulk.delete_message', 'Выбранные чаты переедут в «Удалённые».'),
       [
         { text: t('common.cancel', 'Отмена'), style: 'cancel' },
         {
           text: t('messages.action.delete', 'Удалить'),
           style: 'destructive',
           onPress: () => {
-            const s = useChatSettingsStore.getState();
-            // Synthetic "blocked user without a chat" rows have no chat record
-            // to delete — skip them instead of writing junk ids to the store.
-            ids.filter((id) => !isSyntheticUserBlockId(id)).forEach((id) => s.deleteChat(id));
+            if (isApps) {
+              const store = useMiniAppsStore.getState();
+              // Fire-and-forget per id: the store removes each row optimistically,
+              // and one failed request must not abort the rest.
+              ids.forEach((id) => { void store.deleteApp(id).catch(() => {}); });
+            } else {
+              const s = useChatSettingsStore.getState();
+              // Synthetic "blocked user without a chat" rows have no chat record
+              // to delete — skip them instead of writing junk ids to the store.
+              ids.filter((id) => !isSyntheticUserBlockId(id)).forEach((id) => s.deleteChat(id));
+            }
             triggerHaptic('medium');
             exitEditMode();
           },
         },
       ],
     );
-  }, [selectedIds, t, exitEditMode]);
+  }, [selectedIds, activeTab, t, exitEditMode]);
 
   const handleBulkArchive = useCallback(() => {
     const ids = [...selectedIds].filter((id) => !isSyntheticUserBlockId(id));
@@ -872,14 +944,24 @@ export default function MessagesScreen() {
   }, [selectedIds, activeTab, exitEditMode]);
 
   // Select-all toggles: a second tap clears, which is what "select all" controls
-  // do everywhere and saves the user 20 taps to undo a mis-tap.
+  // do everywhere and saves the user twenty taps to undo a mis-tap.
+  //
+  // Reads whatever is actually on screen for the CURRENT tab — conversations, or
+  // the viewer's own mini-apps on the Apps tab — so it can never select rows the
+  // user cannot see (which bulk delete would then act on).
   const handleSelectAll = useCallback(() => {
     triggerHaptic('selection');
+    const visibleIds =
+      activeTabRef.current === 'apps'
+        ? selectOwnMiniApps(
+            useMiniAppsStore.getState().apps,
+            useAuthStore.getState().user?.id,
+          ).map((a) => a.id)
+        : filteredRef.current.map((c) => c.id);
     setSelectedIds((prev) => {
-      if (prev.size >= filteredRef.current.length && filteredRef.current.length > 0) {
-        return EMPTY_SELECTION;
-      }
-      return new Set(filteredRef.current.map((c) => c.id));
+      if (visibleIds.length === 0) return EMPTY_SELECTION;
+      if (prev.size >= visibleIds.length) return EMPTY_SELECTION;
+      return new Set(visibleIds);
     });
   }, []);
 
@@ -1169,12 +1251,10 @@ export default function MessagesScreen() {
   };
 
   // Swipe-to-switch between the category tabs. A horizontal pan on the content
-  // area moves to the adjacent tab. `activeTabRef` keeps the gesture's JS
-  // callback reading the latest tab without re-creating the gesture each
-  // render. The gesture is tuned to yield to vertical list scrolling
-  // (failOffsetY) and only claim clearly-horizontal swipes (activeOffsetX).
-  const activeTabRef = useRef(activeTab);
-  activeTabRef.current = activeTab;
+  // area moves to the adjacent tab. The gesture is tuned to yield to vertical
+  // list scrolling (failOffsetY) and only claim clearly-horizontal swipes
+  // (activeOffsetX). `activeTabRef` is declared with the other stable-callback
+  // mirrors near the top of the component.
   const goAdjacentTab = useCallback((dir: 1 | -1) => {
     const i = TAB_ORDER.indexOf(activeTabRef.current);
     const next = i + dir;
@@ -1436,7 +1516,12 @@ export default function MessagesScreen() {
                conversation empty-state / FlatList block below — `filtered`
                is always empty on this tab, which previously rendered the
                "no mini-apps" message on top of an existing apps list. */
-            <MiniAppsRow />
+            <MiniAppsRow
+              editMode={editMode}
+              selectedIds={selectedIds}
+              editProgress={editProgress}
+              onToggleSelect={toggleSelected}
+            />
           ) : filtered.length === 0 ? (
             (activeTab === 'chats' && specialChats && !searchQuery) ? null : (
             <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingBottom: 100 }}>
@@ -1733,7 +1818,7 @@ const SelectionActionBar = React.memo(function SelectionActionBar({
     <Reanimated.View
       style={[
         styles.actionBar,
-        { bottom: 12 + bottomInset },
+        { bottom: 14 + bottomInset },
         glassActive
           ? null
           : {
@@ -1755,17 +1840,21 @@ const SelectionActionBar = React.memo(function SelectionActionBar({
         color={selectAllColor}
         onPress={onSelectAll}
       />
-      <ActionBarButton
-        icon={tab === 'archive' ? 'corner-up-left' : 'archive'}
-        label={
-          tab === 'archive'
-            ? t('messages.action.unarchive', 'Из архива')
-            : t('messages.action.archive', 'В архив')
-        }
-        color={actionColor}
-        disabled={!enabled}
-        onPress={onArchive}
-      />
+      {/* Archive is meaningless for mini-apps — the Apps tab gets Select-all +
+          Delete only, and the bar shrink-wraps to two controls. */}
+      {tab === 'apps' ? null : (
+        <ActionBarButton
+          icon={tab === 'archive' ? 'corner-up-left' : 'archive'}
+          label={
+            tab === 'archive'
+              ? t('messages.action.unarchive', 'Из архива')
+              : t('messages.action.archive', 'В архив')
+          }
+          color={actionColor}
+          disabled={!enabled}
+          onPress={onArchive}
+        />
+      )}
       <ActionBarButton
         icon="trash-2"
         label={

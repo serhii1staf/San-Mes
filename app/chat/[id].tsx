@@ -160,11 +160,6 @@ function schedulePersist(conversationId: string, write: () => void): void {
   persistTimer = setTimeout(runPendingPersist, PERSIST_DEBOUNCE_MS);
 }
 
-// One-shot guard timer for the scroll-to-bottom button's clean-landing settle
-// (see `onScrollBtnTap`). Module-level so it needs no extra component hook;
-// only one chat screen is mounted at a time.
-let scrollSettleGuardTimer: ReturnType<typeof setTimeout> | null = null;
-
 // How many of the most-recent messages the chat-open warm prefetches. Bounded
 // low (the first screen is only a handful of bubbles) so opening a chat never
 // front-loads a burst of image fetches onto the navigation frame. The rest
@@ -2709,6 +2704,15 @@ export default function ChatScreen() {
     () => (windowStart > 0 ? chatMessages.slice(windowStart) : chatMessages),
     [chatMessages, windowStart],
   );
+  // Mirror of the rendered rows, so `onScrollBtnTap` can address the last
+  // message by index while staying a STABLE callback (depending on
+  // `windowedMessages` directly would re-create it on every message change, and
+  // FlashList re-reads its props when a callback identity changes).
+  //
+  // A plain ref write derived from the same render pass — no subscription, so it
+  // cannot tear.
+  const windowedMessagesRef = useRef<ChatMessage[]>([]);
+  windowedMessagesRef.current = windowedMessages;
 
   // Are there older messages above the current window? Either already loaded in
   // the array (windowStart > 0) or still on disk (the bounded seed hit the cap,
@@ -2941,21 +2945,37 @@ export default function ChatScreen() {
   // logic addresses messages by their INDEX into this array. Splicing separator
   // entries into the data would shift every index and silently break those jumps.
   // Drawing the chip as part of the first row of each day keeps indices identical.
-  const daySeparators = useMemo(
-    () => buildDaySeparators(windowedMessages),
-    [windowedMessages],
-  );
-  // `now` is captured per recompute rather than read inside the row: it decides
-  // "Today"/"Yesterday", and reading a fresh Date per row would let two chips
+  // Map of "message id → FULLY FORMATTED label", holding only the messages that
+  // begin a new local calendar day.
+  //
+  // The formatting happens HERE, not inside `renderItem`. That is deliberate and
+  // load-bearing: `useT()` allocates a brand-new function on every render, so
+  // listing `t` (or `locale`, or `theme`) among `renderItem`'s dependencies makes
+  // `renderItem` a fresh identity on EVERY render of this screen — and FlashList
+  // then re-renders every mounted cell each time. Formatting up-front means
+  // `renderItem` only closes over this Map, whose identity changes just once per
+  // messages/locale change.
+  //
+  // `Date.now()` is read once per recompute rather than per row: it decides
+  // "Today"/"Yesterday", and reading a fresh clock per row would let two chips
   // disagree if the list happened to render across midnight.
-  const dayNow = useMemo(() => Date.now(), [daySeparators]);
+  const dayLabels = useMemo(() => {
+    const separators = buildDaySeparators(windowedMessages);
+    const now = Date.now();
+    const out = new Map<string, string>();
+    for (const [id, iso] of separators) {
+      const label = formatDaySeparator(iso, now, locale, t);
+      if (label) out.set(id, label);
+    }
+    return out;
+    // `t` is intentionally NOT a dependency — it is a fresh function every
+    // render, and `locale` is the value that actually changes the output.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [windowedMessages, locale]);
 
   const renderItem = useCallback(({ item }: { item: ChatMessage; index: number }) => {
     const m = parseMessage(item);
-    const separatorIso = daySeparators.get(item.id);
-    const dayLabel = separatorIso
-      ? formatDaySeparator(separatorIso, dayNow, locale, t)
-      : null;
+    const dayLabel = dayLabels.get(item.id);
     return (
       <>
       {dayLabel ? <DaySeparatorChip label={dayLabel} glassActive={glassActive} theme={theme} /> : null}
@@ -2989,7 +3009,10 @@ export default function ChatScreen() {
       />
       </>
     );
-  }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, chatSettings.linkEmoji, bubbleColorsKey, bubbleColors, bubbleOpacity, bubbleTextColor, inColorsKey, inColors, inOpacity, inTextColor, startReply, scrollToMessageId, handleSwipeActive, openImageViewer, parseMessage, activeMatchId, jumpHighlightId, onMessageLongPress, currentUserId, dragActiveSV, dragFingerYSV, hoveredActionSV, actionZonesSV, fireDragAction, visTracker, imagesReady, daySeparators, dayNow, locale, t, glassActive, theme]);
+    // NOTE: `t` and `locale` are deliberately absent — see `dayLabels` above.
+    // Adding either (or anything else allocated fresh per render) re-creates
+    // `renderItem` on every render and makes FlashList re-render every cell.
+  }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, chatSettings.linkEmoji, bubbleColorsKey, bubbleColors, bubbleOpacity, bubbleTextColor, inColorsKey, inColors, inOpacity, inTextColor, startReply, scrollToMessageId, handleSwipeActive, openImageViewer, parseMessage, activeMatchId, jumpHighlightId, onMessageLongPress, currentUserId, dragActiveSV, dragFingerYSV, hoveredActionSV, actionZonesSV, fireDragAction, visTracker, imagesReady, dayLabels, glassActive, theme]);
 
   // Stable list header / footer elements. Passing INLINE JSX to FlashList's
   // ListHeaderComponent / ListFooterComponent handed it a fresh element
@@ -3049,6 +3072,9 @@ export default function ChatScreen() {
   // call rate at ~30 Hz on iOS; the JS-side guard here is belt-and-suspenders
   // so a chatty Android scroll listener can't churn `setState` either.
   const lastScrollEventAt = useRef(0);
+  // Latch mirroring `revealScrollPaused`, so the pause is dispatched to React
+  // once per gesture instead of once per scroll event. See `onChatScroll`.
+  const scrollPausedRef = useRef(false);
   // Latest scroll metrics (offset / viewport height / content height) captured
   // on each scroll event. `onScrollBtnTap` reads these to decide whether to do
   // an instant pre-jump before the animated settle (see below).
@@ -3064,10 +3090,24 @@ export default function ChatScreen() {
     visTrackerRef.current?.setScrolling(true);
     // Halt ALL media decode (photos + GIFs) while scrolling so no bitmap decode
     // lands on a scroll frame — the per-image "freeze when it scrolls into view".
-    setRevealScrollPaused(true);
+    //
+    // SCROLL-JANK FIX: this used to call `setRevealScrollPaused(true)` on EVERY
+    // native scroll event, and it sat ABOVE the 32 ms throttle below — so a fast
+    // flick dispatched a React state update per event (60+/s). Each dispatch
+    // re-renders this screen, and this screen owns the message list, so the very
+    // gesture the pause was meant to protect was paying for a render storm.
+    //
+    // A ref latch makes the state flip exactly TWICE per gesture (scroll start,
+    // scroll settle) instead of once per event. The pause semantics are
+    // unchanged — only the dispatch count is.
+    if (!scrollPausedRef.current) {
+      scrollPausedRef.current = true;
+      setRevealScrollPaused(true);
+    }
     if (scrollIdleRef.current) clearTimeout(scrollIdleRef.current);
     scrollIdleRef.current = setTimeout(() => {
       visTrackerRef.current?.setScrolling(false);
+      scrollPausedRef.current = false;
       setRevealScrollPaused(false);
     }, 180);
     const now = Date.now();
@@ -3084,7 +3124,7 @@ export default function ChatScreen() {
     const next = distanceFromBottom > SCROLL_BTN_THRESHOLD;
     setScrollBtnVisible((prev) => (prev === next ? prev : next));
   }, []);
-  useEffect(() => () => { if (scrollIdleRef.current) clearTimeout(scrollIdleRef.current); if (scrollSettleGuardTimer) { clearTimeout(scrollSettleGuardTimer); scrollSettleGuardTimer = null; } setRevealScrollPaused(false); }, []);
+  useEffect(() => () => { if (scrollIdleRef.current) clearTimeout(scrollIdleRef.current); scrollPausedRef.current = false; setRevealScrollPaused(false); }, []);
   useEffect(() => {
     Animated.timing(scrollBtnOpacity, {
       toValue: scrollBtnVisible ? 1 : 0,
@@ -3096,45 +3136,46 @@ export default function ChatScreen() {
     triggerHaptic('light');
     const fl = flatListRef.current;
     if (!fl) return;
-    // Root cause of the "stalls near the end then finishes" jank: with FlashList
-    // v2 + maintainVisibleContentPosition.startRenderingFromBottom, an animated
-    // `scrollToEnd` issued from far up the list animates ACROSS many not-yet-
-    // laid-out, variable-height bubbles. Their real heights only resolve mid-
-    // flight, so the target offset keeps moving and the animation re-anchors
-    // near the end (the visible stall).
+
+    // ── One move, not three ────────────────────────────────────────────────
     //
-    // Fix: when we're more than ~1.5 viewports from the bottom, INSTANTLY jump
-    // to within one viewport of the newest message first (cheap — the bottom
-    // cells stay warm under startRenderingFromBottom), then settle ONLY that
-    // final short, already-measured distance — never animating across unmeasured
-    // cells. A one-shot guard re-settles (non-animated) if late cell measurement
-    // changes the content height within ~250 ms, so the list lands exactly on
-    // the newest message with ZERO visible stutter. Closer than that, a plain
-    // animated scrollToEnd is already smooth, so keep it.
-    const m = scrollMetricsRef.current;
-    const distanceFromBottom = m ? m.contentH - (m.y + m.layoutH) : 0;
-    if (m && m.layoutH > 0 && distanceFromBottom > m.layoutH * 1.5) {
-      const near = Math.max(0, m.contentH - m.layoutH * 1.2);
-      const baselineH = m.contentH;
-      try { fl.scrollToOffset({ offset: near, animated: false }); } catch {}
-      // Next frame: one short animated settle over the now-measured last view.
-      requestAnimationFrame(() => {
+    // This used to be a hand-rolled three-stage sequence: an INSTANT
+    // `scrollToOffset` to ~1.2 viewports from the bottom, then an animated
+    // `scrollToEnd` on the next frame, then a 250 ms timer that fired a THIRD
+    // un-animated `scrollToEnd` if the content height had changed meanwhile.
+    // That is precisely the reported "it teleports me, then twitches up/down,
+    // and only then finishes" — the pre-jump is visible as one jump, the
+    // animated settle as another, and on a history whose cells measure late the
+    // timer adds a third snap.
+    //
+    // It was written that way because an animated `scrollToEnd` from far up the
+    // list animates across not-yet-measured variable-height bubbles, so the
+    // target offset keeps moving. FlashList v2 has a first-class answer for
+    // exactly that: `scrollToIndex` returns a PROMISE that resolves once the
+    // target is actually reached, resolving cell measurement internally. (That
+    // is also why v2 removed `onScrollToIndexFailed` — the retry ladder it used
+    // to need is now the library's job.)
+    //
+    // So: ask for the last message and await it. The single follow-up
+    // `scrollToEnd` is ordered by the promise rather than by a guessed timer,
+    // and only covers the footer spacer below the final bubble — a few points,
+    // un-animated, therefore invisible. One gesture, one move.
+    const lastIndex = windowedMessagesRef.current.length - 1;
+    if (lastIndex < 0) return;
+
+    void (async () => {
+      try {
+        await fl.scrollToIndex({ index: lastIndex, animated: true, viewPosition: 1 });
+        // Land past the footer spacer. Guarded because the user may have started
+        // scrolling again, or navigated away, while the animation ran.
+        flatListRef.current?.scrollToEnd({ animated: false });
+      } catch {
+        // Any rejection (index out of range after a concurrent data change,
+        // list unmounted) falls back to the plain call, which is still correct
+        // — just without the measured animation.
         try { flatListRef.current?.scrollToEnd({ animated: true }); } catch {}
-      });
-      // One-shot guard: if cells finished measuring (content height changed)
-      // within ~250 ms of the tap, re-issue a NON-animated scrollToEnd so we
-      // settle cleanly on the newest message with no visible stutter.
-      if (scrollSettleGuardTimer) clearTimeout(scrollSettleGuardTimer);
-      scrollSettleGuardTimer = setTimeout(() => {
-        scrollSettleGuardTimer = null;
-        const cur = scrollMetricsRef.current;
-        if (!cur || cur.contentH !== baselineH) {
-          try { flatListRef.current?.scrollToEnd({ animated: false }); } catch {}
-        }
-      }, 250);
-    } else {
-      try { fl.scrollToEnd({ animated: true }); } catch {}
-    }
+      }
+    })();
   }, []);
 
   const banner = editing || replyTo;
@@ -3583,6 +3624,11 @@ export default function ChatScreen() {
             bubbleTextColor={menuIsOwn ? bubbleTextColor : theme.colors.text.primary}
             bubbleRadius={chatSettings.bubbleRadius}
             linkEmoji={chatSettings.linkEmoji}
+            // Request the SAME proxy width the bubble already used, so the held
+            // photo comes from expo-image's memory cache rather than being
+            // re-fetched at a menu-specific size (a different cache key). This is
+            // what made long-press look like it re-downloaded the image.
+            imageProxyWidth={CHAT_IMG_MAX_W}
             dragActive={dragActiveSV}
             hoveredAction={hoveredActionSV}
             actionZones={actionZonesSV}
