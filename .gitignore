@@ -58,6 +58,9 @@ expo-env.d.ts
 telegram_ios_settings_icon_pack*.zip
 pixel_characters_pack*.zip
 
+# Downloaded CI job logs (fetched locally when diagnosing a failed build).
+build_log.txt
+
 # Raw logo/icon iteration exports and Apple's SF Symbols installer. Same rule
 # as above: only the optimized, shipped assets under `assets/` belong in git.
 logoappekpan/

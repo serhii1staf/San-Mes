@@ -19,7 +19,27 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        # `npm ci` cannot be used here, and this is why every native build since
+        # June failed at this step (runs #24 and #25, both `EUSAGE`):
+        #
+        #   npm error `npm ci` can only install packages when your package.json
+        #   and package-lock.json ... are in sync.
+        #   npm error Missing: @emnapi/runtime@1.11.3 from lock file
+        #   npm error Missing: @emnapi/core@1.11.3 from lock file
+        #   npm error Invalid: lock file's @emnapi/wasi-threads@1.2.1 does not
+        #             satisfy @emnapi/wasi-threads@1.2.3
+        #
+        # The lock file is generated on Windows, so it does not carry the
+        # platform-specific optional binaries that sharp pulls in on macOS/Linux
+        # (the `@img/sharp-*` → `@emnapi/*` WASM chain). `npm ci` validates the
+        # tree strictly and rejects the install; `npm install` repairs the lock
+        # on the fly. This is the SAME workaround `ota-update.yml` already
+        # documents and has been using successfully all along — the native build
+        # workflow simply never got it.
+        #
+        # Optional deps are NOT omitted here (unlike the OTA workflow): a native
+        # build runs `verify:theme-assets`, and the image tooling needs them.
+        run: npm install --no-audit --no-fund
 
       # Apple §3.3.4 license gate: fail the build if any bundled profile-theme
       # illustration/font asset ships without a license record.
