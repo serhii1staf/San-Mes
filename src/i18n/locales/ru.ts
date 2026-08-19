@@ -412,6 +412,11 @@ const ru: Record<string, string> = {
   'chat.menu.edit': 'Редактировать',
   'chat.menu.delete': 'Удалить',
   'chat.menu.translate': 'Перевести',
+  // Day-separator chips in the transcript. Absolute dates are formatted by
+  // `Intl.DateTimeFormat` from the active locale, so only these two relative
+  // labels need translating.
+  'chat.day.today': 'Сегодня',
+  'chat.day.yesterday': 'Вчера',
 
   // NOTE: the `translation.*` keys live in the "Translation sheet" block higher
   // up in this file. A duplicate block used to sit here and silently shadowed

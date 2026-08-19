@@ -182,6 +182,11 @@ const en: Record<string, string> = {
   'translation.error': "Couldn't translate. Check your connection and try again.",
   'translation.copy_a11y': 'Copy translation',
   'chat.menu.translate': 'Translate',
+  // Day-separator chips in the transcript. Absolute dates are formatted by
+  // `Intl.DateTimeFormat` from the active locale, so only these two relative
+  // labels need translating.
+  'chat.day.today': 'Today',
+  'chat.day.yesterday': 'Yesterday',
 
   // ─── Notifications ─────────────────────────────────────────────────────
   'notifications.title': 'Notifications',

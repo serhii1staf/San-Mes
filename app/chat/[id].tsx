@@ -49,7 +49,8 @@ import { getRecentEmoji, pushRecentEmoji } from '../../src/services/recentEmoji'
 import { getRecentGif, pushRecentGif } from '../../src/services/recentGif';
 import { playSendSound } from '../../src/utils/sounds';
 import { GiphyItem } from '../../src/services/giphy';
-import { useT } from '../../src/i18n/store';
+import { useT, useI18nStore } from '../../src/i18n/store';
+import { buildDaySeparators, formatDaySeparator } from '../../src/utils/chatDaySeparators';
 import { perfMonitor } from '../../src/services/perfMonitor';
 import { useSettingsStore } from '../../src/store/settingsStore';
 import { useLiquidGlassActive, NativeGlassView, GlassBg } from '../../src/components/ui/LiquidGlass';
@@ -742,6 +743,10 @@ export default function ChatScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
+  // Active locale drives the day-separator chips' absolute dates through
+  // `Intl.DateTimeFormat`, so month names and day/month order follow the user's
+  // region instead of being hardcoded.
+  const locale = useI18nStore((s) => s.locale);
   // Android: while focused, stop the OS window resize so ONLY this screen's
   // existing JS-driven lift moves content (kills the first-focus jump).
   // Purely additive — does not touch the input-bar lift/swallow, liftSV/
@@ -2927,9 +2932,33 @@ export default function ChatScreen() {
     visTrackerRef.current?.update(next);
   }).current;
 
+  // ── Day separators ────────────────────────────────────────────────────────
+  //
+  // Map of "message id → timestamp to label", holding ONLY the messages that
+  // begin a new local calendar day. Rendered as a centred chip above the bubble.
+  //
+  // Why inside the row rather than as its own list item: the search / reply-jump
+  // logic addresses messages by their INDEX into this array. Splicing separator
+  // entries into the data would shift every index and silently break those jumps.
+  // Drawing the chip as part of the first row of each day keeps indices identical.
+  const daySeparators = useMemo(
+    () => buildDaySeparators(windowedMessages),
+    [windowedMessages],
+  );
+  // `now` is captured per recompute rather than read inside the row: it decides
+  // "Today"/"Yesterday", and reading a fresh Date per row would let two chips
+  // disagree if the list happened to render across midnight.
+  const dayNow = useMemo(() => Date.now(), [daySeparators]);
+
   const renderItem = useCallback(({ item }: { item: ChatMessage; index: number }) => {
     const m = parseMessage(item);
+    const separatorIso = daySeparators.get(item.id);
+    const dayLabel = separatorIso
+      ? formatDaySeparator(separatorIso, dayNow, locale, t)
+      : null;
     return (
+      <>
+      {dayLabel ? <DaySeparatorChip label={dayLabel} glassActive={glassActive} theme={theme} /> : null}
       <VisibilityBubble
         tracker={visTracker}
         message={m}
@@ -2958,8 +2987,9 @@ export default function ChatScreen() {
         actionZones={actionZonesSV}
         onFireDragAction={fireDragAction}
       />
+      </>
     );
-  }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, chatSettings.linkEmoji, bubbleColorsKey, bubbleColors, bubbleOpacity, bubbleTextColor, inColorsKey, inColors, inOpacity, inTextColor, startReply, scrollToMessageId, handleSwipeActive, openImageViewer, parseMessage, activeMatchId, jumpHighlightId, onMessageLongPress, currentUserId, dragActiveSV, dragFingerYSV, hoveredActionSV, actionZonesSV, fireDragAction, visTracker, imagesReady]);
+  }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, chatSettings.linkEmoji, bubbleColorsKey, bubbleColors, bubbleOpacity, bubbleTextColor, inColorsKey, inColors, inOpacity, inTextColor, startReply, scrollToMessageId, handleSwipeActive, openImageViewer, parseMessage, activeMatchId, jumpHighlightId, onMessageLongPress, currentUserId, dragActiveSV, dragFingerYSV, hoveredActionSV, actionZonesSV, fireDragAction, visTracker, imagesReady, daySeparators, dayNow, locale, t, glassActive, theme]);
 
   // Stable list header / footer elements. Passing INLINE JSX to FlashList's
   // ListHeaderComponent / ListFooterComponent handed it a fresh element
@@ -3605,7 +3635,75 @@ export default function ChatScreen() {
   );
 }
 
+/**
+ * Centred date chip drawn above the first message of each local calendar day.
+ *
+ * Memoized and driven by primitives only, so a chip is reconciled at most once
+ * per label change — a bubble scrolling into view never re-renders its neighbour's
+ * chip.
+ *
+ * Liquid glass: `GlassBg` sits BEHIND the label as a sibling (the app-wide rule),
+ * never wrapping it, so the text is never optically warped by the material. The
+ * flat path uses a translucent fill that reads on both light and dark chat
+ * backgrounds, including user-set photo backgrounds.
+ */
+const DaySeparatorChip = React.memo(function DaySeparatorChip({
+  label,
+  glassActive,
+  theme,
+}: {
+  label: string;
+  glassActive: boolean;
+  theme: any;
+}) {
+  return (
+    <View style={styles.dayChipRow} pointerEvents="none">
+      <View
+        style={[
+          styles.dayChip,
+          glassActive
+            ? null
+            : {
+                backgroundColor: theme.isDark
+                  ? 'rgba(0,0,0,0.38)'
+                  : 'rgba(255,255,255,0.72)',
+              },
+        ]}
+      >
+        {glassActive ? (
+          <GlassBg
+            borderRadius={12}
+            glassStyle="regular"
+            interactive={false}
+            colorScheme={theme.isDark ? 'dark' : 'light'}
+          />
+        ) : null}
+        <Text
+          variant="caption"
+          weight="semibold"
+          color={theme.colors.text.secondary}
+          style={styles.dayChipText}
+          numberOfLines={1}
+        >
+          {label}
+        </Text>
+      </View>
+    </View>
+  );
+});
+
 const styles = StyleSheet.create({
+  dayChipRow: { alignItems: 'center', marginVertical: 10 },
+  dayChip: {
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    overflow: 'hidden',
+    // Cap the width so a long localized date (e.g. a spelled-out month in a
+    // verbose locale) wraps to an ellipsis instead of spanning the transcript.
+    maxWidth: '80%',
+  },
+  dayChipText: { fontSize: 11.5, letterSpacing: 0.2 },
   headerWrapper: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100 },
   headerContent: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingBottom: 8, gap: 10 },
   headerCircle: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
