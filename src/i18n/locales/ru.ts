@@ -176,13 +176,7 @@ const ru: Record<string, string> = {
   'moderation.reason.profanity': 'Слишком грубое выражение. Пожалуйста, измените текст.',
   'moderation.warn.posted_with_warning': 'Пост опубликован, но содержание может быть скрыто модерацией.',
 
-  // ─── Weather ────────────────────────────────────────────────────────────
-  'weather_settings.title': 'Погода',
-  'weather_settings.show_label': 'Показывать на главной',
-  'weather_settings.city_label': 'Город',
-  'weather_settings.search_placeholder': 'Введите название города',
-  'weather_settings.hint': 'Данные предоставлены Open-Meteo. Город можно сменить в любой момент.',
-  'settings.weather': 'Погода',
+
   'settings.liquid_glass': 'Жидкое стекло',
 
   // ─── Translation sheet ────────────────────────────────────────────────
@@ -322,8 +316,20 @@ const ru: Record<string, string> = {
   'account_switcher.signing_in': 'Вход...',
 
   // ─── Messages tab ──────────────────────────────────────────────────────
-  'messages.title': 'Сообщения',
+  // Header title. "Чаты" (not "Сообщения") to match the tab's own label and the
+  // agreed header design — this key has exactly one call site, the chat-list
+  // header, so it is safe to say what that header should say.
+  'messages.title': 'Чаты',
   'messages.search_placeholder': 'Поиск по чатам...',
+  // ─── Chat-list header + selection mode ────────────────────────────────────
+  // Kept short on purpose: the header's side slots are width-budgeted so the
+  // title stays optically centred, and the action-bar labels sit under 19 px
+  // icons in a bar split into equal flex columns.
+  'messages.edit': 'Изм.',
+  'messages.new_chat': 'Новый чат',
+  'messages.bulk.select_all': 'Все',
+  'messages.bulk.delete_title': 'Удалить чаты?',
+  'messages.bulk.delete_message': 'Выбранные чаты переедут в «Удалённые».',
   'messages.tab.chats': 'Чаты',
   'messages.tab.apps': 'Приложения',
   'messages.tab.archive': 'Архив',

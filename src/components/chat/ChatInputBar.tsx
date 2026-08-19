@@ -358,45 +358,34 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
     }
   }, [setExpanded, fieldHeight]);
 
-  // PERCEIVED-LAG FIX (glass only) ─────────────────────────────────────────
-  // The swallow used to drive LAYOUT props (`marginRight` on the photo wrapper
-  // + `paddingLeft` on the field) via `interpolate(sw.value, …)` EVERY spring
-  // frame. Those views live inside a native `GlassContainerView`, so each
-  // frame forced the liquid-glass union to recompute its merged shape — a very
-  // expensive UIVisualEffectView relayout ~60×/spring. That per-frame recompute
-  // is the expand lag users feel on glass devices.
+  // ── Swallow geometry: SMOOTH on every path ──────────────────────────────
   //
-  // The two endpoints have DIFFERENT glass merge states (collapsed = two
-  // separate capsules 8pt apart; expanded = fused), so the field's left edge
-  // genuinely changes width — no pure `translateX` can reproduce both ends
-  // without either leaving a gap at the field's (fixed) right edge or poking
-  // the photo capsule out past the expanded field. And smoothly translating the
-  // glass *background* itself would require an extra animated style on the field
-  // wrapper, which the preserve-exact-hook-count constraint forbids.
+  // HISTORY: a previous pass replaced the glass path's `interpolate` with a
+  // threshold SNAP (`sw.value > 0.02 ? a : b`) to avoid recomputing the native
+  // liquid-glass union every spring frame. That did cut the per-frame cost, but
+  // it also destroyed the animation users actually see: with Liquid Glass ON the
+  // composer jumped between its two rest states instead of growing. Reported as
+  // "you removed the input expansion". Correctness of the felt experience wins —
+  // the interpolation is restored for BOTH paths.
   //
-  // So on glass we take the sanctioned path: keep the live merge SUSPENDED
-  // during the spring and snap the layout exactly ONCE per transition (a single
-  // glass-union recompute instead of one every frame). `marginRight` and
-  // `paddingLeft` flip together at the same tiny threshold, so the field's left
-  // edge (52→0) and its left padding (14→66) change in lock-step and the text
-  // column stays pinned at the same absolute x across the snap — no text jump,
-  // no re-wrap. The emoji reveal still rides `sw` smoothly (unchanged below),
-  // and because the snap lands while the wrapper is already at its expanded
-  // origin, the emoji fades in cleanly at its final position. Both rest states
-  // (sw=0 and sw=1) are pixel-identical to before.
+  // Why this is now affordable: the dominant per-frame cost was never the
+  // relayout on its own, it was the relayout happening on glass surfaces that
+  // were ALSO marked `isInteractive`. Interactive liquid glass runs a continuous
+  // touch-tracking morph, so every geometry change re-derived the interactive
+  // lensing too. Those `isInteractive` flags are gone from this bar (see the
+  // render below), which is both the documented Apple guidance for glass that
+  // CONTAINS controls and what removes the compounding cost here.
   //
-  // The FLAT (non-glass) path slides under an opaque view (cheap, no glass), so
-  // it keeps the original smooth per-frame interpolation untouched.
-  const photoWrapStyle = useAnimatedStyle(() =>
-    glassActive
-      ? { marginRight: sw.value > 0.02 ? -PHOTO_SLOT : GAP }
-      : { marginRight: interpolate(sw.value, [0, 1], [GAP, -PHOTO_SLOT]) },
-  );
-  const fieldPadStyle = useAnimatedStyle(() =>
-    glassActive
-      ? { paddingLeft: sw.value > 0.02 ? EXPAND_PAD_LEFT : BASE_PAD_LEFT }
-      : { paddingLeft: interpolate(sw.value, [0, 1], [BASE_PAD_LEFT, EXPAND_PAD_LEFT]) },
-  );
+  // The field's left edge (52→0) and its left padding (14→66) interpolate in
+  // lock-step off the same `sw`, so the text column stays pinned at the same
+  // absolute x throughout — the field grows around the text, the text never
+  // slides or re-wraps.
+  const photoWrapStyle = useAnimatedStyle(() => ({
+    marginRight: interpolate(sw.value, [0, 1], [GAP, -PHOTO_SLOT]),
+  }));
+  const fieldPadStyle = useAnimatedStyle(() => ({
+    paddingLeft: interpolate(sw.value, [0, 1], [BASE_PAD_LEFT, EXPAND_PAD_LEFT]),
+  }));
   // Emoji button reveal — tied to the SAME `sw` expansion shared value so it
   // fades + scales in on the UI thread exactly as the field expands to 2+
   // lines, and out as it collapses. `pointerEvents` rides `sw` too (#2): the
@@ -462,15 +451,24 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
       {glassActive ? (
         // GLASS: photo + field glass live in a GlassContainer so they FUSE as
         // the field slides over the button (liquid union). No opacity anywhere.
+        // NOTE on `isInteractive`: deliberately NOT set on any glass surface in
+        // this bar. Apple's UIVisualEffectView consumes touches to drive the
+        // interactive morph, which starves the controls rendered INSIDE it (the
+        // photo button, the TextInput, the send button) — see
+        // developer.apple.com/forums/thread/816548. It also makes every geometry
+        // change during the swallow spring re-derive the interactive lensing,
+        // which was the real per-frame cost on glass devices. The capsules still
+        // liquid-MERGE, because that comes from the GlassContainer below, not
+        // from `isInteractive`.
         <GlassContainerView spacing={GLASS_MERGE_SPACING} style={styles.glassGroup}>
           <Reanimated.View style={[styles.photoWrap, photoWrapStyle]}>
             <Pressable onPress={onPickImages} onLongPress={onPasteImage} delayLongPress={300} style={styles.photoBtn}>
-              <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.capsuleFill}>
+              <NativeGlassView glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.capsuleFill}>
                 {photoIcon}
               </NativeGlassView>
             </Pressable>
           </Reanimated.View>
-          <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.inputWrapGlass}>
+          <NativeGlassView glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.inputWrapGlass}>
             {fieldContent}
             {emojiOverlay}
           </NativeGlassView>
@@ -494,7 +492,7 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
       {/* Send button. */}
       {glassActive && !canSend ? (
         <Pressable onPress={handleSend} style={{ borderRadius: 22, marginLeft: 8 }}>
-          <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.btnGlass}>
+          <NativeGlassView glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.btnGlass}>
             <Feather name={isEditing ? 'check' : 'send'} size={18} color={theme.colors.text.tertiary} />
           </NativeGlassView>
         </Pressable>

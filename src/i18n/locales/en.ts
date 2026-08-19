@@ -173,13 +173,6 @@ const en: Record<string, string> = {
   'moderation.reason.profanity': 'This is too rude. Please change the text.',
   'moderation.warn.posted_with_warning': 'Post published, but its content may be hidden by moderation.',
 
-  // ─── Weather ───────────────────────────────────────────────────────────
-  'weather_settings.title': 'Weather',
-  'weather_settings.show_label': 'Show on home tab',
-  'weather_settings.city_label': 'City',
-  'weather_settings.search_placeholder': 'Type a city name',
-  'weather_settings.hint': 'Data provided by Open-Meteo. You can change the city anytime.',
-  'settings.weather': 'Weather',
   'settings.liquid_glass': 'Liquid Glass',
 
   // ─── Translation sheet ─────────────────────────────────────────────────
@@ -320,8 +313,20 @@ const en: Record<string, string> = {
   'account_switcher.signing_in': 'Signing in...',
 
   // ─── Messages tab ──────────────────────────────────────────────────────
-  'messages.title': 'Messages',
+  // Header title. "Chats" (not "Messages") to match the tab's own label and the
+  // agreed header design — this key has exactly one call site, the chat-list
+  // header, so it is safe to say what that header should say.
+  'messages.title': 'Chats',
   'messages.search_placeholder': 'Search conversations...',
+  // ─── Chat-list header + selection mode ────────────────────────────────────
+  // Kept short on purpose: the header's side slots are width-budgeted so the
+  // title stays optically centred, and the action-bar labels sit under 19 px
+  // icons in a bar split into equal flex columns.
+  'messages.edit': 'Edit',
+  'messages.new_chat': 'New chat',
+  'messages.bulk.select_all': 'All',
+  'messages.bulk.delete_title': 'Delete chats?',
+  'messages.bulk.delete_message': 'The selected chats move to Deleted.',
   'messages.tab.chats': 'Chats',
   'messages.tab.apps': 'Apps',
   'messages.tab.archive': 'Archive',

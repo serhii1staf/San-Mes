@@ -3,14 +3,21 @@ import { View, FlatList, Pressable, ViewStyle, TextInput, StyleSheet, Text as RN
 import { FlashList } from '@shopify/flash-list';
 import { Feather } from '@expo/vector-icons';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import { runOnJS } from 'react-native-reanimated';
+import Reanimated, {
+  runOnJS,
+  useSharedValue,
+  useAnimatedStyle,
+  withTiming,
+  interpolate,
+  Easing as REasing,
+  type SharedValue,
+} from 'react-native-reanimated';
 import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import ContextMenu from 'react-native-context-menu-view';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
-import { WeatherChip } from '../../src/components/ui/WeatherChip';
 import { useLiquidGlassActive, NativeGlassView, GlassBg } from '../../src/components/ui/LiquidGlass';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { UserBadge } from '../../src/components/ui/UserBadge';
@@ -26,6 +33,90 @@ import { triggerHaptic } from '../../src/utils/haptics';
 import { useT, t as tStatic, useI18nStore } from '../../src/i18n/store';
 import { Conversation } from '../../src/types';
 import { perfMonitor } from '../../src/services/perfMonitor';
+import { useTabBarStore } from '../../src/store/tabBarStore';
+import {
+  ActiveTodayAvatars,
+  selectActiveToday,
+} from '../../src/components/messages/ActiveTodayAvatars';
+
+// Frozen empty set reused for "nothing selected" so leaving selection mode and
+// re-entering it doesn't allocate, and so the `selected` prop comparison in the
+// row's memo stays cheap.
+const EMPTY_SELECTION: ReadonlySet<string> = new Set<string>();
+
+// Width of the checkbox column that slides in during selection mode. Rows shift
+// right by exactly this much, so nothing ever overlaps the avatar.
+const SELECT_COLUMN_WIDTH = 34;
+
+// Hoisted to module scope: these are referenced from inside memoized rows, so a
+// fresh object per render would defeat their prop-equality bail-outs.
+const styles = StyleSheet.create({
+  selectColumn: { alignItems: 'flex-start', justifyContent: 'center', overflow: 'hidden' },
+  selectCircle: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  headerSide: {
+    // Both side slots reserve the SAME width so the centre cluster is optically
+    // centred on the screen and cannot be pushed off-centre by a longer
+    // localized label ("Изм." vs "Edit" vs "Bearbeiten").
+    minWidth: 92,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  headerSideRight: { justifyContent: 'flex-end' },
+  headerCenter: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+  },
+  headerPill: {
+    height: 34,
+    paddingHorizontal: 14,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  headerIconBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  actionBar: {
+    position: 'absolute',
+    left: 12,
+    right: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-around',
+    height: 60,
+    borderRadius: 26,
+    overflow: 'hidden',
+    zIndex: 210,
+  },
+  actionBtn: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 6,
+    gap: 2,
+  },
+});
 
 function AIConversationItem() { return null; }
 function MusicConversationItem() { return null; }
@@ -191,7 +282,27 @@ function scheduleRowArm(fn: () => void): () => void {
   };
 }
 
-function ConversationItemBase({ item, tab }: { item: Conversation; index: number; tab: ChatTab }) {
+interface ConversationItemProps {
+  item: Conversation;
+  index: number;
+  tab: ChatTab;
+  /** True while the list is in selection ("Изм.") mode. */
+  editMode: boolean;
+  /** Whether THIS row is currently ticked. */
+  selected: boolean;
+  /** Shared 0→1 selection-mode progress, driven once by the screen. */
+  editProgress: SharedValue<number>;
+  onToggleSelect: (id: string) => void;
+}
+
+function ConversationItemBase({
+  item,
+  tab,
+  editMode,
+  selected,
+  editProgress,
+  onToggleSelect,
+}: ConversationItemProps) {
   const theme = useTheme();
   const t = useT();
   const store = useChatSettingsStore;
@@ -346,12 +457,21 @@ function ConversationItemBase({ item, tab }: { item: Conversation; index: number
 
   return (
     <ConditionalContextMenuRow
-      menuReady={menuReady}
+      // In selection mode the native context menu is suppressed entirely: a
+      // long-press peek that navigates would fight the checkboxes, and iOS's
+      // menu would cover the very rows the user is ticking.
+      menuReady={menuReady && !editMode}
       actions={actions}
       onAction={handleAction}
-      onPress={openChat}
+      onPress={editMode ? () => onToggleSelect(item.id) : openChat}
       onLongPress={onRowLongPress}
     >
+      <SelectionCheckbox
+        editProgress={editProgress}
+        selected={selected}
+        accent={theme.colors.accent.primary}
+        borderColor={theme.colors.border.medium}
+      />
       <Avatar emoji={item.participantEmoji} name={item.participantName} size="md" tint />
       <View style={{ flex: 1, marginLeft: 12 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
@@ -395,6 +515,162 @@ function ConversationItemBase({ item, tab }: { item: Conversation; index: number
     </ConditionalContextMenuRow>
   );
 }
+
+/**
+ * Hairline between rows. Reads the same shared `editProgress` as the rows so its
+ * left inset slides in lock-step with them — one UI-thread animation, no JS work
+ * per separator.
+ */
+const RowSeparator = React.memo(function RowSeparator({
+  color,
+  editProgress,
+}: {
+  color: string;
+  editProgress: SharedValue<number>;
+}) {
+  const style = useAnimatedStyle(() => ({
+    marginLeft: 68 + editProgress.value * SELECT_COLUMN_WIDTH,
+  }));
+  return <Reanimated.View style={[{ height: 0.5, backgroundColor: color }, style]} />;
+});
+
+/**
+ * Header chrome buttons. Both follow the same rule the rest of the app uses for
+ * liquid glass: the glass is a BACKGROUND sibling (`GlassBg`) and the label/icon
+ * is painted on top, never nested inside the glass view. That keeps the content
+ * from being optically warped by the material and keeps the press target with
+ * the `Pressable`, not with the effect view.
+ */
+const HeaderPillButton = React.memo(function HeaderPillButton({
+  onPress,
+  glassActive,
+  theme,
+  children,
+  accessibilityLabel,
+}: {
+  onPress: () => void;
+  glassActive: boolean;
+  theme: any;
+  children: React.ReactNode;
+  accessibilityLabel: string;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      // Generous hit slop: the pill is only 34 pt tall, under Apple's 44 pt
+      // minimum touch target, so the slop makes up the difference without
+      // making the chrome look chunky.
+      hitSlop={8}
+      style={[
+        styles.headerPill,
+        glassActive
+          ? null
+          : {
+              backgroundColor: theme.colors.background.elevated,
+              borderWidth: 1,
+              borderColor: theme.colors.border.light,
+            },
+      ]}
+    >
+      {glassActive ? (
+        <GlassBg borderRadius={17} glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} />
+      ) : null}
+      {children}
+    </Pressable>
+  );
+});
+
+const HeaderIconButton = React.memo(function HeaderIconButton({
+  onPress,
+  glassActive,
+  theme,
+  icon,
+  accessibilityLabel,
+}: {
+  onPress: () => void;
+  glassActive: boolean;
+  theme: any;
+  icon: string;
+  accessibilityLabel: string;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      hitSlop={8}
+      style={[
+        styles.headerIconBtn,
+        glassActive
+          ? null
+          : {
+              backgroundColor: theme.colors.background.elevated,
+              borderWidth: 1,
+              borderColor: theme.colors.border.light,
+            },
+      ]}
+    >
+      {glassActive ? (
+        <GlassBg borderRadius={17} glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} />
+      ) : null}
+      <Feather name={icon as any} size={17} color={theme.colors.text.primary} />
+    </Pressable>
+  );
+});
+
+/**
+ * The checkbox column that slides in on the left of every row in selection mode.
+ *
+ * PERF: the width/opacity animation is driven by the ONE `editProgress` shared
+ * value that the screen owns, so entering selection mode is a single UI-thread
+ * animation that every visible row simply reads. There is no per-row timing, no
+ * `setState` cascade and no JS work per frame — which is what keeps the shift
+ * smooth on a long list.
+ *
+ * Collapsing to width 0 (rather than unmounting) means the row's flex layout
+ * settles once, and the tick can animate back out instead of popping.
+ *
+ * `pointerEvents: 'none'` throughout: the whole row is already the press target
+ * in selection mode, so the checkbox must never swallow that tap — it is purely
+ * a visual indicator. This also keeps the hit area a comfortable full-row width
+ * instead of a 22 px circle.
+ */
+const SelectionCheckbox = React.memo(function SelectionCheckbox({
+  editProgress,
+  selected,
+  accent,
+  borderColor,
+}: {
+  editProgress: SharedValue<number>;
+  selected: boolean;
+  accent: string;
+  borderColor: string;
+}) {
+  const columnStyle = useAnimatedStyle(() => ({
+    width: editProgress.value * SELECT_COLUMN_WIDTH,
+    opacity: editProgress.value,
+    // Nudge the circle in from the left so it eases into place rather than
+    // being revealed by a hard clip.
+    transform: [{ translateX: interpolate(editProgress.value, [0, 1], [-8, 0]) }],
+  }));
+
+  return (
+    <Reanimated.View style={[styles.selectColumn, columnStyle]} pointerEvents="none">
+      <View
+        style={[
+          styles.selectCircle,
+          selected
+            ? { backgroundColor: accent, borderColor: accent }
+            : { backgroundColor: 'transparent', borderColor },
+        ]}
+      >
+        {selected ? <Feather name="check" size={13} color="#FFFFFF" /> : null}
+      </View>
+    </Reanimated.View>
+  );
+});
 
 // Wraps a row's pressable content in a ContextMenu only once `menuReady`
 // flips true (one RAF after first mount). Hoisted out of ConversationItem
@@ -444,6 +720,15 @@ function ConditionalContextMenuRow({
 // conversation row. Re-renders only when this row's own data or tab changes.
 const ConversationItem = React.memo(ConversationItemBase, (prev, next) =>
   prev.tab === next.tab &&
+  // Selection state: `editMode` flips for every row at once (that's the point),
+  // while `selected` changes for exactly the tapped row — so ticking one chat
+  // re-renders one row, not the list. `editProgress` and `onToggleSelect` are
+  // stable identities from the screen, compared here so a future accidental
+  // inline arrow can't silently start re-rendering every row.
+  prev.editMode === next.editMode &&
+  prev.selected === next.selected &&
+  prev.editProgress === next.editProgress &&
+  prev.onToggleSelect === next.onToggleSelect &&
   prev.item.id === next.item.id &&
   prev.item.lastMessage === next.item.lastMessage &&
   prev.item.unreadCount === next.item.unreadCount &&
@@ -480,6 +765,133 @@ export default function MessagesScreen() {
   // Native iOS-26 liquid glass for the category tab chips. iOS-only + opt-in.
   const glassActive = useLiquidGlassActive();
   const [activeTab, setActiveTab] = useState<ChatTab>('chats');
+
+  // ─── Selection ("Изм.") mode ──────────────────────────────────────────────
+  //
+  // Entering it slides a checkbox column in on the left of every row, swaps the
+  // floating tab bar for a contextual action bar, and turns a row tap into
+  // select/deselect instead of "open chat".
+  //
+  // `editProgress` is a SINGLE shared value handed to every row, so the shift is
+  // one UI-thread animation the rows merely read — not N JS-driven animations.
+  // `selectedIds` is a Set for O(1) membership from inside the row.
+  const [editMode, setEditMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(EMPTY_SELECTION);
+  const editProgress = useSharedValue(0);
+  const setTabBarHidden = useTabBarStore((s) => s.setHidden);
+  // Mirror of the currently-visible rows, so "select all" can stay a STABLE
+  // callback. Depending on `filtered` directly would hand every row a fresh
+  // `onToggleSelect`/`onSelectAll` identity on each list recompute and defeat
+  // the row memo. (Assigned right after `filtered` is computed below.)
+  const filteredRef = useRef<Conversation[]>([]);
+
+  useEffect(() => {
+    editProgress.value = withTiming(editMode ? 1 : 0, {
+      duration: 220,
+      easing: REasing.out(REasing.cubic),
+    });
+  }, [editMode, editProgress]);
+
+  // The tab bar lives OUTSIDE this screen's tree, so hiding it goes through a
+  // store. The cleanup is not optional: without it, navigating away (or being
+  // unmounted by a tab switch) while still in selection mode would leave the
+  // app with no tab bar and no way to get it back.
+  useEffect(() => {
+    setTabBarHidden(editMode);
+    return () => setTabBarHidden(false);
+  }, [editMode, setTabBarHidden]);
+
+  const exitEditMode = useCallback(() => {
+    setEditMode(false);
+    setSelectedIds(EMPTY_SELECTION);
+  }, []);
+
+  const toggleEditMode = useCallback(() => {
+    triggerHaptic('light');
+    setEditMode((on) => {
+      // Leaving selection mode always clears the selection, so re-entering
+      // never resurrects a stale set.
+      if (on) setSelectedIds(EMPTY_SELECTION);
+      return !on;
+    });
+  }, []);
+
+  const toggleSelected = useCallback((id: string) => {
+    triggerHaptic('selection');
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  // ── Bulk actions ──────────────────────────────────────────────────────────
+  //
+  // All three delegate to the SAME `chatSettingsStore` actions the per-row
+  // context menu already uses, so selection mode can never drift out of sync
+  // with single-row behaviour, and nothing new needs server support.
+  //
+  // Destructive bulk actions are confirmed first: mis-tapping "Delete" with 20
+  // chats ticked is exactly the kind of thing a confirmation exists for.
+  const handleBulkDelete = useCallback(() => {
+    const ids = [...selectedIds];
+    if (ids.length === 0) return;
+    Alert.alert(
+      t('messages.bulk.delete_title', 'Удалить чаты?'),
+      t('messages.bulk.delete_message', 'Выбранные чаты переедут в «Удалённые».'),
+      [
+        { text: t('common.cancel', 'Отмена'), style: 'cancel' },
+        {
+          text: t('messages.action.delete', 'Удалить'),
+          style: 'destructive',
+          onPress: () => {
+            const s = useChatSettingsStore.getState();
+            // Synthetic "blocked user without a chat" rows have no chat record
+            // to delete — skip them instead of writing junk ids to the store.
+            ids.filter((id) => !isSyntheticUserBlockId(id)).forEach((id) => s.deleteChat(id));
+            triggerHaptic('medium');
+            exitEditMode();
+          },
+        },
+      ],
+    );
+  }, [selectedIds, t, exitEditMode]);
+
+  const handleBulkArchive = useCallback(() => {
+    const ids = [...selectedIds].filter((id) => !isSyntheticUserBlockId(id));
+    if (ids.length === 0) return;
+    const s = useChatSettingsStore.getState();
+    // On the Archive tab the same button un-archives, so the control is always
+    // the inverse of the bucket the user is looking at.
+    const unarchiving = activeTab === 'archive';
+    ids.forEach((id) => (unarchiving ? s.unarchiveChat(id) : s.archiveChat(id)));
+    triggerHaptic('light');
+    exitEditMode();
+  }, [selectedIds, activeTab, exitEditMode]);
+
+  // Select-all toggles: a second tap clears, which is what "select all" controls
+  // do everywhere and saves the user 20 taps to undo a mis-tap.
+  const handleSelectAll = useCallback(() => {
+    triggerHaptic('selection');
+    setSelectedIds((prev) => {
+      if (prev.size >= filteredRef.current.length && filteredRef.current.length > 0) {
+        return EMPTY_SELECTION;
+      }
+      return new Set(filteredRef.current.map((c) => c.id));
+    });
+  }, []);
+
+  // Compose menu (mini-apps / AI / music / chat settings). State lives here
+  // because its trigger is now the header button while the menu itself renders
+  // as an overlay sibling — the two can no longer share a component's local
+  // state the way the old FAB did.
+  const [composeOpen, setComposeOpen] = useState(false);
+  const openCompose = useCallback(() => {
+    triggerHaptic('light');
+    setComposeOpen((v) => !v);
+  }, []);
+  const closeCompose = useCallback(() => setComposeOpen(false), []);
   const archived = useChatSettingsStore((s) => s.archived);
   const blocked = useChatSettingsStore((s) => s.blocked);
   const deleted = useChatSettingsStore((s) => s.deleted);
@@ -745,6 +1157,11 @@ export default function MessagesScreen() {
     );
   }, [filteredBase, activeTab, searchQuery, openedAtForSort]);
 
+  // Keep the select-all mirror current. Assignment during render is safe here:
+  // it's a plain ref write derived from props/state in the same pass, not a
+  // subscription, so it can't tear.
+  filteredRef.current = filtered;
+
   const containerStyle: ViewStyle = {
     flex: 1,
     backgroundColor: theme.colors.background.primary,
@@ -784,6 +1201,32 @@ export default function MessagesScreen() {
   const headerContentHeight = insets.top + 48;
   const headerGradientHeight = headerContentHeight + 28;
 
+  // ── "Active today" cluster next to the title ───────────────────────────────
+  //
+  // Derived from the SAME locally-cached conversations the list already renders
+  // (see `selectActiveToday` for why this needs no server and collects nothing
+  // new). Excludes buckets the user has hidden — someone you archived, blocked
+  // or deleted should not reappear as a face in the header.
+  //
+  // Recomputed only when the conversation list or those buckets change. It is
+  // deliberately NOT time-ticking: re-running this on a timer would re-render
+  // the header every minute for a cosmetic detail. It refreshes whenever a
+  // message arrives or the screen remounts, which is exactly when it can
+  // meaningfully change.
+  const activeToday = useMemo(
+    () =>
+      selectActiveToday(
+        conversations.filter(
+          (c) =>
+            !archived.includes(c.id) &&
+            !blocked.includes(c.id) &&
+            !deleted.includes(c.id) &&
+            !blockedUserIds.includes(c.participantId),
+        ),
+      ),
+    [conversations, archived, blocked, deleted, blockedUserIds],
+  );
+
   // Stable FlatList callbacks. Both `renderItem` and `ItemSeparatorComponent`
   // were previously inline arrows, so every MessagesScreen re-render (search
   // typing, tab switch, store push) handed FlatList fresh function identities.
@@ -795,13 +1238,25 @@ export default function MessagesScreen() {
   const separatorColor = theme.colors.border.light;
   const renderConversationItem = useCallback(
     ({ item, index }: { item: Conversation; index: number }) => (
-      <ConversationItem item={item} index={index} tab={activeTab} />
+      <ConversationItem
+        item={item}
+        index={index}
+        tab={activeTab}
+        editMode={editMode}
+        selected={selectedIds.has(item.id)}
+        editProgress={editProgress}
+        onToggleSelect={toggleSelected}
+      />
     ),
-    [activeTab],
+    [activeTab, editMode, selectedIds, editProgress, toggleSelected],
   );
+  // The separator is inset to line up with the start of the row's TEXT column
+  // (past the avatar). In selection mode the rows shift right by the checkbox
+  // column, so the inset has to travel with them or the hairlines visibly fail
+  // to line up with the content above them.
   const renderSeparator = useCallback(
-    () => <View style={{ height: 0.5, backgroundColor: separatorColor, marginLeft: 68 }} />,
-    [separatorColor],
+    () => <RowSeparator color={separatorColor} editProgress={editProgress} />,
+    [separatorColor, editProgress],
   );
 
   // ─── Category-tab chips — memoized data + renderItem ──────────────────────
@@ -872,9 +1327,55 @@ export default function MessagesScreen() {
           locations={[0, 0.55, 1]}
           style={StyleSheet.absoluteFill}
         />
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: theme.spacing.lg, paddingTop: insets.top + 8, paddingBottom: 8 }} pointerEvents="auto">
-          <Text variant="subheading" weight="bold">{t('messages.title')}</Text>
-          <WeatherChip />
+        {/* ── Top bar ────────────────────────────────────────────────────────
+            Three slots: [Изм.] · [active-today avatars + title] · [actions].
+            The two side slots share a `minWidth`, which is what keeps the
+            centre cluster optically centred regardless of how long the
+            localized "Изм." label is — a plain space-between would drift the
+            title as soon as the label width changed. */}
+        <View
+          style={[
+            styles.headerRow,
+            { paddingHorizontal: theme.spacing.base, paddingTop: insets.top + 8, paddingBottom: 8 },
+          ]}
+          pointerEvents="auto"
+        >
+          <View style={styles.headerSide}>
+            <HeaderPillButton
+              onPress={editMode ? exitEditMode : toggleEditMode}
+              glassActive={glassActive}
+              theme={theme}
+              accessibilityLabel={editMode ? t('common.done', 'Готово') : t('messages.edit', 'Изм.')}
+            >
+              <Text variant="caption" weight="semibold" style={{ fontSize: 15 }}>
+                {editMode ? t('common.done', 'Готово') : t('messages.edit', 'Изм.')}
+              </Text>
+            </HeaderPillButton>
+          </View>
+
+          <View style={styles.headerCenter}>
+            <ActiveTodayAvatars entries={activeToday} ringColor={bgColor} />
+            <Text variant="subheading" weight="bold" numberOfLines={1}>
+              {t('messages.title')}
+            </Text>
+          </View>
+
+          <View style={[styles.headerSide, styles.headerSideRight]}>
+            {/* Compose lives HERE now, not in a bottom FAB: the bottom edge is
+                claimed by the tab bar (and, in selection mode, by the action
+                bar), and a top-right compose button is where iOS users reach
+                for it. Hidden during selection mode — "new chat" is meaningless
+                while picking existing ones, and the slot is needed for Done. */}
+            {!editMode && (
+              <HeaderIconButton
+                onPress={openCompose}
+                glassActive={glassActive}
+                theme={theme}
+                icon="edit"
+                accessibilityLabel={t('messages.new_chat', 'Новый чат')}
+              />
+            )}
+          </View>
         </View>
       </View>
 
@@ -967,12 +1468,22 @@ export default function MessagesScreen() {
         </View>
       </GestureDetector>
 
-      {/* FAB + popup menu — Apple-style: scale-and-fade out of the FAB itself
-          (origin = bottom-right of the FAB). Single Animated value drives both
-          scale (0.6→1) and opacity so the menu visually grows out of the
-          button. Closing reverses the same spring. Origin via transform
-          translation keeps the GPU on the native driver throughout. */}
-      <FabWithMenu />
+      {/* Compose menu overlay. Trigger is the header's compose button. */}
+      <ComposeMenu open={composeOpen} onClose={closeCompose} topOffset={headerContentHeight} />
+
+      {/* Contextual action bar — replaces the tab bar while selecting. */}
+      <SelectionActionBar
+        visible={editMode}
+        count={selectedIds.size}
+        tab={activeTab}
+        bottomInset={insets.bottom}
+        glassActive={glassActive}
+        theme={theme}
+        t={t}
+        onDelete={handleBulkDelete}
+        onArchive={handleBulkArchive}
+        onSelectAll={handleSelectAll}
+      />
     </View>
   );
 }
@@ -993,12 +1504,21 @@ export default function MessagesScreen() {
 //     of the navigation transition without competing for the JS thread.
 //   - Menu items are wrapped in React.memo so the list doesn't re-render
 //     when the parent's open state flips.
-function FabWithMenu() {
+function ComposeMenu({
+  open,
+  onClose,
+  topOffset,
+}: {
+  open: boolean;
+  onClose: () => void;
+  /** Y of the menu's top edge — just under the header's compose button. */
+  topOffset: number;
+}) {
   const theme = useTheme();
   const t = useT();
-  // Native iOS-26 liquid glass for the FAB + its menu. iOS-only + opt-in.
+  // Native iOS-26 liquid glass for the menu. iOS-only + opt-in.
   const glassActive = useLiquidGlassActive();
-  const [open, setOpen] = useState(false);
+  const setOpen = useCallback((next: boolean) => { if (!next) onClose(); }, [onClose]);
   const anim = useRef(new Animated.Value(0)).current; // 0 = closed, 1 = open
 
   useEffect(() => {
@@ -1012,7 +1532,6 @@ function FabWithMenu() {
     }).start();
   }, [open]);
 
-  const toggle = useCallback(() => { triggerHaptic('light'); setOpen((v) => !v); }, []);
   const navigate = useCallback((action: () => void) => {
     setOpen(false);
     // Defer the route push until React commits the closed state and the fade
@@ -1027,8 +1546,6 @@ function FabWithMenu() {
   const menuScale = anim.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1] });
   const menuTranslateY = anim.interpolate({ inputRange: [0, 1], outputRange: [8, 0] });
   const backdropOpacity = anim.interpolate({ inputRange: [0, 1], outputRange: [0, 1] });
-  // FAB icon rotates 45° to morph "edit"→"x" without swapping the icon mid-frame.
-  const fabIconRotate = anim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '45deg'] });
 
   const menuBg = theme.isDark ? theme.colors.background.elevated : '#FFFFFF';
   const borderColor = theme.colors.border.light;
@@ -1054,8 +1571,12 @@ function FabWithMenu() {
         pointerEvents={open ? 'auto' : 'none'}
         style={{
           position: 'absolute',
-          bottom: 164,
-          right: 24,
+          // Anchored under the header's compose button (top-right) now that the
+          // trigger moved up there. `topOffset` is computed from the real safe
+          // area + header height by the screen, so it lands correctly on a
+          // notched iPhone, a Dynamic Island one, and a flat-top Android alike.
+          top: topOffset,
+          right: theme.spacing.base,
           opacity: menuOpacity,
           transform: [
             { translateY: menuTranslateY },
@@ -1087,39 +1608,133 @@ function FabWithMenu() {
         <FabMenuItem icon="settings" label={t('messages.fab.chat_settings')} tint={secondary} onPress={() => navigate(() => router.push({ pathname: '/settings/chat-settings', params: { id: GLOBAL_CHAT_SETTINGS_KEY } } as any))} />
       </Animated.View>
 
-      {/* FAB → interactive liquid glass with a strong accent tint so it keeps
-          its accent identity while morphing on touch. Falls back to the solid
-          accent circle when glass is off. */}
-      <Pressable
-        onPress={toggle}
-        style={{
-          position: 'absolute',
-          bottom: 100,
-          right: 24,
-          width: 56,
-          height: 56,
-          borderRadius: 28,
-          backgroundColor: glassActive ? 'transparent' : accent,
-          alignItems: 'center',
-          justifyContent: 'center',
-          elevation: 6,
-          shadowColor: '#000',
-          shadowOffset: { width: 0, height: 4 },
-          shadowOpacity: 0.22,
-          shadowRadius: 8,
-          zIndex: 202,
-        }}
-      >
-        {glassActive ? (
-          <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} tintColor={accent} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 28 }} />
-        ) : null}
-        <Animated.View style={{ transform: [{ rotate: fabIconRotate }] }}>
-          <Feather name="edit" size={22} color="#FFFFFF" />
-        </Animated.View>
-      </Pressable>
+      {/* NOTE: the floating action button that used to live at bottom-right and
+          own this menu is gone — its trigger is now the compose button in the
+          header (see `HeaderIconButton` on the screen). Reasons it moved:
+            - the bottom-right corner is where the tab bar's detached profile
+              capsule floats, so the FAB sat on top of it on shorter devices;
+            - selection mode needs the whole bottom edge for its action bar;
+            - a top-right compose button matches where iOS puts it in Messages.
+          The menu itself (mini-apps / AI / music / chat settings) is unchanged —
+          only its anchor and trigger moved. */}
     </>
   );
 }
+
+/**
+ * Contextual bottom bar shown while selecting conversations. It occupies the
+ * space the tab bar vacates (see `tabBarStore`), so the two are never on screen
+ * together.
+ *
+ * ANIMATION: slides up on `translateY` and is NOT faded with `opacity`. When
+ * liquid glass is on, this bar's background is a `GlassBg` — and
+ * `expo-glass-effect` documents that opacity 0 on a GlassView or any parent
+ * stops the glass rendering entirely (expo/expo#41024). Fading it would make the
+ * bar return as a flat rectangle. Same reason the tab bar hides by translating.
+ *
+ * LAYOUT: bottom offset is built from the real `bottomInset`, so on a device with
+ * a home indicator the bar clears it, and on a flat-bottomed Android it doesn't
+ * float with a pointless gap. Buttons are `flex: 1` in a row, so three or four
+ * of them share the width evenly at any text size and can't overlap.
+ */
+const SelectionActionBar = React.memo(function SelectionActionBar({
+  visible,
+  count,
+  tab,
+  bottomInset,
+  glassActive,
+  theme,
+  t,
+  onDelete,
+  onArchive,
+  onSelectAll,
+}: {
+  visible: boolean;
+  count: number;
+  tab: ChatTab;
+  bottomInset: number;
+  glassActive: boolean;
+  theme: any;
+  t: (k: string, d?: string) => string;
+  onDelete: () => void;
+  onArchive: () => void;
+  onSelectAll: () => void;
+}) {
+  const progress = useSharedValue(visible ? 1 : 0);
+  useEffect(() => {
+    progress.value = withTiming(visible ? 1 : 0, {
+      duration: 220,
+      easing: REasing.out(REasing.cubic),
+    });
+  }, [visible, progress]);
+
+  const barStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: interpolate(progress.value, [0, 1], [140, 0]) }],
+  }));
+
+  // Nothing ticked → the destructive actions are inert. Dimming the label
+  // communicates that without removing the buttons and reflowing the bar.
+  const enabled = count > 0;
+  const actionColor = enabled ? theme.colors.text.primary : theme.colors.text.tertiary;
+  const destructiveColor = enabled ? '#FF453A' : theme.colors.text.tertiary;
+
+  return (
+    <Reanimated.View
+      style={[
+        styles.actionBar,
+        { bottom: 12 + bottomInset },
+        glassActive
+          ? null
+          : {
+              backgroundColor: theme.colors.background.elevated,
+              borderWidth: 1,
+              borderColor: theme.colors.border.light,
+            },
+        barStyle,
+      ]}
+      pointerEvents={visible ? 'auto' : 'none'}
+    >
+      {glassActive ? (
+        <GlassBg borderRadius={26} glassStyle="regular" interactive={false} colorScheme={theme.isDark ? 'dark' : 'light'} />
+      ) : null}
+
+      <Pressable onPress={onSelectAll} style={styles.actionBtn} accessibilityRole="button">
+        <Feather name="check-square" size={19} color={theme.colors.text.primary} />
+        <Text variant="caption" style={{ fontSize: 11 }} color={theme.colors.text.primary}>
+          {t('messages.bulk.select_all', 'Все')}
+        </Text>
+      </Pressable>
+
+      <Pressable
+        onPress={enabled ? onArchive : undefined}
+        disabled={!enabled}
+        style={styles.actionBtn}
+        accessibilityRole="button"
+      >
+        <Feather name={tab === 'archive' ? 'corner-up-left' : 'archive'} size={19} color={actionColor} />
+        <Text variant="caption" style={{ fontSize: 11 }} color={actionColor}>
+          {tab === 'archive'
+            ? t('messages.action.unarchive', 'Из архива')
+            : t('messages.action.archive', 'В архив')}
+        </Text>
+      </Pressable>
+
+      <Pressable
+        onPress={enabled ? onDelete : undefined}
+        disabled={!enabled}
+        style={styles.actionBtn}
+        accessibilityRole="button"
+      >
+        <Feather name="trash-2" size={19} color={destructiveColor} />
+        <Text variant="caption" style={{ fontSize: 11 }} color={destructiveColor}>
+          {count > 0
+            ? `${t('messages.action.delete', 'Удалить')} (${count})`
+            : t('messages.action.delete', 'Удалить')}
+        </Text>
+      </Pressable>
+    </Reanimated.View>
+  );
+});
 
 const FabMenuItem = React.memo(function FabMenuItem({ icon, label, tint, onPress }: { icon: string; label: string; tint: string; onPress: () => void }) {
   return (

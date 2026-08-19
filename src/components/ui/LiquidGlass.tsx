@@ -1,5 +1,13 @@
 import React from 'react';
-import { Platform, View, StyleSheet, type ViewProps, type StyleProp, type ViewStyle } from 'react-native';
+import {
+  AccessibilityInfo,
+  Platform,
+  View,
+  StyleSheet,
+  type ViewProps,
+  type StyleProp,
+  type ViewStyle,
+} from 'react-native';
 import { useSettingsStore } from '../../store/settingsStore';
 
 // ── Native liquid glass (iOS 26+) — single integration point ───────────────
@@ -57,14 +65,65 @@ export function isNativeGlassCapable(): boolean {
   return NATIVE_GLASS_CAPABLE;
 }
 
+// ── Reduce Transparency (accessibility) ────────────────────────────────────
+//
+// Expo's own docs are explicit about this: `isLiquidGlassAvailable()` only tells
+// you the components are compiled in, and "may also be true if the user has
+// enabled accessibility settings that limit the Liquid Glass effect. To check if
+// the user has disabled the Liquid Glass effect via accessibility settings, use
+// AccessibilityInfo.isReduceTransparencyEnabled()."
+//
+// Without this check we mount full liquid-glass surfaces for users who asked the
+// system for LESS transparency — an accessibility regression, and pure wasted
+// GPU work since iOS then degrades the material anyway. Tracked in a module-level
+// store (not a hook-local state) so the value is shared by every consumer and
+// read synchronously by non-React callers.
+let reduceTransparency = false;
+const reduceTransparencyListeners = new Set<() => void>();
+
+function setReduceTransparency(next: boolean): void {
+  if (next === reduceTransparency) return;
+  reduceTransparency = next;
+  reduceTransparencyListeners.forEach((fn) => {
+    try { fn(); } catch { /* a torn-down subscriber must not break the others */ }
+  });
+}
+
+if (Platform.OS === 'ios') {
+  AccessibilityInfo.isReduceTransparencyEnabled()
+    .then(setReduceTransparency)
+    .catch(() => { /* keep the default (glass allowed) */ });
+  // Respect a mid-session toggle — the user can flip this in Settings while the
+  // app is backgrounded and come straight back.
+  AccessibilityInfo.addEventListener('reduceTransparencyChanged', setReduceTransparency);
+}
+
+/** Whether the OS "Reduce Transparency" accessibility setting is currently on. */
+export function isReduceTransparencyEnabled(): boolean {
+  return reduceTransparency;
+}
+
 /**
- * True when the device can render native glass AND the user has it enabled in
- * settings. Subscribes to the toggle so consumers re-render (mount/unmount the
- * GlassView) the instant the user flips it.
+ * True when the device can render native glass, the user has it enabled in
+ * settings, AND the OS is not asking us to reduce transparency. Subscribes to
+ * the settings toggle and to the accessibility flag, so consumers re-render
+ * (mount/unmount the GlassView) the instant either one flips.
  */
 export function useLiquidGlassActive(): boolean {
   const enabled = useSettingsStore((s) => s.liquidGlassEnabled);
-  return NATIVE_GLASS_CAPABLE && enabled;
+  const reduced = React.useSyncExternalStore(
+    subscribeReduceTransparency,
+    isReduceTransparencyEnabled,
+    isReduceTransparencyEnabled,
+  );
+  return NATIVE_GLASS_CAPABLE && enabled && !reduced;
+}
+
+function subscribeReduceTransparency(onStoreChange: () => void): () => void {
+  reduceTransparencyListeners.add(onStoreChange);
+  return () => {
+    reduceTransparencyListeners.delete(onStoreChange);
+  };
 }
 
 export type GlassStyle = 'clear' | 'regular' | 'none';
@@ -84,6 +143,31 @@ interface NativeGlassViewProps extends ViewProps {
  * after checking `useLiquidGlassActive()` — it assumes the native effect is
  * available. Renders a plain View if (somehow) the module is missing, so it
  * can never crash. `children` render inside the glass surface.
+ *
+ * ── `isInteractive` IS IGNORED WHEN THIS SURFACE HAS CHILDREN ──────────────
+ *
+ * Apple's interactive glass is implemented by having the UIVisualEffectView
+ * itself CONSUME touches so it can drive the morph. When controls (a Pressable,
+ * a TextInput, an icon button) are rendered INSIDE that view, the effect view
+ * eats the touch and the control never fires — see
+ * https://developer.apple.com/forums/thread/816548. It also makes every layout
+ * change on the surface re-derive the interactive lensing, which is the single
+ * biggest per-frame cost when a glass surface animates.
+ *
+ * Rather than police ~70 call sites by hand (and re-introduce the bug on the
+ * next one added), the rule is enforced HERE, once:
+ *
+ *   - surface WITH children  → interactive is dropped. The surface is still real
+ *     liquid glass and still merges inside a `GlassContainer`; it just doesn't
+ *     fight its own content for touches.
+ *   - surface WITHOUT children (a backdrop / `GlassBg` layer) → interactive is
+ *     honoured. That is the documented-safe shape: the real content is a SIBLING
+ *     painted on top, so the glass can morph under it without warping it or
+ *     stealing its taps.
+ *
+ * This is also what `CustomTabBar` already asserted in a comment ("isInteractive
+ * lensed/warped the content and is removed everywhere") but was never actually
+ * enforced.
  */
 export function NativeGlassView({
   glassStyle = 'regular',
@@ -97,12 +181,13 @@ export function NativeGlassView({
   if (!GlassViewComp) {
     return <View style={style} {...rest}>{children}</View>;
   }
+  const hasChildren = React.Children.count(children) > 0;
   return (
     <GlassViewComp
       style={style}
       glassEffectStyle={glassStyle}
       tintColor={tintColor}
-      isInteractive={isInteractive}
+      isInteractive={hasChildren ? false : isInteractive}
       colorScheme={colorScheme}
       {...rest}
     >

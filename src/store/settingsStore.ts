@@ -37,15 +37,6 @@ interface SettingsState {
   // `preview_3`) or `null` when the card stays transparent (default).
   // Picked from `app/settings/mini-app-preview.tsx`.
   miniAppPreviewBg: string | null;
-  // Weather chip on the messages-tab header. Off by default per Apple's
-  // "no auto-fetch on launch" guidance — the user opts in from settings.
-  // City is the human-readable label rendered next to the temperature; lat/
-  // lon drive the Open-Meteo fetch. `null` city means weather is on but the
-  // user has not picked a place yet (chip stays hidden until they do).
-  weatherEnabled: boolean;
-  weatherCityName: string | null;
-  weatherLat: number | null;
-  weatherLon: number | null;
   // Long-press customization for the OWN-profile category tabs (Posts /
   // Replies / Media / Likes). Keyed by tab key; missing key = use the
   // default i18n label and no emoji prefix. Read by both `(tabs)/profile`
@@ -79,8 +70,7 @@ interface SettingsState {
   setPerfMonitorFilter: (kind: string, on: boolean) => void;
   setHomeHeaderIcon: (id: string | null) => void;
   setMiniAppPreviewBg: (id: string | null) => void;
-  setWeatherEnabled: (enabled: boolean) => void;
-  setWeatherCity: (city: { name: string; lat: number; lon: number } | null) => void;
+
   // Apply / clear a single tab's customization. `value` carries an optional
   // `label` (empty string treated as cleared) and optional `emoji` prefix;
   // `clearProfileTabCustom` removes the key entirely so the default returns.
@@ -121,11 +111,7 @@ export const useSettingsStore = create<SettingsState>()(
       // No preview-card background by default — `MiniAppPreviewCard`
       // keeps its current transparent look until the user picks one.
       miniAppPreviewBg: null,
-      // Weather opt-in defaults: feature OFF, no city picked yet.
-      weatherEnabled: false,
-      weatherCityName: null,
-      weatherLat: null,
-      weatherLon: null,
+
       // No tab customizations until the user long-presses a tab and applies
       // one. Empty record reads as "every tab uses its default i18n label".
       profileTabsCustom: {},
@@ -148,13 +134,6 @@ export const useSettingsStore = create<SettingsState>()(
         set((s) => ({ perfMonitorFilters: { ...s.perfMonitorFilters, [kind]: on } })),
       setHomeHeaderIcon: (homeHeaderIcon) => set({ homeHeaderIcon }),
       setMiniAppPreviewBg: (miniAppPreviewBg) => set({ miniAppPreviewBg }),
-      setWeatherEnabled: (weatherEnabled) => set({ weatherEnabled }),
-      setWeatherCity: (city) =>
-        set(
-          city
-            ? { weatherCityName: city.name, weatherLat: city.lat, weatherLon: city.lon }
-            : { weatherCityName: null, weatherLat: null, weatherLon: null }
-        ),
       // Tab-customization setters. Apply normalises the input: an empty
       // label string AND no emoji collapses to a clear (no point storing
       // an entry that has no effect). Anything else merges into the

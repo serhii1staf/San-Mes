@@ -14,6 +14,8 @@ import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withSpring,
+  withTiming,
+  Easing,
   runOnJS,
   SharedValue,
   interpolate,
@@ -22,6 +24,7 @@ import Animated, {
 import { useTheme } from '../../theme';
 import { triggerHaptic } from '../../utils/haptics';
 import { GlassSurface, NativeGlassView, useLiquidGlassActive } from '../ui/LiquidGlass';
+import { useTabBarStore } from '../../store/tabBarStore';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -869,8 +872,40 @@ export const CustomTabBar = React.memo(function CustomTabBar({
   const barMarginBottom =
     BAR_BOTTOM_MARGIN + (Platform.OS === 'android' ? insets.bottom : 0);
 
+  // ── Temporary hide (a screen is presenting its own bottom bar) ────────────
+  //
+  // Driven by `tabBarStore`; today only the chat list's selection mode uses it.
+  //
+  // Slides the whole bar DOWN past the screen edge instead of fading it. Two
+  // reasons, both deliberate:
+  //   1. `expo-glass-effect` documents that opacity 0 on a GlassView or any
+  //      PARENT stops the glass rendering entirely (expo/expo#41024) — and the
+  //      bar's backdrop is a GlassView. A faded-out bar would come back as a
+  //      flat grey slab.
+  //   2. A transform is composited on the GPU: no Yoga relayout, so no native
+  //      liquid-glass union recompute while it animates.
+  //
+  // Travel distance is measured from the real bar height so it clears the
+  // display on every device (and under Android's system nav inset) rather than
+  // relying on a magic number.
+  const hidden = useTabBarStore((s) => s.hidden);
+  const hideProgress = useSharedValue(hidden ? 1 : 0);
+  const hideTravel = getTabBarHeight(insets.bottom) + BAR_FADE_HEIGHT;
+  useEffect(() => {
+    hideProgress.value = withTiming(hidden ? 1 : 0, {
+      duration: 220,
+      easing: Easing.out(Easing.cubic),
+    });
+  }, [hidden, hideProgress]);
+  const hideStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: hideProgress.value * hideTravel }],
+  }));
+
   return (
-    <View style={styles.wrapper} pointerEvents="box-none">
+    <Animated.View
+      style={[styles.wrapper, hideStyle]}
+      pointerEvents={hidden ? 'none' : 'box-none'}
+    >
       {/* Bottom fade — the mirror of the home feed's top header fade, but it
           never reaches full opacity: the bottom stop is ~80% so feed content
           stays faintly visible THROUGH the fade all the way down to the
@@ -1008,7 +1043,7 @@ export const CustomTabBar = React.memo(function CustomTabBar({
           />
         )}
       </View>
-    </View>
+    </Animated.View>
   );
 });
 
