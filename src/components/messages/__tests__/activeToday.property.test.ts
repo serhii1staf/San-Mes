@@ -33,10 +33,19 @@ function conv(id: string, lastMessageAt: string, emoji?: string): Conversation {
   };
 }
 
+// BOUNDARY: the selector keeps everything with `at >= now - 24h`, i.e. a message
+// exactly 24 h old still counts as "active today". That inclusive edge is pinned
+// by its own test below, and the generators here stay strictly on one side of it
+// so the properties can never straddle it.
+//
+// (Worth stating because getting this wrong is invisible: fast-check biases hard
+// toward the boundary values of a range, so an "outside" generator starting at
+// exactly DAY_MS produced a conversation the selector legitimately KEPT, and the
+// property failed on maybe one run in five.)
 /** Offsets strictly inside the active window (1 ms .. just under 24 h ago). */
 const insideWindowMs = fc.integer({ min: 1, max: DAY_MS - 1 });
-/** Offsets strictly outside it (24 h ago or older). */
-const outsideWindowMs = fc.integer({ min: DAY_MS, max: 40 * DAY_MS });
+/** Offsets strictly outside it (older than 24 h — past the inclusive edge). */
+const outsideWindowMs = fc.integer({ min: DAY_MS + 1, max: 40 * DAY_MS });
 
 describe('selectActiveToday', () => {
   // ───────────────────────────────────────────────────────────────────────────
@@ -155,5 +164,16 @@ describe('selectActiveToday', () => {
 
   it('returns nothing for an empty list (header renders no cluster)', () => {
     expect(selectActiveToday([], NOW)).toStrictEqual([]);
+  });
+
+  // The 24 h edge is INCLUSIVE. Pinned explicitly rather than left implicit,
+  // because the property generators above are built around this fact and would
+  // silently start failing at random if the comparison ever flipped.
+  it('treats the 24 h edge as inclusive, and one millisecond past it as stale', () => {
+    const exactly24h = conv('edge', new Date(NOW - DAY_MS).toISOString());
+    expect(selectActiveToday([exactly24h], NOW).map((e) => e.id)).toStrictEqual(['edge']);
+
+    const justOver = conv('over', new Date(NOW - DAY_MS - 1).toISOString());
+    expect(selectActiveToday([justOver], NOW)).toStrictEqual([]);
   });
 });

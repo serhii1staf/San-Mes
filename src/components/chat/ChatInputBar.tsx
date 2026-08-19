@@ -1,6 +1,13 @@
 import React, { memo, useState, useImperativeHandle, forwardRef, useCallback, useRef, useEffect } from 'react';
 import { View, TextInput, Pressable, StyleSheet, Text } from 'react-native';
-import Reanimated, { useSharedValue, useAnimatedStyle, withSpring, withTiming, interpolate, Easing } from 'react-native-reanimated';
+import Reanimated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+  interpolate,
+  Easing,
+  LinearTransition,
+} from 'react-native-reanimated';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../../theme';
 import { useT } from '../../i18n/store';
@@ -10,17 +17,38 @@ import { AnimatedKeyboardIcon } from './AnimatedKeyboardIcon';
 import { AnimatedEmojiIcon } from './AnimatedEmojiIcon';
 import { AnimatedGifIcon } from './AnimatedGifIcon';
 
-// Field height clamp bounds — mirror the inner TextInput's minHeight/maxHeight.
-// The field's height is now an explicit, component-owned Reanimated value
-// (`fieldHeight`) animated with `withTiming`, rather than the implicit
-// TextInput height cushioned by a fragile one-shot `LayoutAnimation`. withTiming
-// is interruptible: a new target mid-animation retargets smoothly from the
-// current value instead of snapping, and it runs isolated on the UI thread so it
-// can't race the keyboard frame, the swallow spring (`sw`), or the list.
-const MIN_FIELD_HEIGHT = 22;
-const MAX_FIELD_HEIGHT = 100;
-// Duration/easing for the smooth height retarget (short + standard ease-out).
-const HEIGHT_ANIM = { duration: 160, easing: Easing.out(Easing.quad) };
+// ── How the composer grows (and the two ways it was broken) ────────────────
+//
+// The field height is INTRINSIC: the multiline TextInput measures itself between
+// its own `minHeight: 22` and `maxHeight: 100`, and the glass capsule above it
+// simply sizes to that content. Nothing in JS owns the number.
+//
+// Two previous attempts both regressed this, so the reasoning is recorded here:
+//
+//   1. `LayoutAnimation.configureNext(...)` on every content-size change. This
+//      is the wrong tool on the New Architecture (`newArchEnabled: true`):
+//      Fabric does not honour it the way the old renderer did, which is almost
+//      certainly why the "smooth grow" it was supposed to cushion read as a hard
+//      snap in the first place.
+//   2. Replacing the intrinsic height with an explicit animated `height` driven
+//      by `onContentSizeChange`. That PINS the wrapper: the TextInput is
+//      `alignSelf: 'stretch'`, so a fixed parent height forces its frame, and
+//      growth then depends entirely on that one callback landing. When it
+//      didn't, the composer stopped growing at all — the reported "поле ввода не
+//      расширяется".
+//
+// So: no explicit height, and cushioning comes from a Reanimated LAYOUT
+// TRANSITION, which is the Fabric-correct mechanism. It animates the view's real
+// measured frame, so the field still grows even if the transition is a no-op.
+// Growth is structural; the animation is only polish on top of it.
+const FIELD_HEIGHT_TRANSITION = LinearTransition.duration(170).easing(
+  Easing.out(Easing.quad),
+);
+
+// Line-count thresholds for the horizontal "swallow" hysteresis. These are the
+// ONLY thing `onContentSizeChange` still drives — never the height.
+const SWALLOW_EXPAND_AT = 34;
+const SWALLOW_COLLAPSE_AT = 28;
 
 // Delete the last user-perceived character (grapheme) from a string. Handles
 // astral emoji (surrogate pairs), variation selectors, skin-tone modifiers and
@@ -259,10 +287,6 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
   // expansion + the top-left emoji button behave identically.
   const sw = useSharedValue(0);
   // Explicit, component-owned animated field height. Initializes to the
-  // collapsed base (MIN_FIELD_HEIGHT) so the bar mounts at rest — no
-  // measure-then-animate on mount, so chat-open adds zero height work to the
-  // navigation frame. handleContentSizeChange retargets it via withTiming.
-  const fieldHeight = useSharedValue(MIN_FIELD_HEIGHT);
   const expandedRef = useRef(false);
   const setExpanded = useCallback((next: boolean) => {
     if (next === expandedRef.current) return;
@@ -303,23 +327,24 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
   useImperativeHandle(ref, () => ({
     setText: (val: string) => {
       fieldRef.current?.setText(val);
+      // Clearing collapses the swallow. The HEIGHT needs no reset — emptying the
+      // TextInput shrinks its own measured content, and the layout transition
+      // eases the capsule back down.
       if (!val) {
         setExpanded(false);
         lastHeightRef.current = 0;
-        fieldHeight.value = withTiming(MIN_FIELD_HEIGHT, HEIGHT_ANIM);
       }
     },
     clear: () => {
       fieldRef.current?.clear();
       lastHeightRef.current = 0;
       setExpanded(false);
-      fieldHeight.value = withTiming(MIN_FIELD_HEIGHT, HEIGHT_ANIM);
     },
     getText: () => fieldRef.current?.getText() ?? '',
     insert: (s: string) => { fieldRef.current?.insert(s); },
     backspace: () => { fieldRef.current?.backspace(); },
     focus: () => { fieldRef.current?.focus(); },
-  }), [setExpanded, fieldHeight]);
+  }), [setExpanded]);
 
   const canSend = hasText || hasPendingImages;
 
@@ -331,32 +356,21 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
     onSend(val);
   }, [onSend]);
 
-  // Smoothly ease EVERY height change as the field grows/shrinks across lines.
-  // `onContentSizeChange` fires once per line added/removed (NOT per frame). We
-  // clamp the measured content height to [MIN_FIELD_HEIGHT, MAX_FIELD_HEIGHT]
-  // and retarget the explicit `fieldHeight` shared value via `withTiming`.
-  // withTiming is INTERRUPTIBLE: a new target arriving mid-animation (fast
-  // typing/deleting across lines) retargets smoothly from the current value
-  // instead of snapping, and it animates only this field wrapper's own height on
-  // the UI thread — so it never reintroduces the per-frame liquid-glass union
-  // recompute and never races the keyboard frame or the `sw` swallow spring. The
-  // hysteresis below still drives ONLY the horizontal `sw`/glass-swallow
-  // expand/collapse + emoji reveal (unchanged).
+  // Drives ONLY the horizontal swallow hysteresis (photo capsule + emoji
+  // reveal). It deliberately does NOT touch the field height any more — see the
+  // note at the top of this file. That separation is the point: if this callback
+  // ever misbehaves, the composer still grows, because growth is structural.
   const lastHeightRef = useRef(0);
   const handleContentSizeChange = useCallback((e: { nativeEvent: { contentSize: { height: number } } }) => {
     const h = Math.round(e.nativeEvent.contentSize.height);
     if (h === lastHeightRef.current) return;
     lastHeightRef.current = h;
-    // Clamp to the animatable range (past the cap the TextInput scrolls
-    // internally) and ease the height commit for this line change.
-    const target = Math.min(MAX_FIELD_HEIGHT, Math.max(MIN_FIELD_HEIGHT, h));
-    fieldHeight.value = withTiming(target, HEIGHT_ANIM);
-    if (!expandedRef.current && h > 34) {
+    if (!expandedRef.current && h > SWALLOW_EXPAND_AT) {
       setExpanded(true);
-    } else if (expandedRef.current && h < 28) {
+    } else if (expandedRef.current && h < SWALLOW_COLLAPSE_AT) {
       setExpanded(false);
     }
-  }, [setExpanded, fieldHeight]);
+  }, [setExpanded]);
 
   // ── Swallow geometry: SMOOTH on every path ──────────────────────────────
   //
@@ -398,17 +412,19 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
     pointerEvents: sw.value > 0.01 ? 'auto' : 'none',
   }));
 
-  // Explicit animated height for the field content row. This is the single
-  // value that smoothly grows/shrinks the composer; it animates only this
-  // wrapper's own height (not a global layout transaction), so the glass-merge
-  // still flips once-per-transition on `sw` and is never recomputed per frame.
-  const heightStyle = useAnimatedStyle(() => ({ height: fieldHeight.value }));
-
   // Field content (TextInput + GIF) with the animated left padding that keeps
   // the text pinned while the field swallows the button. The TextInput lives in
   // the memoized <ChatField> so keystrokes don't reconcile this glass chrome.
+  //
+  // NOTE the absence of any `height` here. The row's height is whatever the
+  // TextInput measures itself to be; `layout` only eases the frame change that
+  // results. See the block comment at the top of this file for why an explicit
+  // height is the wrong shape and what it broke.
   const fieldContent = (
-    <Reanimated.View style={[styles.fieldContent, fieldPadStyle, heightStyle]}>
+    <Reanimated.View
+      style={[styles.fieldContent, fieldPadStyle]}
+      layout={FIELD_HEIGHT_TRANSITION}
+    >
       <ChatField
         ref={fieldRef}
         onContentSizeChange={handleContentSizeChange}

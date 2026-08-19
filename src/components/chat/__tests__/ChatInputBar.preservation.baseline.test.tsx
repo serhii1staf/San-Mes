@@ -74,6 +74,21 @@ jest.mock('react-native-reanimated', () => {
     quad: (t: number) => t * t,
     out: (fn: (t: number) => number) => fn,
   };
+  // Chainable stand-in for Reanimated's layout-transition builder. The composer
+  // eases its (intrinsic) height change with `LinearTransition`, so the mock has
+  // to support the `.duration(...).easing(...)` chain the component builds at
+  // module scope — otherwise importing it throws before any test runs.
+  const makeTransition = (config: Record<string, unknown> = {}) => ({
+    __layoutTransition: 'linear',
+    config,
+    duration(ms: number) {
+      return makeTransition({ ...config, duration: ms });
+    },
+    easing(fn: unknown) {
+      return makeTransition({ ...config, easing: fn });
+    },
+  });
+  const LinearTransition = makeTransition();
   const ReanimatedView = ({ children, ...rest }: any) =>
     React_.createElement(View, rest, children);
   return {
@@ -86,6 +101,7 @@ jest.mock('react-native-reanimated', () => {
     useSharedValue,
     useAnimatedStyle,
     Easing,
+    LinearTransition,
   };
 });
 

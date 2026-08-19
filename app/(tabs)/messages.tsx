@@ -97,15 +97,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     overflow: 'hidden',
   },
+  // Compact on purpose: this bar stands in for the tab bar, so it should read as
+  // the same weight of chrome rather than a taller slab. 52 pt still clears
+  // Apple's 44 pt minimum touch target because each button fills the full height.
   actionBar: {
     position: 'absolute',
     left: 12,
     right: 12,
     flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-around',
-    height: 60,
-    borderRadius: 26,
+    alignItems: 'stretch',
+    height: 52,
+    borderRadius: 22,
     overflow: 'hidden',
     zIndex: 210,
   },
@@ -113,8 +115,7 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 6,
-    gap: 2,
+    gap: 1,
   },
 });
 
@@ -1637,6 +1638,45 @@ function ComposeMenu({
  * float with a pointless gap. Buttons are `flex: 1` in a row, so three or four
  * of them share the width evenly at any text size and can't overlap.
  */
+/**
+ * One control in the selection action bar. Icon and label always share a single
+ * `color`, so an "active" action lights up as a whole rather than having a blue
+ * icon over a grey caption.
+ *
+ * `disabled` is passed to `Pressable` (not just used to drop `onPress`) so the
+ * platform also excludes it from the accessibility focus order and announces it
+ * as unavailable.
+ */
+const ActionBarButton = React.memo(function ActionBarButton({
+  icon,
+  label,
+  color,
+  disabled,
+  onPress,
+}: {
+  icon: string;
+  label: string;
+  color: string;
+  disabled?: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      style={styles.actionBtn}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ disabled: !!disabled }}
+    >
+      <Feather name={icon as any} size={18} color={color} />
+      <Text variant="caption" style={{ fontSize: 10.5 }} color={color} numberOfLines={1}>
+        {label}
+      </Text>
+    </Pressable>
+  );
+});
+
 const SelectionActionBar = React.memo(function SelectionActionBar({
   visible,
   count,
@@ -1672,11 +1712,22 @@ const SelectionActionBar = React.memo(function SelectionActionBar({
     transform: [{ translateY: interpolate(progress.value, [0, 1], [140, 0]) }],
   }));
 
-  // Nothing ticked → the destructive actions are inert. Dimming the label
-  // communicates that without removing the buttons and reflowing the bar.
+  // ── Active state = accent ────────────────────────────────────────────────
+  //
+  // At rest the controls are neutral (plain foreground). As soon as at least one
+  // chat is ticked they light up in the accent colour, so "this action will now
+  // do something" is readable at a glance instead of having to notice a dimmed
+  // label. Nothing ticked → tertiary, which reads as unavailable.
+  //
+  // Delete keeps the system destructive red rather than the accent: colour is the
+  // only warning a bulk delete gets before the confirmation dialog, and turning
+  // it the same blue as Archive would remove that distinction.
   const enabled = count > 0;
-  const actionColor = enabled ? theme.colors.text.primary : theme.colors.text.tertiary;
+  const actionColor = enabled ? theme.colors.accent.primary : theme.colors.text.tertiary;
   const destructiveColor = enabled ? '#FF453A' : theme.colors.text.tertiary;
+  // Select-all is always available (there is always something to select), so it
+  // is accent whenever the list is non-empty.
+  const selectAllColor = theme.colors.accent.primary;
 
   return (
     <Reanimated.View
@@ -1698,40 +1749,34 @@ const SelectionActionBar = React.memo(function SelectionActionBar({
         <GlassBg borderRadius={26} glassStyle="regular" interactive={false} colorScheme={theme.isDark ? 'dark' : 'light'} />
       ) : null}
 
-      <Pressable onPress={onSelectAll} style={styles.actionBtn} accessibilityRole="button">
-        <Feather name="check-square" size={19} color={theme.colors.text.primary} />
-        <Text variant="caption" style={{ fontSize: 11 }} color={theme.colors.text.primary}>
-          {t('messages.bulk.select_all', 'Все')}
-        </Text>
-      </Pressable>
-
-      <Pressable
-        onPress={enabled ? onArchive : undefined}
-        disabled={!enabled}
-        style={styles.actionBtn}
-        accessibilityRole="button"
-      >
-        <Feather name={tab === 'archive' ? 'corner-up-left' : 'archive'} size={19} color={actionColor} />
-        <Text variant="caption" style={{ fontSize: 11 }} color={actionColor}>
-          {tab === 'archive'
+      <ActionBarButton
+        icon="check-square"
+        label={t('messages.bulk.select_all', 'Все')}
+        color={selectAllColor}
+        onPress={onSelectAll}
+      />
+      <ActionBarButton
+        icon={tab === 'archive' ? 'corner-up-left' : 'archive'}
+        label={
+          tab === 'archive'
             ? t('messages.action.unarchive', 'Из архива')
-            : t('messages.action.archive', 'В архив')}
-        </Text>
-      </Pressable>
-
-      <Pressable
-        onPress={enabled ? onDelete : undefined}
+            : t('messages.action.archive', 'В архив')
+        }
+        color={actionColor}
         disabled={!enabled}
-        style={styles.actionBtn}
-        accessibilityRole="button"
-      >
-        <Feather name="trash-2" size={19} color={destructiveColor} />
-        <Text variant="caption" style={{ fontSize: 11 }} color={destructiveColor}>
-          {count > 0
+        onPress={onArchive}
+      />
+      <ActionBarButton
+        icon="trash-2"
+        label={
+          count > 0
             ? `${t('messages.action.delete', 'Удалить')} (${count})`
-            : t('messages.action.delete', 'Удалить')}
-        </Text>
-      </Pressable>
+            : t('messages.action.delete', 'Удалить')
+        }
+        color={destructiveColor}
+        disabled={!enabled}
+        onPress={onDelete}
+      />
     </Reanimated.View>
   );
 });

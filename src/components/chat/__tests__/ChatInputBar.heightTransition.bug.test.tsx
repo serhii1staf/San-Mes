@@ -1,35 +1,45 @@
 // Bugfix spec: chat-input-animation-fix — Task 1
-// Bug condition exploration test (Property 1: Bug Condition — Smooth Height Transition).
+// Regression tests for the composer's height behaviour.
 //
-//   **Validates: Requirements 1.1, 1.2, 1.3, 1.4** (current/defect behavior)
-//   **Encodes the Expected Behavior: Requirements 2.1, 2.2, 2.3, 2.4** (re-run in task 3.7)
+// WHY THIS FILE WAS REWRITTEN
+// ---------------------------
+// The first version of these tests asserted the MECHANISM: that a height change
+// produced a `withTiming(...)` call and no `LayoutAnimation.configureNext`. Every
+// one of them passed while the composer, on a real device, stopped growing
+// altogether — because the implementation had moved the height onto an explicit
+// animated value, and "a withTiming call happened" says nothing about whether
+// the field can still resize. The tests validated the plumbing and missed the
+// outcome, which is exactly how the regression shipped twice.
 //
-// CRITICAL (bugfix methodology): this test MUST FAIL on the CURRENT (unfixed)
-// code. The failure is the deliverable — it confirms the root cause: the field
-// height is cushioned by a one-shot `LayoutAnimation.configureNext(INPUT_GROW_ANIM)`
-// fired per line-count change (the snap mechanism) and there is NO time-based
-// `withTiming` retargeting of a clamped height.
+// These tests instead pin the STRUCTURAL property that makes growth work:
 //
-// The assertions encode the EXPECTED (fixed) behavior from design.md:
-//   for kind="contentSizeChange": height retargets via `withTiming` toward
-//   clamp(height, 22, 100) and NO `LayoutAnimation.configureNext` call is made;
-//   for kind="chatOpen": no height animation is scheduled on the mount frame.
+//   The composer's height must stay INTRINSIC. No JS-owned `height` may be
+//   applied to the field wrapper, because the inner TextInput is
+//   `alignSelf: 'stretch'` — a fixed parent height forces its frame and makes
+//   growth depend entirely on `onContentSizeChange` landing.
 //
-// Library: Jest (jest-expo preset) + react-test-renderer + fast-check — the
-// repo convention (there is no @testing-library/react-native dependency; see
-// MiniAppConsentDialog.test.tsx / ambientWiring.test.tsx). No new dependencies.
+// Smoothing is a Reanimated LAYOUT TRANSITION (the Fabric-correct mechanism —
+// this app runs `newArchEnabled: true`, where `LayoutAnimation` is not honoured
+// the way the old renderer did). A layout transition animates the view's real
+// measured frame, so if it were ever a no-op the field would still grow. That
+// ordering — growth structural, animation cosmetic — is what these tests lock in.
+//
+// Library: Jest (jest-expo preset) + react-test-renderer + fast-check — the repo
+// convention (no @testing-library/react-native dependency).
+//
+//   _Requirements: 2.1, 2.2, 2.3, 3.1, 3.2, 3.3_
 
 import React from 'react';
-import { LayoutAnimation, TextInput } from 'react-native';
 import TestRenderer, { act } from 'react-test-renderer';
+import { TextInput, View, LayoutAnimation, StyleSheet } from 'react-native';
 import fc from 'fast-check';
 
 // ─── Mocks (minimal surface — only what ChatInputBar actually touches) ──────
 
-// react-native-reanimated: deterministic mock. `withTiming` / `withSpring`
-// become jest.fns so we can assert WHETHER the height retargets over time
-// (withTiming, the fixed mechanism) vs. snaps (no withTiming on unfixed code).
-// `Reanimated.View` renders as a plain RN View so the tree is observable.
+// react-native-reanimated: deterministic mock. `Reanimated.View` renders as a
+// plain RN View so the tree (and the styles/props applied to it) is observable.
+// `LinearTransition` mimics the real builder's chainable shape and records the
+// configuration so a test can assert a transition was actually attached.
 jest.mock('react-native-reanimated', () => {
   const React_ = require('react');
   const { View } = require('react-native');
@@ -49,6 +59,18 @@ jest.mock('react-native-reanimated', () => {
     quad: (t: number) => t * t,
     out: (fn: (t: number) => number) => fn,
   };
+  // Chainable stand-in for the real layout-transition builder.
+  const makeTransition = (config: Record<string, unknown> = {}) => ({
+    __layoutTransition: 'linear',
+    config,
+    duration(ms: number) {
+      return makeTransition({ ...config, duration: ms });
+    },
+    easing(fn: unknown) {
+      return makeTransition({ ...config, easing: fn });
+    },
+  });
+  const LinearTransition = makeTransition();
   const ReanimatedView = ({ children, ...rest }: any) =>
     React_.createElement(View, rest, children);
   return {
@@ -61,12 +83,13 @@ jest.mock('react-native-reanimated', () => {
     useSharedValue,
     useAnimatedStyle,
     Easing,
+    LinearTransition,
   };
 });
 
-// Liquid glass OFF → take the flat (non-glass) render path. The bug is identical
-// on both paths (height is the implicit TextInput height eased by LayoutAnimation),
-// and the flat path renders plain Views, keeping the tree simple/observable.
+// Liquid glass OFF → take the flat (non-glass) render path, which renders plain
+// Views and keeps the tree simple. The height behaviour under test is identical
+// on both paths: it is the TextInput's own measurement either way.
 jest.mock('../../ui/LiquidGlass', () => {
   const React_ = require('react');
   const { View } = require('react-native');
@@ -102,66 +125,88 @@ jest.mock('../../../theme', () => ({
     fontFamily: { regular: 'System' },
   }),
 }));
-jest.mock('../../../i18n/store', () => ({ useT: () => (k: string) => k }));
+jest.mock('../../../i18n/store', () => ({ useT: () => (_k: string, d?: string) => d ?? '' }));
 jest.mock('../../../services/perfMonitor', () => ({
-  perfMonitor: { markInputFocus: jest.fn() },
+  perfMonitor: { markInputFocus: () => {} },
 }));
+jest.mock('@expo/vector-icons', () => ({ Feather: () => null }));
 
-import { ChatInputBar, ChatInputBarHandle } from '../ChatInputBar';
-import * as Reanimated from 'react-native-reanimated';
+// eslint-disable-next-line import/first
+import { ChatInputBar } from '../ChatInputBar';
 
-const withTimingMock = (Reanimated as any).withTiming as jest.MockedFunction<any>;
+// ─── Harness ────────────────────────────────────────────────────────────────
 
-const MIN_FIELD_HEIGHT = 22;
-const MAX_FIELD_HEIGHT = 100;
-const clamp = (h: number) =>
-  Math.min(MAX_FIELD_HEIGHT, Math.max(MIN_FIELD_HEIGHT, h));
-
-// Keep references so we can unmount between cases.
-const renderers: TestRenderer.ReactTestRenderer[] = [];
+const renderers: any[] = [];
 
 function renderBar() {
-  const ref = React.createRef<ChatInputBarHandle>();
-  let renderer!: TestRenderer.ReactTestRenderer;
+  let renderer!: any;
   act(() => {
     renderer = TestRenderer.create(
       <ChatInputBar
-        ref={ref}
         isEditing={false}
         hasPendingImages={false}
-        onSend={jest.fn()}
-        onPickImages={jest.fn()}
-        onOpenGif={jest.fn()}
+        onSend={() => {}}
+        onPickImages={() => {}}
+        onOpenGif={() => {}}
+        emojiOpen={false}
+        gifOpen={false}
         inputRowStyle={{}}
       />,
     );
   });
   renderers.push(renderer);
   const ti = renderer.root.findByType(TextInput);
-  return { renderer, ti, ref };
+  return { renderer, ti };
 }
 
-// Fire one `onContentSizeChange` with the given measured content height.
-function fireHeight(ti: TestRenderer.ReactTestInstance, h: number) {
+/** Simulate the TextInput reporting a new measured content height. */
+function fireHeight(ti: any, h: number) {
   act(() => {
     ti.props.onContentSizeChange({ nativeEvent: { contentSize: { height: h } } });
   });
 }
 
-// All `withTiming` target values requested for the height since the last reset.
-function timingTargets(): number[] {
-  return withTimingMock.mock.calls.map((c: unknown[]) => c[0] as number);
+/**
+ * Every `height` applied to a View on the TextInput's ANCESTOR chain.
+ *
+ * Scoped to that chain on purpose. The bar legitimately contains fixed-size
+ * chrome (the 44 pt send/attach capsules, the 30 pt emoji button, the 24 pt GIF
+ * slot) whose heights are correct and must not be flagged. The defect is
+ * specifically a height on a view that ENCLOSES the TextInput, because that is
+ * what caps the field's own measurement and stops it growing.
+ *
+ * `minHeight` is deliberately not collected: the capsule's `minHeight: 44` is
+ * what gives the collapsed composer its resting size and is not a pin — it sets
+ * a floor, it does not prevent growth.
+ */
+function pinnedAncestorHeights(renderer: any): unknown[] {
+  const out: unknown[] = [];
+  let node: any = renderer.root.findByType(TextInput).parent;
+  while (node) {
+    if (node.type === View) {
+      const style = StyleSheet.flatten(node.props?.style) as Record<string, unknown> | undefined;
+      if (style?.height !== undefined) out.push(style.height);
+    }
+    node = node.parent;
+  }
+  return out;
+}
+
+/** The View carrying the layout transition (the field content row). */
+function transitionedViews(renderer: any): any[] {
+  return renderer.root
+    .findAllByType(View)
+    .filter((n: any) => n.props?.layout?.__layoutTransition === 'linear');
 }
 
 let configureNextSpy: jest.SpyInstance;
 
 beforeEach(() => {
-  // Spy on the snap mechanism. On unfixed code this fires once per line-count
-  // change; the fix must remove it entirely.
+  // `LayoutAnimation` is the wrong tool on the New Architecture; the fix must
+  // not reach for it. Spied so any reintroduction fails loudly.
   configureNextSpy = jest
     .spyOn(LayoutAnimation, 'configureNext')
     .mockImplementation(() => {});
-  withTimingMock.mockClear();
 });
 
 afterEach(() => {
@@ -172,105 +217,73 @@ afterEach(() => {
   configureNextSpy.mockRestore();
 });
 
-describe('ChatInputBar height transition — bug condition exploration (Task 1)', () => {
-  // ── Case 1: Grow snap (22→48→70 within < 260 ms) ─────────────────────────
-  // _Requirements: 1.1 (defect) / 2.1 (expected)_
-  it('grows smoothly via withTiming with NO LayoutAnimation snap (grow 22→48→70)', () => {
-    const { ti } = renderBar();
-
-    // Drive the grow sequence faster than the 260 ms one-shot would settle.
-    fireHeight(ti, 22);
-    fireHeight(ti, 48);
-    fireHeight(ti, 70);
-
-    // EXPECTED (fixed) behavior — height retargets over time, no global snap.
-    expect(configureNextSpy).not.toHaveBeenCalled();
-    expect(timingTargets()).toEqual(
-      expect.arrayContaining([clamp(48), clamp(70)]),
-    );
-    // The latest retarget continues toward the newest clamped height.
-    expect(timingTargets()[timingTargets().length - 1]).toBe(clamp(70));
-  });
-
-  // ── Case 2: Shrink snap (70→48→22 rapid) ─────────────────────────────────
-  // _Requirements: 1.2 (defect) / 2.2 (expected)_
-  it('shrinks smoothly via withTiming with NO LayoutAnimation snap (shrink 70→48→22)', () => {
-    const { ti } = renderBar();
-
-    fireHeight(ti, 70);
-    fireHeight(ti, 48);
-    fireHeight(ti, 22);
-
-    expect(configureNextSpy).not.toHaveBeenCalled();
-    expect(timingTargets()).toEqual(
-      expect.arrayContaining([clamp(48), clamp(22)]),
-    );
-    expect(timingTargets()[timingTargets().length - 1]).toBe(clamp(22));
-  });
-
-  // ── Case 3: Multi-line cascade (22→48→70→92) ─────────────────────────────
-  // Each step must be one continuous interpolation, NOT a separate global
-  // layout transaction.
-  // _Requirements: 1.3 (defect) / 2.3 (expected)_
-  it('applies one continuous withTiming retarget per step, never a per-step layout transaction (cascade 22→48→70→92)', () => {
-    const { ti } = renderBar();
-
-    const seq = [22, 48, 70, 92];
-    seq.forEach((h) => fireHeight(ti, h));
-
-    // No global layout transaction is issued for any step.
-    expect(configureNextSpy).not.toHaveBeenCalled();
-    // Every within-range step retargets the clamped height via withTiming.
-    expect(timingTargets()).toEqual(
-      expect.arrayContaining([clamp(48), clamp(70), clamp(92)]),
-    );
-  });
-
-  // ── Case 4: Chat-open mount-frame baseline ───────────────────────────────
-  // Mounting the bar (the input-bar contribution to chat-open) must schedule
-  // NO height animation on the mount/navigation frame.
-  // _Requirements: 1.4 (defect) / 2.4 (expected)_
-  it('schedules no height animation on the mount frame (chat-open baseline)', () => {
-    renderBar(); // mount only — no content-size change yet
-
-    expect(configureNextSpy).not.toHaveBeenCalled();
-    expect(withTimingMock).not.toHaveBeenCalled();
-  });
-
-  // ── Scoped property: random monotonic / oscillating sequences ────────────
-  // Deterministic reproduction over the bug-condition input space: any sequence
-  // of within-range heights fed back-to-back must retarget via withTiming and
-  // never fire LayoutAnimation.configureNext.
+describe('ChatInputBar composer height — stays intrinsic', () => {
+  // ── The core regression ──────────────────────────────────────────────────
   // _Requirements: 2.1, 2.2, 2.3_
-  it('property: any within-range height sequence retargets via withTiming, never via LayoutAnimation', () => {
+  it('never applies a JS-owned height to the composer, so growth stays intrinsic', () => {
+    const { renderer, ti } = renderBar();
+
+    // Nothing pinned on the mount frame...
+    expect(pinnedAncestorHeights(renderer)).toStrictEqual([]);
+
+    // ...and nothing pinned after a full grow/shrink cascade either. This is the
+    // assertion the previous version of this file lacked: it is what fails if
+    // the height is ever moved back into JS.
+    [22, 48, 70, 92, 70, 22].forEach((h) => fireHeight(ti, h));
+    expect(pinnedAncestorHeights(renderer)).toStrictEqual([]);
+  });
+
+  it('eases the resulting frame change with a Reanimated layout transition', () => {
+    const { renderer } = renderBar();
+
+    const transitioned = transitionedViews(renderer);
+    // Exactly the field content row carries it — not every view in the bar.
+    expect(transitioned).toHaveLength(1);
+    // Configured with a real, bounded duration rather than left at the default.
+    expect(transitioned[0].props.layout.config.duration).toBeGreaterThan(0);
+    expect(transitioned[0].props.layout.config.duration).toBeLessThanOrEqual(300);
+  });
+
+  it('does not reach for LayoutAnimation (unsupported shape on Fabric)', () => {
+    const { ti } = renderBar();
+    [22, 48, 70, 92].forEach((h) => fireHeight(ti, h));
+    expect(configureNextSpy).not.toHaveBeenCalled();
+  });
+
+  // ── Preservation: the TextInput keeps its own bounds ─────────────────────
+  // _Requirements: 3.1, 3.2_
+  it('leaves the TextInput to bound itself (minHeight 22 / maxHeight 100, multiline)', () => {
+    const { ti } = renderBar();
+    const style = StyleSheet.flatten(ti.props.style) as Record<string, unknown>;
+
+    expect(ti.props.multiline).toBe(true);
+    expect(style.minHeight).toBe(22);
+    // The cap is what makes the field scroll internally instead of growing
+    // without limit (Requirement 3.2).
+    expect(style.maxHeight).toBe(100);
+    // And the TextInput itself must not be handed a fixed height either.
+    expect(style.height).toBeUndefined();
+  });
+
+  // ── Scoped property over the whole bug-condition input space ─────────────
+  // _Requirements: 2.1, 2.2, 2.3_
+  it('property: no height sequence, in any order, ever pins a height', () => {
     fc.assert(
       fc.property(
-        fc.array(fc.integer({ min: 22, max: 100 }), { minLength: 2, maxLength: 8 }),
+        fc.array(fc.integer({ min: 0, max: 140 }), { minLength: 1, maxLength: 10 }),
         (heights) => {
-          configureNextSpy.mockClear();
-          withTimingMock.mockClear();
-          const { ti, renderer } = renderBar();
+          const { renderer, ti } = renderBar();
+          heights.forEach((h) => fireHeight(ti, h));
 
-          let prev = -1;
-          const expectedTargets: number[] = [];
-          heights.forEach((h) => {
-            const rounded = Math.round(h);
-            if (rounded !== prev) {
-              expectedTargets.push(clamp(rounded));
-              prev = rounded;
-            }
-            fireHeight(ti, h);
-          });
-
-          const okNoSnap = configureNextSpy.mock.calls.length === 0;
-          const okRetarget =
-            expectedTargets.length === 0 ||
-            expectedTargets.every((t) => timingTargets().includes(t));
+          const pinned = pinnedAncestorHeights(renderer);
+          const noLayoutAnim = configureNextSpy.mock.calls.length === 0;
 
           act(() => renderer.unmount());
           renderers.pop();
 
-          return okNoSnap && okRetarget;
+          // Deliberately covers out-of-range values (0, >100) too: clamping used
+          // to live in JS, and its removal must not resurrect a pinned height.
+          return pinned.length === 0 && noLayoutAnim;
         },
       ),
       { numRuns: 50 },

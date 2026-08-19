@@ -3415,7 +3415,7 @@ export default function ChatScreen() {
                   onChangeText={setSearchQuery}
                   placeholder={t('chat.search_placeholder')}
                   placeholderTextColor={theme.colors.text.tertiary}
-                  style={{ flex: 1, marginLeft: 8, fontSize: 15, lineHeight: 20, height: 20, alignSelf: 'center', color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular, paddingVertical: 0, textAlignVertical: 'center', includeFontPadding: false }}
+                  style={[styles.searchInput, { color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular }]}
                 />
                 {searchQuery.length > 0 && (
                   <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 12, marginRight: 4 }}>
@@ -3432,7 +3432,7 @@ export default function ChatScreen() {
                   onChangeText={setSearchQuery}
                   placeholder={t('chat.search_placeholder')}
                   placeholderTextColor={theme.colors.text.tertiary}
-                  style={{ flex: 1, marginLeft: 8, fontSize: 15, lineHeight: 20, height: 20, alignSelf: 'center', color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular, paddingVertical: 0, textAlignVertical: 'center', includeFontPadding: false }}
+                  style={[styles.searchInput, { color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular }]}
                 />
                 {searchQuery.length > 0 && (
                   <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 12, marginRight: 4 }}>
@@ -3634,4 +3634,30 @@ const styles = StyleSheet.create({
   // over content on touch. The icon/content lives INSIDE the glass as children.
   headerCircleGlass: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   headerPillGlass: { maxWidth: '100%', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, height: 36, borderRadius: 18, paddingHorizontal: 16 },
+
+  // ── Message-search field ──────────────────────────────────────────────────
+  //
+  // Shared by the glass and flat search bars, which previously carried two
+  // duplicated inline copies of this style — so a fix to one silently missed the
+  // other.
+  //
+  // The text used to sit visibly off-centre. Cause: `height: 20` combined with
+  // `fontSize: 15` and `lineHeight: 20`. A 15 pt system font needs more than
+  // 20 pt of line box once ascender + descender are counted, so forcing the
+  // frame to exactly 20 pushed the glyphs off the optical centre — and RN's
+  // iOS `lineHeight` is applied as a paragraph style, which shifts text DOWN
+  // within its line box and compounded it.
+  //
+  // Fix: no fixed height and no `lineHeight`. The field self-sizes to its font
+  // and the parent bar (a 40 pt row with `alignItems: 'center'`) centres it.
+  // `paddingVertical: 0` keeps iOS from adding its own asymmetric inset.
+  //
+  // `textAlignVertical` / `includeFontPadding` are intentionally absent: both are
+  // Android-only and were doing nothing for the reported iOS symptom.
+  searchInput: {
+    flex: 1,
+    marginLeft: 8,
+    fontSize: 15,
+    paddingVertical: 0,
+  },
 });
