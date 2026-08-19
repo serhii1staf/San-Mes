@@ -1867,9 +1867,43 @@ export default function ChatScreen() {
     [id, participantId, displayName, displayEmoji, setMessages, t],
   );
 
-  // Non-inverted list: newest is at the END, so "scroll to newest" = scrollToEnd.
-  const scrollToEnd = useCallback((_animated = true) => {
-    requestAnimationFrame(() => { try { flatListRef.current?.scrollToEnd({ animated: _animated }); } catch {} });
+  // ── Reveal the message you just sent ──────────────────────────────────────
+  //
+  // This used to be an unconditional `requestAnimationFrame(() => scrollToEnd())`
+  // fired immediately after `addMessage`. Two problems, and together they are the
+  // "I hit send and it lags as the message lands / scrolls up" report:
+  //
+  //   1. It ran BEFORE the new bubble had been laid out, so it animated toward the
+  //      OLD content height; the cell then measured and the target moved.
+  //   2. The list already has `maintainVisibleContentPosition.autoscrollToBottom
+  //      Threshold: 0.1`, i.e. FlashList v2 ALREADY scrolls to the bottom itself
+  //      when content is appended and the user is near it — after layout, which is
+  //      the correct moment. So two mechanisms were racing for the same offset.
+  //
+  // Now the native behaviour owns the common case (you are at the bottom, which is
+  // where you are whenever you are typing) and this does nothing at all. It only
+  // steps in when the user is scrolled far enough up that the native threshold
+  // will NOT fire — and then it uses the same measured `scrollToIndex` path as the
+  // scroll-to-bottom button rather than an unmeasured animated jump.
+  const revealNewest = useCallback(() => {
+    const m = scrollMetricsRef.current;
+    // Unknown metrics (nothing scrolled yet) means we are at the bottom on a
+    // freshly-opened chat — the native autoscroll has it.
+    if (!m || m.layoutH <= 0) return;
+    const distanceFromBottom = m.contentH - (m.y + m.layoutH);
+    // Comfortably inside the native threshold → let FlashList do it.
+    if (distanceFromBottom <= m.layoutH * 0.25) return;
+
+    const lastIndex = windowedMessagesRef.current.length - 1;
+    if (lastIndex < 0) return;
+    void (async () => {
+      try {
+        await flatListRef.current?.scrollToIndex({ index: lastIndex, animated: true, viewPosition: 1 });
+        flatListRef.current?.scrollToEnd({ animated: false });
+      } catch {
+        try { flatListRef.current?.scrollToEnd({ animated: true }); } catch {}
+      }
+    })();
   }, []);
 
   // ── Resolve the canonical conversation id up front ────────────────────
@@ -2230,7 +2264,7 @@ export default function ChatScreen() {
       imageUrls: [url],
     };
     addMessage(conversationId, newMessage);
-    scrollToEnd();
+    revealNewest();
 
     // Persist to the DB (best-effort) using the same image marker scheme.
     if (!useConnectivityStore.getState().isOnline) return;
@@ -2299,7 +2333,7 @@ export default function ChatScreen() {
         }
       } catch {}
     })();
-  }, [id, conversationId, replyTo, addMessage, scrollToEnd, participantId, t, reconcileConversation]);
+  }, [id, conversationId, replyTo, addMessage, revealNewest, participantId, t, reconcileConversation]);
 
   // Pick a GIF from the inline panel: send it, then close the panel and let the
   // input bar settle back down (GIFs are one-and-done, not multi-pick).
@@ -2506,7 +2540,7 @@ export default function ChatScreen() {
       imageUrls: localImages.length > 0 ? localImages : undefined,
     };
     addMessage(conversationId, newMessage);
-    scrollToEnd();
+    revealNewest();
 
     // Upload images in the background, then swap local URIs for remote URLs.
     // Skip all network work when offline so the JS thread / keyboard stay smooth.
@@ -2610,7 +2644,7 @@ export default function ChatScreen() {
       // participant, migrates optimistic messages, and re-keys the route.
       reconcileConversation(convId, text || (uploadedUrls.length > 0 ? '📷' : ''));
     } catch {}
-  }, [pendingImages, conversationId, editing, replyTo, currentUserId, chatSettings.replyPixelIcon, participantId, id, t, addMessage, scrollToEnd, setMessages, reconcileConversation]);
+  }, [pendingImages, conversationId, editing, replyTo, currentUserId, chatSettings.replyPixelIcon, participantId, id, t, addMessage, revealNewest, setMessages, reconcileConversation]);
 
   // ── Media-panel long-press actions (Task B) ───────────────────────────────
   // Additive callbacks wired down through MediaPanel → Emoji/Gif panels. A

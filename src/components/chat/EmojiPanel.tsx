@@ -1,6 +1,6 @@
 import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { View, Pressable, FlatList, Text as RNText, StyleSheet, InteractionManager } from 'react-native';
-import { useT } from '../../i18n/store';
+import { useT, useI18nStore } from '../../i18n/store';
 import { useLiquidGlassActive, GlassBg } from '../ui/LiquidGlass';
 
 // ── Inline emoji panel ─────────────────────────────────────────────────────
@@ -101,6 +101,83 @@ export interface EmojiPanelProps {
   bare?: boolean;
 }
 
+const EMOJI_CATEGORY_KEY = (it: { titleKey: string }) => it.titleKey;
+
+/**
+ * One category block (title + its emoji grid).
+ *
+ * Memoized on primitives and stable callbacks, so a category that is already
+ * mounted is never reconciled again — previously every render of the panel walked
+ * all mounted categories and rebuilt ~40 Pressables each.
+ */
+const EmojiCategory = memo(function EmojiCategory({
+  title,
+  titleColor,
+  emojis,
+  onSelect,
+  onLongPress,
+}: {
+  title: string;
+  titleColor: string;
+  emojis: string[];
+  onSelect: (emoji: string) => void;
+  onLongPress?: (emoji: string) => void;
+}) {
+  return (
+    <View style={styles.category}>
+      <RNText style={[styles.catTitle, { color: titleColor }]}>{title}</RNText>
+      <View style={styles.grid}>
+        {emojis.map((e, i) => (
+          <EmojiCell
+            key={e + i}
+            emoji={e}
+            onSelect={onSelect}
+            onLongPress={onLongPress}
+          />
+        ))}
+      </View>
+    </View>
+  );
+});
+
+/**
+ * A single emoji cell.
+ *
+ * Exists so the per-emoji arrow functions (`() => onSelect(e)`) are no longer
+ * allocated inside the parent's render — with ~40 cells per category that was 80
+ * closures per category per render, and it defeated any chance of the cell
+ * bailing out. The cell now takes the emoji plus stable callbacks and dispatches
+ * with the value it already holds.
+ */
+const EmojiCell = memo(function EmojiCell({
+  emoji,
+  onSelect,
+  onLongPress,
+}: {
+  emoji: string;
+  onSelect: (emoji: string) => void;
+  onLongPress?: (emoji: string) => void;
+}) {
+  const handlePress = useCallback(() => onSelect(emoji), [onSelect, emoji]);
+  const handleLongPress = useCallback(
+    () => onLongPress?.(emoji),
+    [onLongPress, emoji],
+  );
+  return (
+    <Pressable
+      onPress={handlePress}
+      onLongPress={onLongPress ? handleLongPress : undefined}
+      delayLongPress={280}
+      hitSlop={2}
+      style={styles.cell}
+    >
+      <RNText style={styles.cellText} allowFontScaling={false}>
+        {emoji}
+      </RNText>
+    </Pressable>
+  );
+});
+
 function EmojiPanelComponent({ height, onSelect, onLongPress, theme, bottomInset = 0, bare = false }: EmojiPanelProps) {
   const t = useT();
   const glassActive = useLiquidGlassActive();
@@ -121,31 +198,43 @@ function EmojiPanelComponent({ height, onSelect, onLongPress, theme, bottomInset
     return () => { handle.cancel(); if (raf) cancelAnimationFrame(raf); };
   }, []);
 
+  // ── Titles resolved ONCE, not inside renderItem ──────────────────────────
+  //
+  // `useT()` returns a BRAND-NEW function on every render. Listing `t` (or the
+  // whole `theme` object) among `renderCategory`'s dependencies therefore gave
+  // `renderCategory` a fresh identity on every render of this panel — and
+  // FlatList then re-rendered every mounted category, i.e. ~80+ Pressables and
+  // their Text children, for nothing. That is a large part of the "opening emoji
+  // lags really badly" report.
+  //
+  // Titles are resolved up-front into a plain array keyed on the locale, and
+  // `renderCategory` now closes over primitives + stable callbacks only.
+  const locale = useI18nStore((s) => s.locale);
+  const categories = useMemo(
+    () =>
+      CATEGORIES.map((c) => ({
+        titleKey: c.titleKey,
+        title: t(c.titleKey, c.titleKey.split('.').pop()),
+        emojis: c.emojis,
+      })),
+    // `t` is deliberately excluded — it is a new function every render, while
+    // `locale` is what actually changes the output.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [locale],
+  );
+
+  const titleColor = theme.colors.text.tertiary;
   const renderCategory = useCallback(
-    ({ item }: { item: { titleKey: string; emojis: string[] } }) => (
-      <View style={styles.category}>
-        <RNText style={[styles.catTitle, { color: theme.colors.text.tertiary }]}>
-          {t(item.titleKey, item.titleKey.split('.').pop())}
-        </RNText>
-        <View style={styles.grid}>
-          {item.emojis.map((e, i) => (
-            <Pressable
-              key={e + i}
-              onPress={() => onSelect(e)}
-              onLongPress={onLongPress ? () => onLongPress(e) : undefined}
-              delayLongPress={280}
-              hitSlop={2}
-              style={styles.cell}
-            >
-              <RNText style={styles.cellText} allowFontScaling={false}>
-                {e}
-              </RNText>
-            </Pressable>
-          ))}
-        </View>
-      </View>
+    ({ item }: { item: { titleKey: string; title: string; emojis: string[] } }) => (
+      <EmojiCategory
+        title={item.title}
+        titleColor={titleColor}
+        emojis={item.emojis}
+        onSelect={onSelect}
+        onLongPress={onLongPress}
+      />
     ),
-    [onSelect, onLongPress, t, theme],
+    [onSelect, onLongPress, titleColor],
   );
 
   // Content padding: base + the bottom safe-area inset so the final emoji row
@@ -181,15 +270,21 @@ function EmojiPanelComponent({ height, onSelect, onLongPress, theme, bottomInset
       ) : null}
       {listReady ? (
         <FlatList
-          data={CATEGORIES}
-          keyExtractor={(it) => it.titleKey}
+          data={categories}
+          keyExtractor={EMOJI_CATEGORY_KEY}
           renderItem={renderCategory}
           style={styles.list}
           showsVerticalScrollIndicator={false}
           contentContainerStyle={contentStyle}
           keyboardShouldPersistTaps="always"
-          initialNumToRender={2}
-          windowSize={5}
+          // A category is ~40 Pressables. Mounting two of them in one commit put
+          // ~80 responders on the open frame; one per batch spreads that over
+          // frames, and the first category alone already fills the visible grid.
+          initialNumToRender={1}
+          maxToRenderPerBatch={1}
+          updateCellsBatchingPeriod={80}
+          windowSize={3}
+          removeClippedSubviews
         />
       ) : null}
     </View>
