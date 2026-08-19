@@ -53,6 +53,7 @@ import { playSendSound } from '../../src/utils/sounds';
 import { GiphyItem } from '../../src/services/giphy';
 import { useT, useI18nStore } from '../../src/i18n/store';
 import { buildDaySeparators, formatDaySeparator } from '../../src/utils/chatDaySeparators';
+import { computeWindowStart } from '../../src/utils/chatWindow';
 import { perfMonitor } from '../../src/services/perfMonitor';
 import { useSettingsStore } from '../../src/store/settingsStore';
 import { useLiquidGlassActive, NativeGlassView, GlassBg } from '../../src/components/ui/LiquidGlass';
@@ -270,10 +271,33 @@ function OlderMessagesLoader({ visible, color }: { visible: boolean; color: stri
     loop.start();
     return () => loop.stop();
   }, [visible, pulse]);
-  if (!visible) return null;
+
+  // ── CONSTANT height, always ────────────────────────────────────────────────
+  //
+  // This used to `return null` when hidden, so mounting and unmounting it changed
+  // the list header's HEIGHT — and it does so precisely when the user has scrolled
+  // to the top, which is the one moment the content above the viewport must not
+  // move. maintainVisibleContentPosition anchors on ITEMS, not on the header, so it
+  // cannot compensate: the whole transcript shifted by 24 pt as the indicator
+  // appeared and again as it went away.
+  //
+  // The container is now always present at a fixed height and only the bar's
+  // opacity changes, which is compositor-only and cannot affect layout. The
+  // reserved strip sits under the header gradient, so it is not visible as empty
+  // space when idle.
   return (
-    <View style={{ alignItems: 'center', paddingTop: 6, paddingBottom: 12 }}>
-      <Animated.View style={{ width: 84, height: 6, borderRadius: 3, backgroundColor: color, opacity: pulse }} />
+    <View style={styles.olderLoader} pointerEvents="none">
+      <Animated.View
+        style={{
+          width: 84,
+          height: 6,
+          borderRadius: 3,
+          backgroundColor: color,
+          // `visible` gates the opacity rather than the mount. Safe to fade here:
+          // this is a plain View, not a glass surface.
+          opacity: visible ? pulse : 0,
+        }}
+      />
     </View>
   );
 }
@@ -1072,23 +1096,40 @@ export default function ChatScreen() {
   const [renderWindow, setRenderWindow] = useState(INITIAL_WINDOW);
   // Reset to the initial window whenever the conversation changes.
   useEffect(() => { setRenderWindow(INITIAL_WINDOW); }, [conversationId]);
-  // Keep the TOP of the visible window fixed when new messages APPEND at the
-  // bottom, so receiving/sending a message while scrolled up never shifts the
-  // view. We grow `renderWindow` by the number appended. Hydration (older
-  // messages added at the FRONT, newest unchanged) must NOT bump it — detected
-  // by the newest id staying the same.
-  const prevLenRef = useRef(0);
-  const prevLastIdRef = useRef<string | undefined>(undefined);
-  const curLen = chatMessages.length;
-  const curLastId = curLen > 0 ? chatMessages[curLen - 1].id : undefined;
-  useEffect(() => {
-    const prevLen = prevLenRef.current;
-    if (curLen > prevLen && prevLen > 0 && curLastId !== prevLastIdRef.current) {
-      setRenderWindow((w) => w + (curLen - prevLen));
-    }
-    prevLenRef.current = curLen;
-    prevLastIdRef.current = curLastId;
-  }, [curLen, curLastId]);
+
+  // ── The window's FRONT EDGE is monotonic ───────────────────────────────────
+  //
+  // This replaces a two-part mechanism that was the root cause of the reported
+  // "something disappears, then suddenly appears, and it teleports me".
+  //
+  // The old shape: the slice start was recomputed every render as
+  // `chatMessages.length - renderWindow`, and a POST-COMMIT effect then grew
+  // `renderWindow` by however many messages had been appended, to put the start
+  // back. So a single incoming or sent message produced TWO commits:
+  //
+  //   commit 1: length = R+1, renderWindow = R  → start = 1
+  //             the OLDEST row is spliced off the FRONT while a new row is
+  //             appended at the back
+  //   commit 2: the effect sets renderWindow = R+1 → start = 0
+  //             the row that just vanished comes back
+  //
+  // Both commits change the content height ABOVE the viewport, so
+  // maintainVisibleContentPosition applies two opposite corrections in
+  // back-to-back frames. And mvcp cannot protect the first one at all: removing
+  // an item from the FRONT is not a prepend, and `startRenderingFromBottom`
+  // re-anchors on the bottom. That is precisely a row blinking out and back plus
+  // a jolt.
+  //
+  // The fix is to make the front edge NON-INCREASING. It only ever moves
+  // backwards (revealing older history when `renderWindow` grows) and never
+  // forwards. An append therefore cannot drop a row off the front, so the
+  // compensating effect — and the second commit — are gone entirely.
+  //
+  // Written to a ref during render, which is safe here for the same reason
+  // `windowedMessagesRef` below is: the value is derived from this very render
+  // pass, so there is no subscription that could tear. Keyed on the conversation
+  // id so switching chats starts a fresh window rather than inheriting one.
+  const windowStartRef = useRef<{ conv: string | null; start: number }>({ conv: null, start: 0 });
 
   // ── Lazy full-history hydration ────────────────────────────────────────
   // The open path deliberately holds only the bounded `SEED_CAP` tail (see
@@ -1946,6 +1987,11 @@ export default function ChatScreen() {
   // steps in when the user is scrolled far enough up that the native threshold
   // will NOT fire — and then it uses the same measured `scrollToIndex` path as the
   // scroll-to-bottom button rather than an unmeasured animated jump.
+  // Generation counter shared by every programmatic scroll chain. Incremented when
+  // a new chain starts; each chain abandons its follow-up command if the counter
+  // has moved on. See the note inside `revealNewest`.
+  const scrollGenRef = useRef(0);
+
   const revealNewest = useCallback(() => {
     const m = scrollMetricsRef.current;
     // Unknown metrics (nothing scrolled yet) means we are at the bottom on a
@@ -1955,16 +2001,36 @@ export default function ChatScreen() {
     // Comfortably inside the native threshold → let FlashList do it.
     if (distanceFromBottom <= m.layoutH * 0.25) return;
 
-    const lastIndex = windowedMessagesRef.current.length - 1;
-    if (lastIndex < 0) return;
-    void (async () => {
-      try {
-        await flatListRef.current?.scrollToIndex({ index: lastIndex, animated: true, viewPosition: 1 });
-        flatListRef.current?.scrollToEnd({ animated: false });
-      } catch {
-        try { flatListRef.current?.scrollToEnd({ animated: true }); } catch {}
-      }
-    })();
+    // ── Serialise against any other in-flight scroll ────────────────────────
+    //
+    // Three independent two-step chains could previously be in flight at once —
+    // this one, the scroll-to-bottom button's, and a reply/search jump — each
+    // ending in a follow-up command issued after an `await`. Nothing cancelled
+    // anything, so a chain that started before the user did something else would
+    // still fire its second command afterwards and drag the viewport somewhere
+    // unrelated. That is the "it taps me somewhere strange".
+    //
+    // A generation counter makes every chain abandon its follow-up if another
+    // scroll started in the meantime. Deferred by one frame as well, so the
+    // append that triggered this has committed and `windowedMessagesRef` holds the
+    // NEW last row rather than the previous one (which used to make this scroll to
+    // the second-to-last message and then jump to the end — two visible moves).
+    const gen = ++scrollGenRef.current;
+    requestAnimationFrame(() => {
+      if (gen !== scrollGenRef.current) return;
+      const lastIndex = windowedMessagesRef.current.length - 1;
+      if (lastIndex < 0) return;
+      void (async () => {
+        try {
+          await flatListRef.current?.scrollToIndex({ index: lastIndex, animated: true, viewPosition: 1 });
+          if (gen !== scrollGenRef.current) return;
+          flatListRef.current?.scrollToEnd({ animated: false });
+        } catch {
+          if (gen !== scrollGenRef.current) return;
+          try { flatListRef.current?.scrollToEnd({ animated: true }); } catch {}
+        }
+      })();
+    });
   }, []);
 
   // ── Resolve the canonical conversation id up front ────────────────────
@@ -2154,26 +2220,46 @@ export default function ChatScreen() {
 
   // Non-inverted list: data IS `chatMessages` (oldest→newest), so a search-match
   // index maps DIRECTLY to the list index — no inversion, no window remap.
+  // ── Jumps target a MESSAGE, resolved against COMMITTED data ────────────────
+  //
+  // The old version computed the windowed index up front:
+  //
+  //   const win   = Math.max(renderWindow, total - index + 4);
+  //   const start = Math.max(0, total - win);
+  //   const winIdx = index - start;          // then scrolled to winIdx after 2 rAFs
+  //
+  // `total` came from the LIVE store while the rendered `data` came from the
+  // render-time snapshot and the OLD `renderWindow`. Callers hydrate the full
+  // history synchronously first, so `total` could be 800 while the list still held
+  // 30 rows — `winIdx` was then an index into an array that did not exist yet, and
+  // two rAFs are nowhere near enough to commit a 770-row expansion on a real
+  // device. The scroll landed on an unrelated row: the reported teleport.
+  //
+  // Now the target is recorded as an ID, and a separate effect issues the scroll
+  // once that id is actually present in the rendered window. No index arithmetic
+  // across an uncommitted render, and it self-heals if the expansion takes several
+  // frames.
+  const pendingJumpRef = useRef<{ id: string; tries: number } | null>(null);
+
   const scrollToIndex = useCallback((index: number) => {
     // Read the freshest total from the store (the closure's `chatMessages` can
     // be the stale bounded seed right after a lazy hydrate).
     const live = useChatStore.getState().messages[conversationId || ''] as ChatMessage[] | undefined;
-    const total = live && live.length > 0 ? live.length : chatMessages.length;
-    if (index < 0 || index >= total) return;
+    const source = live && live.length > 0 ? live : chatMessages;
+    if (index < 0 || index >= source.length) return;
+    const target = source[index];
+    if (!target?.id) return;
     jumpAttemptRef.current = 0;
-    // Ensure the (possibly older) target message is inside the visible window;
-    // grow the window if needed so the row exists in the FlashList data, then
-    // map the full-array index to the windowed index.
-    const needWindow = total - index + 4;
-    const win = Math.max(renderWindow, needWindow);
-    if (win > renderWindow) setRenderWindow(win);
-    const start = Math.max(0, total - win);
-    const winIdx = index - start;
-    // Two frames: one for a grown window to commit, one to issue the scroll.
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      try { flatListRef.current?.scrollToIndex({ index: winIdx, animated: true, viewPosition: 0.5 }); } catch {}
-    }));
-  }, [chatMessages.length, conversationId, renderWindow]);
+    // Grow the window so the target row is inside it. `+4` keeps a little context
+    // above the target rather than landing it flush against the top edge.
+    const needWindow = source.length - index + 4;
+    if (needWindow > renderWindow) setRenderWindow(needWindow);
+    pendingJumpRef.current = { id: target.id, tries: 0 };
+  }, [chatMessages, conversationId, renderWindow]);
+
+  // (The effect that consumes `pendingJumpRef` lives further down, next to
+  // `windowedMessages` — it has to read the committed window, which is declared
+  // after this point.)
 
   // Recompute matches when the query changes; jump to the most recent match
   useEffect(() => {
@@ -2889,7 +2975,17 @@ export default function ChatScreen() {
   // maintainVisibleContentPosition's `startRenderingFromBottom`. FlashList
   // RECYCLES cells, but we still cap the DATA to `renderWindow` so a huge chat
   // never builds a giant element tree at once; scrolling up grows the window.
-  const windowStart = Math.max(0, chatMessages.length - renderWindow);
+  // Monotonic front edge — the rule, and why it exists, are documented on
+  // `computeWindowStart`. Extracted so the invariant is property-tested rather than
+  // living as inline arithmetic in a 4000-line screen.
+  const windowStart = computeWindowStart({
+    total: chatMessages.length,
+    renderWindow,
+    previousStart:
+      windowStartRef.current.conv === (conversationId ?? null) ? windowStartRef.current.start : null,
+  });
+  windowStartRef.current = { conv: conversationId ?? null, start: windowStart };
+
   const windowedMessages = useMemo(
     () => (windowStart > 0 ? chatMessages.slice(windowStart) : chatMessages),
     [chatMessages, windowStart],
@@ -2904,6 +3000,34 @@ export default function ChatScreen() {
   const windowedMessagesRef = useRef<ChatMessage[]>([]);
   windowedMessagesRef.current = windowedMessages;
 
+  // Resolve a pending jump against the data FlashList is ACTUALLY rendering (see
+  // the note on `pendingJumpRef`). Re-runs on every window change, so a jump
+  // requested before an expansion lands simply completes on the commit where the
+  // row appears. Bounded retries so a target deleted in the meantime cannot latch
+  // this forever.
+  useEffect(() => {
+    const pending = pendingJumpRef.current;
+    if (!pending) return;
+    const idx = windowedMessages.findIndex((m) => m.id === pending.id);
+    if (idx === -1) {
+      pending.tries += 1;
+      if (pending.tries > 10) pendingJumpRef.current = null;
+      return;
+    }
+    pendingJumpRef.current = null;
+    // Claim the scroll generation so a `revealNewest` / scroll-to-bottom chain that
+    // is mid-flight abandons its follow-up rather than yanking us off the target.
+    const gen = ++scrollGenRef.current;
+    // One frame so the row has been laid out before we ask to scroll to it.
+    const raf = requestAnimationFrame(() => {
+      if (gen !== scrollGenRef.current) return;
+      try {
+        flatListRef.current?.scrollToIndex({ index: idx, animated: true, viewPosition: 0.5 });
+      } catch {}
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [windowedMessages]);
+
   // Are there older messages above the current window? Either already loaded in
   // the array (windowStart > 0) or still on disk (the bounded seed hit the cap,
   // so the cache holds more behind it). Drives the top "loading older" glow.
@@ -2916,17 +3040,48 @@ export default function ChatScreen() {
   // a short beat so the top glow reads as "loading more". FlashList + mvcp keeps
   // the scroll position pinned as the older messages prepend.
   const loadingOlderRef = useRef(false);
+  const olderHandleRef = useRef<{ cancel: () => void } | null>(null);
+
+  // Cancel a pending reveal on unmount / conversation change. It used to be a bare
+  // `setTimeout` that was never cleared, so leaving the chat mid-load left a
+  // `setRenderWindow` — and the `loadingOlderRef` latch — to fire into a screen that
+  // had already moved on.
+  useEffect(
+    () => () => {
+      olderHandleRef.current?.cancel();
+      olderHandleRef.current = null;
+      loadingOlderRef.current = false;
+    },
+    [conversationId],
+  );
+
   const onStartReached = useCallback(() => {
     if (loadingOlderRef.current) return;
-    if (historyHydratedRef.current !== conversationId) hydrateFullHistory();
-    const total = (useChatStore.getState().messages[conversationId || ''] || []).length;
-    if (renderWindow >= total) return; // everything older is already shown
     loadingOlderRef.current = true;
-    setTimeout(() => {
-      setRenderWindow((cur) => Math.min(cur + WINDOW_CHUNK, Math.max(cur, total)));
+
+    // ── Hydration must NOT run on the scroll frame ──────────────────────────
+    //
+    // This used to call `hydrateFullHistory()` synchronously, straight from the
+    // native scroll callback. That function reads up to 1000 messages out of MMKV,
+    // maps every one through `healLegacySender`, merges them against the store and
+    // then re-serialises the tail cache — all synchronous, all on the JS thread, in
+    // the middle of a gesture. That IS the "I scroll up and it's loading and
+    // lagging".
+    //
+    // Deferred behind `runAfterInteractions` the parse lands after the gesture
+    // rather than inside it, and the window grows in the SAME callback, so the
+    // expansion is ONE commit instead of a hydrate now plus a reveal 160 ms later
+    // (two content-height changes above the viewport, which mvcp then had to
+    // correct twice).
+    const handle = InteractionManager.runAfterInteractions(() => {
+      olderHandleRef.current = null;
+      if (historyHydratedRef.current !== conversationId) hydrateFullHistoryRef.current();
+      const total = (useChatStore.getState().messages[conversationId || ''] || []).length;
+      setRenderWindow((cur) => (cur >= total ? cur : Math.min(cur + WINDOW_CHUNK, total)));
       loadingOlderRef.current = false;
-    }, 160);
-  }, [conversationId, hydrateFullHistory, renderWindow]);
+    });
+    olderHandleRef.current = handle;
+  }, [conversationId]);
 
   // Tap-a-reply-to-jump: scroll to the message a reply is quoting and flash it.
   // `replyToId` is stored on every reply message (see sendText/sendGif). The
@@ -2957,6 +3112,25 @@ export default function ChatScreen() {
     scrollToIndex(idx);
   }, [chatMessages, conversationId, hydrateFullHistory, scrollToIndex]);
   useEffect(() => () => { if (jumpTimerRef.current) clearTimeout(jumpTimerRef.current); }, []);
+
+  // ── Stable indirection for `renderItem` ────────────────────────────────────
+  //
+  // `scrollToMessageId` depends on `chatMessages` and (through `scrollToIndex`) on
+  // `renderWindow`, so it gets a NEW identity on every message change and every
+  // window change. It was passed straight into `renderItem`'s dependency array,
+  // which meant `renderItem` also churned on exactly those commits — so FlashList
+  // re-rendered EVERY mounted cell on the same frame the data changed. That is the
+  // multiplier that turned each of the scroll bugs above into visible jank.
+  //
+  // A ref-backed wrapper is stable for the component's whole lifetime while always
+  // calling the latest implementation, so `renderItem` can be excluded from that
+  // churn without going stale. Same trick the file already uses for
+  // `hydrateFullHistoryRef`.
+  const scrollToMessageIdRef = useRef(scrollToMessageId);
+  scrollToMessageIdRef.current = scrollToMessageId;
+  const stableJumpToMessage = useCallback((messageId?: string) => {
+    scrollToMessageIdRef.current(messageId);
+  }, []);
 
   // Guard against the freeze caused by rapid long-presses / taps while a menu is
   // opening or closing — see `useContextMenuGuard` (declared above with the
@@ -3163,9 +3337,18 @@ export default function ChatScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [windowedMessages, locale]);
 
+  // `dayLabels` is rebuilt on every data change, so depending on it directly gave
+  // `renderItem` a new identity on those exact commits — and FlashList re-renders
+  // every mounted cell when `renderItem`'s identity changes. Read through a ref
+  // instead: the map contents are still current, but the callback is not invalidated.
+  // The rows that actually need a NEW label re-render anyway, because their item
+  // object changed.
+  const dayLabelsRef = useRef(dayLabels);
+  dayLabelsRef.current = dayLabels;
+
   const renderItem = useCallback(({ item }: { item: ChatMessage; index: number }) => {
     const m = parseMessage(item);
-    const dayLabel = dayLabels.get(item.id);
+    const dayLabel = dayLabelsRef.current.get(item.id);
     return (
       <>
       {dayLabel ? <DaySeparatorChip label={dayLabel} glassActive={glassActive} theme={theme} /> : null}
@@ -3186,7 +3369,7 @@ export default function ChatScreen() {
         highlighted={item.id === activeMatchId || item.id === jumpHighlightId}
         imagesReady={imagesReady}
         onReply={startReply}
-        onReplyJump={scrollToMessageId}
+        onReplyJump={stableJumpToMessage}
         onLongPress={onMessageLongPress}
         onMeasured={stashBubbleRect}
         onSwipeActive={handleSwipeActive}
@@ -3203,7 +3386,10 @@ export default function ChatScreen() {
     // NOTE: `t` and `locale` are deliberately absent — see `dayLabels` above.
     // Adding either (or anything else allocated fresh per render) re-creates
     // `renderItem` on every render and makes FlashList re-render every cell.
-  }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, chatSettings.linkEmoji, bubbleColorsKey, bubbleColors, bubbleOpacity, bubbleTextColor, inColorsKey, inColors, inOpacity, inTextColor, startReply, scrollToMessageId, handleSwipeActive, openImageViewer, parseMessage, activeMatchId, jumpHighlightId, onMessageLongPress, currentUserId, dragActiveSV, dragFingerYSV, hoveredActionSV, actionZonesSV, fireDragAction, visTracker, imagesReady, dayLabels, glassActive, theme, openFullscreen]);
+    // NOTE: `scrollToMessageId` and `dayLabels` are deliberately absent too — both
+    // change identity on every data/window change and are reached through refs
+    // (`stableJumpToMessage`, `dayLabelsRef`) for exactly that reason.
+  }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, chatSettings.linkEmoji, bubbleColorsKey, bubbleColors, bubbleOpacity, bubbleTextColor, inColorsKey, inColors, inOpacity, inTextColor, startReply, stableJumpToMessage, handleSwipeActive, openImageViewer, parseMessage, activeMatchId, jumpHighlightId, onMessageLongPress, currentUserId, dragActiveSV, dragFingerYSV, hoveredActionSV, actionZonesSV, fireDragAction, visTracker, imagesReady, glassActive, theme, openFullscreen]);
 
   // Stable list header / footer elements. Passing INLINE JSX to FlashList's
   // ListHeaderComponent / ListFooterComponent handed it a fresh element
@@ -3354,16 +3540,23 @@ export default function ChatScreen() {
     const lastIndex = windowedMessagesRef.current.length - 1;
     if (lastIndex < 0) return;
 
+    // Claim the scroll generation so any other chain already in flight
+    // (`revealNewest`, a reply jump) abandons its follow-up instead of fighting
+    // this one for the viewport.
+    const gen = ++scrollGenRef.current;
+
     void (async () => {
       try {
         await fl.scrollToIndex({ index: lastIndex, animated: true, viewPosition: 1 });
         // Land past the footer spacer. Guarded because the user may have started
         // scrolling again, or navigated away, while the animation ran.
+        if (gen !== scrollGenRef.current) return;
         flatListRef.current?.scrollToEnd({ animated: false });
       } catch {
         // Any rejection (index out of range after a concurrent data change,
         // list unmounted) falls back to the plain call, which is still correct
         // — just without the measured animation.
+        if (gen !== scrollGenRef.current) return;
         try { flatListRef.current?.scrollToEnd({ animated: true }); } catch {}
       }
     })();
@@ -4170,6 +4363,10 @@ const PinnedMessageBar = React.memo(function PinnedMessageBar({
 });
 
 const styles = StyleSheet.create({
+  // Reserved strip for the "loading older" indicator. Height is CONSTANT so the
+  // indicator appearing or disappearing at the top of the transcript can never
+  // shift content — see the note in `OlderMessagesLoader`.
+  olderLoader: { height: 24, alignItems: 'center', justifyContent: 'center' },
   // Search-result action bar. Shrink-wraps to a centred pill (`alignSelf: center`,
   // no `right`) so two controls sit close together instead of stretching across
   // the display. zIndex clears the message list and the under-input gradient.
