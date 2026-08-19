@@ -8,6 +8,7 @@ export { useFeedStore } from './feedStore';
 export type { Post } from './feedStore';
 export { useChatStore } from './chatStore';
 export type { Message, Conversation } from './chatStore';
+export { usePinnedMessagesStore, selectPinnedId, resolvePinned } from './pinnedMessagesStore';
 export { useThemeStore } from './themeStore';
 export type { ThemeMode } from './themeStore';
 export { useSettingsStore } from './settingsStore';

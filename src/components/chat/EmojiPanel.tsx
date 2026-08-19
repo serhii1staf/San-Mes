@@ -103,6 +103,7 @@ export interface EmojiPanelProps {
 
 const EMOJI_CATEGORY_KEY = (it: { titleKey: string }) => it.titleKey;
 
+
 /**
  * One category block (title + its emoji grid).
  *

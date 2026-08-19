@@ -48,11 +48,7 @@ const EMPTY_SELECTION: ReadonlySet<string> = new Set<string>();
 // right by exactly this much, so nothing ever overlaps the avatar.
 const SELECT_COLUMN_WIDTH = 34;
 
-// Resting height of the search row (field + its vertical padding). The
-// collapse-on-scroll animation interpolates the container between this and 0, so
-// it has to be a constant rather than measured — measuring would need an
-// onLayout round-trip before the first collapse could animate.
-const SEARCH_ROW_HEIGHT = 46;
+
 
 // Hoisted to module scope: these are referenced from inside memoized rows, so a
 // fresh object per render would defeat their prop-equality bail-outs.
@@ -579,6 +575,72 @@ function ConversationItemBase({
 }
 
 /**
+ * The "search conversations" field.
+ *
+ * ── WHY IT LIVES IN THE LIST HEADER ───────────────────────────────────────────
+ *
+ * It used to be a sibling above the list whose HEIGHT was animated to 0 on a
+ * scroll threshold. That flickered: collapsing changed the layout, the layout
+ * changed the scroll offset, the offset re-evaluated the threshold, and the
+ * threshold changed the height again. A feedback loop — which is exactly the
+ * reported "I scroll a little, it tries to close and then snaps back open".
+ * Tuning the thresholds would only have moved the oscillation somewhere else.
+ *
+ * Now it is the conversation list's `ListHeaderComponent`, so it scrolls away
+ * with the content and returns when you scroll back to the top. The scroll offset
+ * and the field's position are the SAME quantity by construction, so there is
+ * nothing left to disagree — and it costs zero animations, zero scroll handlers
+ * and zero relayouts.
+ *
+ * Memoized on primitives + stable callbacks so typing in it never re-renders the
+ * rows below.
+ */
+const ChatSearchField = React.memo(function ChatSearchField({
+  value,
+  onChangeText,
+  placeholder,
+  theme,
+}: {
+  value: string;
+  onChangeText: (v: string) => void;
+  placeholder: string;
+  theme: any;
+}) {
+  return (
+    <View style={{ paddingHorizontal: theme.spacing.base, paddingBottom: theme.spacing.sm }}>
+      <View
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          backgroundColor: theme.colors.background.elevated,
+          borderRadius: theme.borderRadius.pill,
+          paddingHorizontal: theme.spacing.base,
+          paddingVertical: theme.spacing.sm,
+          borderWidth: 1,
+          borderColor: theme.colors.border.light,
+        }}
+      >
+        <Feather name="search" size={16} color={theme.colors.text.tertiary} />
+        <TextInput
+          value={value}
+          onChangeText={onChangeText}
+          placeholder={placeholder}
+          placeholderTextColor={theme.colors.text.tertiary}
+          style={{
+            flex: 1,
+            marginLeft: theme.spacing.sm,
+            fontSize: theme.typography.sizes.base,
+            fontFamily: theme.fontFamily.regular,
+            color: theme.colors.text.primary,
+            paddingVertical: theme.spacing.xs,
+          }}
+        />
+      </View>
+    </View>
+  );
+});
+
+/**
  * Hairline between rows. Reads the same shared `editProgress` as the rows so its
  * left inset slides in lock-step with them — one UI-thread animation, no JS work
  * per separator.
@@ -981,40 +1043,21 @@ export default function MessagesScreen() {
     });
   }, []);
 
-  // ── Collapse-on-scroll for the search field ───────────────────────────────
-  //
-  // 0 = fully open, 1 = fully collapsed. Flipped ONLY when the scroll offset
-  // crosses `SEARCH_COLLAPSE_AT`, so a long flick starts at most one animation
-  // per direction instead of doing work on every scroll event.
-  //
-  // The threshold has hysteresis (collapse at 56, re-open at 12) so a list
-  // resting near the boundary cannot oscillate.
-  const searchCollapse = useSharedValue(0);
-  const searchCollapsedRef = useRef(false);
-  const onListScroll = useCallback((e: any) => {
-    const y = e?.nativeEvent?.contentOffset?.y ?? 0;
-    const shouldCollapse = searchCollapsedRef.current ? y > 12 : y > 56;
-    if (shouldCollapse === searchCollapsedRef.current) return;
-    searchCollapsedRef.current = shouldCollapse;
-    searchCollapse.value = withTiming(shouldCollapse ? 1 : 0, {
-      duration: 200,
-      easing: REasing.out(REasing.cubic),
-    });
-  }, [searchCollapse]);
-
-  const searchCollapseStyle = useAnimatedStyle(() => ({
-    height: interpolate(searchCollapse.value, [0, 1], [SEARCH_ROW_HEIGHT, 0]),
-    opacity: interpolate(searchCollapse.value, [0, 1], [1, 0]),
-    marginBottom: interpolate(searchCollapse.value, [0, 1], [8, 0]),
-  }));
-
-  // Typing in the field must not let a stray scroll collapse it out from under
-  // the keyboard, and clearing the query should bring it back.
-  useEffect(() => {
-    if (!searchQuery) return;
-    searchCollapsedRef.current = false;
-    searchCollapse.value = withTiming(0, { duration: 160 });
-  }, [searchQuery, searchCollapse]);
+  // Stable element for the list header. Passing inline JSX would hand FlatList a
+  // fresh element identity on every render of this screen and force it to
+  // reconcile the header — including the TextInput, which would lose focus.
+  const searchPlaceholder = t('messages.search_placeholder');
+  const searchHeaderEl = useMemo(
+    () => (
+      <ChatSearchField
+        value={searchQuery}
+        onChangeText={setSearchQuery}
+        placeholder={searchPlaceholder}
+        theme={theme}
+      />
+    ),
+    [searchQuery, searchPlaceholder, theme],
+  );
 
   // Compose menu (mini-apps / AI / music / chat settings). State lives here
   // because its trigger is now the header button while the menu itself renders
@@ -1559,56 +1602,14 @@ export default function MessagesScreen() {
         </View>
       </View>
 
-      {/* ── Search field, collapses on scroll ────────────────────────────────
-          Telegram behaviour: scrolling down shrinks the field away and the
-          category chips take its place; returning to the top brings it back.
+      {/* Top spacer under the floating header. The search field itself is no
+          longer here — it is the conversation list's header, so it scrolls away
+          with the content (see `listHeaderEl`). On tabs that render no list it is
+          drawn as a sibling instead, further down. */}
+      <View style={{ marginTop: headerContentHeight }} />
 
-          Driven by a THRESHOLD, not per frame. `searchCollapse` is a single
-          shared value flipped by `withTiming` only when the scroll crosses the
-          threshold, so a whole flick costs at most one animation start per
-          direction — never a relayout per scroll event. Height is animated (this
-          genuinely has to reflow, so the chips really do move up), but only for
-          the ~200 ms of the transition.
-
-          `overflow: 'hidden'` clips the field as the container closes instead of
-          letting it spill over the chips. */}
-      <Reanimated.View
-        style={[
-          { paddingHorizontal: theme.spacing.base, marginTop: headerContentHeight, overflow: 'hidden' },
-          searchCollapseStyle,
-        ]}
-      >
-        <View
-          style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            backgroundColor: theme.colors.background.elevated,
-            borderRadius: theme.borderRadius.pill,
-            paddingHorizontal: theme.spacing.base,
-            paddingVertical: theme.spacing.sm,
-            borderWidth: 1,
-            borderColor: theme.colors.border.light,
-          }}
-        >
-          <Feather name="search" size={16} color={theme.colors.text.tertiary} />
-          <TextInput
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            placeholder={t('messages.search_placeholder')}
-            placeholderTextColor={theme.colors.text.tertiary}
-            style={{
-              flex: 1,
-              marginLeft: theme.spacing.sm,
-              fontSize: theme.typography.sizes.base,
-              fontFamily: theme.fontFamily.regular,
-              color: theme.colors.text.primary,
-              paddingVertical: theme.spacing.xs,
-            }}
-          />
-        </View>
-      </Reanimated.View>
-
-      {/* Category tabs */}
+      {/* Category tabs — pinned. The search field scrolls away UNDER these, which
+          is what makes the chips read as moving up into its place. */}
       <View style={{ marginBottom: 8 }}>
         <FlatList
           horizontal
@@ -1626,6 +1627,11 @@ export default function MessagesScreen() {
         <View style={{ flex: 1 }}>
           {/* AI Chat + Music (chats tab) — only shown once opened, newest first */}
           {activeTab === 'chats' && !searchQuery && specialChats}
+
+          {/* Tabs that render no conversation FlatList have no list header to
+              carry the search field, so it is drawn here instead. Same component,
+              so the two placements can never drift apart. */}
+          {activeTab === 'apps' || filtered.length === 0 ? searchHeaderEl : null}
 
           {activeTab === 'apps' ? (
             /* The Apps tab owns its full content (launcher list OR empty
@@ -1665,12 +1671,13 @@ export default function MessagesScreen() {
               maxToRenderPerBatch={6}
               windowSize={9}
               updateCellsBatchingPeriod={60}
+              // `getItemLayout` describes ROWS only. It stays correct with a list
+              // header because FlatList adds the header's measured height to every
+              // offset itself — the contract is header-relative.
               getItemLayout={MESSAGES_ITEM_LAYOUT}
-              // Drives the search-field collapse. `onListScroll` returns early
-              // unless the threshold is actually crossed, so this costs a couple
-              // of property reads per event and never a state update.
-              onScroll={onListScroll}
-              scrollEventThrottle={32}
+              // The search field. Scrolling the list scrolls it away; no
+              // animation, no threshold, nothing that can oscillate.
+              ListHeaderComponent={searchHeaderEl}
               keyboardShouldPersistTaps="handled"
             />
           )}

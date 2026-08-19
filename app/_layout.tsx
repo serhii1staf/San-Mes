@@ -570,6 +570,10 @@ function AppStack() {
       <Stack.Screen name="chat/[id]" />
       <Stack.Screen name="chat/ai" />
       <Stack.Screen name="chat/music" />
+      {/* Full-screen message viewer. A pushed route (not a modal) on purpose —
+          see the header comment in `chat/fullscreen.tsx`: pushing unmounts the
+          chat's message list instead of leaving it laying out underneath. */}
+      <Stack.Screen name="chat/fullscreen" />
       <Stack.Screen name="profile/edit" options={{ presentation: 'modal', animation: 'slide_from_bottom', headerShown: false }} />
       <Stack.Screen name="profile/[id]" />
       <Stack.Screen name="comments/[id]" />

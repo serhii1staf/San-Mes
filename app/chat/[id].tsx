@@ -25,10 +25,12 @@ import { MessageContextMenu, MessageAction, type ActionZone, type MessageContext
 import { TranslationSheet } from '../../src/components/ui/TranslationSheet';
 import { ChatInputBar, ChatInputBarHandle } from '../../src/components/chat/ChatInputBar';
 import { MediaPanel } from '../../src/components/chat/MediaPanel';
+import { PhotoPickerPanel } from '../../src/components/chat/PhotoPickerPanel';
 import { EmojiDeleteBurst, EmojiBurstHandle } from '../../src/components/chat/EmojiDeleteBurst';
 import { getRealtime, chatChannelName } from '../../src/services/realtime/ably';
 import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
 import { useChatStore, useEntityStore, useConnectivityStore, useAuthStore } from '../../src/store';
+import { usePinnedMessagesStore, selectPinnedId, resolvePinned } from '../../src/store/pinnedMessagesStore';
 import { useChatSettingsStore, GLOBAL_CHAT_SETTINGS_KEY, DEFAULT_CHAT_SETTINGS } from '../../src/store/chatSettingsStore';
 import { readableTextOn, withOpacity } from '../../src/constants/bubbleColors';
 import { useMessageGestures } from '../../src/hooks/useMessageGestures';
@@ -343,7 +345,7 @@ function SingleChatImage({ uri, isVisible, onPress }: { uri: string; isVisible?:
   );
 }
 
-function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, linkEmoji, bubbleColors, bubbleOpacity, bubbleTextColor, inColors, inOpacity, inTextColor, highlighted, isVisible, imagesReady, onReply, onReplyJump, onLongPress, onMeasured, onSwipeActive, onImagePress, dragActive, dragFingerY, hoveredAction, actionZones, onFireDragAction }: { message: ChatMessage; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string; linkEmoji?: string; bubbleColors: string[]; bubbleOpacity: number; bubbleTextColor: string; inColors: string[]; inOpacity: number; inTextColor: string; highlighted?: boolean; isVisible?: boolean; imagesReady?: boolean; onReply: (m: ChatMessage) => void; onReplyJump?: (messageId?: string) => void; onLongPress: (m: ChatMessage) => void; onMeasured?: (id: string, x: number, y: number, w: number, h: number) => void; onSwipeActive: (active: boolean) => void; onImagePress: (images: string[], index: number) => void; dragActive: SharedValue<boolean>; dragFingerY: SharedValue<number>; hoveredAction: SharedValue<string>; actionZones: SharedValue<ActionZone[]>; onFireDragAction: (m: ChatMessage, action: string) => void }) {
+function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, linkEmoji, bubbleColors, bubbleOpacity, bubbleTextColor, inColors, inOpacity, inTextColor, highlighted, isVisible, imagesReady, onReply, onReplyJump, onLongPress, onMeasured, onSwipeActive, onImagePress, dragActive, dragFingerY, hoveredAction, actionZones, onFireDragAction, onOpenFullscreen }: { message: ChatMessage; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string; linkEmoji?: string; bubbleColors: string[]; bubbleOpacity: number; bubbleTextColor: string; inColors: string[]; inOpacity: number; inTextColor: string; highlighted?: boolean; isVisible?: boolean; imagesReady?: boolean; onReply: (m: ChatMessage) => void; onReplyJump?: (messageId?: string) => void; onLongPress: (m: ChatMessage) => void; onMeasured?: (id: string, x: number, y: number, w: number, h: number) => void; onSwipeActive: (active: boolean) => void; onImagePress: (images: string[], index: number) => void; dragActive: SharedValue<boolean>; dragFingerY: SharedValue<number>; hoveredAction: SharedValue<string>; actionZones: SharedValue<ActionZone[]>; onFireDragAction: (m: ChatMessage, action: string) => void; onOpenFullscreen: (m: ChatMessage) => void }) {
   const theme = useTheme();
   const t = useT();
   // Resolve THIS bubble's fill from the per-side style. Outgoing always has a
@@ -461,6 +463,14 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
   // the bubble's url becomes http and re-mounts cached → instant, as before.
   const singleImgKnown = hasImages && message.imageUrls!.length === 1 && !isGifBubble && message.imageUrls![0].startsWith('http') && !!getImageDims(message.imageUrls![0]);
 
+  // `Pressable.onPress` receives a gesture event, not the message — bind it here
+  // so the button can stay a plain onPress while the screen's handler keeps
+  // taking the message it acts on.
+  const handleOpenFullscreen = useCallback(
+    () => onOpenFullscreen(message),
+    [onOpenFullscreen, message],
+  );
+
   return (
     <View style={bubbleStyles.row}>
       <Reanimated.View style={[bubbleStyles.swipeIcon, replyIconAnimStyle]}>
@@ -508,6 +518,26 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
               },
             ]}
           />
+          {/* Expand-to-fullscreen affordance.
+              Placed in the bubble's OUTER top corner — top-left for your own
+              messages, top-right for incoming ones — so it is always on the side
+              away from the tail and never sits over the reply-swipe path.
+              Rendered as an absolute sibling so it adds zero layout: the bubble's
+              size and text wrapping are byte-identical with and without it. */}
+          <Pressable
+            onPress={handleOpenFullscreen}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel={t('chat.open_fullscreen', 'Открыть на весь экран')}
+            style={[
+              styles.expandBtn,
+              isOwn ? { left: -6 } : { right: -6 },
+              { backgroundColor: theme.isDark ? 'rgba(0,0,0,0.42)' : 'rgba(255,255,255,0.78)' },
+            ]}
+          >
+            <Feather name="maximize-2" size={11} color={theme.colors.text.secondary} />
+          </Pressable>
+
           <View style={{
             paddingHorizontal: 14,
             paddingVertical: 10,
@@ -1867,6 +1897,18 @@ export default function ChatScreen() {
     [id, participantId, displayName, displayEmoji, setMessages, t],
   );
 
+  // Open the full-screen viewer on a specific message. A route (not a modal) so
+  // the platform owns the transition and back-gesture, and so this screen's
+  // message list is not left mounted underneath doing layout work.
+  const openFullscreen = useCallback((m: ChatMessage) => {
+    if (!conversationId) return;
+    triggerHaptic('light');
+    router.push({
+      pathname: '/chat/fullscreen',
+      params: { id: conversationId, messageId: m.id },
+    } as any);
+  }, [conversationId]);
+
   // ── Reveal the message you just sent ──────────────────────────────────────
   //
   // This used to be an unconditional `requestAnimationFrame(() => scrollToEnd())`
@@ -2151,6 +2193,26 @@ export default function ChatScreen() {
     setReplyTo(message);
     triggerHaptic('light');
   }, []);
+
+  // ── Attach flow ─────────────────────────────────────────────────────────────
+  //
+  // The attach button opens the app's own `PhotoPickerPanel` (docked where the
+  // keyboard was, expandable by dragging its grabber) instead of the OS sheet. The
+  // system sheet is still reachable — from the folder button in the panel's header,
+  // and automatically when library permission is denied — so a user who never
+  // grants library access loses nothing: iOS's own picker returns only the photos
+  // they explicitly choose, without any permission at all.
+  const [photoPanelOpen, setPhotoPanelOpen] = useState(false);
+
+  const openPhotoPanel = useCallback(() => {
+    triggerHaptic('light');
+    // Close the emoji/GIF panel first so two docked surfaces never overlap.
+    setPanelTab(null);
+    Keyboard.dismiss();
+    setPhotoPanelOpen(true);
+  }, []);
+
+  const closePhotoPanel = useCallback(() => setPhotoPanelOpen(false), []);
 
   const pickImages = useCallback(async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -2473,6 +2535,64 @@ export default function ChatScreen() {
       closeMenu();
     }
   }, [handleMenuAction, closeMenu]);
+
+  // ── Search-result actions ───────────────────────────────────────────────────
+  //
+  // While search is open with at least one hit, a small action row appears above
+  // the input bar and operates on the ACTIVE match (the one the ↑/↓ chevrons and
+  // the "3/17" counter refer to) — so there is never any ambiguity about which
+  // message a tap will affect.
+  //
+  // Delete routes through `handleMenuAction('delete', …)` rather than duplicating
+  // the removal: that path already owns the confirmation alert, the full-history
+  // hydrate (without which a delete inside the bounded seed window gets
+  // resurrected), the delete-burst animation and the realtime `msg.delete`
+  // publish. Duplicating any of that would be a second place to keep in step.
+  //
+  // These are declared AFTER `handleMenuAction` on purpose: `const` bindings in a
+  // component body are not hoisted, so capturing it from a callback declared
+  // above would throw a TDZ ReferenceError on the first render.
+  const activeMatchMessage = useMemo<ChatMessage | null>(() => {
+    if (searchMatches.length === 0) return null;
+    const idx = searchMatches[searchActiveIdx];
+    return chatMessages[idx] ?? null;
+  }, [searchMatches, searchActiveIdx, chatMessages]);
+
+  const togglePinnedMessage = usePinnedMessagesStore((s) => s.toggle);
+  const unpinMessage = usePinnedMessagesStore((s) => s.unpin);
+  const pinnedId = usePinnedMessagesStore(selectPinnedId(conversationId));
+
+  // Resolved against the live transcript, so an edited pinned message shows its
+  // CURRENT text and a deleted one simply stops rendering the bar.
+  const pinnedResolved = useMemo(
+    () => resolvePinned(chatMessages, pinnedId),
+    [chatMessages, pinnedId],
+  );
+
+  const onPinSearchResult = useCallback(() => {
+    if (!activeMatchMessage || !conversationId) return;
+    triggerHaptic('medium');
+    togglePinnedMessage(conversationId, activeMatchMessage.id);
+  }, [activeMatchMessage, conversationId, togglePinnedMessage]);
+
+  const onDeleteSearchResult = useCallback(() => {
+    if (!activeMatchMessage) return;
+    // A pinned message that gets deleted must not leave a dangling pin.
+    if (conversationId && pinnedId === activeMatchMessage.id) unpinMessage(conversationId);
+    handleMenuAction('delete', activeMatchMessage);
+  }, [activeMatchMessage, conversationId, pinnedId, unpinMessage, handleMenuAction]);
+
+  const onUnpin = useCallback(() => {
+    if (!conversationId) return;
+    triggerHaptic('light');
+    unpinMessage(conversationId);
+  }, [conversationId, unpinMessage]);
+
+  const onJumpToPinned = useCallback(() => {
+    if (!pinnedResolved) return;
+    triggerHaptic('light');
+    scrollToIndex(pinnedResolved.index);
+  }, [pinnedResolved, scrollToIndex]);
 
   const handleSend = useCallback(async (rawText: string) => {
     const hasImages = pendingImages.length > 0;
@@ -3040,13 +3160,14 @@ export default function ChatScreen() {
         hoveredAction={hoveredActionSV}
         actionZones={actionZonesSV}
         onFireDragAction={fireDragAction}
+        onOpenFullscreen={openFullscreen}
       />
       </>
     );
     // NOTE: `t` and `locale` are deliberately absent — see `dayLabels` above.
     // Adding either (or anything else allocated fresh per render) re-creates
     // `renderItem` on every render and makes FlashList re-render every cell.
-  }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, chatSettings.linkEmoji, bubbleColorsKey, bubbleColors, bubbleOpacity, bubbleTextColor, inColorsKey, inColors, inOpacity, inTextColor, startReply, scrollToMessageId, handleSwipeActive, openImageViewer, parseMessage, activeMatchId, jumpHighlightId, onMessageLongPress, currentUserId, dragActiveSV, dragFingerYSV, hoveredActionSV, actionZonesSV, fireDragAction, visTracker, imagesReady, dayLabels, glassActive, theme]);
+  }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, chatSettings.linkEmoji, bubbleColorsKey, bubbleColors, bubbleOpacity, bubbleTextColor, inColorsKey, inColors, inOpacity, inTextColor, startReply, scrollToMessageId, handleSwipeActive, openImageViewer, parseMessage, activeMatchId, jumpHighlightId, onMessageLongPress, currentUserId, dragActiveSV, dragFingerYSV, hoveredActionSV, actionZonesSV, fireDragAction, visTracker, imagesReady, dayLabels, glassActive, theme, openFullscreen]);
 
   // Stable list header / footer elements. Passing INLINE JSX to FlashList's
   // ListHeaderComponent / ListFooterComponent handed it a fresh element
@@ -3451,7 +3572,7 @@ export default function ChatScreen() {
           isEditing={!!editing}
           hasPendingImages={pendingImages.length > 0}
           onSend={handleSend}
-          onPickImages={pickImages}
+          onPickImages={openPhotoPanel}
           onPasteImage={pasteImageFromClipboard}
           onPasteImages={addPastedImages}
           onOpenGif={openGif}
@@ -3462,6 +3583,24 @@ export default function ChatScreen() {
           onToggleEmoji={closeEmojiToKeyboard}
         />
       </Reanimated.View>
+      )}
+
+      {/* Search-result actions. Mounted only while searching so the bar's own
+          enter animation is not competing with the input bar's unmount, and gated
+          on having a match so it never appears with nothing to act on. */}
+      {searchMode && (
+        <SearchActionBar
+          visible={!!activeMatchMessage}
+          isPinned={!!activeMatchMessage && pinnedId === activeMatchMessage.id}
+          bottomInset={insets.bottom}
+          glassActive={glassActive}
+          theme={theme}
+          pinLabel={t('chat.pin', 'Закрепить')}
+          unpinLabel={t('chat.unpin', 'Открепить')}
+          deleteLabel={t('common.delete')}
+          onPin={onPinSearchResult}
+          onDelete={onDeleteSearchResult}
+        />
       )}
 
       {/* Inline media panel — bottom-anchored in the space the keyboard
@@ -3495,6 +3634,35 @@ export default function ChatScreen() {
             />
           </View>
         </Reanimated.View>
+      )}
+
+      {/* In-app gallery picker — replaces the OS photo sheet. Docked at the
+          bottom, expandable by dragging its grabber. Rendered AFTER the media
+          panel so it paints on top if both were ever briefly mounted, and gated
+          on `!searchMode` for the same reason the input bar is. Picked assets are
+          handed to `addPastedImages`, which owns the shared downscale/dimension-
+          cache step — so panel-picked and clipboard-pasted photos take exactly the
+          same path into the composer. */}
+      {!searchMode && photoPanelOpen && (
+        <PhotoPickerPanel
+          collapsedHeight={emojiPanelHeight}
+          bottomInset={insets.bottom}
+          theme={theme}
+          selectionLimit={Math.max(1, 6 - pendingImages.length)}
+          labels={{
+            title: t('chat.photos.title', 'Фото'),
+            send: t('media.action.send'),
+            systemPicker: t('chat.photos.system', 'Галерея'),
+            permission: t('chat.photos.permission', 'Нет доступа к галерее. Можно выбрать фото через системную галерею.'),
+            empty: t('chat.photos.empty', 'Фотографий нет'),
+          }}
+          onConfirm={addPastedImages}
+          onOpenSystemPicker={() => {
+            closePhotoPanel();
+            void pickImages();
+          }}
+          onClose={closePhotoPanel}
+        />
       )}
 
       {/* Gradient fade header — three stops with a translucent middle so
@@ -3644,6 +3812,28 @@ export default function ChatScreen() {
         )}
       </View>
 
+      {/* Pinned message. Docked just under the header content, above the header's
+          own gradient, so the transcript scrolls beneath it like Telegram's. Only
+          rendered when the pinned id still resolves against the live transcript —
+          a deleted pin therefore leaves no stale quote behind. */}
+      {pinnedResolved ? (
+        <PinnedMessageBar
+          top={headerContentHeight - 2}
+          title={t('chat.pinned_message', 'Закреплённое сообщение')}
+          preview={
+            pinnedResolved.message.text ||
+            (pinnedResolved.message.imageUrls && pinnedResolved.message.imageUrls.length > 0
+              ? t('chat.photo')
+              : '')
+          }
+          glassActive={glassActive}
+          theme={theme}
+          closeLabel={t('chat.unpin', 'Открепить')}
+          onPress={onJumpToPinned}
+          onUnpin={onUnpin}
+        />
+      ) : null}
+
       {/* Long-press message menu — in-screen overlay (not a native Modal) so it
           can never deadlock with the GIF/image/video modals. High zIndex keeps it
           above the input bar and header. */}
@@ -3772,7 +3962,214 @@ const DaySeparatorChip = React.memo(function DaySeparatorChip({
   );
 });
 
+/**
+ * One control in the search-result action bar. Icon over label, fixed-width
+ * column — same shape as the chat list's bulk-action bar so the two read as the
+ * same piece of chrome.
+ */
+const SearchActionButton = React.memo(function SearchActionButton({
+  icon,
+  label,
+  color,
+  onPress,
+}: {
+  icon: string;
+  label: string;
+  color: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable onPress={onPress} style={styles.searchActionBtn} accessibilityRole="button" accessibilityLabel={label}>
+      <Feather name={icon as any} size={19} color={color} />
+      <Text variant="caption" weight="medium" color={color} style={{ fontSize: 10.5 }} numberOfLines={1}>
+        {label}
+      </Text>
+    </Pressable>
+  );
+});
+
+/**
+ * Action bar for the ACTIVE search result.
+ *
+ * Appears where the input bar normally sits (the input bar is hidden while
+ * searching, so this occupies chrome the user is already looking at) and acts on
+ * the single message the ↑/↓ chevrons and the "3/17" counter point at — never on
+ * "all matches", which would be an unbounded destructive action behind one tap.
+ *
+ * Slides in on translateY, never opacity: a GlassView with `opacity: 0` anywhere
+ * in its parent chain loses its glass entirely (expo/expo#41024).
+ */
+const SearchActionBar = React.memo(function SearchActionBar({
+  visible,
+  isPinned,
+  bottomInset,
+  glassActive,
+  theme,
+  pinLabel,
+  unpinLabel,
+  deleteLabel,
+  onPin,
+  onDelete,
+}: {
+  visible: boolean;
+  isPinned: boolean;
+  bottomInset: number;
+  glassActive: boolean;
+  theme: any;
+  pinLabel: string;
+  unpinLabel: string;
+  deleteLabel: string;
+  onPin: () => void;
+  onDelete: () => void;
+}) {
+  const progress = useSharedValue(visible ? 1 : 0);
+  useEffect(() => {
+    progress.value = withTiming(visible ? 1 : 0, { duration: 200, easing: Easing.out(Easing.cubic) });
+  }, [visible, progress]);
+
+  const barStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: interpolate(progress.value, [0, 1], [140, 0]) }],
+  }));
+
+  return (
+    <Reanimated.View
+      pointerEvents={visible ? 'auto' : 'none'}
+      style={[
+        styles.searchActionBar,
+        { bottom: 14 + bottomInset },
+        glassActive
+          ? null
+          : {
+              backgroundColor: theme.colors.background.elevated,
+              borderWidth: 1,
+              borderColor: theme.colors.border.light,
+            },
+        barStyle,
+      ]}
+    >
+      {glassActive ? (
+        <GlassBg borderRadius={22} glassStyle="regular" interactive={false} colorScheme={theme.isDark ? 'dark' : 'light'} />
+      ) : null}
+      <SearchActionButton
+        icon={isPinned ? 'x-circle' : 'bookmark'}
+        label={isPinned ? unpinLabel : pinLabel}
+        color={theme.colors.accent.primary}
+        onPress={onPin}
+      />
+      {/* Destructive red rather than the accent: colour is the only warning the
+          delete gets before its confirmation dialog. */}
+      <SearchActionButton icon="trash-2" label={deleteLabel} color="#FF453A" onPress={onDelete} />
+    </Reanimated.View>
+  );
+});
+
+/**
+ * Pinned-message bar, docked directly under the header.
+ *
+ * Tapping the body jumps the transcript to the message; the × unpins. The text is
+ * always resolved from the LIVE transcript by the caller, so an edit is reflected
+ * here and a delete removes the bar rather than leaving a stale quote.
+ */
+const PinnedMessageBar = React.memo(function PinnedMessageBar({
+  top,
+  title,
+  preview,
+  glassActive,
+  theme,
+  closeLabel,
+  onPress,
+  onUnpin,
+}: {
+  top: number;
+  title: string;
+  preview: string;
+  glassActive: boolean;
+  theme: any;
+  closeLabel: string;
+  onPress: () => void;
+  onUnpin: () => void;
+}) {
+  return (
+    <View style={[styles.pinnedBarWrap, { top }]} pointerEvents="box-none">
+      <Pressable
+        onPress={onPress}
+        style={[
+          styles.pinnedBar,
+          glassActive
+            ? null
+            : {
+                backgroundColor: theme.colors.background.elevated,
+                borderWidth: 1,
+                borderColor: theme.colors.border.light,
+              },
+        ]}
+      >
+        {glassActive ? (
+          <GlassBg borderRadius={14} glassStyle="regular" interactive={false} colorScheme={theme.isDark ? 'dark' : 'light'} />
+        ) : null}
+        <View style={[styles.pinnedAccent, { backgroundColor: theme.colors.accent.primary }]} />
+        <Feather name="bookmark" size={14} color={theme.colors.accent.primary} />
+        <View style={{ flex: 1 }}>
+          <Text variant="caption" weight="semibold" color={theme.colors.accent.primary} style={{ fontSize: 11 }} numberOfLines={1}>
+            {title}
+          </Text>
+          <Text variant="caption" color={theme.colors.text.secondary} style={{ fontSize: 12 }} numberOfLines={1}>
+            {preview}
+          </Text>
+        </View>
+        <Pressable onPress={onUnpin} hitSlop={10} accessibilityRole="button" accessibilityLabel={closeLabel}>
+          <Feather name="x" size={16} color={theme.colors.text.tertiary} />
+        </Pressable>
+      </Pressable>
+    </View>
+  );
+});
+
 const styles = StyleSheet.create({
+  // Absolute so it contributes NO layout — the bubble measures and wraps exactly
+  // as it did before this button existed. `zIndex` lifts it over the bubble fill
+  // (and over a gradient's clipped container).
+  expandBtn: {
+    position: 'absolute',
+    top: -6,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 4,
+  },
+  // Search-result action bar. Shrink-wraps to a centred pill (`alignSelf: center`,
+  // no `right`) so two controls sit close together instead of stretching across
+  // the display. zIndex clears the message list and the under-input gradient.
+  searchActionBar: {
+    position: 'absolute',
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    height: 52,
+    borderRadius: 22,
+    overflow: 'hidden',
+    paddingHorizontal: 6,
+    maxWidth: '92%',
+    zIndex: 210,
+  },
+  // Fixed-width column, not `flex: 1`: inside a shrink-wrapping bar flex children
+  // collapse to their content and the pitch drifts with label length.
+  searchActionBtn: { width: 88, alignItems: 'center', justifyContent: 'center', gap: 2 },
+  // Pinned bar sits above the header gradient (zIndex 101 > headerWrapper's 100)
+  // so it reads as part of the header chrome and the transcript scrolls under it.
+  pinnedBarWrap: { position: 'absolute', left: 0, right: 0, paddingHorizontal: 12, zIndex: 101 },
+  pinnedBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    overflow: 'hidden',
+  },
+  pinnedAccent: { width: 3, alignSelf: 'stretch', borderRadius: 2 },
   dayChipRow: { alignItems: 'center', marginVertical: 10 },
   dayChip: {
     borderRadius: 12,
