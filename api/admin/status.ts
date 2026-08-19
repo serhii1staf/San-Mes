@@ -11,21 +11,38 @@ import crypto from 'crypto';
 // Each check has its own timeout and they run in parallel, so the endpoint
 // stays fast. Heavy/streaming work is avoided; the database is barely touched.
 
-const ADMIN_PASSWORD = 'V7k!Qm9@Lp2#xR8$Tw6ZcD4%yN';
+// ── Credentials: environment only, fail closed ──────────────────────────────
+//
+// SECURITY: this file previously carried, as source constants in a git-tracked
+// file, the admin password, the R2 account id and an R2 S3 access-key pair with
+// Object Read & Write on the media bucket. Anyone who could read the repository
+// (or its history) could list, overwrite and delete every user-uploaded object
+// served from the media domain, and authenticate to this endpoint and to the
+// Worker's `/v1/admin/*` routes — which expose device keys and can grant badges or
+// delete anyone's posts.
+//
+// Every credential now comes from the environment with NO literal fallback, so a
+// missing variable degrades to "this check is unavailable" instead of silently
+// using a public value. That matches how `api/ably-token.ts` and
+// `api/_lib/miniAppRender.ts` already handle their secrets.
+//
+// ⚠️ The values that used to live here must be treated as compromised and ROTATED
+// (new R2 S3 key pair, new admin password), because they remain in git history.
+const ADMIN_PASSWORD = process.env.ADMIN_KEY || '';
 
 // Phase 5 of the Cloudflare D1 migration: row counts come from the
 // Worker's admin endpoint (gated by the same X-Admin-Key the in-app
 // admin screen uses). The "DB" service we report on is now D1, not
 // Supabase Postgres.
 const WORKER_BASE_URL = 'https://san-mes-api.odi44972.workers.dev';
-const ADMIN_KEY = process.env.ADMIN_KEY || ADMIN_PASSWORD;
-const R2_PUBLIC_BASE = 'https://media.san-m-app.com';
+const ADMIN_KEY = ADMIN_PASSWORD;
+const R2_PUBLIC_BASE = process.env.R2_PUBLIC_BASE || 'https://media.san-m-app.com';
 
 // R2 S3 credentials (Object Read & Write) — used to measure storage usage.
-const R2_ACCOUNT_ID = '8e0d53f0faad2f48870d0a570dadd03f';
-const R2_ACCESS_KEY_ID = '648310b34064b4fb20f96585e25ced2f';
-const R2_SECRET_ACCESS_KEY = '6bb6d3c4bdd20d97afe13610e89c5817e2f1167905f047ef29c59ed607d2e577';
-const R2_BUCKET = 'san';
+const R2_ACCOUNT_ID = process.env.R2_ACCOUNT_ID || '';
+const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID || '';
+const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY || '';
+const R2_BUCKET = process.env.R2_BUCKET || 'san';
 const R2_HOST = `${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`;
 const R2_FREE_BYTES = 10 * 1024 * 1024 * 1024; // 10 GB free tier
 // D1 free tier — 5 GB total, but the relevant cap for a usage bar is
@@ -131,6 +148,12 @@ function signAndBuild(signingDate: Date, token?: string) {
 }
 
 async function r2Usage(): Promise<{ bytes: number; objects: number; debug?: string }> {
+  // No credentials configured → report "unmeasured" rather than signing a request
+  // with empty keys (which would just 403 after a round trip).
+  if (!R2_ACCOUNT_ID || !R2_ACCESS_KEY_ID || !R2_SECRET_ACCESS_KEY) {
+    return { bytes: 0, objects: 0, debug: 'r2_not_configured' };
+  }
+
   let bytes = 0;
   let objects = 0;
   let token: string | undefined;
@@ -206,8 +229,23 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     return;
   }
 
+  // Fail closed: with no ADMIN_KEY configured there is no correct key, so the
+  // endpoint is simply unavailable rather than open (which is what the old
+  // literal-constant fallback effectively made it).
+  if (!ADMIN_PASSWORD) {
+    send(res, 503, { error: 'admin_not_configured' });
+    return;
+  }
+
   const key = (req.headers['x-admin-key'] as string) || '';
-  if (key !== ADMIN_PASSWORD) {
+  // Constant-time compare so the endpoint doesn't leak the key one byte at a time
+  // through response timing. Lengths are compared first because
+  // `timingSafeEqual` throws on a length mismatch.
+  const provided = Buffer.from(key);
+  const expected = Buffer.from(ADMIN_PASSWORD);
+  const keyOk =
+    provided.length === expected.length && crypto.timingSafeEqual(provided, expected);
+  if (!keyOk) {
     send(res, 401, { error: 'Unauthorized' });
     return;
   }

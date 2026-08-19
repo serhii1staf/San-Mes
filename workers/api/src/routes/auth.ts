@@ -24,7 +24,16 @@ import { exec, normalizeProfile, query, queryOne } from '../db';
 import { signToken } from '../auth';
 import { asStr, readJson } from '../validate';
 
-const PROFILE_FULL_COLUMNS = `id, username, display_name, emoji, bio, pin_hash, device_key, banner_url, theme_id, header_scene, links, badge, is_verified, created_at, updated_at`;
+// Projection returned by the auth endpoints.
+//
+// SECURITY: `device_key` IS included — the client stores it to offer the account in
+// the switcher, and every caller here has either just typed it or just had it
+// generated for them, so it is not a disclosure. `pin_hash` is NOT included and
+// must never be: it is a derivative of a 4-digit PIN under a 32-bit accumulator,
+// so handing it out is equivalent to handing out the PIN. It is still used as a
+// WHERE predicate below — comparing against it server-side is exactly what it is
+// for — but it never travels in a response.
+const PROFILE_AUTH_COLUMNS = `id, username, display_name, emoji, bio, device_key, banner_url, theme_id, header_scene, links, badge, is_verified, created_at, updated_at`;
 
 // Mirror of `hashPin` in `src/lib/supabase.ts`. Keeps the on-the-wire
 // PIN hash compatible with any client build that still computes it
@@ -91,7 +100,7 @@ register('POST', '/v1/auth/register', async (req, env) => {
 
   const row = await queryOne<Record<string, unknown>>(
     env,
-    `SELECT ${PROFILE_FULL_COLUMNS} FROM profiles WHERE id = ? LIMIT 1`,
+    `SELECT ${PROFILE_AUTH_COLUMNS} FROM profiles WHERE id = ? LIMIT 1`,
     [id],
   );
   const profile = normalizeProfile(row);
@@ -112,7 +121,7 @@ register('POST', '/v1/auth/login', async (req, env) => {
 
   const row = await queryOne<Record<string, unknown>>(
     env,
-    `SELECT ${PROFILE_FULL_COLUMNS} FROM profiles WHERE device_key = ? AND pin_hash = ? LIMIT 1`,
+    `SELECT ${PROFILE_AUTH_COLUMNS} FROM profiles WHERE device_key = ? AND pin_hash = ? LIMIT 1`,
     [deviceKey, hashPin(pin)],
   );
   if (!row) return fail(req, 'invalid_key_or_pin', 401);
@@ -122,28 +131,21 @@ register('POST', '/v1/auth/login', async (req, env) => {
   return ok(req, { profile, token });
 });
 
-// ── POST /v1/auth/login-with-pin ──────────────────────────────────────
+// ── POST /v1/auth/login-with-pin — REMOVED (security) ─────────────────
 //
-// Body: { pin }
-// Returns: { profile, token } for the FIRST profile with a matching
-// pin_hash. Mirrors the existing `loginWithPin` quick-login flow.
-register('POST', '/v1/auth/login-with-pin', async (req, env) => {
-  const body = await readJson<{ pin?: unknown }>(req);
-  if (!body.ok) return fail(req, body.error, 400);
-  const pin = asStr(body.value.pin, 16);
-  if (!pin) return fail(req, 'invalid_pin', 400);
-
-  const row = await queryOne<Record<string, unknown>>(
-    env,
-    `SELECT ${PROFILE_FULL_COLUMNS} FROM profiles WHERE pin_hash = ? LIMIT 1`,
-    [hashPin(pin)],
-  );
-  if (!row) return fail(req, 'invalid_pin', 401);
-
-  const profile = normalizeProfile(row);
-  const token = await signToken(env, row.id as string);
-  return ok(req, { profile, token });
-});
+// This endpoint took ONLY `{ pin }`, selected the first profile whose `pin_hash`
+// matched, and signed a 30-day token for it. That is a full account takeover behind
+// a 4-digit secret with no second factor, no lockout and no rate limiting anywhere
+// in the Worker: walking 0000–9999 (10k unthrottled requests) logs the caller in as
+// whichever account matches first. The PIN hash is also a 32-bit accumulator, so
+// collisions meant a WRONG pin could authenticate as a stranger's account.
+//
+// It was dead weight as well as dangerous — `loginWithPin` was exported from
+// `src/services/authClient.ts` and re-exported from `src/lib/supabase.ts`, but no
+// screen ever called it. Both client wrappers were removed alongside this handler.
+//
+// `POST /v1/auth/login` remains: it requires the device key AND the PIN, so the
+// secret being brute-forced is the 32+ character device key, not four digits.
 
 // ── GET /v1/auth/me ───────────────────────────────────────────────────
 //
@@ -152,7 +154,7 @@ register('GET', '/v1/auth/me', async (req, env, _ctx, _params, authedUserId) => 
   if (!authedUserId) return fail(req, 'unauthorised', 401);
   const row = await queryOne<Record<string, unknown>>(
     env,
-    `SELECT ${PROFILE_FULL_COLUMNS} FROM profiles WHERE id = ? LIMIT 1`,
+    `SELECT ${PROFILE_AUTH_COLUMNS} FROM profiles WHERE id = ? LIMIT 1`,
     [authedUserId],
   );
   if (!row) return fail(req, 'unauthorised', 401);

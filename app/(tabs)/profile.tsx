@@ -201,20 +201,25 @@ export default function ProfileScreen() {
   const postEmoji = useProfileAppearanceStore((s) => s.postEmoji);
   // Virtualization is now handled by Animated.FlatList — no manual windowing
   // needed. Tab tap stays snappy via the `postsReady` gating below.
-  // Posts cards are heavier (gesture handlers + images). Gate their mount one
-  // frame after the tab activates so the tab highlight switches instantly and
-  // the heavy mount happens off the tap's critical path (no perceived freeze).
-  // Start FALSE so the first paint of the profile screen carries only the
-  // header, and the post cards mount once the navigation transition into
-  // this screen has completed (via InteractionManager). That single frame
-  // of breathing room is enough to keep the JS thread clear during the
-  // open animation, which was the source of `SLOW ui<30 @ (tabs)/profile`.
+  // Posts cards are heavier (gesture handlers + images), so their mount is held
+  // back by ONE FRAME: the first paint of the profile carries only the header,
+  // and the cards commit on the next frame. That is enough to keep the JS thread
+  // clear during the open animation, which was the source of
+  // `SLOW ui<30 @ (tabs)/profile`.
+  //
+  // It used to be `InteractionManager.runAfterInteractions`, which is NOT "next
+  // frame" — it waits for every registered interaction handle to clear, so the
+  // delay was unbounded. Because `chromeReady` (the banner image + the BlurView
+  // chrome) is chained one frame behind this flag, an unbounded wait here is what
+  // made the profile banner and avatar "behave strangely": the identity block
+  // rendered without its cover photo, then the photo popped in some indeterminate
+  // time later. A `requestAnimationFrame` keeps the staggering — the whole point,
+  // so no single frame carries both the card mount and the blur/decode storm —
+  // while bounding each step to one frame.
   const [postsReady, setPostsReady] = useState(false);
   useEffect(() => {
-    const handle = InteractionManager.runAfterInteractions(() => {
-      setPostsReady(true);
-    });
-    return () => handle.cancel();
+    const raf = requestAnimationFrame(() => setPostsReady(true));
+    return () => cancelAnimationFrame(raf);
   }, []);
   // Heavy iOS chrome — `expo-blur` BlurView (×3 on this screen) and the
   // banner CachedImage — must NOT mount on the same commit as the post

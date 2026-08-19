@@ -661,18 +661,23 @@ export default function UserProfileScreen() {
       }).catch(() => setIsLoading(false));
     }
 
-    // Defer the heavier follow-up work (background sync, image prefetch, follow
-    // counts) until after the navigation transition into this screen has
-    // settled — keeps the open animation smooth on weak devices.
-    const handle = InteractionManager.runAfterInteractions(() => {
-      // Heavy post cards mount only after the navigation transition has
-      // settled — that single frame of breathing room is what kept SLOW
-      // ui<30 from firing on profile open.
+    // The RENDER gates are bounded to one frame: the first paint carries only the
+    // identity block, and the heavy post cards + iOS chrome (BlurView buttons,
+    // banner CachedImage) commit on the very next frame. `runAfterInteractions`
+    // used to own these two flags as well, and because it waits for every
+    // registered interaction handle rather than for the next frame, the banner and
+    // avatar could stay unrendered for an indeterminate stretch and then pop in —
+    // the "the avatar/banner behaves strangely" report.
+    //
+    // The NETWORK / prefetch work below stays on `runAfterInteractions`: it has no
+    // pixels attached to it, so an unbounded wait there costs nothing visible and
+    // still keeps requests off the transition.
+    const raf = requestAnimationFrame(() => {
       setPostsReady(true);
-      // Same gate also flips on the heavy iOS chrome (BlurView buttons +
-      // banner CachedImage). One flag, one render, no extra effects.
       setChromeReady(true);
+    });
 
+    const handle = InteractionManager.runAfterInteractions(() => {
       // Trigger background sync for profile and user posts
       syncProfile(id);
       syncUserPosts(id);
@@ -716,7 +721,7 @@ export default function UserProfileScreen() {
         })();
       }
     });
-    return () => handle.cancel();
+    return () => { cancelAnimationFrame(raf); handle.cancel(); };
   }, [id]);
 
   // Display profile: prefer cached from store, fallback to direct fetch

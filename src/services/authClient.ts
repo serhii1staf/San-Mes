@@ -192,25 +192,10 @@ export async function login(params: {
   return { profile: null, error: t('auth.error.invalid_key_or_pin') };
 }
 
-export async function loginWithPin(
-  pin: string,
-): Promise<{ profile: DBProfileLike | null; error: string | null }> {
-  const { data, error } = await call<AuthResponse>('/v1/auth/login-with-pin', {
-    method: 'POST',
-    body: { pin },
-  });
-  if (error) {
-    if (error === 'invalid_pin') {
-      return { profile: null, error: t('auth.error.invalid_pin') };
-    }
-    return { profile: null, error };
-  }
-  if (data?.token && data?.profile) {
-    setAuthToken(data.token);
-    return { profile: data.profile, error: null };
-  }
-  return { profile: null, error: t('auth.error.invalid_pin') };
-}
+// `loginWithPin` was REMOVED along with the `/v1/auth/login-with-pin` endpoint it
+// called. PIN-only login signed a 30-day token for the first profile whose PIN hash
+// matched, which is account takeover behind four digits with no lockout. No screen
+// ever called it. Use `login(deviceKey, pin)`.
 
 export async function me(): Promise<{ profile: DBProfileLike | null; error: string | null; unauthorised: boolean }> {
   if (!getAuthToken()) return { profile: null, error: 'no_token', unauthorised: false };

@@ -34,23 +34,13 @@
 
 import type { IncomingMessage, ServerResponse } from 'http';
 import * as Ably from 'ably';
+import { extractBearer, verifyWorkerToken } from './_lib/verifyToken';
 
 const TOKEN_TTL_MS = 60 * 60 * 1000;
 
-// Hard-coded Worker URL — same as the rest of the SSR functions.
-// We verify the (userId, deviceKey) pair against the Worker's admin
-// profile-by-id endpoint instead of Supabase REST (Phase 5 of the
-// Cloudflare D1 migration).
-const WORKER_BASE_URL = 'https://san-mes-api.odi44972.workers.dev';
-// Admin key is read from the Vercel env ONLY — no baked-in fallback.
-// If it's missing, verifyAuth() fails closed (denies) instead of using
-// a committed credential. This key unlocks a Worker endpoint that
-// returns every user's device_key / pin_hash.
-const ADMIN_KEY = process.env.ADMIN_KEY;
-
-// Production web origin for the app. Used to scope CORS instead of a
-// wildcard so the device_key credential isn't echoed to arbitrary
-// origins. Override via APP_ORIGIN env if the deployed origin differs.
+// Production web origin for the app. Used to scope CORS instead of a wildcard, so a
+// bearer token is never accepted from / echoed to arbitrary origins. Override via
+// APP_ORIGIN env if the deployed origin differs.
 const ALLOWED_ORIGIN = process.env.APP_ORIGIN || 'https://san-m-app.com';
 
 function send(res: ServerResponse, status: number, body: unknown): void {
@@ -68,80 +58,13 @@ function send(res: ServerResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body));
 }
 
-function readJsonBody(req: IncomingMessage): Promise<any> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    let total = 0;
-    req.on('data', (chunk: Buffer) => {
-      total += chunk.length;
-      // 4 KB cap — this endpoint receives a tiny JSON object only. Any larger
-      // payload is malformed or malicious.
-      if (total > 4096) {
-        reject(new Error('payload_too_large'));
-        return;
-      }
-      chunks.push(chunk);
-    });
-    req.on('end', () => {
-      try {
-        const raw = Buffer.concat(chunks).toString('utf8') || '{}';
-        resolve(JSON.parse(raw));
-      } catch (e) {
-        reject(e);
-      }
-    });
-    req.on('error', reject);
-  });
-}
-
-// Constant-time string comparison. A raw `===`/`!==` on a secret can leak
-// its length/prefix through early-exit timing; this folds every char into an
-// accumulator so the comparison cost doesn't depend on where the first
-// mismatch is. Returns false (fail-closed) on non-strings or length mismatch.
-function timingSafeEqualStr(a: string, b: string): boolean {
-  if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
-  let d = 0;
-  for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return d === 0;
-}
-
-interface AuthInput {
-  userId: string;
-  deviceKey: string;
-}
-
-async function verifyAuth(input: AuthInput): Promise<boolean> {
-  const userId = input.userId?.trim();
-  const deviceKey = input.deviceKey?.trim();
-  if (!userId || !deviceKey) return false;
-  // Cheap shape check: profile IDs are UUIDs; device keys are 8+ chars
-  // of base32. Reject obviously-malformed input before hitting the
-  // Worker so bots probing the endpoint don't burn rows.
-  if (!/^[0-9a-f-]{20,}$/i.test(userId)) return false;
-  if (!/^[A-Z0-9-]{6,40}$/i.test(deviceKey)) return false;
-
-  // Phase 5: profile lookup goes through the Worker's admin endpoint.
-  // The X-Admin-Key gates the call so a leaked client can't hit this
-  // endpoint directly to enumerate profiles. Fail closed: without a
-  // configured ADMIN_KEY we deny auth rather than issuing the request
-  // with a baked-in credential.
-  if (!ADMIN_KEY) return false;
-  try {
-    const url = `${WORKER_BASE_URL}/v1/admin/profiles/${encodeURIComponent(userId)}`;
-    const resp = await fetch(url, {
-      headers: { Accept: 'application/json', 'X-Admin-Key': ADMIN_KEY },
-    });
-    if (!resp.ok) return false;
-    const body = (await resp.json()) as { data?: { id?: string; device_key?: string } | null };
-    const row = body?.data;
-    // device_key is the shared secret for this auth pair, so compare it in
-    // constant time. row.id is just the lookup identifier (not secret), so a
-    // plain equality check is fine there.
-    return !!row && row.id === userId && timingSafeEqualStr(row.device_key ?? '', deviceKey);
-  } catch {
-    return false;
-  }
-}
+// The device-key verification path (`readJsonBody`, `timingSafeEqualStr`,
+// `verifyAuth`, and the admin-key round trip to the Worker) was DELETED. It proved
+// identity by matching a caller-supplied `device_key` against the profile row, which
+// meant a long-lived, non-rotating secret was being used as a bearer credential — and
+// that secret was, until the accompanying fix, readable from unauthenticated profile
+// endpoints. Identity now comes from the verified JWT, which also removes this
+// function's dependency on the admin key entirely.
 
 /**
  * Build a least-privilege capability map for the given user id.
@@ -204,28 +127,20 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     });
   }
 
-  // Credentials are accepted ONLY via the JSON POST body. The deviceKey
-  // is a secret, so it must never travel in a query string where it
-  // lands in CDN/proxy/access logs. Non-POST methods are already
-  // rejected above (405), so there is no query-string credential path.
-  let userId: string | undefined;
-  let deviceKey: string | undefined;
-  try {
-    const body = await readJsonBody(req);
-    userId = body?.userId;
-    deviceKey = body?.deviceKey;
-  } catch (e: any) {
-    return send(res, 400, { error: 'bad_body', message: e?.message?.slice(0, 200) });
-  }
-
-  if (!userId || !deviceKey) {
-    return send(res, 400, { error: 'missing_credentials' });
-  }
-
-  const ok = await verifyAuth({ userId, deviceKey });
-  if (!ok) {
+  // ── Identity ──────────────────────────────────────────────────────────────
+  //
+  // SECURITY: the user id comes from a VERIFIED Worker-issued JWT and is never
+  // taken from the request body. The endpoint used to accept `{ userId, deviceKey }`
+  // and treat a device-key match as proof of identity, which was exploitable two
+  // ways: the device key never rotates, and it was being returned by
+  // unauthenticated profile endpoints — so anybody could mint a realtime token for
+  // anybody. Deriving the id from the signature means a caller can only ever get a
+  // token for themselves.
+  const authedUserId = verifyWorkerToken(extractBearer(req.headers as any))?.userId;
+  if (!authedUserId) {
     return send(res, 401, { error: 'unauthorized' });
   }
+  const userId = authedUserId;
 
   // Use the Ably REST client to sign a TokenRequest. The Ably SDK does the
   // HMAC-SHA256 + nonce + timestamp dance for us. We hand the capability

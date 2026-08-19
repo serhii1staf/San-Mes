@@ -80,10 +80,18 @@ export async function uploadToR2(
       return { url: null, error: 'empty file' };
     }
 
+    // The upload endpoint now requires a Worker-issued JWT — it used to accept
+    // anonymous writes, which made the bucket free file hosting for anyone who knew
+    // the URL. Imported lazily so this module keeps no import cycle with the auth
+    // client, and read at call time so a token refreshed mid-session is picked up.
+    const { getAuthToken } = await import('../services/authClient');
+    const token = getAuthToken();
+    if (!token) return { url: null, error: 'not signed in' };
+
     const url = `${UPLOAD_ENDPOINT}?prefix=${prefix}&ext=${ext}&type=${encodeURIComponent(contentType)}`;
     const res = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': contentType },
+      headers: { 'Content-Type': contentType, Authorization: `Bearer ${token}` },
       body: arrayBuffer as any,
     });
 

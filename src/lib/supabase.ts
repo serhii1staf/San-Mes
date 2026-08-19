@@ -234,10 +234,8 @@ export async function loginUser(params: {
   return { profile: profile as DBProfile | null, error };
 }
 
-export async function loginWithPin(pin: string): Promise<{ profile: DBProfile | null; error: string | null }> {
-  const { profile, error } = await authClient.loginWithPin(pin);
-  return { profile: profile as DBProfile | null, error };
-}
+// `loginWithPin` removed — see the note in `src/services/authClient.ts`. PIN-only
+// login was account takeover behind four digits; the endpoint is gone too.
 
 export async function deleteAccount(_userId: string): Promise<{ error: string | null }> {
   const { error } = await authClient.deleteAccount();

@@ -33,6 +33,7 @@
 //   R2_PUBLIC_BASE  — public read URL prefix (https://pub-…r2.dev)
 
 import type { IncomingMessage, ServerResponse } from 'http';
+import { extractBearer, verifyWorkerToken } from './_lib/verifyToken';
 
 const ALLOWED_PREFIXES = new Set(['posts', 'avatars', 'banners', 'chat']);
 const ALLOWED_CONTENT_TYPES = new Set([
@@ -64,6 +65,51 @@ function readBodyBytes(req: IncomingMessage): Promise<Uint8Array> {
   });
 }
 
+/**
+ * Does the payload actually start with the signature of the content type it claims?
+ *
+ * SECURITY: `ALLOWED_CONTENT_TYPES` only validated the CLAIM — the `?type=` query
+ * parameter — so any bytes at all could be stored and then served back with an
+ * `image/*` content type from our media domain. Sniffing the leading bytes means the
+ * declared type has to match the payload, so the bucket cannot be used as generic
+ * file hosting.
+ *
+ * Unknown/unlisted types return false, keeping this an allowlist. HEIC is matched on
+ * the ISO-BMFF `ftyp` box rather than a fixed prefix, because the first four bytes
+ * are a length field.
+ */
+function magicMatches(bytes: Uint8Array, contentType: string): boolean {
+  const at = (i: number) => bytes[i];
+  const ascii = (start: number, len: number) =>
+    Buffer.from(bytes.subarray(start, start + len)).toString('latin1');
+
+  switch (contentType) {
+    case 'image/jpeg':
+      return bytes.length > 3 && at(0) === 0xff && at(1) === 0xd8 && at(2) === 0xff;
+    case 'image/png':
+      return (
+        bytes.length > 8 &&
+        at(0) === 0x89 &&
+        ascii(1, 3) === 'PNG' &&
+        at(4) === 0x0d &&
+        at(5) === 0x0a &&
+        at(6) === 0x1a &&
+        at(7) === 0x0a
+      );
+    case 'image/gif':
+      return bytes.length > 6 && (ascii(0, 6) === 'GIF87a' || ascii(0, 6) === 'GIF89a');
+    case 'image/webp':
+      return bytes.length > 12 && ascii(0, 4) === 'RIFF' && ascii(8, 4) === 'WEBP';
+    case 'image/heic':
+      // ISO base media file: bytes 4..8 are 'ftyp', then a brand such as heic /
+      // heix / hevc / mif1 / msf1.
+      if (bytes.length < 12 || ascii(4, 4) !== 'ftyp') return false;
+      return ['heic', 'heix', 'hevc', 'hevx', 'mif1', 'msf1'].includes(ascii(8, 4));
+    default:
+      return false;
+  }
+}
+
 function randomKey(prefix: string, ext: string): string {
   const ts = Date.now().toString(36);
   const rand = Array.from(crypto.getRandomValues(new Uint8Array(9)))
@@ -93,6 +139,21 @@ function getQueryParam(url: string | undefined, name: string): string | undefine
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
   if (req.method !== 'POST') {
     return send(res, 405, { error: 'method_not_allowed' });
+  }
+
+  // ── Authentication ────────────────────────────────────────────────────────
+  //
+  // SECURITY: this endpoint had no caller check at all. Anyone who knew the URL
+  // could push 4 MB objects into the bucket in a loop — unbounded storage and
+  // Class-A operation cost with no per-user quota — and host arbitrary bytes on our
+  // own media domain, under our domain reputation.
+  //
+  // It now requires a valid Worker-issued JWT. The bucket is only writable on
+  // behalf of a real account, which also makes abuse attributable and rate-limitable
+  // per user rather than anonymous.
+  const authedUserId = verifyWorkerToken(extractBearer(req.headers as any))?.userId;
+  if (!authedUserId) {
+    return send(res, 401, { error: 'unauthorised' });
   }
 
   const accountId = process.env.R2_ACCOUNT_ID;
@@ -136,6 +197,12 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
 
   if (bytes.length === 0) {
     return send(res, 400, { error: 'empty_body' });
+  }
+
+  // The declared content type must match the payload's actual signature, so the
+  // bucket cannot be used to host non-image bytes behind an `image/*` label.
+  if (!magicMatches(bytes, contentType)) {
+    return send(res, 400, { error: 'content_type_mismatch', contentType });
   }
 
   // PUT object via the R2 REST API.

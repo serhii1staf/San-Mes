@@ -29,6 +29,7 @@
 
 import * as Ably from 'ably';
 import { getAblySubscribeKey } from '../env';
+import { getAuthToken } from '../authClient';
 import { useAuthStore } from '../../store/authStore';
 
 // The base URL for our Vercel API. In dev (Expo Go) this points at the
@@ -41,21 +42,36 @@ let cachedClientUserId: string | null = null;
 
 /**
  * Build the auth callback the Ably SDK uses on (re)connect to fetch a
- * fresh TokenRequest. The callback runs on the device — it POSTs the
- * user's userId + deviceKey to /api/ably-token and returns the
- * TokenRequest, which the SDK then exchanges with Ably for a real auth
- * token.
+ * fresh TokenRequest.
  *
- * Returning `null` from this callback aborts the connection; the SDK will
- * retry per its built-in backoff.
+ * SECURITY: identity is proven with the Worker-issued JWT, sent as a normal bearer
+ * header. It used to be proven by POSTing `{ userId, deviceKey }`, i.e. by presenting
+ * the device key as a bearer credential. That was unsafe for two reasons: the device
+ * key is long-lived and never rotates, and (until this change) it was readable from
+ * unauthenticated profile endpoints — so anyone could mint a realtime token for any
+ * user. A JWT expires, is scoped by the issuer, and is the credential the rest of
+ * the API already uses.
+ *
+ * The token is read at call time (not captured) so the SDK's own re-auth on token
+ * expiry picks up a refreshed one.
+ *
+ * Returning an error from this callback aborts the connection; the SDK will retry
+ * per its built-in backoff.
  */
-function buildAuthCallback(userId: string, deviceKey: string): Ably.AuthOptions['authCallback'] {
+function buildAuthCallback(): Ably.AuthOptions['authCallback'] {
   return async (_tokenParams, callback) => {
     try {
+      const token = getAuthToken();
+      if (!token) {
+        callback('not_signed_in', null);
+        return;
+      }
       const resp = await fetch(TOKEN_ENDPOINT, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, deviceKey }),
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        // Body kept as an empty object: the endpoint derives the user id from the
+        // verified token, never from anything the client asserts about itself.
+        body: '{}',
       });
       if (!resp.ok) {
         callback(`token endpoint returned ${resp.status}`, null);
@@ -96,18 +112,18 @@ export function getRealtime(): Ably.Realtime | null {
 
   if (cachedClient) return cachedClient;
 
-  // The deviceKey is what proves identity to /api/ably-token. Without it we
-  // can't auth, so we'd be stuck — fall back to subscribe-only key if it's
+  // The Worker JWT is what proves identity to /api/ably-token. Without one we
+  // can't auth, so we'd be stuck — fall back to the subscribe-only key if it's
   // configured. That gives the user incoming messages but disables sends.
-  const deviceKey = user.deviceKey;
+  const haveToken = !!getAuthToken();
   const fallbackKey = getAblySubscribeKey();
 
   let opts: Ably.ClientOptions;
-  if (deviceKey) {
+  if (haveToken) {
     opts = {
       // No `key` here — auth is purely via the callback so the bundle never
       // ships an Ably credential strong enough to publish on its own.
-      authCallback: buildAuthCallback(user.id, deviceKey),
+      authCallback: buildAuthCallback(),
       // Reduce idle ping noise — the connection is short-lived (only while
       // the user is on a chat / messages screen), so we don't need
       // aggressive heartbeats.

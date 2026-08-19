@@ -19,7 +19,32 @@ import { validateThemeId } from '../themeIds';
 
 // ── helpers ─────────────────────────────────────────────────────────────
 
-const PROFILE_FULL_COLUMNS = `id, username, display_name, emoji, bio, pin_hash, device_key, banner_url, links, badge, is_verified, created_at, updated_at, theme_id, header_scene`;
+// ── Column projections, by who is allowed to see them ───────────────────
+//
+// SECURITY: the `profiles` table holds two credential columns. `pin_hash` is a
+// derivative of the user's PIN and `device_key` is the other half of the login
+// pair — together they ARE the account, since `POST /v1/auth/login` takes exactly
+// those two values.
+//
+// Every read below used to project the full row, including both columns, from
+// endpoints that require no authentication at all. A single unauthenticated
+// `GET /v1/profiles?limit=50` therefore returned the login credentials of fifty
+// accounts, and `pin_hash` is a 32-bit accumulator over a 4-digit PIN — recoverable
+// offline in a few thousand iterations. That was account takeover for any user, so
+// the projections are now split by audience and the secrets have no path out.
+//
+// Mirrors the same split already documented in `routes/admin.ts`.
+
+/** No credential columns. Used by every unauthenticated / third-party read. */
+const PROFILE_PUBLIC_COLUMNS = `id, username, display_name, emoji, bio, banner_url, links, badge, is_verified, created_at, updated_at, theme_id, header_scene`;
+
+/**
+ * Public columns plus `device_key`. Only for callers that have already PROVEN they
+ * hold the device key (they passed it in) or that are the profile's owner — in both
+ * cases the value is something they already have, so echoing it leaks nothing.
+ * `pin_hash` is never included, by anyone.
+ */
+const PROFILE_AUTH_COLUMNS = `${PROFILE_PUBLIC_COLUMNS}, device_key`;
 
 // Compact projection used wherever a profile is embedded inside another
 // row — same columns the existing PostgREST embeds project. Keeping it
@@ -36,7 +61,7 @@ register('GET', '/v1/profiles/by-username/:username', async (req, env, _ctx, par
   if (!username || username.length > 64) return fail(req, 'invalid username', 400);
   const row = await queryOne<Record<string, unknown>>(
     env,
-    `SELECT ${PROFILE_FULL_COLUMNS} FROM profiles WHERE username = ? LIMIT 1`,
+    `SELECT ${PROFILE_PUBLIC_COLUMNS} FROM profiles WHERE username = ? LIMIT 1`,
     [username],
   );
   return ok(req, normalizeProfile(row));
@@ -53,7 +78,9 @@ register('GET', '/v1/profiles/by-device-key/:deviceKey', async (req, env, _ctx, 
   if (!deviceKey || deviceKey.length > 128) return fail(req, 'invalid device key', 400);
   const row = await queryOne<Record<string, unknown>>(
     env,
-    `SELECT ${PROFILE_FULL_COLUMNS} FROM profiles WHERE device_key = ? LIMIT 1`,
+    // The caller supplied this exact device key, so echoing it back is not a
+    // disclosure. `pin_hash` is excluded.
+    `SELECT ${PROFILE_AUTH_COLUMNS} FROM profiles WHERE device_key = ? LIMIT 1`,
     [deviceKey],
   );
   return ok(req, normalizeProfile(row));
@@ -68,7 +95,7 @@ register('GET', '/v1/profiles', async (req, env) => {
   const limit = parseLimit(url.searchParams.get('limit'), 50, 50);
   const rows = await query<Record<string, unknown>>(
     env,
-    `SELECT ${PROFILE_FULL_COLUMNS} FROM profiles ORDER BY created_at DESC LIMIT ?`,
+    `SELECT ${PROFILE_PUBLIC_COLUMNS} FROM profiles ORDER BY created_at DESC LIMIT ?`,
     [limit],
   );
   return ok(req, rows.map((r) => normalizeProfile(r)).filter(Boolean));
@@ -389,7 +416,9 @@ register('PATCH', '/v1/profiles/me', async (req, env, ctx, _params, authedUserId
   // re-apply of identical values.
   const current = await queryOne<Record<string, unknown>>(
     env,
-    `SELECT ${PROFILE_FULL_COLUMNS} FROM profiles WHERE id = ? LIMIT 1`,
+    // Owner-authenticated, so `device_key` may be returned (they have it already);
+    // `pin_hash` still never leaves the database.
+    `SELECT ${PROFILE_AUTH_COLUMNS} FROM profiles WHERE id = ? LIMIT 1`,
     [authedUserId],
   );
 
@@ -525,7 +554,7 @@ register('PATCH', '/v1/profiles/me', async (req, env, ctx, _params, authedUserId
   await exec(env, `UPDATE profiles SET ${sets.join(', ')} WHERE id = ?`, binds);
   const updated = await queryOne<Record<string, unknown>>(
     env,
-    `SELECT ${PROFILE_FULL_COLUMNS} FROM profiles WHERE id = ? LIMIT 1`,
+    `SELECT ${PROFILE_AUTH_COLUMNS} FROM profiles WHERE id = ? LIMIT 1`,
     [authedUserId],
   );
 
@@ -556,7 +585,8 @@ register('GET', '/v1/profiles/:id', async (req, env, _ctx, params) => {
   if (!id) return fail(req, 'invalid profile id', 400);
   const row = await queryOne<Record<string, unknown>>(
     env,
-    `SELECT ${PROFILE_FULL_COLUMNS} FROM profiles WHERE id = ? LIMIT 1`,
+    // Anonymous read — public columns only.
+    `SELECT ${PROFILE_PUBLIC_COLUMNS} FROM profiles WHERE id = ? LIMIT 1`,
     [id],
   );
   return ok(req, normalizeProfile(row));
