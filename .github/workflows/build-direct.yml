@@ -55,6 +55,19 @@ jobs:
           # Without it the build still works but stack traces will be minified.
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
 
+      # Keep the .ipa even when the upload fails. The compile is the expensive
+      # part (~25 min); losing it because a 2-minute upload failed means paying
+      # for it again. With the artifact retained, a failed upload can be retried
+      # — or the build can be pushed to TestFlight by hand from Transporter.
+      - name: Upload .ipa as a workflow artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: San-ios-ipa
+          path: ./San.ipa
+          retention-days: 14
+          if-no-files-found: error
+
       - name: Upload to TestFlight
         if: success()
         # Uploads with Apple's own `altool`, NOT EAS Submit. Together with
@@ -63,13 +76,34 @@ jobs:
         # status.expo.dev reports EAS Build/Submit `under_maintenance`, the hosted
         # workflow (build-ios.yml) cannot get past scheduling, while this one only
         # needs the EAS API for credentials.
+        #
+        # `altool` resolves the API key from a `private_keys` directory by
+        # filename (`AuthKey_<KEYID>.p8`). It searches ./private_keys,
+        # ~/private_keys, ~/.private_keys and ~/.appstoreconnect/private_keys — the
+        # key is placed in the two canonical ones because run #41 failed with
+        #   ERROR: Cannot determine the Apple ID from Bundle ID 'com.sanmes.app'
+        # which is what altool reports when it cannot authenticate well enough to
+        # look the app up. `--verbose` is on so the next failure says which.
         run: |
-          mkdir -p ~/private_keys
+          mkdir -p ~/private_keys ~/.appstoreconnect/private_keys
           cp ./AuthKey_PN7B743Y4X.p8 ~/private_keys/AuthKey_PN7B743Y4X.p8
-          xcrun altool --upload-app --type ios --file ./San.ipa --apiKey PN7B743Y4X --apiIssuer "8c0acc2b-73e7-4067-884b-790f14bf4b92"
+          cp ./AuthKey_PN7B743Y4X.p8 ~/.appstoreconnect/private_keys/AuthKey_PN7B743Y4X.p8
+          # Sanity-check the key actually arrived as a PEM. A secret that expanded
+          # empty, or with escaped newlines, produces exactly the auth failure
+          # above — so fail loudly here instead of blaming Apple.
+          head -c 27 ./AuthKey_PN7B743Y4X.p8
+          echo ""
+          wc -l < ./AuthKey_PN7B743Y4X.p8
+          xcrun altool --upload-app --type ios --file ./San.ipa \
+            --apiKey PN7B743Y4X \
+            --apiIssuer "8c0acc2b-73e7-4067-884b-790f14bf4b92" \
+            --verbose
 
-      # The private key is written into the workspace and copied to ~/private_keys;
-      # remove both even when the build or upload failed.
+      # The private key is written into the workspace and copied into altool's
+      # search paths; remove every copy even when the build or upload failed.
       - name: Remove ASC API Key
         if: always()
-        run: rm -f ./AuthKey_PN7B743Y4X.p8 ~/private_keys/AuthKey_PN7B743Y4X.p8
+        run: |
+          rm -f ./AuthKey_PN7B743Y4X.p8 \
+                ~/private_keys/AuthKey_PN7B743Y4X.p8 \
+                ~/.appstoreconnect/private_keys/AuthKey_PN7B743Y4X.p8
