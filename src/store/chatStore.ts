@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { ChatMessage as Message, Conversation } from '../types';
+import { bumpPreviewFromTranscript } from './conversationPreviewStore';
 
 export type { ChatMessage as Message, Conversation } from '../types';
 
@@ -150,6 +151,12 @@ export const useChatStore = create<ChatStoreState>()((set) => ({
     set((state) => ({ conversations: [conversation, ...state.conversations] })),
   setMessages: (conversationId, messages) =>
     set((state) => {
+      // Persist the newest message as the conversation's durable preview. This is
+      // the cache re-seed path (opening a chat hydrates its tail from MMKV), so
+      // doing it here is what BACKFILLS previews for conversations that predate the
+      // preview store — and what keeps them correct across a cold start, where
+      // `messages` itself is empty until a chat is opened.
+      bumpPreviewFromTranscript(conversationId, messages);
       // Apply the update first, then mark MRU + evict whole least-recently-used
       // conversation entries from the map (arrays are never truncated).
       touch(conversationId);
@@ -199,6 +206,19 @@ export const useChatStore = create<ChatStoreState>()((set) => ({
       // Guarded by timestamp so an out-of-order arrival (a late realtime echo, a
       // cache merge of older history) can never move the preview BACKWARDS.
       const conversations = bumpConversationPreview(state.conversations, conversationId, message);
+
+      // ── And in the DURABLE preview store ──────────────────────────────────
+      //
+      // The row above only lives as long as this session's `conversations` array,
+      // and the list also derives previews from the transcripts in this store — both
+      // of which are empty after a full app restart, because transcripts are only
+      // re-seeded when a chat is opened. That is the "the last activity under the
+      // name disappears after I restart the app" report, and the same blank
+      // timestamp is why the header's active-today faces vanished too.
+      //
+      // `bump` is timestamp-guarded, so an out-of-order arrival cannot move the
+      // preview backwards, and it writes through to MMKV (coalesced).
+      bumpPreviewFromTranscript(conversationId, [message]);
 
       return { messages: evictIfNeeded(updated, conversationId), conversations };
     }),

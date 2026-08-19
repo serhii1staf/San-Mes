@@ -1,10 +1,8 @@
 // Full-screen message viewer.
 //
-// Reached from the small expand button in the corner of a chat bubble (top-LEFT
-// on your own messages, top-RIGHT on incoming ones — i.e. always the outer
-// corner, away from the tail). It presents ONE message per page, swipeable left
-// and right through the conversation, with a composer pinned at the bottom so a
-// reply can be sent without leaving.
+// Reached from the expand button next to a bubble's timestamp. It presents ONE
+// message per page, swipeable left and right through the conversation, with a
+// composer pinned at the bottom so a reply can be sent without leaving.
 //
 // ── WHY A ROUTE AND NOT A MODAL ───────────────────────────────────────────────
 // A real route gets the platform's own push/pop transition and back-gesture for
@@ -15,10 +13,25 @@
 //
 // ── WHAT IT DELIBERATELY DOES NOT DO ──────────────────────────────────────────
 // It does not re-fetch anything. The transcript is already in the chat store, so
-// the viewer reads it from there and renders the images through `CachedImage` at
-// the SAME proxy width the bubbles used — so paging is instant and served from
-// memory rather than re-decoding at a new size (the mistake that made the context
-// menu look like it re-downloaded photos).
+// the viewer reads it from there and renders images through `CachedImage` at the
+// SAME proxy width the bubbles used — so paging is instant and served from memory
+// rather than re-decoding at a new size.
+//
+// ── FIXES APPLIED AFTER THE FIRST PASS (all reported from the device) ─────────
+//  • The status bar no longer disappears. `ModalStatusBar` (which is
+//    `<StatusBar hidden />` on iOS) was being rendered here — correct for an
+//    immersive image viewer, wrong for a pushed screen with a composer, where the
+//    clock vanishing reads as a glitch.
+//  • The composer sits ON the keyboard. It was inside a `KeyboardAvoidingView`
+//    that was not the bottom-most element, so the padding it added landed in the
+//    wrong place and left a large gap. It now uses `KeyboardStickyView` from
+//    `react-native-keyboard-controller`, the same mechanism the other chat screens
+//    use, which tracks the keyboard frame on the UI thread.
+//  • Long messages are no longer clipped. Each page is a ScrollView, so a long
+//    text scrolls instead of overflowing a centred fixed box.
+//  • ALL photos are shown, not the first one with a "+2" badge.
+//  • Link previews render, like they do in the transcript.
+//  • Own vs incoming messages are visually distinct (side, bubble colour, label).
 
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
@@ -27,23 +40,28 @@ import {
   StyleSheet,
   Dimensions,
   FlatList,
+  ScrollView,
   TextInput,
   type ListRenderItemInfo,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
+import { KeyboardStickyView } from 'react-native-keyboard-controller';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
 import { CachedImage } from '../../src/components/ui/CachedImage';
 import { FormattedText } from '../../src/components/ui/FormattedText';
-import { ModalStatusBar } from '../../src/components/ui/ModalStatusBar';
+import { LinkPreview } from '../../src/components/ui/LinkPreview';
+import { extractFirstUrl } from '../../src/services/linkPreview';
 import { useChatStore, useAuthStore } from '../../src/store';
+import { usePinnedMessagesStore, selectPinnedIds } from '../../src/store/pinnedMessagesStore';
 import { useT, useI18nStore } from '../../src/i18n/store';
 import { useLiquidGlassActive, GlassBg } from '../../src/components/ui/LiquidGlass';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { formatDaySeparator } from '../../src/utils/chatDaySeparators';
+import { readableTextOn, withOpacity } from '../../src/constants/bubbleColors';
+import { useSettingsStore } from '../../src/store/settingsStore';
 import type { ChatMessage } from '../../src/types';
 
 const { width: SCREEN_W } = Dimensions.get('window');
@@ -70,6 +88,22 @@ export default function ChatFullscreenScreen() {
   const messages = useChatStore((s) => (conversationId ? s.messages[conversationId] : undefined));
 
   const pages = useMemo(() => messages ?? [], [messages]);
+
+  // Own-bubble styling, read from the same settings the chat screen uses so a page
+  // looks like the bubble it was opened from.
+  const chatBubble = useSettingsStore((s) => s.chatBubble);
+  const ownColors = useMemo<string[]>(
+    () => (chatBubble && chatBubble.colors.length > 0 ? chatBubble.colors : [theme.colors.accent.primary]),
+    [chatBubble, theme.colors.accent.primary],
+  );
+  const ownBg = withOpacity(ownColors[0], chatBubble?.opacity ?? 1);
+  const ownTextColor = chatBubble && chatBubble.colors.length > 0 ? readableTextOn(chatBubble.colors) : '#FFFFFF';
+
+  // ── Pinning ───────────────────────────────────────────────────────────────
+  // Multiple pins per conversation are supported, so the viewer can pin whatever
+  // page it is on without displacing an earlier pin.
+  const pinnedIds = usePinnedMessagesStore(selectPinnedIds(conversationId));
+  const togglePin = usePinnedMessagesStore((s) => s.toggle);
 
   // Where to open. Falls back to the newest message when the id is missing or no
   // longer present (it may have been deleted while the viewer was being opened).
@@ -111,9 +145,13 @@ export default function ChatFullscreenScreen() {
         isOwn={item.senderId === currentUserId}
         theme={theme}
         topInset={insets.top}
+        ownBg={ownBg}
+        ownTextColor={ownTextColor}
+        youLabel={t('chat.you', 'Вы')}
+        peerLabel={t('chat.peer', 'Собеседник')}
       />
     ),
-    [currentUserId, theme, insets.top],
+    [currentUserId, theme, insets.top, ownBg, ownTextColor, t],
   );
 
   const current = pages[index];
@@ -128,9 +166,18 @@ export default function ChatFullscreenScreen() {
       : t('chat.peer', 'Собеседник')
     : '';
 
+  const currentPinned = !!current && pinnedIds.includes(current.id);
+
+  const onTogglePin = useCallback(() => {
+    if (!current || !conversationId) return;
+    triggerHaptic('medium');
+    togglePin(conversationId, current.id);
+  }, [current, conversationId, togglePin]);
+
   return (
     <View style={[styles.root, { backgroundColor: theme.colors.background.primary }]}>
-      <ModalStatusBar />
+      {/* No `ModalStatusBar` here on purpose — this is a pushed screen, not an
+          immersive overlay, so the clock and battery must stay visible. */}
 
       <FlatList
         ref={listRef}
@@ -151,8 +198,8 @@ export default function ChatFullscreenScreen() {
         removeClippedSubviews
       />
 
-      {/* Floating close button + caption. Sits above the pages, inset by the safe
-          area so it clears the notch / Dynamic Island on every device. */}
+      {/* Floating close button + caption + pin. Sits above the pages, inset by the
+          safe area so it clears the notch / Dynamic Island on every device. */}
       <View
         style={[styles.header, { top: insets.top + 8, paddingHorizontal: 12 }]}
         pointerEvents="box-none"
@@ -162,7 +209,7 @@ export default function ChatFullscreenScreen() {
           hitSlop={10}
           accessibilityRole="button"
           accessibilityLabel={t('common.close', 'Закрыть')}
-          style={styles.closeBtn}
+          style={styles.headerBtn}
         >
           {glassActive ? (
             <GlassBg borderRadius={18} glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} />
@@ -174,30 +221,49 @@ export default function ChatFullscreenScreen() {
           <Text variant="caption" weight="semibold" numberOfLines={1}>
             {senderLabel}
           </Text>
-          {dayLabel ? (
-            <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 11 }}>
-              {dayLabel}
-            </Text>
-          ) : null}
+          <View style={styles.captionSub}>
+            {dayLabel ? (
+              <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={styles.captionSubText}>
+                {dayLabel}
+              </Text>
+            ) : null}
+            {pages.length > 1 ? (
+              <Text variant="caption" color={theme.colors.text.tertiary} style={styles.captionSubText}>
+                · {index + 1}/{pages.length}
+              </Text>
+            ) : null}
+          </View>
         </View>
 
-        {/* Page counter — mirrors the close button's width so the caption stays
-            optically centred. */}
-        <View style={styles.counter} pointerEvents="none">
-          {pages.length > 1 ? (
-            <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>
-              {index + 1}/{pages.length}
-            </Text>
+        {/* Pin toggle for the page on screen. Mirrors the close button's width so
+            the caption between them stays optically centred. */}
+        <Pressable
+          onPress={onTogglePin}
+          hitSlop={10}
+          accessibilityRole="button"
+          accessibilityLabel={currentPinned ? t('chat.unpin', 'Открепить') : t('chat.pin', 'Закрепить')}
+          style={styles.headerBtn}
+        >
+          {glassActive ? (
+            <GlassBg borderRadius={18} glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} />
           ) : null}
-        </View>
+          <Feather
+            name="bookmark"
+            size={17}
+            color={currentPinned ? theme.colors.accent.primary : theme.colors.text.primary}
+          />
+        </Pressable>
       </View>
 
-      {/* Composer. `KeyboardAvoidingView` from react-native-keyboard-controller
-          (already a dependency, used by the chat screen) keeps it above the
-          keyboard without the JS-driven lift the chat screen needs for its
-          docked panels. */}
-      <KeyboardAvoidingView behavior="padding" keyboardVerticalOffset={0}>
-        <View style={{ paddingBottom: insets.bottom + 8 }}>
+      {/* Composer. `KeyboardStickyView` (react-native-keyboard-controller, already a
+          dependency and what the other chat screens use) tracks the keyboard frame
+          on the UI thread, so the field sits ON the keyboard instead of the large
+          gap a mis-placed KeyboardAvoidingView produced. */}
+      <KeyboardStickyView
+        offset={{ closed: 0, opened: 0 }}
+        style={styles.composerDock}
+      >
+        <View style={{ paddingBottom: insets.bottom + 8, paddingTop: 8 }}>
           <FullscreenComposer
             conversationId={conversationId}
             theme={theme}
@@ -205,13 +271,17 @@ export default function ChatFullscreenScreen() {
             placeholder={t('chat.input_placeholder')}
           />
         </View>
-      </KeyboardAvoidingView>
+      </KeyboardStickyView>
     </View>
   );
 }
 
 /**
- * One page: the message's images (if any) above its text.
+ * One page: the message's photos, its text, and a link preview if the text carries
+ * a URL — the same pieces the transcript shows, at full size.
+ *
+ * Scrollable, because a long message has to be readable: the first version centred
+ * everything in a fixed box, so anything taller than the screen was simply clipped.
  *
  * Memoized so paging never re-renders the neighbours. Images go through
  * `CachedImage` with the shared proxy width, so a photo already decoded for its
@@ -222,57 +292,89 @@ const FullscreenPage = React.memo(function FullscreenPage({
   isOwn,
   theme,
   topInset,
+  ownBg,
+  ownTextColor,
+  youLabel,
+  peerLabel,
 }: {
   message: ChatMessage;
   isOwn: boolean;
   theme: any;
   topInset: number;
+  ownBg: string;
+  ownTextColor: string;
+  youLabel: string;
+  peerLabel: string;
 }) {
   const images = message.imageUrls ?? [];
+  const linkUrl = message.text ? extractFirstUrl(message.text) : null;
+
+  const textColor = isOwn ? ownTextColor : theme.colors.text.primary;
+  const bubbleBg = isOwn ? ownBg : theme.colors.background.elevated;
 
   return (
-    <View style={[styles.page, { width: SCREEN_W, paddingTop: topInset + 56 }]}>
-      {images.length > 0 ? (
-        <View style={styles.imageWrap}>
-          {images.slice(0, 1).map((uri) => (
-            <CachedImage
-              key={uri}
-              uri={uri}
-              style={styles.image}
-              resizeMode="contain"
-              proxyWidth={VIEWER_IMG_MAX_W}
-            />
-          ))}
-          {images.length > 1 ? (
-            <View style={styles.moreBadge}>
-              <Text variant="caption" color="#FFFFFF" style={{ fontSize: 11 }}>
-                +{images.length - 1}
-              </Text>
-            </View>
-          ) : null}
+    <ScrollView
+      style={{ width: SCREEN_W }}
+      contentContainerStyle={[
+        styles.pageContent,
+        // Clears the floating header at the top and the composer at the bottom.
+        { paddingTop: topInset + 60, paddingBottom: 96 },
+      ]}
+      showsVerticalScrollIndicator={false}
+    >
+      {/* Sender marker. The alignment and bubble colour already say whose message
+          this is, but the label removes any doubt when a page is opened directly. */}
+      <View style={[styles.senderRow, { alignSelf: isOwn ? 'flex-end' : 'flex-start' }]}>
+        <Feather
+          name={isOwn ? 'arrow-up-right' : 'arrow-down-left'}
+          size={11}
+          color={theme.colors.text.tertiary}
+        />
+        <Text variant="caption" color={theme.colors.text.tertiary} style={styles.senderText}>
+          {isOwn ? youLabel : peerLabel}
+        </Text>
+      </View>
+
+      {/* EVERY photo, stacked. The first version rendered `images[0]` with a "+2"
+          badge, which meant the other photos were unreachable in the one screen
+          whose entire job is looking at them. Each keeps its natural aspect ratio
+          via `resizeMode="contain"` inside a generous fixed-height box. */}
+      {images.map((uri) => (
+        <View key={uri} style={styles.imageBox}>
+          <CachedImage
+            uri={uri}
+            style={styles.image}
+            resizeMode="contain"
+            proxyWidth={VIEWER_IMG_MAX_W}
+          />
         </View>
-      ) : null}
+      ))}
 
       {message.text ? (
         <View
           style={[
             styles.textWrap,
-            {
-              alignSelf: isOwn ? 'flex-end' : 'flex-start',
-              backgroundColor: theme.colors.background.elevated,
-            },
+            { alignSelf: isOwn ? 'flex-end' : 'flex-start', backgroundColor: bubbleBg },
           ]}
         >
           <FormattedText
-            color={theme.colors.text.primary}
-            linkColor={theme.colors.accent.primary}
-            style={{ fontSize: 16, lineHeight: 22 }}
+            color={textColor}
+            linkColor={isOwn ? textColor : theme.colors.accent.primary}
+            style={styles.bodyText}
           >
             {message.text}
           </FormattedText>
         </View>
       ) : null}
-    </View>
+
+      {/* Link preview, same component the transcript uses. `static` is NOT set, so
+          a video link is playable here — this screen exists to look at content. */}
+      {linkUrl ? (
+        <View style={[styles.previewWrap, { alignSelf: isOwn ? 'flex-end' : 'flex-start' }]}>
+          <LinkPreview url={linkUrl} textColor={theme.colors.text.primary} />
+        </View>
+      ) : null}
+    </ScrollView>
   );
 });
 
@@ -398,25 +500,21 @@ const ComposerInput = React.memo(function ComposerInput({
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  page: { flex: 1, justifyContent: 'center', paddingHorizontal: 16, paddingBottom: 16 },
-  imageWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  pageContent: { paddingHorizontal: 16, minHeight: '100%' },
+  senderRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 8 },
+  senderText: { fontSize: 11 },
+  // Tall but bounded: `contain` keeps the aspect ratio, and a fixed box means the
+  // page's scroll height is known before the images decode, so nothing jumps.
+  imageBox: { width: '100%', height: 360, marginBottom: 12 },
   image: { width: '100%', height: '100%' },
-  moreBadge: {
-    position: 'absolute',
-    right: 12,
-    bottom: 12,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 10,
-    backgroundColor: 'rgba(0,0,0,0.55)',
-  },
   textWrap: {
     maxWidth: '92%',
-    marginTop: 12,
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 18,
   },
+  bodyText: { fontSize: 16, lineHeight: 22 },
+  previewWrap: { maxWidth: '92%', marginTop: 10 },
   header: {
     position: 'absolute',
     left: 0,
@@ -425,7 +523,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     zIndex: 10,
   },
-  closeBtn: {
+  headerBtn: {
     width: 36,
     height: 36,
     borderRadius: 18,
@@ -434,8 +532,9 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   caption: { flex: 1, alignItems: 'center' },
-  // Same width as the close button so the caption between them stays centred.
-  counter: { width: 36, alignItems: 'flex-end' },
+  captionSub: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  captionSubText: { fontSize: 11 },
+  composerDock: { position: 'absolute', left: 0, right: 0, bottom: 0 },
   composerRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, useSyncExternalStore } from 'react';
-import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, Alert, Animated, Modal, Dimensions, Keyboard, InteractionManager, AppState, type ViewToken } from 'react-native';
+import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, Alert, Animated, Dimensions, Keyboard, InteractionManager, AppState, type ViewToken } from 'react-native';
 import { useReanimatedKeyboardAnimation, useKeyboardHandler } from 'react-native-keyboard-controller';
 import { FlashList, type FlashListRef } from '@shopify/flash-list';
 import Reanimated, { useAnimatedStyle, interpolate, Extrapolation, useSharedValue, withSpring, withTiming, withSequence, withDelay, runOnJS, useAnimatedRef, measure, Easing, type SharedValue } from 'react-native-reanimated';
@@ -15,7 +15,6 @@ import { Text, Avatar } from '../../src/components/ui';
 import { CachedImage } from '../../src/components/ui/CachedImage';
 import { proxiedImageUrl } from '../../src/components/ui/CachedImage';
 import Skeleton from '../../src/components/ui/Skeleton';
-import { ModalStatusBar } from '../../src/components/ui/ModalStatusBar';
 import { FormattedText, hasCodeBlock } from '../../src/components/ui/FormattedText';
 import { LinkPreview } from '../../src/components/ui/LinkPreview';
 import { extractFirstUrl } from '../../src/services/linkPreview';
@@ -26,11 +25,12 @@ import { TranslationSheet } from '../../src/components/ui/TranslationSheet';
 import { ChatInputBar, ChatInputBarHandle } from '../../src/components/chat/ChatInputBar';
 import { MediaPanel } from '../../src/components/chat/MediaPanel';
 import { PhotoPickerPanel } from '../../src/components/chat/PhotoPickerPanel';
+import { ImageViewerModal } from '../../src/components/chat/ImageViewerModal';
 import { EmojiDeleteBurst, EmojiBurstHandle } from '../../src/components/chat/EmojiDeleteBurst';
 import { getRealtime, chatChannelName } from '../../src/services/realtime/ably';
 import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
 import { useChatStore, useEntityStore, useConnectivityStore, useAuthStore } from '../../src/store';
-import { usePinnedMessagesStore, selectPinnedId, resolvePinned } from '../../src/store/pinnedMessagesStore';
+import { usePinnedMessagesStore, selectPinnedIds, resolvePinned } from '../../src/store/pinnedMessagesStore';
 import { useChatSettingsStore, GLOBAL_CHAT_SETTINGS_KEY, DEFAULT_CHAT_SETTINGS } from '../../src/store/chatSettingsStore';
 import { readableTextOn, withOpacity } from '../../src/constants/bubbleColors';
 import { useMessageGestures } from '../../src/hooks/useMessageGestures';
@@ -242,6 +242,13 @@ const bubbleStyles = StyleSheet.create({
   imageMulti: { width: 120, height: 120, borderRadius: 12 },
   linkPreviewWrap: { marginTop: 6, width: 280, maxWidth: '100%' },
   timestamp: { marginTop: 3, alignSelf: 'flex-end', fontSize: 10 },
+  // Metadata line: [expand] [time], right-aligned inside the bubble. `gap` keeps the
+  // two apart without padding that would widen the bubble on a short message.
+  metaRow: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-end', gap: 5, marginTop: 3 },
+  // The icon's own box is small, but `hitSlop={10}` on the Pressable takes the touch
+  // target well past Apple's 44 pt guidance without affecting layout.
+  expandInline: { paddingVertical: 1 },
+  timestampInline: { fontSize: 10 },
 });
 
 // Soft glowing "loading older messages" indicator shown at the TOP of the chat
@@ -518,25 +525,8 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
               },
             ]}
           />
-          {/* Expand-to-fullscreen affordance.
-              Placed in the bubble's OUTER top corner — top-left for your own
-              messages, top-right for incoming ones — so it is always on the side
-              away from the tail and never sits over the reply-swipe path.
-              Rendered as an absolute sibling so it adds zero layout: the bubble's
-              size and text wrapping are byte-identical with and without it. */}
-          <Pressable
-            onPress={handleOpenFullscreen}
-            hitSlop={8}
-            accessibilityRole="button"
-            accessibilityLabel={t('chat.open_fullscreen', 'Открыть на весь экран')}
-            style={[
-              styles.expandBtn,
-              isOwn ? { left: -6 } : { right: -6 },
-              { backgroundColor: theme.isDark ? 'rgba(0,0,0,0.42)' : 'rgba(255,255,255,0.78)' },
-            ]}
-          >
-            <Feather name="maximize-2" size={11} color={theme.colors.text.secondary} />
-          </Pressable>
+          {/* The expand-to-fullscreen affordance now lives inline next to the
+              timestamp, further down — see `bubbleStyles.metaRow`. */}
 
           <View style={{
             paddingHorizontal: 14,
@@ -656,9 +646,26 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
                 </View>
               ) : null;
             })()}
-            <Text variant="caption" color={timeColor} style={bubbleStyles.timestamp}>
-              {formatMessageTime(message.createdAt)}
-            </Text>
+            {/* Timestamp row, with the full-screen button immediately to its LEFT.
+                The button used to be an absolute badge floating on the bubble's
+                outer top corner; that read as a sticker pasted over the message.
+                Sitting inline next to the time it becomes part of the bubble's own
+                metadata line — compact, always in the same place, and it no longer
+                overlaps the first line of text on a short message. */}
+            <View style={bubbleStyles.metaRow}>
+              <Pressable
+                onPress={handleOpenFullscreen}
+                hitSlop={10}
+                accessibilityRole="button"
+                accessibilityLabel={t('chat.open_fullscreen', 'Открыть на весь экран')}
+                style={bubbleStyles.expandInline}
+              >
+                <Feather name="maximize-2" size={11} color={timeColor} />
+              </Pressable>
+              <Text variant="caption" color={timeColor} style={bubbleStyles.timestampInline}>
+                {formatMessageTime(message.createdAt)}
+              </Text>
+            </View>
           </View>
         </View>
         </Reanimated.View>
@@ -2306,6 +2313,9 @@ export default function ChatScreen() {
     }
   }, [t]);
 
+  // Stable so the memoized viewer never re-renders because of this screen.
+  const closeImageViewer = useCallback(() => setViewerImages(null), []);
+
   const openImageViewer = useCallback((images: string[], index: number) => {
     setViewerImages({ images, index });
   }, []);
@@ -2572,14 +2582,21 @@ export default function ChatScreen() {
 
   const togglePinnedMessage = usePinnedMessagesStore((s) => s.toggle);
   const unpinMessage = usePinnedMessagesStore((s) => s.unpin);
-  const pinnedId = usePinnedMessagesStore(selectPinnedId(conversationId));
+  const pinnedIds = usePinnedMessagesStore(selectPinnedIds(conversationId));
 
   // Resolved against the live transcript, so an edited pinned message shows its
-  // CURRENT text and a deleted one simply stops rendering the bar.
+  // CURRENT text and a deleted one simply drops out of the list.
   const pinnedResolved = useMemo(
-    () => resolvePinned(chatMessages, pinnedId),
-    [chatMessages, pinnedId],
+    () => resolvePinned(chatMessages, pinnedIds),
+    [chatMessages, pinnedIds],
   );
+
+  // Which pin the bar is showing. A conversation can have several, and tapping the
+  // bar advances through them (Telegram's behaviour) — clamped rather than stored
+  // absolutely so deleting a pin can never leave the cursor out of range.
+  const [pinCursor, setPinCursor] = useState(0);
+  const activePin =
+    pinnedResolved.length > 0 ? pinnedResolved[pinCursor % pinnedResolved.length] : null;
 
   const onPinSearchResult = useCallback(() => {
     if (!activeMatchMessage || !conversationId) return;
@@ -2590,21 +2607,28 @@ export default function ChatScreen() {
   const onDeleteSearchResult = useCallback(() => {
     if (!activeMatchMessage) return;
     // A pinned message that gets deleted must not leave a dangling pin.
-    if (conversationId && pinnedId === activeMatchMessage.id) unpinMessage(conversationId);
+    if (conversationId && pinnedIds.includes(activeMatchMessage.id)) {
+      unpinMessage(conversationId, activeMatchMessage.id);
+    }
     handleMenuAction('delete', activeMatchMessage);
-  }, [activeMatchMessage, conversationId, pinnedId, unpinMessage, handleMenuAction]);
+  }, [activeMatchMessage, conversationId, pinnedIds, unpinMessage, handleMenuAction]);
 
   const onUnpin = useCallback(() => {
-    if (!conversationId) return;
+    if (!conversationId || !activePin) return;
     triggerHaptic('light');
-    unpinMessage(conversationId);
-  }, [conversationId, unpinMessage]);
+    unpinMessage(conversationId, activePin.message.id);
+  }, [conversationId, activePin, unpinMessage]);
 
+  // Tap the bar: jump to the pin it is showing, then advance the cursor so the next
+  // tap goes to the following pin.
   const onJumpToPinned = useCallback(() => {
-    if (!pinnedResolved) return;
+    if (!activePin) return;
     triggerHaptic('light');
-    scrollToIndex(pinnedResolved.index);
-  }, [pinnedResolved, scrollToIndex]);
+    scrollToIndex(activePin.index);
+    if (pinnedResolved.length > 1) {
+      setPinCursor((prev) => (prev + 1) % pinnedResolved.length);
+    }
+  }, [activePin, pinnedResolved.length, scrollToIndex]);
 
   const handleSend = useCallback(async (rawText: string) => {
     const hasImages = pendingImages.length > 0;
@@ -3603,8 +3627,9 @@ export default function ChatScreen() {
       {searchMode && (
         <SearchActionBar
           visible={!!activeMatchMessage}
-          isPinned={!!activeMatchMessage && pinnedId === activeMatchMessage.id}
+          isPinned={!!activeMatchMessage && pinnedIds.includes(activeMatchMessage.id)}
           bottomInset={insets.bottom}
+          keyboardHeight={keyboardHeight}
           glassActive={glassActive}
           theme={theme}
           pinLabel={t('chat.pin', 'Закрепить')}
@@ -3828,13 +3853,17 @@ export default function ChatScreen() {
           own gradient, so the transcript scrolls beneath it like Telegram's. Only
           rendered when the pinned id still resolves against the live transcript —
           a deleted pin therefore leaves no stale quote behind. */}
-      {pinnedResolved ? (
+      {activePin ? (
         <PinnedMessageBar
           top={headerContentHeight - 2}
-          title={t('chat.pinned_message', 'Закреплённое сообщение')}
+          title={
+            pinnedResolved.length > 1
+              ? `${t('chat.pinned_message', 'Закреплённое сообщение')} ${(pinCursor % pinnedResolved.length) + 1}/${pinnedResolved.length}`
+              : t('chat.pinned_message', 'Закреплённое сообщение')
+          }
           preview={
-            pinnedResolved.message.text ||
-            (pinnedResolved.message.imageUrls && pinnedResolved.message.imageUrls.length > 0
+            activePin.message.text ||
+            (activePin.message.imageUrls && activePin.message.imageUrls.length > 0
               ? t('chat.photo')
               : '')
           }
@@ -3883,32 +3912,17 @@ export default function ChatScreen() {
         onClose={() => setTranslateText('')}
       />
 
-      {/* Fullscreen image viewer */}
-      <Modal visible={!!viewerImages} transparent animationType="fade" onRequestClose={() => setViewerImages(null)} statusBarTranslucent>
-        <ModalStatusBar />
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.95)' }}>
-          <Pressable onPress={() => setViewerImages(null)} style={{ position: 'absolute', top: insets.top + 12, right: 16, zIndex: 10, width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' }}>
-            <Feather name="x" size={20} color="#FFFFFF" />
-          </Pressable>
-          {viewerImages && (
-            <FlatList
-              data={viewerImages.images}
-              horizontal
-              pagingEnabled
-              initialScrollIndex={viewerImages.index}
-              getItemLayout={(_, index) => ({ length: SCREEN_WIDTH, offset: SCREEN_WIDTH * index, index })}
-              keyExtractor={(uri, i) => uri + i}
-              showsHorizontalScrollIndicator={false}
-              style={{ flex: 1 }}
-              renderItem={({ item }) => (
-                <View style={{ width: SCREEN_WIDTH, height: '100%', justifyContent: 'center', alignItems: 'center' }}>
-                  <CachedImage uri={item} style={{ width: SCREEN_WIDTH, height: SCREEN_WIDTH }} resizeMode="contain" />
-                </View>
-              )}
-            />
-          )}
-        </View>
-      </Modal>
+      {/* Full-screen photo viewer. Extracted and memoized — inline, its pager was
+          handed fresh `renderItem` / `keyExtractor` / `getItemLayout` identities on
+          every re-render of this screen, so all three mounted full-screen images
+          re-rendered mid-gesture. That was the "the modal lags badly when I drag it".
+          `proxyWidth` matches the bubbles so pages come from the memory cache. */}
+      <ImageViewerModal
+        payload={viewerImages}
+        onClose={closeImageViewer}
+        topInset={insets.top}
+        proxyWidth={CHAT_IMG_MAX_W}
+      />
       <ScreenshotShield visible={screenshotDetected} />
       {/* Emoji "dissolve" burst overlay — renders nothing until a delete fires.
           pointerEvents none, native-driver particles. */}
@@ -4015,6 +4029,7 @@ const SearchActionBar = React.memo(function SearchActionBar({
   visible,
   isPinned,
   bottomInset,
+  keyboardHeight,
   glassActive,
   theme,
   pinLabel,
@@ -4026,6 +4041,7 @@ const SearchActionBar = React.memo(function SearchActionBar({
   visible: boolean;
   isPinned: boolean;
   bottomInset: number;
+  keyboardHeight: SharedValue<number>;
   glassActive: boolean;
   theme: any;
   pinLabel: string;
@@ -4039,9 +4055,25 @@ const SearchActionBar = React.memo(function SearchActionBar({
     progress.value = withTiming(visible ? 1 : 0, { duration: 200, easing: Easing.out(Easing.cubic) });
   }, [visible, progress]);
 
-  const barStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: interpolate(progress.value, [0, 1], [140, 0]) }],
-  }));
+  // Rides ON the keyboard.
+  //
+  // The search field autofocuses, so the keyboard is ALWAYS up while this bar is
+  // relevant. Anchored to the screen bottom it was simply behind the keyboard —
+  // the reported "the delete/pin buttons appear somewhere I can't see". Reading
+  // `keyboardHeight` (the same `useReanimatedKeyboardAnimation` value the input bar
+  // uses) keeps it just above the keyboard on the UI thread, so it tracks the
+  // keyboard's own animation curve rather than approximating it.
+  //
+  // `keyboardHeight` is reported as 0 → -kbHeight by the library, hence the abs.
+  const barStyle = useAnimatedStyle(() => {
+    const raw = keyboardHeight.value;
+    const kb = raw < 0 ? -raw : raw;
+    // While the keyboard is up the bottom inset is already inside the keyboard's
+    // footprint, so subtract it to avoid double-counting the home-indicator gap.
+    const kbLift = kb > 1 ? kb - bottomInset : 0;
+    const enter = interpolate(progress.value, [0, 1], [140, 0]);
+    return { transform: [{ translateY: enter - kbLift }] };
+  });
 
   return (
     <Reanimated.View
@@ -4138,19 +4170,6 @@ const PinnedMessageBar = React.memo(function PinnedMessageBar({
 });
 
 const styles = StyleSheet.create({
-  // Absolute so it contributes NO layout — the bubble measures and wraps exactly
-  // as it did before this button existed. `zIndex` lifts it over the bubble fill
-  // (and over a gradient's clipped container).
-  expandBtn: {
-    position: 'absolute',
-    top: -6,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 4,
-  },
   // Search-result action bar. Shrink-wraps to a centred pill (`alignSelf: center`,
   // no `right`) so two controls sit close together instead of stretching across
   // the display. zIndex clears the message list and the under-input gradient.

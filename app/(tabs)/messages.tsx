@@ -7,8 +7,10 @@ import Reanimated, {
   runOnJS,
   useSharedValue,
   useAnimatedStyle,
+  useAnimatedScrollHandler,
   withTiming,
   interpolate,
+  Extrapolation,
   Easing as REasing,
   type SharedValue,
 } from 'react-native-reanimated';
@@ -34,6 +36,10 @@ import { useT, t as tStatic, useI18nStore } from '../../src/i18n/store';
 import { Conversation } from '../../src/types';
 import { perfMonitor } from '../../src/services/perfMonitor';
 import { useTabBarStore } from '../../src/store/tabBarStore';
+import {
+  useConversationPreviewStore,
+  selectPreviews,
+} from '../../src/store/conversationPreviewStore';
 import {
   ActiveTodayAvatars,
   selectActiveToday,
@@ -574,51 +580,87 @@ function ConversationItemBase({
   );
 }
 
+// ── Collapsing search zone geometry ─────────────────────────────────────────
+//
+// Both values are CONSTANTS on purpose. The zone's outer height must never change,
+// for the reason spelled out on `ChatSearchField` below.
+const SEARCH_FIELD_HEIGHT = 44;
+const SEARCH_ZONE_HEIGHT = SEARCH_FIELD_HEIGHT + 8; // + bottom gap to the chips
+
 /**
- * The "search conversations" field.
+ * The "search conversations" field, with a Telegram-style squash on scroll.
  *
- * ── WHY IT LIVES IN THE LIST HEADER ───────────────────────────────────────────
+ * ── HOW THE COLLAPSE AVOIDS THE OSCILLATION IT USED TO HAVE ───────────────────
  *
- * It used to be a sibling above the list whose HEIGHT was animated to 0 on a
- * scroll threshold. That flickered: collapsing changed the layout, the layout
- * changed the scroll offset, the offset re-evaluated the threshold, and the
- * threshold changed the height again. A feedback loop — which is exactly the
- * reported "I scroll a little, it tries to close and then snaps back open".
- * Tuning the thresholds would only have moved the oscillation somewhere else.
+ * Two earlier attempts failed, and the reasons are worth keeping written down:
  *
- * Now it is the conversation list's `ListHeaderComponent`, so it scrolls away
- * with the content and returns when you scroll back to the top. The scroll offset
- * and the field's position are the SAME quantity by construction, so there is
- * nothing left to disagree — and it costs zero animations, zero scroll handlers
- * and zero relayouts.
+ *  1. Animating the zone's own HEIGHT on a scroll THRESHOLD. Collapsing changed the
+ *     layout, the layout changed the scroll offset, the new offset re-evaluated the
+ *     threshold, and the threshold changed the height again — a feedback loop, felt
+ *     as "I scroll a little and it tries to close then snaps back open". Tuning the
+ *     threshold only moves the oscillation.
+ *  2. Putting the field in the list's `ListHeaderComponent` so it scrolled away
+ *     naturally. That cannot oscillate, but it puts the field BELOW the category
+ *     chips, which is the wrong order.
+ *
+ * What is here now keeps the right order (field above chips) and cannot oscillate,
+ * because of one invariant: **the layout never changes.**
+ *
+ *  • The zone is a fixed `SEARCH_ZONE_HEIGHT` box. Always.
+ *  • `progress` is a CONTINUOUS function of the scroll offset (not a threshold),
+ *    computed on the UI thread by an `useAnimatedScrollHandler` worklet. No JS
+ *    state, so no re-render can be triggered by scrolling.
+ *  • The squash and the upward slide of the chips and the list are TRANSFORMS plus a
+ *    height change *inside* the fixed box. Transforms do not participate in layout,
+ *    so the scroll offset can never be perturbed by the animation — which removes
+ *    the feedback edge entirely rather than damping it.
+ *
+ * Because the offset drives the visual state directly and monotonically, a 2-pixel
+ * scroll produces 2 pixels of squash: it tracks the finger, which is what the
+ * "more beautiful" version is.
+ *
+ * NOTE ON OPACITY: fading is safe here specifically because this component renders
+ * no `GlassView` — an opacity of 0 anywhere above a glass surface kills the glass
+ * (expo/expo#41024), which is why every other hide in this app is a translate.
  *
  * Memoized on primitives + stable callbacks so typing in it never re-renders the
- * rows below.
+ * rows below; `progress` is a shared value, so it is stable by nature.
  */
 const ChatSearchField = React.memo(function ChatSearchField({
   value,
   onChangeText,
   placeholder,
   theme,
+  progress,
 }: {
   value: string;
   onChangeText: (v: string) => void;
   placeholder: string;
   theme: any;
+  progress: SharedValue<number>;
 }) {
+  // Height squash + fade, both inside the fixed-height zone.
+  const pillStyle = useAnimatedStyle(() => ({
+    height: SEARCH_FIELD_HEIGHT * (1 - progress.value),
+    opacity: interpolate(progress.value, [0, 0.65], [1, 0], Extrapolation.CLAMP),
+  }));
+
   return (
-    <View style={{ paddingHorizontal: theme.spacing.base, paddingBottom: theme.spacing.sm }}>
-      <View
-        style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          backgroundColor: theme.colors.background.elevated,
-          borderRadius: theme.borderRadius.pill,
-          paddingHorizontal: theme.spacing.base,
-          paddingVertical: theme.spacing.sm,
-          borderWidth: 1,
-          borderColor: theme.colors.border.light,
-        }}
+    <View style={{ height: SEARCH_ZONE_HEIGHT, paddingHorizontal: theme.spacing.base }}>
+      <Reanimated.View
+        style={[
+          {
+            flexDirection: 'row',
+            alignItems: 'center',
+            backgroundColor: theme.colors.background.elevated,
+            borderRadius: theme.borderRadius.pill,
+            paddingHorizontal: theme.spacing.base,
+            borderWidth: 1,
+            borderColor: theme.colors.border.light,
+            overflow: 'hidden',
+          },
+          pillStyle,
+        ]}
       >
         <Feather name="search" size={16} color={theme.colors.text.tertiary} />
         <TextInput
@@ -632,10 +674,12 @@ const ChatSearchField = React.memo(function ChatSearchField({
             fontSize: theme.typography.sizes.base,
             fontFamily: theme.fontFamily.regular,
             color: theme.colors.text.primary,
-            paddingVertical: theme.spacing.xs,
+            // No vertical padding: the pill owns the height, and padding here would
+            // fight the squash.
+            paddingVertical: 0,
           }}
         />
-      </View>
+      </Reanimated.View>
     </View>
   );
 });
@@ -1043,9 +1087,38 @@ export default function MessagesScreen() {
     });
   }, []);
 
-  // Stable element for the list header. Passing inline JSX would hand FlatList a
-  // fresh element identity on every render of this screen and force it to
-  // reconcile the header — including the TextInput, which would lose focus.
+  // ── Scroll-driven search collapse ─────────────────────────────────────────
+  //
+  // 0 = field fully open, 1 = fully squashed. A CONTINUOUS map of the scroll offset
+  // computed on the UI thread, so it tracks the finger and never round-trips through
+  // React state. See the long note on `ChatSearchField` for why this shape is the one
+  // that cannot oscillate.
+  const searchCollapse = useSharedValue(0);
+
+  const onListScroll = useAnimatedScrollHandler({
+    onScroll: (e) => {
+      const y = e.contentOffset.y;
+      searchCollapse.value = Math.min(Math.max(y / SEARCH_ZONE_HEIGHT, 0), 1);
+    },
+  });
+
+  // Each tab has its own list starting at offset 0, so a collapse left over from the
+  // previous tab would be stuck (no scroll event arrives to undo it). Eased rather
+  // than snapped so switching tabs while collapsed doesn't jolt.
+  useEffect(() => {
+    searchCollapse.value = withTiming(0, { duration: 180, easing: REasing.out(REasing.cubic) });
+  }, [activeTab, searchCollapse]);
+
+  // The chips and the list ride up into the space the squashing field vacates.
+  // Transform only — the zone keeps its height, so layout (and therefore the scroll
+  // offset) is untouched.
+  const searchLiftStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: -SEARCH_ZONE_HEIGHT * searchCollapse.value }],
+  }));
+
+  // Stable element for the search field. Passing inline JSX would hand a fresh
+  // element identity down on every render of this screen and force a reconcile of
+  // the TextInput, which would lose focus mid-typing.
   const searchPlaceholder = t('messages.search_placeholder');
   const searchHeaderEl = useMemo(
     () => (
@@ -1054,9 +1127,10 @@ export default function MessagesScreen() {
         onChangeText={setSearchQuery}
         placeholder={searchPlaceholder}
         theme={theme}
+        progress={searchCollapse}
       />
     ),
-    [searchQuery, searchPlaceholder, theme],
+    [searchQuery, searchPlaceholder, theme, searchCollapse],
   );
 
   // Compose menu (mini-apps / AI / music / chat settings). State lives here
@@ -1230,21 +1304,44 @@ export default function MessagesScreen() {
   //   * it survives a cold start for every chat whose tail was re-seeded from
   //     MMKV, with no request of any kind.
   //
-  // Keyed on the messages map, so it recomputes only when a transcript actually
-  // changes — not on every render of this screen.
+  // ── Persisted previews are the FLOOR ──────────────────────────────────────
+  //
+  // Deriving from the transcripts alone was correct while the app ran and wrong
+  // after a restart: transcripts are only re-seeded from disk when a chat is
+  // OPENED, so on a cold start the map is empty and every row went blank — which
+  // also blanked `lastMessageAt` and therefore emptied the header's active-today
+  // faces. `conversationPreviewStore` persists the same information through MMKV and
+  // hydrates synchronously, so the first render after a restart is already correct.
+  //
+  // Both sources are merged and the NEWER one wins, so the live transcript still
+  // takes precedence the instant a message lands.
+  const persistedPreviews = useConversationPreviewStore(selectPreviews);
+
+  // Keyed on the messages map + the persisted map, so it recomputes only when one of
+  // them actually changes — not on every render of this screen.
   const messagesByConv = useChatStore((s) => s.messages);
   const previewByConv = useMemo(() => {
-    const out = new Map<string, { text: string; at: string }>();
+    const out = new Map<string, { text: string; at: string; hasImage: boolean }>();
+    for (const convId in persistedPreviews) {
+      const p = persistedPreviews[convId];
+      if (p?.at) out.set(convId, { text: p.text, at: p.at, hasImage: p.hasImage });
+    }
     for (const convId in messagesByConv) {
       const list = messagesByConv[convId];
       if (!list || list.length === 0) continue;
       // Transcripts are stored oldest → newest, so the newest is the tail.
       const last = list[list.length - 1];
       if (!last?.createdAt) continue;
-      out.set(convId, { text: last.text || '', at: last.createdAt });
+      const existing = out.get(convId);
+      if (existing && existing.at >= last.createdAt) continue;
+      out.set(convId, {
+        text: last.text || '',
+        at: last.createdAt,
+        hasImage: !!last.imageUrls && last.imageUrls.length > 0,
+      });
     }
     return out;
-  }, [messagesByConv]);
+  }, [messagesByConv, persistedPreviews]);
 
   // Use entityStore conversations as cache layer; fall back to chatStore if empty
   const conversations: Conversation[] = useMemo(() => {
@@ -1602,15 +1699,17 @@ export default function MessagesScreen() {
         </View>
       </View>
 
-      {/* Top spacer under the floating header. The search field itself is no
-          longer here — it is the conversation list's header, so it scrolls away
-          with the content (see `listHeaderEl`). On tabs that render no list it is
-          drawn as a sibling instead, further down. */}
+      {/* Top spacer under the floating header. */}
       <View style={{ marginTop: headerContentHeight }} />
 
-      {/* Category tabs — pinned. The search field scrolls away UNDER these, which
-          is what makes the chips read as moving up into its place. */}
-      <View style={{ marginBottom: 8 }}>
+      {/* Search field — ABOVE the category chips, squashing as the list scrolls.
+          Its box is a fixed `SEARCH_ZONE_HEIGHT`; only its contents shrink, so no
+          layout changes and the collapse cannot feed back into the scroll offset. */}
+      {searchHeaderEl}
+
+      {/* Category chips. Rendered AFTER the search zone so they paint OVER it as
+          they ride up into its place, and lifted by the same shared value. */}
+      <Reanimated.View style={[{ marginBottom: 8 }, searchLiftStyle]}>
         <FlatList
           horizontal
           data={categoryTabsData}
@@ -1619,19 +1718,19 @@ export default function MessagesScreen() {
           contentContainerStyle={{ paddingHorizontal: theme.spacing.base, gap: 8 }}
           renderItem={renderCategoryTab}
         />
-      </View>
+      </Reanimated.View>
 
       {/* AI Chat (chats tab) + Mini-apps (apps tab) */}
       {/* Swipe horizontally anywhere on the content area to switch tabs. */}
       <GestureDetector gesture={swipeGesture}>
-        <View style={{ flex: 1 }}>
+        {/* Rides up with the chips. The negative bottom margin makes this container
+            `SEARCH_ZONE_HEIGHT` taller than its slot, so lifting it does not expose
+            a strip of empty screen at the bottom — the extra height is simply
+            off-screen while the field is open. Both values are constants, so this
+            adds no layout churn. */}
+        <Reanimated.View style={[{ flex: 1, marginBottom: -SEARCH_ZONE_HEIGHT }, searchLiftStyle]}>
           {/* AI Chat + Music (chats tab) — only shown once opened, newest first */}
           {activeTab === 'chats' && !searchQuery && specialChats}
-
-          {/* Tabs that render no conversation FlatList have no list header to
-              carry the search field, so it is drawn here instead. Same component,
-              so the two placements can never drift apart. */}
-          {activeTab === 'apps' || filtered.length === 0 ? searchHeaderEl : null}
 
           {activeTab === 'apps' ? (
             /* The Apps tab owns its full content (launcher list OR empty
@@ -1659,7 +1758,7 @@ export default function MessagesScreen() {
             </View>
             )
           ) : (
-            <FlatList
+            <Reanimated.FlatList
               data={filtered}
               keyExtractor={MESSAGES_KEY_EXTRACTOR}
               renderItem={renderConversationItem}
@@ -1671,17 +1770,16 @@ export default function MessagesScreen() {
               maxToRenderPerBatch={6}
               windowSize={9}
               updateCellsBatchingPeriod={60}
-              // `getItemLayout` describes ROWS only. It stays correct with a list
-              // header because FlatList adds the header's measured height to every
-              // offset itself — the contract is header-relative.
               getItemLayout={MESSAGES_ITEM_LAYOUT}
-              // The search field. Scrolling the list scrolls it away; no
-              // animation, no threshold, nothing that can oscillate.
-              ListHeaderComponent={searchHeaderEl}
+              // Drives the search-field squash. A Reanimated scroll handler so the
+              // whole thing stays on the UI thread — a JS `onScroll` here would
+              // dispatch ~60 state updates a second while flicking.
+              onScroll={onListScroll}
+              scrollEventThrottle={16}
               keyboardShouldPersistTaps="handled"
             />
           )}
-        </View>
+        </Reanimated.View>
       </GestureDetector>
 
       {/* Compose menu overlay. Trigger is the header's compose button. */}
