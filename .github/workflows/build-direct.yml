@@ -21,7 +21,15 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        # NOT `npm ci` — the lock file is generated on Windows and therefore lacks
+        # the platform-specific optional binaries sharp pulls in on macOS (the
+        # `@img/sharp-*` → `@emnapi/*` WASM chain). `npm ci` validates the tree
+        # strictly and aborts with:
+        #   npm error code EUSAGE
+        #   npm error Missing: @emnapi/runtime@1.11.3 from lock file
+        # which is what killed the EAS-hosted builds too. `npm install` repairs the
+        # lock in place. Same workaround `ota-update.yml` has always used.
+        run: npm install --no-audit --no-fund
 
       # Apple §3.3.4 license gate: fail the build if any bundled profile-theme
       # illustration/font asset ships without a license record.
@@ -49,7 +57,19 @@ jobs:
 
       - name: Upload to TestFlight
         if: success()
+        # Uploads with Apple's own `altool`, NOT EAS Submit. Together with
+        # `--local` above this makes the whole pipeline independent of Expo's
+        # build/submit workers — which is the point of this workflow: when
+        # status.expo.dev reports EAS Build/Submit `under_maintenance`, the hosted
+        # workflow (build-ios.yml) cannot get past scheduling, while this one only
+        # needs the EAS API for credentials.
         run: |
           mkdir -p ~/private_keys
           cp ./AuthKey_PN7B743Y4X.p8 ~/private_keys/AuthKey_PN7B743Y4X.p8
           xcrun altool --upload-app --type ios --file ./San.ipa --apiKey PN7B743Y4X --apiIssuer "8c0acc2b-73e7-4067-884b-790f14bf4b92"
+
+      # The private key is written into the workspace and copied to ~/private_keys;
+      # remove both even when the build or upload failed.
+      - name: Remove ASC API Key
+        if: always()
+        run: rm -f ./AuthKey_PN7B743Y4X.p8 ~/private_keys/AuthKey_PN7B743Y4X.p8
