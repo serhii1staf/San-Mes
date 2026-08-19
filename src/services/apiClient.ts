@@ -25,8 +25,17 @@
 
 import { perfMonitor } from './perfMonitor';
 import { clearAuthToken, getAuthToken } from './authClient';
+import { getApiHost, isTransportFailure, rotateApiHost } from './apiHost';
 
-export const WORKER_BASE_URL = 'https://san-mes-api.odi44972.workers.dev';
+/**
+ * @deprecated Read the live host with `getApiHost()` instead.
+ *
+ * Kept as a named export only because other modules import it. It is now just the
+ * FIRST candidate, not "the" host — the app fails over between hosts at runtime (see
+ * `apiHost.ts`), so anything that captures this value at module load will keep
+ * talking to a host the rest of the app has already abandoned.
+ */
+export const WORKER_BASE_URL = getApiHost();
 
 /** Default per-request timeout in ms. Configurable per-call. */
 const DEFAULT_TIMEOUT_MS = 8000;
@@ -176,7 +185,34 @@ interface InternalRequestOptions extends ApiOptions {
   body?: unknown;
 }
 
+/**
+ * Perform a request, rotating to the next backend host if this one is unreachable.
+ *
+ * Rotation fires ONLY on a transport failure — a timeout, DNS/TLS failure or reset.
+ * Any HTTP status proves the host is reachable and is returned as-is, so an ordinary
+ * 500 can never be mistaken for a blocked domain and start host flapping.
+ *
+ * At most ONE retry, on the next candidate, within the same call: the user sees a
+ * single slightly-slower request instead of a failure, and the worst case is bounded
+ * at two timeouts rather than a walk through every host.
+ */
 async function request<T>(path: string, opts: InternalRequestOptions): Promise<ApiResponse<T>> {
+  const host = getApiHost();
+  const first = await requestAgainst<T>(host, path, opts);
+  if (!isTransportFailure(first.error)) return first;
+
+  const next = rotateApiHost(host);
+  if (!next || next === host) return first;
+
+  perfMonitor.recordError(`apiClient host failover: ${host} -> ${next} (${first.error})`);
+  return requestAgainst<T>(next, path, opts);
+}
+
+async function requestAgainst<T>(
+  host: string,
+  path: string,
+  opts: InternalRequestOptions,
+): Promise<ApiResponse<T>> {
   // Offline short-circuit so we don't burn a fetch attempt + timeout
   // when the OS already knows the request will fail. Callers can use
   // this signal to fall back to a cached value rather than spinning.
@@ -184,7 +220,7 @@ async function request<T>(path: string, opts: InternalRequestOptions): Promise<A
     return { data: null, error: 'offline' };
   }
 
-  const url = `${WORKER_BASE_URL}${path}`;
+  const url = `${host}${path}`;
   const headers: Record<string, string> = {
     'Accept': 'application/json',
     ...(opts.body != null ? { 'Content-Type': 'application/json' } : {}),

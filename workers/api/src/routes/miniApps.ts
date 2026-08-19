@@ -121,11 +121,23 @@ register('GET', '/v1/mini-apps/by-short/:prefix', async (req, env, _ctx, params)
     created_at: string;
   }>(
     env,
+    // ── Range predicate, not LIKE ──────────────────────────────────────────
+    //
+    // This was `WHERE id LIKE ?` with a `<prefix>%` pattern. SQLite can only use an
+    // index for a LIKE prefix when the column has a `NOCASE` index and
+    // `case_sensitive_like` is off; the PRIMARY KEY index here is BINARY, so the
+    // planner fell back to a FULL TABLE SCAN of `mini_apps` on every short-link
+    // resolution. On D1's metered row-read budget that is a scan per shared link.
+    //
+    // `id >= prefix AND id < prefix+1` is exactly equivalent for a prefix match and
+    // IS an index seek: `\uffff` is above every character that can appear in the id
+    // (already narrowed to `[0-9a-f-]` above), so the half-open range covers precisely
+    // the ids beginning with `clean`.
     `SELECT id, creator_id, name, description, emoji, url, created_at
        FROM mini_apps
-      WHERE id LIKE ?
+      WHERE id >= ? AND id < ?
       LIMIT 2`,
-    [`${clean}%`],
+    [clean, `${clean}\uffff`],
   );
   if (rows.length !== 1) return ok(req, null);
   return ok(req, rows[0]);

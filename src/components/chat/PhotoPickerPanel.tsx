@@ -107,7 +107,22 @@ function PhotoPickerPanelComponent({
   const collapsed = Math.max(collapsedHeight, 280);
   const expanded = Math.round(SCREEN_H * EXPANDED_RATIO);
 
-  // ── Height, driven on the UI thread ────────────────────────────────────────
+  // ── Size, driven on the UI thread WITHOUT touching layout ──────────────────
+  //
+  // `height` is the panel's VISIBLE height. It used to be applied literally, as
+  // `useAnimatedStyle(() => ({ height: height.value }))`, and that was the single
+  // worst performance decision in this component: animating a layout property runs a
+  // full Fabric layout pass over the subtree — which contains a FlashList of image
+  // cells — on EVERY frame of a drag. Exactly the failure mode diagnosed at length in
+  // `BrowserBottomBand.tsx`.
+  //
+  // Now the container is a CONSTANT `expanded` tall, anchored to the bottom, and is
+  // pushed down by `expanded - height` so that precisely `height` of it is on screen.
+  // A transform does not participate in layout, so the drag is pure compositor work
+  // and holds frame rate regardless of what is mounted inside.
+  //
+  // Side benefit: the grid is always laid out at full height, so expanding reveals
+  // rows that are already rendered instead of mounting them mid-animation.
   const height = useSharedValue(collapsed);
   // Height at the moment the drag started, so the gesture is a pure delta.
   const dragStart = useSharedValue(collapsed);
@@ -120,7 +135,15 @@ function PhotoPickerPanelComponent({
     }
   }, [collapsed, expanded, height]);
 
-  const panelStyle = useAnimatedStyle(() => ({ height: height.value }));
+  const panelStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: expanded - height.value }],
+  }));
+
+  // The send button has to stay at the VISIBLE bottom edge, so it cancels the
+  // panel's own offset. Also a transform — still no layout.
+  const sendCounterStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: -(expanded - height.value) }],
+  }));
 
   const drag = useMemo(
     () =>
@@ -279,7 +302,12 @@ function PhotoPickerPanelComponent({
     <Reanimated.View
       style={[
         styles.container,
-        { backgroundColor: glassActive ? 'transparent' : theme.colors.background.elevated },
+        {
+          // CONSTANT height — see the note on `panelStyle`. The visible portion is
+          // controlled by a transform, never by this value.
+          height: expanded,
+          backgroundColor: glassActive ? 'transparent' : theme.colors.background.elevated,
+        },
         panelStyle,
       ]}
     >
@@ -349,7 +377,10 @@ function PhotoPickerPanelComponent({
       {/* Send button — appears only with a selection, and rides in on translateY
           so no glass ancestor ever gets an opacity of 0. */}
       {canSend ? (
-        <View style={[styles.sendWrap, { bottom: 12 + bottomInset }]} pointerEvents="box-none">
+        <Reanimated.View
+          style={[styles.sendWrap, { bottom: 12 + bottomInset }, sendCounterStyle]}
+          pointerEvents="box-none"
+        >
           {glassActive ? (
             <Pressable onPress={confirm} disabled={confirming} style={styles.sendPress}>
               <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.sendFill}>
@@ -371,7 +402,7 @@ function PhotoPickerPanelComponent({
               </RNText>
             </Pressable>
           )}
-        </View>
+        </Reanimated.View>
       ) : null}
     </Reanimated.View>
   );

@@ -37,6 +37,13 @@ import { useAuthStore } from '../../store/authStore';
 // host so dev builds also work without a tunnel.
 const TOKEN_ENDPOINT = 'https://san-m-app.com/api/ably-token';
 
+/**
+ * Token-fetch timeout. Must be well under the SDK's own retry cadence so a failure
+ * surfaces as an error the SDK can back off from, rather than as a callback that is
+ * never invoked (see the note at the call site).
+ */
+const TOKEN_TIMEOUT_MS = 10000;
+
 let cachedClient: Ably.Realtime | null = null;
 let cachedClientUserId: string | null = null;
 
@@ -66,13 +73,29 @@ function buildAuthCallback(): Ably.AuthOptions['authCallback'] {
         callback('not_signed_in', null);
         return;
       }
-      const resp = await fetch(TOKEN_ENDPOINT, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        // Body kept as an empty object: the endpoint derives the user id from the
-        // verified token, never from anything the client asserts about itself.
-        body: '{}',
-      });
+      // ── Timeout ────────────────────────────────────────────────────────────
+      // This fetch had no timeout, and the consequence was subtle: the Ably SDK
+      // waits for `callback` to be invoked, so a request that never resolves means
+      // the callback is never called, which means the SDK's OWN retry
+      // (`disconnectedRetryTimeout`) never arms. Realtime then stays silently dead
+      // for the whole session with no error anywhere — no new messages, no
+      // presence, and nothing to indicate why. A captive portal is enough to
+      // trigger it.
+      const controller = new AbortController();
+      const abortTimer = setTimeout(() => controller.abort(), TOKEN_TIMEOUT_MS);
+      let resp: Response;
+      try {
+        resp = await fetch(TOKEN_ENDPOINT, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          // Body kept as an empty object: the endpoint derives the user id from the
+          // verified token, never from anything the client asserts about itself.
+          body: '{}',
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(abortTimer);
+      }
       if (!resp.ok) {
         callback(`token endpoint returned ${resp.status}`, null);
         return;

@@ -10,6 +10,14 @@
 
 const UPLOAD_ENDPOINT = 'https://san-m-app.com/api/r2-upload';
 
+/**
+ * Upload timeout. Generous compared to the 8 s API-client default because the body
+ * can be up to 4 MB on a slow uplink — but FINITE, which is the point: without it a
+ * captive portal leaves the promise unresolved forever (see the note at the call
+ * site).
+ */
+const UPLOAD_TIMEOUT_MS = 45000;
+
 type UploadPrefix = 'posts' | 'avatars' | 'banners' | 'chat';
 
 interface UploadResult {
@@ -76,6 +84,7 @@ export async function uploadToR2(
     // Read the local file as bytes. fetch() on file:// works in RN.
     const fileRes = await fetch(localUri);
     const arrayBuffer = await fileRes.arrayBuffer();
+    // (local read — no timeout needed, there is no network involved)
     if (arrayBuffer.byteLength === 0) {
       return { url: null, error: 'empty file' };
     }
@@ -88,12 +97,36 @@ export async function uploadToR2(
     const token = getAuthToken();
     if (!token) return { url: null, error: 'not signed in' };
 
+    // ── Timeout ──────────────────────────────────────────────────────────────
+    // This upload had NO timeout, and it is the worst place in the app to be
+    // missing one: on a captive portal (airplane mode with a hotspot, hotel Wi-Fi,
+    // a throttled mobile network) the socket is accepted and never answered, so the
+    // await never settles. `offlineQueue.uploadImageWithRetry` wraps this in three
+    // attempts, so a `create_post` mutation could sit in a permanently unresolved
+    // promise chain and the post would never settle either way — no success, no
+    // failure, no retry.
+    //
+    // 45 s rather than the API client's 8 s: this is up to 4 MB of body on a
+    // possibly-slow uplink, so the budget has to cover a genuinely slow success.
+    const controller = new AbortController();
+    const abortTimer = setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
     const url = `${UPLOAD_ENDPOINT}?prefix=${prefix}&ext=${ext}&type=${encodeURIComponent(contentType)}`;
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': contentType, Authorization: `Bearer ${token}` },
-      body: arrayBuffer as any,
-    });
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': contentType, Authorization: `Bearer ${token}` },
+        body: arrayBuffer as any,
+        signal: controller.signal,
+      });
+    } catch (e: any) {
+      // An abort surfaces as a distinct, actionable error so the retry logic in
+      // `offlineQueue` can back off instead of treating it as a permanent failure.
+      if (e?.name === 'AbortError') return { url: null, error: 'upload timed out' };
+      throw e;
+    } finally {
+      clearTimeout(abortTimer);
+    }
 
     if (!res.ok) {
       let detail = '';

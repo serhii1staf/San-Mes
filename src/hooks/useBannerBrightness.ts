@@ -36,6 +36,9 @@ import { stripBannerTransform } from '../utils/bannerTransform';
 //   render. Never include the hash in the cache key.
 
 const API_ENDPOINT = 'https://san-m-app.com/api/banner-brightness';
+
+/** Cosmetic request — short budget, and a failure just keeps the default. */
+const BRIGHTNESS_TIMEOUT_MS = 6000;
 // Versioned cache key — old entries used Rec.601 luma over the full image
 // and a 0.5 cutoff. The new endpoint returns sRGB-correct relative
 // luminance over the bottom 40% of the banner, so the numeric values
@@ -119,9 +122,16 @@ export function useBannerBrightness(
     // detail, not blocking anything, and it shouldn't compete with
     // the initial render for network or JS-thread time.
     const handle = InteractionManager.runAfterInteractions(async () => {
+      // Timeout: without one, a captive portal left `inFlightUrl` latched forever, so
+      // this hook never retried the banner for the rest of the session AND held a
+      // pending promise per profile visited. Brightness is cosmetic, so the budget is
+      // short and a failure is simply dropped.
+      const controller = new AbortController();
+      const abortTimer = setTimeout(() => controller.abort(), BRIGHTNESS_TIMEOUT_MS);
       try {
         const resp = await fetch(
-          `${API_ENDPOINT}?url=${encodeURIComponent(stripped)}`
+          `${API_ENDPOINT}?url=${encodeURIComponent(stripped)}`,
+          { signal: controller.signal }
         );
         if (!resp.ok) {
           inFlightUrl.current = null;
@@ -142,8 +152,10 @@ export function useBannerBrightness(
         } as CacheEntry);
         if (mountedRef.current) setBrightness(value);
       } catch {
-        // swallow — `null` brightness produces the safe legacy default
+        // swallow — `null` brightness produces the safe legacy default. Includes the
+        // abort, which is just "took too long", not an error worth surfacing.
       } finally {
+        clearTimeout(abortTimer);
         inFlightUrl.current = null;
       }
     });

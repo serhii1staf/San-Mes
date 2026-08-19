@@ -18,9 +18,19 @@
 
 import { kvDeleteRaw, kvGetStringRawSync, kvSetStringRaw } from './kvStore';
 import { perfMonitor } from './perfMonitor';
+import { getApiHost, isTransportFailure, rotateApiHost } from './apiHost';
 import { t } from '../i18n/store';
 
-export const WORKER_BASE_URL = 'https://san-mes-api.odi44972.workers.dev';
+/**
+ * @deprecated Resolve the host per request with `getApiHost()`.
+ *
+ * This was a second, independent hard-coded copy of the backend host. Two constants
+ * for one host is a correctness bug as soon as failover exists: a user could end up
+ * authenticating against one host and reading from another, which means a token issued
+ * by a host that is reachable being sent to one that is not. Both now share
+ * `apiHost.ts`.
+ */
+export const WORKER_BASE_URL = getApiHost();
 const TOKEN_KEY = '@san:auth_token';
 
 export interface DBProfileLike {
@@ -102,7 +112,24 @@ interface CallResult<T> {
   unauthorised: boolean;
 }
 
+/**
+ * Same host-failover wrapper the API client uses. Rotates only on a transport
+ * failure — a 401 proves the host is reachable and must be returned untouched, or a
+ * wrong PIN would look like a blocked domain.
+ */
 async function call<T>(path: string, opts: CallOpts): Promise<CallResult<T>> {
+  const host = getApiHost();
+  const first = await callAgainst<T>(host, path, opts);
+  if (first.status !== null || !isTransportFailure(first.error)) return first;
+
+  const next = rotateApiHost(host);
+  if (!next || next === host) return first;
+
+  perfMonitor.recordError(`authClient host failover: ${host} -> ${next} (${first.error})`);
+  return callAgainst<T>(next, path, opts);
+}
+
+async function callAgainst<T>(host: string, path: string, opts: CallOpts): Promise<CallResult<T>> {
   const headers: Record<string, string> = { 'Accept': 'application/json' };
   if (opts.body != null) headers['Content-Type'] = 'application/json';
   if (opts.authed) {
@@ -113,7 +140,7 @@ async function call<T>(path: string, opts: CallOpts): Promise<CallResult<T>> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 15000);
   try {
-    const res = await fetch(`${WORKER_BASE_URL}${path}`, {
+    const res = await fetch(`${host}${path}`, {
       method: opts.method,
       headers,
       body: opts.body != null ? JSON.stringify(opts.body) : undefined,

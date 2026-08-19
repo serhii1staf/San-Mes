@@ -2,7 +2,43 @@ import { create } from 'zustand';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-const PING_URL = 'https://www.google.com/generate_204';
+// ── Reachability probes ──────────────────────────────────────────────────────
+//
+// This used to be a SINGLE probe against `https://www.google.com/generate_204`,
+// and that was the most consequential availability bug in the app.
+//
+// `apiClient.request()` short-circuits EVERY call with `{ error: 'offline' }` when
+// this monitor says we are offline — before it opens a socket. So a probe host that
+// is unreachable for the user makes the entire app permanently read-only-from-cache
+// even when our own backend answers fine. Google is blocked outright in mainland
+// China and throttled by Russian ISPs, so users in those regions could sit in a
+// forced-offline state indefinitely, which also reads as "my data keeps reloading /
+// nothing ever updates".
+//
+// Two changes fix the whole class of problem:
+//
+//  1. The FIRST probe is our OWN backend health endpoint. If the app's API is
+//     reachable, the app is online by definition — that is the only question that
+//     actually matters here. No third party gets a veto over it.
+//  2. It is an ANY-OF race across several independent hosts on different networks,
+//     not a single point of failure. The first success wins and the rest are
+//     abandoned, so the common case costs one round trip.
+//
+// Ordering matters: our own host first (authoritative and usually warm), then two
+// widely-reachable neutral endpoints as a backstop for the case where our backend
+// is down but the device genuinely has internet — we still want the app to behave as
+// "online" then, so writes queue and retry rather than being rejected locally.
+const PING_URLS = [
+  // Cheap, public, no auth. Also the only probe whose success guarantees the app
+  // can actually do useful work.
+  'https://san-mes-api.odi44972.workers.dev/v1/health',
+  // Cloudflare's own 204 endpoint: different apex from workers.dev, reachable in
+  // most networks that allow any HTTPS at all.
+  'https://cloudflare.com/cdn-cgi/trace',
+  // Apple's captive-portal probe. Reachable in China and Russia (iOS itself depends
+  // on it), which is exactly why it is a better backstop than Google.
+  'https://captive.apple.com/hotspot-detect.html',
+];
 const PING_TIMEOUT = 3000;
 
 // Base poll cadence. On a stable connection the effective interval backs off
@@ -48,23 +84,66 @@ let stableCount = 0;
 
 // ─── Connectivity Check ──────────────────────────────────────────────────────
 
-async function checkConnectivity(): Promise<boolean> {
+/**
+ * Probe one host. Resolves `true` on ANY HTTP response (a 4xx still proves the
+ * network path works), `false` on a transport error or the timeout.
+ *
+ * `HEAD` because we only care that bytes flow; `no-store` so a cached 204 from a
+ * previous check can never report a dead network as alive.
+ */
+async function probe(url: string): Promise<boolean> {
+  const controller = new AbortController();
+  // Named `abortTimer` (not `timeoutId`) so it can never shadow/clobber the
+  // module-level poll-loop handle `timeoutId` declared above.
+  const abortTimer = setTimeout(() => controller.abort(), PING_TIMEOUT);
   try {
-    const controller = new AbortController();
-    // Named `abortTimer` (not `timeoutId`) so it can never shadow/clobber the
-    // module-level poll-loop handle `timeoutId` declared above.
-    const abortTimer = setTimeout(() => controller.abort(), PING_TIMEOUT);
-    const response = await fetch(PING_URL, {
+    const response = await fetch(url, {
       method: 'HEAD',
       signal: controller.signal,
       cache: 'no-store',
     });
-    clearTimeout(abortTimer);
-    // Google's generate_204 returns 204, any response means online
-    return response.status === 204 || response.ok;
+    // Any status at all means the request reached a server.
+    return response.status > 0;
   } catch {
     return false;
+  } finally {
+    clearTimeout(abortTimer);
   }
+}
+
+/**
+ * Online when ANY probe answers.
+ *
+ * Implemented as a real race rather than a sequential walk: on a healthy network the
+ * first host answers in tens of milliseconds and we return immediately, and on a dead
+ * network every probe fails inside the shared `PING_TIMEOUT` instead of taking
+ * N × timeout. `Promise.any` is not used because a single rejection shape would lose
+ * the "first success wins" semantics on some Hermes builds; the explicit resolver is
+ * unambiguous and has no dependency on aggregate-error support.
+ */
+async function checkConnectivity(): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    let settled = false;
+    let pending = PING_URLS.length;
+
+    const finish = (value: boolean) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+
+    for (const url of PING_URLS) {
+      void probe(url).then((ok) => {
+        if (ok) {
+          finish(true);
+          return;
+        }
+        pending -= 1;
+        // Only declare offline once EVERY probe has failed.
+        if (pending === 0) finish(false);
+      });
+    }
+  });
 }
 
 // ─── Lazy import to avoid circular dependency ────────────────────────────────

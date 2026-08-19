@@ -20,6 +20,17 @@ import { register } from '../router';
 import { normalizeProfile, query, queryOne } from '../db';
 import { parseLimit, parseUuid } from '../util';
 
+/**
+ * Cap on how many conversations one sync returns.
+ *
+ * Set well above any realistic chat list so no user loses a conversation from the
+ * list, while still bounding the query: without a LIMIT this endpoint's result set —
+ * and the D1 rows it reads — grew linearly and without ceiling for the heaviest
+ * users, on a metered daily row-read budget. Ordered newest-first, so if anyone ever
+ * exceeds this, what falls off the end is their least recently active chats.
+ */
+const CONVERSATIONS_PAGE_LIMIT = 500;
+
 // ── GET /v1/conversations ─────────────────────────────────────────────
 //
 // Lists every conversation the authed user participates in, projected
@@ -69,8 +80,14 @@ register('GET', '/v1/conversations', async (req, env, _ctx, _params, authedUserI
         AND other.user_id != cp.user_id
   LEFT JOIN profiles pr ON pr.id = other.user_id
       WHERE cp.user_id = ?
-   ORDER BY c.created_at DESC`,
-    [authedUserId],
+   ORDER BY c.created_at DESC
+      LIMIT ?`,
+    // Bounded. This query had NO limit, so it returned every conversation the user
+    // has ever had, joined three ways, on every chat-list sync — the result set (and
+    // the D1 rows read) grew without ceiling for the app's heaviest users. The chat
+    // list is recency-ordered and the client caches locally, so a generous cap costs
+    // nothing anyone would notice while making the worst case finite.
+    [authedUserId, CONVERSATIONS_PAGE_LIMIT],
   );
 
   const out = rows.map((row) => ({

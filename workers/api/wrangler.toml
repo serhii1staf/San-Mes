@@ -12,6 +12,30 @@ database_id = "62428750-5f61-4ed8-9bd9-51241ad95d16"
 # Public-by-design vars only. Secrets (Supabase JWT signing key — if we
 # move from JWKS to symmetric verification later) MUST go through
 # `wrangler secret put`, never here.
+# ── Custom domain (availability) ─────────────────────────────────────────────
+#
+# The app used to talk ONLY to `san-mes-api.odi44972.workers.dev`, which is a poor
+# single point of failure: `*.workers.dev` is shared by every free Cloudflare
+# account, so it gets blocked as a CATEGORY rather than as a business (it is
+# reported unreachable from mainland China), and the account subdomain sits in the
+# TLS SNI, which makes filtering trivial.
+#
+# Serving the same Worker from our own apex removes that class of block and gives
+# us a hostname whose DNS we control. The client already fails over between the two
+# (see `src/services/apiHost.ts`), so this can be enabled without a coordinated
+# release: while the DNS record does not exist the client simply keeps using
+# workers.dev.
+#
+# `workers_dev` is deliberately NOT set to false — keeping both reachable is the
+# whole point of the failover. Removing the workers.dev URL would trade one single
+# point of failure for another.
+#
+# Requires `san-m-app.com` to be a zone on account 8e0d53f0faad2f48870d0a570dadd03f.
+# Cloudflare creates the DNS record and the certificate on deploy.
+[[routes]]
+pattern = "api.san-m-app.com"
+custom_domain = true
+
 [vars]
 SUPABASE_PROJECT_REF = "ycwadqglcykcpucembjn"
 

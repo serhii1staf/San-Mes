@@ -47,7 +47,9 @@ import {
 import { Feather } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { KeyboardStickyView } from 'react-native-keyboard-controller';
+import { KeyboardStickyView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
+import Reanimated, { useAnimatedStyle, interpolate, Extrapolation } from 'react-native-reanimated';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
 import { CachedImage } from '../../src/components/ui/CachedImage';
@@ -62,9 +64,11 @@ import { triggerHaptic } from '../../src/utils/haptics';
 import { formatDaySeparator } from '../../src/utils/chatDaySeparators';
 import { readableTextOn, withOpacity } from '../../src/constants/bubbleColors';
 import { useSettingsStore } from '../../src/store/settingsStore';
+import { getImageDims, setImageDims } from '../../src/services/imageDimsCache';
+import { showToast } from '../../src/store/toastStore';
 import type { ChatMessage } from '../../src/types';
 
-const { width: SCREEN_W } = Dimensions.get('window');
+const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 
 // Match the chat bubbles' proxy width so a page shows the image the bubble
 // already decoded instead of requesting a new size (a different cache key).
@@ -98,6 +102,7 @@ export default function ChatFullscreenScreen() {
   );
   const ownBg = withOpacity(ownColors[0], chatBubble?.opacity ?? 1);
   const ownTextColor = chatBubble && chatBubble.colors.length > 0 ? readableTextOn(chatBubble.colors) : '#FFFFFF';
+  const bgColor = theme.colors.background.primary;
 
   // ── Pinning ───────────────────────────────────────────────────────────────
   // Multiple pins per conversation are supported, so the viewer can pin whatever
@@ -174,6 +179,81 @@ export default function ChatFullscreenScreen() {
     togglePin(conversationId, current.id);
   }, [current, conversationId, togglePin]);
 
+  // ── Save to the photo library ─────────────────────────────────────────────
+  //
+  // Only offered when the page actually has a photo. `expo-media-library` is
+  // already a dependency and `NSPhotoLibraryAddUsageDescription` is already
+  // declared and accurate, so this ships over-the-air with no new permission.
+  // Everything is lazily imported so the module is not pulled in on screens that
+  // never save anything.
+  const currentImages = current?.imageUrls ?? [];
+  const canSave = currentImages.length > 0;
+  const [saving, setSaving] = useState(false);
+
+  const onSave = useCallback(async () => {
+    const uri = currentImages[0];
+    if (!uri || saving) return;
+    setSaving(true);
+    try {
+      const MediaLibrary = await import('expo-media-library');
+      // `writeOnly: true` asks for the add-only scope — the least access that can
+      // save a file, and it never grants us the ability to READ the library.
+      const perm = await MediaLibrary.requestPermissionsAsync(true);
+      if (!perm.granted) {
+        showToast(t('toast.error_generic'), 'alert-circle');
+        return;
+      }
+      // Resolve to a local file first: `createAssetAsync` cannot take a remote URL.
+      // expo-image has almost certainly already cached this exact derivative,
+      // because the viewer requests the same proxy width the bubble used.
+      const { Image: ExpoImage } = await import('expo-image');
+      const proxied = uri;
+      let localUri: string | null = null;
+      try {
+        const cached = await ExpoImage.getCachePathAsync(proxied);
+        if (cached) localUri = cached.startsWith('file') ? cached : 'file://' + cached;
+      } catch {
+        // fall through to a download
+      }
+      if (!localUri) {
+        const FileSystem = await import('expo-file-system');
+        const target = `${(FileSystem as any).cacheDirectory}san-save-${Date.now()}.jpg`;
+        const res = await (FileSystem as any).downloadAsync(proxied, target);
+        localUri = res?.uri ?? null;
+      }
+      if (!localUri) {
+        showToast(t('toast.error_generic'), 'alert-circle');
+        return;
+      }
+      await MediaLibrary.saveToLibraryAsync(localUri);
+      triggerHaptic('medium');
+      // Reuses the existing swipe-to-screenshot strings rather than adding a second
+      // pair of keys that say the same thing in both locales.
+      showToast(t('swipeable.saved_to_gallery'), 'check');
+    } catch {
+      showToast(t('swipeable.save_failed'), 'alert-circle');
+    } finally {
+      setSaving(false);
+    }
+  }, [currentImages, saving, t]);
+
+  // ── Composer dock padding ─────────────────────────────────────────────────
+  //
+  // The bottom safe-area inset must NOT be added while the keyboard is up: the
+  // keyboard's own frame already covers the home-indicator strip, so adding it
+  // again left roughly 34 pt of dead space between the field and the keyboard —
+  // the reported "the distance between them is big". Interpolated on the UI thread
+  // from the live keyboard height, so it closes as the keyboard rises rather than
+  // snapping when it finishes.
+  const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
+  const composerPadStyle = useAnimatedStyle(() => {
+    const raw = keyboardHeight.value;
+    const kb = raw < 0 ? -raw : raw;
+    // 0 → keyboard fully down, 1 → fully up.
+    const up = interpolate(kb, [0, 60], [0, 1], Extrapolation.CLAMP);
+    return { paddingBottom: interpolate(up, [0, 1], [insets.bottom + 8, 8]) };
+  });
+
   return (
     <View style={[styles.root, { backgroundColor: theme.colors.background.primary }]}>
       {/* No `ModalStatusBar` here on purpose — this is a pushed screen, not an
@@ -198,61 +278,96 @@ export default function ChatFullscreenScreen() {
         removeClippedSubviews
       />
 
-      {/* Floating close button + caption + pin. Sits above the pages, inset by the
-          safe area so it clears the notch / Dynamic Island on every device. */}
-      <View
-        style={[styles.header, { top: insets.top + 8, paddingHorizontal: 12 }]}
-        pointerEvents="box-none"
-      >
-        <Pressable
-          onPress={close}
-          hitSlop={10}
-          accessibilityRole="button"
-          accessibilityLabel={t('common.close', 'Закрыть')}
-          style={styles.headerBtn}
-        >
-          {glassActive ? (
-            <GlassBg borderRadius={18} glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} />
-          ) : null}
-          <Feather name="x" size={18} color={theme.colors.text.primary} />
-        </Pressable>
+      {/* ── Header bar ──────────────────────────────────────────────────────
+          A REAL header, not three buttons floating on the photo. The first
+          version had no bar at all, so the controls sat directly on the image
+          with nothing behind them and read as unanchored. This mirrors the chat
+          screen's header: a three-stop gradient backdrop (opaque at the top,
+          translucent in the middle, clear at the bottom) so content scrolling
+          under it fades out instead of being cut off, with the chrome painted on
+          top so it stays legible over any photo.
 
-        <View style={styles.caption} pointerEvents="none">
-          <Text variant="caption" weight="semibold" numberOfLines={1}>
-            {senderLabel}
-          </Text>
-          <View style={styles.captionSub}>
-            {dayLabel ? (
-              <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={styles.captionSubText}>
-                {dayLabel}
-              </Text>
+          `box-none` so only the buttons take touches — the pages behind stay
+          swipeable across the full height. */}
+      <View style={[styles.header, { height: insets.top + 52 }]} pointerEvents="box-none">
+        <LinearGradient
+          colors={[bgColor, bgColor + 'B3', bgColor + '00']}
+          locations={[0, 0.55, 1]}
+          style={StyleSheet.absoluteFill}
+          pointerEvents="none"
+        />
+        <View style={[styles.headerRow, { paddingTop: insets.top }]} pointerEvents="box-none">
+          <Pressable
+            onPress={close}
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityLabel={t('common.close', 'Закрыть')}
+            style={styles.headerBtn}
+          >
+            {glassActive ? (
+              <GlassBg borderRadius={18} glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} />
             ) : null}
-            {pages.length > 1 ? (
-              <Text variant="caption" color={theme.colors.text.tertiary} style={styles.captionSubText}>
-                · {index + 1}/{pages.length}
-              </Text>
+            <Feather name="x" size={18} color={theme.colors.text.primary} />
+          </Pressable>
+
+          <View style={styles.caption} pointerEvents="none">
+            <Text variant="caption" weight="semibold" numberOfLines={1}>
+              {senderLabel}
+            </Text>
+            <View style={styles.captionSub}>
+              {dayLabel ? (
+                <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={styles.captionSubText}>
+                  {dayLabel}
+                </Text>
+              ) : null}
+              {pages.length > 1 ? (
+                <Text variant="caption" color={theme.colors.text.tertiary} style={styles.captionSubText}>
+                  · {index + 1}/{pages.length}
+                </Text>
+              ) : null}
+            </View>
+          </View>
+
+          {/* Save (photos only) + pin. Right-hand cluster. */}
+          <View style={styles.headerActions} pointerEvents="box-none">
+            {canSave ? (
+              <Pressable
+                onPress={onSave}
+                disabled={saving}
+                hitSlop={10}
+                accessibilityRole="button"
+                accessibilityLabel={t('common.save')}
+                style={styles.headerBtn}
+              >
+                {glassActive ? (
+                  <GlassBg borderRadius={18} glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} />
+                ) : null}
+                <Feather
+                  name="download"
+                  size={17}
+                  color={saving ? theme.colors.text.tertiary : theme.colors.text.primary}
+                />
+              </Pressable>
             ) : null}
+
+            <Pressable
+              onPress={onTogglePin}
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel={currentPinned ? t('chat.unpin', 'Открепить') : t('chat.pin', 'Закрепить')}
+              style={styles.headerBtn}
+            >
+              {glassActive ? (
+                <GlassBg borderRadius={18} glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} />
+              ) : null}
+              <Feather
+                name="bookmark"
+                size={17}
+                color={currentPinned ? theme.colors.accent.primary : theme.colors.text.primary}
+              />
+            </Pressable>
           </View>
         </View>
-
-        {/* Pin toggle for the page on screen. Mirrors the close button's width so
-            the caption between them stays optically centred. */}
-        <Pressable
-          onPress={onTogglePin}
-          hitSlop={10}
-          accessibilityRole="button"
-          accessibilityLabel={currentPinned ? t('chat.unpin', 'Открепить') : t('chat.pin', 'Закрепить')}
-          style={styles.headerBtn}
-        >
-          {glassActive ? (
-            <GlassBg borderRadius={18} glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} />
-          ) : null}
-          <Feather
-            name="bookmark"
-            size={17}
-            color={currentPinned ? theme.colors.accent.primary : theme.colors.text.primary}
-          />
-        </Pressable>
       </View>
 
       {/* Composer. `KeyboardStickyView` (react-native-keyboard-controller, already a
@@ -263,14 +378,14 @@ export default function ChatFullscreenScreen() {
         offset={{ closed: 0, opened: 0 }}
         style={styles.composerDock}
       >
-        <View style={{ paddingBottom: insets.bottom + 8, paddingTop: 8 }}>
+        <Reanimated.View style={[styles.composerPad, composerPadStyle]}>
           <FullscreenComposer
             conversationId={conversationId}
             theme={theme}
             glassActive={glassActive}
             placeholder={t('chat.input_placeholder')}
           />
-        </View>
+        </Reanimated.View>
       </KeyboardStickyView>
     </View>
   );
@@ -335,19 +450,9 @@ const FullscreenPage = React.memo(function FullscreenPage({
         </Text>
       </View>
 
-      {/* EVERY photo, stacked. The first version rendered `images[0]` with a "+2"
-          badge, which meant the other photos were unreachable in the one screen
-          whose entire job is looking at them. Each keeps its natural aspect ratio
-          via `resizeMode="contain"` inside a generous fixed-height box. */}
+      {/* EVERY photo, stacked, each at its OWN aspect ratio. */}
       {images.map((uri) => (
-        <View key={uri} style={styles.imageBox}>
-          <CachedImage
-            uri={uri}
-            style={styles.image}
-            resizeMode="contain"
-            proxyWidth={VIEWER_IMG_MAX_W}
-          />
-        </View>
+        <ViewerPhoto key={uri} uri={uri} />
       ))}
 
       {message.text ? (
@@ -375,6 +480,58 @@ const FullscreenPage = React.memo(function FullscreenPage({
         </View>
       ) : null}
     </ScrollView>
+  );
+});
+
+/**
+ * One photo in a page, at its NATURAL aspect ratio and edge to edge.
+ *
+ * The first version letterboxed every photo inside a fixed 360 pt box with
+ * `resizeMode="contain"`, which left thick empty bars above and below a wide shot
+ * and squeezed a tall one into a third of the screen. That is the "the image looks
+ * awful" report.
+ *
+ * The size comes from `imageDimsCache`, the same store the chat bubbles use, so a
+ * photo that has ever been displayed already has its dimensions on disk and mounts
+ * at the RIGHT shape on the very first frame — no square-then-snap. For a photo that
+ * has never been seen we start at 4:3, which is the least wrong guess, and correct it
+ * from `onLoad`; the measured size is written back so it is instant next time.
+ *
+ * Height is capped at 78 % of the screen so a very tall panorama still leaves the
+ * caption and the composer reachable rather than pushing them a screen away.
+ */
+const ViewerPhoto = React.memo(function ViewerPhoto({ uri }: { uri: string }) {
+  const cached = getImageDims(uri);
+  const [ratio, setRatio] = useState(cached ? cached.w / cached.h : 4 / 3);
+
+  const width = SCREEN_W - 32;
+  const maxHeight = SCREEN_H * 0.78;
+  const height = Math.min(width / Math.max(ratio, 0.05), maxHeight);
+
+  const onLoad = useCallback(
+    (e: any) => {
+      const w = e?.source?.width ?? e?.nativeEvent?.source?.width;
+      const h = e?.source?.height ?? e?.nativeEvent?.source?.height;
+      if (!w || !h) return;
+      setImageDims(uri, w, h);
+      const next = w / h;
+      setRatio((prev) => (Math.abs(prev - next) < 0.01 ? prev : next));
+    },
+    [uri],
+  );
+
+  return (
+    <View style={[styles.photoBox, { width, height }]}>
+      <CachedImage
+        uri={uri}
+        style={styles.image}
+        // `cover` inside a box that already matches the photo's ratio: no bars, no
+        // distortion, and the image fills its rounded frame exactly.
+        resizeMode="cover"
+        proxyWidth={VIEWER_IMG_MAX_W}
+        onLoad={onLoad}
+      />
+    </View>
   );
 });
 
@@ -503,9 +660,16 @@ const styles = StyleSheet.create({
   pageContent: { paddingHorizontal: 16, minHeight: '100%' },
   senderRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 8 },
   senderText: { fontSize: 11 },
-  // Tall but bounded: `contain` keeps the aspect ratio, and a fixed box means the
-  // page's scroll height is known before the images decode, so nothing jumps.
-  imageBox: { width: '100%', height: 360, marginBottom: 12 },
+  // Rounded frame sized to the photo's own aspect ratio (see `ViewerPhoto`), so
+  // there are never letterbox bars. `overflow: hidden` is required for the radius to
+  // actually clip the image on iOS.
+  photoBox: {
+    alignSelf: 'center',
+    borderRadius: 20,
+    overflow: 'hidden',
+    marginBottom: 12,
+    backgroundColor: 'rgba(127,127,127,0.10)',
+  },
   image: { width: '100%', height: '100%' },
   textWrap: {
     maxWidth: '92%',
@@ -515,14 +679,15 @@ const styles = StyleSheet.create({
   },
   bodyText: { fontSize: 16, lineHeight: 22 },
   previewWrap: { maxWidth: '92%', marginTop: 10 },
-  header: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
+  header: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10 },
+  headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    zIndex: 10,
+    paddingHorizontal: 12,
+    gap: 8,
+    flex: 1,
   },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   headerBtn: {
     width: 36,
     height: 36,
@@ -535,6 +700,7 @@ const styles = StyleSheet.create({
   captionSub: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   captionSubText: { fontSize: 11 },
   composerDock: { position: 'absolute', left: 0, right: 0, bottom: 0 },
+  composerPad: { paddingTop: 8 },
   composerRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',

@@ -54,15 +54,31 @@ function mapItem(g: any): GiphyItem | null {
   }
 }
 
+/**
+ * Timeout for a GIF query.
+ *
+ * Giphy is blocked in mainland China and unreliable on throttled networks. Without a
+ * timeout the panel's loading state had no exit: `fetch` on a captive portal never
+ * settles, so the grid showed a spinner forever with no way to tell it had failed.
+ * 6 s is long enough for a slow-but-working network and short enough that a blocked
+ * host degrades to an empty grid quickly.
+ */
+const GIF_TIMEOUT_MS = 6000;
+
 async function fetchGifs(url: string): Promise<GiphyItem[]> {
+  const controller = new AbortController();
+  const abortTimer = setTimeout(() => controller.abort(), GIF_TIMEOUT_MS);
   try {
-    const res = await fetch(url);
+    const res = await fetch(url, { signal: controller.signal });
     if (!res.ok) return [];
     const json = await res.json();
     const data: any[] = Array.isArray(json?.data) ? json.data : [];
     return data.map(mapItem).filter((x): x is GiphyItem => !!x);
   } catch {
+    // Includes the abort — an empty list is the right degraded result either way.
     return [];
+  } finally {
+    clearTimeout(abortTimer);
   }
 }
 
