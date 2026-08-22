@@ -41,20 +41,37 @@ jobs:
           token: ${{ secrets.EXPO_TOKEN }}
 
       - name: Publish OTA Update
-        # `--platform all`, NOT `--platform ios`.
+        # ── TWO PUBLISHES, ONE PER SHIPPED PLATFORM ─────────────────────────────
         #
-        # This said `ios` for as long as there was no Android build to serve, and the moment
-        # one existed it became a silent trap: every update published here reached iPhones and
-        # NONE of them reached the Android APK. An `eas update` for one platform does not
-        # error, warn, or appear any different in the logs — the Android client simply asks
+        # This step used to be `--platform ios` alone. That was harmless for as long as there
+        # was no Android build to serve, and became a silent trap the moment one existed:
+        # every update reached iPhones and NONE reached the Android APK. An `eas update`
+        # scoped to one platform does not error or warn — the Android client asks
         # `u.expo.dev` for an update, is told there is nothing for its platform, and keeps
-        # running the JS bundle baked into the APK forever.
+        # running the bundle baked into the APK forever.
         #
-        # Both platforms share one runtime version (`runtimeVersion.policy = "appVersion"` =
-        # 1.2.0), so a single publish is compatible with both and there is no reason to split
-        # them. If they ever diverge, split by BRANCH rather than by leaving a platform out.
+        # The obvious fix, `--platform all`, FAILS. Verified: run 32600154127.
+        # `all` means every platform the project is configured for, WEB INCLUDED, and the web
+        # bundle does not build:
+        #
+        #     expo export --platform=all exited with non-zero code: 1
+        #     Cannot find module 'react-native-web-webview'
+        #       node_modules/react-native-youtube-iframe/lib/commonjs/WebView.web.js
+        #       | import "react-native-web-webview"
+        #
+        # `react-native-youtube-iframe` resolves that package only for its web target, and it
+        # is not a dependency of this project because web is not a shipped platform. Adding it
+        # just to satisfy an export nobody consumes is the wrong trade, and `eas update` has
+        # no way to say "all except web" — `--platform` takes exactly one of ios|android|all.
+        #
+        # So both shipped platforms are published explicitly, with the same message. Each
+        # publish is its own update record; a client fetches the newest one matching its own
+        # platform and runtime version, so the two are independent and cannot shadow each
+        # other. Both share `runtimeVersion.policy = "appVersion"` (1.2.0), so the same JS is
+        # valid for both.
         run: |
-          eas update --branch production --message "${MSG}" --platform all
+          eas update --branch production --message "${MSG}" --platform ios
+          eas update --branch production --message "${MSG}" --platform android
         env:
           CI: '1'
           MSG: ${{ github.event.inputs.message || github.event.head_commit.message || 'OTA update' }}
