@@ -606,11 +606,16 @@ export const CustomTabBar = React.memo(function CustomTabBar({
   // scrim read as weak. It now reaches full opacity at the bottom edge, which is what
   // both iOS and Android do behind a bottom bar: content is occluded, not tinted.
   //
-  // In dark themes the ramp is biased toward true black rather than the theme's
-  // near-black surface, because a scrim that matches the surface exactly does not
-  // read as depth — the requested "darker, black" look.
-  const scrimEnd = theme.isDark ? 'rgba(0,0,0,1)' : bgColor + 'FF';
-  const scrimMid = theme.isDark ? 'rgba(0,0,0,0.72)' : bgColor + 'BF';
+  // In dark themes the ramp is biased toward black rather than the theme's near-black
+  // surface, because a scrim matching the surface exactly cannot read as depth.
+  //
+  // Calibration note: the first attempt used a fully opaque black end stop. That was
+  // too heavy — it read as a solid black bar rather than as content receding, which
+  // is not what either platform does. It now stops short of opaque, so the scrim
+  // still occludes enough for the bar to be legible while the content behind it
+  // remains faintly perceptible.
+  const scrimEnd = theme.isDark ? 'rgba(0,0,0,0.82)' : bgColor + 'F2';
+  const scrimMid = theme.isDark ? 'rgba(0,0,0,0.5)' : bgColor + 'A6';
 
   // ─── Split the routes: 4 main tabs vs the detached profile tab ───────────
   //
