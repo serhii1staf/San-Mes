@@ -1,6 +1,9 @@
 import React, { useEffect, useCallback, useState, useRef, useMemo } from 'react';
 import { View, RefreshControl, Pressable, StyleSheet, ActivityIndicator, Modal, InteractionManager, Animated, Easing } from 'react-native';
 import { AnimatedFlashList } from '@shopify/flash-list';
+import { feedGetItemType } from '../../src/lib/feedItemType';
+import { useRenderBudget } from '../../src/hooks/useRenderBudget';
+import { currentRenderBudget } from '../../src/utils/renderBudget';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
@@ -8,8 +11,7 @@ import { router, useFocusEffect } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
-import { PostCard } from '../../src/components/feed/PostCard';
-import { HERO_IMG_WIDTH } from '../../src/components/feed/PostCard';
+import { PostCard, HERO_IMG_WIDTH } from '../../src/components/feed/PostCard';
 import { prefetchImages } from '../../src/components/ui/CachedImage';
 import { PostMenuModal } from '../../src/components/feed/PostMenuModal';
 import { useFeedStore, useAuthStore, useEntityStore } from '../../src/store';
@@ -387,7 +389,10 @@ export default function FeedScreen() {
       // so 4 hero images × 1 URL each is more than enough warm-up. Reposts
       // and carousels load lazily as the user reaches them.
       const heroes: string[] = [];
-      const limit = Math.min(posts.length, 4);
+      // Read at call time rather than closing over the hook value: this runs from
+      // a callback that must not be re-created when the power mode flips.
+      const warm = currentRenderBudget();
+      const limit = Math.min(posts.length, warm.heroWarmCount);
       for (let i = 0; i < limit; i++) {
         const u = posts[i].imageUrl || posts[i].imageUrls?.[0];
         if (u) heroes.push(u);
@@ -397,7 +402,10 @@ export default function FeedScreen() {
       // mount. Warming at the old default (600 → w=1200) produced a different
       // URL than the hero displayed (w=800 via the proxy default), so every
       // "warmed" hero still cold-fetched on first paint.
-      if (heroes.length > 0) prefetchImages(heroes, HERO_IMG_WIDTH);
+      // `disk` on the reduced budget: still download the bytes, but skip the eager
+      // DECODE — decoding is the expensive half and the part that competes with the
+      // scroll for the UI thread.
+      if (heroes.length > 0) prefetchImages(heroes, HERO_IMG_WIDTH, warm.warmCachePolicy);
       const { postCount } = useWidgetSettingsStore.getState();
       updateFeedWidget(posts.map((p) => ({
         id: p.id,
@@ -928,6 +936,24 @@ export default function FeedScreen() {
   // every FeedScreen render.
   const keyExtractor = useCallback((item: Post) => item.id, []);
 
+  // Separate recycling pools per card SHAPE.
+  //
+  // Without this every cell shared one pool, so a text-only card could be
+  // recycled into a carousel card. The subtree shape differs completely, so
+  // React had to unmount/mount whole branches and the native view tree had to
+  // re-layout — on a scroll frame. That is a large part of the scroll stutter,
+  // and it is invisible in a profiler as anything other than "render is slow".
+  //
+  // The discriminator MUST mirror PostCard's own branching. If they disagree,
+  // the pool no longer matches the subtree and the problem returns while
+  // looking fixed. `feedGetItemType` is asserted against PostCard's branches by
+  // a property test.
+  const getItemType = useCallback((item: Post) => feedGetItemType(item), []);
+
+  // Frame budget for this device and power state. Re-resolves if the user toggles
+  // Low Power Mode while the feed is open.
+  const budget = useRenderBudget();
+
   const bgColor = theme.colors.background.primary;
   const bgTransparent = bgColor + '00';
   const headerContentHeight = insets.top + 48;
@@ -1059,6 +1085,7 @@ export default function FeedScreen() {
       <AnimatedFlashList
         data={posts}
         keyExtractor={keyExtractor}
+        getItemType={getItemType}
         renderItem={renderPost}
         ListHeaderComponent={posts.length === 0 ? FeedHeader : undefined}
         contentContainerStyle={listContentContainerStyle}
@@ -1078,7 +1105,10 @@ export default function FeedScreen() {
         // documented fix for the "feed jerks when an image finishes decoding and
         // resizes a card above the viewport" jump (replaces the old FlatList
         // `{ minIndexForVisible: 0 }` shape).
-        drawDistance={250}
+        // Halved on weak hardware and in Low Power Mode (see renderBudget): a
+        // fling then pre-renders about one screen ahead instead of two, so the
+        // burst of simultaneous image decodes it kicks off is roughly halved.
+        drawDistance={budget.drawDistance}
         // Incremental loading (FIX 1): when the user nears the tail, fetch and
         // APPEND the next page. `loadMore` self-guards against concurrent/burst
         // triggers and stops once a short page signals the oldest post. This

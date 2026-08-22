@@ -3,7 +3,6 @@ import { View, ScrollView, Pressable, TextInput, Alert, Modal, FlatList, Activit
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { CachedImage } from '../../src/components/ui/CachedImage';
@@ -18,7 +17,7 @@ import {
   type AdminFailureReason,
 } from '../../src/lib/adminFailure';
 import { useFeedStore } from '../../src/store/feedStore';
-import { accountKey } from '../../src/services/cacheService';
+import { removeFromPostCaches } from '../../src/services/postCacheWrite';
 import { formatTimeAgo } from '../../src/utils/mockData';
 import { t as tStatic, useT, useI18nStore } from '../../src/i18n/store';
 
@@ -305,19 +304,9 @@ export default function AdminScreen() {
         // Remove from Zustand feed store
         useFeedStore.getState().removePost(postId);
 
-        // Remove from AsyncStorage caches
-        try {
-          const feedCached = await AsyncStorage.getItem(accountKey('@san:feed_posts'));
-          if (feedCached) {
-            const posts = JSON.parse(feedCached).filter((p: any) => p.id !== postId);
-            await AsyncStorage.setItem(accountKey('@san:feed_posts'), JSON.stringify(posts));
-          }
-          const myCached = await AsyncStorage.getItem(accountKey('@san:my_posts'));
-          if (myCached) {
-            const posts = JSON.parse(myCached).filter((p: any) => p.id !== postId);
-            await AsyncStorage.setItem(accountKey('@san:my_posts'), JSON.stringify(posts));
-          }
-        } catch {}
+        // Through kvStore. The old direct AsyncStorage delete left the post in the
+        // store the feed actually reads, so a deleted post reappeared on next open.
+        removeFromPostCaches(postId);
       }},
     ]);
   };

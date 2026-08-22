@@ -9,6 +9,7 @@ import {
   type ViewStyle,
 } from 'react-native';
 import { useSettingsStore } from '../../store/settingsStore';
+import { useRenderBudget } from '../../hooks/useRenderBudget';
 
 // ── Native liquid glass (iOS 26+) — single integration point ───────────────
 //
@@ -116,7 +117,16 @@ export function useLiquidGlassActive(): boolean {
     isReduceTransparencyEnabled,
     isReduceTransparencyEnabled,
   );
-  return NATIVE_GLASS_CAPABLE && enabled && !reduced;
+  // Real-time blur is a per-frame GPU compositing cost. On weak silicon and under
+  // Low Power Mode it is one of the largest things we can stop paying for, and both
+  // fallback paths (plain surface / gradient) already exist in the codebase, so
+  // nothing new has to be designed.
+  //
+  // Composed by conjunction of negatives on purpose: `reduced` (the accessibility
+  // setting) can never be overridden by the power state. A budget may only remove
+  // an effect, never restore one the user asked to be off.
+  const { glassAllowed } = useRenderBudget();
+  return NATIVE_GLASS_CAPABLE && enabled && !reduced && glassAllowed;
 }
 
 function subscribeReduceTransparency(onStoreChange: () => void): () => void {

@@ -2,6 +2,7 @@ import type { ProfileTheme } from '../theme/profileThemes';
 import { PARTICLE_CAP, PARTICLE_CAP_WEAK } from '../components/profile/ambientParticles';
 import { useWeakDevice } from '../utils/deviceCapability';
 import { useReducedMotion } from './useReducedMotion';
+import { usePowerMode } from './usePowerMode';
 
 // Feature: seasonal-profile-themes
 //
@@ -65,10 +66,15 @@ export function computeAmbientGate({
 export function useAmbientAnimationGate(theme: ProfileTheme): AmbientGateResult {
   const isWeak = useWeakDevice();
   const reducedMotion = useReducedMotion();
+  const powerMode = usePowerMode();
 
   return computeAmbientGate({
     hasAnimation: theme.ambientAnimation != null,
-    isWeak,
+    // Low Power Mode is folded into the SAME suppressor as weak hardware, by
+    // disjunction — never as a ternary that could re-enable something. A
+    // suppressor may only ever add suppression, so `reducedMotion` can never be
+    // overridden by a power-mode change.
+    isWeak: isWeak || powerMode === 'low_power',
     reducedMotion,
   });
 }

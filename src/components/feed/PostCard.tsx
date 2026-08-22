@@ -1,4 +1,6 @@
-import React, { useState, useRef, useMemo, useEffect, useCallback, memo } from 'react';
+import React, { useState, useRef, useMemo, useEffect, useLayoutEffect, useCallback, memo } from 'react';
+import { useRecyclingState } from '@shopify/flash-list';
+import { getImageDims, setImageDims } from '../../services/imageDimsCache';
 import { View, Pressable, ViewStyle, ImageStyle, Dimensions, ScrollView, NativeSyntheticEvent, NativeScrollEvent, Text as RNText, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -155,21 +157,39 @@ export const PostCard = memo(function PostCard({ post, currentUserId, onLike, on
   // Natural aspect ratio of the single hero image, learned from expo-image's
   // onLoad (fires once per image — no per-frame cost). Null until the bitmap
   // dimensions arrive, at which point the card resizes to fit the photo.
-  const [heroAspect, setHeroAspect] = useState<number | null>(null);
-  // FlashList v2 recycles cells across posts. Reset the measured hero aspect
-  // ratio whenever the hero image URI changes so a recycled card never paints
-  // the new photo inside the previous post's aspect-ratio box (which caused a
-  // one-frame height jump + list reflow mid-scroll). Starts from the neutral
-  // placeholder ratio until the new image's onLoad reports its real dimensions.
   const heroUri = imageUrls[0];
-  useEffect(() => {
-    setHeroAspect(null);
+
+  // Seed from the remembered natural size so an already-seen photo mounts at
+  // its FINAL height on the very first frame. No resize, so nothing below it
+  // shifts — this is what removed the viewport nudge while scrolling:
+  // `maintainVisibleContentPosition` anchors against insertions, not against a
+  // rendered cell changing its own height after a decode.
+  const seededHeroAspect = useMemo(() => {
+    const d = getImageDims(heroUri);
+    return d ? d.w / d.h : null;
   }, [heroUri]);
+
+  // `useRecyclingState` resets DURING RENDER when the deps change, so a
+  // recycled cell never paints one frame of the previous post's shape. The old
+  // `useEffect(() => setHeroAspect(null), [heroUri])` ran AFTER commit, which
+  // is exactly the one-frame window where the new photo appeared inside the old
+  // post's aspect box — the "content changes to the wrong one" symptom.
+  //
+  // Keyed on `post.id` as well as the URI: the id is the cell's identity, the
+  // URI covers a post whose image was edited while keeping its id.
+  const [heroAspect, setHeroAspect] = useRecyclingState<number | null>(
+    seededHeroAspect,
+    [post.id, heroUri],
+  );
   const handleHeroLoad = useCallback((e: ImageLoadEventData) => {
     const w = e?.source?.width;
     const h = e?.source?.height;
-    if (w && h && w > 0 && h > 0) setHeroAspect(w / h);
-  }, []);
+    if (w && h && w > 0 && h > 0) {
+      setHeroAspect(w / h);
+      // Remember it so every later view — including a recycle — skips the snap.
+      setImageDims(heroUri, w, h);
+    }
+  }, [heroUri, setHeroAspect]);
 
   // Resolve the single-image box style. `aspectRatio` + `cover` at the image's
   // own (clamped) ratio = no crop. Only the two extreme cases trim: a photo
@@ -351,7 +371,7 @@ export const PostCard = memo(function PostCard({ post, currentUserId, onLike, on
             <CachedImage uri={imageUrls[0]} style={heroImageStyle} resizeMode="cover" proxyWidth={HERO_IMG_WIDTH} priority={heroPriority} onLoad={handleHeroLoad} />
           </Pressable>
         ) : (
-          <ImageCarousel imageUrls={imageUrls} onDoubleTap={handleDoubleTap} heroPriority={heroPriority} />
+          <ImageCarousel imageUrls={imageUrls} onDoubleTap={handleDoubleTap} heroPriority={heroPriority} postId={post.id} />
         )
       )}
 
@@ -391,10 +411,21 @@ export const PostCard = memo(function PostCard({ post, currentUserId, onLike, on
 });
 
 // Image carousel for multiple images
-function ImageCarousel({ imageUrls, onDoubleTap, heroPriority }: { imageUrls: string[]; onDoubleTap: () => void; heroPriority: 'high' | 'low' }) {
+function ImageCarousel({ imageUrls, onDoubleTap, heroPriority, postId }: { imageUrls: string[]; onDoubleTap: () => void; heroPriority: 'high' | 'low'; postId: string }) {
   const theme = useTheme();
-  const [activeIndex, setActiveIndex] = useState(0);
+  // Recycled with the cell. Plain `useState` kept the previous post's page
+  // index, so a recycled carousel showed dots pointing at page 3 of a photo set
+  // the user had never opened.
+  const [activeIndex, setActiveIndex] = useRecyclingState(0, [postId]);
   const lastTapRef = useRef<number>(0);
+  const scrollRef = useRef<ScrollView | null>(null);
+
+  // The inner ScrollView keeps its own horizontal offset across recycling, so
+  // resetting `activeIndex` alone would leave the dots and the visible page
+  // disagreeing. A layout effect runs before paint, so the reset is not visible.
+  useLayoutEffect(() => {
+    scrollRef.current?.scrollTo({ x: 0, animated: false });
+  }, [postId]);
   const imgWidth = SCREEN_WIDTH - 32;
   // Each slide pages at full width, but the photo inside is inset on both
   // sides and rounded so it floats with breathing room (matches the single
@@ -406,12 +437,26 @@ function ImageCarousel({ imageUrls, onDoubleTap, heroPriority }: { imageUrls: st
   // shares ONE height. We derive that height from the FIRST image's natural
   // (clamped) ratio — a portrait set gets a taller carousel, a landscape set a
   // shorter one — capped at MAX_IMAGE_HEIGHT. Learned once via onLoad.
-  const [firstAspect, setFirstAspect] = useState<number | null>(null);
+  const firstUri = imageUrls[0];
+  const seededFirstAspect = useMemo(() => {
+    const d = getImageDims(firstUri);
+    return d ? d.w / d.h : null;
+  }, [firstUri]);
+  // Same reasoning as the hero: reset during render, seeded from the remembered
+  // size. Previously this had no reset at all, so a recycled carousel computed
+  // its shared slide height from the PREVIOUS post's first image.
+  const [firstAspect, setFirstAspect] = useRecyclingState<number | null>(
+    seededFirstAspect,
+    [postId, firstUri],
+  );
   const handleFirstLoad = useCallback((e: ImageLoadEventData) => {
     const w = e?.source?.width;
     const h = e?.source?.height;
-    if (w && h && w > 0 && h > 0) setFirstAspect(w / h);
-  }, []);
+    if (w && h && w > 0 && h > 0) {
+      setFirstAspect(w / h);
+      setImageDims(firstUri, w, h);
+    }
+  }, [firstUri, setFirstAspect]);
   const carouselHeight = useMemo(() => {
     const ratio = firstAspect == null ? PLACEHOLDER_ASPECT_RATIO : clampAspectRatio(firstAspect);
     return Math.min(MAX_IMAGE_HEIGHT, Math.round(slideImgWidth / ratio));
@@ -426,7 +471,7 @@ function ImageCarousel({ imageUrls, onDoubleTap, heroPriority }: { imageUrls: st
 
   return (
     <View style={{ paddingBottom: 12 }}>
-      <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false} onScroll={handleScroll} scrollEventThrottle={16}>
+      <ScrollView ref={scrollRef} horizontal pagingEnabled showsHorizontalScrollIndicator={false} onScroll={handleScroll} scrollEventThrottle={16}>
         {imageUrls.map((url, i) => (
           <Pressable key={i} onPress={handlePress} style={{ width: imgWidth, alignItems: 'center' }}>
             {/* Within-card stagger: only the visible (first) image takes

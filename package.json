@@ -86,6 +86,7 @@
     "@bacons/apple-targets": "^4.0.7",
     "@types/jest": "^29.5.0",
     "@types/react": "~19.1.10",
+    "babel-plugin-transform-remove-console": "6.9.4",
     "babel-preset-expo": "~54.0.0",
     "eslint": "^9.0.0",
     "eslint-config-expo": "~10.0.0",
