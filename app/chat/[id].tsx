@@ -3304,9 +3304,7 @@ export default function ChatScreen() {
   const olderCooldownRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // False until the user's first scroll. See the note at the top of `onStartReached`.
   const startReachedArmedRef = useRef(false);
-  // Id of the topmost row currently VISIBLE, maintained by `onViewableItemsChanged`. This
-  // is the anchor the window growth restores; see the note in `onStartReached`.
-  const firstViewableIdRef = useRef<string | null>(null);
+
 
   // Cancel a pending reveal on unmount / conversation change. It used to be a bare
   // `setTimeout` that was never cleared, so leaving the chat mid-load left a
@@ -3339,49 +3337,37 @@ export default function ChatScreen() {
     if (loadingOlderRef.current) return;
     loadingOlderRef.current = true;
 
-    // ── Restore the viewport OURSELVES rather than trusting mvcp ───────────────
+    // ── NO EXPLICIT POSITION RESTORE. FlashList ALREADY DOES IT. ──────────────
     //
-    // Growing the window prepends rows, and `maintainVisibleContentPosition` is supposed to
-    // absorb that — the library's typings say it is enabled by default. In this
-    // configuration it does not: `startRenderingFromBottom` plus a data array whose FRONT
-    // edge moves is the shape Shopify/flash-list#1844 describes as unresolved for paginated
-    // chats. Two previous attempts to fix the teleport by changing how much or how fast the
-    // window grew both failed, for the same reason — the size of the prepend was never the
-    // problem, the absence of compensation was.
+    // There was a hand-rolled restore here: remember a row, then `scrollToIndex` back to it
+    // after the prepend committed. It went through two anchors (first rendered row, then
+    // first visible row) and the teleport survived both, because the restore itself WAS the
+    // teleport -- it was a second correction stacked on top of one that had already run.
     //
-    // So compensate explicitly. Record which message is currently the FIRST rendered row;
-    // after the expansion commits, put that exact row back at the top of the viewport with
-    // no animation. The row is guaranteed to still exist (the window only ever grows
-    // backwards), and the machinery to do it already exists and is already debugged:
-    // `pendingJumpRef` plus the effect that waits for the id to appear in the rendered
-    // window. This is the same problem the reply-jump solved — scroll to a message that is
-    // not on screen yet — so it uses the same solution.
+    // Read from the installed FlashList v2 rather than from its docs
+    // (src/recyclerview/hooks/useRecyclerViewController.tsx, `applyOffsetCorrection`):
     //
-    // ── THE ANCHOR IS THE FIRST VISIBLE ROW, NOT THE FIRST RENDERED ROW ───────
+    //   - it records `firstVisibleItemKey` plus that item's measured layout BEFORE the
+    //     update -- the same anchor the second attempt here reached for;
+    //   - after the data change it re-finds that key (searching the full array, explicitly
+    //     to handle prepends shifting every index) and applies `scrollBy(newY - oldY)`;
+    //   - it is gated on `hasStableDataKeys()`, which is simply `Boolean(keyExtractor)` --
+    //     and `keyExtractor={chatKeyExtractor}` is passed below, so it IS active here;
+    //   - `autoscrollToTopThreshold` is declared in the typings but read NOWHERE in the
+    //     implementation, so it is a no-op in this version and cannot be the missing piece.
     //
-    // This was `windowedMessagesRef.current[0]?.id`, with a comment asserting that the first
-    // RENDERED row "is at or just above the viewport top when `onStartReached` fires". That
-    // assertion is false, and it is why the teleport survived every previous attempt — the
-    // restore was not failing to compensate, it was actively scrolling the user to the top.
+    // So the prepend was already compensated exactly, from measured layouts. Then, one RAF
+    // later, `scrollToIndex` overrode that with an index-based estimate -- and it landed
+    // inside the 100 ms window during which FlashList deliberately keeps refining the
+    // correction as unmeasured row heights converge (its own comment on `ignoreScrollEvents`
+    // says so). Two corrections fighting, the wrong one winning, on every chunk load. With
+    // the cooldown letting a continuous drag load several chunks, the error compounded until
+    // the viewport hit the oldest end.
     //
-    //   `onStartReachedThreshold` is 0.05 of the LIST, not one row. On content a few
-    //   viewports tall that is a good fraction of a screen, so when the callback fires,
-    //   rendered row 0 sits well ABOVE the viewport. Rendered row 0 is also, by definition,
-    //   the very start of the content. Asking for it at `viewPosition: 0` therefore means
-    //   "scroll to offset 0" -- the absolute top of the chat.
-    //
-    // So every prepend ended with a deliberate, animation-free jump to the oldest message.
-    // That is precisely the report: scroll up a little, BAM, thrown to the very top, with
-    // everything apparently loaded at once (the window had just grown by a chunk).
-    //
-    // The row that must not move is the one the user is LOOKING at, i.e. the topmost visible
-    // one, which `onViewableItemsChanged` already tracks. Restoring that to the viewport top
-    // is accurate to within one row height and is a no-op when nothing shifted.
-    //
-    // No viewable anchor (viewability not armed yet) means no restore at all. An
-    // uncompensated prepend may drift by a row; a restore against the wrong anchor throws
-    // the user across the whole conversation.
-    const anchorId = firstViewableIdRef.current;
+    // The fix is to delete the competing correction. mvcp's anchor is the right anchor, its
+    // arithmetic uses real measured layouts instead of estimates, and it runs at the right
+    // moment in the commit. `pendingJumpRef` stays for what it was built for -- reply-jump
+    // and search, where the target is genuinely off-screen and a deliberate scroll IS wanted.
 
     // ── Hydration must NOT run on the scroll frame ──────────────────────────
     //
@@ -3407,14 +3393,9 @@ export default function ChatScreen() {
         grew = true;
         return Math.min(cur + WINDOW_CHUNK, total);
       });
-      // Queue the position restore in the SAME commit as the growth, so the effect that
-      // consumes it runs once with both the new window and the anchor in hand. Skipped when
-      // nothing grew — there is no prepend to compensate for, and issuing a scroll anyway
-      // would move the user for no reason.
-      if (grew && anchorId) {
-        pendingJumpRef.current = { id: anchorId, tries: 0, viewPosition: 0, animated: false };
-        setJumpNonce((n) => n + 1);
-      }
+      // Deliberately NO scroll of any kind here — see the note above. `grew` is still
+      // computed because the cooldown below only needs to throttle real growth.
+      void grew;
       // ── COOLDOWN, not an immediate release ────────────────────────────────
       //
       // Releasing the latch here let this cascade, and that cascade is the remaining half of
@@ -3652,10 +3633,6 @@ export default function ChatScreen() {
     for (const v of viewableItems) {
       if (v.isViewable && v.item?.id) next.add(v.item.id as string);
     }
-    // The TOPMOST visible row, kept for `onStartReached` to anchor on. `viewableItems` is
-    // in list order, so the first viewable entry is the row nearest the viewport top.
-    // See the note in `onStartReached` for why the first RENDERED row was the wrong anchor.
-    firstViewableIdRef.current = (viewableItems.find((v) => v.isViewable)?.item?.id as string) ?? null;
     visTrackerRef.current?.update(next);
   }).current;
 
