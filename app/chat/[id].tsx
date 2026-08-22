@@ -56,6 +56,7 @@ import { playSendSound } from '../../src/utils/sounds';
 import { GiphyItem } from '../../src/services/giphy';
 import { useT, useI18nStore } from '../../src/i18n/store';
 import { buildDaySeparators, formatDaySeparator } from '../../src/utils/chatDaySeparators';
+import { mergeHistory } from '../../src/utils/mergeHistory';
 
 import { perfMonitor } from '../../src/services/perfMonitor';
 import { useSettingsStore } from '../../src/store/settingsStore';
@@ -1795,6 +1796,12 @@ export default function ChatScreen() {
   //   - Re-sorted by `createdAt`, which is an ISO-8601 string and therefore sorts correctly
   //     as a string (fixed-width, big-endian, zero-padded) — no Date allocation per compare.
   //
+  // All three rules live in `src/utils/mergeHistory.ts`, property-tested, NOT inline here.
+  // Group chats will have the identical problem the moment they exist, and a merge that is
+  // subtly different per surface is how you get "my messages are duplicated in groups but
+  // missing in DMs". See that file for why the comments screen deliberately uses the OPPOSITE
+  // policy (server-wins membership) and why the two must not be unified.
+  //
   // The write to disk is NOT done here. `setMessages` makes the store diverge from
   // `seededArrayRef`, which the persistence effect below already treats as a real mutation
   // and mirrors into `chat_messages:<id>` plus the tail cache through its coalesced writer.
@@ -1816,37 +1823,28 @@ export default function ChatScreen() {
           const { messages, error } = await getMessages(conversationId, { limit: 200 });
           if (cancelled || error || !Array.isArray(messages) || messages.length === 0) return;
 
-          const local = (useChatStore.getState().messages[conversationId] || []) as ChatMessage[];
-          const known = new Set<string>();
-          for (const m of local) {
-            known.add(m.id);
-            if (m.serverId) known.add(m.serverId);
-          }
-
-          const additions: ChatMessage[] = [];
-          for (const row of messages as any[]) {
-            const id = String(row?.id ?? '');
-            if (!id || known.has(id)) continue;
-            additions.push({
-              id,
+          const remote: ChatMessage[] = (messages as any[])
+            .filter((row) => row && String(row.id ?? '').length > 0)
+            .map((row) => ({
+              id: String(row.id),
               conversationId,
               // The server column is the author's real uuid, which is exactly what
               // `senderId` is contracted to hold — ownership is computed at render time as
               // `senderId === currentUserId`.
-              senderId: String(row?.sender_id ?? ''),
-              text: typeof row?.text === 'string' ? row.text : '',
-              createdAt: row?.created_at || new Date().toISOString(),
+              senderId: String(row.sender_id ?? ''),
+              text: typeof row.text === 'string' ? row.text : '',
+              createdAt: row.created_at || new Date().toISOString(),
               // Anything already on the server and not in our local copy was received while
               // this device was not listening; there is no unread state to reconstruct.
               isRead: true,
-              serverId: id,
-            });
-          }
-          if (cancelled || additions.length === 0) return;
+              serverId: String(row.id),
+            }));
 
-          const merged = [...local, ...additions].sort((a, b) =>
-            a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0,
-          );
+          const local = (useChatStore.getState().messages[conversationId] || []) as ChatMessage[];
+          const merged = mergeHistory(local, remote);
+          // `mergeHistory` hands back the SAME array reference when nothing was new, so this
+          // is the cheap way to skip a store write and the re-render it would cause.
+          if (cancelled || merged === local) return;
           setMessages(conversationId, merged as any);
         } catch {
           // Offline, 403 (opened under a peer user id before the conversation row exists),
