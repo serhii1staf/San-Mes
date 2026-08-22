@@ -8,6 +8,7 @@ import * as Clipboard from 'expo-clipboard';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
+import { SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../../src/theme';
 import { useLiquidGlassActive, NativeGlassView, GlassBg } from '../../src/components/ui/LiquidGlass';
@@ -1384,7 +1385,7 @@ export default function CommentsScreen() {
     <View style={{ flex: 1, backgroundColor: bgColor }}>
       {/* Gradient fade header */}
       <View style={[styles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">
-        <LinearGradient colors={[bgColor, bgColor, bgTransparent]} locations={[0, 0.55, 1]} style={StyleSheet.absoluteFill} />
+        <LinearGradient colors={topScrimColors(theme.isDark, bgColor)} locations={SCRIM_LOCATIONS} style={StyleSheet.absoluteFill} />
         <View style={[styles.headerContent, { paddingTop: insets.top }]} pointerEvents="auto">
           <Pressable onPress={() => router.back()}>
             <Feather name="chevron-left" size={24} color={theme.colors.text.primary} />
