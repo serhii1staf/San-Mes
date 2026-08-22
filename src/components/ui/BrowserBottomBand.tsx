@@ -19,55 +19,50 @@ import { useSettingsStore } from '../../store/settingsStore';
 import { useT } from '../../i18n/store';
 import { triggerHaptic } from '../../utils/haptics';
 
-// Floating browser / mini-app session card, docked near the bottom.
+// Bottom-docked browser / mini-app session band.
 //
-// ── WHY IT FLOATS INSTEAD OF DOCKING ────────────────────────────────────────
+// ── SHAPE: DOCKED, NOT FLOATING ─────────────────────────────────────────────
 //
-// It used to be a sibling of the whole navigator inside the root flex column, and
-// it RESERVED its height there. Two consequences, both reported:
+// I briefly turned this into a floating card with all four corners rounded, inset
+// from both edges and carrying a shadow. That was not what was asked for and it is
+// reverted. The band belongs flush with the bottom of the screen, full width, with
+// only its TOP corners rounded — sitting under the bottom navigation / input field
+// exactly as it did before. Only two things were actually requested: make it a
+// little taller, and stop it pushing the app content upward.
 //
-//   1. The app content was pushed up whenever a session was minimized. Requested
-//      behaviour is the opposite — the card should sit OVER the content, like a
-//      floating pill, and nothing below it should move.
-//   2. Reserving and releasing that height re-laid out the root column twice per
-//      session, and each of those passes re-laid out the Stack, the active screen
-//      and everything in it. In a chat that tree holds a FlashList of live message
-//      cells, glass surfaces, gradients and the Reanimated input bar, so those two
-//      commits were expensive — visible as a hitch exactly when the card appeared
-//      or left.
+// ── LAYOUT: OVERLAYS, DOES NOT PUSH ────────────────────────────────────────
 //
-// Now it is absolutely positioned and reserves nothing. Layout cost per session is
-// ZERO: showing and hiding is a compositor-only `translateY` + `opacity`, and no
-// other view's frame ever changes. That is strictly cheaper than the previous
-// "reserve once, release once" design, which was already an improvement on the
-// per-frame height animation before it.
+// It used to be a sibling of the navigator inside the root flex column and RESERVED
+// its height there, so minimizing a session lifted the whole app. It is now
+// absolutely positioned and reserves nothing, which fixes that and also removes a
+// real cost: reserving and releasing the height re-laid out the root column twice
+// per session, and each pass re-laid out the Stack, the active screen and everything
+// inside it. In a chat that tree holds a live FlashList of message cells, glass
+// surfaces, gradients and the Reanimated input bar, so those two commits were
+// expensive — a hitch exactly when the band appeared or left.
 //
-// Corners are rounded on ALL FOUR sides because it is a floating card now, not a
-// band attached to the screen edge — a shape with two square bottom corners only
-// reads as correct when it is flush with the bottom of the display.
+// Showing and hiding is now compositor-only (`translateY` + `opacity`); no view's
+// frame ever changes.
 //
 // The component is ALWAYS mounted (no `return null`), so nothing unmounts
 // mid-animation.
 
-/** Card height. Slightly taller than the old 56 pt band, as requested. */
+/** Band height. Slightly taller than the original 56, which is what was asked for. */
 const BAND_HEIGHT = 64;
-/** Gap between the card and the floating tab bar / screen bottom. */
-const BOTTOM_INSET = 12;
-/** Horizontal inset so the card reads as floating rather than full-bleed. */
-const SIDE_INSET = 10;
-/** Travel distance for the enter/exit slide. Card height plus its bottom gap. */
-const SLIDE_DISTANCE = BAND_HEIGHT + BOTTOM_INSET;
+/**
+ * Travel distance for the enter/exit slide, computed from the real box height.
+ *
+ * Must cover the safe-area padding as well as the band itself: the clip box is
+ * `BAND_HEIGHT + insets.bottom` tall, and sliding by only `BAND_HEIGHT` would leave
+ * a strip of background visible along the bottom edge when hidden.
+ */
+function slideDistanceFor(bottomInset: number): number {
+  return BAND_HEIGHT + bottomInset;
+}
 const ENTER_DURATION = 380;
 const EXIT_DURATION = 300;
 const FADE_IN_DURATION = 240;
 const FADE_OUT_DURATION = 180;
-/**
- * Room left for the floating tab bar so the card sits above it rather than on it.
- *
- * The tab bar is itself absolutely positioned inside the Stack, so its height is not
- * observable from here; this is a deliberate constant matching its visual height.
- */
-const TAB_BAR_CLEARANCE = 64;
 
 export function BrowserBottomBand() {
   const theme = useTheme();
@@ -84,31 +79,33 @@ export function BrowserBottomBand() {
   const visible = !!minimizedUrl && position === 'bottom';
 
   // Kept mounted but non-interactive while hidden, so nothing unmounts mid-slide.
-  // There is no layout state any more — the card reserves no space at all.
+  // There is no layout state any more — the band reserves no space at all.
   const [interactive, setInteractive] = useState(visible);
 
-  // Slide offset in points: 0 = docked, SLIDE_DISTANCE = fully off the bottom.
-  const slideSV = useSharedValue(visible ? 0 : SLIDE_DISTANCE);
+  const slideDistance = slideDistanceFor(insets.bottom);
+
+  // Slide offset in points: 0 = docked, `slideDistance` = fully off the bottom.
+  const slideSV = useSharedValue(visible ? 0 : slideDistance);
   const opacitySV = useSharedValue(visible ? 1 : 0);
 
   useEffect(() => {
     if (visible) {
       setInteractive(true);
-      slideSV.value = SLIDE_DISTANCE;
+      slideSV.value = slideDistance;
       slideSV.value = withTiming(0, {
         duration: ENTER_DURATION,
-        // ease-out cubic: starts fast, settles gently — a card arriving into place.
+        // ease-out cubic: starts fast, settles gently — arriving into place.
         easing: Easing.out(Easing.cubic),
       });
       opacitySV.value = withTiming(1, { duration: FADE_IN_DURATION, easing: Easing.out(Easing.cubic) });
     } else {
       opacitySV.value = withTiming(0, { duration: FADE_OUT_DURATION, easing: Easing.out(Easing.cubic) });
       slideSV.value = withTiming(
-        SLIDE_DISTANCE,
+        slideDistance,
         {
           duration: EXIT_DURATION,
           // Symmetric ease-in-out rather than `Easing.in`. `Easing.in` reaches its
-          // maximum speed exactly as the card leaves, which reads as a snap; the
+          // maximum speed exactly as the band leaves, which reads as a snap; the
           // same mistake was behind the mini-app overlay feeling abrupt.
           easing: Easing.bezier(0.33, 0, 0.67, 1),
         },
@@ -117,7 +114,7 @@ export function BrowserBottomBand() {
         },
       );
     }
-  }, [visible, slideSV, opacitySV]);
+  }, [visible, slideSV, opacitySV, slideDistance]);
 
   // Compositor-only: opacity + translateY. No view's frame changes, so showing or
   // hiding the card costs no layout pass anywhere in the tree.
@@ -152,10 +149,14 @@ export function BrowserBottomBand() {
     <View
       style={{
         position: 'absolute',
-        left: SIDE_INSET,
-        right: SIDE_INSET,
-        bottom: BOTTOM_INSET + insets.bottom + TAB_BAR_CLEARANCE,
-        height: BAND_HEIGHT,
+        left: 0,
+        right: 0,
+        // Flush with the bottom of the screen, under the bottom navigation, as it
+        // was. The safe-area inset is handled by the padding inside the band so the
+        // background still bleeds to the physical edge.
+        bottom: 0,
+        height: BAND_HEIGHT + insets.bottom,
+        overflow: 'hidden',
         zIndex: 150,
       }}
       pointerEvents={interactive ? 'box-none' : 'none'}
@@ -163,19 +164,13 @@ export function BrowserBottomBand() {
       <Animated.View
         style={[
           {
-            height: BAND_HEIGHT,
-            backgroundColor: theme.colors.background.elevated,
-            // All four corners: this is a floating card, not a band flush with the
-            // screen edge. Square bottom corners only read as correct when the
-            // shape actually touches the bottom of the display.
-            borderRadius: 24,
-            // A soft shadow separates the card from whatever is behind it now that
-            // it overlays content instead of sitting in its own reserved strip.
-            shadowColor: '#000',
-            shadowOpacity: theme.isDark ? 0.45 : 0.16,
-            shadowRadius: 16,
-            shadowOffset: { width: 0, height: 6 },
-            elevation: 8,
+            height: BAND_HEIGHT + insets.bottom,
+            paddingBottom: insets.bottom,
+            backgroundColor: theme.colors.background.primary,
+            // TOP corners only. It is docked to the screen edge, so rounding the
+            // bottom corners would leave visible notches against the display edge.
+            borderTopLeftRadius: 24,
+            borderTopRightRadius: 24,
             // No hairline borders — on dark themes the light border color
             // appeared as bright UV-style streaks running down the rounded
             // corners during the collapse animation.

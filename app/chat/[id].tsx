@@ -2300,6 +2300,17 @@ export default function ChatScreen() {
   // frames.
   const pendingJumpRef = useRef<{ id: string; tries: number } | null>(null);
 
+  // Bumped on every jump REQUEST so the consuming effect below runs even when the
+  // render window did not have to change.
+  //
+  // THE BUG THIS FIXES: that effect depended only on `[windowedMessages]`, and
+  // `scrollToIndex` only calls `setRenderWindow` when the target is OUTSIDE the
+  // current window. So for a target already inside the window — which is the normal
+  // case for a pinned message, and for replies to anything recent — nothing changed,
+  // the effect never re-ran, and the queued jump was silently dropped. Tapping a
+  // pinned message did nothing at all.
+  const [jumpNonce, setJumpNonce] = useState(0);
+
   const scrollToIndex = useCallback((index: number) => {
     // Read the freshest total from the store (the closure's `chatMessages` can
     // be the stale bounded seed right after a lazy hydrate).
@@ -2314,6 +2325,9 @@ export default function ChatScreen() {
     const needWindow = source.length - index + 4;
     if (needWindow > renderWindow) setRenderWindow(needWindow);
     pendingJumpRef.current = { id: target.id, tries: 0 };
+    // Guarantee the consuming effect runs for THIS request, whether or not the
+    // window had to grow above.
+    setJumpNonce((n) => n + 1);
   }, [chatMessages, conversationId, renderWindow]);
 
   // (The effect that consumes `pendingJumpRef` lives further down, next to
@@ -3111,7 +3125,10 @@ export default function ChatScreen() {
       } catch {}
     });
     return () => cancelAnimationFrame(raf);
-  }, [windowedMessages]);
+    // `jumpNonce` makes every jump request run this at least once; `windowedMessages`
+    // makes a request that needed a bigger window complete on the commit where the
+    // row finally appears. Both are required — see the note on `jumpNonce`.
+  }, [windowedMessages, jumpNonce]);
 
   // Are there older messages above the current window? Either already loaded in
   // the array (windowStart > 0) or still on disk (the bounded seed hit the cap,

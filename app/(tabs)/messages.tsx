@@ -253,6 +253,7 @@ function MiniAppsRow({ editMode, selectedIds, editProgress, onToggleSelect }: Mi
         >
           <SelectionCheckbox
             editProgress={editProgress}
+            editMode={editMode}
             selected={selectedIds.has(app.id)}
             accent={theme.colors.accent.primary}
             borderColor={theme.colors.border.medium}
@@ -532,6 +533,7 @@ function ConversationItemBase({
     >
       <SelectionCheckbox
         editProgress={editProgress}
+        editMode={editMode}
         selected={selected}
         accent={theme.colors.accent.primary}
         borderColor={theme.colors.border.medium}
@@ -691,15 +693,25 @@ const ChatSearchField = React.memo(function ChatSearchField({
  */
 const RowSeparator = React.memo(function RowSeparator({
   color,
-  editProgress,
+  editMode,
 }: {
   color: string;
-  editProgress: SharedValue<number>;
+  editMode: boolean;
 }) {
-  const style = useAnimatedStyle(() => ({
-    marginLeft: 68 + editProgress.value * SELECT_COLUMN_WIDTH,
-  }));
-  return <Reanimated.View style={[{ height: 0.5, backgroundColor: color }, style]} />;
+  // `marginLeft` was animated through `useAnimatedStyle`, which meant a layout pass
+  // per frame for EVERY separator in the list during the edit-mode transition — the
+  // other half of the ~20 fps stall (see SelectionCheckbox for the full note).
+  //
+  // A hairline's inset does not need to ease. Plain style, one commit.
+  return (
+    <View
+      style={{
+        height: 0.5,
+        backgroundColor: color,
+        marginLeft: 68 + (editMode ? SELECT_COLUMN_WIDTH : 0),
+      }}
+    />
+  );
 });
 
 /**
@@ -807,17 +819,36 @@ const HeaderIconButton = React.memo(function HeaderIconButton({
  */
 const SelectionCheckbox = React.memo(function SelectionCheckbox({
   editProgress,
+  editMode,
   selected,
   accent,
   borderColor,
 }: {
   editProgress: SharedValue<number>;
+  editMode: boolean;
   selected: boolean;
   accent: string;
   borderColor: string;
 }) {
-  const columnStyle = useAnimatedStyle(() => ({
-    width: editProgress.value * SELECT_COLUMN_WIDTH,
+  // ── WHY THE WIDTH IS NOT ANIMATED ────────────────────────────────────────────
+  //
+  // This used to be `width: editProgress.value * SELECT_COLUMN_WIDTH` inside
+  // `useAnimatedStyle`. `width` is a LAYOUT property, so every frame of the 220 ms
+  // edit-mode transition forced a layout recalculation — and not for one row, but
+  // for every mounted row at once, since each row owns one of these. Together with
+  // the separator (which animated `marginLeft`, also layout) that was on the order
+  // of thirty layout passes per frame, which is exactly the ~20 fps reported when
+  // tapping "Edit" in a chat list with many chats.
+  //
+  // The column's width is now plain React state: it commits ONCE when edit mode is
+  // entered and once when it is left. The motion that remains — fade and slide of
+  // the circle — is compositor-only, so it costs no layout at all.
+  //
+  // Trade-off, taken deliberately: the column's width snaps instead of easing. With
+  // the circle still fading and sliding in, the transition still reads as motion,
+  // and 60 fps is worth more than an eased width. This is the same "one layout
+  // commit, compositor motion" shape already used by the bottom session card.
+  const circleStyle = useAnimatedStyle(() => ({
     opacity: editProgress.value,
     // Nudge the circle in from the left so it eases into place rather than
     // being revealed by a hard clip.
@@ -825,7 +856,10 @@ const SelectionCheckbox = React.memo(function SelectionCheckbox({
   }));
 
   return (
-    <Reanimated.View style={[styles.selectColumn, columnStyle]} pointerEvents="none">
+    <Reanimated.View
+      style={[styles.selectColumn, { width: editMode ? SELECT_COLUMN_WIDTH : 0 }, circleStyle]}
+      pointerEvents="none"
+    >
       <View
         style={[
           styles.selectCircle,
@@ -1567,8 +1601,8 @@ export default function MessagesScreen() {
   // column, so the inset has to travel with them or the hairlines visibly fail
   // to line up with the content above them.
   const renderSeparator = useCallback(
-    () => <RowSeparator color={separatorColor} editProgress={editProgress} />,
-    [separatorColor, editProgress],
+    () => <RowSeparator color={separatorColor} editMode={editMode} />,
+    [separatorColor, editMode],
   );
 
   // ─── Category-tab chips — memoized data + renderItem ──────────────────────
