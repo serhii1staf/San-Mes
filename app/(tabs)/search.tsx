@@ -20,6 +20,17 @@ import { useSettingsStore } from '../../src/store/settingsStore';
 
 const SEARCH_HISTORY_KEY = '@san:search_history';
 
+/**
+ * Recently-opened MINI APPS, stored separately from the profile history.
+ *
+ * A separate key rather than one merged list, deliberately: `@san:search_history` is already
+ * on disk for every existing user as a `ProfileResult[]`, and widening that array's element
+ * type would mean a migration (or a silent crash the first time an old entry is read as an
+ * app). Two keys, merged by timestamp at read time, needs no migration and cannot corrupt
+ * what is already stored.
+ */
+const RECENT_APPS_KEY = '@san:search_recent_apps';
+
 interface ProfileResult {
   id: string;
   username: string;
@@ -28,9 +39,76 @@ interface ProfileResult {
   bio: string;
   badge?: string;
   is_verified?: boolean;
+  /** When this entry was last opened. Absent on entries written before recents existed. */
+  ts?: number;
 }
 
+interface RecentApp {
+  id: string;
+  name: string;
+  emoji: string;
+  url: string;
+  ts?: number;
+}
+
+/** One tile in the "Recent" strip — either a person or a mini app. */
+type RecentEntry =
+  | { kind: 'profile'; ts: number; id: string; profile: ProfileResult }
+  | { kind: 'app'; ts: number; id: string; app: RecentApp };
+
+/** Tile width. Sized so four fit on a 390 pt screen with the row's padding, as in the design. */
+const RECENT_TILE_WIDTH = 78;
+
+/** How many tiles the strip keeps. Bounded so the row can never become a long list. */
+const RECENT_LIMIT = 12;
+
 type AppTheme = ReturnType<typeof useTheme>;
+
+/**
+ * One tile in the "Recent" strip: a round 64 pt avatar with its name underneath.
+ *
+ * Memoized and given only primitives plus a stable callback, so scrolling the strip or
+ * typing in the field does not re-render tiles that have not changed.
+ */
+const RecentTile = React.memo(function RecentTile({
+  emoji,
+  label,
+  verified,
+  badge,
+  onPress,
+}: {
+  emoji: string;
+  label: string;
+  verified?: boolean;
+  badge?: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      style={{ width: RECENT_TILE_WIDTH, alignItems: 'center' }}
+    >
+      <Avatar emoji={emoji} name={label} size="lg" tint />
+      <View
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 2,
+          marginTop: 8,
+          maxWidth: RECENT_TILE_WIDTH - 6,
+        }}
+      >
+        <Text variant="caption" numberOfLines={1} style={{ flexShrink: 1 }}>
+          {label}
+        </Text>
+        {verified ? <VerifiedBadge size={10} /> : null}
+        {badge ? <UserBadge badge={badge} size="sm" /> : null}
+      </View>
+    </Pressable>
+  );
+});
 
 // Pure presentational result row. Memoized so unchanged rows don't re-render
 // when the parent re-renders on each keystroke. `theme` is stable across
@@ -115,6 +193,7 @@ export default function SearchScreen() {
     }
   });
   const [history, setHistory] = useState<ProfileResult[]>([]);
+  const [recentApps, setRecentApps] = useState<RecentApp[]>([]);
 
   useEffect(() => {
     loadProfiles();
@@ -211,23 +290,85 @@ export default function SearchScreen() {
       const cached = await AsyncStorage.getItem(accountKey(SEARCH_HISTORY_KEY));
       if (cached) setHistory(JSON.parse(cached));
     } catch {}
+    try {
+      const cachedApps = await AsyncStorage.getItem(accountKey(RECENT_APPS_KEY));
+      if (cachedApps) setRecentApps(JSON.parse(cachedApps));
+    } catch {}
   };
 
   const addToHistory = useCallback(async (profile: ProfileResult) => {
-    const updated = [profile, ...history.filter(h => h.id !== profile.id)].slice(0, 10);
+    const stamped = { ...profile, ts: Date.now() };
+    const updated = [stamped, ...history.filter(h => h.id !== profile.id)].slice(0, RECENT_LIMIT);
     setHistory(updated);
     await AsyncStorage.setItem(accountKey(SEARCH_HISTORY_KEY), JSON.stringify(updated));
   }, [history]);
 
+  /**
+   * Record a mini app in the recents strip.
+   *
+   * Only the four fields the tile and the relaunch need are stored, not the whole `MiniApp`:
+   * the strip must keep working for an app that has since been renamed, edited or removed
+   * from the account's list, and a fat copy would go stale in ways the tile would show.
+   */
+  const addAppToRecents = useCallback(async (app: { id: string; name: string; emoji: string; url: string }) => {
+    const entry: RecentApp = { id: app.id, name: app.name, emoji: app.emoji, url: app.url, ts: Date.now() };
+    const updated = [entry, ...recentApps.filter(a => a.id !== app.id)].slice(0, RECENT_LIMIT);
+    setRecentApps(updated);
+    await AsyncStorage.setItem(accountKey(RECENT_APPS_KEY), JSON.stringify(updated));
+  }, [recentApps]);
+
   const clearHistory = async () => {
     setHistory([]);
-    await AsyncStorage.removeItem(accountKey(SEARCH_HISTORY_KEY));
+    setRecentApps([]);
+    await AsyncStorage.multiRemove([accountKey(SEARCH_HISTORY_KEY), accountKey(RECENT_APPS_KEY)]);
   };
 
   const handleSelect = useCallback((item: ProfileResult) => {
     addToHistory(item);
     router.push({ pathname: '/profile/[id]', params: { id: item.id } });
   }, [addToHistory]);
+
+  const openApp = useCallback((app: { id: string; name: string; emoji: string; url: string }) => {
+    addAppToRecents(app);
+    router.push({ pathname: '/mini-app', params: { url: encodeURIComponent(app.url), name: app.name, emoji: app.emoji } });
+  }, [addAppToRecents]);
+
+  /**
+   * The strip's contents: people and mini apps in one list, newest first.
+   *
+   * Entries written before recents existed have no `ts`. They get a negative pseudo-stamp
+   * that preserves their stored order and sorts them after everything with a real timestamp,
+   * so an old history does not outrank something opened a moment ago.
+   */
+  const recents = useMemo<RecentEntry[]>(() => {
+    const people: RecentEntry[] = history.map((p, i) => ({
+      kind: 'profile', ts: p.ts ?? -(i + 1), id: `p:${p.id}`, profile: p,
+    }));
+    const apps: RecentEntry[] = recentApps.map((a, i) => ({
+      kind: 'app', ts: a.ts ?? -(i + 1), id: `a:${a.id}`, app: a,
+    }));
+    return [...people, ...apps].sort((x, y) => y.ts - x.ts).slice(0, RECENT_LIMIT);
+  }, [history, recentApps]);
+
+  const recentKeyExtractor = useCallback((e: RecentEntry) => e.id, []);
+
+  const renderRecent = useCallback(({ item }: { item: RecentEntry }) => (
+    item.kind === 'profile' ? (
+      <RecentTile
+        emoji={item.profile.emoji}
+        label={item.profile.display_name || item.profile.username}
+        verified={item.profile.is_verified}
+        badge={item.profile.badge}
+        onPress={() => handleSelect(item.profile)}
+      />
+    ) : (
+      <RecentTile
+        emoji={item.app.emoji}
+        label={item.app.name}
+        onPress={() => openApp(item.app)}
+      />
+    )
+  ), [handleSelect, openApp]);
 
   const containerStyle = useMemo<ViewStyle>(() => ({
     flex: 1,
@@ -251,6 +392,13 @@ export default function SearchScreen() {
     paddingBottom: 100,
   }), [theme]);
 
+  // The strip's own padding. `base - 6` because each tile is centred inside RECENT_TILE_WIDTH,
+  // so the first avatar already carries ~6 pt of its own slack; using the full base inset
+  // would leave the row visibly further from the edge than the heading above it.
+  const recentStripStyle = useMemo(() => ({
+    paddingHorizontal: theme.spacing.base - 6,
+  }), [theme]);
+
   const ListHeader = useCallback(() => {
     const searchTerm = query.startsWith('#') ? query.slice(1) : query;
     const lower = searchTerm.toLowerCase();
@@ -260,7 +408,7 @@ export default function SearchScreen() {
       <View style={{ marginBottom: 16 }}>
         <Text variant="caption" weight="semibold" color={theme.colors.text.secondary} style={{ marginBottom: 8 }}>{t('search.mini_apps')}</Text>
         {matchedApps.slice(0, 3).map(app => (
-          <Pressable key={app.id} onPress={() => router.push({ pathname: '/mini-app', params: { url: encodeURIComponent(app.url), name: app.name, emoji: app.emoji } })} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8 }}>
+          <Pressable key={app.id} onPress={() => openApp(app)} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8 }}>
             <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: theme.colors.accent.primary + '12', alignItems: 'center', justifyContent: 'center', overflow: 'visible' }}>
               <RNText style={{ fontSize: 18 }} allowFontScaling={false}>{app.emoji}</RNText>
             </View>
@@ -269,7 +417,7 @@ export default function SearchScreen() {
         ))}
       </View>
     );
-  }, [query, miniApps, theme, t]);
+  }, [query, miniApps, theme, t, openApp]);
 
   const listEmpty = useMemo(() => (
     <View style={{ alignItems: 'center', paddingTop: 40 }}>
@@ -277,15 +425,14 @@ export default function SearchScreen() {
     </View>
   ), [theme, t]);
 
-  const showHistory = !query.trim() && history.length > 0;
+  const showRecents = !query.trim() && recents.length > 0;
 
   return (
     <View style={containerStyle}>
-      <View style={{ paddingHorizontal: theme.spacing.base, paddingBottom: theme.spacing.sm }}>
-        <Text variant="subheading" weight="bold">{t('search.title')}</Text>
-      </View>
-
-      {/* Search Input */}
+      {/* Search Input.
+          The screen used to carry a bold "Поиск" heading directly above this field, which
+          restated the field's own placeholder and pushed everything down by a line. The field
+          is the first thing on the screen now, matching the design. */}
       <View
         style={{
           flexDirection: 'row',
@@ -293,7 +440,7 @@ export default function SearchScreen() {
           paddingHorizontal: theme.spacing.base,
           paddingVertical: theme.spacing.sm,
           backgroundColor: theme.colors.background.elevated,
-          borderRadius: theme.borderRadius.pill,
+          borderRadius: 14,
           marginHorizontal: theme.spacing.base,
           marginTop: theme.spacing.sm,
           borderWidth: isFocused ? 1.5 : 1,
@@ -328,33 +475,48 @@ export default function SearchScreen() {
         )}
       </View>
 
-      {/* History */}
-      {showHistory && (
-        <View style={{ paddingHorizontal: theme.spacing.base, paddingTop: 16 }}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-            <Text variant="caption" weight="semibold" color={theme.colors.text.secondary}>{t('search.recent')}</Text>
-            <Pressable onPress={clearHistory}>
-              <Text variant="caption" color={theme.colors.accent.primary}>{t('search.clear')}</Text>
+      {/* ── Recent ──────────────────────────────────────────────────────────────
+          A HORIZONTAL strip of round avatars with the name underneath, holding people and
+          mini apps together, newest first. It replaces a vertical list of full-width rows
+          (avatar + name + @handle + a clock icon), which spent a whole screen on four
+          entries and read as a second set of search results rather than as shortcuts.
+
+          Horizontal FlatList rather than a ScrollView: `recents` is capped at RECENT_LIMIT,
+          so the strip can never be long, but the FlatList still costs nothing and keeps the
+          windowing props consistent with every other list in the app. */}
+      {showRecents && (
+        <View style={{ paddingTop: 18 }}>
+          <View
+            style={{
+              flexDirection: 'row',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              paddingHorizontal: theme.spacing.base,
+              marginBottom: 14,
+            }}
+          >
+            <Text variant="subheading" weight="bold">{t('search.recent')}</Text>
+            <Pressable onPress={clearHistory} hitSlop={10} accessibilityRole="button">
+              <Text variant="caption" color={theme.colors.text.tertiary}>{t('search.clear')}</Text>
             </Pressable>
           </View>
-          {history.map(item => (
-            <Pressable key={item.id} onPress={() => handleSelect(item)} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10 }}>
-              <Avatar emoji={item.emoji} size="sm" />
-              <View style={{ marginLeft: 10, flex: 1 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-                  <Text variant="caption" weight="semibold" numberOfLines={1} style={{ maxWidth: '70%' }}>{item.display_name}</Text>
-                  {item.is_verified && <VerifiedBadge size={10} />}
-                </View>
-                <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>@{item.username}</Text>
-              </View>
-              <Feather name="clock" size={14} color={theme.colors.text.tertiary} />
-            </Pressable>
-          ))}
+          <FlatList
+            data={recents}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            keyExtractor={recentKeyExtractor}
+            renderItem={renderRecent}
+            contentContainerStyle={recentStripStyle}
+            initialNumToRender={6}
+            maxToRenderPerBatch={4}
+            windowSize={3}
+            removeClippedSubviews={true}
+          />
         </View>
       )}
 
       {/* Results */}
-      {isLoading && !showHistory ? (
+      {isLoading && !showRecents ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
           <ActivityIndicator size="large" color={theme.colors.accent.primary} />
         </View>
