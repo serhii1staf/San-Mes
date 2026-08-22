@@ -8,6 +8,7 @@ import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
+import { bottomScrimColors, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
 import { BlurView } from 'expo-blur';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
@@ -903,7 +904,7 @@ export default function AIChatScreen() {
     <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
       {/* Header */}
       <View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100 }}>
-        <LinearGradient colors={[theme.colors.background.primary, theme.colors.background.primary, theme.colors.background.primary + '00']} locations={[0, 0.7, 1]} style={{ paddingTop: insets.top + 8, paddingBottom: 20, paddingHorizontal: 16 }}>
+        <LinearGradient colors={topScrimColors(theme.isDark, theme.colors.background.primary)} locations={SCRIM_LOCATIONS} style={{ paddingTop: insets.top + 8, paddingBottom: 20, paddingHorizontal: 16 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
             <Pressable onPress={() => router.back()} style={glassActive ? { borderRadius: 17 } : { borderRadius: 17, overflow: 'hidden' }}>
               {glassActive ? (
@@ -965,8 +966,8 @@ export default function AIChatScreen() {
           input container is gone, so messages scroll UNDER the input and
           dissolve into the background instead of hitting a hard bar edge. */}
       <LinearGradient
-        colors={[theme.colors.background.primary + '00', theme.colors.background.primary + 'B3', theme.colors.background.primary]}
-        locations={[0, 0.45, 1]}
+        colors={bottomScrimColors(theme.isDark, theme.colors.background.primary)}
+        locations={SCRIM_LOCATIONS}
         pointerEvents="none"
         style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: INPUT_BAR + insets.bottom + 56 }}
       />

@@ -9,7 +9,7 @@ import { Text } from './Text';
 import { CachedImage } from './CachedImage';
 import { useBrowserStore } from '../../store/browserStore';
 import { useMiniAppStore } from '../../store/miniAppStore';
-import { useSettingsStore } from '../../store/settingsStore';
+import { useEffectiveBrowserWidgetPosition } from '../../lib/browserWidget';
 import { useT } from '../../i18n/store';
 import { triggerHaptic } from '../../utils/haptics';
 
@@ -39,7 +39,7 @@ export function BrowserMiniBar() {
   const clearMinimized = useBrowserStore((s) => s.clearMinimized);
   // The bottom variant has its own component — bail out here so the absolute
   // overlay doesn't double up while the bottom band is also showing.
-  const position = useSettingsStore((s) => s.browserWidgetPosition);
+  const position = useEffectiveBrowserWidgetPosition();
 
   const slideAnim = useRef(new Animated.Value(-60)).current;
   const opacityAnim = useRef(new Animated.Value(0)).current;

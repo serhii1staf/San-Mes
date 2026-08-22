@@ -16,7 +16,7 @@ import { createRepost, createPost, uploadPostImage, joinImageUrls } from '../../
 import { uploadFailureMessageKey, type UploadFailureReason } from '../../src/lib/uploadFailure';
 import { uploadImageBatch } from '../../src/lib/uploadBatch';
 import { prependToPostCaches, updateInPostCaches } from '../../src/services/postCacheWrite';
-import { SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
+import { headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
 import { queueMutation, generateTempId } from '../../src/services/offlineQueue';
 import { sanitizeUserText } from '../../src/utils/sanitizeText';
 import { accountKey } from '../../src/services/cacheService';
@@ -566,8 +566,7 @@ export default function CreateScreen() {
 
   const bgColor = theme.colors.background.primary;
   const bgTransparent = bgColor + '00';
-  const headerContentHeight = insets.top + 48;
-  const headerGradientHeight = headerContentHeight + 28;
+  const { content: headerContentHeight, gradient: headerGradientHeight } = headerScrimHeights(insets.top);
   const headerTitle = repostData ? t('create.title.repost') : editingPostId ? t('create.title.edit') : t('create.title.new');
 
   return (

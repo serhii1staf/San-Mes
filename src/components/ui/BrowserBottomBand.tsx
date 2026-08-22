@@ -16,7 +16,7 @@ import { Text } from './Text';
 import { CachedImage } from './CachedImage';
 import { useBrowserStore } from '../../store/browserStore';
 import { useMiniAppStore } from '../../store/miniAppStore';
-import { useSettingsStore } from '../../store/settingsStore';
+import { useEffectiveBrowserWidgetPosition } from '../../lib/browserWidget';
 import { useT } from '../../i18n/store';
 import { triggerHaptic } from '../../utils/haptics';
 
@@ -98,8 +98,11 @@ export function BrowserBottomBand() {
   const minimizedEmoji = useBrowserStore((s) => s.minimizedEmoji);
   const isMiniApp = useBrowserStore((s) => s.isMiniApp);
   const clearMinimized = useBrowserStore((s) => s.clearMinimized);
-  const position = useSettingsStore((s) => s.browserWidgetPosition);
+  const position = useEffectiveBrowserWidgetPosition();
 
+  // `BOTTOM_BAND_ENABLED` is currently false, so `position` can never be 'bottom' and
+  // this band stays permanently invisible — see src/lib/browserWidget.ts for why, and
+  // for what has to change before it is switched back on.
   const visible = !!minimizedUrl && position === 'bottom';
 
   // The ONE piece of layout state. `true` reserves BAND_HEIGHT in the root flex

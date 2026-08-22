@@ -50,6 +50,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { KeyboardStickyView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
 import Reanimated, { useAnimatedStyle, interpolate, Extrapolation } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
+import { SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
 import { CachedImage } from '../../src/components/ui/CachedImage';
@@ -291,8 +292,8 @@ export default function ChatFullscreenScreen() {
           swipeable across the full height. */}
       <View style={[styles.header, { height: insets.top + 52 }]} pointerEvents="box-none">
         <LinearGradient
-          colors={[bgColor, bgColor + 'B3', bgColor + '00']}
-          locations={[0, 0.55, 1]}
+          colors={topScrimColors(theme.isDark, bgColor)}
+          locations={SCRIM_LOCATIONS}
           style={StyleSheet.absoluteFill}
           pointerEvents="none"
         />

@@ -17,6 +17,7 @@ import Reanimated, {
 import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
+import { headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
 import ContextMenu from 'react-native-context-menu-view';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
@@ -1544,8 +1545,7 @@ export default function MessagesScreen() {
 
   const bgColor = theme.colors.background.primary;
   const bgTransparent = theme.colors.background.primary + '00';
-  const headerContentHeight = insets.top + 48;
-  const headerGradientHeight = headerContentHeight + 28;
+  const { content: headerContentHeight, gradient: headerGradientHeight } = headerScrimHeights(insets.top);
 
   // ── "Active today" cluster next to the title ───────────────────────────────
   //
@@ -1676,8 +1676,8 @@ export default function MessagesScreen() {
             landed in that 28 pt band, i.e. the top of the search field. That is
             why the chat search "didn't press". */}
         <LinearGradient
-          colors={[bgColor, bgColor, bgTransparent]}
-          locations={[0, 0.55, 1]}
+          colors={topScrimColors(theme.isDark, bgColor)}
+          locations={SCRIM_LOCATIONS}
           style={StyleSheet.absoluteFill}
           pointerEvents="none"
         />

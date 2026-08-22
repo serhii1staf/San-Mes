@@ -46,6 +46,7 @@ import { useSettingsStore } from '../../src/store/settingsStore';
 import { showToast } from '../../src/store/toastStore';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { useT } from '../../src/i18n/store';
+import { headerScrimHeights } from '../../src/theme/scrim';
 
 // Emoji choices for the "link preview emoji" row — same set as the legacy
 // chat-settings screen so users get exactly the visual options they had
@@ -139,8 +140,7 @@ export default function ChatSettingsScreen() {
   const accent = theme.colors.accent.primary;
   const danger = '#FF3B30';
 
-  const headerContentHeight = insets.top + 48;
-  const headerGradientHeight = headerContentHeight + 28;
+  const { content: headerContentHeight, gradient: headerGradientHeight } = headerScrimHeights(insets.top);
   const bgTransparent = bgPrimary + '00';
 
   // ── Right-side metas for each row ──────────────────────────────────────

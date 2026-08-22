@@ -11,6 +11,7 @@ import { useSettingsStore } from '../../src/store/settingsStore';
 import { isNativeGlassCapable } from '../../src/components/ui/LiquidGlass';
 import { useT } from '../../src/i18n/store';
 import { PROFILE_THEMES_ENABLED } from '../../src/theme/profileThemes';
+import { bottomScrimColors, headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
 
 // Per-row tint pairs (icon color + soft tile bg) — picked to be readable in
 // both light and dark mode without being eye-piercing. Same hue family as
@@ -235,8 +236,7 @@ export default function SettingsScreen() {
 
   const bgColor = theme.colors.background.primary;
   const bgTransparent = theme.colors.background.primary + '00';
-  const headerContentHeight = insets.top + 48;
-  const headerGradientHeight = headerContentHeight + 28;
+  const { content: headerContentHeight, gradient: headerGradientHeight } = headerScrimHeights(insets.top);
 
   const sectionCardStyle: ViewStyle = {
     backgroundColor: theme.colors.background.elevated,
@@ -255,8 +255,8 @@ export default function SettingsScreen() {
       {/* Gradient fade header */}
       <View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100, height: headerGradientHeight }} pointerEvents="box-none">
         <LinearGradient
-          colors={[bgColor, bgColor, bgTransparent]}
-          locations={[0, 0.55, 1]}
+          colors={topScrimColors(theme.isDark, bgColor)}
+          locations={SCRIM_LOCATIONS}
           style={StyleSheet.absoluteFill}
         />
         <View
@@ -528,8 +528,8 @@ export default function SettingsScreen() {
           ScrollView; box-none so it never blocks taps on the last rows. */}
       <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: insets.bottom + 48 }} pointerEvents="none">
         <LinearGradient
-          colors={[bgTransparent, bgColor + 'B3', bgColor]}
-          locations={[0, 0.45, 1]}
+          colors={bottomScrimColors(theme.isDark, bgColor)}
+          locations={SCRIM_LOCATIONS}
           style={StyleSheet.absoluteFill}
         />
       </View>
