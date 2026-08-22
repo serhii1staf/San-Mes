@@ -22,7 +22,7 @@ import Animated, {
   Extrapolation,
 } from 'react-native-reanimated';
 import { useTheme } from '../../theme';
-import { bottomScrimColors, SCRIM_LOCATIONS } from '../../theme/scrim';
+import { bottomScrimColors, BOTTOM_CHROME_SCRIM_HEIGHT, SCRIM_LOCATIONS } from '../../theme/scrim';
 import { BOTTOM_CHROME_SPRING } from '../../theme/motion';
 import { triggerHaptic } from '../../utils/haptics';
 import { GlassSurface, NativeGlassView, useLiquidGlassActive } from '../ui/LiquidGlass';
@@ -99,7 +99,19 @@ export function getTabBarHeight(insetsBottom: number): number {
  * looked different from the feed and why the darkening reached above the navigation.
  * If a screen looks like it is missing a bottom scrim, the fix is here, not there.
  */
-export const BAR_FADE_HEIGHT = TAB_BAR_INNER_HEIGHT + BAR_BOTTOM_MARGIN;
+export const BAR_FADE_HEIGHT = BOTTOM_CHROME_SCRIM_HEIGHT;
+
+// Guard: `BOTTOM_CHROME_SCRIM_HEIGHT` is a literal in src/theme/scrim.ts because the chat
+// and comment screens need it without importing the tab bar. It must stay equal to the
+// geometry it describes — the capsule plus its bottom margin — or those screens' scrims stop
+// matching this one, which is the exact failure the shared constant exists to prevent.
+if (__DEV__ && BOTTOM_CHROME_SCRIM_HEIGHT !== TAB_BAR_INNER_HEIGHT + BAR_BOTTOM_MARGIN) {
+  console.warn(
+    `[CustomTabBar] BOTTOM_CHROME_SCRIM_HEIGHT (${BOTTOM_CHROME_SCRIM_HEIGHT}) no longer equals ` +
+      `TAB_BAR_INNER_HEIGHT + BAR_BOTTOM_MARGIN (${TAB_BAR_INNER_HEIGHT + BAR_BOTTOM_MARGIN}). ` +
+      'Update src/theme/scrim.ts — every bottom scrim in the app reads that constant.',
+  );
+}
 
 // Liquid feel — pill follows finger 1:1, but stretches and never switches tabs mid-drag
 const PAN_MIN_DISTANCE = 6;

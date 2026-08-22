@@ -1320,10 +1320,30 @@ export default function ProfileScreen() {
         // RAF without stealing time from a swipe gesture. The user can
         // briefly see empty space at the bottom while flicking fast,
         // but no stutter — a strict win on weak devices.
+        // ── Virtualisation, retuned for scrolling UP ────────────────────────────
+        //
+        // Was 2 / 1 / 3 with a 100 ms batching period, tightened over several passes to keep
+        // the mount cost off the open frame. That works going down and is the direct cause of
+        // the judder going UP.
+        //
+        // maxToRenderPerBatch: 1 with updateCellsBatchingPeriod: 100 means ONE card is
+        // rendered per 100 ms. Scrolling up past cards that have been unmounted, the list can
+        // only refill at 10 cards/second, so it hands back blank space and then pops a card
+        // in. Every pop-in is a card of unknown height replacing a placeholder, so the content
+        // height changes, the list corrects the scroll offset, and the correction moves more
+        // cells across the boundary. That is the up/down oscillation.
+        //
+        // windowSize: 3 keeps only ~1.5 viewports mounted, so cards are discarded almost as
+        // soon as they leave the screen and the refill above is needed constantly.
+        //
+        // 2 / 3 / 7 keeps first paint identical (initialNumToRender is unchanged, so the open
+        // frame carries the same two cards) while giving the list enough retained cells and
+        // enough refill rate that scrolling back up finds them already mounted. FlatList's
+        // own default windowSize is 21, so 7 is still conservative.
         initialNumToRender={2}
-        maxToRenderPerBatch={1}
-        windowSize={3}
-        updateCellsBatchingPeriod={100}
+        maxToRenderPerBatch={3}
+        windowSize={7}
+        updateCellsBatchingPeriod={50}
         // ── removeClippedSubviews is OFF, deliberately ──────────────────────────
         //
         // Scrolling DOWN was fine; scrolling back UP juddered, jumping up and down

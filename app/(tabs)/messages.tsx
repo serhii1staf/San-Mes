@@ -1216,10 +1216,18 @@ export default function MessagesScreen() {
   activeTabRef.current = activeTab;
 
   useEffect(() => {
-    editProgress.value = withTiming(editMode ? 1 : 0, {
-      duration: 220,
-      easing: REasing.out(REasing.cubic),
-    });
+    // ── The curve was the problem, not the mechanism ──────────────────────────
+    //
+    // The rows already slide by transform rather than by an animated width, so the motion
+    // costs no layout. It still read as a jump, and the reason is `out(cubic)`: its
+    // derivative at t=0 is 3, so a 34 pt slide starts at three times its average speed. The
+    // row leaves its old position instantly and then crawls into the new one — which is
+    // exactly what "it jumps" describes, even though nothing snaps.
+    //
+    // `BOTTOM_CHROME_SPRING` is the same spring the action bar uses, and that motion was
+    // the one part of this transition the user said felt right. A spring starts from REST:
+    // zero initial velocity, so the slide begins where the eye expects it to.
+    editProgress.value = withSpring(editMode ? 1 : 0, BOTTOM_CHROME_SPRING);
   }, [editMode, editProgress]);
 
   // The tab bar lives OUTSIDE this screen's tree, so hiding it goes through a
