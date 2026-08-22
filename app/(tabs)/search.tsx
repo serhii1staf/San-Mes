@@ -18,13 +18,7 @@ import { perfMonitor } from '../../src/services/perfMonitor';
 import { useSettingsStore } from '../../src/store/settingsStore';
 import { ScreenScrim } from '../../src/components/ui/ScreenScrim';
 
-/**
- * Height of the bottom scrim on tab screens.
- *
- * Matches `BAR_FADE_HEIGHT` in CustomTabBar so the ramp behind the floating bar and
- * the ramp on the screen behind it line up instead of producing two visible edges.
- */
-const BOTTOM_SCRIM_HEIGHT = 132;
+import { BAR_FADE_HEIGHT } from '../../src/components/navigation/CustomTabBar';
 
 const SEARCH_HISTORY_KEY = '@san:search_history';
 
@@ -301,7 +295,7 @@ export default function SearchScreen() {
           the navigation. Giving search a top scrim means first converting its header
           into a floating overlay and re-insetting the list; that is a separate change,
           not something to fake with a gradient. */}
-      <ScreenScrim bottomHeight={BOTTOM_SCRIM_HEIGHT} />
+      <ScreenScrim bottomHeight={BAR_FADE_HEIGHT} />
       <View style={{ paddingHorizontal: theme.spacing.base, paddingBottom: theme.spacing.sm }}>
         <Text variant="subheading" weight="bold">{t('search.title')}</Text>
       </View>

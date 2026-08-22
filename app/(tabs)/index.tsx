@@ -31,7 +31,18 @@ import { useT } from '../../src/i18n/store';
 import { perfMonitor } from '../../src/services/perfMonitor';
 import { useSettingsStore } from '../../src/store/settingsStore';
 import { PixelIcon } from '../../src/components/pixel-icons/PixelIcon';
-import { FadingBlurHeader, isFadingBlurAvailable } from '../../src/components/ui/FadingBlurHeader';
+// The dark scrim gradient is now rendered UNCONDITIONALLY beneath the frosted blur,
+// where it used to be a fallback for when the blur was unavailable
+// (`!isFadingBlurAvailable() && …`).
+//
+// That guard is why the top of the screen looked milky-white while the bottom looked
+// dark: with the blur present the gradient was skipped entirely, so the only thing at
+// the top was `systemChromeMaterial`, which is a LIGHT frost. The bottom, having no
+// blur, showed the dark ramp. Same app, two different treatments at the two edges.
+//
+// Gradient first, blur on top: the darkness comes from the ramp, the frost from the
+// blur, and both edges now read the same.
+import { FadingBlurHeader } from '../../src/components/ui/FadingBlurHeader';
 
 const FEED_CACHE_KEY = '@san:feed_posts';
 const FEED_LIMIT = 20;
@@ -995,9 +1006,7 @@ export default function FeedScreen() {
     return (
       <View style={{ flex: 1, backgroundColor: bgColor }}>
         <View style={[styles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">
-          {!isFadingBlurAvailable() && (
             <LinearGradient colors={topScrim} locations={SCRIM_LOCATIONS} style={StyleSheet.absoluteFill} />
-          )}
           <FadingBlurHeader isDark={theme.isDark} direction="down" height={insets.top + 38} fadeStart={0.5} blendColor={bgColor + '8C'} />
           <View style={[styles.headerContent, { paddingTop: insets.top }]}>
             <Pressable onLongPress={onTitleLongPress} delayLongPress={350} hitSlop={6} style={styles.titleRow}>
@@ -1020,9 +1029,7 @@ export default function FeedScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: bgColor }}>
       <View style={[styles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">
-        {!isFadingBlurAvailable() && (
           <LinearGradient colors={topScrim} locations={SCRIM_LOCATIONS} style={StyleSheet.absoluteFill} />
-        )}
         <FadingBlurHeader isDark={theme.isDark} direction="down" height={insets.top + 38} fadeStart={0.5} blendColor={bgColor + '8C'} />
         <View style={[styles.headerContent, { paddingTop: insets.top }]} pointerEvents="auto">
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>

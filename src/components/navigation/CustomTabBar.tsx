@@ -83,9 +83,19 @@ export function getTabBarHeight(insetsBottom: number): number {
     (Platform.OS === 'android' ? insetsBottom : 0)
   );
 }
-// Height of the bottom background-fade behind the floating bar. Mirrors the
-// home header fade (~bar height + margin + a soft fade above the bar top).
-const BAR_FADE_HEIGHT = 132;
+/**
+ * Height of the bottom scrim behind the floating bar.
+ *
+ * Was 132, which is well above the bar's own height, so the ramp climbed noticeably
+ * past the top of the navigation and read as darkening the content above it rather
+ * than sitting behind it. Reported as "it extends over the navigation, it should be
+ * level with it".
+ *
+ * Now the bar's height plus a short ramp, so the fade finishes just above the bar
+ * instead of well above it. Exported so screens can size their own bottom scrim to
+ * exactly the same figure — two ramps of different heights produce two visible edges.
+ */
+export const BAR_FADE_HEIGHT = TAB_BAR_INNER_HEIGHT + BAR_BOTTOM_MARGIN + 16;
 
 // Liquid feel — pill follows finger 1:1, but stretches and never switches tabs mid-drag
 const PAN_MIN_DISTANCE = 6;

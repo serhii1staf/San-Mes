@@ -43,19 +43,31 @@ export const SCRIM_LOCATIONS = [0, 0.5, 1] as const;
  * `backgroundColor` must be a 6-digit hex (`#RRGGBB`); alpha is appended.
  */
 export function scrimStops(isDark: boolean, backgroundColor: string): ScrimStops {
+  // Black in BOTH themes.
+  //
+  // The light theme used to ramp toward the background colour instead, on the
+  // reasoning that black over a light surface reads as a smear. In practice that made
+  // the scrim invisible in light mode — it was the background fading into itself — and
+  // it meant the two themes had structurally different chrome. The instruction was
+  // explicit and repeated: dark, like the one under the bottom navigation, everywhere.
+  //
+  // Light mode gets a gentler ramp than dark mode, because the same alpha over a white
+  // surface is visually much stronger than over a near-black one. Same colour, same
+  // structure, calibrated per theme.
+  void backgroundColor;
   if (isDark) {
     return {
       top: 'rgba(0,0,0,0.28)',
-      mid: 'rgba(0,0,0,0.5)',
-      end: 'rgba(0,0,0,0.82)',
+      mid: 'rgba(0,0,0,0.55)',
+      end: 'rgba(0,0,0,0.86)',
       clear: 'rgba(0,0,0,0)',
     };
   }
   return {
-    top: backgroundColor + '73',
-    mid: backgroundColor + 'A6',
-    end: backgroundColor + 'F2',
-    clear: backgroundColor + '00',
+    top: 'rgba(0,0,0,0.14)',
+    mid: 'rgba(0,0,0,0.3)',
+    end: 'rgba(0,0,0,0.55)',
+    clear: 'rgba(0,0,0,0)',
   };
 }
 
