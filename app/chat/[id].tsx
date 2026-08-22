@@ -534,6 +534,28 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
     [onOpenFullscreen, message],
   );
 
+  // ── Derived-from-text work, memoized per message ────────────────────────────
+  //
+  // Both of these ran on EVERY render of every mounted bubble. Neither is expensive alone,
+  // but they are the kind of cost that scales the wrong way: `renderItem`'s identity changes
+  // whenever chat settings, bubble colours, search state or the highlight id move, and each
+  // time FlashList re-runs it for every mounted cell. So a search keystroke re-formatted a
+  // date and ran two regexes over the text of a dozen bubbles, none of which had changed.
+  //
+  // `createdAt` and `text` are immutable for a given message, so the results are cacheable
+  // for the lifetime of that message — and because `parseMessage` hands out a stable object
+  // per message id (WeakMap-cached), these memos survive re-renders and only recompute when
+  // the message itself actually changes.
+  const timeLabel = useMemo(() => formatMessageTime(message.createdAt), [message.createdAt]);
+
+  // Link preview target. `hasCodeBlock` guards against unfurling a URL that is part of a
+  // fenced code block, so both regexes belong to the same decision and are memoized together.
+  // Reuses the `hasImages` computed further up rather than recomputing the same test.
+  const previewLink = useMemo(
+    () => (!hasImages && !hasCodeBlock(message.text) ? extractFirstUrl(message.text) : null),
+    [hasImages, message.text],
+  );
+
   return (
     <View style={bubbleStyles.row}>
       <Reanimated.View style={[bubbleStyles.swipeIcon, replyIconAnimStyle]}>
@@ -690,18 +712,15 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
             {message.text ? (
               <FormattedText color={bodyTextColor} linkColor={linkTextColor} style={{ fontSize, fontFamily: fontFamilyStyle }}>{message.text}</FormattedText>
             ) : null}
-            {(() => {
-              const link = (!message.imageUrls || message.imageUrls.length === 0) && !hasCodeBlock(message.text) ? extractFirstUrl(message.text) : null;
-              return link ? (
-                <View style={bubbleStyles.linkPreviewWrap}>
-                  <LinkPreview
-                    url={link}
-                    textColor={coloredBubble ? sideTextColor : undefined}
-                    emoji={linkEmoji}
-                  />
-                </View>
-              ) : null;
-            })()}
+            {previewLink ? (
+              <View style={bubbleStyles.linkPreviewWrap}>
+                <LinkPreview
+                  url={previewLink}
+                  textColor={coloredBubble ? sideTextColor : undefined}
+                  emoji={linkEmoji}
+                />
+              </View>
+            ) : null}
             {/* Timestamp row, with the full-screen button immediately to its LEFT.
                 The button used to be an absolute badge floating on the bubble's
                 outer top corner; that read as a sticker pasted over the message.
@@ -719,7 +738,7 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
                 <Feather name="maximize-2" size={11} color={timeColor} />
               </Pressable>
               <Text variant="caption" color={timeColor} style={bubbleStyles.timestampInline}>
-                {formatMessageTime(message.createdAt)}
+                {timeLabel}
               </Text>
             </View>
           </View>
