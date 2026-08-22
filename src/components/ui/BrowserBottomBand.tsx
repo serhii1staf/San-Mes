@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { View, Pressable, LayoutAnimation, StyleSheet, Text as RNText } from 'react-native';
+import { View, Pressable, StyleSheet, Text as RNText } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -60,15 +60,6 @@ import { triggerHaptic } from '../../utils/haptics';
  */
 const BAND_HEIGHT = 56;
 
-/**
- * How far the band tucks up under the tab bar's bottom margin.
- *
- * The floating tab bar carries a 24 pt bottom margin of its own. Stacked in the flex
- * column that margin sat BETWEEN the navigation and this band, so the widget appeared
- * to hang well below the bar. Pulling the band up by most of that margin closes the gap
- * without touching the tab bar's own spacing on screens where no band is present.
- */
-const BAND_TUCK = 16;
 const ENTER_DURATION = 420;
 /**
  * Exit is now LONGER than it was, and longer than the enter.
@@ -90,12 +81,6 @@ const FADE_IN_DURATION = 260;
  * end keeps the movement legible all the way down.
  */
 const FADE_OUT_DURATION = 380;
-/**
- * How long the surrounding content takes to close the gap after the band has left.
- *
- * Runs natively via `LayoutAnimation`, so this is not a per-frame JS cost.
- */
-const RELEASE_EASE_MS = 280;
 
 export function BrowserBottomBand() {
   const theme = useTheme();
@@ -122,33 +107,28 @@ export function BrowserBottomBand() {
   // never collapses out from under a still-visible band.
   const [reserved, setReserved] = useState(visible);
 
-  /**
-   * Ease the surrounding content instead of snapping it.
-   *
-   * `LayoutAnimation` is the right tool here and it is important to be precise about
-   * why, because a previous commit removed layout animation from a panel for
-   * performance and the lesson was over-generalised:
-   *
-   *   - What was expensive was animating a height through Reanimated, i.e. a NEW
-   *     layout pass every frame driven from JS.
-   *   - `LayoutAnimation.configureNext` is the opposite: ONE call that hands the
-   *     interpolation to the platform's own layout animator. The frames are produced
-   *     natively, with no JS involvement and no per-frame commit from our side.
-   *
-   * This is also what makes it match Telegram's mini-player, where the content inset
-   * eases in step with the bar rather than jumping when it finishes.
-   */
-  const scheduleLayoutEase = useCallback((duration: number) => {
-    LayoutAnimation.configureNext({
-      duration,
-      update: { type: LayoutAnimation.Types.easeInEaseOut, property: LayoutAnimation.Properties.scaleY },
-    });
-  }, []);
-
+  // ── WHY THERE IS NO `LayoutAnimation` HERE ──────────────────────────────────
+  //
+  // I used `LayoutAnimation.configureNext` to ease the content as the reserved height
+  // was released, so the input bar and tab bar would not snap. It did smooth that, and
+  // it broke other things, because of something the API's name hides:
+  //
+  //   `configureNext` is GLOBAL for the next layout commit. It is not scoped to this
+  //   component. Every other view whose frame changes in that same commit gets
+  //   animated too — in a chat that means message rows, the input bar's own growth,
+  //   the keyboard-driven shifts. Unrelated things start sliding.
+  //
+  // So the content settles in one step. That is a smaller flaw than animating layout
+  // across the whole tree, and it is the behaviour this screen had before I touched it.
+  //
+  // Doing it properly means the band publishing its height as a shared value and each
+  // affected surface applying its OWN transform — no layout involved anywhere. That is
+  // a real change to how the chat composer and tab bar are positioned, not a
+  // one-line easing, and it is not something to bolt on while other regressions are
+  // outstanding.
   const releaseReserved = useCallback(() => {
-    scheduleLayoutEase(RELEASE_EASE_MS);
     setReserved(false);
-  }, [scheduleLayoutEase]);
+  }, []);
 
   // Slide offset in points: 0 = docked, BAND_HEIGHT = fully below the clip box.
   const slideSV = useSharedValue(visible ? 0 : BAND_HEIGHT);
@@ -159,7 +139,6 @@ export function BrowserBottomBand() {
       // Reserve the space first (single layout commit). The band starts fully below
       // its own clip box, so nothing is visible until the slide brings it in — no
       // flash of a solid rectangle in the reserved gap.
-      scheduleLayoutEase(ENTER_DURATION);
       setReserved(true);
       slideSV.value = BAND_HEIGHT;
       slideSV.value = withTiming(0, {
@@ -192,7 +171,7 @@ export function BrowserBottomBand() {
         },
       );
     }
-  }, [visible, slideSV, opacitySV, scheduleLayoutEase, releaseReserved]);
+  }, [visible, slideSV, opacitySV, releaseReserved]);
 
   // Compositor-only: opacity + translateY. No view's frame changes, so showing or
   // hiding the card costs no layout pass anywhere in the tree.
@@ -228,15 +207,11 @@ export function BrowserBottomBand() {
     // its height is plain React state so it commits once per transition rather than
     // once per frame.
     <View
-      style={{
-        height: reserved ? BAND_HEIGHT : 0,
-        overflow: 'hidden',
-        // Tuck upward under the tab bar's own bottom margin (24 pt), which was
-        // otherwise added on top of the band and left a visibly wide gap between the
-        // navigation and the widget. Negative margin costs nothing — it does not
-        // animate and is resolved in the same single layout commit as the height.
-        marginTop: reserved ? -BAND_TUCK : 0,
-      }}
+      // No negative margin. I used `marginTop: -16` to close the gap to the tab bar;
+      // it pulled the band up over the bottom 16 pt of the Stack, which is where the
+      // floating tab bar lives, so the band clipped the navigation. The gap is the tab
+      // bar's own bottom margin and has to be addressed there, not by overlapping it.
+      style={{ height: reserved ? BAND_HEIGHT : 0, overflow: 'hidden' }}
       pointerEvents={visible ? 'auto' : 'none'}
     >
       {/* Backing scrim, UNROUNDED, filling the whole strip.
