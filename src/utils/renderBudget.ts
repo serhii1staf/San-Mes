@@ -50,18 +50,48 @@ export const BASELINE_BUDGET: RenderBudget = {
 };
 
 /**
- * Reduced budget for weak hardware and for Low Power Mode.
+ * INVISIBLE reductions, applied on weak hardware.
  *
- * Each number is a halving rather than a token trim, because the goal is to fit a
- * frame budget that the OS has genuinely cut, not to look like we tried:
- *   - drawDistance 250 → 120: roughly one screen of pre-render instead of two,
- *     so a fling triggers about half as many simultaneous image decodes.
- *   - heroWarmCount 4 → 2 and policy → 'disk': fewer bytes AND no eager decode.
+ * Every field here changes how much work happens per frame WITHOUT changing what
+ * the app looks like:
+ *   - drawDistance 250 → 120: roughly one screen of pre-render instead of two, so
+ *     a fling triggers about half as many simultaneous image decodes.
+ *   - heroWarmCount 4 → 2 and policy → 'disk': fewer bytes AND no eager decode,
+ *     which is the expensive half.
  *   - carousel mounts the visible slide plus one neighbour instead of all of them.
- *   - glass/blur off: these are per-frame GPU compositing costs, and a plain
- *     gradient fallback for both already exists in the codebase.
+ *
+ * Glass, blur and ambient particles are deliberately LEFT ON here — see
+ * `LOW_POWER_BUDGET` for why.
  */
-export const REDUCED_BUDGET: RenderBudget = {
+export const WEAK_DEVICE_BUDGET: RenderBudget = {
+  drawDistance: 120,
+  heroWarmCount: 2,
+  warmCachePolicy: 'disk',
+  carouselEagerSlides: 2,
+  glassAllowed: true,
+  fadingBlurAllowed: true,
+  ambientParticles: true,
+};
+
+/**
+ * Low Power Mode: the invisible reductions PLUS the visible ones.
+ *
+ * WHY THE SPLIT EXISTS
+ *   An earlier version of this table switched glass, blur and ambient particles off
+ *   on weak hardware too. That was wrong. Turning off glass changes how the app
+ *   LOOKS, and an owner of an older phone did not ask for a different-looking app —
+ *   they asked for a smooth one. Shipping a silent visual downgrade to a whole
+ *   device class is a redesign nobody agreed to, and it is immediately noticeable
+ *   (corner treatments and surface sizes differ between the glass and fallback
+ *   paths).
+ *
+ *   Low Power Mode is different, and is the case the user actually asked about. There
+ *   the OS itself has cut the CPU/GPU budget and capped the refresh rate, the state
+ *   is explicitly chosen by the user, and it ends the moment they charge the device.
+ *   Dropping per-frame GPU compositing there is a fair trade for keeping motion
+ *   smooth; dropping it permanently because of a device's year class is not.
+ */
+export const LOW_POWER_BUDGET: RenderBudget = {
   drawDistance: 120,
   heroWarmCount: 2,
   warmCachePolicy: 'disk',
@@ -82,10 +112,13 @@ export interface RenderBudgetInputs {
  * Pure and total. `powerMode === 'unknown'` deliberately does NOT degrade: that is
  * the state of every binary currently installed, and an OTA update must not change
  * how they behave.
+ *
+ * Low Power Mode wins over device class because it is the strictly stronger
+ * constraint.
  */
 export function renderBudget({ isWeak, powerMode }: RenderBudgetInputs): RenderBudget {
-  const degraded = isWeak || powerMode === 'low_power';
-  return degraded ? REDUCED_BUDGET : BASELINE_BUDGET;
+  if (powerMode === 'low_power') return LOW_POWER_BUDGET;
+  return isWeak ? WEAK_DEVICE_BUDGET : BASELINE_BUDGET;
 }
 
 /**

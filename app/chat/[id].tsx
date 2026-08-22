@@ -2774,11 +2774,23 @@ export default function ChatScreen() {
   const onJumpToPinned = useCallback(() => {
     if (!activePin) return;
     triggerHaptic('light');
-    scrollToIndex(activePin.index);
+    // Jump BY MESSAGE ID, not by the raw index from `resolvePinned`.
+    //
+    // `activePin.index` is an index into `chatMessages` — the full history — while
+    // the list renders `windowedMessages`, a tail window of it. Passing the full
+    // history index straight to `scrollToIndex` therefore aimed at the wrong row
+    // whenever the window did not start at 0, which is the normal case: tapping a
+    // pinned message appeared to do nothing.
+    //
+    // `scrollToMessageIdRef` resolves the target against the data actually being
+    // rendered, lazily hydrates the full history when the pin is older than the
+    // loaded seed, and flashes the jump highlight so the jump is visible. All of
+    // that already existed for reply-jumps; the pinned bar just was not using it.
+    scrollToMessageIdRef.current(activePin.message.id);
     if (pinnedResolved.length > 1) {
       setPinCursor((prev) => (prev + 1) % pinnedResolved.length);
     }
-  }, [activePin, pinnedResolved.length, scrollToIndex]);
+  }, [activePin, pinnedResolved.length]);
 
   const handleSend = useCallback(async (rawText: string) => {
     const hasImages = pendingImages.length > 0;
