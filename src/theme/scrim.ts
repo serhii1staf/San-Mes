@@ -305,8 +305,24 @@ export const HEADER_SCRIM_OVERHANG = 0;
  * higher than the content". Home passes `content` straight through as `paddingTop`, the two
  * edges coincide, and that is the whole reason its header reads as one continuous piece.
  */
-export function headerScrimHeights(insetsTop: number): { content: number; gradient: number } {
-  const content = insetsTop + HEADER_ROW_HEIGHT;
+export function headerScrimHeights(
+  insetsTop: number,
+  /**
+   * Extra height for screens whose header carries a second row of chrome under the title.
+   *
+   * Applied to BOTH `content` and `gradient`, never to one of them. That coupling is the
+   * whole point: the gradient's bottom edge and the first row of content have to coincide,
+   * or you get either a lit strip below the ramp (spacer taller than gradient) or dimming
+   * laid over the transcript (gradient taller than spacer). Both have been reported, from
+   * exactly those two mistakes.
+   *
+   * Chat and fullscreen pass 8 so the ramp reaches a little further down past the back pill,
+   * which is what "the top dimming should sit a bit lower" asks for, and the transcript
+   * starts 8 pt lower with it so the two edges stay together.
+   */
+  extra = 0,
+): { content: number; gradient: number } {
+  const content = insetsTop + HEADER_ROW_HEIGHT + extra;
   return { content, gradient: content + HEADER_SCRIM_OVERHANG };
 }
 
@@ -344,12 +360,18 @@ export const COMPOSER_PADDING_TOP = 8;
  * height would mean animating a gradient's frame on every keystroke.
  */
 export function composerScrimHeight(insetsBottom: number, minBottomPad = 12): number {
-  return (
-    COMPOSER_PADDING_TOP +
-    COMPOSER_FIELD_HEIGHT +
-    Math.max(insetsBottom, minBottomPad) +
-    COMPOSER_SCRIM_OVERHANG
-  );
+  // ── `COMPOSER_PADDING_TOP` IS DELIBERATELY NOT INCLUDED ─────────────────────
+  //
+  // It was, and that put the ramp's top edge 8 pt ABOVE the top of the input field —
+  // the composer's own 8 pt of breathing room sits between the field and the transcript,
+  // and covering it means the ramp starts over the messages rather than over the chrome.
+  // Reported precisely: "raise it so it sits right under the field, but not above the
+  // field."
+  //
+  // So the scrim now spans the FIELD plus the safe-area padding beneath it, and its top
+  // edge lands exactly on the field's top edge. The 8 pt gap above stays undimmed, which
+  // is what makes the field read as floating on the ramp the way the tab bar capsule does.
+  return COMPOSER_FIELD_HEIGHT + Math.max(insetsBottom, minBottomPad) + COMPOSER_SCRIM_OVERHANG;
 }
 
 /**

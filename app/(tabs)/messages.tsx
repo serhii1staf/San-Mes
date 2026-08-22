@@ -25,6 +25,7 @@ import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { useLiquidGlassActive, NativeGlassView, GlassBg } from '../../src/components/ui/LiquidGlass';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
+import { CollapsingSearchField, SEARCH_ZONE_HEIGHT } from '../../src/components/ui/CollapsingSearchField';
 import { UserBadge } from '../../src/components/ui/UserBadge';
 import { useChatStore, useEntityStore, useAuthStore } from '../../src/store';
 import { useBlockedUsersStore } from '../../src/store/blockedUsersStore';
@@ -885,109 +886,10 @@ const PinMarker = React.memo(function PinMarker({
   );
 });
 
-// ── Collapsing search zone geometry ─────────────────────────────────────────
-//
-// Both values are CONSTANTS on purpose. The zone's outer height must never change,
-// for the reason spelled out on `ChatSearchField` below.
-const SEARCH_FIELD_HEIGHT = 44;
-const SEARCH_ZONE_HEIGHT = SEARCH_FIELD_HEIGHT + 8; // + bottom gap to the chips
-
-/**
- * The "search conversations" field, with a Telegram-style squash on scroll.
- *
- * ── HOW THE COLLAPSE AVOIDS THE OSCILLATION IT USED TO HAVE ───────────────────
- *
- * Two earlier attempts failed, and the reasons are worth keeping written down:
- *
- *  1. Animating the zone's own HEIGHT on a scroll THRESHOLD. Collapsing changed the
- *     layout, the layout changed the scroll offset, the new offset re-evaluated the
- *     threshold, and the threshold changed the height again — a feedback loop, felt
- *     as "I scroll a little and it tries to close then snaps back open". Tuning the
- *     threshold only moves the oscillation.
- *  2. Putting the field in the list's `ListHeaderComponent` so it scrolled away
- *     naturally. That cannot oscillate, but it puts the field BELOW the category
- *     chips, which is the wrong order.
- *
- * What is here now keeps the right order (field above chips) and cannot oscillate,
- * because of one invariant: **the layout never changes.**
- *
- *  • The zone is a fixed `SEARCH_ZONE_HEIGHT` box. Always.
- *  • `progress` is a CONTINUOUS function of the scroll offset (not a threshold),
- *    computed on the UI thread by an `useAnimatedScrollHandler` worklet. No JS
- *    state, so no re-render can be triggered by scrolling.
- *  • The squash and the upward slide of the chips and the list are TRANSFORMS plus a
- *    height change *inside* the fixed box. Transforms do not participate in layout,
- *    so the scroll offset can never be perturbed by the animation — which removes
- *    the feedback edge entirely rather than damping it.
- *
- * Because the offset drives the visual state directly and monotonically, a 2-pixel
- * scroll produces 2 pixels of squash: it tracks the finger, which is what the
- * "more beautiful" version is.
- *
- * NOTE ON OPACITY: fading is safe here specifically because this component renders
- * no `GlassView` — an opacity of 0 anywhere above a glass surface kills the glass
- * (expo/expo#41024), which is why every other hide in this app is a translate.
- *
- * Memoized on primitives + stable callbacks so typing in it never re-renders the
- * rows below; `progress` is a shared value, so it is stable by nature.
- */
-const ChatSearchField = React.memo(function ChatSearchField({
-  value,
-  onChangeText,
-  placeholder,
-  theme,
-  progress,
-}: {
-  value: string;
-  onChangeText: (v: string) => void;
-  placeholder: string;
-  theme: any;
-  progress: SharedValue<number>;
-}) {
-  // Height squash + fade, both inside the fixed-height zone.
-  const pillStyle = useAnimatedStyle(() => ({
-    height: SEARCH_FIELD_HEIGHT * (1 - progress.value),
-    opacity: interpolate(progress.value, [0, 0.65], [1, 0], Extrapolation.CLAMP),
-  }));
-
-  return (
-    <View style={{ height: SEARCH_ZONE_HEIGHT, paddingHorizontal: theme.spacing.base }}>
-      <Reanimated.View
-        style={[
-          {
-            flexDirection: 'row',
-            alignItems: 'center',
-            backgroundColor: theme.colors.background.elevated,
-            borderRadius: theme.borderRadius.pill,
-            paddingHorizontal: theme.spacing.base,
-            borderWidth: 1,
-            borderColor: theme.colors.border.light,
-            overflow: 'hidden',
-          },
-          pillStyle,
-        ]}
-      >
-        <Feather name="search" size={16} color={theme.colors.text.tertiary} />
-        <TextInput
-          value={value}
-          onChangeText={onChangeText}
-          placeholder={placeholder}
-          placeholderTextColor={theme.colors.text.tertiary}
-          style={{
-            flex: 1,
-            marginLeft: theme.spacing.sm,
-            fontSize: theme.typography.sizes.base,
-            fontFamily: theme.fontFamily.regular,
-            color: theme.colors.text.primary,
-            // No vertical padding: the pill owns the height, and padding here would
-            // fight the squash.
-            paddingVertical: 0,
-          }}
-        />
-      </Reanimated.View>
-    </View>
-  );
-});
+// The collapsing search field and its two geometry constants now live in
+// src/components/ui/CollapsingSearchField.tsx, so the Search tab can use the SAME component
+// instead of a second copy that drifts. The long design note travelled with it.
+const ChatSearchField = CollapsingSearchField;
 
 /**
  * Hairline between rows. Reads the same shared `editProgress` as the rows so its

@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { View, Pressable, ViewStyle, TextInput, FlatList, ActivityIndicator, Text as RNText, InteractionManager } from 'react-native';
+import { View, Pressable, ViewStyle, FlatList, ActivityIndicator, Text as RNText, InteractionManager } from 'react-native';
+import Reanimated, { useSharedValue, useAnimatedStyle, useAnimatedScrollHandler } from 'react-native-reanimated';
+import { CollapsingSearchField, SEARCH_ZONE_HEIGHT } from '../../src/components/ui/CollapsingSearchField';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -55,6 +57,17 @@ interface RecentApp {
 type RecentEntry =
   | { kind: 'profile'; ts: number; id: string; profile: ProfileResult }
   | { kind: 'app'; ts: number; id: string; app: RecentApp };
+
+/** A trimmed post, just enough for the preview cards under the top result. */
+interface SearchPreviewPost {
+  id: string;
+  content: string;
+  likes: number;
+  comments: number;
+}
+
+/** How many of the top match's posts to show. Three fills the gap without pushing the second result off screen. */
+const PREVIEW_POST_LIMIT = 3;
 
 /** Tile width. Sized so four fit on a 390 pt screen with the row's padding, as in the design. */
 const RECENT_TILE_WIDTH = 78;
@@ -376,14 +389,89 @@ export default function SearchScreen() {
     paddingTop: insets.top,
   }), [theme, insets.top]);
 
+  // ── A taste of the top match's content ──────────────────────────────────────
+  //
+  // The first result gets a few of its author's most recent posts rendered directly
+  // underneath, so a search for a person answers "is this the right person" without a
+  // round trip into their profile.
+  //
+  // Fetched rather than derived: deriving it would mean subscribing to the entity store's
+  // whole `posts` map and scanning it, which is exactly the subscription that makes
+  // `app/profile/[id].tsx` re-render on every unrelated upsert. A tiny `limit=3` request
+  // keyed on the author, memoised per author for the session, costs one round trip and
+  // cannot re-render this screen on someone else's activity.
+  const topResultId = profiles.length > 0 ? profiles[0].id : null;
+  const [previewPosts, setPreviewPosts] = useState<SearchPreviewPost[]>([]);
+  const previewCacheRef = useRef<Map<string, SearchPreviewPost[]>>(new Map());
+
+  useEffect(() => {
+    if (!topResultId) { setPreviewPosts([]); return; }
+    const cached = previewCacheRef.current.get(topResultId);
+    if (cached) { setPreviewPosts(cached); return; }
+    setPreviewPosts([]);
+    let cancelled = false;
+    // Off the keystroke frame. `debouncedQuery` already collapses typing bursts, but the
+    // author can still change on consecutive settled queries.
+    const handle = InteractionManager.runAfterInteractions(async () => {
+      try {
+        const { apiGet } = await import('../../src/services/apiClient');
+        const { data } = await apiGet<any[]>(
+          `/v1/profiles/${encodeURIComponent(topResultId)}/posts?limit=${PREVIEW_POST_LIMIT}`,
+        );
+        if (cancelled || !Array.isArray(data)) return;
+        const mapped: SearchPreviewPost[] = data.slice(0, PREVIEW_POST_LIMIT).map((p: any) => ({
+          id: String(p.id),
+          content: typeof p.content === 'string' ? p.content : '',
+          likes: Number(p.likes_count) || 0,
+          comments: Number(p.comments_count) || 0,
+        }));
+        previewCacheRef.current.set(topResultId, mapped);
+        if (!cancelled) setPreviewPosts(mapped);
+      } catch {}
+    });
+    return () => { cancelled = true; handle.cancel(); };
+  }, [topResultId]);
+
   // Stable list props so FlatList doesn't see new identities each keystroke.
   const keyExtractor = useCallback((item: ProfileResult) => item.id, []);
 
   const renderItem = useCallback(
-    ({ item }: { item: ProfileResult }) => (
-      <SearchResultRow item={item} theme={theme} onSelect={handleSelect} />
+    ({ item, index }: { item: ProfileResult; index: number }) => (
+      <>
+        <SearchResultRow item={item} theme={theme} onSelect={handleSelect} />
+        {index === 0 && previewPosts.length > 0 ? (
+          <View style={{ paddingLeft: 56, paddingTop: 10, paddingBottom: 4, gap: 10 }}>
+            {previewPosts.map((p) => (
+              <Pressable
+                key={p.id}
+                // `/comments/[id]` IS the post detail route in this app — there is no
+                // `/post/[id]`.
+                onPress={() => router.push({ pathname: '/comments/[id]', params: { id: p.id } })}
+                style={{
+                  backgroundColor: theme.colors.background.elevated,
+                  borderRadius: 12,
+                  paddingHorizontal: 12,
+                  paddingVertical: 10,
+                }}
+              >
+                <Text variant="caption" numberOfLines={3}>{p.content || '—'}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 6 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                    <Feather name="heart" size={11} color={theme.colors.text.tertiary} />
+                    <Text variant="caption" color={theme.colors.text.tertiary}>{p.likes}</Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                    <Feather name="message-circle" size={11} color={theme.colors.text.tertiary} />
+                    <Text variant="caption" color={theme.colors.text.tertiary}>{p.comments}</Text>
+                  </View>
+                </View>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
+      </>
     ),
-    [theme, handleSelect]
+    [theme, handleSelect, previewPosts]
   );
 
   const listContentStyle = useMemo(() => ({
@@ -399,15 +487,25 @@ export default function SearchScreen() {
     paddingHorizontal: theme.spacing.base - 6,
   }), [theme]);
 
-  const ListHeader = useCallback(() => {
-    const searchTerm = query.startsWith('#') ? query.slice(1) : query;
-    const lower = searchTerm.toLowerCase();
-    const matchedApps = miniApps.filter(a => a.name.toLowerCase().includes(lower) || a.description.toLowerCase().includes(lower));
+  // Mini apps are their OWN category now, rendered as the list FOOTER rather than mixed in
+  // above the people. Matching apps used to sit in the header, so a query that hit both an
+  // app and a person put the app first and pushed the person the user was actually looking
+  // for below the fold.
+  const matchedApps = useMemo(() => {
+    const term = debouncedQuery.startsWith('#') ? debouncedQuery.slice(1) : debouncedQuery;
+    const lower = term.trim().toLowerCase();
+    if (!lower) return [];
+    return miniApps.filter(
+      (a) => a.name.toLowerCase().includes(lower) || (a.description || '').toLowerCase().includes(lower),
+    );
+  }, [debouncedQuery, miniApps]);
+
+  const listFooter = useMemo(() => {
     if (matchedApps.length === 0) return null;
     return (
-      <View style={{ marginBottom: 16 }}>
+      <View style={{ marginTop: 18 }}>
         <Text variant="caption" weight="semibold" color={theme.colors.text.secondary} style={{ marginBottom: 8 }}>{t('search.mini_apps')}</Text>
-        {matchedApps.slice(0, 3).map(app => (
+        {matchedApps.slice(0, 5).map(app => (
           <Pressable key={app.id} onPress={() => openApp(app)} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8 }}>
             <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: theme.colors.accent.primary + '12', alignItems: 'center', justifyContent: 'center', overflow: 'visible' }}>
               <RNText style={{ fontSize: 18 }} allowFontScaling={false}>{app.emoji}</RNText>
@@ -417,7 +515,7 @@ export default function SearchScreen() {
         ))}
       </View>
     );
-  }, [query, miniApps, theme, t, openApp]);
+  }, [matchedApps, theme, t, openApp]);
 
   const listEmpty = useMemo(() => (
     <View style={{ alignItems: 'center', paddingTop: 40 }}>
@@ -427,53 +525,48 @@ export default function SearchScreen() {
 
   const showRecents = !query.trim() && recents.length > 0;
 
+  const clearQuery = useCallback(() => setQuery(''), []);
+
+  // ── Collapse plumbing, mirroring app/(tabs)/messages.tsx exactly ─────────────
+  //
+  // A shared value written by a UI-thread scroll worklet, NOT React state. See the long note
+  // on `CollapsingSearchField` for why a threshold plus a height animation oscillates and a
+  // continuous transform cannot.
+  const searchCollapse = useSharedValue(0);
+  const onSearchScroll = useAnimatedScrollHandler({
+    onScroll: (e) => {
+      'worklet';
+      const y = e.contentOffset.y;
+      searchCollapse.value = Math.min(Math.max(y / SEARCH_ZONE_HEIGHT, 0), 1);
+    },
+  });
+  const searchLiftStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: -SEARCH_ZONE_HEIGHT * searchCollapse.value }],
+  }));
+
   return (
     <View style={containerStyle}>
-      {/* Search Input.
-          The screen used to carry a bold "Поиск" heading directly above this field, which
-          restated the field's own placeholder and pushed everything down by a line. The field
-          is the first thing on the screen now, matching the design. */}
-      <View
-        style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          paddingHorizontal: theme.spacing.base,
-          paddingVertical: theme.spacing.sm,
-          backgroundColor: theme.colors.background.elevated,
-          borderRadius: 14,
-          marginHorizontal: theme.spacing.base,
-          marginTop: theme.spacing.sm,
-          borderWidth: isFocused ? 1.5 : 1,
-          borderColor: isFocused ? theme.colors.accent.primary : theme.colors.border.light,
-        }}
-      >
-        <Feather
-          name="search"
-          size={18}
-          color={isFocused ? theme.colors.accent.primary : theme.colors.text.tertiary}
-        />
-        <TextInput
-          value={query}
-          onChangeText={setQuery}
-          placeholder={t('search.placeholder')}
-          placeholderTextColor={theme.colors.text.tertiary}
-          onFocus={() => setIsFocused(true)}
-          onBlur={() => setIsFocused(false)}
-          style={{
-            flex: 1,
-            marginLeft: theme.spacing.sm,
-            fontSize: theme.typography.sizes.base,
-            fontFamily: theme.fontFamily.regular,
-            color: theme.colors.text.primary,
-            paddingVertical: theme.spacing.xs,
-          }}
-        />
-        {query.length > 0 && (
-          <Pressable onPress={() => setQuery('')}>
-            <Feather name="x" size={16} color={theme.colors.text.tertiary} />
-          </Pressable>
-        )}
-      </View>
+      {/* ── The SAME collapsing field the chat list uses ─────────────────────────
+          Literally the same component (src/components/ui/CollapsingSearchField.tsx), which is
+          the only way "it should behave exactly like the one in the chat list" can be true and
+          stay true. What was here before was a separate static pill with a focus-coloured
+          border and no scroll behaviour at all.
+
+          The squash is driven by a shared value off a UI-thread scroll worklet, so scrolling
+          the results never touches React state — see the long note on the component. */}
+      <CollapsingSearchField
+        value={query}
+        onChangeText={setQuery}
+        placeholder={t('search.placeholder')}
+        theme={theme}
+        progress={searchCollapse}
+        onClear={clearQuery}
+      />
+
+      {/* Everything below the field rides UP as the field squashes, by exactly the height the
+          field gave back. `marginBottom: -SEARCH_ZONE_HEIGHT` on the lifted block means the
+          lift never exposes empty space at the bottom — the same trick the chat list uses. */}
+      <Reanimated.View style={[{ flex: 1, marginBottom: -SEARCH_ZONE_HEIGHT }, searchLiftStyle]}>
 
       {/* ── Recent ──────────────────────────────────────────────────────────────
           A HORIZONTAL strip of round avatars with the name underneath, holding people and
@@ -521,10 +614,14 @@ export default function SearchScreen() {
           <ActivityIndicator size="large" color={theme.colors.accent.primary} />
         </View>
       ) : query.trim() ? (
-        <FlatList
+        <Reanimated.FlatList
           data={profiles}
           keyExtractor={keyExtractor}
           contentContainerStyle={listContentStyle}
+          // Drives the field's squash. A worklet on the UI thread, so scrolling the results
+          // produces no JS work and no re-render at all.
+          onScroll={onSearchScroll}
+          scrollEventThrottle={16}
           // Virtualization props were absent here — a username search that
           // matches a large slice of the profile directory would mount every
           // matched row at once on each keystroke (search-as-you-type is the
@@ -536,11 +633,13 @@ export default function SearchScreen() {
           initialNumToRender={10}
           maxToRenderPerBatch={8}
           windowSize={7}
-          ListHeaderComponent={ListHeader}
           renderItem={renderItem}
           ListEmptyComponent={listEmpty}
+          // Mini apps as their own trailing category — see `listFooter`.
+          ListFooterComponent={listFooter}
         />
       ) : null}
+      </Reanimated.View>
     </View>
   );
 }

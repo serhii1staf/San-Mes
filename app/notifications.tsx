@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
-import { View, Pressable, ViewStyle, StyleSheet, FlatList, ActivityIndicator, RefreshControl } from 'react-native';
+import { View, Pressable, ViewStyle, StyleSheet, SectionList, ScrollView, ActivityIndicator, RefreshControl } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../src/theme/scrim';
@@ -39,6 +39,18 @@ interface Notification {
 
 const CACHE_KEY = '@san:notifications';
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes — fast tab switches stay instant
+
+/** Which kinds the chip row can filter to. `all` is the default. */
+type FilterKey = 'all' | Kind;
+
+/** Height of the chip row. CONSTANT — the scrim above and the list padding below both derive from it. */
+const FILTER_ROW_HEIGHT = 46;
+
+/** How recent an event has to be to land in the raised "Highlights" section. */
+const FEATURED_WINDOW_MS = 12 * 60 * 60 * 1000;
+
+/** And how many of them at most, so Highlights stays a highlight rather than a second feed. */
+const FEATURED_MAX = 3;
 
 // Comment storage uses two markers that we need to strip out of preview text:
 //   `::gif::{url}`            — GIF comment (full content is just the URL)
@@ -174,35 +186,141 @@ export default function NotificationsScreen() {
 
   const containerStyle: ViewStyle = { flex: 1, backgroundColor: theme.colors.background.primary };
   const bgColor = theme.colors.background.primary;
-  const bgTransparent = theme.colors.background.primary + '00';
   const { content: headerContentHeight, gradient: headerGradientHeight } = headerScrimHeights(insets.top);
+  // The chrome is now two rows: title, then the filter chips. The scrim spans BOTH and the
+  // list's top padding matches it exactly — the same flush rule the rest of the app follows,
+  // because a gradient that stops short of where content begins leaves a lit strip and one
+  // that overshoots dims the content.
+  const chromeHeight = headerGradientHeight + FILTER_ROW_HEIGHT;
+  const listTopPadding = headerContentHeight + FILTER_ROW_HEIGHT;
 
-  const renderItem = useCallback(({ item }: { item: Notification }) => {
-    return <NotificationRow item={item} theme={theme} />;
-  }, [theme]);
+  const [filter, setFilter] = useState<FilterKey>('all');
+
+  const filters = useMemo<{ key: FilterKey; label: string }[]>(() => ([
+    { key: 'all', label: t('notifications.filter.all') },
+    { key: 'like', label: t('notifications.filter.likes') },
+    { key: 'comment', label: t('notifications.filter.comments') },
+    { key: 'follow', label: t('notifications.filter.follows') },
+  ]), [t]);
+
+  // ── Sections ────────────────────────────────────────────────────────────────
+  //
+  // "Highlights" is the freshest handful, drawn as raised cards; everything else falls into
+  // calendar buckets as flat rows. An item appears in exactly one section — the calendar
+  // buckets explicitly skip whatever Highlights already took, otherwise the newest events
+  // would show up twice.
+  const sections = useMemo(() => {
+    const visible = filter === 'all' ? items : items.filter((n) => n.kind === filter);
+    if (visible.length === 0) return [];
+
+    const now = Date.now();
+    const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
+    const startOfYesterday = startOfToday.getTime() - 86400000;
+
+    const featured: Notification[] = [];
+    for (const n of visible) {
+      if (featured.length >= FEATURED_MAX) break;
+      const age = now - new Date(n.ts).getTime();
+      if (age >= 0 && age <= FEATURED_WINDOW_MS) featured.push(n);
+    }
+    const taken = new Set(featured.map((n) => n.id));
+
+    const today: Notification[] = [];
+    const yesterday: Notification[] = [];
+    const earlier: Notification[] = [];
+    for (const n of visible) {
+      if (taken.has(n.id)) continue;
+      const ms = new Date(n.ts).getTime();
+      if (ms >= startOfToday.getTime()) today.push(n);
+      else if (ms >= startOfYesterday) yesterday.push(n);
+      else earlier.push(n);
+    }
+
+    const out: { key: string; title: string; featured: boolean; data: Notification[] }[] = [];
+    if (featured.length) out.push({ key: 'featured', title: t('notifications.section.featured'), featured: true, data: featured });
+    if (today.length) out.push({ key: 'today', title: t('notifications.section.today'), featured: false, data: today });
+    if (yesterday.length) out.push({ key: 'yesterday', title: t('notifications.section.yesterday'), featured: false, data: yesterday });
+    if (earlier.length) out.push({ key: 'earlier', title: t('notifications.section.earlier'), featured: false, data: earlier });
+    return out;
+  }, [items, filter, t]);
+
+  const renderItem = useCallback(({ item, section }: { item: Notification; section: { featured: boolean } }) => (
+    <NotificationRow item={item} theme={theme} featured={section.featured} />
+  ), [theme]);
+
+  const renderSectionHeader = useCallback(({ section }: { section: { title: string } }) => (
+    <Text variant="subheading" weight="bold" style={{ paddingHorizontal: 16, marginTop: 18, marginBottom: 10 }}>
+      {section.title}
+    </Text>
+  ), []);
 
   const keyExtractor = useCallback((n: Notification) => n.id, []);
 
+  const contentStyle = useMemo(
+    () => ({ paddingTop: listTopPadding, paddingBottom: insets.bottom + 24 }),
+    [listTopPadding, insets.bottom],
+  );
+
+  const refreshControl = useMemo(() => (
+    <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.colors.accent.primary} progressViewOffset={listTopPadding} />
+  ), [refreshing, onRefresh, theme.colors.accent.primary, listTopPadding]);
+
   return (
     <View style={containerStyle}>
-      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100, height: headerGradientHeight }} pointerEvents="box-none">
+      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100, height: chromeHeight }} pointerEvents="box-none">
         <LinearGradient colors={topScrimColors(theme.isDark, bgColor)} locations={SCRIM_LOCATIONS} style={StyleSheet.absoluteFill} />
         <View
           style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingHorizontal: theme.spacing.lg, paddingTop: insets.top + 8, paddingBottom: 8, position: 'relative' }}
           pointerEvents="auto"
         >
-          <Pressable onPress={() => router.back()} style={{ position: 'absolute', left: theme.spacing.lg, top: insets.top + 8 }}>
+          <Pressable onPress={() => router.back()} hitSlop={10} style={{ position: 'absolute', left: theme.spacing.lg, top: insets.top + 8 }}>
             <Feather name="chevron-left" size={24} color={theme.colors.text.primary} />
           </Pressable>
           <Text variant="subheading" weight="bold">{t('notifications.title')}</Text>
         </View>
+        {/* Filter chips. Horizontally scrollable so the row never wraps or truncates a label
+            on a narrow screen. `Репосты` is deliberately absent: the feed is reduced on the
+            client from likes / comments / follows (see the note on `Notification`), and there
+            is no repost event source, so the chip would filter to permanently empty. */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ paddingHorizontal: 16, gap: 8, alignItems: 'center' }}
+          style={{ height: FILTER_ROW_HEIGHT }}
+        >
+          {filters.map((f) => {
+            const active = filter === f.key;
+            return (
+              <Pressable
+                key={f.key}
+                onPress={() => { triggerHaptic('selection'); setFilter(f.key); }}
+                style={{
+                  paddingHorizontal: 16,
+                  paddingVertical: 8,
+                  borderRadius: 18,
+                  backgroundColor: active ? theme.colors.background.elevated : 'transparent',
+                  borderWidth: 1,
+                  borderColor: active ? theme.colors.border.medium : theme.colors.border.light,
+                }}
+              >
+                <Text
+                  variant="caption"
+                  weight={active ? 'semibold' : 'regular'}
+                  color={active ? theme.colors.text.primary : theme.colors.text.secondary}
+                >
+                  {f.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
       </View>
 
       {loading && items.length === 0 ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
           <ActivityIndicator size="small" color={theme.colors.accent.primary} />
         </View>
-      ) : items.length === 0 ? (
+      ) : sections.length === 0 ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingBottom: 100 }}>
           <Feather name="bell" size={48} color={theme.colors.text.tertiary} />
           <Text variant="body" color={theme.colors.text.tertiary} style={{ marginTop: theme.spacing.base, textAlign: 'center' }}>
@@ -210,12 +328,13 @@ export default function NotificationsScreen() {
           </Text>
         </View>
       ) : (
-        <FlatList
-          data={items}
+        <SectionList
+          sections={sections}
           keyExtractor={keyExtractor}
-          renderItem={renderItem}
-          contentContainerStyle={{ paddingTop: headerContentHeight + 4, paddingBottom: insets.bottom + 24 }}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.colors.accent.primary} progressViewOffset={headerContentHeight} />}
+          renderItem={renderItem as any}
+          renderSectionHeader={renderSectionHeader as any}
+          contentContainerStyle={contentStyle}
+          refreshControl={refreshControl}
           showsVerticalScrollIndicator={false}
           removeClippedSubviews
           initialNumToRender={8}
@@ -227,7 +346,7 @@ export default function NotificationsScreen() {
   );
 }
 
-const NotificationRow = React.memo(function NotificationRow({ item, theme }: { item: Notification; theme: any }) {
+const NotificationRow = React.memo(function NotificationRow({ item, theme, featured }: { item: Notification; theme: any; featured: boolean }) {
   const t = useT();
   const onPress = () => {
     triggerHaptic('light');
@@ -254,21 +373,42 @@ const NotificationRow = React.memo(function NotificationRow({ item, theme }: { i
   return (
     <Pressable
       onPress={onPress}
-      style={{ flexDirection: 'row', alignItems: 'flex-start', paddingHorizontal: 16, paddingVertical: 12, gap: 12 }}
+      style={
+        // Two presentations, one component. Highlights rows are raised cards; calendar rows
+        // are flat. Only the container differs — the contents are identical, so the two can
+        // never drift apart the way two separate row components would.
+        featured
+          ? {
+              flexDirection: 'row',
+              alignItems: 'flex-start',
+              gap: 12,
+              marginHorizontal: 16,
+              marginBottom: 10,
+              padding: 14,
+              borderRadius: 18,
+              backgroundColor: theme.colors.background.elevated,
+            }
+          : { flexDirection: 'row', alignItems: 'flex-start', paddingHorizontal: 16, paddingVertical: 12, gap: 12 }
+      }
     >
-      {/* Avatar with a small kind icon overlaid bottom-right. */}
+      {/* Avatar with a small kind icon overlaid bottom-left, as in the design. */}
       <View style={{ width: 44, height: 44 }}>
         <Avatar emoji={item.actorEmoji} size="md" />
-        <View style={{ position: 'absolute', right: -4, bottom: -4, width: 20, height: 20, borderRadius: 10, backgroundColor: accent, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: theme.colors.background.primary }}>
-          <Feather name={icon as any} size={11} color="#FFFFFF" />
+        <View style={{ position: 'absolute', left: -3, bottom: -3, width: 20, height: 20, borderRadius: 10, backgroundColor: theme.colors.background.primary, alignItems: 'center', justifyContent: 'center' }}>
+          <Feather name={icon as any} size={12} color={accent} />
         </View>
       </View>
-      <View style={{ flex: 1, marginTop: 2 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 4 }}>
-          <Text variant="caption" weight="semibold" style={{ fontSize: 13 }}>{item.actorName}</Text>
-          {item.actorVerified ? <VerifiedBadge size={11} /> : null}
-          <Text variant="caption" color={theme.colors.text.secondary} style={{ fontSize: 13 }}>{verb}</Text>
+      <View style={{ flex: 1 }}>
+        {/* Name on its own line, then the action + relative time beneath it. The three used to
+            share one wrapping row, so a long display name pushed the verb onto a second line
+            and the timestamp onto a third. */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Text variant="body" weight="bold" numberOfLines={1} style={{ fontSize: 15, flexShrink: 1 }}>{item.actorName}</Text>
+          {item.actorVerified ? <VerifiedBadge size={13} /> : null}
         </View>
+        <Text variant="caption" color={theme.colors.text.secondary} numberOfLines={1} style={{ fontSize: 13, marginTop: 1 }}>
+          {verb} · {formatTimeAgo(item.ts)}
+        </Text>
         {(() => {
           // Comment text often contains a GIF/image/link instead of (or in
           // addition to) plain words. Detect those so the preview shows a
@@ -294,16 +434,19 @@ const NotificationRow = React.memo(function NotificationRow({ item, theme }: { i
             );
           }
           if (item.postPreview) {
-            return <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 12, marginTop: 3 }}>{item.postPreview}</Text>;
+            // Full-strength text, up to three lines: this is the post the event is ABOUT, and
+            // it is the only thing that tells the user which post was liked. It used to be
+            // tertiary-coloured and clamped to one line, which made it read as a caption.
+            return <Text variant="caption" numberOfLines={3} style={{ fontSize: 13, marginTop: 6, lineHeight: 18 }}>{item.postPreview}</Text>;
           }
           return null;
         })()}
-        <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11, marginTop: 3 }}>{formatTimeAgo(item.ts)}</Text>
       </View>
     </Pressable>
   );
 }, (prev, next) =>
   prev.item.id === next.item.id &&
   prev.item.commentText === next.item.commentText &&
+  prev.featured === next.featured &&
   prev.theme.isDark === next.theme.isDark
 );
