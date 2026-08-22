@@ -30,8 +30,29 @@ module.exports = function (api) {
         ],
       },
     },
-    plugins: [
-      'react-native-reanimated/plugin',
-    ],
+    // NO manual worklets/reanimated plugin entry. This is deliberate and verified.
+    //
+    // `babel-preset-expo` (SDK 54) adds it ITSELF. From
+    // node_modules/babel-preset-expo/build/index.js:
+    //
+    //     hasModule('react-native-worklets') && ...
+    //       ? [require('react-native-worklets/plugin')]
+    //       : hasModule('react-native-reanimated') && [require('react-native-reanimated/plugin')]
+    //
+    // `react-native-worklets` IS installed (0.5.1, required by Reanimated 4), so the
+    // preset picks `react-native-worklets/plugin` — the correct plugin for Reanimated 4,
+    // which moved workletization out of the reanimated package.
+    //
+    // This file used to ALSO list `react-native-reanimated/plugin` by hand, so the
+    // pipeline ran BOTH: the preset's worklets plugin and the legacy reanimated one.
+    // That is a second workletization pass over every worklet in the app, and it is what
+    // Reanimated 4 warns about ("It was moved to react-native-worklets package. Please
+    // use react-native-worklets/plugin instead" — software-mansion/react-native-reanimated#8231).
+    //
+    // Expo's own upgrade note is explicit that with babel-preset-expo there is nothing to
+    // specify: https://github.com/expo/fyi/blob/main/expo-54-reanimated.md
+    //
+    // If a worklet ever fails to compile after this, the fix is NOT to re-add the entry
+    // here — check that `react-native-worklets` is still installed.
   };
 };

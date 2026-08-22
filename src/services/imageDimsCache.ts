@@ -44,6 +44,26 @@ function load(): Record<string, ImageDim> {
   return mem;
 }
 
+/**
+ * Load the blob into memory ahead of the first read.
+ *
+ * `load()` is lazy, and every caller of `getImageDims` is on a RENDER path — a chat
+ * bubble sizing its photo box (`SingleChatImage`), the placeholder box, the multi-image
+ * grid, `PostCard`'s hero/carousel aspect seeding. So the FIRST call in a session paid a
+ * synchronous `kvGetJSONSync` + `JSON.parse` of up to `MAX_ENTRIES` (600) entries, and it
+ * paid it on whichever frame happened to render an image first — typically the chat-open
+ * or feed-open frame, i.e. the one already carrying a navigation transition.
+ *
+ * The in-memory mirror was designed to make reads "synchronous and free on the render
+ * path" (see the header note). That is true from the second call onward; this makes it
+ * true for the first one too.
+ *
+ * Idempotent and never throws, so it is safe to call from app start.
+ */
+export function warmImageDims(): void {
+  load();
+}
+
 /** Read remembered natural dimensions for an image URL, or undefined. */
 export function getImageDims(uri: string | undefined | null): ImageDim | undefined {
   if (!uri) return undefined;

@@ -313,9 +313,24 @@ function ValueSlider({ min, max, value, onChange, color, trackColor, rainbow }: 
   const toVal = (x: number, w: number) => min + (Math.max(0, Math.min(x, w)) / w) * (max - min);
   const onLayout = (e: LayoutChangeEvent) => { const w = e.nativeEvent.layout.width; width.value = w; knobX.value = toX(value, w); };
   const commit = (x: number) => { const w = width.value; if (w <= 0) return; onChange(Math.round(toVal(x, w) * 100) / 100); };
+  // ── The knob tracks the finger on the UI thread; the VALUE commits on release ──
+  //
+  // `onUpdate` used to `runOnJS(commit)(e.x)` on every pan frame, and `commit` calls
+  // `onChange`, which writes the bubble colour into the settings store. So dragging this
+  // slider dispatched ~60 store writes per second, each one re-rendering this screen AND
+  // its live bubble preview — while the finger was still moving.
+  //
+  // The three sibling sliders in this app (`chat-text-size`, `chat-bubble-radius`,
+  // `fonts-size`) already commit in `onEnd` only. This one was the outlier.
+  //
+  // The knob and the filled track are driven by `knobX`, a shared value, so the slider
+  // still follows the finger 1:1 with no visible change. `onEnd` also commits, so the
+  // final value always lands even on a tap (where `onBegin` fires and `onUpdate` may not).
   const pan = Gesture.Pan().minDistance(0)
-    .onBegin((e) => { 'worklet'; knobX.value = Math.max(0, Math.min(e.x, width.value)); runOnJS(commit)(e.x); })
-    .onUpdate((e) => { 'worklet'; knobX.value = Math.max(0, Math.min(e.x, width.value)); runOnJS(commit)(e.x); });
+    .onBegin((e) => { 'worklet'; knobX.value = Math.max(0, Math.min(e.x, width.value)); })
+    .onUpdate((e) => { 'worklet'; knobX.value = Math.max(0, Math.min(e.x, width.value)); })
+    .onEnd(() => { 'worklet'; runOnJS(commit)(knobX.value); })
+    .onFinalize((_e, success) => { 'worklet'; if (!success) runOnJS(commit)(knobX.value); });
   const filled = useAnimatedStyle(() => ({ width: knobX.value }));
   const thumb = useAnimatedStyle(() => ({ transform: [{ translateX: knobX.value - 11 }] }));
   return (

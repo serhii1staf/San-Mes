@@ -318,15 +318,45 @@ const SlidingLens = React.memo(function SlidingLens({
   isDark: boolean;
   glassActive: boolean;
 }) {
-  const animStyle = useAnimatedStyle(() => ({
-    transform: [
-      { translateX: pillX.value },
-      { translateY: pillY.value },
-      { scale: pillScale.value },
-    ],
-    width: baseWidth + pillStretchW.value,
-    opacity: visible ? 1 : 0,
-  }));
+  // ── The stretch is a TRANSFORM, not a width ─────────────────────────────────
+  //
+  // `pillStretchW` is written on every frame of a tab-bar drag and then released with
+  // `withSpring`, so this style used to change `width` continuously through the drag AND
+  // through the ~300 ms spring settle. A width change is a Yoga layout pass plus a Fabric
+  // shadow-tree commit per frame; a transform is a compositor property the UI thread
+  // applies without touching layout at all. This is the most-touched control in the app,
+  // so it is the one place where that difference is worth the extra arithmetic.
+  //
+  // MATCHING THE OLD GEOMETRY EXACTLY
+  //   Growing `width` extends the RIGHT edge only — the left edge is pinned by `left: 0`
+  //   plus `translateX`. `scaleX` instead scales about the view's CENTRE, which would push
+  //   the left edge outward by half the stretch. Adding `stretch / 2` to `translateX`
+  //   cancels that, so the left edge stays put and the right edge extends by the full
+  //   stretch: pixel-identical to the width version.
+  //
+  //   The translate is applied in the PARENT's coordinate space (RN composes the array as
+  //   a matrix, so the scale does not multiply the translate), which is what makes the
+  //   compensation a plain addition rather than a ratio.
+  //
+  //   `pillScale` (the press squish) still scales about the centre, unchanged — and when
+  //   `pillStretchW` is 0, which is every state except an active drag, `scaleX` is exactly
+  //   1 and this style is mathematically identical to the previous one.
+  const animStyle = useAnimatedStyle(() => {
+    const stretch = pillStretchW.value;
+    // Guard the divide: `baseWidth` is 0 until the bar has been measured, and the pill is
+    // gated on `slotWidth > 0` at the call site anyway.
+    const stretchScaleX = baseWidth > 0 ? (baseWidth + stretch) / baseWidth : 1;
+    return {
+      transform: [
+        { translateX: pillX.value + stretch / 2 },
+        { translateY: pillY.value },
+        { scale: pillScale.value },
+        { scaleX: stretchScaleX },
+      ],
+      width: baseWidth,
+      opacity: visible ? 1 : 0,
+    };
+  });
 
   // Tint values picked so the lens stays clearly visible against the bar's
   // own blurred tint without going opaque. iOS dark mode is darker than

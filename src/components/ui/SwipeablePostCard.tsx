@@ -1,7 +1,15 @@
 import React, { useRef, useCallback, useEffect, useMemo } from 'react';
-import { View, Pressable, Animated } from 'react-native';
+import { View, Pressable } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import { runOnJS } from 'react-native-reanimated';
+import Reanimated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withTiming,
+  withSpring,
+  interpolate,
+  Extrapolation,
+  runOnJS,
+} from 'react-native-reanimated';
 import { Feather } from '@expo/vector-icons';
 import { captureRef } from 'react-native-view-shot';
 import * as MediaLibrary from 'expo-media-library';
@@ -20,63 +28,57 @@ interface SwipeablePostCardProps {
 export function SwipeablePostCard({ children }: SwipeablePostCardProps) {
   const theme = useTheme();
   const t = useT();
-  const translateX = useRef(new Animated.Value(0)).current;
+  // ── The swipe runs entirely on the UI thread ────────────────────────────────
+  //
+  // It did not. `translateX` was a legacy `Animated.Value` and the pan's `onUpdate`
+  // worklet called `runOnJS(handleGestureUpdate)(e.translationX)`, which then did
+  // `translateX.setValue(...)`. So every frame of every swipe made this trip:
+  //
+  //     UI thread (gesture) → JS thread (setValue) → native (view update)
+  //
+  // That is the exact shape the architecture is supposed to avoid, and it is worse here
+  // than it looks: this component is mounted PER POST ROW (ProfilePostCard,
+  // UserProfilePostCard), the JS thread is the one already busy rendering cards during a
+  // scroll, and `setValue` on a native-driver value still has to cross the boundary.
+  // A swipe that starts while cards are mounting drops frames for that reason alone.
+  //
+  // Now `translateX` is a shared value written directly by the worklet, so the finger
+  // tracking never leaves the UI thread. `runOnJS` survives only at phase boundaries
+  // (arming and clearing the 3 s auto-close timer, which is genuinely JS state).
+  //
+  // Spring mapping note: legacy `{ tension: 150, friction: 15 }` maps to Reanimated's
+  // `{ stiffness: 150, damping: 15 }` — same underlying model, so the snap feels the same.
+  const translateX = useSharedValue(0);
+  // UI-thread mirrors of the two flags the gesture needs to consult per frame. Reading a
+  // React ref from a worklet is not allowed, and marshalling to JS to read it is the very
+  // thing being removed.
+  const isOpenSV = useSharedValue(false);
+  const ignoreGestureSV = useSharedValue(false);
+  // JS-side mirror, kept only for `handleScreenshot` (which is already a JS-thread async
+  // function). Updated at phase boundaries, never per frame.
   const isOpen = useRef(false);
   const timer = useRef<any>(null);
   const cardRef = useRef<View>(null);
-  // Set on gesture start when the row was already open: we then just reset and
-  // swallow the rest of that gesture (matches the legacy PanResponder, which
-  // returned `false` from onMoveShouldSetPanResponder while open).
-  const ignoreGesture = useRef(false);
 
-  const resetPosition = useCallback(() => {
+  const clearAutoClose = useCallback(() => {
     isOpen.current = false;
     if (timer.current) { clearTimeout(timer.current); timer.current = null; }
-    Animated.timing(translateX, { toValue: 0, duration: 200, useNativeDriver: true }).start();
   }, []);
 
-  const snapOpen = useCallback(() => {
+  // Fired by the 3 s timer. Writing a shared value from the JS thread is fine — it is one
+  // write, not a per-frame stream.
+  const closeFromTimer = useCallback(() => {
+    isOpen.current = false;
+    timer.current = null;
+    isOpenSV.value = false;
+    translateX.value = withTiming(0, { duration: 200 });
+  }, [isOpenSV, translateX]);
+
+  const armAutoClose = useCallback(() => {
     isOpen.current = true;
-    Animated.spring(translateX, { toValue: -BUTTON_WIDTH, useNativeDriver: true, tension: 150, friction: 15 }).start();
     if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(resetPosition, 3000);
-  }, []);
-
-  const handleEnd = useCallback((dx: number) => {
-    if (dx < -20) {
-      snapOpen();
-    } else {
-      resetPosition();
-    }
-  }, []);
-
-  // JS-side gesture handlers. The RNGH Pan worklet marshals to these via
-  // runOnJS because they touch the (JS-driven) Animated.Value, the auto-reset
-  // timer, and the open/closed ref state.
-  const handleGestureStart = useCallback(() => {
-    if (isOpen.current) {
-      // Swiping/tapping a row that's already open just closes it.
-      ignoreGesture.current = true;
-      resetPosition();
-    } else {
-      ignoreGesture.current = false;
-    }
-  }, [resetPosition]);
-
-  const handleGestureUpdate = useCallback((dx: number) => {
-    if (ignoreGesture.current || isOpen.current) return;
-    if (dx < 0) {
-      translateX.setValue(Math.max(dx, -BUTTON_WIDTH));
-    }
-  }, [translateX]);
-
-  const handleGestureEnd = useCallback((dx: number) => {
-    if (ignoreGesture.current) {
-      ignoreGesture.current = false;
-      return;
-    }
-    handleEnd(dx);
-  }, [handleEnd]);
+    timer.current = setTimeout(closeFromTimer, 3000);
+  }, [closeFromTimer]);
 
   // Clear the 3-second auto-reset timer on unmount. Without this, if a
   // user swipes a card open then scrolls fast enough to recycle the row
@@ -114,18 +116,56 @@ export function SwipeablePostCard({ children }: SwipeablePostCardProps) {
         .failOffsetY([-10, 10])
         .onStart(() => {
           'worklet';
-          runOnJS(handleGestureStart)();
+          if (isOpenSV.value) {
+            // Swiping a row that is already open just closes it, and the rest of this
+            // gesture is swallowed — same behaviour as before.
+            ignoreGestureSV.value = true;
+            isOpenSV.value = false;
+            translateX.value = withTiming(0, { duration: 200 });
+            runOnJS(clearAutoClose)();
+          } else {
+            ignoreGestureSV.value = false;
+          }
         })
         .onUpdate((e) => {
           'worklet';
-          runOnJS(handleGestureUpdate)(e.translationX);
+          if (ignoreGestureSV.value || isOpenSV.value) return;
+          // Left only, clamped to the button width. No JS involvement.
+          if (e.translationX < 0) {
+            translateX.value = Math.max(e.translationX, -BUTTON_WIDTH);
+          }
         })
         .onEnd((e) => {
           'worklet';
-          runOnJS(handleGestureEnd)(e.translationX);
+          if (ignoreGestureSV.value) {
+            ignoreGestureSV.value = false;
+            return;
+          }
+          if (e.translationX < -20) {
+            isOpenSV.value = true;
+            translateX.value = withSpring(-BUTTON_WIDTH, { stiffness: 150, damping: 15 });
+            runOnJS(armAutoClose)();
+          } else {
+            isOpenSV.value = false;
+            translateX.value = withTiming(0, { duration: 200 });
+            runOnJS(clearAutoClose)();
+          }
         }),
-    [handleGestureStart, handleGestureUpdate, handleGestureEnd],
+    [isOpenSV, ignoreGestureSV, translateX, clearAutoClose, armAutoClose],
   );
+
+  const cardStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: translateX.value }],
+  }));
+  // Same ramp the legacy `translateX.interpolate` produced, now evaluated on the UI thread.
+  const buttonStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(
+      translateX.value,
+      [-BUTTON_WIDTH, -BUTTON_WIDTH + 10, 0],
+      [1, 0, 0],
+      Extrapolation.CLAMP,
+    ),
+  }));
 
   const handleScreenshot = async () => {
     triggerHaptic('medium');
@@ -133,7 +173,8 @@ export function SwipeablePostCard({ children }: SwipeablePostCardProps) {
     // First reset position so screenshot shows full card
     isOpen.current = false;
     if (timer.current) { clearTimeout(timer.current); timer.current = null; }
-    Animated.timing(translateX, { toValue: 0, duration: 150, useNativeDriver: true }).start();
+    isOpenSV.value = false;
+    translateX.value = withTiming(0, { duration: 150 });
 
     // Wait for animation to complete
     await new Promise(resolve => setTimeout(resolve, 200));
@@ -156,26 +197,20 @@ export function SwipeablePostCard({ children }: SwipeablePostCardProps) {
     }
   };
 
-  const buttonOpacity = translateX.interpolate({
-    inputRange: [-BUTTON_WIDTH, -BUTTON_WIDTH + 10, 0],
-    outputRange: [1, 0, 0],
-    extrapolate: 'clamp',
-  });
-
   return (
     <View style={{ position: 'relative' }}>
-      <Animated.View style={{ position: 'absolute', right: 0, top: 0, bottom: 12, width: BUTTON_WIDTH, justifyContent: 'center', alignItems: 'center', opacity: buttonOpacity }}>
+      <Reanimated.View style={[{ position: 'absolute', right: 0, top: 0, bottom: 12, width: BUTTON_WIDTH, justifyContent: 'center', alignItems: 'center' }, buttonStyle]}>
         <Pressable onPress={handleScreenshot} style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: theme.colors.accent.primary, alignItems: 'center', justifyContent: 'center' }}>
           <Feather name="camera" size={17} color="#FFFFFF" />
         </Pressable>
-      </Animated.View>
+      </Reanimated.View>
 
       <GestureDetector gesture={panGesture}>
-        <Animated.View style={{ transform: [{ translateX }] }}>
+        <Reanimated.View style={cardStyle}>
           <View ref={cardRef} collapsable={false}>
             {children}
           </View>
-        </Animated.View>
+        </Reanimated.View>
       </GestureDetector>
     </View>
   );

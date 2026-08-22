@@ -618,13 +618,35 @@ export default function UserProfileScreen() {
   const cachedProfile = useEntityStore((s) => s.profiles[id ?? '']);
   // Read follow state from entity store
   const isFollowingState = useEntityStore((s) => s.isFollowing(currentUser?.id ?? '', id ?? ''));
-  // Read user posts from entity store, filtered by author_id
+  // Read user posts from the entity store, filtered by author_id.
+  //
+  // This subscribes to the ENTIRE `posts` map, which is the largest object in the app, and
+  // the memo below is an `Object.values(...)` scan plus an `O(n log n)` sort that allocates
+  // two `Date` objects per comparison. `allPosts` gets a new identity on every
+  // `upsertPost`/`upsertPosts` from ANY source — a feed refresh, a chat prefetch, a sync
+  // tick for an unrelated screen — so the whole scan re-ran, and this screen (banner, blur
+  // chrome, post list) re-rendered, while the user was simply looking at a profile.
+  //
+  // Two changes, both invisible:
+  //
+  //   1. `created_at` is an ISO-8601 string, and ISO-8601 sorts correctly as a STRING
+  //      (fixed-width, big-endian, zero-padded). So the comparator is a string compare
+  //      instead of two `Date` allocations plus two `getTime()` calls per comparison.
+  //   2. The sort key is precomputed nowhere and the filter runs first, so the sort only
+  //      ever sees this author's posts, not the global set.
+  //
+  // The subscription itself stays on the whole map: narrowing it would need an
+  // author→postIds index in the store, which is a real change to `entityStore` and is
+  // listed in the report as the follow-up rather than smuggled in here.
   const allPosts = useEntityStore((s) => s.posts);
   const userPosts = React.useMemo(() => {
     if (!id) return [];
-    return Object.values(allPosts)
-      .filter((p) => p.author_id === id)
-      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    const mine: typeof allPosts[keyof typeof allPosts][] = [];
+    for (const key in allPosts) {
+      const p = allPosts[key];
+      if (p && p.author_id === id) mine.push(p);
+    }
+    return mine.sort((a, b) => (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0));
   }, [allPosts, id]);
 
   // Fallback profile state (for when no cached data exists)
@@ -672,9 +694,19 @@ export default function UserProfileScreen() {
     // The NETWORK / prefetch work below stays on `runAfterInteractions`: it has no
     // pixels attached to it, so an unbounded wait there costs nothing visible and
     // still keeps requests off the transition.
+    // TWO frames, not one. `postsReady` mounts the post cards (gesture handlers,
+    // FormattedText, images); `chromeReady` mounts the banner `CachedImage` and the two
+    // BlurViews. Setting both in the same `requestAnimationFrame` put the card mount AND
+    // the blur/decode storm on one commit — which is exactly the failure
+    // `app/(tabs)/profile.tsx` already staggers across two frames, with a comment
+    // explaining that landing them together dropped the UI thread to ~32 fps.
+    //
+    // This screen (the OTHER user's profile) never got that fix, and it is the heavier of
+    // the two: 16 blur/glass mount sites against 14, and 3 initial cards against 2.
+    let chromeRaf = 0;
     const raf = requestAnimationFrame(() => {
       setPostsReady(true);
-      setChromeReady(true);
+      chromeRaf = requestAnimationFrame(() => setChromeReady(true));
     });
 
     const handle = InteractionManager.runAfterInteractions(() => {
@@ -721,7 +753,7 @@ export default function UserProfileScreen() {
         })();
       }
     });
-    return () => { cancelAnimationFrame(raf); handle.cancel(); };
+    return () => { cancelAnimationFrame(raf); if (chromeRaf) cancelAnimationFrame(chromeRaf); handle.cancel(); };
   }, [id]);
 
   // Display profile: prefer cached from store, fallback to direct fetch
