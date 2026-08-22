@@ -1017,11 +1017,23 @@ export default function ChatScreen() {
   // thread in UIKit and is not affected by JS work at all. The remaining
   // decode-heavy part (real images instead of sized placeholders) is still gated
   // separately by `imagesReady` below.
-  const [listReady, setListReady] = useState(false);
-  useEffect(() => {
-    const raf = requestAnimationFrame(() => setListReady(true));
-    return () => cancelAnimationFrame(raf);
-  }, []);
+  // ── THE GATE IS GONE — it was the "flash" ───────────────────────────────────
+  //
+  // `listReady` held the FlashList back for one `requestAnimationFrame` and rendered a blank
+  // `View` in its place. The note above argues one frame is imperceptible. It is not, and the
+  // reason is what happens on the frame AFTER: the list mounts with a full window of rows in
+  // a single commit, straight after a frame that was empty. Blank → fully populated in two
+  // consecutive frames is exactly the "content loads with some kind of flash" report, and it
+  // is worse than the thing the gate was protecting against.
+  //
+  // The gate's stated purpose — keeping the heavy mount off the first commit — is already
+  // served by `imagesReady`, which is the gate that matters: it is the image DECODES, not the
+  // text layout, that cost real time. Text-only bubbles are cheap enough to mount on the open
+  // commit, and mounting them there means the first frame the user sees already has content.
+  //
+  // If a measurement ever shows the text-only mount is itself too heavy, the fix is a
+  // skeleton in place of the blank View — never a blank frame.
+  const listReady = true;
 
   // ── Telegram-style deferred image decode (open-frame protection) ───────
   // On open, message bubbles render TEXT + correctly-sized placeholder boxes
@@ -3270,6 +3282,8 @@ export default function ChatScreen() {
   const loadingOlderRef = useRef(false);
   const olderHandleRef = useRef<{ cancel: () => void } | null>(null);
   const olderCooldownRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // False until the user's first scroll. See the note at the top of `onStartReached`.
+  const startReachedArmedRef = useRef(false);
 
   // Cancel a pending reveal on unmount / conversation change. It used to be a bare
   // `setTimeout` that was never cleared, so leaving the chat mid-load left a
@@ -3286,6 +3300,19 @@ export default function ChatScreen() {
   );
 
   const onStartReached = useCallback(() => {
+    // ── Ignore this until the user has actually scrolled ──────────────────────
+    //
+    // `startRenderingFromBottom` means the list lays out and THEN positions itself at the
+    // bottom. During that initial layout it is momentarily at offset 0 — the start — so
+    // FlashList fires `onStartReached` on mount, before the user has touched anything.
+    //
+    // That is the other half of "as if all the messages load immediately". The chat opened,
+    // immediately asked for older history, grew the window, and (with the cooldown) kept
+    // asking as the layout settled. Nothing the user did caused it.
+    //
+    // The latch is armed by the first real scroll event (see `onChatScroll`), so loading
+    // older history is now strictly user-initiated, which is what it was always meant to be.
+    if (!startReachedArmedRef.current) return;
     if (loadingOlderRef.current) return;
     loadingOlderRef.current = true;
 
@@ -3745,6 +3772,9 @@ export default function ChatScreen() {
   // scroll event (covers both drag and momentum/fling uniformly).
   const scrollIdleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onChatScroll = useCallback((e: any) => {
+    // Arm "load older" on the first real scroll event. Before this, `onStartReached` is
+    // ignored — see the note there for why the list fires it on mount.
+    startReachedArmedRef.current = true;
     // Pause GIF animation for the duration of the scroll: arm on every scroll
     // event (no-op once already paused), and release 180 ms after the last
     // one. Cheap — `setScrolling` only fans out to the bubbles on a true
