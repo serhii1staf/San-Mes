@@ -16,6 +16,15 @@ import { shouldSync } from '../../src/services/syncThrottle';
 import { useT } from '../../src/i18n/store';
 import { perfMonitor } from '../../src/services/perfMonitor';
 import { useSettingsStore } from '../../src/store/settingsStore';
+import { ScreenScrim } from '../../src/components/ui/ScreenScrim';
+
+/**
+ * Height of the bottom scrim on tab screens.
+ *
+ * Matches `BAR_FADE_HEIGHT` in CustomTabBar so the ramp behind the floating bar and
+ * the ramp on the screen behind it line up instead of producing two visible edges.
+ */
+const BOTTOM_SCRIM_HEIGHT = 132;
 
 const SEARCH_HISTORY_KEY = '@san:search_history';
 
@@ -280,6 +289,19 @@ export default function SearchScreen() {
 
   return (
     <View style={containerStyle}>
+      {/* Bottom scrim only.
+          
+          Results scroll under the floating tab bar, so the bottom edge genuinely needs
+          occluding and this matches every other screen.
+          
+          No TOP scrim here on purpose: this screen's title and search field sit in
+          normal flow (the container carries `paddingTop: insets.top`), so nothing ever
+          passes beneath them. A gradient there would dim the title and the input
+          instead of dimming content behind them — the same mistake as a scrim covering
+          the navigation. Giving search a top scrim means first converting its header
+          into a floating overlay and re-insetting the list; that is a separate change,
+          not something to fake with a gradient. */}
+      <ScreenScrim bottomHeight={BOTTOM_SCRIM_HEIGHT} />
       <View style={{ paddingHorizontal: theme.spacing.base, paddingBottom: theme.spacing.sm }}>
         <Text variant="subheading" weight="bold">{t('search.title')}</Text>
       </View>

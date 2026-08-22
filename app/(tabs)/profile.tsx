@@ -4,6 +4,10 @@ import { Feather, FontAwesome5 } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
+import { ScreenScrim } from '../../src/components/ui/ScreenScrim';
+
+/** Matches BAR_FADE_HEIGHT in CustomTabBar so the two ramps line up. */
+const BOTTOM_SCRIM_HEIGHT = 132;
 import { BlurView } from 'expo-blur';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../../src/theme';
@@ -1252,6 +1256,11 @@ export default function ProfileScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
+      {/* Bottom scrim so profile content passing under the floating tab bar is
+          occluded, matching the feed and search. Rendered FIRST so the profile chrome
+          and the themed layers below paint over it, and it carries `zIndex: 1` — a
+          scrim must never dim the controls it exists to make legible. */}
+      <ScreenScrim bottomHeight={BOTTOM_SCRIM_HEIGHT} />
       <ProfileThemeScope themeId={profileThemeId} scrollActive={scrollActive} screenFocused={screenFocused}>
       {/* Layer 1: themed background illustration — a SIBLING beneath the content
           (never a parent of a glass view). Renders nothing while the asset is
