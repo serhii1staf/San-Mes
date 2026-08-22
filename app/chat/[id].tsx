@@ -42,6 +42,7 @@ import { PixelIcon } from '../../src/components/pixel-icons/PixelIcon';
 import { uploadChatImage } from '../../src/lib/supabase';
 import { getImageDims, setImageDims } from '../../src/services/imageDimsCache';
 import { useRenderBudget } from '../../src/hooks/useRenderBudget';
+import { bottomScrimColors, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
 import { kvGetJSONSync, kvSetJSON, kvWarm } from '../../src/services/kvStore';
 import { mockMessages, mockConversations, formatMessageTime } from '../../src/utils/mockData';
 import { showToast } from '../../src/store/toastStore';
@@ -3743,9 +3744,14 @@ export default function ChatScreen() {
         pointerEvents="none"
         style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: LIST_FOOTER_HEIGHT }}
       >
+        {/* Shared scrim ramp (src/theme/scrim.ts). These stops used to be local
+            (`[bgTransparent, bgColor + 'B3', bgColor]`, midpoint 0.45) — a
+            background-coloured fade rather than the black ramp used behind the tab
+            bar, which is why the chat's scrim looked like a different effect from
+            every other screen's. */}
         <LinearGradient
-          colors={[bgTransparent, bgColor + 'B3', bgColor]}
-          locations={[0, 0.45, 1]}
+          colors={bottomScrimColors(theme.isDark, bgColor)}
+          locations={SCRIM_LOCATIONS}
           style={StyleSheet.absoluteFill}
         />
       </View>
@@ -4010,9 +4016,10 @@ export default function ChatScreen() {
           fully readable; only the message list behind it fades through
           the dimming zone. */}
       <View style={[styles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">
+        {/* Shared scrim ramp — see the note on the footer gradient below. */}
         <LinearGradient
-          colors={[bgColor, bgColor + 'B3', bgTransparent]}
-          locations={[0, 0.55, 1]}
+          colors={topScrimColors(theme.isDark, bgColor)}
+          locations={SCRIM_LOCATIONS}
           style={StyleSheet.absoluteFill}
         />
         {searchMode ? (
