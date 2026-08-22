@@ -47,17 +47,33 @@ describe('renderBudget', () => {
   /**
    * A weak device must NOT get a different-looking app.
    *
-   * An earlier version switched glass, blur and particles off by device class. That
-   * is a silent redesign for a whole class of hardware — immediately visible, since
-   * the glass and fallback paths differ in corner treatment and surface size — and
-   * nobody asked for it. Older phones should run smoothly, not look different.
+   * An earlier version switched decorative effects off by device class. That is a
+   * silent redesign for a whole class of hardware, and nobody asked for it. Older
+   * phones should run smoothly, not look different.
    */
   it('never changes the visual design based on device class alone', () => {
     for (const powerMode of ['unknown', 'normal'] as const) {
-      const b = renderBudget({ isWeak: true, powerMode });
-      expect(b.glassAllowed).toBe(true);
-      expect(b.fadingBlurAllowed).toBe(true);
-      expect(b.ambientParticles).toBe(true);
+      expect(renderBudget({ isWeak: true, powerMode }).ambientParticles).toBe(true);
+    }
+  });
+
+  /**
+   * THE REGRESSION TEST FOR THE WORST VERSION OF THIS MISTAKE.
+   *
+   * `glassAllowed` and `fadingBlurAllowed` used to live in this table, and Low Power
+   * Mode set them false. A phone kept in Low Power Mode therefore had no liquid glass
+   * anywhere while the user's own toggle was still switched on.
+   *
+   * The budget must not be able to express that at all, so the fields are gone rather
+   * than merely set to `true`. If they ever come back, this fails.
+   */
+  it('cannot express a visual downgrade — glass is not in the budget', () => {
+    for (const powerMode of ALL_MODES) {
+      for (const isWeak of [true, false]) {
+        const b = renderBudget({ isWeak, powerMode }) as unknown as Record<string, unknown>;
+        expect(b).not.toHaveProperty('glassAllowed');
+        expect(b).not.toHaveProperty('fadingBlurAllowed');
+      }
     }
   });
 
@@ -70,11 +86,9 @@ describe('renderBudget', () => {
    * OS has already cut the CPU/GPU budget and capped the refresh rate, the user
    * chose the state, and it ends when they charge the phone.
    */
-  it('drops visible effects only in low power mode', () => {
-    const lp = renderBudget({ isWeak: false, powerMode: 'low_power' });
-    expect(lp.glassAllowed).toBe(false);
-    expect(lp.fadingBlurAllowed).toBe(false);
-    expect(lp.ambientParticles).toBe(false);
+  it('drops decorative particles only in low power mode', () => {
+    expect(renderBudget({ isWeak: false, powerMode: 'low_power' }).ambientParticles).toBe(false);
+    expect(renderBudget({ isWeak: true, powerMode: 'normal' }).ambientParticles).toBe(true);
   });
 
   it('lets low power mode win over device class', () => {
@@ -89,7 +103,6 @@ describe('renderBudget', () => {
         expect(b.heroWarmCount).toBeLessThanOrEqual(BASELINE_BUDGET.heroWarmCount);
         expect(b.carouselEagerSlides).toBeLessThanOrEqual(BASELINE_BUDGET.carouselEagerSlides);
         // A boolean may go true→false, never false→true.
-        if (!BASELINE_BUDGET.glassAllowed) expect(b.glassAllowed).toBe(false);
         if (!BASELINE_BUDGET.ambientParticles) expect(b.ambientParticles).toBe(false);
       }),
       { numRuns: 100 },

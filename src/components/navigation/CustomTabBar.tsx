@@ -22,6 +22,7 @@ import Animated, {
   Extrapolation,
 } from 'react-native-reanimated';
 import { useTheme } from '../../theme';
+import { bottomScrimColors, SCRIM_LOCATIONS } from '../../theme/scrim';
 import { triggerHaptic } from '../../utils/haptics';
 import { GlassSurface, NativeGlassView, useLiquidGlassActive } from '../ui/LiquidGlass';
 import { useTabBarStore } from '../../store/tabBarStore';
@@ -598,7 +599,6 @@ export const CustomTabBar = React.memo(function CustomTabBar({
   // Theme background for the bottom fade — mirrors the home header's
   // top fade so feed content dissolves into the background under the bar.
   const bgColor = theme.colors.background.primary;
-  const bgTransparent = bgColor + '00';
   // ── Bottom scrim ────────────────────────────────────────────────────────────
   //
   // The fade behind the floating bar used to top out at `bgColor + 'D9'` (85 %), so
@@ -606,16 +606,9 @@ export const CustomTabBar = React.memo(function CustomTabBar({
   // scrim read as weak. It now reaches full opacity at the bottom edge, which is what
   // both iOS and Android do behind a bottom bar: content is occluded, not tinted.
   //
-  // In dark themes the ramp is biased toward black rather than the theme's near-black
-  // surface, because a scrim matching the surface exactly cannot read as depth.
-  //
-  // Calibration note: the first attempt used a fully opaque black end stop. That was
-  // too heavy — it read as a solid black bar rather than as content receding, which
-  // is not what either platform does. It now stops short of opaque, so the scrim
-  // still occludes enough for the bar to be legible while the content behind it
-  // remains faintly perceptible.
-  const scrimEnd = theme.isDark ? 'rgba(0,0,0,0.82)' : bgColor + 'F2';
-  const scrimMid = theme.isDark ? 'rgba(0,0,0,0.5)' : bgColor + 'A6';
+  // Single shared definition — see src/theme/scrim.ts. Inline per-screen stops are
+  // what let the scrims drift apart and left some screens with none at all.
+  const bottomScrim = bottomScrimColors(theme.isDark, bgColor);
 
   // ─── Split the routes: 4 main tabs vs the detached profile tab ───────────
   //
@@ -930,8 +923,8 @@ export const CustomTabBar = React.memo(function CustomTabBar({
           end, not be covered by a solid slab). transparent → light → ~80%
           background. On Android we extend it by the system-nav inset. */}
       <LinearGradient
-        colors={[bgTransparent, scrimMid, scrimEnd]}
-        locations={[0, 0.5, 1]}
+        colors={bottomScrim}
+        locations={SCRIM_LOCATIONS}
         style={[
           styles.bottomFade,
           { height: BAR_FADE_HEIGHT + (Platform.OS === 'android' ? insets.bottom : 0) },

@@ -25,13 +25,24 @@ export interface RenderBudget {
   warmCachePolicy: 'disk' | 'memory-disk';
   /** Carousel slides mounted eagerly; Infinity = all of them. */
   carouselEagerSlides: number;
-  /** May native liquid-glass surfaces be used? */
-  glassAllowed: boolean;
-  /** May the fading-blur header be used (vs. a plain gradient)? */
-  fadingBlurAllowed: boolean;
   /** May decorative ambient particles run? */
   ambientParticles: boolean;
 }
+
+// ── WHAT THIS TABLE MAY AND MAY NOT CONTROL ─────────────────────────────────
+//
+// It controls how much WORK a frame costs. It does not control how the app LOOKS.
+//
+// `glassAllowed` and `fadingBlurAllowed` used to live here, and Low Power Mode set
+// them to false. The result was that a phone kept in Low Power Mode had no liquid
+// glass anywhere while the user's own toggle was still on — reported as "glass
+// disappeared on iPhone". Buying frames by removing the product's appearance is not
+// a trade that was ever agreed to, and it is invisible in review because the code
+// reads as correct until the power state flips.
+//
+// Ambient decorative particles remain here because they are a purely additive
+// background effect with no structural role, unlike glass surfaces which ARE the
+// chrome.
 
 /**
  * Today's behaviour, stated explicitly so it can be asserted.
@@ -44,8 +55,6 @@ export const BASELINE_BUDGET: RenderBudget = {
   heroWarmCount: 4,
   warmCachePolicy: 'memory-disk',
   carouselEagerSlides: Number.POSITIVE_INFINITY,
-  glassAllowed: true,
-  fadingBlurAllowed: true,
   ambientParticles: true,
 };
 
@@ -68,8 +77,6 @@ export const WEAK_DEVICE_BUDGET: RenderBudget = {
   heroWarmCount: 2,
   warmCachePolicy: 'disk',
   carouselEagerSlides: 2,
-  glassAllowed: true,
-  fadingBlurAllowed: true,
   ambientParticles: true,
 };
 
@@ -96,8 +103,6 @@ export const LOW_POWER_BUDGET: RenderBudget = {
   heroWarmCount: 2,
   warmCachePolicy: 'disk',
   carouselEagerSlides: 2,
-  glassAllowed: false,
-  fadingBlurAllowed: false,
   ambientParticles: false,
 };
 
