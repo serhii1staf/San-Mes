@@ -1530,6 +1530,14 @@ export default function UserProfileScreen() {
   );
   const handleScrollBeginDrag = useCallback(() => setScrollActive(true), []);
   const handleScrollSettle = useCallback(() => setScrollActive(false), []);
+  // Was inline JSX on the list, so a new element every render.
+  const listEmpty = useMemo(() => (
+    <View style={{ alignItems: 'center', paddingVertical: 40 }}>
+      <Text variant="caption" color={theme.colors.text.tertiary}>
+        {activeTab === 'posts' ? t('profile.no_posts') : t('profile.empty_section')}
+      </Text>
+    </View>
+  ), [theme.colors.text.tertiary, activeTab, t]);
 
   // Loading / not-found guards — placed AFTER every hook so hook count is
   // identical on every render (see the rules-of-hooks note above).
@@ -1699,13 +1707,7 @@ export default function UserProfileScreen() {
         // edge-to-edge via negative horizontal margins below.
         contentContainerStyle={LIST_CONTENT_CONTAINER_STYLE}
         ListHeaderComponent={listHeader}
-        ListEmptyComponent={(
-          <View style={{ alignItems: 'center', paddingVertical: 40 }}>
-            <Text variant="caption" color={theme.colors.text.tertiary}>
-              {activeTab === 'posts' ? t('profile.no_posts') : t('profile.empty_section')}
-            </Text>
-          </View>
-        )}
+        ListEmptyComponent={listEmpty}
       />
 
       {/* ── Pinned (sticky) category tabs overlay ──────────────────────────

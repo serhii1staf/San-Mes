@@ -302,7 +302,7 @@ export default function ChatFullscreenScreen() {
           This screen was the only one still hand-rolling it, so it did not pick up the
           shared header overhang and its top ramp was shorter than every other screen's —
           the same ramp compressed into less distance, which reads as weaker. */}
-      <View style={[styles.header, { height: headerScrimHeights(insets.top).gradient }]} pointerEvents="box-none">
+      <View style={[styles.header, { height: headerScrimHeights(insets.top, 8).gradient }]} pointerEvents="box-none">
         <LinearGradient
           colors={topScrimColors(theme.isDark, bgColor)}
           locations={SCRIM_LOCATIONS}

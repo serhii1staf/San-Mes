@@ -959,7 +959,11 @@ export default function ProfileScreen() {
   // reads `user` optionally; the values computed during the brief null window
   // are simply discarded by that guard.
 
-  const userLinks = useMemo<{ type: string; url: string }[]>(() => (user as any)?.links || [], [user]);
+  // Keyed on the links field itself, NOT on the whole `user` object. Keyed on `user`, any
+  // auth-store mutation (badge sync, display-name edit, follow counts) produced a fresh `[]`
+  // here, which fed `bannerHeader`'s dep list and rebuilt the banner for nothing.
+  const userLinksRaw = (user as any)?.links;
+  const userLinks = useMemo<{ type: string; url: string }[]>(() => userLinksRaw || [], [userLinksRaw]);
   // "Build-your-own" header decorations. Prefer the in-memory user value (set
   // right after editing), else the locally-cached scene (instant on cold start).
   const ownScene = useMemo(() => {
@@ -1236,9 +1240,29 @@ export default function ProfileScreen() {
 
   // Compose: only `tabsRow` changes reference on tab switch, so React keeps
   // the `bannerHeader` subtree mounted untouched.
+  //
+  // This finally holds. `t` used to be a fresh closure per render (see the note on
+  // `useT` in src/i18n/store.ts), which invalidated `tabs`, and through it `tabsRow`,
+  // `bannerHeader` and this — so the list got a brand-new header element tree on every
+  // render and none of the memo split did anything. `useT` is now `useCallback`'d.
   const listHeader = useMemo(() => (
     <>{bannerHeader}{tabsRow}</>
   ), [bannerHeader, tabsRow]);
+
+  // Stable scroll plumbing. All three were allocated inline in the list's JSX.
+  const onOwnProfileScroll = useMemo(
+    () => Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true }),
+    [scrollY],
+  );
+  const handleScrollBeginDrag = useCallback(() => setScrollActive(true), []);
+  const handleScrollSettle = useCallback(() => setScrollActive(false), []);
+  const listEmpty = useMemo(() => (
+    <View style={{ alignItems: 'center', paddingVertical: 40 }}>
+      <Text variant="caption" color={theme.colors.text.tertiary}>
+        {activeTab === 'posts' ? t('profile.no_posts') : t('profile.empty_section')}
+      </Text>
+    </View>
+  ), [theme.colors.text.tertiary, activeTab, t]);
 
   // "No user yet" spinner. Deliberately placed AFTER every hook above so the
   // hook order/count is identical whether or not a session is loaded — see the
@@ -1370,23 +1394,22 @@ export default function ProfileScreen() {
         removeClippedSubviews={false}
         showsVerticalScrollIndicator={false}
         bounces={false}
-        onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true })}
+        // Memoized, not inline. Built in JSX this allocated a fresh `AnimatedEvent` on every
+        // render and made the ScrollView re-attach its native event mapping each time.
+        // `app/profile/[id].tsx` already memoized exactly this; the own-profile tab did not.
+        onScroll={onOwnProfileScroll}
         scrollEventThrottle={16}
         // Seasonal Profile Themes (Req 6.2, 6.3): drive the ambient pause from
         // lightweight JS handlers that fire only on drag/momentum start/end, so
         // they do not contend with the native-driven `onScroll` above.
-        onScrollBeginDrag={() => setScrollActive(true)}
-        onScrollEndDrag={() => setScrollActive(false)}
-        onMomentumScrollEnd={() => setScrollActive(false)}
+        // Stable identities — these were inline arrows, so every render handed the list three
+        // new handlers on top of a new scroll event.
+        onScrollBeginDrag={handleScrollBeginDrag}
+        onScrollEndDrag={handleScrollSettle}
+        onMomentumScrollEnd={handleScrollSettle}
         contentContainerStyle={LIST_CONTENT_CONTAINER_STYLE}
         ListHeaderComponent={listHeader}
-        ListEmptyComponent={(
-          <View style={{ alignItems: 'center', paddingVertical: 40 }}>
-            <Text variant="caption" color={theme.colors.text.tertiary}>
-              {activeTab === 'posts' ? t('profile.no_posts') : t('profile.empty_section')}
-            </Text>
-          </View>
-        )}
+        ListEmptyComponent={listEmpty}
       />
       {/* ── Pinned (sticky) category tabs overlay ──────────────────────────
           Mirrors the inline tabs row (same labels, active styling, haptic,
