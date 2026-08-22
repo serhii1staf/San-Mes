@@ -389,6 +389,18 @@ const ru: Record<string, string> = {
   'create.alert.file_too_large_camera': 'Максимальный размер изображения — 20 МБ. Попробуйте сделать другое фото.',
   'create.alert.upload_error_title': 'Ошибка загрузки',
   'create.alert.upload_error_msg': 'Не удалось загрузить изображение: {reason}',
+  // Различимые причины отказа загрузки. Раньше пользователь видел сырую строку
+  // `upload failed (401) {"error":"unauthorised"}` — из неё невозможно понять,
+  // что делать. Сообщение для auth_rejected НЕ утверждает, что сервер не
+  // настроен: клиент этого не знает и знать не должен.
+  'create.upload_fail.not_signed_in': 'Вы не вошли в аккаунт. Войдите и попробуйте снова.',
+  'create.upload_fail.session_expired': 'Сессия истекла. Войдите заново, чтобы опубликовать изображение.',
+  'create.upload_fail.auth_rejected': 'Не удалось подтвердить вход. Попробуйте войти заново — если ошибка повторяется, сообщите нам.',
+  'create.upload_fail.timeout': 'Загрузка не успела завершиться. Проверьте связь и попробуйте снова.',
+  'create.upload_fail.offline': 'Нет сети. Опубликуем, когда связь вернётся.',
+  'create.upload_fail.service_unavailable': 'Сервис загрузки временно недоступен. Попробуйте позже.',
+  'create.upload_fail.bad_image': 'Это изображение не подходит. Выберите другой файл.',
+  'create.upload_fail.draft_kept': 'Черновик и выбранные изображения сохранены.',
   'create.alert.unknown_error': 'Неизвестная ошибка',
   'create.alert.error_title': 'Ошибка',
   'create.alert.must_login': 'Необходимо войти в аккаунт',
@@ -619,6 +631,17 @@ const ru: Record<string, string> = {
   'admin.error.wrong_password': 'Неверный пароль',
   'admin.error.load_status': 'Не удалось загрузить статус',
   'admin.error.server_returned': 'Сервер вернул {code}',
+  // Различимые причины недоступности панели. Раньше и «переменная окружения не
+  // задана», и «сервис лежит», и таймаут показывались одним сообщением с кодом,
+  // из-за чего единственная исправимая причина выглядела как сбой хостинга.
+  'admin.error.not_configured': 'На сервере не настроен ADMIN_KEY',
+  'admin.error.not_configured_hint': 'Задайте переменную окружения ADMIN_KEY на Vercel и сделайте новый деплой — переменная не применяется к уже запущенным функциям.',
+  'admin.error.service_unavailable': 'Сервис недоступен',
+  'admin.error.timeout': 'Сервер не ответил вовремя',
+  'admin.error.unreachable': 'Не удалось связаться с сервером',
+  'admin.error.worker_key_mismatch': 'Ключ администратора не совпадает с ключом Worker — метрики базы будут пустыми',
+  'admin.error.jwt_mismatch': 'JWT_SECRET на Vercel и в Worker расходятся — загрузка изображений будет падать с 401',
+  'admin.error.jwt_missing': 'JWT_SECRET не задан на Vercel — загрузка изображений падает с 401',
   'admin.delete_post_title': 'Удалить пост?',
   'admin.delete_post_msg': 'Будет удалён с сервера, из кэшей и все связанные репосты',
   'admin.panel_title': 'Админ-панель',
@@ -643,6 +666,12 @@ const ru: Record<string, string> = {
   'admin.post': 'Пост',
   'admin.delete_post_btn': 'Удалить пост',
   'admin.usage.of': '{used} из {total}',
+  // Явная пометка неизмеренного значения. Раньше это была одиночная тильда рядом
+  // с названием — она читалась как шум, а не как «это оценка».
+  'admin.usage.unmeasured': 'не измерено',
+  'admin.usage.est_images': 'оценка: постов с изображениями × 180 КБ',
+  'admin.usage.est_rows': 'оценка по числу строк',
+  'admin.usage.unmeasured_reason': 'причина: {reason}',
   'admin.unit.ms': 'мс',
   'admin.badge.developer': 'Разработчик',
   'admin.badge.admin': 'Администратор',

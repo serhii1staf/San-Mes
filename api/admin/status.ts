@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import crypto from 'crypto';
+import { secretFingerprint } from '../_lib/authFingerprint';
 
 // Admin "services status" endpoint. Returns a live health snapshot of the
 // backing services (Supabase DB, Cloudflare R2 media domain, Vercel runtime)
@@ -79,6 +80,39 @@ function fetchT(url: string, init?: RequestInit): Promise<Response> {
 // Fetch row counts from the Worker's admin endpoint. The Worker
 // returns all four counts in a single SQL trip; we project a single
 // number per metric the status panel needs.
+/**
+ * Ask the Worker for its `JWT_SECRET` fingerprint and compare it with ours.
+ *
+ * This is the diagnosis for the image-upload 401. `api/r2-upload.ts` verifies
+ * Worker-issued tokens with `process.env.JWT_SECRET`, and `verifyWorkerToken` is
+ * fail-closed — so if the two sides hold different secrets (or Vercel holds none),
+ * EVERY upload 401s and the client cannot tell why. Returning a single boolean
+ * surfaces that state in the admin panel without either side transmitting a secret
+ * or even a fingerprint.
+ *
+ * Returns null when the comparison could not be made (Worker unreachable, route
+ * not deployed yet). Null means "unknown", never "fine" — an unknown must not read
+ * as a pass.
+ */
+async function jwtSecretsAgree(): Promise<boolean | null> {
+  try {
+    const ours = secretFingerprint(process.env.JWT_SECRET);
+    const r = await fetchT(`${WORKER_BASE_URL}/v1/admin/auth-fingerprint`, {
+      headers: { Accept: 'application/json', 'X-Admin-Key': ADMIN_KEY },
+    });
+    if (!r.ok) return null;
+    const body = (await r.json()) as { data?: { jwt?: { configured?: boolean; fingerprint?: string | null } } };
+    const theirs = body?.data?.jwt;
+    if (!theirs) return null;
+    // Neither side configured is still a mismatch in the sense that matters: the
+    // upload path cannot work. Only "both configured and equal" is agreement.
+    if (!ours.configured || !theirs.configured) return false;
+    return ours.fingerprint === theirs.fingerprint;
+  } catch {
+    return null;
+  }
+}
+
 async function workerCounts(): Promise<{
   profiles: number;
   posts: number;
@@ -251,11 +285,12 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   }
 
   // Run all checks in parallel.
-  const [counts, r2, r2use, vercelRegion] = await Promise.all([
+  const [counts, r2, r2use, vercelRegion, jwtMatch] = await Promise.all([
     timed(() => workerCounts()),
     timed(() => fetchT(`${R2_PUBLIC_BASE}/test/hello.txt`, { method: 'GET' }).then((r) => r.ok)),
     timed(() => r2Usage()),
     Promise.resolve(process.env.VERCEL_REGION || 'unknown'),
+    jwtSecretsAgree(),
   ]);
 
   // The Worker is the data layer now. It's healthy if the counts call
@@ -340,6 +375,27 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       dbLatencyMs: counts.ms,
       storageBytes,
       storageObjects,
+    },
+    // Configuration diagnostics — deliberately INSIDE the 200 response, so they
+    // are readable only by a caller that already passed the admin-key check. The
+    // 503 body stays exactly `{error:'admin_not_configured'}`: no variable names,
+    // no regions, nothing an unauthenticated caller can harvest.
+    //
+    // These three booleans answer the questions the panel previously could not:
+    //   r2Measured        — is the storage bar a measurement or a guess?
+    //   workerAdminKeyOk  — did the Worker accept the key we forwarded? When false,
+    //                       every count reads zero and it looks like the database
+    //                       is down, which is a different problem entirely.
+    //   jwtSecretsMatch   — do Vercel and the Worker sign/verify with the same
+    //                       secret? `false` here is the direct explanation for
+    //                       image uploads failing with 401. `null` means the check
+    //                       could not run, which is not the same as "fine".
+    config: {
+      r2Measured: measuredStorage,
+      r2Debug: r2use.value?.debug || null,
+      workerAdminKeyOk: counts.ok,
+      jwtSecretsMatch: jwtMatch,
+      jwtConfiguredHere: secretFingerprint(process.env.JWT_SECRET).configured,
     },
   });
 }

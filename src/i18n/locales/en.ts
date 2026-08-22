@@ -391,6 +391,18 @@ const en: Record<string, string> = {
   'create.alert.file_too_large_camera': 'Maximum image size is 20 MB. Try taking another photo.',
   'create.alert.upload_error_title': 'Upload error',
   'create.alert.upload_error_msg': 'Could not upload image: {reason}',
+  // Distinguishable upload failure reasons. The user used to see the raw
+  // `upload failed (401) {"error":"unauthorised"}`, which says nothing about what
+  // to do. The auth_rejected copy deliberately does NOT claim the server is
+  // misconfigured — the client cannot know that, and should not be told.
+  'create.upload_fail.not_signed_in': "You're not signed in. Sign in and try again.",
+  'create.upload_fail.session_expired': 'Your session expired. Sign in again to upload this image.',
+  'create.upload_fail.auth_rejected': "Couldn't confirm your sign-in. Try signing in again — if it keeps happening, let us know.",
+  'create.upload_fail.timeout': "The upload didn't finish in time. Check your connection and try again.",
+  'create.upload_fail.offline': "You're offline. We'll post this once you're back online.",
+  'create.upload_fail.service_unavailable': 'The upload service is temporarily unavailable. Try again later.',
+  'create.upload_fail.bad_image': "That image can't be used. Pick a different file.",
+  'create.upload_fail.draft_kept': 'Your draft and selected images have been kept.',
   'create.alert.unknown_error': 'Unknown error',
   'create.alert.error_title': 'Error',
   'create.alert.must_login': 'You need to sign in',
@@ -606,6 +618,17 @@ const en: Record<string, string> = {
   'admin.password_subtitle': 'Enter the admin password',
   'admin.password_placeholder': 'Password',
   'admin.error.wrong_password': 'Wrong password',
+  // Distinguishable reasons the panel is unavailable. Previously a missing env
+  // var, a downed service and a timeout all showed one message with a status
+  // code, so the only fixable cause looked like a hosting outage.
+  'admin.error.not_configured': 'ADMIN_KEY is not configured on the server',
+  'admin.error.not_configured_hint': 'Set the ADMIN_KEY environment variable on Vercel and redeploy — env vars do not apply to already-running functions.',
+  'admin.error.service_unavailable': 'Service unavailable',
+  'admin.error.timeout': 'The server did not respond in time',
+  'admin.error.unreachable': 'Could not reach the server',
+  'admin.error.worker_key_mismatch': 'The admin key does not match the Worker key — database metrics will read zero',
+  'admin.error.jwt_mismatch': 'JWT_SECRET differs between Vercel and the Worker — image uploads will fail with 401',
+  'admin.error.jwt_missing': 'JWT_SECRET is not set on Vercel — image uploads are failing with 401',
   'admin.error.load_status': 'Could not load status',
   'admin.error.server_returned': 'Server returned {code}',
   'admin.delete_post_title': 'Delete post?',
@@ -632,6 +655,12 @@ const en: Record<string, string> = {
   'admin.post': 'Post',
   'admin.delete_post_btn': 'Delete post',
   'admin.usage.of': '{used} of {total}',
+  // Explicit marker for an unmeasured value. This used to be a lone tilde next to
+  // the label, which read as noise rather than "this is an estimate".
+  'admin.usage.unmeasured': 'not measured',
+  'admin.usage.est_images': 'estimate: posts with images × 180 KB',
+  'admin.usage.est_rows': 'estimate from row count',
+  'admin.usage.unmeasured_reason': 'reason: {reason}',
   'admin.unit.ms': 'ms',
   'admin.badge.developer': 'Developer',
   'admin.badge.admin': 'Admin',
