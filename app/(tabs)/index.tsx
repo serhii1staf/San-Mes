@@ -956,6 +956,11 @@ export default function FeedScreen() {
 
   const bgColor = theme.colors.background.primary;
   const bgTransparent = bgColor + '00';
+  // Top scrim, biased toward true black in dark themes so it reads as depth rather
+  // than as a flat tint of the surface it sits on — matching the bottom scrim behind
+  // the tab bar and the platform convention on both iOS and Android.
+  const scrimTop = theme.isDark ? 'rgba(0,0,0,1)' : bgColor;
+  const scrimTopMid = theme.isDark ? 'rgba(0,0,0,0.72)' : bgColor + 'BF';
   const headerContentHeight = insets.top + 48;
   const headerGradientHeight = headerContentHeight + 28;
 
@@ -994,7 +999,7 @@ export default function FeedScreen() {
       <View style={{ flex: 1, backgroundColor: bgColor }}>
         <View style={[styles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">
           {!isFadingBlurAvailable() && (
-            <LinearGradient colors={[bgColor, bgColor + '80', bgTransparent]} locations={[0, 0.45, 1]} style={StyleSheet.absoluteFill} />
+            <LinearGradient colors={[scrimTop, scrimTopMid, bgTransparent]} locations={[0, 0.5, 1]} style={StyleSheet.absoluteFill} />
           )}
           <FadingBlurHeader isDark={theme.isDark} direction="down" height={insets.top + 38} fadeStart={0.5} blendColor={bgColor + '8C'} />
           <View style={[styles.headerContent, { paddingTop: insets.top }]}>
@@ -1019,7 +1024,7 @@ export default function FeedScreen() {
     <View style={{ flex: 1, backgroundColor: bgColor }}>
       <View style={[styles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">
         {!isFadingBlurAvailable() && (
-          <LinearGradient colors={[bgColor, bgColor + '80', bgTransparent]} locations={[0, 0.45, 1]} style={StyleSheet.absoluteFill} />
+          <LinearGradient colors={[scrimTop, scrimTopMid, bgTransparent]} locations={[0, 0.5, 1]} style={StyleSheet.absoluteFill} />
         )}
         <FadingBlurHeader isDark={theme.isDark} direction="down" height={insets.top + 38} fadeStart={0.5} blendColor={bgColor + '8C'} />
         <View style={[styles.headerContent, { paddingTop: insets.top }]} pointerEvents="auto">

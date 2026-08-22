@@ -599,6 +599,18 @@ export const CustomTabBar = React.memo(function CustomTabBar({
   // top fade so feed content dissolves into the background under the bar.
   const bgColor = theme.colors.background.primary;
   const bgTransparent = bgColor + '00';
+  // ── Bottom scrim ────────────────────────────────────────────────────────────
+  //
+  // The fade behind the floating bar used to top out at `bgColor + 'D9'` (85 %), so
+  // list content stayed faintly visible through the strip the bar sits on and the
+  // scrim read as weak. It now reaches full opacity at the bottom edge, which is what
+  // both iOS and Android do behind a bottom bar: content is occluded, not tinted.
+  //
+  // In dark themes the ramp is biased toward true black rather than the theme's
+  // near-black surface, because a scrim that matches the surface exactly does not
+  // read as depth — the requested "darker, black" look.
+  const scrimEnd = theme.isDark ? 'rgba(0,0,0,1)' : bgColor + 'FF';
+  const scrimMid = theme.isDark ? 'rgba(0,0,0,0.72)' : bgColor + 'BF';
 
   // ─── Split the routes: 4 main tabs vs the detached profile tab ───────────
   //
@@ -913,8 +925,8 @@ export const CustomTabBar = React.memo(function CustomTabBar({
           end, not be covered by a solid slab). transparent → light → ~80%
           background. On Android we extend it by the system-nav inset. */}
       <LinearGradient
-        colors={[bgTransparent, bgColor + '80', bgColor + 'D9']}
-        locations={[0, 0.45, 1]}
+        colors={[bgTransparent, scrimMid, scrimEnd]}
+        locations={[0, 0.5, 1]}
         style={[
           styles.bottomFade,
           { height: BAR_FADE_HEIGHT + (Platform.OS === 'android' ? insets.bottom : 0) },

@@ -521,22 +521,25 @@ function RootLayout() {
         <MusicBottomIndicator />
         <MusicFullPlayer />
         <Toast />
-        {/* The minimized-session card OVERLAYS the Stack — it is absolutely
-            positioned and reserves no space, so nothing below it moves when a
-            session is minimized or dismissed.
+        {/* The Stack and the minimized-session band share one flex column, so the
+            band occupies its own height and the Stack — including the chat input bar
+            and the floating tab bar inside it — is pushed up by exactly that much.
             
-            It used to sit in a flex column and reserve its own height, which
-            pushed the whole Stack (and the floating tab bar inside it) upward.
-            That was both unwanted visually and expensive: reserving and releasing
-            the height re-laid out the Stack, the active screen and everything in
-            it twice per session — a hitch exactly when the card appeared or left,
-            worst in a chat where that tree holds a live message list. */}
+            That lift is REQUIRED, not incidental: the band, the input bar and the tab
+            bar all live at the bottom of the screen, so a band that reserved no space
+            would necessarily cover one of them. It did, and the report was "I can't
+            see what I'm tapping".
+            
+            Layout commits twice per session (show / finished-hiding), owned by React
+            state inside the band. What must not come back is animating that height
+            frame by frame, which re-laid out this whole tree ~23 times per
+            transition. */}
         <View style={styles.rootColumn}>
           <View style={styles.stackWrapper}>
             <AppStack />
           </View>
+          <BrowserBottomBand />
         </View>
-        <BrowserBottomBand />
         {/* Floating performance monitor — sits above everything else so it
             stays visible on every screen. Defaults to ON; users can hide it
             from the panel that opens when they tap the bubble. */}
