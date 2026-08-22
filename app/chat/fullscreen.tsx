@@ -255,6 +255,14 @@ export default function ChatFullscreenScreen() {
     return { paddingBottom: interpolate(up, [0, 1], [insets.bottom + 8, 8]) };
   });
 
+  const headerBtnFrame = useMemo(
+    () => ({
+      backgroundColor: theme.colors.background.elevated,
+      borderWidth: 1,
+      borderColor: theme.colors.border.light,
+    }),
+    [theme.colors.background.elevated, theme.colors.border.light],
+  );
   return (
     <View style={[styles.root, { backgroundColor: theme.colors.background.primary }]}>
       {/* No `ModalStatusBar` here on purpose — this is a pushed screen, not an
@@ -307,7 +315,7 @@ export default function ChatFullscreenScreen() {
             hitSlop={10}
             accessibilityRole="button"
             accessibilityLabel={t('common.close', 'Закрыть')}
-            style={styles.headerBtn}
+            style={[styles.headerBtn, glassActive ? null : headerBtnFrame]}
           >
             {glassActive ? (
               <GlassBg borderRadius={18} glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} />
@@ -315,7 +323,16 @@ export default function ChatFullscreenScreen() {
             <Feather name="x" size={18} color={theme.colors.text.primary} />
           </Pressable>
 
-          <View style={styles.caption} pointerEvents="none">
+          {/* Name + day/page caption. Framed for the same reason as the buttons: this header
+              sits over a PHOTO, so unbacked text has no guaranteed contrast. Glass supplies
+              its own surface; otherwise it gets the flat elevated fill + hairline. */}
+          <View
+            style={[styles.captionFrame, glassActive ? null : headerBtnFrame]}
+            pointerEvents="none"
+          >
+            {glassActive ? (
+              <GlassBg borderRadius={15} glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} />
+            ) : null}
             <Text variant="caption" weight="semibold" numberOfLines={1}>
               {senderLabel}
             </Text>
@@ -342,7 +359,7 @@ export default function ChatFullscreenScreen() {
                 hitSlop={10}
                 accessibilityRole="button"
                 accessibilityLabel={t('common.save')}
-                style={styles.headerBtn}
+                style={[styles.headerBtn, glassActive ? null : headerBtnFrame]}
               >
                 {glassActive ? (
                   <GlassBg borderRadius={18} glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} />
@@ -360,7 +377,7 @@ export default function ChatFullscreenScreen() {
               hitSlop={10}
               accessibilityRole="button"
               accessibilityLabel={currentPinned ? t('chat.unpin', 'Открепить') : t('chat.pin', 'Закрепить')}
-              style={styles.headerBtn}
+              style={[styles.headerBtn, glassActive ? null : headerBtnFrame]}
             >
               {glassActive ? (
                 <GlassBg borderRadius={18} glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} />
@@ -733,6 +750,19 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   caption: { flex: 1, alignItems: 'center' },
+  // Frame for the caption pill, same treatment as the buttons so the header reads as
+  // three chrome elements rather than text floating on a photo.
+  captionFrame: {
+    flex: 1,
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 15,
+    overflow: 'hidden',
+    // NOTE: no `borderWidth` here. It lives in `headerBtnFrame`, which is applied only on
+    // the non-glass path — a border declared here would also draw in glass mode, where
+    // RN's default black `borderColor` would put a hairline across the glass surface.
+  },
   captionSub: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   captionSubText: { fontSize: 11 },
   composerDock: { position: 'absolute', left: 0, right: 0, bottom: 0 },

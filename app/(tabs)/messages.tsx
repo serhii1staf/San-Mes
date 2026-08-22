@@ -627,8 +627,13 @@ function ConversationItemBase({
     [index, dragFrom, dragTo, dragOffsetY, onDragStart, onDragEnd],
   );
 
+  // The edit-mode slide. Composed with the drag displacement below — one is horizontal and
+  // one is vertical, so they never fight.
+  const editShift = useEditShiftStyle(editProgress, editMode);
+
   return (
     <Reanimated.View style={dragStyle}>
+    <Reanimated.View style={editShift}>
     <ConditionalContextMenuRow
       // In selection mode the native context menu is suppressed entirely: a
       // long-press peek that navigates would fight the checkboxes, and iOS's
@@ -702,6 +707,7 @@ function ConversationItemBase({
         color={theme.colors.text.tertiary}
       />
     </ConditionalContextMenuRow>
+    </Reanimated.View>
     </Reanimated.View>
   );
 }
@@ -858,25 +864,66 @@ const ChatSearchField = React.memo(function ChatSearchField({
 const RowSeparator = React.memo(function RowSeparator({
   color,
   editMode,
+  editProgress,
 }: {
   color: string;
   editMode: boolean;
+  editProgress: SharedValue<number>;
 }) {
-  // `marginLeft` was animated through `useAnimatedStyle`, which meant a layout pass
-  // per frame for EVERY separator in the list during the edit-mode transition — the
-  // other half of the ~20 fps stall (see SelectionCheckbox for the full note).
-  //
-  // A hairline's inset does not need to ease. Plain style, one commit.
+  // Layout still commits ONCE (the `marginLeft` below), and the motion is a transform.
+  // Animating `marginLeft` directly — which this used to do — meant a layout pass per frame
+  // for every separator in the list.
+  const shiftStyle = useEditShiftStyle(editProgress, editMode);
   return (
-    <View
-      style={{
-        height: 0.5,
-        backgroundColor: color,
-        marginLeft: 68 + (editMode ? SELECT_COLUMN_WIDTH : 0),
-      }}
+    <Reanimated.View
+      style={[
+        {
+          height: 0.5,
+          backgroundColor: color,
+          marginLeft: 68 + (editMode ? SELECT_COLUMN_WIDTH : 0),
+        },
+        shiftStyle,
+      ]}
     />
   );
 });
+
+/**
+ * The edit-mode slide, as a transform.
+ *
+ * ── WHY THIS IS NOT AN ANIMATED WIDTH ────────────────────────────────────────────
+ *
+ * Rows shift right by `SELECT_COLUMN_WIDTH` when selection mode opens. The obvious
+ * implementation animates the checkbox column's width from 0, and that was tried: `width`
+ * is a layout property, so every frame of the transition forced a layout pass for EVERY
+ * mounted row at once — about thirty per frame, measured at ~20 fps on a long list. It was
+ * replaced with a width that snaps in one commit, which is fast but visibly abrupt.
+ *
+ * This is the third option, and it is the one that is both smooth AND free: keep the
+ * one-commit layout change, then use a transform to make the row *appear* to start where it
+ * used to be and slide to where it now is.
+ *
+ *   entering  layout has the column, so the row is already at x+34.
+ *             translateX goes −34 → 0, i.e. it starts drawn at the old x and slides right.
+ *   leaving   layout no longer has the column, so the row is already at x.
+ *             translateX goes +34 → 0, i.e. it starts drawn at the shifted x and slides left.
+ *
+ * Both directions therefore begin at the visually-previous position and animate to zero
+ * offset. Which formula applies depends on which side of the layout commit we are on, which
+ * is exactly what `editMode` tells us.
+ *
+ * Cost: one shared value read per row per frame on the UI thread, no layout, no JS. It
+ * scales to a list of any length, which matters — this list also holds mini-apps and blocked
+ * entries and is expected to get long.
+ */
+function useEditShiftStyle(editProgress: SharedValue<number>, editMode: boolean) {
+  return useAnimatedStyle(() => {
+    const offset = editMode
+      ? (editProgress.value - 1) * SELECT_COLUMN_WIDTH
+      : editProgress.value * SELECT_COLUMN_WIDTH;
+    return { transform: [{ translateX: offset }] };
+  });
+}
 
 /**
  * Header chrome buttons. Both follow the same rule the rest of the app uses for
@@ -1012,11 +1059,10 @@ const SelectionCheckbox = React.memo(function SelectionCheckbox({
   // the circle still fading and sliding in, the transition still reads as motion,
   // and 60 fps is worth more than an eased width. This is the same "one layout
   // commit, compositor motion" shape already used by the bottom session card.
+  // The circle rides the row's own slide (see `useEditShiftStyle`), so it only needs to
+  // fade — a second translate here would move it relative to the row it belongs to.
   const circleStyle = useAnimatedStyle(() => ({
     opacity: editProgress.value,
-    // Nudge the circle in from the left so it eases into place rather than
-    // being revealed by a hard clip.
-    transform: [{ translateX: interpolate(editProgress.value, [0, 1], [-8, 0]) }],
   }));
 
   return (
@@ -1932,8 +1978,8 @@ export default function MessagesScreen() {
   // column, so the inset has to travel with them or the hairlines visibly fail
   // to line up with the content above them.
   const renderSeparator = useCallback(
-    () => <RowSeparator color={separatorColor} editMode={editMode} />,
-    [separatorColor, editMode],
+    () => <RowSeparator color={separatorColor} editMode={editMode} editProgress={editProgress} />,
+    [separatorColor, editMode, editProgress],
   );
 
   // ─── Category-tab chips — memoized data + renderItem ──────────────────────

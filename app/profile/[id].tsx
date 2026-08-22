@@ -1657,7 +1657,30 @@ export default function UserProfileScreen() {
         maxToRenderPerBatch={2}
         windowSize={5}
         updateCellsBatchingPeriod={100}
-        removeClippedSubviews={true}
+        // ── removeClippedSubviews is OFF, deliberately ──────────────────────────
+        //
+        // Scrolling DOWN was fine; scrolling back UP juddered, jumping up and down
+        // repeatedly. That asymmetry is the signature of this prop combined with
+        // variable-height rows and no getItemLayout.
+        //
+        // With it on, iOS DETACHES cells that leave the clipping rect. Post cards have no
+        // fixed height (text length, image aspect ratio, optional link preview), so a
+        // detached cell scrolled back into view re-attaches and re-measures. Its real height
+        // rarely equals the height the list assumed while it was gone, so the total content
+        // height changes, the list corrects the scroll offset to compensate, and that
+        // correction moves more cells across the boundary — which is the oscillation.
+        //
+        // Scrolling down never hits it: those cells are being measured for the first time, so
+        // there is no earlier assumption for the measurement to contradict.
+        //
+        // This is NOT a memory regression. windowSize still bounds how many cells exist at
+        // all; this prop only controls whether cells INSIDE that window stay attached to the
+        // native view tree. Turning it off removes the detach/re-attach/re-measure cycle and
+        // leaves the virtualisation window exactly as tight as it was.
+        //
+        // The proper long-term fix is a height the list can trust up front, which for these
+        // cards means measuring and caching per-post heights. Much larger than this.
+        removeClippedSubviews={false}
         showsVerticalScrollIndicator={false}
         bounces={false}
         onScroll={onProfileScroll}
