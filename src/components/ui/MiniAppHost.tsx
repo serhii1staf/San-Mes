@@ -19,6 +19,34 @@ import { useTheme } from '../../theme';
 
 const SCREEN_H = Dimensions.get('window').height;
 
+// ── Motion curves for the mini-app overlay ───────────────────────────────────
+//
+// Opening decelerates into rest (ease-out expo), which is the standard "arriving"
+// feel and was already correct.
+//
+// Dismissing used `Easing.in(Easing.cubic)`, and that was the bug behind "closing
+// feels abrupt". `Easing.in` means the panel CREEPS at the start and reaches its
+// maximum velocity exactly as it leaves the screen — it slams out, and it is the
+// mirror image of the opening curve rather than its reverse. Motion that arrives
+// gently but departs at full speed reads as a glitch, not as a transition.
+//
+// The dismiss now uses a symmetric ease-in-out: it builds up and eases off, so
+// leaving looks like arriving played backwards. Duration is also matched to the
+// open so the two directions feel like one object, not two effects.
+const OPEN_EASING = Easing.bezier(0.16, 1, 0.3, 1);
+const DISMISS_EASING = Easing.bezier(0.33, 0, 0.67, 1);
+const DISMISS_MS = 360;
+
+/**
+ * Fraction of the collapse after which the minimized widget is revealed.
+ *
+ * Not 1.0: revealing only on completion made the panel finish and the widget appear
+ * from nothing, a hard cut between two separate events. Overlapping them reads as a
+ * handoff. 0.62 is late enough that the widget is not competing with the panel for
+ * attention, early enough that there is no gap.
+ */
+const HANDOFF_AT = 0.62;
+
 // Root-level persistent mini-app host. See src/store/miniAppStore.ts for the
 // state machine. The WebView is mounted while mode !== 'closed' and is NEVER
 // torn down on minimize — minimizing just parks the overlay off-screen
@@ -133,6 +161,22 @@ export function MiniAppHost() {
   }, []);
   useEffect(() => () => { if (loadTimeout.current) clearTimeout(loadTimeout.current); }, []);
 
+  /**
+   * Hand control to the familiar minimized widget.
+   *
+   * Idempotent and mode-guarded, because it is now called from two places (a timer
+   * partway through the collapse and the animation's completion callback) and
+   * whichever fires first must be the only one that matters.
+   */
+  const revealMinimizedWidget = useCallback(() => {
+    try {
+      const st = useMiniAppStore.getState();
+      if (st.mode !== 'min') return;
+      if (useBrowserStore.getState().minimizedUrl) return; // already handed off
+      useBrowserStore.getState().setMinimized(normalizeUrl(st.url), st.name, true, st.emoji);
+    } catch {}
+  }, []);
+
   // Slide the overlay UP on open/restore and DOWN on minimize/close.
   //
   // The overlay's stacking (zIndex / elevation) and background are kept STABLE
@@ -145,15 +189,28 @@ export function MiniAppHost() {
   // below, so there is no JS-side style commit at the end of the slide.
   const slideY = useRef(new Animated.Value(SCREEN_H)).current;
 
+  // Timer that hands the widget over PART WAY through the collapse (see below).
+  // Held in a ref so an interrupted collapse can cancel it.
+  const handoffTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelHandoff = useCallback(() => {
+    if (handoffTimer.current) {
+      clearTimeout(handoffTimer.current);
+      handoffTimer.current = null;
+    }
+  }, []);
+  useEffect(() => () => cancelHandoff(), [cancelHandoff]);
+
   useEffect(() => {
     if (mode === 'full') {
+      cancelHandoff();
       // Open / restore. Starting a new timing on slideY implicitly cancels any
       // in-flight minimize/close slide, so a quick restore mid-collapse simply
       // reverses cleanly from the CURRENT position — no stale state.
-      Animated.timing(slideY, { toValue: 0, duration: 400, easing: Easing.bezier(0.16, 1, 0.3, 1), useNativeDriver: true }).start();
+      Animated.timing(slideY, { toValue: 0, duration: 400, easing: OPEN_EASING, useNativeDriver: true }).start();
       try { useBrowserStore.getState().clearMinimized(); } catch {}
     } else if (mode === 'min') {
-      Animated.timing(slideY, { toValue: SCREEN_H, duration: 340, easing: Easing.in(Easing.cubic), useNativeDriver: true }).start(({ finished }) => {
+      cancelHandoff();
+      Animated.timing(slideY, { toValue: SCREEN_H, duration: DISMISS_MS, easing: DISMISS_EASING, useNativeDriver: true }).start(({ finished }) => {
         // Bail if the slide was interrupted (e.g. user restored / closed
         // mid-collapse) — the new transition owns the value now.
         if (!finished) return;
@@ -162,16 +219,27 @@ export function MiniAppHost() {
         // restore could have landed on the final frame). This prevents the
         // familiar widget from popping in for a stale 'min' that already moved on.
         if (useMiniAppStore.getState().mode !== 'min') return;
-        // Reveal the user's FAMILIAR minimized widget (BrowserMiniBar /
-        // BrowserBottomBand) ONLY AFTER the collapse finishes, so the widget
-        // never appears while the window is still sliding down.
-        try {
-          const st = useMiniAppStore.getState();
-          useBrowserStore.getState().setMinimized(normalizeUrl(st.url), st.name, true, st.emoji);
-        } catch {}
+        revealMinimizedWidget();
       });
+
+      // ── Overlap the handoff ──────────────────────────────────────────────
+      //
+      // The widget used to be revealed ONLY in the completion callback, so the
+      // panel finished sliding and THEN the widget appeared from nothing. Two
+      // separate events with a hard cut between them, which is the second half of
+      // the "it used to descend smoothly, now it's abrupt" report.
+      //
+      // Revealing it while the panel is still travelling makes the two motions
+      // overlap, so it reads as one object handing off to another rather than one
+      // disappearing and another popping in. The timer is cancelled if the collapse
+      // is interrupted, and `revealMinimizedWidget` re-checks the live mode, so an
+      // interrupted collapse can never leave a stale widget behind.
+      handoffTimer.current = setTimeout(() => {
+        handoffTimer.current = null;
+        revealMinimizedWidget();
+      }, Math.round(DISMISS_MS * HANDOFF_AT));
     }
-  }, [mode, slideY]);
+  }, [mode, slideY, cancelHandoff, revealMinimizedWidget]);
 
   // While minimized, dismissing the widget (its x / swipe-away) clears
   // browserStore — observe that and tear the live WebView down so the two
@@ -196,11 +264,12 @@ export function MiniAppHost() {
   // dismiss feel), then clear the familiar widget too.
   const requestClose = useCallback(() => {
     triggerHaptic('light');
-    Animated.timing(slideY, { toValue: SCREEN_H, duration: 320, easing: Easing.in(Easing.cubic), useNativeDriver: true }).start(() => {
+    cancelHandoff();
+    Animated.timing(slideY, { toValue: SCREEN_H, duration: DISMISS_MS, easing: DISMISS_EASING, useNativeDriver: true }).start(() => {
       useMiniAppStore.getState().close();
       try { useBrowserStore.getState().clearMinimized(); } catch {}
     });
-  }, [slideY]);
+  }, [slideY, cancelHandoff]);
 
   // Hardware back (Android): while fullscreen, back minimizes the mini-app
   // (Telegram-style) instead of leaving it on screen. No-op otherwise.

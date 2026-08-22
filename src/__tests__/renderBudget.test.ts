@@ -10,8 +10,9 @@
 import fc from 'fast-check';
 import {
   BASELINE_BUDGET,
-  REDUCED_BUDGET,
+  LOW_POWER_BUDGET,
   renderBudget,
+  WEAK_DEVICE_BUDGET,
 } from '../utils/renderBudget';
 import type { PowerMode } from '../services/powerMode';
 import { countPostImages, feedGetItemType } from '../lib/feedItemType';
@@ -34,17 +35,50 @@ describe('renderBudget', () => {
    */
   it('treats unknown as "behave exactly as before", not as low power', () => {
     expect(renderBudget({ isWeak: false, powerMode: 'unknown' })).toEqual(BASELINE_BUDGET);
-    expect(renderBudget({ isWeak: false, powerMode: 'unknown' })).not.toEqual(REDUCED_BUDGET);
+    expect(renderBudget({ isWeak: false, powerMode: 'unknown' })).not.toEqual(LOW_POWER_BUDGET);
   });
 
-  it('reduces on weak hardware regardless of power mode', () => {
-    for (const powerMode of ALL_MODES) {
-      expect(renderBudget({ isWeak: true, powerMode })).toEqual(REDUCED_BUDGET);
+  it('applies the invisible reductions on weak hardware', () => {
+    for (const powerMode of ['unknown', 'normal'] as const) {
+      expect(renderBudget({ isWeak: true, powerMode })).toEqual(WEAK_DEVICE_BUDGET);
+    }
+  });
+
+  /**
+   * A weak device must NOT get a different-looking app.
+   *
+   * An earlier version switched glass, blur and particles off by device class. That
+   * is a silent redesign for a whole class of hardware — immediately visible, since
+   * the glass and fallback paths differ in corner treatment and surface size — and
+   * nobody asked for it. Older phones should run smoothly, not look different.
+   */
+  it('never changes the visual design based on device class alone', () => {
+    for (const powerMode of ['unknown', 'normal'] as const) {
+      const b = renderBudget({ isWeak: true, powerMode });
+      expect(b.glassAllowed).toBe(true);
+      expect(b.fadingBlurAllowed).toBe(true);
+      expect(b.ambientParticles).toBe(true);
     }
   });
 
   it('reduces in low power mode even on strong hardware', () => {
-    expect(renderBudget({ isWeak: false, powerMode: 'low_power' })).toEqual(REDUCED_BUDGET);
+    expect(renderBudget({ isWeak: false, powerMode: 'low_power' })).toEqual(LOW_POWER_BUDGET);
+  });
+
+  /**
+   * Low Power Mode is the one case where dropping visible effects is justified: the
+   * OS has already cut the CPU/GPU budget and capped the refresh rate, the user
+   * chose the state, and it ends when they charge the phone.
+   */
+  it('drops visible effects only in low power mode', () => {
+    const lp = renderBudget({ isWeak: false, powerMode: 'low_power' });
+    expect(lp.glassAllowed).toBe(false);
+    expect(lp.fadingBlurAllowed).toBe(false);
+    expect(lp.ambientParticles).toBe(false);
+  });
+
+  it('lets low power mode win over device class', () => {
+    expect(renderBudget({ isWeak: true, powerMode: 'low_power' })).toEqual(LOW_POWER_BUDGET);
   });
 
   it('never makes any dimension heavier when degrading', () => {
@@ -62,11 +96,11 @@ describe('renderBudget', () => {
     );
   });
 
-  it('is total and returns one of the two known budgets', () => {
+  it('is total and returns one of the three known budgets', () => {
     fc.assert(
       fc.property(fc.boolean(), fc.constantFrom(...ALL_MODES), (isWeak, powerMode) => {
         const b = renderBudget({ isWeak, powerMode });
-        expect([BASELINE_BUDGET, REDUCED_BUDGET]).toContainEqual(b);
+        expect([BASELINE_BUDGET, WEAK_DEVICE_BUDGET, LOW_POWER_BUDGET]).toContainEqual(b);
       }),
       { numRuns: 100 },
     );
@@ -75,10 +109,12 @@ describe('renderBudget', () => {
   it('actually halves the pre-render window when degrading', () => {
     // Guards against a token reduction that looks like mitigation but does not
     // meaningfully cut the decode burst a fling triggers.
-    expect(REDUCED_BUDGET.drawDistance).toBeLessThanOrEqual(BASELINE_BUDGET.drawDistance / 2);
-    expect(REDUCED_BUDGET.heroWarmCount).toBeLessThanOrEqual(BASELINE_BUDGET.heroWarmCount / 2);
-    // And it must skip the eager decode, which is the expensive half.
-    expect(REDUCED_BUDGET.warmCachePolicy).toBe('disk');
+    for (const b of [WEAK_DEVICE_BUDGET, LOW_POWER_BUDGET]) {
+      expect(b.drawDistance).toBeLessThanOrEqual(BASELINE_BUDGET.drawDistance / 2);
+      expect(b.heroWarmCount).toBeLessThanOrEqual(BASELINE_BUDGET.heroWarmCount / 2);
+      // And it must skip the eager decode, which is the expensive half.
+      expect(b.warmCachePolicy).toBe('disk');
+    }
   });
 });
 
