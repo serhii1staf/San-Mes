@@ -62,7 +62,7 @@ const SCRIM_STOP_COUNT = 17;
  * within a hair of the original — while keeping the gentle approach at the transparent
  * end that removes the visible starting edge.
  */
-const SCRIM_GAMMA = 0.85;
+const SCRIM_GAMMA = 0.7;
 
 // ─── ONE strength ───────────────────────────────────────────────────────────────
 //
@@ -117,19 +117,34 @@ export function scrimStops(isDark: boolean, backgroundColor: string): ScrimStops
   // Light mode gets a gentler ramp than dark mode, because the same alpha over a white
   // surface is visually much stronger than over a near-black one. Same colour, same
   // structure, calibrated per theme.
+  // ── STRENGTH ────────────────────────────────────────────────────────────────
+  //
+  // Raised once, deliberately, on a direct instruction ("make the dimming stronger").
+  // Measured against the previous values, at the same geometry:
+  //
+  //                      before    now
+  //     end alpha         0.860    0.940
+  //     midpoint alpha    0.477    0.579     (SCRIM_GAMMA 0.85 -> 0.70)
+  //     quarter alpha     0.178    0.256
+  //
+  // This is the ONE lever for "make it read stronger", and it is deliberately global: it
+  // moves the tab bar, every screen header and every composer together. Reaching for length
+  // instead (an overhang past the chrome) was tried twice and is what produces "the dimming
+  // sticks out over the messages", because extra length is ramp laid on top of content
+  // rather than on top of chrome.
   void backgroundColor;
   if (isDark) {
     return {
       top: 'rgba(0,0,0,0.28)',
-      mid: 'rgba(0,0,0,0.55)',
-      end: 'rgba(0,0,0,0.86)',
+      mid: 'rgba(0,0,0,0.58)',
+      end: 'rgba(0,0,0,0.94)',
       clear: 'rgba(0,0,0,0)',
     };
   }
   return {
-    top: 'rgba(0,0,0,0.14)',
-    mid: 'rgba(0,0,0,0.3)',
-    end: 'rgba(0,0,0,0.55)',
+    top: 'rgba(0,0,0,0.16)',
+    mid: 'rgba(0,0,0,0.36)',
+    end: 'rgba(0,0,0,0.64)',
     clear: 'rgba(0,0,0,0)',
   };
 }

@@ -71,8 +71,28 @@ const ACTION_BAR_BOTTOM_GAP = 14;
 // Hoisted to module scope: these are referenced from inside memoized rows, so a
 // fresh object per render would defeat their prop-equality bail-outs.
 const styles = StyleSheet.create({
-  selectColumn: { alignItems: 'flex-start', justifyContent: 'center', overflow: 'hidden' },
-  reorderColumn: { alignItems: 'flex-end', justifyContent: 'center', overflow: 'hidden' },
+  // BOTH COLUMNS TAKE UP NO SPACE.
+  //
+  // Constant width, cancelled by an equal negative margin on the side that faces the
+  // content. Yoga advances the layout cursor by width + margin = 0, so the avatar starts
+  // exactly where it would with no checkbox column at all, and the preview text ends
+  // exactly where it would with no handle column. The row's layout is therefore IDENTICAL
+  // in both modes, which is the whole point -- see `useEditShift`.
+  selectColumn: {
+    width: SELECT_COLUMN_WIDTH,
+    marginRight: -SELECT_COLUMN_WIDTH,
+    alignItems: 'flex-start',
+    justifyContent: 'center',
+  },
+  reorderColumn: {
+    width: REORDER_COLUMN_WIDTH,
+    marginLeft: -REORDER_COLUMN_WIDTH,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+  },
+  // The mover. `flex: 1` so it fills the row; sliding it right pushes its trailing edge past
+  // the row's content box, which the row clips.
+  rowContent: { flex: 1, flexDirection: 'row', alignItems: 'center' },
   selectCircle: {
     width: 22,
     height: 22,
@@ -234,6 +254,14 @@ function MiniAppsRow({ editMode, selectedIds, editProgress, onToggleSelect }: Mi
 
   const myApps = useMemo(() => selectOwnMiniApps(apps, userId), [apps, userId]);
 
+  // Same two styles the chat rows use, for the same reason. Before this, the mini-app rows
+  // had NO slide at all: the checkbox column's width flipped 0 -> 34 in one commit and shoved
+  // the content sideways with no animation, which is the "the mini-apps jump" half of the
+  // report. Now the column takes no space (negative margin) and the content slides on a
+  // transform, so both lists move identically and neither one changes layout.
+  const editShift = useEditShift(editProgress);
+  const editFade = useAnimatedStyle(() => ({ opacity: 1 - editProgress.value }));
+
   // Genuine empty state lives HERE so the Apps tab has a single source of
   // truth. The screen's generic empty-state block skips the Apps tab, which
   // fixes the bug where the centered "no mini-apps" message rendered even
@@ -262,15 +290,15 @@ function MiniAppsRow({ editMode, selectedIds, editProgress, onToggleSelect }: Mi
               ? () => onToggleSelect(app.id)
               : () => router.push({ pathname: '/mini-app', params: { url: encodeURIComponent(app.url), name: app.name, emoji: app.emoji } })
           }
-          style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border.light }}
+          style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border.light, overflow: 'hidden' }}
         >
           <SelectionCheckbox
             editProgress={editProgress}
-            editMode={editMode}
             selected={selectedIds.has(app.id)}
             accent={theme.colors.accent.primary}
             borderColor={theme.colors.border.medium}
           />
+          <Reanimated.View style={[styles.rowContent, editShift]}>
           <View style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: theme.colors.accent.primary + '12', alignItems: 'center', justifyContent: 'center', overflow: 'visible' }}>
             <RNText style={{ fontSize: 20 }} allowFontScaling={false}>{app.emoji}</RNText>
           </View>
@@ -283,7 +311,10 @@ function MiniAppsRow({ editMode, selectedIds, editProgress, onToggleSelect }: Mi
               borderRadius). Falls back to the flat accent chip when glass off.
               Hidden in selection mode: a launch affordance inside a row whose
               tap now means "select" is a trap. */}
-          {editMode ? null : (
+          {/* FADED in selection mode, not unmounted: unmounting it changed the row's layout
+              on the same frames the content was sliding. `pointerEvents` still turns it off,
+              so a tap in selection mode ticks the row rather than launching the app. */}
+          <Reanimated.View style={editFade} pointerEvents={editMode ? 'none' : 'auto'}>
           <Pressable onPress={() => router.push({ pathname: '/mini-app', params: { url: encodeURIComponent(app.url), name: app.name, emoji: app.emoji } })} style={glassActive ? { borderRadius: 14 } : { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, backgroundColor: theme.colors.accent.primary + '15' }}>
             {glassActive ? (
               <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} tintColor={theme.colors.accent.primary + '38'} style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, alignItems: 'center', justifyContent: 'center' }}>
@@ -293,7 +324,8 @@ function MiniAppsRow({ editMode, selectedIds, editProgress, onToggleSelect }: Mi
               <Text variant="caption" weight="semibold" color={theme.colors.accent.primary} style={{ fontSize: 11 }}>{t('messages.miniapp.open')}</Text>
             )}
           </Pressable>
-          )}
+          </Reanimated.View>
+          </Reanimated.View>
         </Pressable>
       ))}
     </View>
@@ -665,11 +697,16 @@ function ConversationItemBase({
 
   // The edit-mode slide. Composed with the drag displacement below — one is horizontal and
   // one is vertical, so they never fight.
-  const editShift = useEditShiftStyle(editProgress, editMode);
+  // ONE pure formula, no `editMode` in it. Applied to the row's CONTENT rather than to the
+  // row, because the two side columns must stay put while the content moves. See
+  // `useEditShift`.
+  const editShift = useEditShift(editProgress);
+  // Fades out whatever must not collide with the reorder handle once the content has slid
+  // right. Opacity only, so it costs no layout.
+  const editFade = useAnimatedStyle(() => ({ opacity: 1 - editProgress.value }));
 
   return (
     <Reanimated.View style={[dragStyle, liftedStyle]}>
-    <Reanimated.View style={editShift}>
     <ConditionalContextMenuRow
       // In selection mode the native context menu is suppressed entirely: a
       // long-press peek that navigates would fight the checkboxes, and iOS's
@@ -701,13 +738,19 @@ function ConversationItemBase({
       onPress={editMode ? () => onToggleSelect(item.id) : openChat}
       onLongPress={onRowLongPress}
     >
+      {/* Left column. Its width is CONSTANT and cancelled by a negative right margin, so it
+          occupies no space in the row's flow and the avatar starts exactly where it would if
+          the column were not here. Nothing about the row's layout changes when edit mode is
+          entered or left -- see `useEditShift`. */}
       <SelectionCheckbox
         editProgress={editProgress}
-        editMode={editMode}
         selected={selected}
         accent={theme.colors.accent.primary}
         borderColor={theme.colors.border.medium}
       />
+      {/* THE MOVER. Everything that slides right in selection mode lives in here, and it
+          slides by a transform on a shared value -- no layout, no `editMode`. */}
+      <Reanimated.View style={[styles.rowContent, editShift]}>
       <Avatar emoji={item.participantEmoji} name={item.participantName} size="md" tint />
       <View style={{ flex: 1, marginLeft: 12 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
@@ -728,8 +771,8 @@ function ConversationItemBase({
               {previewText}
             </Text>
             {item.unreadCount > 0 && (
-              <View
-                style={{
+              <Reanimated.View
+                style={[{
                   backgroundColor: theme.colors.accent.primary,
                   borderRadius: 10,
                   minWidth: 20,
@@ -738,12 +781,12 @@ function ConversationItemBase({
                   justifyContent: 'center',
                   paddingHorizontal: 6,
                   marginLeft: theme.spacing.sm,
-                }}
+                }, editFade]}
               >
                 <Text variant="caption" weight="bold" color={theme.colors.text.inverse}>
                   {item.unreadCount}
                 </Text>
-              </View>
+              </Reanimated.View>
             )}
           </View>
         ) : null}
@@ -751,18 +794,19 @@ function ConversationItemBase({
       {/* Pin marker. Outside edit mode this is the only affordance that tells the user why
           a chat is sitting above a more recent one. */}
       {isPinned ? <PinMarker editProgress={editProgress} color={theme.colors.text.tertiary} /> : null}
+      </Reanimated.View>
       {/* Reorder handle — right-hand column, selection mode only. Collapsed to width 0
           rather than unmounted, for the same reason as the checkbox column on the left:
           the row's flex layout then settles once per mode change instead of on a
           per-frame animated width. */}
       <ReorderHandle
         editProgress={editProgress}
-        visible={editMode && reorderable}
+        visible={reorderable}
+        interactive={editMode && reorderable}
         gesture={dragGesture}
         color={theme.colors.text.tertiary}
       />
     </ConditionalContextMenuRow>
-    </Reanimated.View>
     </Reanimated.View>
   );
 }
@@ -780,11 +824,13 @@ function ConversationItemBase({
 const ReorderHandle = React.memo(function ReorderHandle({
   editProgress,
   visible,
+  interactive,
   gesture,
   color,
 }: {
   editProgress: SharedValue<number>;
   visible: boolean;
+  interactive: boolean;
   gesture: ReturnType<typeof Gesture.Pan>;
   color: string;
 }) {
@@ -797,11 +843,12 @@ const ReorderHandle = React.memo(function ReorderHandle({
   // position, so the handle's views, and the pan gesture attached to them, were destroyed
   // and rebuilt each time edit mode opened or closed. The column is now always the same
   // element and only its width changes, which is a single layout commit exactly as before.
+  if (!visible) return null;
   return (
     <GestureDetector gesture={gesture}>
       <Reanimated.View
-        pointerEvents={visible ? 'auto' : 'none'}
-        style={[styles.reorderColumn, { width: visible ? REORDER_COLUMN_WIDTH : 0 }, iconStyle]}
+        pointerEvents={interactive ? 'auto' : 'none'}
+        style={[styles.reorderColumn, iconStyle]}
         // A real touch target: the icon is 18 pt but the column is 34, and the hold has to
         // land somewhere forgiving.
         hitSlop={8}
@@ -1006,13 +1053,10 @@ const RowSeparator = React.memo(function RowSeparator({
  * scales to a list of any length, which matters — this list also holds mini-apps and blocked
  * entries and is expected to get long.
  */
-function useEditShiftStyle(editProgress: SharedValue<number>, editMode: boolean) {
-  return useAnimatedStyle(() => {
-    const offset = editMode
-      ? (editProgress.value - 1) * SELECT_COLUMN_WIDTH
-      : editProgress.value * SELECT_COLUMN_WIDTH;
-    return { transform: [{ translateX: offset }] };
-  });
+function useEditShift(editProgress: SharedValue<number>) {
+  return useAnimatedStyle(() => ({
+    transform: [{ translateX: editProgress.value * SELECT_COLUMN_WIDTH }],
+  }));
 }
 
 /**
@@ -1120,13 +1164,11 @@ const HeaderIconButton = React.memo(function HeaderIconButton({
  */
 const SelectionCheckbox = React.memo(function SelectionCheckbox({
   editProgress,
-  editMode,
   selected,
   accent,
   borderColor,
 }: {
   editProgress: SharedValue<number>;
-  editMode: boolean;
   selected: boolean;
   accent: string;
   borderColor: string;
@@ -1157,7 +1199,7 @@ const SelectionCheckbox = React.memo(function SelectionCheckbox({
 
   return (
     <Reanimated.View
-      style={[styles.selectColumn, { width: editMode ? SELECT_COLUMN_WIDTH : 0 }, circleStyle]}
+      style={[styles.selectColumn, circleStyle]}
       pointerEvents="none"
     >
       <View
@@ -1201,6 +1243,12 @@ function ConditionalContextMenuRow({
     alignItems: 'center',
     paddingVertical: 10,
     paddingHorizontal: theme.spacing.base,
+    // Clips the mover once it has slid right. The trade this buys is worth stating: in
+    // selection mode a very long preview line runs under the reorder handle instead of
+    // ellipsizing 34 pt earlier. That is the entire cost of having the row's layout be
+    // constant, and a constant layout is what removes the class of bug that had this
+    // animation jerking for five rounds.
+    overflow: 'hidden',
   };
   const inner = (
     <Pressable
