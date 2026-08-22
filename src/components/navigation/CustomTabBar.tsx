@@ -86,16 +86,19 @@ export function getTabBarHeight(insetsBottom: number): number {
 /**
  * Height of the bottom scrim behind the floating bar.
  *
- * Was 132, which is well above the bar's own height, so the ramp climbed noticeably
- * past the top of the navigation and read as darkening the content above it rather
- * than sitting behind it. Reported as "it extends over the navigation, it should be
- * level with it".
+ * Sized to EXACTLY the bar's own footprint (inner height + bottom margin) so the ramp
+ * finishes level with the top of the navigation. It was 132 — well above that — so it
+ * visibly darkened content above the bar instead of sitting behind it.
  *
- * Now the bar's height plus a short ramp, so the fade finishes just above the bar
- * instead of well above it. Exported so screens can size their own bottom scrim to
- * exactly the same figure — two ramps of different heights produce two visible edges.
+ * ── IMPORTANT: THIS IS THE ONLY BOTTOM SCRIM ON TAB SCREENS ────────────────────
+ *
+ * The tab bar renders it once, for every tab screen. Individual screens must NOT add
+ * their own. I briefly gave search and profile a second `ScreenScrim` on top of this
+ * one; two stacked ramps are darker AND taller than one, which is why those screens
+ * looked different from the feed and why the darkening reached above the navigation.
+ * If a screen looks like it is missing a bottom scrim, the fix is here, not there.
  */
-export const BAR_FADE_HEIGHT = TAB_BAR_INNER_HEIGHT + BAR_BOTTOM_MARGIN + 16;
+export const BAR_FADE_HEIGHT = TAB_BAR_INNER_HEIGHT + BAR_BOTTOM_MARGIN;
 
 // Liquid feel — pill follows finger 1:1, but stretches and never switches tabs mid-drag
 const PAN_MIN_DISTANCE = 6;
