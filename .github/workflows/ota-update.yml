@@ -41,8 +41,20 @@ jobs:
           token: ${{ secrets.EXPO_TOKEN }}
 
       - name: Publish OTA Update
+        # `--platform all`, NOT `--platform ios`.
+        #
+        # This said `ios` for as long as there was no Android build to serve, and the moment
+        # one existed it became a silent trap: every update published here reached iPhones and
+        # NONE of them reached the Android APK. An `eas update` for one platform does not
+        # error, warn, or appear any different in the logs — the Android client simply asks
+        # `u.expo.dev` for an update, is told there is nothing for its platform, and keeps
+        # running the JS bundle baked into the APK forever.
+        #
+        # Both platforms share one runtime version (`runtimeVersion.policy = "appVersion"` =
+        # 1.2.0), so a single publish is compatible with both and there is no reason to split
+        # them. If they ever diverge, split by BRANCH rather than by leaving a platform out.
         run: |
-          eas update --branch production --message "${MSG}" --platform ios
+          eas update --branch production --message "${MSG}" --platform all
         env:
           CI: '1'
           MSG: ${{ github.event.inputs.message || github.event.head_commit.message || 'OTA update' }}
