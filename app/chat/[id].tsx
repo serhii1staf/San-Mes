@@ -43,7 +43,7 @@ import { uploadChatImage } from '../../src/lib/supabase';
 import { getImageDims, setImageDims } from '../../src/services/imageDimsCache';
 import { useRenderBudget } from '../../src/hooks/useRenderBudget';
 import { useEffectiveBrowserWidgetPosition } from '../../src/lib/browserWidget';
-import { bottomScrimColorsStrong, BOTTOM_CHROME_SCRIM_HEIGHT, headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
+import { bottomScrimColorsStrong, composerScrimHeight, headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
 import { kvGetJSONSync, kvSetJSON, kvWarm } from '../../src/services/kvStore';
 import { mockMessages, mockConversations, formatMessageTime } from '../../src/utils/mockData';
 import { showToast } from '../../src/store/toastStore';
@@ -1354,18 +1354,38 @@ export default function ChatScreen() {
   //   — one `WINDOW_CHUNK` — and mvcp handles that. Trading a bounded, user-initiated,
   //   30-row prepend for an unbounded 970-row one that fires on its own is strictly worse.
   //
-  // The store hydration stays. It is what makes search, reply-jump and delete work against
-  // the whole history, and it is invisible: growing `chatMessages` does not by itself change
-  // what is rendered, because `windowStart` keeps the window pinned to the newest rows.
-  // Growth of the RENDERED set now happens only where the user asks for it, in
-  // `onStartReached`, one chunk at a time, with `OlderMessagesLoader` visible while it works.
-  useEffect(() => {
-    if (!conversationId) return;
-    const h = InteractionManager.runAfterInteractions(() => {
-      if (historyHydratedRef.current !== conversationId) hydrateFullHistory();
-    });
-    return () => h.cancel();
-  }, [conversationId, hydrateFullHistory]);
+  // ── AND THE HYDRATION ITSELF IS NOW LAZY TOO ──────────────────────────────
+  //
+  // There was an effect here that called `hydrateFullHistory()` behind
+  // `runAfterInteractions` on every open, described as "invisible" because growing
+  // `chatMessages` does not change what is rendered. Invisible in LAYOUT terms, yes. Not
+  // free, and it is the "the chat opens heavily, with micro-freezes" report:
+  //
+  //   `hydrateFullHistory` reads up to MAX_PERSISTED_MESSAGES (1000) out of MMKV, JSON-parses
+  //   them, maps every one through `healLegacySender`, merges the result against the store
+  //   and re-serialises the tail cache. All synchronous, all on the JS thread. `runAfterInteractions`
+  //   only decides WHICH frame pays for it -- it still lands a few hundred milliseconds after the
+  //   chat appears, which is exactly when the user is starting to scroll.
+  //
+  // And it ran on EVERY open, for every chat, whether or not anything ever needed the full
+  // array. That is the definition of unnecessary work: the reason the chat feels heavy even
+  // when, as reported, there is very little content in it.
+  //
+  // Nothing needs it eagerly. Every consumer already hydrates on demand, synchronously, at
+  // the point of use:
+  //
+  //   scroll-up      `onStartReached`            hydrates before growing the window
+  //   reply-jump     `scrollToIndex`             hydrates to resolve the target index
+  //   search         the search-open effect      hydrates when the field opens
+  //   delete         the Ably `msg.delete` path  hydrates via `hydrateFullHistoryRef`
+  //   persistence    the mutation effect         hydrates after a real send/edit
+  //
+  // Durability does not depend on it either: when the history is NOT hydrated, the persist
+  // path id-merges the store delta into the full cached array on disk rather than mirroring
+  // the store wholesale, so older history is never truncated by a chat that was opened and
+  // closed without hydrating.
+  //
+  // Net effect: opening a chat now costs the bounded `SEED_CAP` tail parse and nothing else.
 
   // Push the bounded SEED into the store once (after paint) so edits/sends
   // work normally. We deliberately seed ONLY the `SEED_CAP` tail here — NOT
@@ -3284,6 +3304,9 @@ export default function ChatScreen() {
   const olderCooldownRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // False until the user's first scroll. See the note at the top of `onStartReached`.
   const startReachedArmedRef = useRef(false);
+  // Id of the topmost row currently VISIBLE, maintained by `onViewableItemsChanged`. This
+  // is the anchor the window growth restores; see the note in `onStartReached`.
+  const firstViewableIdRef = useRef<string | null>(null);
 
   // Cancel a pending reveal on unmount / conversation change. It used to be a bare
   // `setTimeout` that was never cleared, so leaving the chat mid-load left a
@@ -3334,11 +3357,31 @@ export default function ChatScreen() {
     // window. This is the same problem the reply-jump solved — scroll to a message that is
     // not on screen yet — so it uses the same solution.
     //
-    // Precision: the anchor row is the first RENDERED row, which when `onStartReached` fires
-    // is at or just above the viewport top, so restoring it to `viewPosition: 0` is accurate
-    // to within one row height. Against a 30-row jump, that is the difference between
-    // "nothing moved" and "where am I".
-    const anchorId = windowedMessagesRef.current[0]?.id;
+    // ── THE ANCHOR IS THE FIRST VISIBLE ROW, NOT THE FIRST RENDERED ROW ───────
+    //
+    // This was `windowedMessagesRef.current[0]?.id`, with a comment asserting that the first
+    // RENDERED row "is at or just above the viewport top when `onStartReached` fires". That
+    // assertion is false, and it is why the teleport survived every previous attempt — the
+    // restore was not failing to compensate, it was actively scrolling the user to the top.
+    //
+    //   `onStartReachedThreshold` is 0.05 of the LIST, not one row. On content a few
+    //   viewports tall that is a good fraction of a screen, so when the callback fires,
+    //   rendered row 0 sits well ABOVE the viewport. Rendered row 0 is also, by definition,
+    //   the very start of the content. Asking for it at `viewPosition: 0` therefore means
+    //   "scroll to offset 0" -- the absolute top of the chat.
+    //
+    // So every prepend ended with a deliberate, animation-free jump to the oldest message.
+    // That is precisely the report: scroll up a little, BAM, thrown to the very top, with
+    // everything apparently loaded at once (the window had just grown by a chunk).
+    //
+    // The row that must not move is the one the user is LOOKING at, i.e. the topmost visible
+    // one, which `onViewableItemsChanged` already tracks. Restoring that to the viewport top
+    // is accurate to within one row height and is a no-op when nothing shifted.
+    //
+    // No viewable anchor (viewability not armed yet) means no restore at all. An
+    // uncompensated prepend may drift by a row; a restore against the wrong anchor throws
+    // the user across the whole conversation.
+    const anchorId = firstViewableIdRef.current;
 
     // ── Hydration must NOT run on the scroll frame ──────────────────────────
     //
@@ -3609,6 +3652,10 @@ export default function ChatScreen() {
     for (const v of viewableItems) {
       if (v.isViewable && v.item?.id) next.add(v.item.id as string);
     }
+    // The TOPMOST visible row, kept for `onStartReached` to anchor on. `viewableItems` is
+    // in list order, so the first viewable entry is the row nearest the viewport top.
+    // See the note in `onStartReached` for why the first RENDERED row was the wrong anchor.
+    firstViewableIdRef.current = (viewableItems.find((v) => v.isViewable)?.item?.id as string) ?? null;
     visTrackerRef.current?.update(next);
   }).current;
 
@@ -3714,7 +3761,13 @@ export default function ChatScreen() {
   const listHeaderEl = useMemo(
     () => (
       <View>
-        <View style={{ height: headerContentHeight + 8 }} />
+        {/* Exactly `headerContentHeight`, with NO extra padding. The top scrim's gradient is
+            `headerContentHeight` tall (headerScrimHeights → gradient, overhang 0), so any
+            spacer taller than that pushes the first message below where the ramp ends and
+            leaves a lit strip between them — "the dimming ends higher than the content".
+            Home does `paddingTop: headerContentHeight` and the edges coincide; this used to
+            be `+ 8` and they did not. */}
+        <View style={{ height: headerContentHeight }} />
         <OlderMessagesLoader visible={hasMoreOlder} color={theme.colors.accent.primary} />
       </View>
     ),
@@ -3958,7 +4011,7 @@ export default function ChatScreen() {
           height, no animation — it simply sits there. */}
       <View
         pointerEvents="none"
-        style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: BOTTOM_CHROME_SCRIM_HEIGHT }}
+        style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: composerScrimHeight(insets.bottom, 12) }}
       >
         {/* Shared scrim ramp (src/theme/scrim.ts). These stops used to be local
             (`[bgTransparent, bgColor + 'B3', bgColor]`, midpoint 0.45) — a
@@ -3966,12 +4019,18 @@ export default function ChatScreen() {
             bar, which is why the chat's scrim looked like a different effect from
             every other screen's.
 
-            Height is the COMPOSER's footprint, not `LIST_FOOTER_HEIGHT`. Those are
-            two different measurements that happened to be written with one constant:
-            the footer spacer has to clear the composer AND leave breathing room above
-            it (hence its extra 12), whereas the scrim must stop exactly at the top of
-            the composer or it darkens the transcript above it. Sharing the constant
-            put 20 pt of ramp over the messages. */}
+            Height is the COMPOSER's footprint, not `LIST_FOOTER_HEIGHT` and not the tab
+            bar's `BOTTOM_CHROME_SCRIM_HEIGHT`. All three are different measurements:
+
+              LIST_FOOTER_HEIGHT        44 + pad + 12   clears the composer AND leaves room
+              BOTTOM_CHROME_SCRIM_HEIGHT           84   the TAB BAR's footprint
+              composerScrimHeight(...)  8 + 44 + pad    THIS composer's footprint
+
+            Both wrong answers have now been tried. `LIST_FOOTER_HEIGHT` put 20 pt of ramp
+            over the messages; the tab bar's 84 fell 2 pt SHORT of the field, leaving an
+            un-dimmed strip right above it. Only the composer's own footprint makes the ramp
+            finish level with the top of the input, which is the property that makes the tab
+            bar's scrim read the way it does. Same rule, different chrome. */}
         <LinearGradient
           colors={bottomScrimColorsStrong(theme.isDark, bgColor)}
           locations={SCRIM_LOCATIONS}

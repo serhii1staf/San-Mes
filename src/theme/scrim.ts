@@ -221,19 +221,28 @@ export function bottomScrimColorsStrong(isDark: boolean, backgroundColor: string
 }
 
 /**
- * The length of a scrim behind bottom chrome.
+ * The length of the scrim behind the TAB BAR, and only the tab bar.
  *
  * This is the tab bar's own footprint — the 60 pt glass capsule plus its 24 pt bottom
- * margin — and it is the number every other bottom scrim now uses too. `CustomTabBar`
- * derives `BAR_FADE_HEIGHT` from this rather than computing its own, so the two cannot
- * drift.
+ * margin. `CustomTabBar` derives `BAR_FADE_HEIGHT` from this rather than computing its own,
+ * so the two cannot drift.
  *
- * Why a single shared LENGTH and not just a shared ramp: the ramp only decides how the
- * alpha is distributed. Two scrims with identical colours but different heights spread that
- * distribution over different distances and therefore look like different effects — which is
- * how the chat's scrims kept ending up "not the same as under the navigation" through
- * several rounds of colour matching. Same colours AND same length is the only combination
- * that is actually the same.
+ * DO NOT use this on a composer screen. It was briefly used on all five of them, on the
+ * reasoning that "the same as the one under the navigation" means the same NUMBER. It does
+ * not, and that misreading cost five rounds:
+ *
+ *   the property that makes the tab bar's scrim look right is that it ends EXACTLY at the
+ *   top of the chrome it belongs to — 84 is not a good length, it is the tab bar's length
+ *
+ * A composer is 86 pt tall (`COMPOSER_PADDING_TOP + COMPOSER_FIELD_HEIGHT + max(inset, pad)`),
+ * so an 84 pt scrim stops 2 pt below the top of the input field. That 2 pt strip of
+ * un-dimmed transcript directly above the field is what "the dimming is lower than the input
+ * field" describes, and it is why matching the number made the two look LESS alike rather
+ * than more.
+ *
+ * The rule that actually transfers is flush-with-own-chrome. Composer screens state it with
+ * `composerScrimHeight`, the tab bar states it with this constant, and both are the same
+ * rule applied to different chrome.
  */
 export const BOTTOM_CHROME_SCRIM_HEIGHT = 84;
 
@@ -273,6 +282,13 @@ export const HEADER_SCRIM_OVERHANG = 0;
  *
  * `content` is what the scroll view should use as `paddingTop` so the first item clears
  * the header. `gradient` is the height of the scrim wrapper itself.
+ *
+ * Use `content` VERBATIM — no `+ 8` for breathing room. The chat's list header spacer had
+ * exactly that, and since the gradient is `content` tall, the extra 8 pt put the first
+ * message 8 pt below where the scrim ends. Result: a strip of fully-lit content between the
+ * bottom of the ramp and the top of the transcript, reported as the top dimming "ending
+ * higher than the content". Home passes `content` straight through as `paddingTop`, the two
+ * edges coincide, and that is the whole reason its header reads as one continuous piece.
  */
 export function headerScrimHeights(insetsTop: number): { content: number; gradient: number } {
   const content = insetsTop + HEADER_ROW_HEIGHT;
