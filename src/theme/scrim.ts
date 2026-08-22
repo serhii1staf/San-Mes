@@ -64,6 +64,38 @@ const SCRIM_STOP_COUNT = 17;
  */
 const SCRIM_GAMMA = 0.85;
 
+// ─── Two strengths ──────────────────────────────────────────────────────────────
+//
+// STANDARD is the ramp behind the floating tab bar. It works there, and it is the one
+// place nothing should change.
+//
+// STRONG is for every surface that does NOT have a bright element sitting on the ramp's
+// dark end. That distinction is the whole reason two strengths exist rather than one:
+//
+//   Under the tab bar, the darkest 24 pt of ramp is uncovered and butts straight against
+//   an opaque glass capsule with a light rim. High local contrast, so the ramp reads as a
+//   defined shelf even though it is black on a near-black background.
+//
+//   At the TOP of a screen there is no such element — the header chrome is small pills
+//   floating over it — and on a composer screen the bottom has only a 44 pt translucent
+//   field. With the same alpha the ramp there is black on near-black with nothing to
+//   contrast against, which is exactly why it read as "there is no scrim in the chat".
+//
+// So STRONG raises the end alpha AND lowers the exponent, which lifts the whole middle of
+// the curve rather than only the last stop:
+//
+//                       quarter   mid    3/4    end
+//     dark standard      0.178   0.477  0.744  0.860
+//     dark strong        0.255   0.589  0.858  0.970     (×1.43 / ×1.23 / ×1.15 / ×1.13)
+//
+// The end stop stays short of 1.0 on purpose. At exactly opaque the top of the screen is a
+// hard black bar rather than content receding, and in light mode that is very obvious.
+//
+// The transparent end is still gentle: the first segment's slope is 0.608, against 1.10 for
+// the old three-stop ramp, so strengthening does not bring back the visible starting edge
+// that the smoothstep curve was introduced to remove.
+const SCRIM_GAMMA_STRONG = 0.72;
+
 /** Hermite `smoothstep`: 0 at x=0, 1 at x=1, zero derivative at both ends. */
 function smoothstep(x: number): number {
   return x * x * (3 - 2 * x);
@@ -131,12 +163,15 @@ export type ScrimColors = readonly [string, string, ...string[]];
  *     slope at the transparent end  1.100 → 0.303   (3.6× gentler: no visible edge)
  *     slope discontinuities         1 → 0
  */
-function buildRamp(isDark: boolean): string[] {
-  const end = alphaOf(scrimStops(isDark, '#000000').end);
+function buildRamp(isDark: boolean, strong: boolean): string[] {
+  const end = strong
+    ? (isDark ? 0.97 : 0.72)
+    : alphaOf(scrimStops(isDark, '#000000').end);
+  const gamma = strong ? SCRIM_GAMMA_STRONG : SCRIM_GAMMA;
   const out: string[] = [];
   for (let i = 0; i < SCRIM_STOP_COUNT; i++) {
     const t = i / (SCRIM_STOP_COUNT - 1);
-    const a = end * Math.pow(smoothstep(t), SCRIM_GAMMA);
+    const a = end * Math.pow(smoothstep(t), gamma);
     out.push(`rgba(0,0,0,${Math.round(a * 1000) / 1000})`);
   }
   return out;
@@ -147,29 +182,52 @@ function alphaOf(rgba: string): number {
   return m ? parseFloat(m[1]) : 1;
 }
 
-// Built once per theme. Without this every scrim would allocate nine strings on every
-// render of every screen that draws one.
-const RAMP_DARK = buildRamp(true);
-const RAMP_LIGHT = buildRamp(false);
-const RAMP_DARK_REVERSED = [...RAMP_DARK].reverse();
-const RAMP_LIGHT_REVERSED = [...RAMP_LIGHT].reverse();
+// Built once per theme and strength. Without this, every scrim would allocate 17 strings
+// on every render of every screen that draws one.
+const RAMP_DARK = buildRamp(true, false);
+const RAMP_LIGHT = buildRamp(false, false);
+const RAMP_DARK_STRONG = buildRamp(true, true);
+const RAMP_LIGHT_STRONG = buildRamp(false, true);
+const RAMP_DARK_STRONG_REVERSED = [...RAMP_DARK_STRONG].reverse();
+const RAMP_LIGHT_STRONG_REVERSED = [...RAMP_LIGHT_STRONG].reverse();
 
 /**
- * Ready-made colour array for a scrim at the TOP of a screen: opaque at the screen
- * edge, fading into the content below.
+ * Ready-made colour array for a scrim at the TOP of a screen: opaque at the screen edge,
+ * fading into the content below.
+ *
+ * Always the STRONG ramp. There is no weak top scrim anywhere in the app, because there is
+ * no screen whose top edge has a bright element parked on the ramp's dark end the way the
+ * tab bar's glass capsule is parked on the bottom one.
  */
 export function topScrimColors(isDark: boolean, backgroundColor: string): ScrimColors {
   void backgroundColor;
-  return (isDark ? RAMP_DARK_REVERSED : RAMP_LIGHT_REVERSED) as unknown as ScrimColors;
+  return (isDark ? RAMP_DARK_STRONG_REVERSED : RAMP_LIGHT_STRONG_REVERSED) as unknown as ScrimColors;
 }
 
 /**
  * Ready-made colour array for a scrim at the BOTTOM of a screen: transparent where it
  * meets the content, opaque at the screen edge.
+ *
+ * The STANDARD strength — this is the ramp behind the floating tab bar, and it is the one
+ * surface that must not change.
  */
 export function bottomScrimColors(isDark: boolean, backgroundColor: string): ScrimColors {
   void backgroundColor;
   return (isDark ? RAMP_DARK : RAMP_LIGHT) as unknown as ScrimColors;
+}
+
+/**
+ * Bottom scrim for screens with a text COMPOSER rather than the tab bar.
+ *
+ * Same ramp shape, strong strength. The tab bar's version reads at standard strength only
+ * because its opaque glass capsule sits on the ramp's dark end and supplies the contrast;
+ * a composer has nothing there but a 44 pt translucent field, so at standard strength the
+ * ramp was black on near-black with nothing to read against — reported, correctly, as the
+ * chat simply not having a scrim at the bottom.
+ */
+export function bottomScrimColorsStrong(isDark: boolean, backgroundColor: string): ScrimColors {
+  void backgroundColor;
+  return (isDark ? RAMP_DARK_STRONG : RAMP_LIGHT_STRONG) as unknown as ScrimColors;
 }
 
 // ─── Header geometry ────────────────────────────────────────────────────────────
