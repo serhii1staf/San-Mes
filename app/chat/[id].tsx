@@ -43,7 +43,7 @@ import { uploadChatImage } from '../../src/lib/supabase';
 import { getImageDims, setImageDims } from '../../src/services/imageDimsCache';
 import { useRenderBudget } from '../../src/hooks/useRenderBudget';
 import { useEffectiveBrowserWidgetPosition } from '../../src/lib/browserWidget';
-import { bottomScrimColors, composerScrimHeight, headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
+import { bottomScrimColorsStrong, composerScrimHeight, headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
 import { kvGetJSONSync, kvSetJSON, kvWarm } from '../../src/services/kvStore';
 import { mockMessages, mockConversations, formatMessageTime } from '../../src/utils/mockData';
 import { showToast } from '../../src/store/toastStore';
@@ -3757,7 +3757,7 @@ export default function ChatScreen() {
             the composer or it darkens the transcript above it. Sharing the constant
             put 20 pt of ramp over the messages. */}
         <LinearGradient
-          colors={bottomScrimColors(theme.isDark, bgColor)}
+          colors={bottomScrimColorsStrong(theme.isDark, bgColor)}
           locations={SCRIM_LOCATIONS}
           style={StyleSheet.absoluteFill}
         />

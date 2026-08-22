@@ -8,7 +8,7 @@ import * as Clipboard from 'expo-clipboard';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import { bottomScrimColors, composerScrimHeight, headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
+import { bottomScrimColorsStrong, composerScrimHeight, headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../../src/theme';
 import { useLiquidGlassActive, NativeGlassView, GlassBg } from '../../src/components/ui/LiquidGlass';
@@ -1417,11 +1417,33 @@ export default function CommentsScreen() {
       <View style={[styles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">
         <LinearGradient colors={topScrimColors(theme.isDark, bgColor)} locations={SCRIM_LOCATIONS} style={StyleSheet.absoluteFill} />
         <View style={[styles.headerContent, { paddingTop: insets.top }]} pointerEvents="auto">
-          <Pressable onPress={() => router.back()}>
+          {/* Back affordance now carries a LABEL beside the chevron, matching the chat
+              header's back pill. `t('common.back')` already exists in both locales
+              ("Назад" / "Back"), so nothing new had to be added to the dictionaries.
+
+              The three-column shape is copied from the chat header rather than invented:
+              the side columns hug their content and never shrink (`flexShrink: 0`) so the
+              label is always shown in full, and the title takes the remaining space
+              (`flex: 1`) and truncates within it. That means the title is centred in the
+              gap between the two columns rather than on the screen — iOS does the same,
+              and the chat header documents it as deliberate. Perfectly centring it would
+              need absolute positioning, which lets a long title run under the label. */}
+          <Pressable onPress={() => router.back()} hitSlop={8} style={styles.backRow}>
             <Feather name="chevron-left" size={24} color={theme.colors.text.primary} />
+            <Text
+              variant="caption"
+              weight="semibold"
+              numberOfLines={1}
+              color={theme.colors.text.primary}
+              style={styles.backLabel}
+            >
+              {t('common.back')}
+            </Text>
           </Pressable>
-          <Text variant="body" weight="bold">{t('comments.title')}</Text>
-          <View style={{ width: 24 }} />
+          <View style={styles.headerTitleWrap}>
+            <Text variant="body" weight="bold" numberOfLines={1}>{t('comments.title')}</Text>
+          </View>
+          <View style={styles.headerSpacer} />
         </View>
       </View>
 
@@ -1461,7 +1483,7 @@ export default function CommentsScreen() {
             container is gone, so comments scroll UNDER the input and dissolve
             into the background instead of hitting a hard bar edge. */}
         <LinearGradient
-          colors={bottomScrimColors(theme.isDark, bgColor)}
+          colors={bottomScrimColorsStrong(theme.isDark, bgColor)}
           locations={SCRIM_LOCATIONS}
           pointerEvents="none"
           style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: composerScrimHeight(insets.bottom, 14) }}
@@ -1686,5 +1708,13 @@ export default function CommentsScreen() {
 
 const styles = StyleSheet.create({
   headerWrapper: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100 },
-  headerContent: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingBottom: 8 },
+  headerContent: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingBottom: 8, gap: 8 },
+  // Back affordance: chevron + localized label. `flexShrink: 0` so the label is never
+  // squeezed by a long title. Mirrors `backPill` / `backLabel` in the chat header.
+  backRow: { flexShrink: 0, flexDirection: 'row', alignItems: 'center', gap: 2 },
+  backLabel: { marginLeft: -2, flexShrink: 0 },
+  // Title takes the space between the two side columns and truncates within it.
+  headerTitleWrap: { flex: 1, minWidth: 0, alignItems: 'center', justifyContent: 'center' },
+  // Right-hand counterweight, same width the bare chevron used to occupy.
+  headerSpacer: { width: 24, flexShrink: 0 },
 });
