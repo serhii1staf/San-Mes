@@ -50,7 +50,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { KeyboardStickyView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
 import Reanimated, { useAnimatedStyle, interpolate, Extrapolation } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
-import { SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
+import { bottomScrimColors, composerScrimHeight, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
 import { CachedImage } from '../../src/components/ui/CachedImage';
@@ -375,6 +375,22 @@ export default function ChatFullscreenScreen() {
           dependency and what the other chat screens use) tracks the keyboard frame
           on the UI thread, so the field sits ON the keyboard instead of the large
           gap a mis-placed KeyboardAvoidingView produced. */}
+      {/* Bottom scrim. This screen was the only one of the five composer screens with
+          no bottom ramp at all — it had a top scrim and nothing underneath, which is
+          why the darkening was present above and missing below the input field.
+
+          Pinned to the screen bottom and rendered BEFORE the composer, so the composer
+          paints over it — same order as the tab bar's fade and the other chats. Height
+          matches this screen's own composer padding (`insets.bottom + 8`), so the ramp
+          finishes level with the top of the field rather than reaching over the
+          message. */}
+      <LinearGradient
+        colors={bottomScrimColors(theme.isDark, theme.colors.background.primary)}
+        locations={SCRIM_LOCATIONS}
+        pointerEvents="none"
+        style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: composerScrimHeight(insets.bottom + 8, 16) }}
+      />
+
       <KeyboardStickyView
         offset={{ closed: 0, opened: 0 }}
         style={styles.composerDock}

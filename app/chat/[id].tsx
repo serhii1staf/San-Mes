@@ -43,7 +43,7 @@ import { uploadChatImage } from '../../src/lib/supabase';
 import { getImageDims, setImageDims } from '../../src/services/imageDimsCache';
 import { useRenderBudget } from '../../src/hooks/useRenderBudget';
 import { useEffectiveBrowserWidgetPosition } from '../../src/lib/browserWidget';
-import { bottomScrimColors, headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
+import { bottomScrimColors, composerScrimHeight, headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
 import { kvGetJSONSync, kvSetJSON, kvWarm } from '../../src/services/kvStore';
 import { mockMessages, mockConversations, formatMessageTime } from '../../src/utils/mockData';
 import { showToast } from '../../src/store/toastStore';
@@ -3742,13 +3742,20 @@ export default function ChatScreen() {
           height, no animation — it simply sits there. */}
       <View
         pointerEvents="none"
-        style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: LIST_FOOTER_HEIGHT }}
+        style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: composerScrimHeight(insets.bottom, 12) }}
       >
         {/* Shared scrim ramp (src/theme/scrim.ts). These stops used to be local
             (`[bgTransparent, bgColor + 'B3', bgColor]`, midpoint 0.45) — a
             background-coloured fade rather than the black ramp used behind the tab
             bar, which is why the chat's scrim looked like a different effect from
-            every other screen's. */}
+            every other screen's.
+
+            Height is the COMPOSER's footprint, not `LIST_FOOTER_HEIGHT`. Those are
+            two different measurements that happened to be written with one constant:
+            the footer spacer has to clear the composer AND leave breathing room above
+            it (hence its extra 12), whereas the scrim must stop exactly at the top of
+            the composer or it darkens the transcript above it. Sharing the constant
+            put 20 pt of ramp over the messages. */}
         <LinearGradient
           colors={bottomScrimColors(theme.isDark, bgColor)}
           locations={SCRIM_LOCATIONS}

@@ -8,7 +8,7 @@ import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import { bottomScrimColors, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
+import { bottomScrimColors, composerScrimHeight, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
 import { BlurView } from 'expo-blur';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
@@ -421,7 +421,7 @@ export default function MusicChatScreen() {
         colors={bottomScrimColors(theme.isDark, theme.colors.background.primary)}
         locations={SCRIM_LOCATIONS}
         pointerEvents="none"
-        style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: INPUT_BAR + insets.bottom + 56 }}
+        style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: composerScrimHeight(insets.bottom, 16) }}
       />
 
       {/* Input bar — no solid backgroundColor: the fade above supplies the
