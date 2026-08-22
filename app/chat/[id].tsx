@@ -1810,14 +1810,48 @@ export default function ChatScreen() {
   // route is `ORDER BY created_at ASC LIMIT ?`, so it returns the OLDEST N, not the newest.
   // Under 200 messages that is the whole conversation and this is correct; above 200 the
   // recent end would be the part that is missing. The fix is `DESC` + reverse server-side.
+  // ── AND IT REPEATS WHILE THE CHAT IS OPEN ───────────────────────────────────
+  //
+  // The fetch started as open-time only, on the assumption that Ably would carry anything
+  // that arrived afterwards. It does not. Reported, with both users sitting in the chat: the
+  // peer sends, nothing appears, and the message only shows up after leaving and re-entering
+  // — i.e. only when this fetch runs again.
+  //
+  // Realtime has now survived several rounds of diagnosis (channel names match, the token
+  // grants `chat:*` publish+subscribe, the token endpoint answers, the Worker's
+  // `user:<peer>:notifications` fan-out and its bridge handler both exist and both feed the
+  // same store). Two independent live paths failing together points at the receiver's Ably
+  // connection, most likely `/api/ably-token` rejecting the Worker JWT because Vercel's
+  // `JWT_SECRET` differs — a fail-closed verifier, exactly the failure
+  // `api/admin/auth-fingerprint.ts` was written to diagnose. That is a configuration fact I
+  // cannot read from here.
+  //
+  // So the design changes rather than the diagnosis continuing: CORRECTNESS NO LONGER DEPENDS
+  // ON REALTIME. This poll is the floor — messages arrive within one interval no matter what
+  // Ably is doing. Realtime, when it works, is what makes them arrive instantly instead.
+  // A messenger that loses messages when a socket dies is broken; one that is a few seconds
+  // slower without it is merely not optimal.
+  //
+  // Cost, deliberately bounded:
+  //   - only while the app is ACTIVE. Backgrounded delivery is push's job, and polling from
+  //     the background is what drains a battery.
+  //   - `mergeHistory` returns the same array reference when nothing is new, so an idle poll
+  //     costs one request and NO store write, NO re-render, NO disk write.
+  //   - the request is one indexed query capped at 200 rows.
+  //
+  // The obvious follow-up is a `?since=<iso>` parameter so an idle poll transfers nothing at
+  // all. That is a Worker change; the same deploy should also fix `ORDER BY created_at ASC
+  // LIMIT ?` returning the OLDEST N instead of the newest.
+  const HISTORY_POLL_MS = 6000;
   useEffect(() => {
     if (!conversationId) return;
     if (!useConnectivityStore.getState().isOnline) return;
     let cancelled = false;
+    let timer: ReturnType<typeof setInterval> | null = null;
     // Off the open frame: this is a network round trip plus a store write, and first paint is
     // already served from cache.
     const handle = InteractionManager.runAfterInteractions(() => {
-      (async () => {
+      const runFetch = async () => {
         try {
           const { getMessages } = await import('../../src/lib/supabase');
           const { messages, error } = await getMessages(conversationId, { limit: 200 });
@@ -1850,9 +1884,22 @@ export default function ChatScreen() {
           // Offline, 403 (opened under a peer user id before the conversation row exists),
           // or a transport failure. The cached transcript stays on screen either way.
         }
-      })();
+      };
+
+      void runFetch();
+      timer = setInterval(() => {
+        if (cancelled) return;
+        // Foreground only — see the cost note above.
+        if (AppState.currentState !== 'active') return;
+        if (!useConnectivityStore.getState().isOnline) return;
+        void runFetch();
+      }, HISTORY_POLL_MS);
     });
-    return () => { cancelled = true; handle.cancel(); };
+    return () => {
+      cancelled = true;
+      handle.cancel();
+      if (timer) clearInterval(timer);
+    };
   }, [conversationId, setMessages]);
 
   // Persist messages to KV cache whenever THIS chat's messages change.
