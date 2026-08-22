@@ -956,11 +956,12 @@ export default function FeedScreen() {
 
   const bgColor = theme.colors.background.primary;
   const bgTransparent = bgColor + '00';
-  // Top scrim, biased toward true black in dark themes so it reads as depth rather
-  // than as a flat tint of the surface it sits on — matching the bottom scrim behind
-  // the tab bar and the platform convention on both iOS and Android.
-  const scrimTop = theme.isDark ? 'rgba(0,0,0,1)' : bgColor;
-  const scrimTopMid = theme.isDark ? 'rgba(0,0,0,0.72)' : bgColor + 'BF';
+  // Top scrim. Biased toward black in dark themes so it reads as depth rather than as
+  // a flat tint of the surface it sits on, but deliberately NOT fully opaque — a
+  // solid black bar is heavier than what either platform does. Kept in step with the
+  // bottom scrim behind the tab bar.
+  const scrimTop = theme.isDark ? 'rgba(0,0,0,0.9)' : bgColor;
+  const scrimTopMid = theme.isDark ? 'rgba(0,0,0,0.5)' : bgColor + 'A6';
   const headerContentHeight = insets.top + 48;
   const headerGradientHeight = headerContentHeight + 28;
 

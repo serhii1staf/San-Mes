@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { View, Pressable, Text as RNText } from 'react-native';
+import { View, Pressable, StyleSheet, Text as RNText } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
+import { FadingBlurHeader, isFadingBlurAvailable } from './FadingBlurHeader';
 import { router } from 'expo-router';
 import Animated, {
   useSharedValue,
@@ -57,14 +59,39 @@ import { triggerHaptic } from '../../utils/haptics';
  * docked was for it to be slightly smaller again.
  */
 const BAND_HEIGHT = 56;
-const ENTER_DURATION = 380;
-const EXIT_DURATION = 300;
-const FADE_IN_DURATION = 240;
-const FADE_OUT_DURATION = 180;
+const ENTER_DURATION = 420;
+/**
+ * Exit is now LONGER than it was, and longer than the enter.
+ *
+ * The descent read as abrupt for two reasons that compound: it was the shorter of the
+ * two directions (300 vs 380), and the released layout height snapped back the instant
+ * the slide ended. A dismissal that is quicker than the corresponding arrival always
+ * feels like a cut rather than a movement, so the durations are inverted — leaving is
+ * the slower half.
+ */
+const EXIT_DURATION = 460;
+const FADE_IN_DURATION = 260;
+/**
+ * The fade must not finish early.
+ *
+ * At 180 ms against a 460 ms slide the band went fully transparent while it was still
+ * travelling, so the last two thirds of the motion were invisible and the eye read the
+ * whole thing as "it vanished, then the layout jumped". Holding opacity until near the
+ * end keeps the movement legible all the way down.
+ */
+const FADE_OUT_DURATION = 380;
 
 export function BrowserBottomBand() {
   const theme = useTheme();
   const t = useT();
+
+  // Gradient ramp for the band's own surface. Mirrors the scrim behind the tab bar
+  // so the two read as one continuous piece of chrome rather than a slab sitting on
+  // top of a gradient.
+  const bandBg = theme.colors.background.primary;
+  const bandFadeTop = theme.isDark ? 'rgba(0,0,0,0.42)' : bandBg + '8C';
+  const bandFadeMid = theme.isDark ? 'rgba(0,0,0,0.62)' : bandBg + 'C4';
+  const bandFadeBottom = theme.isDark ? 'rgba(0,0,0,0.78)' : bandBg + 'F2';
   const minimizedUrl = useBrowserStore((s) => s.minimizedUrl);
   const minimizedDomain = useBrowserStore((s) => s.minimizedDomain);
   const minimizedFavicon = useBrowserStore((s) => s.minimizedFavicon);
@@ -98,15 +125,18 @@ export function BrowserBottomBand() {
       });
       opacitySV.value = withTiming(1, { duration: FADE_IN_DURATION, easing: Easing.out(Easing.cubic) });
     } else {
-      opacitySV.value = withTiming(0, { duration: FADE_OUT_DURATION, easing: Easing.out(Easing.cubic) });
+      // Held opaque for most of the travel, then eased off — see FADE_OUT_DURATION.
+      opacitySV.value = withTiming(0, { duration: FADE_OUT_DURATION, easing: Easing.in(Easing.quad) });
       slideSV.value = withTiming(
         BAND_HEIGHT,
         {
           duration: EXIT_DURATION,
-          // Symmetric ease-in-out rather than `Easing.in`. `Easing.in` reaches its
-          // maximum speed exactly as the band leaves, which reads as a snap — the
-          // same mistake that made the mini-app overlay feel abrupt.
-          easing: Easing.bezier(0.33, 0, 0.67, 1),
+          // Gentle start, long decelerating tail. `Easing.in` (the original) reached
+          // maximum speed exactly as the band left, which reads as a snap — the same
+          // mistake that made the mini-app overlay feel abrupt. A symmetric
+          // ease-in-out was better but still had a fast middle; this curve spends
+          // most of its time slowing down, which is what "descends smoothly" means.
+          easing: Easing.bezier(0.25, 0.1, 0.25, 1),
         },
         (finished) => {
           // Release the reserved height only once the band is off-screen, so the app
@@ -158,11 +188,11 @@ export function BrowserBottomBand() {
         style={[
           {
             height: BAND_HEIGHT,
-            backgroundColor: theme.colors.background.primary,
             // TOP corners only. It is docked to the screen edge, so rounding the
             // bottom corners would leave visible notches against the display edge.
             borderTopLeftRadius: 24,
             borderTopRightRadius: 24,
+            overflow: 'hidden',
             // No hairline borders — on dark themes the light border color
             // appeared as bright UV-style streaks running down the rounded
             // corners during the collapse animation.
@@ -170,6 +200,33 @@ export function BrowserBottomBand() {
           innerStyle,
         ]}
       >
+        {/* ── Surface ────────────────────────────────────────────────────────
+            This was a flat `background.primary` fill. Against a chat — which has
+            its own scrim behind the input bar — that read fine, but on the feed,
+            profile, search and the chat list it sat as an opaque slab with a hard
+            edge against the content, which is what "the widget looks awful
+            everywhere except chats" was describing. It also read as glass having
+            been removed, even though `useLiquidGlassActive` was untouched.
+
+            It now uses the same two-layer treatment as every other piece of
+            bottom chrome in the app: a gradient base that ramps into the
+            background, plus the real frosted blur on top where the binary
+            supports it. So it blends into the scrim on every screen instead of
+            covering it. */}
+        <LinearGradient
+          colors={[bandFadeTop, bandFadeMid, bandFadeBottom]}
+          locations={[0, 0.5, 1]}
+          style={StyleSheet.absoluteFill}
+          pointerEvents="none"
+        />
+        {isFadingBlurAvailable() ? (
+          <FadingBlurHeader
+            isDark={theme.isDark}
+            direction="up"
+            intensity={28}
+            blendColor={theme.colors.background.primary + '55'}
+          />
+        ) : null}
         <Pressable
           onPress={handleOpen}
           style={{
