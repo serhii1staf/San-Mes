@@ -674,7 +674,28 @@ function ConversationItemBase({
       // In selection mode the native context menu is suppressed entirely: a
       // long-press peek that navigates would fight the checkboxes, and iOS's
       // menu would cover the very rows the user is ticking.
-      menuReady={menuReady && !editMode}
+      //
+      // WHY `disabled` AND NOT `menuReady && !editMode`
+      //
+      // That is what this was, and it is what made the rows jerk.
+      // `ConditionalContextMenuRow` returns a bare <Pressable> when `menuReady` is false
+      // and wraps it in <ContextMenu> when true, so folding `!editMode` into `menuReady`
+      // changed the ELEMENT TYPE at that position on every toggle. React cannot reconcile
+      // a different type: it unmounts the row's whole content subtree and mounts a new
+      // one. Fresh native views are created at their layout position and receive their
+      // animated style on a LATER frame, so each visible row snapped sideways,
+      // independently, a frame or two apart.
+      //
+      // It also explains the reported pattern exactly. `menuReady` is false on the FIRST
+      // toggle (it flips one RAF after mount), so both branches were the bare Pressable
+      // and nothing remounted -- "the first time they move fine". From the second toggle
+      // on, `menuReady` is true and every toggle rebuilds every visible row -- "after
+      // that they bug out badly".
+      //
+      // `disabled` turns the menu off inside the same native view, so the tree shape is
+      // identical in both modes and nothing is torn down mid-animation.
+      menuReady={menuReady}
+      menuDisabled={editMode}
       actions={actions}
       onAction={handleAction}
       onPress={editMode ? () => onToggleSelect(item.id) : openChat}
@@ -729,9 +750,7 @@ function ConversationItemBase({
       </View>
       {/* Pin marker. Outside edit mode this is the only affordance that tells the user why
           a chat is sitting above a more recent one. */}
-      {isPinned && !editMode ? (
-        <Feather name="bookmark" size={13} color={theme.colors.text.tertiary} style={{ marginLeft: 6 }} />
-      ) : null}
+      {isPinned ? <PinMarker editProgress={editProgress} color={theme.colors.text.tertiary} /> : null}
       {/* Reorder handle — right-hand column, selection mode only. Collapsed to width 0
           rather than unmounted, for the same reason as the checkbox column on the left:
           the row's flex layout then settles once per mode change instead of on a
@@ -773,11 +792,16 @@ const ReorderHandle = React.memo(function ReorderHandle({
     opacity: editProgress.value,
     transform: [{ translateX: interpolate(editProgress.value, [0, 1], [8, 0]) }],
   }));
-  if (!visible) return <View style={{ width: 0 }} />;
+  // No early return. `if (!visible) return <View/>` swapped a plain View for a
+  // GestureDetector subtree on every toggle -- another change of element type at a fixed
+  // position, so the handle's views, and the pan gesture attached to them, were destroyed
+  // and rebuilt each time edit mode opened or closed. The column is now always the same
+  // element and only its width changes, which is a single layout commit exactly as before.
   return (
     <GestureDetector gesture={gesture}>
       <Reanimated.View
-        style={[styles.reorderColumn, { width: REORDER_COLUMN_WIDTH }, iconStyle]}
+        pointerEvents={visible ? 'auto' : 'none'}
+        style={[styles.reorderColumn, { width: visible ? REORDER_COLUMN_WIDTH : 0 }, iconStyle]}
         // A real touch target: the icon is 18 pt but the column is 34, and the hold has to
         // land somewhere forgiving.
         hitSlop={8}
@@ -785,6 +809,32 @@ const ReorderHandle = React.memo(function ReorderHandle({
         <Feather name="menu" size={18} color={color} />
       </Reanimated.View>
     </GestureDetector>
+  );
+});
+
+/**
+ * The bookmark that marks a pinned chat.
+ *
+ * Mounted whenever the chat is pinned; FADED in selection mode rather than unmounted. It
+ * used to be `{isPinned && !editMode ? <Feather .../> : null}`, so a 19 pt element (the
+ * icon plus its 6 pt margin) entered and left the row's FLOW on every toggle. That
+ * reflowed the preview text on the same frames as the row was sliding sideways, and only
+ * on pinned rows, which is a good recipe for motion that looks random.
+ *
+ * Opacity is compositor-only, so the row's layout is now identical in both modes.
+ */
+const PinMarker = React.memo(function PinMarker({
+  editProgress,
+  color,
+}: {
+  editProgress: SharedValue<number>;
+  color: string;
+}) {
+  const style = useAnimatedStyle(() => ({ opacity: 1 - editProgress.value }));
+  return (
+    <Reanimated.View style={[{ marginLeft: 6 }, style]}>
+      <Feather name="bookmark" size={13} color={color} />
+    </Reanimated.View>
   );
 });
 
@@ -1130,6 +1180,7 @@ const SelectionCheckbox = React.memo(function SelectionCheckbox({
 // twice — the children are passed through whichever wrapper is active.
 function ConditionalContextMenuRow({
   menuReady,
+  menuDisabled,
   actions,
   onAction,
   onPress,
@@ -1137,6 +1188,7 @@ function ConditionalContextMenuRow({
   children,
 }: {
   menuReady: boolean;
+  menuDisabled: boolean;
   actions: any[];
   onAction: (e: any) => void;
   onPress: () => void;
@@ -1161,8 +1213,11 @@ function ConditionalContextMenuRow({
     </Pressable>
   );
   if (!menuReady) return inner;
+  // `disabled`, not an unmount -- see the long note at the call site. Once this branch is
+  // taken it must STAY taken for the lifetime of the row, or the row's content subtree is
+  // rebuilt from scratch in the middle of the edit-mode slide.
   return (
-    <ContextMenu actions={actions} onPress={onAction}>
+    <ContextMenu actions={actions} onPress={onAction} disabled={menuDisabled}>
       {inner}
     </ContextMenu>
   );
