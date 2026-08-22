@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { InteractionManager } from 'react-native';
+import { CONVERSATION_FIELDS, listEqualOn } from '../utils/listEquality';
 
 import {
   cacheFeed,
@@ -434,6 +435,16 @@ export const useEntityStore = create<EntityState>()((set, get) => ({
   },
 
   setConversations: (convs: LocalConversation[]) => {
+    // Bail out when nothing visible changed.
+    //
+    // This setter is called from four places (sync service, realtime bridge, chat
+    // screen, chat list) and most of those calls carry a NEW array holding the SAME
+    // data. Writing it re-rendered every subscriber and broke `React.memo` on every
+    // row, which is what made the chat list blink and rebuild on each focus, sync
+    // tick and realtime event.
+    const prev = get().conversations;
+    if (listEqualOn(prev, convs, CONVERSATION_FIELDS)) return;
+
     set({ conversations: convs });
     // Persist to cache so conversations survive app restart (even offline)
     import('./cacheService').then(({ cacheConversations }) => {

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { Post } from '../types';
+import { listEqualOn, POST_FIELDS } from '../utils/listEquality';
 
 export type { Post } from '../types';
 
@@ -56,7 +57,14 @@ export const useFeedStore = create<FeedStoreState>()((set) => ({
   lastFeedFetch: null,
   lastProfileFetch: null,
 
-  setPosts: (posts) => set({ posts, lastFeedFetch: Date.now() }),
+  // Same guard as `setProfilePosts`. See the note there for why the timestamp is
+  // still advanced when the content turns out to be identical.
+  setPosts: (posts) =>
+    set((state) =>
+      listEqualOn(state.posts, posts, POST_FIELDS)
+        ? { lastFeedFetch: Date.now() }
+        : { posts, lastFeedFetch: Date.now() },
+    ),
   addPost: (post) => set((state) => ({ posts: [post, ...state.posts] })),
   removePost: (postId) =>
     set((state) => ({
@@ -82,7 +90,20 @@ export const useFeedStore = create<FeedStoreState>()((set) => ({
   setEditingPost: (editingPost) => set({ editingPost }),
 
   // Новые методы
-  setProfilePosts: (posts) => set({ profilePosts: posts, lastProfileFetch: Date.now() }),
+  // Bail out when nothing visible changed. `setProfilePosts` is called on every
+  // profile focus and after every publish, usually with a new array holding the
+  // same rows — writing it re-rendered the profile and broke `React.memo` on every
+  // card, which is what made the profile blink on entry.
+  //
+  // `lastProfileFetch` is still advanced on a no-op: the fetch DID happen, and the
+  // throttle that reads this timestamp must not re-fire just because the result was
+  // identical.
+  setProfilePosts: (posts) =>
+    set((state) =>
+      listEqualOn(state.profilePosts, posts, POST_FIELDS)
+        ? { lastProfileFetch: Date.now() }
+        : { profilePosts: posts, lastProfileFetch: Date.now() },
+    ),
   updatePost: (postId, data) =>
     set((state) => ({
       posts: state.posts.map((p) =>

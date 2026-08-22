@@ -44,17 +44,58 @@ describe('feedStore property invariants', () => {
   });
 
   // Feature: app-ux-improvements, Property 1: Инвариант store — сохранение данных между табами
-  it('Property 1: setPosts stores the exact same array (data preserved between tabs)', () => {
+  //
+  // UPDATED (app-wide-degradation-fixes, block G): this used to assert `toBe`, i.e.
+  // that the store holds the very array instance that was passed in.
+  //
+  // `setPosts` now bails out when the incoming list is content-equal to what is
+  // already stored, keeping the PREVIOUS reference so React can skip the re-render.
+  // That is the fix for screens blinking and rebuilding on every focus and sync
+  // tick, and the feed's own call sites already worked this way
+  // (`setPosts(prev => equal ? prev : parsed)`) — the store setter just makes it
+  // impossible to forget.
+  //
+  // So reference identity was an implementation detail, not the requirement. What
+  // this property actually guarantees — the store holds exactly the data you set,
+  // with no copy, no reordering and no round-trip — is asserted below on content.
+  it('Property 1: setPosts stores exactly the data given (data preserved between tabs)', () => {
     fc.assert(
       fc.property(uniquePostsArb(0, 12), (posts) => {
         resetStore();
         useFeedStore.getState().setPosts(posts);
 
         const stored = useFeedStore.getState().posts;
-        // Same reference and same contents — no network round-trip, no copy.
-        expect(stored).toBe(posts);
         expect(stored).toEqual(posts);
         expect(stored.length).toBe(posts.length);
+        // Order is part of the contract: the feed renders in array order.
+        expect(stored.map((p) => p.id)).toEqual(posts.map((p) => p.id));
+      }),
+      { numRuns: 100 }
+    );
+  });
+
+  // Companion to Property 1: the bail-out itself.
+  //
+  // Setting content-equal data must NOT produce a new reference, because that
+  // reference change is precisely what re-rendered every subscriber and busted
+  // `React.memo` on every card.
+  it('Property 1b: re-setting content-equal posts keeps the previous reference', () => {
+    fc.assert(
+      fc.property(uniquePostsArb(1, 8), (posts) => {
+        resetStore();
+        useFeedStore.getState().setPosts(posts);
+        const first = useFeedStore.getState().posts;
+
+        // A structurally identical but distinct array — what a refetch produces.
+        useFeedStore.getState().setPosts(posts.map((p) => ({ ...p })));
+        expect(useFeedStore.getState().posts).toBe(first);
+
+        // A real change must still land.
+        useFeedStore.getState().setPosts(
+          posts.map((p, i) => (i === 0 ? { ...p, content: `${p.content}#changed` } : { ...p })),
+        );
+        expect(useFeedStore.getState().posts).not.toBe(first);
+        expect(useFeedStore.getState().posts[0].content).toContain('#changed');
       }),
       { numRuns: 100 }
     );
