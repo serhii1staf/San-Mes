@@ -3,12 +3,14 @@
 // the Worker via `apiClient`. The previous direct-`supabase.from(...)`
 // fallbacks are gone; there's no second authoritative source anymore.
 
+// `getMessages` is deliberately NOT imported here any more. The DM history fetch belongs to
+// the chat screen, which is the only thing that can merge it into the transcript — see the
+// note where `syncMessages` used to live, further down.
 import {
   getPosts,
   getProfile,
   getProfiles,
   getConversations,
-  getMessages,
 } from '../lib/supabase';
 
 import { apiGet } from './apiClient';
@@ -21,11 +23,9 @@ import {
   cacheLikes,
   cacheFollows,
   cacheConversations,
-  cacheMessages,
   LocalPost,
   LocalProfile,
   LocalConversation,
-  LocalMessage,
 } from './cacheService';
 
 /**
@@ -263,26 +263,26 @@ export async function syncConversations(userId: string): Promise<void> {
   }
 }
 
-export async function syncMessages(conversationId: string): Promise<void> {
-  try {
-    await syncWithThrottle(`messages:${conversationId}`, 60 * 1000, async () => {
-      const { messages, error } = await getMessages(conversationId);
-      if (error) throw error; // transport/fetch failure → don't stamp, allow retry
-      if (!messages.length) return; // fetch succeeded but empty → legitimate success
-      const localMessages: LocalMessage[] = messages.map((m: any) => ({
-        id: m.id,
-        conversation_id: m.conversation_id,
-        sender_id: m.sender_id,
-        text: m.text,
-        created_at: m.created_at,
-        status: 'synced' as const,
-      }));
-      await cacheMessages(conversationId, localMessages);
-    });
-  } catch (e) {
-    console.warn('[SyncService] syncMessages failed:', e);
-  }
-}
+// ── `syncMessages` USED TO BE HERE, AND IT WAS A TRAP ─────────────────────────
+//
+// It fetched `GET /v1/conversations/:id/messages` and wrote the result through
+// `cacheMessages` to `KEYS.messages(convId)`. Two things were wrong with it, and together
+// they are why direct messages appeared to vanish:
+//
+//   1. NOTHING CALLED IT. A grep across src/ and app/ found no invocation — the DM read path
+//      on the client was local cache plus live Ably and nothing else, so any message
+//      published while the app was not subscribed was never retrievable. The push still
+//      arrived (the Worker fans that out), so the symptom was "push lands, chat is empty".
+//
+//   2. It wrote to a key NO SCREEN READS. `app/chat/[id].tsx` reads `chat_messages:<id>` and
+//      its tail cache; `KEYS.messages(convId)` is a different namespace, and
+//      `getCachedMessages` is never called outside a unit test. Even if something had called
+//      it, the messages would not have reached the transcript.
+//
+// The real fetch now lives in `app/chat/[id].tsx`, next to the other hydration paths, and
+// merges into the chat store — which the existing persistence effect then mirrors to
+// `chat_messages:<id>`. This stub is left as a comment rather than a function so nobody
+// "fixes" the bug by calling a helper that quietly does nothing.
 
 export async function fullSync(userId: string): Promise<void> {
   try {

@@ -283,8 +283,22 @@ export async function getConversations(_userId: string): Promise<{ conversations
   return { conversations: data || [], error: null };
 }
 
-export async function getMessages(conversationId: string): Promise<{ messages: any[]; error: string | null }> {
-  const { data, error } = await apiGet<any[]>(`/v1/conversations/${encodeURIComponent(conversationId)}/messages`);
+/**
+ * A conversation's messages, oldest-first.
+ *
+ * `limit` is worth passing explicitly. The route's default is 50 and its query is
+ * `ORDER BY created_at ASC LIMIT ?`, so the default returns the OLDEST 50 rather than the
+ * most recent ones — fine for a short conversation, wrong for a long one. 200 is the route's
+ * ceiling, so asking for it covers as much as the endpoint can currently give.
+ */
+export async function getMessages(
+  conversationId: string,
+  opts: { limit?: number } = {},
+): Promise<{ messages: any[]; error: string | null }> {
+  const limit = Math.max(1, Math.min(opts.limit ?? 50, 200));
+  const { data, error } = await apiGet<any[]>(
+    `/v1/conversations/${encodeURIComponent(conversationId)}/messages?limit=${limit}`,
+  );
   if (error) return { messages: [], error };
   return { messages: data || [], error: null };
 }

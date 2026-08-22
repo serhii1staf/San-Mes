@@ -1757,6 +1757,106 @@ export default function ChatScreen() {
     return () => handle.cancel();
   }, [conversationId]);
 
+  // ── SERVER HISTORY. THIS IS THE DM READ PATH, AND IT DID NOT EXIST. ─────────
+  //
+  // Reported as: "I send messages, he sends messages, I get the push, I open the chat and
+  // it is EMPTY — he does not see mine and I do not see his."
+  //
+  // Everything above this point reads LOCAL storage only: the chat store, the bounded tail
+  // cache, the `chat_messages:<id>` blob. Live messages arrive over Ably. That is the whole
+  // read path, and it has a hole big enough to lose every message:
+  //
+  //   - Ably delivers only while the app is subscribed. `channel.subscribe('msg', ...)` is
+  //     issued with NO `rewind`, so anything published while the app was closed, backgrounded
+  //     or between token refreshes is never seen by this client. The push notification still
+  //     fires, because the Worker fans that out server-side — which is exactly why the push
+  //     arrives and the transcript is empty.
+  //   - A fresh install has no local cache at all, so its chats start blank and stay blank.
+  //     The new Android APK is precisely this case.
+  //
+  // The data was never lost. `GET /v1/conversations/:id/messages` has existed all along and
+  // the Worker persists every message (workers/api/src/routes/messages.ts). Nothing on the
+  // client called it:
+  //
+  //   `syncMessages()` in src/services/syncService.ts did call it — and was never invoked
+  //   from anywhere in src/ or app/. It also wrote its result to `KEYS.messages(convId)` via
+  //   `cacheMessages`, a key this screen does not read and `getCachedMessages` never reads
+  //   back. Dead code writing to a dead key. It has been deleted rather than left as a trap.
+  //
+  // So: fetch the server's copy on open and merge it in.
+  //
+  // MERGE RULES, deliberately conservative — this only ever ADDS.
+  //   - A message is "already known" if its uuid matches a local `id` OR a local `serverId`.
+  //     Both are required: our own optimistic sends live under a local `m-<ts>` id with the
+  //     server uuid in `serverId`, so matching on `id` alone would duplicate every message
+  //     this device sent.
+  //   - Local rows are never overwritten or removed. Pending/failed sends, local-only edits
+  //     and anything the server has not caught up on all survive untouched.
+  //   - Re-sorted by `createdAt`, which is an ISO-8601 string and therefore sorts correctly
+  //     as a string (fixed-width, big-endian, zero-padded) — no Date allocation per compare.
+  //
+  // The write to disk is NOT done here. `setMessages` makes the store diverge from
+  // `seededArrayRef`, which the persistence effect below already treats as a real mutation
+  // and mirrors into `chat_messages:<id>` plus the tail cache through its coalesced writer.
+  //
+  // Known follow-up, NOT fixed here because it needs a Worker deploy rather than an OTA: the
+  // route is `ORDER BY created_at ASC LIMIT ?`, so it returns the OLDEST N, not the newest.
+  // Under 200 messages that is the whole conversation and this is correct; above 200 the
+  // recent end would be the part that is missing. The fix is `DESC` + reverse server-side.
+  useEffect(() => {
+    if (!conversationId) return;
+    if (!useConnectivityStore.getState().isOnline) return;
+    let cancelled = false;
+    // Off the open frame: this is a network round trip plus a store write, and first paint is
+    // already served from cache.
+    const handle = InteractionManager.runAfterInteractions(() => {
+      (async () => {
+        try {
+          const { getMessages } = await import('../../src/lib/supabase');
+          const { messages, error } = await getMessages(conversationId, { limit: 200 });
+          if (cancelled || error || !Array.isArray(messages) || messages.length === 0) return;
+
+          const local = (useChatStore.getState().messages[conversationId] || []) as ChatMessage[];
+          const known = new Set<string>();
+          for (const m of local) {
+            known.add(m.id);
+            if (m.serverId) known.add(m.serverId);
+          }
+
+          const additions: ChatMessage[] = [];
+          for (const row of messages as any[]) {
+            const id = String(row?.id ?? '');
+            if (!id || known.has(id)) continue;
+            additions.push({
+              id,
+              conversationId,
+              // The server column is the author's real uuid, which is exactly what
+              // `senderId` is contracted to hold — ownership is computed at render time as
+              // `senderId === currentUserId`.
+              senderId: String(row?.sender_id ?? ''),
+              text: typeof row?.text === 'string' ? row.text : '',
+              createdAt: row?.created_at || new Date().toISOString(),
+              // Anything already on the server and not in our local copy was received while
+              // this device was not listening; there is no unread state to reconstruct.
+              isRead: true,
+              serverId: id,
+            });
+          }
+          if (cancelled || additions.length === 0) return;
+
+          const merged = [...local, ...additions].sort((a, b) =>
+            a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0,
+          );
+          setMessages(conversationId, merged as any);
+        } catch {
+          // Offline, 403 (opened under a peer user id before the conversation row exists),
+          // or a transport failure. The cached transcript stays on screen either way.
+        }
+      })();
+    });
+    return () => { cancelled = true; handle.cancel(); };
+  }, [conversationId, setMessages]);
+
   // Persist messages to KV cache whenever THIS chat's messages change.
   // `myStoreMessages` (above) already narrows the subscription to this chat,
   // so the array reference is stable across other chats' background syncs.
