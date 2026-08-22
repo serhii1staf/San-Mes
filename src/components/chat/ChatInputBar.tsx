@@ -12,6 +12,7 @@ import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../../theme';
 import { useT } from '../../i18n/store';
 import { perfMonitor } from '../../services/perfMonitor';
+import { MAX_MESSAGE_CHARS } from '../../utils/textLimits';
 import { useLiquidGlassActive, NativeGlassView, GlassContainerView } from '../ui/LiquidGlass';
 import { AnimatedKeyboardIcon } from './AnimatedKeyboardIcon';
 import { AnimatedEmojiIcon } from './AnimatedEmojiIcon';
@@ -246,6 +247,10 @@ const ChatField = memo(forwardRef<ChatFieldHandle, ChatFieldProps>(function Chat
       placeholder={t('chat.input_placeholder')}
       placeholderTextColor={theme.colors.text.tertiary}
       style={{ flex: 1, fontSize: 15, color: theme.colors.text.primary, fontFamily: theme.fontFamily.regular, maxHeight: 100, paddingTop: 0, paddingBottom: 0, minHeight: 22, lineHeight: 20, alignSelf: 'stretch', textAlign: 'left' }}
+      // There was NO limit here. The only bound was the server truncating at 16 000 after the
+      // fact, which loses text silently, and before that a single pasted wall of text is one
+      // enormous bubble for the list to measure on every pass. See src/utils/textLimits.ts.
+      maxLength={MAX_MESSAGE_CHARS}
       multiline
       textAlignVertical="center"
       autoCorrect={false}
