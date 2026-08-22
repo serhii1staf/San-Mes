@@ -74,6 +74,26 @@ const SCREEN_HEIGHT = Dimensions.get('window').height;
 // forcing its internal prop-diff/effect work to re-run needlessly. Both values
 // are compile-time constants, so hoisting them to module scope makes the
 // references stable across every render without changing any behaviour.
+// ── DO NOT ADD `autoscrollToTopThreshold` HERE ──────────────────────────────────────
+//
+// Worth writing down, because it looks like the obvious fix for "loading older messages
+// throws me to the top" and it is the exact opposite.
+//
+// From the installed package's own typings (`dist/FlashListProps.d.ts`):
+//
+//   maintainVisibleContentPosition is enabled by default.        (there is a `disabled` flag)
+//   autoscrollToTopThreshold — "When content is added at the top, automatically scroll to
+//                               maintain position if the user is within this threshold"
+//   autoscrollToBottomThreshold — same, for content added at the bottom
+//
+// So position maintenance is NOT what the thresholds switch on; it is on already. The
+// thresholds control AUTO-SCROLLING — actively following newly added content. Setting a top
+// threshold would make the list chase older messages toward the top as they are prepended,
+// i.e. it would CAUSE the teleport rather than cure it.
+//
+// `autoscrollToBottomThreshold: 0.1` is deliberate and correct: when a new message arrives at
+// the bottom and the user is already near the newest message, follow it. That is the
+// stick-to-newest behaviour a chat wants.
 const MVCP_FROM_BOTTOM = { startRenderingFromBottom: true, autoscrollToBottomThreshold: 0.1 } as const;
 const LIST_CONTENT_CONTAINER_STYLE = { paddingBottom: 8 } as const;
 
@@ -2378,7 +2398,13 @@ export default function ChatScreen() {
   // once that id is actually present in the rendered window. No index arithmetic
   // across an uncommitted render, and it self-heals if the expansion takes several
   // frames.
-  const pendingJumpRef = useRef<{ id: string; tries: number } | null>(null);
+  //
+  // `viewPosition` / `animated` are per-request because this mechanism now serves two
+  // callers with opposite needs. A reply/search jump wants the target CENTRED and animated,
+  // so the movement is visible and the user can see where they landed. Restoring position
+  // after older history is prepended wants the anchor row put back at the viewport TOP with
+  // NO animation — the whole point is that nothing appears to move.
+  const pendingJumpRef = useRef<{ id: string; tries: number; viewPosition: number; animated: boolean } | null>(null);
 
   // Bumped on every jump REQUEST so the consuming effect below runs even when the
   // render window did not have to change.
@@ -2404,7 +2430,7 @@ export default function ChatScreen() {
     // above the target rather than landing it flush against the top edge.
     const needWindow = source.length - index + 4;
     if (needWindow > renderWindow) setRenderWindow(needWindow);
-    pendingJumpRef.current = { id: target.id, tries: 0 };
+    pendingJumpRef.current = { id: target.id, tries: 0, viewPosition: 0.5, animated: true };
     // Guarantee the consuming effect runs for THIS request, whether or not the
     // window had to grow above.
     setJumpNonce((n) => n + 1);
@@ -3212,6 +3238,7 @@ export default function ChatScreen() {
       if (pending.tries > 10) pendingJumpRef.current = null;
       return;
     }
+    const { viewPosition, animated } = pending;
     pendingJumpRef.current = null;
     // Claim the scroll generation so a `revealNewest` / scroll-to-bottom chain that
     // is mid-flight abandons its follow-up rather than yanking us off the target.
@@ -3220,7 +3247,7 @@ export default function ChatScreen() {
     const raf = requestAnimationFrame(() => {
       if (gen !== scrollGenRef.current) return;
       try {
-        flatListRef.current?.scrollToIndex({ index: idx, animated: true, viewPosition: 0.5 });
+        flatListRef.current?.scrollToIndex({ index: idx, animated, viewPosition });
       } catch {}
     });
     return () => cancelAnimationFrame(raf);
@@ -3262,6 +3289,30 @@ export default function ChatScreen() {
     if (loadingOlderRef.current) return;
     loadingOlderRef.current = true;
 
+    // ── Restore the viewport OURSELVES rather than trusting mvcp ───────────────
+    //
+    // Growing the window prepends rows, and `maintainVisibleContentPosition` is supposed to
+    // absorb that — the library's typings say it is enabled by default. In this
+    // configuration it does not: `startRenderingFromBottom` plus a data array whose FRONT
+    // edge moves is the shape Shopify/flash-list#1844 describes as unresolved for paginated
+    // chats. Two previous attempts to fix the teleport by changing how much or how fast the
+    // window grew both failed, for the same reason — the size of the prepend was never the
+    // problem, the absence of compensation was.
+    //
+    // So compensate explicitly. Record which message is currently the FIRST rendered row;
+    // after the expansion commits, put that exact row back at the top of the viewport with
+    // no animation. The row is guaranteed to still exist (the window only ever grows
+    // backwards), and the machinery to do it already exists and is already debugged:
+    // `pendingJumpRef` plus the effect that waits for the id to appear in the rendered
+    // window. This is the same problem the reply-jump solved — scroll to a message that is
+    // not on screen yet — so it uses the same solution.
+    //
+    // Precision: the anchor row is the first RENDERED row, which when `onStartReached` fires
+    // is at or just above the viewport top, so restoring it to `viewPosition: 0` is accurate
+    // to within one row height. Against a 30-row jump, that is the difference between
+    // "nothing moved" and "where am I".
+    const anchorId = windowedMessagesRef.current[0]?.id;
+
     // ── Hydration must NOT run on the scroll frame ──────────────────────────
     //
     // This used to call `hydrateFullHistory()` synchronously, straight from the
@@ -3280,7 +3331,20 @@ export default function ChatScreen() {
       olderHandleRef.current = null;
       if (historyHydratedRef.current !== conversationId) hydrateFullHistoryRef.current();
       const total = (useChatStore.getState().messages[conversationId || ''] || []).length;
-      setRenderWindow((cur) => (cur >= total ? cur : Math.min(cur + WINDOW_CHUNK, total)));
+      let grew = false;
+      setRenderWindow((cur) => {
+        if (cur >= total) return cur;
+        grew = true;
+        return Math.min(cur + WINDOW_CHUNK, total);
+      });
+      // Queue the position restore in the SAME commit as the growth, so the effect that
+      // consumes it runs once with both the new window and the anchor in hand. Skipped when
+      // nothing grew — there is no prepend to compensate for, and issuing a scroll anyway
+      // would move the user for no reason.
+      if (grew && anchorId) {
+        pendingJumpRef.current = { id: anchorId, tries: 0, viewPosition: 0, animated: false };
+        setJumpNonce((n) => n + 1);
+      }
       // ── COOLDOWN, not an immediate release ────────────────────────────────
       //
       // Releasing the latch here let this cascade, and that cascade is the remaining half of

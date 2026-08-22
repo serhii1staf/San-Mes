@@ -381,6 +381,8 @@ interface ConversationItemProps {
   dragOffsetY: SharedValue<number>;
   onDragStart: (index: number) => void;
   onDragEnd: () => void;
+  /** True only for the row currently under the finger. Drives the lift + highlight. */
+  draggingThisRow: boolean;
 }
 
 function ConversationItemBase({
@@ -398,6 +400,7 @@ function ConversationItemBase({
   dragOffsetY,
   onDragStart,
   onDragEnd,
+  draggingThisRow,
 }: ConversationItemProps) {
   const theme = useTheme();
   const t = useT();
@@ -567,25 +570,60 @@ function ConversationItemBase({
   // All of it is read from three shared values, so a drag re-renders NO rows — the list
   // keeps its React tree completely still while the user rearranges it. That is the whole
   // reason this is viable inside a virtualised list with `removeClippedSubviews`.
+  // ── NO `zIndex` in this worklet ─────────────────────────────────────────────
+  //
+  // It used to return `zIndex` alongside the transform. `zIndex` is not a compositor
+  // property — it changes sibling ORDER, which means the native view hierarchy is
+  // re-arranged. Returning it from an animated style makes that re-arrangement happen on
+  // animation frames, and doing it for every row on every frame of an edit-mode transition
+  // is a plausible source of the "sometimes it moves sharply left/right, it bugs out"
+  // glitch. It is also unnecessary: which row is lifted is known on the JS thread, so it
+  // can be a plain static style (see `liftedStyle` below).
+  //
+  // What remains here is transform-only: the dragged row follows the finger, and rows
+  // between its origin and its target shift by exactly one row pitch.
   const dragStyle = useAnimatedStyle(() => {
     const from = dragFrom.value;
-    if (from < 0) return { transform: [{ translateY: 0 }], zIndex: 0 };
+    if (from < 0) return { transform: [{ translateY: 0 }] };
     if (from === index) {
-      // The dragged row itself: rides the finger, lifted above its neighbours.
-      return { transform: [{ translateY: dragOffsetY.value }], zIndex: 20 };
+      // The dragged row itself: rides the finger.
+      return { transform: [{ translateY: dragOffsetY.value }] };
     }
     const to = dragTo.value;
-    if (to < 0 || to === from) return { transform: [{ translateY: 0 }], zIndex: 0 };
+    if (to < 0 || to === from) return { transform: [{ translateY: 0 }] };
     // Dragging DOWN: rows in (from, to] move up one slot. Dragging UP: rows in [to, from)
     // move down one slot.
     if (from < to && index > from && index <= to) {
-      return { transform: [{ translateY: -MESSAGES_ROW_PITCH }], zIndex: 0 };
+      return { transform: [{ translateY: -MESSAGES_ROW_PITCH }] };
     }
     if (from > to && index < from && index >= to) {
-      return { transform: [{ translateY: MESSAGES_ROW_PITCH }], zIndex: 0 };
+      return { transform: [{ translateY: MESSAGES_ROW_PITCH }] };
     }
-    return { transform: [{ translateY: 0 }], zIndex: 0 };
+    return { transform: [{ translateY: 0 }] };
   });
+
+  // Static lift + highlight for the row currently being dragged. Driven by a JS boolean
+  // (`draggingThisRow`) rather than a shared value, so `zIndex` and the tint are applied in a
+  // single commit at drag start and removed in one at drag end — twice per gesture, not once
+  // per frame.
+  //
+  // The highlight is what makes a drag legible: without it the row under the finger looks
+  // identical to the rows shuffling past it, so there is no feedback about WHAT is being
+  // moved. Accent tint plus a border plus a shadow, which together read as "picked up".
+  const liftedStyle: ViewStyle | null = draggingThisRow
+    ? {
+        zIndex: 20,
+        backgroundColor: theme.colors.accent.primary + (theme.isDark ? '2E' : '1F'),
+        borderColor: theme.colors.accent.primary,
+        borderWidth: 1,
+        borderRadius: 14,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: theme.isDark ? 0.45 : 0.18,
+        shadowRadius: 12,
+        elevation: 8,
+      }
+    : null;
 
   // Hold-then-drag. `activateAfterLongPress` is what keeps this from fighting the list's
   // own vertical scroll: a quick flick starting on the handle still scrolls the list,
@@ -632,7 +670,7 @@ function ConversationItemBase({
   const editShift = useEditShiftStyle(editProgress, editMode);
 
   return (
-    <Reanimated.View style={dragStyle}>
+    <Reanimated.View style={[dragStyle, liftedStyle]}>
     <Reanimated.View style={editShift}>
     <ConditionalContextMenuRow
       // In selection mode the native context menu is suppressed entirely: a
@@ -1140,6 +1178,7 @@ const ConversationItem = React.memo(ConversationItemBase, (prev, next) =>
   prev.dragOffsetY === next.dragOffsetY &&
   prev.onDragStart === next.onDragStart &&
   prev.onDragEnd === next.onDragEnd &&
+  prev.draggingThisRow === next.draggingThisRow &&
   // Selection state: `editMode` flips for every row at once (that's the point),
   // while `selected` changes for exactly the tapped row — so ticking one chat
   // re-renders one row, not the list. `editProgress` and `onToggleSelect` are
@@ -1357,10 +1396,15 @@ export default function MessagesScreen() {
   const dragTo = useSharedValue(-1);
   const dragOffsetY = useSharedValue(0);
   const [dragging, setDragging] = useState(false);
+  // Which row is under the finger, or -1. One dispatch at drag start and one at drag end —
+  // it exists so the lifted row's `zIndex` and highlight can be PLAIN styles rather than
+  // values returned from an animated style (see the note on `dragStyle`).
+  const [draggingIndex, setDraggingIndex] = useState(-1);
 
-  const handleDragStart = useCallback((_index: number) => {
+  const handleDragStart = useCallback((index: number) => {
     triggerHaptic('medium');
     setDragging(true);
+    setDraggingIndex(index);
   }, []);
 
   // Commit on release. Read the indices from the shared values rather than passing them
@@ -1977,6 +2021,7 @@ export default function MessagesScreen() {
         dragOffsetY={dragOffsetY}
         onDragStart={handleDragStart}
         onDragEnd={handleDragEnd}
+        draggingThisRow={draggingIndex === index}
       />
     ),
     [activeTab, editMode, selectedIds, editProgress, toggleSelected, pinnedSet, reorderEnabled, dragFrom, dragTo, dragOffsetY, handleDragStart, handleDragEnd],
