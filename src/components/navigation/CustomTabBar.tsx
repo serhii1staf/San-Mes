@@ -23,6 +23,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useTheme } from '../../theme';
 import { bottomScrimColors, SCRIM_LOCATIONS } from '../../theme/scrim';
+import { BOTTOM_CHROME_SPRING } from '../../theme/motion';
 import { triggerHaptic } from '../../utils/haptics';
 import { GlassSurface, NativeGlassView, useLiquidGlassActive } from '../ui/LiquidGlass';
 import { useTabBarStore } from '../../store/tabBarStore';
@@ -945,10 +946,12 @@ export const CustomTabBar = React.memo(function CustomTabBar({
   const hideProgress = useSharedValue(hidden ? 1 : 0);
   const hideTravel = getTabBarHeight(insets.bottom) + BAR_FADE_HEIGHT;
   useEffect(() => {
-    hideProgress.value = withTiming(hidden ? 1 : 0, {
-      duration: 220,
-      easing: Easing.out(Easing.cubic),
-    });
+    // Spring, and the SAME spring the chat list's selection action bar uses
+    // (`BOTTOM_CHROME_SPRING`). The two surfaces trade places — this bar leaves as that
+    // one arrives — so they have to share a curve or the swap reads as two separate
+    // movements. They previously each ran their own `withTiming(220, out(cubic))`: same
+    // numbers, two clocks, and a curve that starts at full speed the moment it is armed.
+    hideProgress.value = withSpring(hidden ? 1 : 0, BOTTOM_CHROME_SPRING);
   }, [hidden, hideProgress]);
   const hideStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: hideProgress.value * hideTravel }],

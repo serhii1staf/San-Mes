@@ -9,6 +9,7 @@ import Reanimated, {
   useAnimatedStyle,
   useAnimatedScrollHandler,
   withTiming,
+  withSpring,
   interpolate,
   Extrapolation,
   Easing as REasing,
@@ -18,6 +19,7 @@ import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
+import { BOTTOM_CHROME_SPRING } from '../../src/theme/motion';
 import ContextMenu from 'react-native-context-menu-view';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
@@ -55,12 +57,22 @@ const EMPTY_SELECTION: ReadonlySet<string> = new Set<string>();
 // right by exactly this much, so nothing ever overlaps the avatar.
 const SELECT_COLUMN_WIDTH = 34;
 
+// Width of the reorder-handle column that slides in on the RIGHT in selection mode.
+// Mirrors SELECT_COLUMN_WIDTH so the row stays optically balanced.
+const REORDER_COLUMN_WIDTH = 34;
+
+// Selection action bar geometry. Hoisted because the bar's slide-in distance is derived
+// from it — a hardcoded travel value drifts the moment the bar's height changes.
+const ACTION_BAR_HEIGHT = 52;
+const ACTION_BAR_BOTTOM_GAP = 14;
+
 
 
 // Hoisted to module scope: these are referenced from inside memoized rows, so a
 // fresh object per render would defeat their prop-equality bail-outs.
 const styles = StyleSheet.create({
   selectColumn: { alignItems: 'flex-start', justifyContent: 'center', overflow: 'hidden' },
+  reorderColumn: { alignItems: 'flex-end', justifyContent: 'center', overflow: 'hidden' },
   selectCircle: {
     width: 22,
     height: 22,
@@ -121,7 +133,7 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     flexDirection: 'row',
     alignItems: 'stretch',
-    height: 52,
+    height: ACTION_BAR_HEIGHT,
     borderRadius: 22,
     overflow: 'hidden',
     paddingHorizontal: 6,
@@ -353,15 +365,39 @@ interface ConversationItemProps {
   /** Shared 0→1 selection-mode progress, driven once by the screen. */
   editProgress: SharedValue<number>;
   onToggleSelect: (id: string) => void;
+  /** Pinned chats show a small marker and cannot be dragged below unpinned ones. */
+  isPinned: boolean;
+  /**
+   * Whether this bucket supports manual reorder. Only the buckets that already had an
+   * order worth rearranging do (Chats and Archive); search results and the
+   * Blocked/Deleted buckets do not, so no handle is offered there.
+   */
+  reorderable: boolean;
+  /** Index of the row being dragged, or -1. Screen-owned, UI thread. */
+  dragFrom: SharedValue<number>;
+  /** Index the dragged row currently hovers over, or -1. */
+  dragTo: SharedValue<number>;
+  /** Live finger offset of the dragged row, in points. */
+  dragOffsetY: SharedValue<number>;
+  onDragStart: (index: number) => void;
+  onDragEnd: () => void;
 }
 
 function ConversationItemBase({
   item,
+  index,
   tab,
   editMode,
   selected,
   editProgress,
   onToggleSelect,
+  isPinned,
+  reorderable,
+  dragFrom,
+  dragTo,
+  dragOffsetY,
+  onDragStart,
+  onDragEnd,
 }: ConversationItemProps) {
   const theme = useTheme();
   const t = useT();
@@ -521,7 +557,78 @@ function ConversationItemBase({
     void prefetchRecentChatMedia({ conversationIds: [item.id], budgetUris: 8 });
   };
 
+  // ── Reorder: this row's own displacement ────────────────────────────────────
+  //
+  // Rows are a FIXED pitch (`MESSAGES_ROW_PITCH`, asserted by `getItemLayout`), which is
+  // what makes a drag tractable without measuring anything: the row being dragged follows
+  // the finger, and every row between its origin and its current target shifts by exactly
+  // one pitch in the opposite direction.
+  //
+  // All of it is read from three shared values, so a drag re-renders NO rows — the list
+  // keeps its React tree completely still while the user rearranges it. That is the whole
+  // reason this is viable inside a virtualised list with `removeClippedSubviews`.
+  const dragStyle = useAnimatedStyle(() => {
+    const from = dragFrom.value;
+    if (from < 0) return { transform: [{ translateY: 0 }], zIndex: 0 };
+    if (from === index) {
+      // The dragged row itself: rides the finger, lifted above its neighbours.
+      return { transform: [{ translateY: dragOffsetY.value }], zIndex: 20 };
+    }
+    const to = dragTo.value;
+    if (to < 0 || to === from) return { transform: [{ translateY: 0 }], zIndex: 0 };
+    // Dragging DOWN: rows in (from, to] move up one slot. Dragging UP: rows in [to, from)
+    // move down one slot.
+    if (from < to && index > from && index <= to) {
+      return { transform: [{ translateY: -MESSAGES_ROW_PITCH }], zIndex: 0 };
+    }
+    if (from > to && index < from && index >= to) {
+      return { transform: [{ translateY: MESSAGES_ROW_PITCH }], zIndex: 0 };
+    }
+    return { transform: [{ translateY: 0 }], zIndex: 0 };
+  });
+
+  // Hold-then-drag. `activateAfterLongPress` is what keeps this from fighting the list's
+  // own vertical scroll: a quick flick starting on the handle still scrolls the list,
+  // because the pan has not activated yet; only a deliberate hold claims the gesture.
+  // Without it, a vertical pan on the handle and the scroll view would both want the same
+  // touch and RNGH would have to arbitrate on movement direction, which is ambiguous when
+  // both are vertical.
+  const dragGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .activateAfterLongPress(180)
+        .onStart(() => {
+          'worklet';
+          dragFrom.value = index;
+          dragTo.value = index;
+          dragOffsetY.value = 0;
+          runOnJS(onDragStart)(index);
+        })
+        .onUpdate((e) => {
+          'worklet';
+          dragOffsetY.value = e.translationY;
+          // Which slot is the row's CENTRE currently over? Rounding the pitch-normalised
+          // offset gives the slot the row would land in if released now.
+          const slots = Math.round(e.translationY / MESSAGES_ROW_PITCH);
+          dragTo.value = index + slots;
+        })
+        .onEnd(() => {
+          'worklet';
+          runOnJS(onDragEnd)();
+        })
+        .onFinalize(() => {
+          'worklet';
+          // Reset unconditionally: `onEnd` does not fire on a cancelled gesture, and a
+          // stuck `dragFrom` would leave the list permanently displaced.
+          dragFrom.value = -1;
+          dragTo.value = -1;
+          dragOffsetY.value = 0;
+        }),
+    [index, dragFrom, dragTo, dragOffsetY, onDragStart, onDragEnd],
+  );
+
   return (
+    <Reanimated.View style={dragStyle}>
     <ConditionalContextMenuRow
       // In selection mode the native context menu is suppressed entirely: a
       // long-press peek that navigates would fight the checkboxes, and iOS's
@@ -579,9 +686,65 @@ function ConversationItemBase({
           </View>
         ) : null}
       </View>
+      {/* Pin marker. Outside edit mode this is the only affordance that tells the user why
+          a chat is sitting above a more recent one. */}
+      {isPinned && !editMode ? (
+        <Feather name="bookmark" size={13} color={theme.colors.text.tertiary} style={{ marginLeft: 6 }} />
+      ) : null}
+      {/* Reorder handle — right-hand column, selection mode only. Collapsed to width 0
+          rather than unmounted, for the same reason as the checkbox column on the left:
+          the row's flex layout then settles once per mode change instead of on a
+          per-frame animated width. */}
+      <ReorderHandle
+        editProgress={editProgress}
+        visible={editMode && reorderable}
+        gesture={dragGesture}
+        color={theme.colors.text.tertiary}
+      />
     </ConditionalContextMenuRow>
+    </Reanimated.View>
   );
 }
+
+/**
+ * The grab handle that appears on the right of every row in selection mode.
+ *
+ * Same shape as `SelectionCheckbox`: the column's WIDTH is plain state (one layout commit
+ * per mode change) and only the icon's opacity/offset animate off `editProgress`. See the
+ * long note on `SelectionCheckbox` for why animating the width was a ~20 fps mistake.
+ *
+ * The `GestureDetector` wraps only the handle, so the rest of the row keeps its normal tap
+ * behaviour (select/deselect) while the handle owns the vertical drag.
+ */
+const ReorderHandle = React.memo(function ReorderHandle({
+  editProgress,
+  visible,
+  gesture,
+  color,
+}: {
+  editProgress: SharedValue<number>;
+  visible: boolean;
+  gesture: ReturnType<typeof Gesture.Pan>;
+  color: string;
+}) {
+  const iconStyle = useAnimatedStyle(() => ({
+    opacity: editProgress.value,
+    transform: [{ translateX: interpolate(editProgress.value, [0, 1], [8, 0]) }],
+  }));
+  if (!visible) return <View style={{ width: 0 }} />;
+  return (
+    <GestureDetector gesture={gesture}>
+      <Reanimated.View
+        style={[styles.reorderColumn, { width: REORDER_COLUMN_WIDTH }, iconStyle]}
+        // A real touch target: the icon is 18 pt but the column is 34, and the hold has to
+        // land somewhere forgiving.
+        hitSlop={8}
+      >
+        <Feather name="menu" size={18} color={color} />
+      </Reanimated.View>
+    </GestureDetector>
+  );
+});
 
 // ── Collapsing search zone geometry ─────────────────────────────────────────
 //
@@ -923,6 +1086,14 @@ function ConditionalContextMenuRow({
 // conversation row. Re-renders only when this row's own data or tab changes.
 const ConversationItem = React.memo(ConversationItemBase, (prev, next) =>
   prev.tab === next.tab &&
+  prev.index === next.index &&
+  prev.isPinned === next.isPinned &&
+  prev.reorderable === next.reorderable &&
+  prev.dragFrom === next.dragFrom &&
+  prev.dragTo === next.dragTo &&
+  prev.dragOffsetY === next.dragOffsetY &&
+  prev.onDragStart === next.onDragStart &&
+  prev.onDragEnd === next.onDragEnd &&
   // Selection state: `editMode` flips for every row at once (that's the point),
   // while `selected` changes for exactly the tapped row — so ticking one chat
   // re-renders one row, not the list. `editProgress` and `onToggleSelect` are
@@ -1100,6 +1271,89 @@ export default function MessagesScreen() {
     exitEditMode();
   }, [selectedIds, activeTab, exitEditMode]);
 
+  // Pin / unpin the selection.
+  //
+  // The control is a single toggle whose meaning depends on the selection: when EVERY
+  // selected chat is already pinned it unpins them, otherwise it pins whatever is not yet
+  // pinned. A mixed selection therefore ends up fully pinned, which is what "Pin" says it
+  // will do — the alternative (toggling each one individually) would leave the selection in
+  // a state the label never promised.
+  //
+  // Unlike archive/delete this does NOT exit selection mode: pinning is a positional tweak
+  // the user is likely to make to several chats in a row, and dropping them out of the mode
+  // after each one would mean re-entering it every time.
+  // `allSelectedPinned` is derived further down, next to the `pinned` selector it reads —
+  // the store selectors are declared below this block.
+  const handleBulkPin = useCallback(() => {
+    const ids = [...selectedIds].filter((id) => !isSyntheticUserBlockId(id));
+    if (ids.length === 0) return;
+    const s = useChatSettingsStore.getState();
+    const unpinning = ids.every((id) => s.pinned.includes(id));
+    ids.forEach((id) => (unpinning ? s.unpinChat(id) : s.pinChat(id)));
+    triggerHaptic('light');
+  }, [selectedIds]);
+
+  // ── Manual reorder ────────────────────────────────────────────────────────
+  //
+  // Three shared values own the whole interaction, so the drag runs on the UI thread and
+  // re-renders nothing while the finger is down. `dragging` is the ONE piece of React
+  // state involved, and it flips exactly twice per drag (start, end) — it exists only to
+  // suspend list scrolling, which cannot be done from a worklet.
+  const dragFrom = useSharedValue(-1);
+  const dragTo = useSharedValue(-1);
+  const dragOffsetY = useSharedValue(0);
+  const [dragging, setDragging] = useState(false);
+
+  const handleDragStart = useCallback((_index: number) => {
+    triggerHaptic('medium');
+    setDragging(true);
+  }, []);
+
+  // Commit on release. Read the indices from the shared values rather than passing them
+  // through `runOnJS` arguments: `onFinalize` resets them, and it can run before this
+  // callback is scheduled, so the values are captured here at call time instead.
+  const commitReorder = useCallback((from: number, to: number) => {
+    const rows = filteredRef.current;
+    if (from < 0 || to < 0 || from === to || from >= rows.length) return;
+    const clamped = Math.max(0, Math.min(to, rows.length - 1));
+    if (clamped === from) return;
+    const ids = rows.map((c) => c.id);
+    const [moved] = ids.splice(from, 1);
+    ids.splice(clamped, 0, moved);
+
+    // ── Persist only the PREFIX the drag actually spoke about ─────────────────
+    //
+    // The obvious implementation writes the whole visible list. That is wrong, and the way
+    // it is wrong is not obvious until you use it: once every visible chat has an explicit
+    // position, NOTHING floats on new activity any more, and a brand-new conversation —
+    // which has no entry in `order` — sorts after all of them and appears at the BOTTOM of
+    // the list. The user would have silently traded their activity sort for a frozen one by
+    // dragging a single row.
+    //
+    // A drag from index `from` to `to` only makes a claim about the rows it moved through.
+    // Everything below `max(from, to)` was never involved, so it stays absent from `order`
+    // and keeps sorting by activity.
+    //
+    // The consequence that DOES remain is intended and is the same one pinning has: the
+    // arranged prefix is fixed, so a new message in a chat below it cannot jump above it.
+    // That is what "put this chat second" has to mean.
+    const prefix = ids.slice(0, Math.max(from, clamped) + 1);
+    useChatSettingsStore.getState().setChatOrder(prefix);
+    triggerHaptic('light');
+  }, []);
+
+  const handleDragEnd = useCallback(() => {
+    // Snapshot before `onFinalize` clears them.
+    commitReorder(dragFrom.value, dragTo.value);
+    setDragging(false);
+  }, [commitReorder, dragFrom, dragTo]);
+
+  // Only the buckets whose order is the user's to arrange offer a handle. Search results
+  // are a query result, not a list the user owns, and Blocked/Deleted are bookkeeping.
+  const reorderEnabled = editMode && searchQuery === '' && (activeTab === 'chats' || activeTab === 'archive');
+
+  // `pinnedSet` is derived further down, next to the `pinned` selector it reads.
+
   // Select-all toggles: a second tap clears, which is what "select all" controls
   // do everywhere and saves the user twenty taps to undo a mis-tap.
   //
@@ -1184,6 +1438,23 @@ export default function MessagesScreen() {
   // Per-chat "last opened" timestamps — folded into the recency sort so a chat
   // the user just opened floats to the top even with no new message.
   const openedAt = useChatSettingsStore((s) => s.openedAt);
+  // Pinned chats and the user's manual ordering. Field-level selectors, same as the
+  // buckets above — both are plain arrays whose identity only changes when they do.
+  const pinned = useChatSettingsStore((s) => s.pinned);
+  const chatOrder = useChatSettingsStore((s) => s.order);
+
+  // True only when EVERY selected chat is already pinned — drives the action bar's
+  // Pin/Unpin label. Declared here rather than with the other selection derivations
+  // because it needs the `pinned` selector above.
+  const allSelectedPinned = useMemo(() => {
+    if (selectedIds.size === 0) return false;
+    for (const id of selectedIds) if (!pinned.includes(id)) return false;
+    return true;
+  }, [selectedIds, pinned]);
+
+  // Set rather than `Array.includes` per row: `renderConversationItem` runs this lookup for
+  // every mounted row on each list recompute, and `pinned` is unbounded.
+  const pinnedSet = useMemo(() => new Set(pinned), [pinned]);
   // `openedAt` feeds ONLY the float-to-top recency sort (the `filtered` memo
   // below), never the bucket filter. The chat screen defers its markChatOpened
   // write past its own open transition, so the openedAt bump lands ~one
@@ -1490,21 +1761,74 @@ export default function MessagesScreen() {
   // frame. Per-row activity is precomputed once (O(n)) into a Map so the
   // comparator does plain string compares instead of two lookups + a max per
   // comparison.
+  // ── Three-key sort: pinned, then manual order, then activity ──────────────
+  //
+  // Pinned and manually-ordered chats are new; activity is the original behaviour and is
+  // still the fallback for everything the user has not touched.
+  //
+  // The keys are applied as a strict cascade, and the ORDER of the cascade is the design:
+  //
+  //   1. Pinned first. A pin is an explicit "keep this at the top", so it has to outrank a
+  //      drag — otherwise dragging an unpinned chat above a pinned one would silently win
+  //      and the pin would look broken.
+  //   2. Then manual order, for chats the user has dragged. `order` is SPARSE: a chat that
+  //      has never been dragged is absent and falls through to activity. That is why the
+  //      index lookup uses a large sentinel for a miss rather than -1.
+  //   3. Then activity — max(lastMessageAt, openedAt) — exactly as before.
+  //
+  // `pinned` is applied even on the buckets that never sorted (Blocked, Deleted): a pin is
+  // a user statement about position, and honouring it in one bucket but not another would
+  // be arbitrary. Those buckets otherwise keep their insertion order, so the change there
+  // is only that pinned rows move to the front.
   const filtered = useMemo(() => {
-    const shouldSort =
-      activeTab !== 'apps' &&
-      (searchQuery !== '' || activeTab === 'archive' || activeTab === 'chats');
-    if (!shouldSort) return filteredBase;
+    if (activeTab === 'apps') return filteredBase;
+
+    const pinRank = new Map<string, number>();
+    for (let i = 0; i < pinned.length; i++) pinRank.set(pinned[i], i);
+    const orderRank = new Map<string, number>();
+    for (let i = 0; i < chatOrder.length; i++) orderRank.set(chatOrder[i], i);
+
+    const hasPinnedHere = filteredBase.some((c) => pinRank.has(c.id));
+    const hasOrderedHere = filteredBase.some((c) => orderRank.has(c.id));
+    const sortsByActivity =
+      searchQuery !== '' || activeTab === 'archive' || activeTab === 'chats';
+
+    // Nothing to do: this bucket never sorted by activity and carries no pins or manual
+    // positions. Returning `filteredBase` unchanged preserves the original identity, which
+    // the list's prop-equality relies on.
+    if (!sortsByActivity && !hasPinnedHere && !hasOrderedHere) return filteredBase;
+
     const activity = new Map<string, string>();
-    for (const c of filteredBase) {
-      const opened = openedAtForSort[c.id] || '';
-      const last = c.lastMessageAt || '';
-      activity.set(c.id, opened > last ? opened : last);
+    if (sortsByActivity) {
+      for (const c of filteredBase) {
+        const opened = openedAtForSort[c.id] || '';
+        const last = c.lastMessageAt || '';
+        activity.set(c.id, opened > last ? opened : last);
+      }
     }
-    return [...filteredBase].sort((a, b) =>
-      (activity.get(b.id) || '').localeCompare(activity.get(a.id) || ''),
-    );
-  }, [filteredBase, activeTab, searchQuery, openedAtForSort]);
+
+    const MISS = Number.MAX_SAFE_INTEGER;
+    // Index within `filteredBase`, so the "no key at all" case is a STABLE sort rather
+    // than whatever order the comparator happens to produce.
+    const baseIndex = new Map<string, number>();
+    for (let i = 0; i < filteredBase.length; i++) baseIndex.set(filteredBase[i].id, i);
+
+    return [...filteredBase].sort((a, b) => {
+      const pa = pinRank.has(a.id) ? pinRank.get(a.id)! : MISS;
+      const pb = pinRank.has(b.id) ? pinRank.get(b.id)! : MISS;
+      if (pa !== pb) return pa - pb;
+
+      const oa = orderRank.has(a.id) ? orderRank.get(a.id)! : MISS;
+      const ob = orderRank.has(b.id) ? orderRank.get(b.id)! : MISS;
+      if (oa !== ob) return oa - ob;
+
+      if (sortsByActivity) {
+        const cmp = (activity.get(b.id) || '').localeCompare(activity.get(a.id) || '');
+        if (cmp !== 0) return cmp;
+      }
+      return (baseIndex.get(a.id) || 0) - (baseIndex.get(b.id) || 0);
+    });
+  }, [filteredBase, activeTab, searchQuery, openedAtForSort, pinned, chatOrder]);
 
   // Keep the select-all mirror current. Assignment during render is safe here:
   // it's a plain ref write derived from props/state in the same pass, not a
@@ -1592,9 +1916,16 @@ export default function MessagesScreen() {
         selected={selectedIds.has(item.id)}
         editProgress={editProgress}
         onToggleSelect={toggleSelected}
+        isPinned={pinnedSet.has(item.id)}
+        reorderable={reorderEnabled}
+        dragFrom={dragFrom}
+        dragTo={dragTo}
+        dragOffsetY={dragOffsetY}
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
       />
     ),
-    [activeTab, editMode, selectedIds, editProgress, toggleSelected],
+    [activeTab, editMode, selectedIds, editProgress, toggleSelected, pinnedSet, reorderEnabled, dragFrom, dragTo, dragOffsetY, handleDragStart, handleDragEnd],
   );
   // The separator is inset to line up with the start of the row's TEXT column
   // (past the avatar). In selection mode the rows shift right by the checkbox
@@ -1805,6 +2136,10 @@ export default function MessagesScreen() {
               windowSize={9}
               updateCellsBatchingPeriod={60}
               getItemLayout={MESSAGES_ITEM_LAYOUT}
+              // Suspended while a row is being dragged. Without this the list would scroll
+              // under the finger and the pitch-based slot math — which is relative to the
+              // row's ORIGIN — would drift by the scrolled distance.
+              scrollEnabled={!dragging}
               // Drives the search-field squash. A Reanimated scroll handler so the
               // whole thing stays on the UI thread — a JS `onScroll` here would
               // dispatch ~60 state updates a second while flicking.
@@ -1831,6 +2166,8 @@ export default function MessagesScreen() {
         onDelete={handleBulkDelete}
         onArchive={handleBulkArchive}
         onSelectAll={handleSelectAll}
+        onPin={handleBulkPin}
+        allSelectedPinned={allSelectedPinned}
       />
     </View>
   );
@@ -2035,6 +2372,8 @@ const SelectionActionBar = React.memo(function SelectionActionBar({
   onDelete,
   onArchive,
   onSelectAll,
+  onPin,
+  allSelectedPinned,
 }: {
   visible: boolean;
   count: number;
@@ -2046,17 +2385,26 @@ const SelectionActionBar = React.memo(function SelectionActionBar({
   onDelete: () => void;
   onArchive: () => void;
   onSelectAll: () => void;
+  onPin: () => void;
+  allSelectedPinned: boolean;
 }) {
   const progress = useSharedValue(visible ? 1 : 0);
   useEffect(() => {
-    progress.value = withTiming(visible ? 1 : 0, {
-      duration: 220,
-      easing: REasing.out(REasing.cubic),
-    });
+    // Spring, shared with the tab bar's hide (`BOTTOM_CHROME_SPRING`). These two surfaces
+    // trade places, so they must move on one curve; see the note in src/theme/motion.ts.
+    progress.value = withSpring(visible ? 1 : 0, BOTTOM_CHROME_SPRING);
   }, [visible, progress]);
 
+  // Travel is the bar's ACTUAL distance to off-screen, not a magic 140.
+  //
+  // The hardcoded 140 was larger than the real distance on every device (52 pt bar + 14 pt
+  // gap + inset ≈ 100 on a notched phone), so the bar started further below the screen than
+  // it needed to and had to cover the extra ground in the same time — i.e. it arrived
+  // faster than it looked like it should. With a spring that overshoot in distance also
+  // feeds the initial velocity, which made it worse rather than better.
+  const travel = ACTION_BAR_HEIGHT + ACTION_BAR_BOTTOM_GAP + bottomInset;
   const barStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: interpolate(progress.value, [0, 1], [140, 0]) }],
+    transform: [{ translateY: interpolate(progress.value, [0, 1], [travel, 0]) }],
   }));
 
   // ── Active state = accent ────────────────────────────────────────────────
@@ -2101,6 +2449,21 @@ const SelectionActionBar = React.memo(function SelectionActionBar({
         label={t('messages.bulk.select_all', 'Все')}
         color={selectAllColor}
         onPress={onSelectAll}
+      />
+      {/* Pin. Label flips to "Unpin" once EVERY selected chat is already pinned, so the
+          control always describes what the tap will do rather than offering "Pin" on a
+          set that is already pinned. Mixed selections read as "Pin", and the handler
+          pins the rest — which is the least surprising outcome. */}
+      <ActionBarButton
+        icon={allSelectedPinned ? 'bookmark' : 'bookmark'}
+        label={
+          allSelectedPinned
+            ? t('messages.action.unpin', 'Открепить')
+            : t('messages.action.pin', 'Закрепить')
+        }
+        color={actionColor}
+        disabled={!enabled}
+        onPress={onPin}
       />
       {/* Archive is meaningless for mini-apps — the Apps tab gets Select-all +
           Delete only, and the bar shrink-wraps to two controls. */}

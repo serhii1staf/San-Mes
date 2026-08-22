@@ -46,6 +46,24 @@ interface ChatSettingsStore {
   // SEPARATE from the conversation's lastMessageAt (which a sync overwrites
   // with the real last-message time) so the open-bump survives reconciliation.
   openedAt: Record<string, string>;
+  /**
+   * Chats the user pinned to the top of the list, in pin order.
+   *
+   * UNLIKE `archived`/`blocked`/`deleted` this is NOT mutually exclusive with them: a
+   * chat is in exactly one bucket, but it can be pinned in whichever bucket it sits in.
+   * The three bucket setters deliberately do not clear it.
+   */
+  pinned: string[];
+  /**
+   * The user's manual ordering, most-recent-first, for chats they have dragged.
+   *
+   * Sparse on purpose. A chat that has never been dragged is absent, and absent chats
+   * keep sorting by activity after the arranged ones. Storing a full ordering instead
+   * would mean every new conversation had to be inserted somewhere, and any chat the
+   * user has not touched would stop floating on new messages — which is the behaviour
+   * they already have and did not ask to lose.
+   */
+  order: string[];
   getSettings: (chatId: string) => ChatSettings;
   updateSettings: (chatId: string, updates: Partial<ChatSettings>) => void;
   /**
@@ -65,6 +83,19 @@ interface ChatSettingsStore {
   isDeleted: (chatId: string) => boolean;
   /** Stamp `chatId` as opened right now so it floats to the top of the list. */
   markChatOpened: (chatId: string) => void;
+  pinChat: (chatId: string) => void;
+  unpinChat: (chatId: string) => void;
+  isPinned: (chatId: string) => boolean;
+  /** Pin when unpinned, unpin when pinned. */
+  togglePinChat: (chatId: string) => void;
+  /**
+   * Replace the manual ordering with `ids`, in the order given.
+   *
+   * The caller passes the ids it actually rearranged (the currently visible list), so
+   * ids for other buckets that were already arranged are preserved by merging: anything
+   * in the previous order that is not in `ids` keeps its relative position after them.
+   */
+  setChatOrder: (ids: string[]) => void;
 }
 
 const DEFAULT_SETTINGS: ChatSettings = { fontSize: 15, fontFamily: 'system', bubbleRadius: 18, scrollToBottomButton: true };
@@ -80,6 +111,8 @@ export const useChatSettingsStore = create<ChatSettingsStore>()(
       blocked: [],
       deleted: [],
       openedAt: {},
+      pinned: [],
+      order: [],
       getSettings: (chatId) => {
         const state = get();
         const global = state.settings[GLOBAL_CHAT_SETTINGS_KEY];
@@ -108,6 +141,23 @@ export const useChatSettingsStore = create<ChatSettingsStore>()(
       restoreChat: (chatId) => set((s) => ({ deleted: s.deleted.filter(id => id !== chatId) })),
       isDeleted: (chatId) => get().deleted.includes(chatId),
       markChatOpened: (chatId) => set((s) => ({ openedAt: { ...s.openedAt, [chatId]: new Date().toISOString() } })),
+      // Pin: dedupe-then-append, matching the bucket setters' idiom. Note the absence of
+      // any `archived`/`blocked`/`deleted` clearing — pinning is orthogonal to buckets.
+      pinChat: (chatId) => set((s) => (s.pinned.includes(chatId) ? s : { pinned: [...s.pinned, chatId] })),
+      unpinChat: (chatId) => set((s) => (s.pinned.includes(chatId) ? { pinned: s.pinned.filter((id) => id !== chatId) } : s)),
+      isPinned: (chatId) => get().pinned.includes(chatId),
+      togglePinChat: (chatId) => set((s) => (
+        s.pinned.includes(chatId)
+          ? { pinned: s.pinned.filter((id) => id !== chatId) }
+          : { pinned: [...s.pinned, chatId] }
+      )),
+      // Merge rather than replace: `ids` is only the bucket the user was looking at, so
+      // an arrangement made in Chats must not be wiped by a later drag in Archive.
+      setChatOrder: (ids) => set((s) => {
+        const incoming = new Set(ids);
+        const kept = s.order.filter((id) => !incoming.has(id));
+        return { order: [...ids, ...kept] };
+      }),
     }),
     { name: 'chat-settings', storage: createJSONStorage(() => storage) }
   )

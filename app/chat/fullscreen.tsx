@@ -50,7 +50,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { KeyboardStickyView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
 import Reanimated, { useAnimatedStyle, interpolate, Extrapolation } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
-import { bottomScrimColorsStrong, composerScrimHeight, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
+import { bottomScrimColorsStrong, composerScrimHeight, headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
 import { CachedImage } from '../../src/components/ui/CachedImage';
@@ -290,7 +290,11 @@ export default function ChatFullscreenScreen() {
 
           `box-none` so only the buttons take touches — the pages behind stay
           swipeable across the full height. */}
-      <View style={[styles.header, { height: insets.top + 52 }]} pointerEvents="box-none">
+      {/* Height comes from `headerScrimHeights` rather than a local `insets.top + 52`.
+          This screen was the only one still hand-rolling it, so it did not pick up the
+          shared header overhang and its top ramp was shorter than every other screen's —
+          the same ramp compressed into less distance, which reads as weaker. */}
+      <View style={[styles.header, { height: headerScrimHeights(insets.top).gradient }]} pointerEvents="box-none">
         <LinearGradient
           colors={topScrimColors(theme.isDark, bgColor)}
           locations={SCRIM_LOCATIONS}
