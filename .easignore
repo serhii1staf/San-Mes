@@ -1,6 +1,88 @@
+# What NOT to upload to EAS Build.
+#
+# ── READ THIS BEFORE ADDING ANYTHING ────────────────────────────────────────────
+#
+# When `.easignore` exists, EAS Build uses it INSTEAD OF `.gitignore` — not in
+# addition to it. That is the trap this file fell into: it listed six entries, so
+# every exclusion `.gitignore` provides was silently switched off and the project
+# archive came out at 621 MB. Compressing it took 51 s and uploading it another
+# 51 s, on every single build.
+#
+# Measured contents of that archive:
+#
+#     422 MB   SF-Symbols-8 (1).dmg          an Apple design-tool installer
+#     220 MB   workers/                      the Cloudflare Worker + its own deps
+#     160 MB   pixel_characters_pack*.zip    source art, packed
+#      27 MB   telegram_ios_settings_icon_pack*.zip
+#
+# None of it is needed to compile the app. With the rules below the archive is a
+# couple of dozen MB.
+#
+# So: anything added here must be something the BUILD does not read. If a file is
+# imported by app code or referenced from app.json, it must NOT be listed.
+
+# ── DO NOT EXCLUDE package-lock.json ────────────────────────────────────────────
+#
+# It was excluded here for one build, to dodge `npm ci`. That works — eas-build picks its
+# installer by looking for a lock file — but it picks YARN when there is no npm lock, and
+# yarn is strictly worse here:
+#
+#     Running "yarn install --frozen-lockfile --production false"
+#     info No lockfile found.
+#     error @supabase/supabase-js@2.112.3: The engine "node" is incompatible with this
+#           module. Expected version ">=22.0.0". Got "20.19.4"
+#     error Found incompatible module.
+#
+# yarn treats `engines` as fatal; npm treats it as a warning (and there is no `.npmrc`
+# setting `engine-strict`). The builder image runs Node 20.19.4, so any dependency that
+# declares `node >= 22` kills a yarn install and is merely noisy under npm.
+#
+# So the lock STAYS in the archive, npm stays the installer, and the actual `npm ci`
+# complaint is fixed at its source instead — see the `@emnapi/*` entries in package.json's
+# devDependencies and the comment there.
+
+# ── Secrets and local-only config ───────────────────────────────────────────────
 .env.local
 credentials.json
 build-info.json
 .vercel
-.agents
 tokim
+AuthKey_*.p8
+
+# ── Agent / editor / planning state ─────────────────────────────────────────────
+.agents
+.kiro
+.vscode
+.expo
+.github
+
+# ── Backend, deployed separately ────────────────────────────────────────────────
+# The Cloudflare Worker is its own deploy target with its own node_modules; the
+# mobile build never imports from it.
+workers/
+worker/
+
+# ── Design-tool installers and packed source art ────────────────────────────────
+# Shipping assets live in assets/ and are referenced from app.json / code. These
+# are the ORIGINALS and the tooling, which the build never opens.
+*.dmg
+*.zip
+logoappekpan/
+vrii/
+targets/
+
+# ── Docs, notes, dumps ──────────────────────────────────────────────────────────
+docs/
+*.md
+!README.md
+eple.txt
+worker_dump.txt
+worker_live_check.txt
+build-log.txt
+html.txt
+
+# ── Test output and caches ──────────────────────────────────────────────────────
+coverage/
+dist/
+.jest-cache/
+*.log
