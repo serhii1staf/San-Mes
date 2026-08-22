@@ -303,8 +303,8 @@ function MiniAppsRow({ editMode, selectedIds, editProgress, onToggleSelect }: Mi
           <View style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: theme.colors.accent.primary + '12', alignItems: 'center', justifyContent: 'center', overflow: 'visible' }}>
             <RNText style={{ fontSize: 20 }} allowFontScaling={false}>{app.emoji}</RNText>
           </View>
-          <View style={{ marginLeft: 12, flex: 1 }}>
-            <Text variant="body" weight="medium">{app.name}</Text>
+          <View style={{ marginLeft: 12, flex: 1, paddingRight: editMode ? REORDER_COLUMN_WIDTH : 0 }}>
+            <Text variant="body" weight="medium" numberOfLines={1}>{app.name}</Text>
             {app.description ? <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>{app.description}</Text> : null}
           </View>
           {/* "Open" button → interactive liquid glass holding the label as a
@@ -753,7 +753,22 @@ function ConversationItemBase({
           slides by a transform on a shared value -- no layout, no `editMode`. */}
       <Reanimated.View style={[styles.rowContent, editShift]}>
       <Avatar emoji={item.participantEmoji} name={item.participantName} size="md" tint />
-      <View style={{ flex: 1, marginLeft: 12 }}>
+      {/* â”€â”€ `paddingRight` RESERVES THE HANDLE'S COLUMN â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+          The reorder handle takes no space in the row's flow (constant width cancelled by a
+          negative margin), which keeps the layout identical in both modes and is what fixed
+          the sideways jerk. The side effect: with the content slid 34 pt right, a long display
+          name or message preview ran UNDERNEATH the handle instead of ellipsizing before it.
+
+          This padding is the fix, and it is SAFE in a way the old geometry was not: it changes
+          only the inner text box, so the text reflows inside its own column. It is not part of
+          the transform's compensation, so it cannot reintroduce the +/-34 pt jump that came
+          from a layout change the transform had to cancel out. The avatar does not move and
+          the slide is untouched.
+
+          Applied only in edit mode: at rest there is no handle to clear, and a permanent
+          34 pt gap on the right would be visible on every row. `numberOfLines` on the two
+          Text nodes below then ellipsizes at the new edge. */}
+      <View style={{ flex: 1, marginLeft: 12, paddingRight: editMode ? REORDER_COLUMN_WIDTH : 0 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
           <Text variant="body" weight={item.unreadCount > 0 ? 'semibold' : 'regular'} numberOfLines={1} style={{ flexShrink: 1 }}>
             {displayName}

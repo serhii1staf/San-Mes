@@ -285,7 +285,12 @@ export default function NotificationsScreen() {
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ paddingHorizontal: 16, gap: 8, alignItems: 'center' }}
+          // `flexGrow: 1` + `justifyContent: center` centres the row while the chips are
+          // narrower than the screen, and degrades to normal left-aligned scrolling once they
+          // are not. Without `flexGrow` the content container hugs its children and
+          // `justifyContent` has nothing to distribute, which is why the row sat against the
+          // left edge while the title above it was centred.
+          contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', paddingHorizontal: 16, gap: 8, alignItems: 'center' }}
           style={{ height: FILTER_ROW_HEIGHT }}
         >
           {filters.map((f) => {
@@ -298,9 +303,18 @@ export default function NotificationsScreen() {
                   paddingHorizontal: 16,
                   paddingVertical: 8,
                   borderRadius: 18,
-                  backgroundColor: active ? theme.colors.background.elevated : 'transparent',
+                  // EVERY chip gets a fill, not just the selected one. Inactive chips were
+                  // `transparent`, so they read as floating text over the scrim and the row
+                  // looked half-broken — only the one you had tapped looked like a button.
+                  // The active chip is now distinguished by being LIGHTER and by its border,
+                  // which is a contrast difference rather than a presence difference.
+                  backgroundColor: active
+                    ? theme.colors.background.elevated
+                    : theme.isDark
+                      ? 'rgba(255,255,255,0.07)'
+                      : 'rgba(0,0,0,0.05)',
                   borderWidth: 1,
-                  borderColor: active ? theme.colors.border.medium : theme.colors.border.light,
+                  borderColor: active ? theme.colors.border.medium : 'transparent',
                 }}
               >
                 <Text
@@ -333,6 +347,20 @@ export default function NotificationsScreen() {
           keyExtractor={keyExtractor}
           renderItem={renderItem as any}
           renderSectionHeader={renderSectionHeader as any}
+          // ── STICKY HEADERS OFF ────────────────────────────────────────────────
+          //
+          // On iOS `SectionList` sticks section headers by DEFAULT, and it sticks them to the
+          // top of its own viewport — which is y=0 of the screen, underneath the absolutely
+          // positioned title + chips chrome. So "Актуальное" / "Сегодня" pinned themselves
+          // ABOVE the filter chips, on top of the header, instead of behaving like
+          // subheadings of it.
+          //
+          // Two ways to fix that: keep them sticky and offset them by the chrome height, or
+          // let them scroll. Scrolling is what the design shows and it is the honest reading
+          // of what a section label is here — a divider between groups, not a persistent
+          // control. An offset would also have to be re-derived every time the chrome changes
+          // height, which is the kind of coupling that drifts.
+          stickySectionHeadersEnabled={false}
           contentContainerStyle={contentStyle}
           refreshControl={refreshControl}
           showsVerticalScrollIndicator={false}
