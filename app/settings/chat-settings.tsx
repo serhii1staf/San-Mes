@@ -45,7 +45,7 @@ import { useEntityStore } from '../../src/store';
 import { useSettingsStore } from '../../src/store/settingsStore';
 import { showToast } from '../../src/store/toastStore';
 import { triggerHaptic } from '../../src/utils/haptics';
-import { useT } from '../../src/i18n/store';
+import { useT } from '../../src/i18n/store';
 import { headerScrimHeights } from '../../src/theme/scrim';
 
 // Emoji choices for the "link preview emoji" row — same set as the legacy

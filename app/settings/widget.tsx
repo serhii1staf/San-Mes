@@ -10,7 +10,7 @@ import { showToast } from '../../src/store/toastStore';
 import { reloadWidgetNow, isWidgetAvailable } from '../../src/services/widgetBridge';
 import { useWidgetSettingsStore, WidgetContent } from '../../src/store/widgetSettingsStore';
 import { triggerHaptic } from '../../src/utils/haptics';
-import { useT } from '../../src/i18n/store';
+import { useT } from '../../src/i18n/store';
 import { headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
 
 function Step({ index, text, theme }: { index: number; text: string; theme: any }) {

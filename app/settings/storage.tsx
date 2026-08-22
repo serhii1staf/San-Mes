@@ -10,7 +10,7 @@ import { Text } from '../../src/components/ui';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { kvAllEntries, kvDeleteRawKeys, kvGetJSONSync, kvGetStringRawSync } from '../../src/services/kvStore';
 import { measureImageCacheBytes, clearImageCache } from '../../src/services/imageCacheStore';
-import { t as tStatic, useT } from '../../src/i18n/store';
+import { t as tStatic, useT } from '../../src/i18n/store';
 import { SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
 
 // Storage screen — the on-device cache is visualised as a clean, segmented

@@ -17,7 +17,7 @@ import { SlideUpSheet } from '../../src/components/ui/SlideUpSheet';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { useT } from '../../src/i18n/store';
 import { PixelIcon } from '../../src/components/pixel-icons/PixelIcon';
-import { parseDecoration, emojiToken } from '../../src/components/pixel-icons/decoration';
+import { parseDecoration, emojiToken } from '../../src/components/pixel-icons/decoration';
 import { headerScrimHeights } from '../../src/theme/scrim';
 
 // Inline-preview font for each family option. Mirrors the regular weight

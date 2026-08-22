@@ -16,7 +16,7 @@ import { useT } from '../../src/i18n/store';
 import { buildMiniAppShareUrl } from '../../src/utils/miniAppShare';
 import { MiniAppConsentDialog } from '../../src/components/mini-apps/MiniAppConsentDialog';
 import { openLegalLink } from '../../src/components/mini-apps/openLegalLink';
-import { planSave, dispatchAccept } from '../../src/components/mini-apps/consentGate';
+import { planSave, dispatchAccept } from '../../src/components/mini-apps/consentGate';
 import { headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
 
 // HTTPS-only legal page literals (same destinations as the consent dialog).

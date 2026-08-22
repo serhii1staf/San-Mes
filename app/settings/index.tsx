@@ -10,7 +10,7 @@ import { useAuthStore } from '../../src/store';
 import { useSettingsStore } from '../../src/store/settingsStore';
 import { isNativeGlassCapable } from '../../src/components/ui/LiquidGlass';
 import { useT } from '../../src/i18n/store';
-import { PROFILE_THEMES_ENABLED } from '../../src/theme/profileThemes';
+import { PROFILE_THEMES_ENABLED } from '../../src/theme/profileThemes';
 import { bottomScrimColors, headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
 
 // Per-row tint pairs (icon color + soft tile bg) — picked to be readable in
