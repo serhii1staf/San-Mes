@@ -33,7 +33,7 @@
 //   R2_PUBLIC_BASE  — public read URL prefix (https://pub-…r2.dev)
 
 import type { IncomingMessage, ServerResponse } from 'http';
-import { extractBearer, verifyWorkerToken } from './_lib/verifyToken';
+import { authorizeUpload } from './_lib/authorizeUpload';
 
 const ALLOWED_PREFIXES = new Set(['posts', 'avatars', 'banners', 'chat']);
 const ALLOWED_CONTENT_TYPES = new Set([
@@ -151,8 +151,12 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   // It now requires a valid Worker-issued JWT. The bucket is only writable on
   // behalf of a real account, which also makes abuse attributable and rate-limitable
   // per user rather than anonymous.
-  const authedUserId = verifyWorkerToken(extractBearer(req.headers as any))?.userId;
-  if (!authedUserId) {
+  // Local JWT verification first; if that cannot decide — which is what happens
+  // when `JWT_SECRET` is absent or has drifted from the Worker's — delegate to the
+  // Worker, which owns the signing key. See `_lib/authorizeUpload.ts` for why this
+  // is not a weakening: the Worker does a strictly stronger check than we can.
+  const principal = await authorizeUpload(req);
+  if (!principal.ok) {
     return send(res, 401, { error: 'unauthorised' });
   }
 
