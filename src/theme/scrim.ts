@@ -64,44 +64,26 @@ const SCRIM_STOP_COUNT = 17;
  */
 const SCRIM_GAMMA = 0.85;
 
-// ─── Two strengths ──────────────────────────────────────────────────────────────
+// ─── ONE strength ───────────────────────────────────────────────────────────────
 //
-// STANDARD is the ramp behind the floating tab bar. It works there, and it is the one
-// place nothing should change.
+// There was briefly a second, STRONGER ramp for the tops of screens and for composer
+// screens. The reasoning: the tab bar's version only reads because its opaque glass capsule
+// sits on the ramp's dark end and supplies contrast, and nothing does that at the top of a
+// screen or behind a translucent composer.
 //
-// STRONG is for every surface that does NOT have a bright element sitting on the ramp's
-// dark end. That distinction is the whole reason two strengths exist rather than one:
+// The reasoning was sound and the result was still wrong, because it answered a question
+// nobody asked. The request was never "make the chat's scrim strong enough to read on its
+// own" — it was "make it the same as the one under the navigation". Two strengths guarantees
+// they are NOT the same, however well either one is tuned.
 //
-//   Under the tab bar, the darkest 24 pt of ramp is uncovered and butts straight against
-//   an opaque glass capsule with a light rim. High local contrast, so the ramp reads as a
-//   defined shelf even though it is black on a near-black background.
+// So: one ramp, one length (BOTTOM_CHROME_SCRIM_HEIGHT), everywhere. topScrimColors and
+// bottomScrimColorsStrong both return it; the second name survives only so the five composer
+// screens need not all be touched again, and it is now a synonym.
 //
-//   At the TOP of a screen there is no such element — the header chrome is small pills
-//   floating over it — and on a composer screen the bottom has only a 44 pt translucent
-//   field. With the same alpha the ramp there is black on near-black with nothing to
-//   contrast against, which is exactly why it read as "there is no scrim in the chat".
-//
-// So STRONG raises the end alpha AND lowers the exponent, which lifts the whole middle of
-// the curve rather than only the last stop:
-//
-//                       quarter   mid    3/4    end
-//     dark standard      0.178   0.477  0.744  0.860
-//     dark strong        0.291   0.627  0.885  0.990     (×1.63 / ×1.31 / ×1.19 / ×1.15)
-//
-// The end stop stays short of 1.0 on purpose. At exactly opaque the screen edge is a hard
-// black bar rather than content receding, and in light mode that is very obvious — which is
-// why light mode also caps lower (0.82) rather than matching dark.
-//
-// HOW FAR THIS CAN GO
-//   The limiting factor is the slope where the ramp leaves transparent. The old three-stop
-//   ramp started at 1.10 alpha/unit and that edge was visible as a line. Strengthening
-//   works by lowering the exponent, which raises that slope too:
-//
-//       gamma 0.72 → first slope 0.61     gamma 0.66 → 0.82     gamma 0.62 → 0.99
-//
-//   0.66 is where this stops. Going further buys a little more midtone and walks straight
-//   back into the banding the smoothstep curve exists to remove.
-const SCRIM_GAMMA_STRONG = 0.66;
+// If the scrim ever needs to be stronger, the honest change is the STANDARD numbers in
+// scrimStops — which moves every surface at once, including the tab bar. That property is
+// the one worth protecting.
+const SCRIM_GAMMA_STRONG = SCRIM_GAMMA;
 
 /** Hermite `smoothstep`: 0 at x=0, 1 at x=1, zero derivative at both ends. */
 function smoothstep(x: number): number {
@@ -171,9 +153,11 @@ export type ScrimColors = readonly [string, string, ...string[]];
  *     slope discontinuities         1 → 0
  */
 function buildRamp(isDark: boolean, strong: boolean): string[] {
-  const end = strong
-    ? (isDark ? 0.99 : 0.82)
-    : alphaOf(scrimStops(isDark, '#000000').end);
+  // strong is now a synonym for standard — see the ONE strength note above. The parameter
+  // is kept so the two ramp builds below stay symmetric and the diff that removed the second
+  // strength is one line rather than a restructure.
+  const end = alphaOf(scrimStops(isDark, '#000000').end);
+  void strong;
   const gamma = strong ? SCRIM_GAMMA_STRONG : SCRIM_GAMMA;
   const out: string[] = [];
   for (let i = 0; i < SCRIM_STOP_COUNT; i++) {
@@ -189,14 +173,13 @@ function alphaOf(rgba: string): number {
   return m ? parseFloat(m[1]) : 1;
 }
 
-// Built once per theme and strength. Without this, every scrim would allocate 17 strings
-// on every render of every screen that draws one.
+// Built once per theme. Without this, every scrim would allocate 17 strings on every render
+// of every screen that draws one. Two arrays, not four — the reversed pair is what a TOP
+// scrim uses, and there is no longer a second strength to build.
 const RAMP_DARK = buildRamp(true, false);
 const RAMP_LIGHT = buildRamp(false, false);
-const RAMP_DARK_STRONG = buildRamp(true, true);
-const RAMP_LIGHT_STRONG = buildRamp(false, true);
-const RAMP_DARK_STRONG_REVERSED = [...RAMP_DARK_STRONG].reverse();
-const RAMP_LIGHT_STRONG_REVERSED = [...RAMP_LIGHT_STRONG].reverse();
+const RAMP_DARK_REVERSED = [...RAMP_DARK].reverse();
+const RAMP_LIGHT_REVERSED = [...RAMP_LIGHT].reverse();
 
 /**
  * Ready-made colour array for a scrim at the TOP of a screen: opaque at the screen edge,
@@ -208,7 +191,7 @@ const RAMP_LIGHT_STRONG_REVERSED = [...RAMP_LIGHT_STRONG].reverse();
  */
 export function topScrimColors(isDark: boolean, backgroundColor: string): ScrimColors {
   void backgroundColor;
-  return (isDark ? RAMP_DARK_STRONG_REVERSED : RAMP_LIGHT_STRONG_REVERSED) as unknown as ScrimColors;
+  return (isDark ? RAMP_DARK_REVERSED : RAMP_LIGHT_REVERSED) as unknown as ScrimColors;
 }
 
 /**
@@ -234,8 +217,25 @@ export function bottomScrimColors(isDark: boolean, backgroundColor: string): Scr
  */
 export function bottomScrimColorsStrong(isDark: boolean, backgroundColor: string): ScrimColors {
   void backgroundColor;
-  return (isDark ? RAMP_DARK_STRONG : RAMP_LIGHT_STRONG) as unknown as ScrimColors;
+  return (isDark ? RAMP_DARK : RAMP_LIGHT) as unknown as ScrimColors;
 }
+
+/**
+ * The length of a scrim behind bottom chrome.
+ *
+ * This is the tab bar's own footprint — the 60 pt glass capsule plus its 24 pt bottom
+ * margin — and it is the number every other bottom scrim now uses too. `CustomTabBar`
+ * derives `BAR_FADE_HEIGHT` from this rather than computing its own, so the two cannot
+ * drift.
+ *
+ * Why a single shared LENGTH and not just a shared ramp: the ramp only decides how the
+ * alpha is distributed. Two scrims with identical colours but different heights spread that
+ * distribution over different distances and therefore look like different effects — which is
+ * how the chat's scrims kept ending up "not the same as under the navigation" through
+ * several rounds of colour matching. Same colours AND same length is the only combination
+ * that is actually the same.
+ */
+export const BOTTOM_CHROME_SCRIM_HEIGHT = 84;
 
 // ─── Header geometry ────────────────────────────────────────────────────────────
 //

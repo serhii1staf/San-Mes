@@ -43,7 +43,7 @@ import { uploadChatImage } from '../../src/lib/supabase';
 import { getImageDims, setImageDims } from '../../src/services/imageDimsCache';
 import { useRenderBudget } from '../../src/hooks/useRenderBudget';
 import { useEffectiveBrowserWidgetPosition } from '../../src/lib/browserWidget';
-import { bottomScrimColorsStrong, composerScrimHeight, headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
+import { bottomScrimColorsStrong, BOTTOM_CHROME_SCRIM_HEIGHT, headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
 import { kvGetJSONSync, kvSetJSON, kvWarm } from '../../src/services/kvStore';
 import { mockMessages, mockConversations, formatMessageTime } from '../../src/utils/mockData';
 import { showToast } from '../../src/store/toastStore';
@@ -84,9 +84,23 @@ const LIST_CONTENT_CONTAINER_STYLE = { paddingBottom: 8 } as const;
 // INVERTED list, is `onEndReached`). `SEED_CAP` bounds the synchronous
 // first-paint parse — the full history is still hydrated into the store off
 // the critical path so scroll-up and reply-jump to old messages keep working.
-const INITIAL_WINDOW = 30;
+// 40 rather than 30: with a 30-row window of short text messages the content can be barely
+// taller than the viewport, which puts the list permanently inside `onStartReachedThreshold`
+// and makes it ask for older history before the user has scrolled at all. 40 rows of bubbles
+// clears a phone screen comfortably on every device size, and FlashList recycles, so the
+// extra ten cost nothing beyond ten more parsed messages in the seed.
+const INITIAL_WINDOW = 40;
 const WINDOW_CHUNK = 30;
 const SEED_CAP = 60;
+
+/**
+ * Minimum spacing between two "load older" expansions.
+ *
+ * See the long note at the cooldown itself in `onStartReached`. Without it the growth is
+ * self-retriggering: each expansion moves the window's start closer to the viewport, which
+ * re-satisfies the threshold on the next scroll event.
+ */
+const OLDER_LOAD_COOLDOWN_MS = 400;
 
 // Hard cap on how many messages we keep in the durable `chat_messages:<id>`
 // blob. Without this, every send/receive grows the MMKV blob unbounded, and
@@ -3209,6 +3223,7 @@ export default function ChatScreen() {
   // the scroll position pinned as the older messages prepend.
   const loadingOlderRef = useRef(false);
   const olderHandleRef = useRef<{ cancel: () => void } | null>(null);
+  const olderCooldownRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Cancel a pending reveal on unmount / conversation change. It used to be a bare
   // `setTimeout` that was never cleared, so leaving the chat mid-load left a
@@ -3218,6 +3233,7 @@ export default function ChatScreen() {
     () => () => {
       olderHandleRef.current?.cancel();
       olderHandleRef.current = null;
+      if (olderCooldownRef.current) { clearTimeout(olderCooldownRef.current); olderCooldownRef.current = null; }
       loadingOlderRef.current = false;
     },
     [conversationId],
@@ -3246,7 +3262,25 @@ export default function ChatScreen() {
       if (historyHydratedRef.current !== conversationId) hydrateFullHistoryRef.current();
       const total = (useChatStore.getState().messages[conversationId || ''] || []).length;
       setRenderWindow((cur) => (cur >= total ? cur : Math.min(cur + WINDOW_CHUNK, total)));
-      loadingOlderRef.current = false;
+      // ── COOLDOWN, not an immediate release ────────────────────────────────
+      //
+      // Releasing the latch here let this cascade, and that cascade is the remaining half of
+      // the "BAM, I'm at the very top" report.
+      //
+      // `onStartReached` fires whenever the viewport is within `onStartReachedThreshold` of
+      // the list's start. With a 40-row window of short text messages the content is only a
+      // couple of viewports tall, so a small scroll up satisfies the threshold — and the
+      // moment this callback released the latch, the very next scroll event satisfied it
+      // again. Each pass grew the window by another `WINDOW_CHUNK` and the growth chased the
+      // viewport up the list, so a single flick could walk the window across the entire
+      // history in a handful of frames. From the user's side: everything appears at once and
+      // the viewport ends up at the oldest end.
+      //
+      // A cooldown bounds it to one chunk per interval regardless of how many scroll events
+      // arrive. At 400 ms a continuous drag loads ~2.5 chunks/second, which is fast enough to
+      // feel responsive and slow enough that `OlderMessagesLoader` is legible while it works.
+      const cooldown = setTimeout(() => { loadingOlderRef.current = false; }, OLDER_LOAD_COOLDOWN_MS);
+      olderCooldownRef.current = cooldown;
     });
     olderHandleRef.current = handle;
   }, [conversationId]);
@@ -3782,7 +3816,11 @@ export default function ChatScreen() {
         onViewableItemsChanged={onViewableItemsChanged}
         // Load OLDER history when the user nears the TOP (oldest) of the list.
         onStartReached={onStartReached}
-        onStartReachedThreshold={0.15}
+        // 0.05, not 0.15. The threshold is a FRACTION of the content length, so on a short
+        // window 0.15 is satisfied while the user is still nowhere near the top — the list
+        // asked for older history unprompted. Combined with the cooldown in `onStartReached`,
+        // loading now begins when the user is genuinely approaching the oldest loaded message.
+        onStartReachedThreshold={0.05}
         // Scroll-to-bottom button visibility — onChatScroll computes distance
         // from the bottom (newest) from the scroll event.
         onScroll={onChatScroll}
@@ -3807,7 +3845,7 @@ export default function ChatScreen() {
           height, no animation — it simply sits there. */}
       <View
         pointerEvents="none"
-        style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: composerScrimHeight(insets.bottom, 12) }}
+        style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: BOTTOM_CHROME_SCRIM_HEIGHT }}
       >
         {/* Shared scrim ramp (src/theme/scrim.ts). These stops used to be local
             (`[bgTransparent, bgColor + 'B3', bgColor]`, midpoint 0.45) — a

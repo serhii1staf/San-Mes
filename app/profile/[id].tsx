@@ -1653,10 +1653,13 @@ export default function UserProfileScreen() {
         // mounted card count low so gesture handlers, FormattedText, and any
         // LinkPreview unfurls don't all sit on the UI thread at once — the
         // root cause of `SLOW ui<30 @ profile/[id]`.
+        // Same retune as app/(tabs)/profile.tsx — see the long note there. Was 3 / 2 / 5 with
+        // a 100 ms batching period; the refill rate while scrolling UP was the cause of the
+        // list oscillating. initialNumToRender is unchanged so the open frame is unaffected.
         initialNumToRender={3}
-        maxToRenderPerBatch={2}
-        windowSize={5}
-        updateCellsBatchingPeriod={100}
+        maxToRenderPerBatch={3}
+        windowSize={7}
+        updateCellsBatchingPeriod={50}
         // ── removeClippedSubviews is OFF, deliberately ──────────────────────────
         //
         // Scrolling DOWN was fine; scrolling back UP juddered, jumping up and down
