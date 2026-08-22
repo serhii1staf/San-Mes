@@ -1880,6 +1880,34 @@ export default function ChatScreen() {
           // is the cheap way to skip a store write and the re-render it would cause.
           if (cancelled || merged === local) return;
           setMessages(conversationId, merged as any);
+
+          // ── THE CHAT LIST HAS TO LEARN ABOUT IT TOO ─────────────────────────
+          //
+          // Reported: the message shows up in the transcript but the conversations list still
+          // shows the old preview. Two different stores hold the two views — `chatStore`
+          // holds transcripts, `entityStore.conversations` holds the rows with their preview
+          // text and timestamp — and this fetch was only writing the first one.
+          //
+          // Realtime hid the gap: the Worker's `user:<peer>:notifications` fan-out is handled
+          // by `RealtimeAccountBridge`, which updates BOTH. With realtime down, the poll was
+          // the only thing running and it only did half the job.
+          const newest = merged[merged.length - 1];
+          if (newest) {
+            const store = useEntityStore.getState();
+            const rows = store.conversations || [];
+            const idx = rows.findIndex((c: any) => c.id === conversationId);
+            if (idx >= 0) {
+              const row: any = rows[idx];
+              // Only write when the preview actually moved on. An unconditional write would
+              // re-render the whole list on every poll tick, which is exactly the kind of
+              // idle cost the `merged === local` bail-out above exists to avoid.
+              if (row.lastMessage !== newest.text || row.lastMessageAt !== newest.createdAt) {
+                const next = rows.slice();
+                next[idx] = { ...row, lastMessage: newest.text, lastMessageAt: newest.createdAt };
+                store.setConversations(next);
+              }
+            }
+          }
         } catch {
           // Offline, 403 (opened under a peer user id before the conversation row exists),
           // or a transport failure. The cached transcript stays on screen either way.

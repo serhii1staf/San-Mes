@@ -62,6 +62,21 @@ const SELECT_COLUMN_WIDTH = 34;
 // Mirrors SELECT_COLUMN_WIDTH so the row stays optically balanced.
 const REORDER_COLUMN_WIDTH = 34;
 
+/**
+ * How much room the text column gives up in edit mode.
+ *
+ * The handle is 34 pt wide, so 34 is the amount needed for the text not to be drawn
+ * UNDERNEATH it. That was the first attempt and it is not enough: an ellipsis landing flush
+ * against the handle still reads as "the name runs into the button". Reported as wanting the
+ * name to end about ten characters short of it.
+ *
+ * 34 + 60: sixty points is roughly ten glyphs at this text size (13 pt caption, ~6 pt average
+ * advance), which puts visible whitespace between the truncated text and the grab handle.
+ * Applied ONLY in edit mode, so the resting rows are unaffected and no width is wasted when
+ * there is no handle to clear.
+ */
+const REORDER_TEXT_CLEARANCE = REORDER_COLUMN_WIDTH + 60;
+
 // Selection action bar geometry. Hoisted because the bar's slide-in distance is derived
 // from it — a hardcoded travel value drifts the moment the bar's height changes.
 const ACTION_BAR_HEIGHT = 52;
@@ -303,7 +318,7 @@ function MiniAppsRow({ editMode, selectedIds, editProgress, onToggleSelect }: Mi
           <View style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: theme.colors.accent.primary + '12', alignItems: 'center', justifyContent: 'center', overflow: 'visible' }}>
             <RNText style={{ fontSize: 20 }} allowFontScaling={false}>{app.emoji}</RNText>
           </View>
-          <View style={{ marginLeft: 12, flex: 1, paddingRight: editMode ? REORDER_COLUMN_WIDTH : 0 }}>
+          <View style={{ marginLeft: 12, flex: 1, paddingRight: editMode ? REORDER_TEXT_CLEARANCE : 0 }}>
             <Text variant="body" weight="medium" numberOfLines={1}>{app.name}</Text>
             {app.description ? <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>{app.description}</Text> : null}
           </View>
@@ -768,7 +783,7 @@ function ConversationItemBase({
           Applied only in edit mode: at rest there is no handle to clear, and a permanent
           34 pt gap on the right would be visible on every row. `numberOfLines` on the two
           Text nodes below then ellipsizes at the new edge. */}
-      <View style={{ flex: 1, marginLeft: 12, paddingRight: editMode ? REORDER_COLUMN_WIDTH : 0 }}>
+      <View style={{ flex: 1, marginLeft: 12, paddingRight: editMode ? REORDER_TEXT_CLEARANCE : 0 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
           <Text variant="body" weight={item.unreadCount > 0 ? 'semibold' : 'regular'} numberOfLines={1} style={{ flexShrink: 1 }}>
             {displayName}

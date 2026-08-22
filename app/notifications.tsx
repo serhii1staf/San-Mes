@@ -8,6 +8,7 @@ import { router } from 'expo-router';
 import { useTheme } from '../src/theme';
 import { Text, Avatar } from '../src/components/ui';
 import { VerifiedBadge } from '../src/components/ui/VerifiedBadge';
+import { useLiquidGlassActive, NativeGlassView } from '../src/components/ui/LiquidGlass';
 import { useAuthStore } from '../src/store';
 import { kvGetJSONSync } from '../src/services/kvStore';
 import { useNotificationsBadge } from '../src/store/notificationsBadgeStore';
@@ -195,6 +196,9 @@ export default function NotificationsScreen() {
   const listTopPadding = headerContentHeight + FILTER_ROW_HEIGHT;
 
   const [filter, setFilter] = useState<FilterKey>('all');
+  // Native iOS-26 liquid glass for the selected filter chip — same gate the tab bar and the
+  // profile tab pills use, so the three stay consistent.
+  const glassActive = useLiquidGlassActive();
 
   const filters = useMemo<{ key: FilterKey; label: string }[]>(() => ([
     { key: 'all', label: t('notifications.filter.all') },
@@ -299,31 +303,57 @@ export default function NotificationsScreen() {
               <Pressable
                 key={f.key}
                 onPress={() => { triggerHaptic('selection'); setFilter(f.key); }}
-                style={{
-                  paddingHorizontal: 16,
-                  paddingVertical: 8,
-                  borderRadius: 18,
-                  // EVERY chip gets a fill, not just the selected one. Inactive chips were
-                  // `transparent`, so they read as floating text over the scrim and the row
-                  // looked half-broken — only the one you had tapped looked like a button.
-                  // The active chip is now distinguished by being LIGHTER and by its border,
-                  // which is a contrast difference rather than a presence difference.
-                  backgroundColor: active
-                    ? theme.colors.background.elevated
-                    : theme.isDark
-                      ? 'rgba(255,255,255,0.07)'
-                      : 'rgba(0,0,0,0.05)',
-                  borderWidth: 1,
-                  borderColor: active ? theme.colors.border.medium : 'transparent',
-                }}
+                // ── LIQUID GLASS ON THE ACTIVE CHIP ─────────────────────────────
+                //
+                // These were plain fills, which is why they had no glass: nothing here ever
+                // rendered a `NativeGlassView`. Now the selected chip is real iOS-26 glass
+                // when the user has the toggle on and the device supports it, matching the
+                // profile tab pills and the tab bar — the app's established pattern for "the
+                // selected thing in a row of choices".
+                //
+                // Fallback when glass is off is NOT transparent. The whole row used to be
+                // `transparent` except the tapped chip, so unselected chips read as bare text
+                // and the pressed one read as barely-there. Both states now have a solid
+                // fill; the difference is CONTRAST (elevated vs a faint tint) plus a border,
+                // not presence vs absence.
+                style={
+                  glassActive && active
+                    ? { borderRadius: 18 }
+                    : {
+                        paddingHorizontal: 16,
+                        paddingVertical: 8,
+                        borderRadius: 18,
+                        backgroundColor: active
+                          ? theme.colors.background.elevated
+                          : theme.isDark
+                            ? 'rgba(255,255,255,0.07)'
+                            : 'rgba(0,0,0,0.05)',
+                        borderWidth: 1,
+                        borderColor: active ? theme.colors.border.medium : 'transparent',
+                      }
+                }
               >
-                <Text
-                  variant="caption"
-                  weight={active ? 'semibold' : 'regular'}
-                  color={active ? theme.colors.text.primary : theme.colors.text.secondary}
-                >
-                  {f.label}
-                </Text>
+                {glassActive && active ? (
+                  <NativeGlassView
+                    glassStyle="regular"
+                    isInteractive
+                    colorScheme={theme.isDark ? 'dark' : 'light'}
+                    tintColor={theme.colors.accent.primary + '33'}
+                    style={{ paddingHorizontal: 16, paddingVertical: 8, borderRadius: 18, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}
+                  >
+                    <Text variant="caption" weight="semibold" color={theme.colors.text.primary}>
+                      {f.label}
+                    </Text>
+                  </NativeGlassView>
+                ) : (
+                  <Text
+                    variant="caption"
+                    weight={active ? 'semibold' : 'regular'}
+                    color={active ? theme.colors.text.primary : theme.colors.text.secondary}
+                  >
+                    {f.label}
+                  </Text>
+                )}
               </Pressable>
             );
           })}

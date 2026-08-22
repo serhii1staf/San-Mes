@@ -34,6 +34,7 @@ import { getRecentEmoji, pushRecentEmoji } from '../../src/services/recentEmoji'
 import { getRecentGif, pushRecentGif } from '../../src/services/recentGif';
 import { kvGetJSONSync, kvSetJSON } from '../../src/services/kvStore';
 import { useAuthStore, useConnectivityStore } from '../../src/store';
+import { getRealtime, postChannelName } from '../../src/services/realtime/ably';
 import { getComments, createComment, updateComment, deleteComment, isRepost, parseImageUrls } from '../../src/lib/supabase';
 import { generateClientMutationId, queueMutation } from '../../src/services/offlineQueue';
 import { triggerHaptic } from '../../src/utils/haptics';
@@ -909,6 +910,78 @@ export default function CommentsScreen() {
     clearTimeout(safety);
     setIsLoading(false);
   };
+
+  // ── LIVE COMMENTS. THIS SUBSCRIPTION DID NOT EXIST. ─────────────────────────
+  //
+  // Reported: "in comments they do not see each other at all until they re-enter, and even
+  // then not reliably." That was not a broken connection — this screen had NO realtime
+  // subscription of any kind. A grep for `postChannelName`, `getRealtime` and `subscribe(`
+  // over this file returned nothing.
+  //
+  // Everything needed was already in place on both sides and simply never wired together:
+  //
+  //   server   `POST /v1/posts/:id/comments`  publishes `comment.new`    (posts.ts:530)
+  //            `PATCH /v1/comments/:id`       publishes `comment.edit`   (comments.ts:41)
+  //            `DELETE /v1/comments/:id`      publishes `comment.delete` (comments.ts:87)
+  //            all three onto `post:<postId>` via `channels.post()`
+  //   client   `postChannelName(postId)` produces the SAME `post:<postId>` string
+  //            `api/ably-token` grants `post:*` subscribe + history
+  //
+  // So the events have been going out to a channel nobody listened on.
+  //
+  // The payloads mirror the REST shapes deliberately, which is what lets `reconcileComments`
+  // be reused verbatim: `comment.new` carries `{ comment: <same shape as GET returns> }`,
+  // `comment.edit` carries `{ id, content }`, `comment.delete` carries `{ id }`.
+  //
+  // `post:*` is SUBSCRIBE-ONLY for devices (see the capability map in api/ably-token.ts), so
+  // there is nothing to publish from here — the Worker is the only publisher, which is the
+  // pattern the 1:1 chat channel does NOT follow and is exactly why chat delivery is the
+  // fragile one.
+  useEffect(() => {
+    if (!postId) return;
+    const realtime = getRealtime();
+    if (!realtime) return;
+    const channel = realtime.channels.get(postChannelName(postId));
+
+    const onNew = (msg: { data?: any }) => {
+      const incoming = msg?.data?.comment;
+      if (!incoming || !incoming.id) return;
+      // `reconcileComments` is server-authoritative on membership, so it cannot be used to
+      // ADD a single row — it would drop everything not in `next`. Append by hand, deduped
+      // by id so our own optimistic insert plus the echoed event do not double up.
+      setComments((prev) => (prev.some((c) => String(c?.id) === String(incoming.id)) ? prev : [...prev, incoming]));
+    };
+
+    const onEdit = (msg: { data?: any }) => {
+      const p = msg?.data;
+      if (!p?.id) return;
+      setComments((prev) =>
+        prev.map((c) => (String(c?.id) === String(p.id) ? { ...c, content: p.content ?? c.content } : c)),
+      );
+    };
+
+    const onDelete = (msg: { data?: any }) => {
+      const p = msg?.data;
+      if (!p?.id) return;
+      setComments((prev) => prev.filter((c) => String(c?.id) !== String(p.id)));
+    };
+
+    // Rejections are surfaced rather than discarded. A silently dead subscription here is
+    // indistinguishable from "nobody commented", which is the state this screen was in.
+    const onErr = (event: string) => (err: unknown) => {
+      if (__DEV__) {
+        console.warn(`[comments] realtime subscribe failed for "${event}" on ${postChannelName(postId)}`, err);
+      }
+    };
+    channel.subscribe('comment.new', onNew).catch(onErr('comment.new'));
+    channel.subscribe('comment.edit', onEdit).catch(onErr('comment.edit'));
+    channel.subscribe('comment.delete', onDelete).catch(onErr('comment.delete'));
+    return () => {
+      try { channel.unsubscribe('comment.new', onNew); } catch {}
+      try { channel.unsubscribe('comment.edit', onEdit); } catch {}
+      try { channel.unsubscribe('comment.delete', onDelete); } catch {}
+    };
+  }, [postId]);
 
   // If this post is a repost, resolve the original post (with author) to render a proper preview
   useEffect(() => {
