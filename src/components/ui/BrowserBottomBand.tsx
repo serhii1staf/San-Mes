@@ -9,7 +9,6 @@ import Animated, {
   runOnJS,
   Easing,
 } from 'react-native-reanimated';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme';
 import { Text } from './Text';
 import { CachedImage } from './CachedImage';
@@ -24,41 +23,40 @@ import { triggerHaptic } from '../../utils/haptics';
 // ── SHAPE: DOCKED, NOT FLOATING ─────────────────────────────────────────────
 //
 // I briefly turned this into a floating card with all four corners rounded, inset
-// from both edges and carrying a shadow. That was not what was asked for and it is
-// reverted. The band belongs flush with the bottom of the screen, full width, with
-// only its TOP corners rounded — sitting under the bottom navigation / input field
-// exactly as it did before. Only two things were actually requested: make it a
-// little taller, and stop it pushing the app content upward.
+// from both edges and carrying a shadow. That was not asked for and is reverted. The
+// band is flush with the bottom of the screen, full width, top corners only.
 //
-// ── LAYOUT: OVERLAYS, DOES NOT PUSH ────────────────────────────────────────
+// ── LAYOUT: IT RESERVES ITS HEIGHT, ON PURPOSE ─────────────────────────────
 //
-// It used to be a sibling of the navigator inside the root flex column and RESERVED
-// its height there, so minimizing a session lifted the whole app. It is now
-// absolutely positioned and reserves nothing, which fixes that and also removes a
-// real cost: reserving and releasing the height re-laid out the root column twice
-// per session, and each pass re-laid out the Stack, the active screen and everything
-// inside it. In a chat that tree holds a live FlashList of message cells, glass
-// surfaces, gradients and the Reanimated input bar, so those two commits were
-// expensive — a hitch exactly when the band appeared or left.
+// I also briefly made it absolutely positioned so it would not push the app content
+// up. That was wrong, and the reason is worth writing down so it does not get
+// "optimised" again: this band lives at the BOTTOM of the screen, and so do the chat
+// input bar and the tab bar. If it reserves no space it necessarily covers one of
+// them — which is exactly what happened, and the report was "I can't see what I'm
+// tapping".
 //
-// Showing and hiding is now compositor-only (`translateY` + `opacity`); no view's
-// frame ever changes.
+// So it is a sibling of the navigator inside the root flex column and occupies its
+// own height there. The input bar and tab bar are pushed up by exactly that height
+// and stay fully visible and tappable, with the band sitting UNDER them.
+//
+// The cost is bounded and acceptable: layout commits EXACTLY TWICE per session, once
+// when the band is shown and once after it has finished leaving, both owned by React
+// state (`reserved`). What must never come back is the original version, which
+// ANIMATED that height frame by frame — roughly 23 full layout passes over the whole
+// tree, and in a chat that tree holds a live message list, glass surfaces, gradients
+// and the Reanimated input bar. Two commits is fine; two per frame is not.
+//
+// The visible motion is a pure `translateY` on an inner view inside an
+// `overflow: hidden` box — compositor-only, so the slide itself costs no layout.
 //
 // The component is ALWAYS mounted (no `return null`), so nothing unmounts
 // mid-animation.
 
-/** Band height. Slightly taller than the original 56, which is what was asked for. */
-const BAND_HEIGHT = 64;
 /**
- * Travel distance for the enter/exit slide, computed from the real box height.
- *
- * Must cover the safe-area padding as well as the band itself: the clip box is
- * `BAND_HEIGHT + insets.bottom` tall, and sliding by only `BAND_HEIGHT` would leave
- * a strip of background visible along the bottom edge when hidden.
+ * Band height. Back down from the 64 I raised it to — the request after seeing it
+ * docked was for it to be slightly smaller again.
  */
-function slideDistanceFor(bottomInset: number): number {
-  return BAND_HEIGHT + bottomInset;
-}
+const BAND_HEIGHT = 56;
 const ENTER_DURATION = 380;
 const EXIT_DURATION = 300;
 const FADE_IN_DURATION = 240;
@@ -66,7 +64,6 @@ const FADE_OUT_DURATION = 180;
 
 export function BrowserBottomBand() {
   const theme = useTheme();
-  const insets = useSafeAreaInsets();
   const t = useT();
   const minimizedUrl = useBrowserStore((s) => s.minimizedUrl);
   const minimizedDomain = useBrowserStore((s) => s.minimizedDomain);
@@ -78,20 +75,22 @@ export function BrowserBottomBand() {
 
   const visible = !!minimizedUrl && position === 'bottom';
 
-  // Kept mounted but non-interactive while hidden, so nothing unmounts mid-slide.
-  // There is no layout state any more — the band reserves no space at all.
-  const [interactive, setInteractive] = useState(visible);
+  // The ONE piece of layout state. `true` reserves BAND_HEIGHT in the root flex
+  // column; set on show, cleared only after the exit slide has finished, so the gap
+  // never collapses out from under a still-visible band.
+  const [reserved, setReserved] = useState(visible);
 
-  const slideDistance = slideDistanceFor(insets.bottom);
-
-  // Slide offset in points: 0 = docked, `slideDistance` = fully off the bottom.
-  const slideSV = useSharedValue(visible ? 0 : slideDistance);
+  // Slide offset in points: 0 = docked, BAND_HEIGHT = fully below the clip box.
+  const slideSV = useSharedValue(visible ? 0 : BAND_HEIGHT);
   const opacitySV = useSharedValue(visible ? 1 : 0);
 
   useEffect(() => {
     if (visible) {
-      setInteractive(true);
-      slideSV.value = slideDistance;
+      // Reserve the space first (single layout commit). The band starts fully below
+      // its own clip box, so nothing is visible until the slide brings it in — no
+      // flash of a solid rectangle in the reserved gap.
+      setReserved(true);
+      slideSV.value = BAND_HEIGHT;
       slideSV.value = withTiming(0, {
         duration: ENTER_DURATION,
         // ease-out cubic: starts fast, settles gently — arriving into place.
@@ -101,20 +100,22 @@ export function BrowserBottomBand() {
     } else {
       opacitySV.value = withTiming(0, { duration: FADE_OUT_DURATION, easing: Easing.out(Easing.cubic) });
       slideSV.value = withTiming(
-        slideDistance,
+        BAND_HEIGHT,
         {
           duration: EXIT_DURATION,
           // Symmetric ease-in-out rather than `Easing.in`. `Easing.in` reaches its
-          // maximum speed exactly as the band leaves, which reads as a snap; the
-          // same mistake was behind the mini-app overlay feeling abrupt.
+          // maximum speed exactly as the band leaves, which reads as a snap — the
+          // same mistake that made the mini-app overlay feel abrupt.
           easing: Easing.bezier(0.33, 0, 0.67, 1),
         },
         (finished) => {
-          if (finished) runOnJS(setInteractive)(false);
+          // Release the reserved height only once the band is off-screen, so the app
+          // content settles back down in one step instead of chasing the slide.
+          if (finished) runOnJS(setReserved)(false);
         },
       );
     }
-  }, [visible, slideSV, opacitySV, slideDistance]);
+  }, [visible, slideSV, opacitySV]);
 
   // Compositor-only: opacity + translateY. No view's frame changes, so showing or
   // hiding the card costs no layout pass anywhere in the tree.
@@ -146,26 +147,17 @@ export function BrowserBottomBand() {
   return (
     // Absolutely positioned: occupies no space in any layout, so the app content
     // never moves when a session is minimized or dismissed.
+    // Outer box: pure layout + clip window. No background, no radius, no animation —
+    // its height is plain React state so it commits once per transition rather than
+    // once per frame.
     <View
-      style={{
-        position: 'absolute',
-        left: 0,
-        right: 0,
-        // Flush with the bottom of the screen, under the bottom navigation, as it
-        // was. The safe-area inset is handled by the padding inside the band so the
-        // background still bleeds to the physical edge.
-        bottom: 0,
-        height: BAND_HEIGHT + insets.bottom,
-        overflow: 'hidden',
-        zIndex: 150,
-      }}
-      pointerEvents={interactive ? 'box-none' : 'none'}
+      style={{ height: reserved ? BAND_HEIGHT : 0, overflow: 'hidden' }}
+      pointerEvents={visible ? 'auto' : 'none'}
     >
       <Animated.View
         style={[
           {
-            height: BAND_HEIGHT + insets.bottom,
-            paddingBottom: insets.bottom,
+            height: BAND_HEIGHT,
             backgroundColor: theme.colors.background.primary,
             // TOP corners only. It is docked to the screen edge, so rounding the
             // bottom corners would leave visible notches against the display edge.
