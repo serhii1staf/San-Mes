@@ -34,8 +34,50 @@ export interface ScrimStops {
   clear: string;
 }
 
-/** Gradient stop locations paired with `ScrimStops`. */
-export const SCRIM_LOCATIONS = [0, 0.5, 1] as const;
+// ─── Ramp shape ─────────────────────────────────────────────────────────────────
+//
+// The ramp used to be THREE stops (0 → 0.5 → 1 at alpha 0 → 0.55 → 0.86). A linear
+// gradient interpolates straight lines between stops, so three stops produce two
+// straight segments with DIFFERENT slopes — 1.10 alpha/unit over the first half, 0.62
+// over the second. The eye is very good at spotting a slope discontinuity in a smooth
+// field (Mach banding), so the midpoint read as a faint horizontal line, and the ramp's
+// transparent end started at full slope, which read as a second line where the scrim
+// began. That is the "strip" that stops it dissolving away.
+//
+// Fix: sample a curve with ZERO derivative at both the transparent end and the midpoint,
+// so there is no slope to see anywhere. `smoothstep` has exactly that property. Nine
+// evenly spaced stops is far more than needed to make the residual error invisible.
+//
+// Cost: unchanged. This is still ONE native gradient layer; a CAGradientLayer with nine
+// colour stops rasterises identically to one with three.
+
+const SCRIM_STOP_COUNT = 17;
+
+/**
+ * Shaping exponent applied to `smoothstep`.
+ *
+ * Pure `smoothstep` puts the ramp's midpoint at half the end alpha (0.43 in dark mode),
+ * noticeably lighter than the 0.55 the three-stop version had, and the scrim's weight is
+ * the part that was working. Raising it to 0.85 pulls the midpoint back to 0.477 —
+ * within a hair of the original — while keeping the gentle approach at the transparent
+ * end that removes the visible starting edge.
+ */
+const SCRIM_GAMMA = 0.85;
+
+/** Hermite `smoothstep`: 0 at x=0, 1 at x=1, zero derivative at both ends. */
+function smoothstep(x: number): number {
+  return x * x * (3 - 2 * x);
+}
+
+/**
+ * Gradient stop locations. Evenly spaced, which matters: it makes the location array its
+ * own mirror, so a top scrim is the bottom scrim's colours reversed with no second
+ * locations array to keep in step.
+ */
+export const SCRIM_LOCATIONS = Array.from(
+  { length: SCRIM_STOP_COUNT },
+  (_, i) => i / (SCRIM_STOP_COUNT - 1),
+) as unknown as readonly [number, number, ...number[]];
 
 /**
  * Colour stops for a scrim, ordered transparent → opaque.
@@ -71,22 +113,63 @@ export function scrimStops(isDark: boolean, backgroundColor: string): ScrimStops
   };
 }
 
+export type ScrimColors = readonly [string, string, ...string[]];
+
+/**
+ * The ramp, transparent → opaque, as `SCRIM_STOP_COUNT` black stops.
+ *
+ * ONE curve across the whole ramp, deliberately — the `mid` stop is no longer an anchor.
+ * Pinning the midpoint forced the two halves to rise by different amounts (0.55 then
+ * 0.31) over equal distances, so the slope stepped down by a factor of 1.8 as it crossed
+ * the middle. Shaping each half separately moved that kink around but could not remove
+ * it; only dropping the anchor does.
+ *
+ * Measured against the three-stop version it replaces:
+ *
+ *     midpoint alpha    0.550 → 0.477   (weight preserved)
+ *     end alpha         0.860 → 0.860   (unchanged — this is the part that reads)
+ *     slope at the transparent end  1.100 → 0.303   (3.6× gentler: no visible edge)
+ *     slope discontinuities         1 → 0
+ */
+function buildRamp(isDark: boolean): string[] {
+  const end = alphaOf(scrimStops(isDark, '#000000').end);
+  const out: string[] = [];
+  for (let i = 0; i < SCRIM_STOP_COUNT; i++) {
+    const t = i / (SCRIM_STOP_COUNT - 1);
+    const a = end * Math.pow(smoothstep(t), SCRIM_GAMMA);
+    out.push(`rgba(0,0,0,${Math.round(a * 1000) / 1000})`);
+  }
+  return out;
+}
+
+function alphaOf(rgba: string): number {
+  const m = /rgba\([^,]+,[^,]+,[^,]+,\s*([\d.]+)\)/.exec(rgba);
+  return m ? parseFloat(m[1]) : 1;
+}
+
+// Built once per theme. Without this every scrim would allocate nine strings on every
+// render of every screen that draws one.
+const RAMP_DARK = buildRamp(true);
+const RAMP_LIGHT = buildRamp(false);
+const RAMP_DARK_REVERSED = [...RAMP_DARK].reverse();
+const RAMP_LIGHT_REVERSED = [...RAMP_LIGHT].reverse();
+
 /**
  * Ready-made colour array for a scrim at the TOP of a screen: opaque at the screen
  * edge, fading into the content below.
  */
-export function topScrimColors(isDark: boolean, backgroundColor: string): [string, string, string] {
-  const s = scrimStops(isDark, backgroundColor);
-  return [s.end, s.mid, s.clear];
+export function topScrimColors(isDark: boolean, backgroundColor: string): ScrimColors {
+  void backgroundColor;
+  return (isDark ? RAMP_DARK_REVERSED : RAMP_LIGHT_REVERSED) as unknown as ScrimColors;
 }
 
 /**
  * Ready-made colour array for a scrim at the BOTTOM of a screen: transparent where it
  * meets the content, opaque at the screen edge.
  */
-export function bottomScrimColors(isDark: boolean, backgroundColor: string): [string, string, string] {
-  const s = scrimStops(isDark, backgroundColor);
-  return [s.clear, s.mid, s.end];
+export function bottomScrimColors(isDark: boolean, backgroundColor: string): ScrimColors {
+  void backgroundColor;
+  return (isDark ? RAMP_DARK : RAMP_LIGHT) as unknown as ScrimColors;
 }
 
 // ─── Header geometry ────────────────────────────────────────────────────────────
@@ -122,4 +205,41 @@ export const HEADER_SCRIM_OVERHANG = 12;
 export function headerScrimHeights(insetsTop: number): { content: number; gradient: number } {
   const content = insetsTop + HEADER_ROW_HEIGHT;
   return { content, gradient: content + HEADER_SCRIM_OVERHANG };
+}
+
+// ─── Composer geometry ──────────────────────────────────────────────────────────
+//
+// The bottom scrim on every screen with a text composer (user chat, AI chat, music
+// chat, comments, fullscreen) was taller than the composer it sits behind:
+//
+//     chat 106, ai 150, music 150, comments 154   vs a composer footprint of 86
+//
+// The excess is ramp hanging ABOVE the composer, over the transcript, which is what
+// "it protrudes above the input field" describes. The tab bar does not have this
+// problem because `BAR_FADE_HEIGHT` is defined as exactly the capsule's height plus
+// its bottom margin, so the ramp finishes level with the top of the navigation.
+//
+// These constants let the composer screens state the same rule.
+
+/** Height of the rounded field capsule in every composer (`minHeight: 44`). */
+export const COMPOSER_FIELD_HEIGHT = 44;
+
+/** Gap above the field, between it and the content behind (`paddingTop: 8`). */
+export const COMPOSER_PADDING_TOP = 8;
+
+/**
+ * The composer's own footprint, measured from the screen's bottom edge to the top of
+ * the composer — the direct analogue of `BAR_FADE_HEIGHT` for the tab bar, and the
+ * correct height for a bottom scrim on a composer screen.
+ *
+ * `minBottomPad` is the floor each screen applies to the safe-area inset, so the value
+ * tracks that screen's actual `paddingBottom` rather than assuming one.
+ *
+ * The composer can grow taller than this — a reply banner, image attachments, several
+ * lines of text — and the scrim deliberately does NOT follow. It is fixed chrome, like
+ * the tab bar's fade; the grown parts carry their own backgrounds. Sizing it to the live
+ * height would mean animating a gradient's frame on every keystroke.
+ */
+export function composerScrimHeight(insetsBottom: number, minBottomPad = 12): number {
+  return COMPOSER_PADDING_TOP + COMPOSER_FIELD_HEIGHT + Math.max(insetsBottom, minBottomPad);
 }
