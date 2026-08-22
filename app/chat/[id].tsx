@@ -2325,10 +2325,43 @@ export default function ChatScreen() {
   //   - 'msg'        → new message from peer
   //   - 'msg.edit'   → peer edited a message they sent earlier
   //   - 'msg.delete' → peer deleted a message
+  // ── The subscription must not give up permanently ───────────────────────────
+  //
+  // This effect's dependencies are `[conversationId, addMessage, setMessages]`, all of them
+  // stable, so it runs ONCE per conversation. Combined with the `if (!realtime) return`
+  // below, that meant: if `getRealtime()` happened to return null at the moment the screen
+  // mounted — auth store not hydrated yet, token not minted yet — the chat had NO live
+  // subscription for its entire lifetime, with nothing logged and nothing retried.
+  //
+  // `realtimeTick` re-arms it. It increments while the client is unavailable and on every
+  // connection state change, so the effect re-runs and subscribes as soon as a client
+  // exists. Ably's own channel objects survive reconnects, so this is only about the
+  // window where there is no client at all.
+  const [realtimeTick, setRealtimeTick] = useState(0);
+  useEffect(() => {
+    if (!conversationId) return;
+    // Already have a client: nothing to poll for.
+    if (getRealtime()) return;
+    let tries = 0;
+    const timer = setInterval(() => {
+      tries += 1;
+      if (getRealtime()) {
+        setRealtimeTick((n) => n + 1);
+        clearInterval(timer);
+        return;
+      }
+      // Bounded. If there is still no client after ~30s the problem is not a race — it is
+      // that the user is signed out or the token endpoint is unreachable, and spinning a
+      // timer forever would not fix either.
+      if (tries >= 15) clearInterval(timer);
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [conversationId, realtimeTick]);
+
   useEffect(() => {
     if (!conversationId) return;
     const realtime = getRealtime();
-    if (!realtime) return; // Not authenticated yet, or no deviceKey — degrade silently.
+    if (!realtime) return; // No client yet — the poll above re-arms this effect.
     const channel = realtime.channels.get(chatChannelName(conversationId));
     const ownUserId = useAuthStore.getState().user?.id;
 
@@ -2404,15 +2437,45 @@ export default function ChatScreen() {
       setMessages(conversationId, current.filter((m) => !matchesPayload(m, payload.id)) as any);
     };
 
-    void channel.subscribe('msg', onNewMessage);
-    void channel.subscribe('msg.edit', onEdit);
-    void channel.subscribe('msg.delete', onDelete);
+    // ── STOP SWALLOWING THE FAILURES ──────────────────────────────────────────
+    //
+    // These three were `void channel.subscribe(...)`, and the publishes in `handleSend` are
+    // still fire-and-forget. Every one of them returns a promise that rejects when the
+    // channel cannot attach — wrong capability, connection failed, token rejected — and
+    // discarding it makes "realtime is completely dead" look exactly like "nobody sent
+    // anything". That is precisely the state this chat was in: messages only appeared after
+    // leaving and re-entering, i.e. only via the HTTP history fetch.
+    //
+    // The most likely cause of a rejection here is NOT this file. `/api/ably-token` verifies
+    // the Worker-issued JWT with `verifyWorkerToken`, which is fail-closed: if Vercel's
+    // `JWT_SECRET` is missing or differs from the Worker's, it 401s every client, the
+    // `authCallback` errors, and realtime is dead app-wide while plain HTTP keeps working
+    // (HTTP talks to the Worker, which signs and verifies with its own copy). There is
+    // already a purpose-built diagnostic for exactly this: compare
+    // `GET /api/admin/auth-fingerprint` (Vercel) with `GET /v1/admin/auth-fingerprint`
+    // (Worker) — see the long note in api/admin/auth-fingerprint.ts.
+    //
+    // So: log it. A silent realtime outage is the single most expensive failure mode this
+    // app has, because every symptom it produces points somewhere else.
+    const onSubscribeError = (event: string) => (err: unknown) => {
+      if (__DEV__) {
+        console.warn(
+          `[chat] realtime subscribe failed for "${event}" on ${chatChannelName(conversationId)}. ` +
+            'Live messages will not arrive; the chat will only update via the HTTP history ' +
+            'fetch on re-entry. Check /api/ably-token and the JWT_SECRET fingerprints.',
+          err,
+        );
+      }
+    };
+    channel.subscribe('msg', onNewMessage).catch(onSubscribeError('msg'));
+    channel.subscribe('msg.edit', onEdit).catch(onSubscribeError('msg.edit'));
+    channel.subscribe('msg.delete', onDelete).catch(onSubscribeError('msg.delete'));
     return () => {
       try { channel.unsubscribe('msg', onNewMessage); } catch {}
       try { channel.unsubscribe('msg.edit', onEdit); } catch {}
       try { channel.unsubscribe('msg.delete', onDelete); } catch {}
     };
-  }, [conversationId, addMessage, setMessages]);
+  }, [conversationId, addMessage, setMessages, realtimeTick]);
 
   // ── Message search ──────────────────────────────────────────────────────────
   const openSearch = useCallback(() => {
