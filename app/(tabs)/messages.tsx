@@ -610,20 +610,15 @@ function ConversationItemBase({
   // The highlight is what makes a drag legible: without it the row under the finger looks
   // identical to the rows shuffling past it, so there is no feedback about WHAT is being
   // moved. Accent tint plus a border plus a shadow, which together read as "picked up".
-  const liftedStyle: ViewStyle | null = draggingThisRow
-    ? {
-        zIndex: 20,
-        backgroundColor: theme.colors.accent.primary + (theme.isDark ? '2E' : '1F'),
-        borderColor: theme.colors.accent.primary,
-        borderWidth: 1,
-        borderRadius: 14,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 6 },
-        shadowOpacity: theme.isDark ? 0.45 : 0.18,
-        shadowRadius: 12,
-        elevation: 8,
-      }
-    : null;
+  // `zIndex` ONLY — no tint, no border, no shadow.
+  //
+  // A coloured highlight lived here briefly and was removed at the user request. It carried a
+  // real bug worth remembering: the reset ran in `handleDragEnd`, which was called from the
+  // gesture `onEnd`, and `onEnd` does NOT fire when a gesture is cancelled. A drag interrupted
+  // by a scroll or an incoming call therefore left the highlight painted on the row
+  // permanently, and left `dragging` set so the list stayed unscrollable. Both the commit and
+  // the reset now run from `onFinalize`, so nothing here can stick.
+  const liftedStyle: ViewStyle | null = draggingThisRow ? { zIndex: 20 } : null;
 
   // Hold-then-drag. `activateAfterLongPress` is what keeps this from fighting the list's
   // own vertical scroll: a quick flick starting on the handle still scrolls the list,
@@ -650,14 +645,17 @@ function ConversationItemBase({
           const slots = Math.round(e.translationY / MESSAGES_ROW_PITCH);
           dragTo.value = index + slots;
         })
-        .onEnd(() => {
-          'worklet';
-          runOnJS(onDragEnd)();
-        })
         .onFinalize(() => {
           'worklet';
-          // Reset unconditionally: `onEnd` does not fire on a cancelled gesture, and a
-          // stuck `dragFrom` would leave the list permanently displaced.
+          // EVERYTHING happens here — the commit as well as the reset.
+          //
+          // The commit used to run from `onEnd`, which does NOT fire when a gesture is
+          // cancelled. An interrupted drag therefore never called `onDragEnd`, so the JS-side
+          // drag state (`dragging`, `draggingIndex`) stayed set: the list remained
+          // unscrollable and the lifted row remained lifted, with no way back short of
+          // leaving the screen. `onFinalize` is the one phase guaranteed to run on every
+          // outcome, so both the commit and the reset belong here.
+          runOnJS(onDragEnd)();
           dragFrom.value = -1;
           dragTo.value = -1;
           dragOffsetY.value = 0;
@@ -901,27 +899,31 @@ const ChatSearchField = React.memo(function ChatSearchField({
  */
 const RowSeparator = React.memo(function RowSeparator({
   color,
-  editMode,
   editProgress,
 }: {
   color: string;
-  editMode: boolean;
   editProgress: SharedValue<number>;
 }) {
-  // Layout still commits ONCE (the `marginLeft` below), and the motion is a transform.
-  // Animating `marginLeft` directly — which this used to do — meant a layout pass per frame
-  // for every separator in the list.
-  const shiftStyle = useEditShiftStyle(editProgress, editMode);
+  // CONSTANT inset, transform-only motion, and no `editMode` prop at all.
+  //
+  // Third iteration here, and each one fixed the previous one cost:
+  //   1. animated `marginLeft` — a layout pass per frame for every separator in the list;
+  //   2. `marginLeft` snapping on a mode flag with a transform compensating for it — no
+  //      per-frame layout, but taking `editMode` as a PROP put it in the parent callback
+  //      dependency list, and a fresh `ItemSeparatorComponent` identity makes React unmount
+  //      and remount every separator in the list. That teardown burst landed on the same
+  //      frames as the rows starting to slide, which is the intermittent "sometimes it jerks";
+  //   3. this: the inset never changes and the whole shift is a transform read from the shared
+  //      value. No layout at any point, and nothing that can invalidate the parent callback.
+  //
+  // The formula matches the row shift at every value of `editProgress`, which is what keeps
+  // the hairline aligned with the text column it belongs to throughout the transition.
+  const shiftStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: editProgress.value * SELECT_COLUMN_WIDTH }],
+  }));
   return (
     <Reanimated.View
-      style={[
-        {
-          height: 0.5,
-          backgroundColor: color,
-          marginLeft: 68 + (editMode ? SELECT_COLUMN_WIDTH : 0),
-        },
-        shiftStyle,
-      ]}
+      style={[{ height: 0.5, backgroundColor: color, marginLeft: 68 }, shiftStyle]}
     />
   );
 });
@@ -2031,8 +2033,13 @@ export default function MessagesScreen() {
   // column, so the inset has to travel with them or the hairlines visibly fail
   // to line up with the content above them.
   const renderSeparator = useCallback(
-    () => <RowSeparator color={separatorColor} editMode={editMode} editProgress={editProgress} />,
-    [separatorColor, editMode, editProgress],
+    () => <RowSeparator color={separatorColor} editProgress={editProgress} />,
+    // `editMode` is deliberately NOT here. This file already documents what a fresh
+    // `ItemSeparatorComponent` identity costs: React treats it as a new component TYPE and
+    // unmounts + remounts EVERY separator in the list. With `editMode` in this list that
+    // happened on every Edit/Done tap, in the same commit as the rows starting to slide —
+    // see the note on `RowSeparator`. Both remaining deps are stable, so this is created once.
+    [separatorColor, editProgress],
   );
 
   // ─── Category-tab chips — memoized data + renderItem ──────────────────────
