@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { Post } from '../types';
-import { listEqualOn, POST_FIELDS } from '../utils/listEquality';
+import { postsEqual } from '../utils/listEquality';
 
 export type { Post } from '../types';
 
@@ -61,7 +61,7 @@ export const useFeedStore = create<FeedStoreState>()((set) => ({
   // still advanced when the content turns out to be identical.
   setPosts: (posts) =>
     set((state) =>
-      listEqualOn(state.posts, posts, POST_FIELDS)
+      postsEqual(state.posts, posts)
         ? { lastFeedFetch: Date.now() }
         : { posts, lastFeedFetch: Date.now() },
     ),
@@ -100,7 +100,7 @@ export const useFeedStore = create<FeedStoreState>()((set) => ({
   // identical.
   setProfilePosts: (posts) =>
     set((state) =>
-      listEqualOn(state.profilePosts, posts, POST_FIELDS)
+      postsEqual(state.profilePosts, posts)
         ? { lastProfileFetch: Date.now() }
         : { profilePosts: posts, lastProfileFetch: Date.now() },
     ),
