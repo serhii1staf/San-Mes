@@ -177,7 +177,7 @@ export function CommentContextMenu({ visible, comment, isOwn, displayBody, reply
         <Animated.View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', opacity: fade }} />
 
         <Animated.View
-          style={{ flex: 1, justifyContent: 'flex-end', paddingBottom: Math.max(insets.bottom, 16), opacity: fade, transform: [{ translateY: slideAnim }] }}
+          style={{ flex: 1, justifyContent: 'flex-end', paddingBottom: 16, opacity: fade, transform: [{ translateY: slideAnim }] }}
           pointerEvents="box-none"
         >
           {/* Held comment preview — wide so rich previews fit */}

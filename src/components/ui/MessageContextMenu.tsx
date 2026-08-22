@@ -18,6 +18,16 @@ const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = Dimensions.get('window');
 // Same proportion as CommentContextMenu — works well in practice and keeps the
 // preview from ever pushing the action sheet off-screen on tall content.
 const PREVIEW_MAX_HEIGHT = SCREEN_HEIGHT * 0.45;
+
+/**
+ * Distance from the bottom of the screen to the bottom of the sheet.
+ *
+ * Deliberately a fixed 16 rather than the safe-area inset: this is the value the
+ * feed's `PostMenuModal` uses, and both are the same long-press action sheet, so
+ * they must sit at the same height. Using the inset here put this menu ~26 pt higher
+ * than the post menu on devices with a home indicator.
+ */
+const SHEET_BOTTOM_GAP = 16;
 const LONG_TEXT_THRESHOLD = 220;
 
 export type MessageAction = 'reply' | 'copy' | 'copyImage' | 'edit' | 'delete' | 'translate';
@@ -351,7 +361,12 @@ export const MessageContextMenu = forwardRef<MessageContextMenuHandle, MessageCo
       </Animated.View>
 
       {/* Sheet */}
-      <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, paddingBottom: Math.max(insets.bottom, 16) }} pointerEvents="box-none">
+      {/* Bottom spacing matches the feed's PostMenuModal exactly (`marginBottom: 16`,
+          no safe-area padding). This menu used `Math.max(insets.bottom, 16)`, which
+          on a device with a home indicator is ~34 pt — so it sat roughly 26 pt
+          higher than the post menu and read as floating too far up the screen. The
+          two menus are the same interaction and must land at the same height. */}
+      <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, paddingBottom: SHEET_BOTTOM_GAP }} pointerEvents="box-none">
         <Animated.View style={{ transform: [{ translateY: slideAnim }] }} pointerEvents="box-none">
           {/* Held message preview — neutral elevated card (same pattern as
               CommentContextMenu). Wide enough to fit rich previews; scrolls
