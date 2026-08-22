@@ -15,6 +15,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { Platform } from 'react-native';
 import { uploadToR2 } from './r2';
+import type { UploadFailureReason } from './uploadFailure';
 import {
   apiDelete,
   apiGet,
@@ -83,7 +84,9 @@ export async function uploadChatImage(imageUri: string): Promise<{ url: string |
 }
 
 /** Upload post image to storage, return public URL. */
-export async function uploadPostImage(imageUri: string): Promise<{ url: string | null; error: string | null }> {
+export async function uploadPostImage(
+  imageUri: string,
+): Promise<{ url: string | null; error: string | null; reason?: UploadFailureReason }> {
   try {
     let finalUri = imageUri;
     let contentType = 'image/jpeg';
@@ -102,9 +105,13 @@ export async function uploadPostImage(imageUri: string): Promise<{ url: string |
     const filename = `post_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.${fileExt}`;
     const r2 = await uploadToR2(finalUri, `post/${filename}`, contentType);
     if (r2.url) return { url: r2.url, error: null };
-    return { url: null, error: r2.error || 'Upload failed' };
+    // `reason` is forwarded so the create screen can decide between "show the
+    // user an actionable message and keep their draft" and "hand it to the
+    // offline queue". Without it the caller only sees a string and cannot tell a
+    // permanent auth failure from a transient network one.
+    return { url: null, error: r2.error || 'Upload failed', reason: r2.reason };
   } catch (e: any) {
-    return { url: null, error: e?.message || 'Unknown error' };
+    return { url: null, error: e?.message || 'Unknown error', reason: 'server_error' };
   }
 }
 

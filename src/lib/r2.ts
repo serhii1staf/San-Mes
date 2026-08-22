@@ -8,6 +8,10 @@
 // behind Cloudflare's CDN, so reads cost zero egress forever — the whole
 // point of moving image hosting off Supabase.
 
+// Pure module, no dependencies of its own, so a static import here cannot create
+// a cycle — and the error path must be able to classify without an await.
+import { classifyUploadFailure, type UploadFailureReason } from './uploadFailure';
+
 const UPLOAD_ENDPOINT = 'https://san-m-app.com/api/r2-upload';
 
 /**
@@ -22,7 +26,19 @@ type UploadPrefix = 'posts' | 'avatars' | 'banners' | 'chat';
 
 interface UploadResult {
   url: string | null;
+  /**
+   * Short, non-leaking summary for logs and for legacy call sites.
+   *
+   * This used to be `upload failed (${status}) ${detail}` where `detail` was the
+   * raw response body — which is how `{"error":"unauthorised"}` ended up in a
+   * user-facing alert. The body is no longer interpolated anywhere.
+   */
   error: string | null;
+  /**
+   * Machine-readable cause. Prefer this over `error` at any call site that shows
+   * something to the user or decides whether to retry.
+   */
+  reason?: UploadFailureReason;
 }
 
 const PREFIX_BY_KEY: Record<string, UploadPrefix> = {
@@ -95,7 +111,9 @@ export async function uploadToR2(
     // client, and read at call time so a token refreshed mid-session is picked up.
     const { getAuthToken } = await import('../services/authClient');
     const token = getAuthToken();
-    if (!token) return { url: null, error: 'not signed in' };
+    if (!token) {
+      return { url: null, error: 'not signed in', reason: 'not_signed_in' };
+    }
 
     // ── Timeout ──────────────────────────────────────────────────────────────
     // This upload had NO timeout, and it is the worst place in the app to be
@@ -122,22 +140,42 @@ export async function uploadToR2(
     } catch (e: any) {
       // An abort surfaces as a distinct, actionable error so the retry logic in
       // `offlineQueue` can back off instead of treating it as a permanent failure.
-      if (e?.name === 'AbortError') return { url: null, error: 'upload timed out' };
-      throw e;
+      if (e?.name === 'AbortError') {
+        return {
+          url: null,
+          error: 'upload timed out',
+          reason: classifyUploadFailure({ status: null, transportError: 'abort', token }),
+        };
+      }
+      // Any other throw from `fetch` is a transport failure, not an HTTP result.
+      // Classifying it as `offline` lets the caller queue it rather than showing a
+      // dead end; previously it escaped to the outer catch and became the opaque
+      // `e?.message`.
+      return {
+        url: null,
+        error: 'network error',
+        reason: classifyUploadFailure({ status: null, transportError: 'network', token }),
+      };
     } finally {
       clearTimeout(abortTimer);
     }
 
     if (!res.ok) {
-      let detail = '';
-      try { detail = await res.text(); } catch {}
-      return { url: null, error: `upload failed (${res.status}) ${detail}`.slice(0, 400) };
+      // The response body is deliberately NOT read into the returned error. It is
+      // what put `{"error":"unauthorised"}` in front of the user. The status code
+      // plus the token's own `exp` is everything the classifier needs.
+      const reason = classifyUploadFailure({ status: res.status, token });
+      return { url: null, error: `upload failed (${res.status})`, reason };
     }
 
     const data = (await res.json()) as { url?: string };
-    if (!data?.url) return { url: null, error: 'malformed response' };
+    if (!data?.url) {
+      return { url: null, error: 'malformed response', reason: 'server_error' };
+    }
     return { url: data.url, error: null };
   } catch (e: any) {
-    return { url: null, error: e?.message || 'Unknown error' };
+    // Reached only for failures outside the network call itself — reading the
+    // local file, or parsing the success body.
+    return { url: null, error: e?.message || 'Unknown error', reason: 'server_error' };
   }
 }

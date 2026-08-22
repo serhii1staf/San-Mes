@@ -3,15 +3,21 @@ import { View, ScrollView, Pressable, TextInput, Alert, Modal, FlatList, Activit
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { CachedImage } from '../../src/components/ui/CachedImage';
 import { parseImageUrls, adminDeletePost } from '../../src/lib/supabase';
 import { apiGet, apiPatch } from '../../src/services/apiClient';
 import { kvGetStringRawSync, kvSetStringRaw, kvDeleteRaw } from '../../src/services/kvStore';
+import {
+  adminFailureMessageKey,
+  classifyAdminFailure,
+  configWarningKeys,
+  shouldDiscardStoredKey,
+  type AdminFailureReason,
+} from '../../src/lib/adminFailure';
 import { useFeedStore } from '../../src/store/feedStore';
-import { accountKey } from '../../src/services/cacheService';
+import { removeFromPostCaches } from '../../src/services/postCacheWrite';
 import { formatTimeAgo } from '../../src/utils/mockData';
 import { t as tStatic, useT, useI18nStore } from '../../src/i18n/store';
 
@@ -38,11 +44,25 @@ interface UsageItem {
   extra?: string;
   measured: boolean;
 }
+/**
+ * Configuration diagnostics. Present only on a 200, i.e. only after the admin key
+ * has been accepted. Optional because an older deployment will not send it.
+ */
+interface StatusConfig {
+  r2Measured: boolean;
+  r2Debug: string | null;
+  /** Did the Worker accept the admin key Vercel forwarded? */
+  workerAdminKeyOk: boolean;
+  /** Do Vercel and the Worker hold the same JWT_SECRET? null = could not check. */
+  jwtSecretsMatch: boolean | null;
+  jwtConfiguredHere: boolean;
+}
 interface StatusResponse {
   generatedAt: string;
   services: ServiceStatus[];
   usage?: UsageItem[];
   metrics: { profiles: number | null; posts: number | null; comments: number | null; dbLatencyMs: number; storageBytes?: number; storageObjects?: number };
+  config?: StatusConfig;
 }
 
 const BADGES = [
@@ -76,26 +96,113 @@ export default function AdminScreen() {
   const [statusLoading, setStatusLoading] = useState(false);
   const [statusError, setStatusError] = useState<string | null>(null);
 
-  const loadStatus = useCallback(async () => {
-    setStatusLoading(true);
-    setStatusError(null);
+  /**
+   * Drop the persisted admin key and return to the password gate.
+   *
+   * Separate from `handleAdminLogout` (which is the explicit user action) so the
+   * automatic path can be triggered from a failed request without implying the
+   * operator asked to log out. Same effect, different caller.
+   */
+  const discardStoredAdminKey = useCallback(() => {
+    kvDeleteRaw(ADMIN_KEY_STORAGE_KEY);
+    adminKeyRef.current = null;
+    setAuthenticated(false);
+    setUsers([]);
+    setSelectedUser(null);
+    setUserPosts([]);
+    setShowStatus(false);
+    setStatusData(null);
+  }, []);
+
+  /**
+   * Issue the status request and reduce every outcome to a classified reason.
+   *
+   * Extracted so `loadStatus` and `handleUnlock` cannot drift apart: they hit the
+   * same endpoint and previously interpreted its failures differently, which is
+   * part of why the same server state produced different messages depending on
+   * whether you were unlocking or refreshing.
+   */
+  const requestStatus = async (
+    adminKey: string,
+  ): Promise<
+    | { ok: true; data: StatusResponse }
+    | { ok: false; reason: AdminFailureReason; status: number | null }
+  > => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 12000);
     try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 12000);
       const resp = await fetch(STATUS_ENDPOINT, {
-        headers: { 'x-admin-key': adminKeyRef.current ?? '' },
+        headers: { 'x-admin-key': adminKey },
         signal: controller.signal,
       });
       clearTimeout(timer);
-      if (!resp.ok) throw new Error(tStatic('admin.error.server_returned', undefined, { code: String(resp.status) }));
-      const json = (await resp.json()) as StatusResponse;
-      setStatusData(json);
+
+      if (resp.ok) {
+        return { ok: true, data: (await resp.json()) as StatusResponse };
+      }
+
+      // Read the body marker: both "env var missing" and "service down" are 503,
+      // and only the body tells them apart.
+      let bodyError: string | null = null;
+      try {
+        const body = (await resp.json()) as { error?: string };
+        bodyError = body?.error ?? null;
+      } catch {
+        // A 503 from the platform itself (rather than our handler) has no JSON
+        // body. That absence is meaningful — it means "not our handler" — so it
+        // is passed through as null rather than treated as a parse failure.
+      }
+
+      return {
+        ok: false,
+        reason: classifyAdminFailure({ status: resp.status, bodyError }),
+        status: resp.status,
+      };
     } catch (e: any) {
-      setStatusError(e?.message || tStatic('admin.error.load_status'));
-    } finally {
-      setStatusLoading(false);
+      clearTimeout(timer);
+      // An abort is our own 12 s timeout, not a server response. It used to land
+      // in the generic catch and surface as a raw `e?.message`.
+      const transportError = e?.name === 'AbortError' ? 'abort' : 'network';
+      return {
+        ok: false,
+        reason: classifyAdminFailure({ status: null, transportError }),
+        status: null,
+      };
     }
-  }, []);
+  };
+
+  /** Build the user-facing message for a classified admin failure. */
+  const adminFailureText = useCallback(
+    (reason: AdminFailureReason, status: number | null): string => {
+      const base = tStatic(adminFailureMessageKey(reason), undefined, {
+        code: String(status ?? '—'),
+      });
+      // Only `not_configured` gets a remediation hint, because it is the only
+      // reason the operator can act on directly.
+      return reason === 'not_configured'
+        ? `${base}\n\n${tStatic('admin.error.not_configured_hint')}`
+        : base;
+    },
+    [],
+  );
+
+  const loadStatus = useCallback(async () => {
+    setStatusLoading(true);
+    setStatusError(null);
+    const res = await requestStatus(adminKeyRef.current ?? '');
+    if (res.ok) {
+      setStatusData(res.data);
+    } else {
+      setStatusError(adminFailureText(res.reason, res.status));
+      // A rejected key means the stored one is dead — most likely because it was
+      // rotated. Returning to the gate is the state that matches reality; staying
+      // in an open panel with a dead key shows empty lists and no explanation.
+      if (shouldDiscardStoredKey(res.reason)) discardStoredAdminKey();
+    }
+    setStatusLoading(false);
+    // `adminFailureText` and `discardStoredAdminKey` are stable useCallback([]).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adminFailureText]);
 
   const openStatus = () => {
     setShowStatus(true);
@@ -112,26 +219,20 @@ export default function AdminScreen() {
     if (!candidate || unlocking) return;
     setUnlocking(true);
     try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 12000);
-      const resp = await fetch(STATUS_ENDPOINT, {
-        headers: { 'x-admin-key': candidate },
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
-      if (resp.ok) {
+      const res = await requestStatus(candidate);
+      if (res.ok) {
         kvSetStringRaw(ADMIN_KEY_STORAGE_KEY, candidate);
         adminKeyRef.current = candidate;
         setPassword('');
         setAuthenticated(true);
+        setStatusData(res.data);
         loadUsers();
-      } else if (resp.status === 401 || resp.status === 403) {
-        Alert.alert(t('common.error'), t('admin.error.wrong_password'));
-      } else {
-        Alert.alert(t('common.error'), tStatic('admin.error.server_returned', undefined, { code: String(resp.status) }));
+        return;
       }
-    } catch (e: any) {
-      Alert.alert(t('common.error'), e?.message || t('admin.error.load_status'));
+      // Every failure now names itself. `not_configured` in particular tells the
+      // operator the password is irrelevant — there is no correct one until the
+      // env var is set — instead of implying they typed it wrong.
+      Alert.alert(t('common.error'), adminFailureText(res.reason, res.status));
     } finally {
       setUnlocking(false);
     }
@@ -140,15 +241,8 @@ export default function AdminScreen() {
   // Forget the stored admin key and return to the locked gate. Clears all
   // in-memory admin data so nothing lingers after "logout".
   const handleAdminLogout = () => {
-    kvDeleteRaw(ADMIN_KEY_STORAGE_KEY);
-    adminKeyRef.current = null;
-    setAuthenticated(false);
+    discardStoredAdminKey();
     setPassword('');
-    setUsers([]);
-    setSelectedUser(null);
-    setUserPosts([]);
-    setShowStatus(false);
-    setStatusData(null);
   };
 
   // On mount: if a validated admin key was previously persisted, hydrate it
@@ -210,19 +304,9 @@ export default function AdminScreen() {
         // Remove from Zustand feed store
         useFeedStore.getState().removePost(postId);
 
-        // Remove from AsyncStorage caches
-        try {
-          const feedCached = await AsyncStorage.getItem(accountKey('@san:feed_posts'));
-          if (feedCached) {
-            const posts = JSON.parse(feedCached).filter((p: any) => p.id !== postId);
-            await AsyncStorage.setItem(accountKey('@san:feed_posts'), JSON.stringify(posts));
-          }
-          const myCached = await AsyncStorage.getItem(accountKey('@san:my_posts'));
-          if (myCached) {
-            const posts = JSON.parse(myCached).filter((p: any) => p.id !== postId);
-            await AsyncStorage.setItem(accountKey('@san:my_posts'), JSON.stringify(posts));
-          }
-        } catch {}
+        // Through kvStore. The old direct AsyncStorage delete left the post in the
+        // store the feed actually reads, so a deleted post reappeared on next open.
+        removeFromPostCaches(postId);
       }},
     ]);
   };
@@ -388,6 +472,7 @@ export default function AdminScreen() {
   if (showStatus) {
     const dot = (s: string) => (s === 'online' ? '#10B981' : s === 'degraded' ? '#F59E0B' : '#EF4444');
     const dotLabel = (s: string) => (s === 'online' ? t('admin.status.online') : s === 'degraded' ? t('admin.status.degraded') : t('admin.status.offline'));
+    const configWarnings = configWarningKeys(statusData?.config);
     return (
       <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', paddingTop: insets.top + 8, paddingBottom: 12, paddingHorizontal: 16, gap: 12 }}>
@@ -413,6 +498,22 @@ export default function AdminScreen() {
           </View>
         ) : statusData ? (
           <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
+            {/* Configuration warnings.
+                These sit above everything else because each one explains a symptom
+                that otherwise looks like a different problem entirely: a JWT_SECRET
+                mismatch presents as "image upload broken", and a Worker admin-key
+                mismatch presents as "the database is down". */}
+            {configWarnings.length > 0 && (
+              <View style={{ backgroundColor: '#F59E0B15', borderRadius: 16, padding: 14, marginTop: 4, marginBottom: 12, borderWidth: 1, borderColor: '#F59E0B40', gap: 8 }}>
+                {configWarnings.map((key) => (
+                  <View key={key} style={{ flexDirection: 'row', gap: 8, alignItems: 'flex-start' }}>
+                    <Feather name="alert-triangle" size={14} color="#F59E0B" style={{ marginTop: 2 }} />
+                    <Text variant="caption" color={theme.colors.text.secondary} style={{ flex: 1 }}>{t(key)}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
+
             {/* Services */}
             <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginBottom: 8, marginTop: 4 }}>{t('admin.section.services')}</Text>
             {statusData.services.map((s) => (
@@ -434,7 +535,13 @@ export default function AdminScreen() {
               <>
                 <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginBottom: 8, marginTop: 16 }}>{t('admin.section.usage')}</Text>
                 {statusData.usage.map((u) => (
-                  <UsageBar key={u.key} theme={theme} item={u} t={t} />
+                  <UsageBar
+                    key={u.key}
+                    theme={theme}
+                    item={u}
+                    t={t}
+                    debugReason={u.key === 'r2_storage' ? statusData.config?.r2Debug ?? null : null}
+                  />
                 ))}
               </>
             )}
@@ -537,24 +644,55 @@ function formatBytes(n: number): string {
   return `${(n / 1024 / 1024 / 1024).toFixed(2)} ${tStatic('storage.unit.gb')}`;
 }
 
-function UsageBar({ theme, item, t }: { theme: any; item: { label: string; used: number; limit: number; unit: string; extra?: string; measured: boolean }; t: (key: string, fallback?: string, vars?: Record<string, string | number>) => string }) {
+/**
+ * Which estimation method produced an unmeasured bar.
+ *
+ * Both bars can be estimates, but for different reasons, and saying which one
+ * applies is the difference between "this number is made up" and "this number is
+ * made up THIS way" — the latter tells the operator whether to trust it.
+ */
+function estimationMethodKey(usageKey: string): string | null {
+  if (usageKey === 'r2_storage') return 'admin.usage.est_images';
+  if (usageKey === 'db_size') return 'admin.usage.est_rows';
+  return null;
+}
+
+function UsageBar({ theme, item, t, debugReason }: { theme: any; item: { key: string; label: string; used: number; limit: number; unit: string; extra?: string; measured: boolean }; t: (key: string, fallback?: string, vars?: Record<string, string | number>) => string; debugReason?: string | null }) {
   const ratio = item.limit > 0 ? Math.min(item.used / item.limit, 1) : 0;
   const pct = Math.round(ratio * 100);
   const color = ratio > 0.9 ? '#EF4444' : ratio > 0.7 ? '#F59E0B' : '#10B981';
   const fmt = item.unit === 'bytes' ? formatBytes : (x: number) => String(x);
+  const methodKey = item.measured ? null : estimationMethodKey(item.key);
   return (
     <View style={{ backgroundColor: theme.colors.background.elevated, borderRadius: 16, padding: 14, marginBottom: 8, borderWidth: 1, borderColor: theme.colors.border.light }}>
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-        <Text variant="caption" weight="semibold" numberOfLines={1} style={{ flex: 1 }}>{item.label}{!item.measured ? ' ~' : ''}</Text>
-        <Text variant="caption" weight="semibold" color={color}>{pct}%</Text>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, gap: 8 }}>
+        <Text variant="caption" weight="semibold" numberOfLines={1} style={{ flexShrink: 1 }}>{item.label}</Text>
+        {/* Was a lone ' ~' appended to the label — indistinguishable from a typo,
+            and present on the always-estimated db bar too, so it read as noise.
+            An explicit pill states the fact instead of hinting at it. */}
+        {!item.measured ? (
+          <View style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, backgroundColor: '#F59E0B22' }}>
+            <Text variant="caption" weight="semibold" color="#F59E0B" style={{ fontSize: 10 }}>{t('admin.usage.unmeasured')}</Text>
+          </View>
+        ) : null}
+        <Text variant="caption" weight="semibold" color={color} style={{ marginLeft: 'auto' }}>{pct}%</Text>
       </View>
       <View style={{ height: 8, borderRadius: 4, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)', overflow: 'hidden' }}>
         <View style={{ width: `${pct}%`, height: '100%', backgroundColor: color, borderRadius: 4 }} />
       </View>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 }}>
-        <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{t('admin.usage.of', undefined, { used: fmt(item.used), total: fmt(item.limit) })}</Text>
+        {/* An estimated value is dimmed so the eye does not read it as a fact. */}
+        <Text variant="caption" color={item.measured ? theme.colors.text.tertiary : theme.colors.text.quaternary ?? theme.colors.text.tertiary} style={{ fontSize: 11, opacity: item.measured ? 1 : 0.7 }}>{t('admin.usage.of', undefined, { used: fmt(item.used), total: fmt(item.limit) })}</Text>
         {item.extra ? <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 11 }}>{item.extra}</Text> : null}
       </View>
+      {methodKey ? (
+        <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 10, marginTop: 4 }}>{t(methodKey)}</Text>
+      ) : null}
+      {/* Why the measurement did not happen — e.g. `r2_not_configured`, `http 403`.
+          Without this the operator sees an estimate and no way to make it real. */}
+      {!item.measured && debugReason ? (
+        <Text variant="caption" color={theme.colors.text.tertiary} style={{ fontSize: 10, marginTop: 2 }}>{t('admin.usage.unmeasured_reason', undefined, { reason: debugReason })}</Text>
+      ) : null}
     </View>
   );
 }

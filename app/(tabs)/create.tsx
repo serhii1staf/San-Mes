@@ -13,6 +13,9 @@ import { useAuthStore } from '../../src/store/authStore';
 import { useFeedStore } from '../../src/store/feedStore';
 import { useConnectivityStore } from '../../src/store';
 import { createRepost, createPost, uploadPostImage, joinImageUrls } from '../../src/lib/supabase';
+import { uploadFailureMessageKey, type UploadFailureReason } from '../../src/lib/uploadFailure';
+import { uploadImageBatch } from '../../src/lib/uploadBatch';
+import { prependToPostCaches, updateInPostCaches } from '../../src/services/postCacheWrite';
 import { queueMutation, generateTempId } from '../../src/services/offlineQueue';
 import { sanitizeUserText } from '../../src/utils/sanitizeText';
 import { accountKey } from '../../src/services/cacheService';
@@ -190,20 +193,27 @@ export default function CreateScreen() {
     }
   };
 
-  const uploadImage = async (uri: string): Promise<string | null> => {
-    try {
-      const { url, error } = await uploadPostImage(uri);
-      if (error) {
-        console.log('Upload error:', error);
-        Alert.alert(t('create.alert.upload_error_title'), t('create.alert.upload_error_msg', undefined, { reason: error }));
-        return null;
-      }
-      return url;
-    } catch (e: any) {
-      console.log('Upload failed:', e);
-      Alert.alert(t('create.alert.upload_error_title'), t('create.alert.upload_error_msg', undefined, { reason: e?.message || t('create.alert.unknown_error') }));
-      return null;
-    }
+  /**
+   * Upload every picked image, or fail the whole batch.
+   *
+   * The logic lives in `src/lib/uploadBatch.ts` rather than here so it is covered
+   * by tests that run the real code path instead of a re-implementation.
+   */
+  const uploadAllImages = (uris: string[]) => uploadImageBatch(uris, uploadPostImage);
+
+  /**
+   * Report an aborted upload without destroying what the user typed or picked.
+   *
+   * The draft is preserved simply by NOT clearing it — the caller returns before
+   * reaching any `setContent('')` / `setImageUris([])` / `router.replace`. Saying
+   * so in the alert matters: otherwise the user assumes the post is gone and
+   * retypes it.
+   */
+  const showUploadAborted = (reason: UploadFailureReason) => {
+    Alert.alert(
+      t('create.alert.upload_error_title'),
+      `${t(uploadFailureMessageKey(reason))}\n\n${t('create.upload_fail.draft_kept')}`,
+    );
   };
 
   const handlePost = async () => {
@@ -264,18 +274,19 @@ export default function CreateScreen() {
         // Upload images if user added any
         if (imageUris.length > 0) {
           setImageUploading(true);
-          const uploadedUrls: string[] = [];
-          for (const uri of imageUris) {
-            if (uri.startsWith('https://')) {
-              uploadedUrls.push(uri);
-            } else {
-              const uploadedUrl = await uploadImage(uri);
-              if (uploadedUrl) uploadedUrls.push(uploadedUrl);
-            }
-          }
+          const batch = await uploadAllImages(imageUris);
           setImageUploading(false);
-          if (uploadedUrls.length > 0) {
-            repostImageUrl = joinImageUrls(uploadedUrls);
+          if (batch.outcome !== 'ok') {
+            // There is no offline-queue path for reposts, so a transient failure
+            // is handled the same way as a permanent one: stop, explain, and keep
+            // the draft. Publishing the repost without the image the user attached
+            // would be worse than not publishing it.
+            showUploadAborted(batch.reason);
+            setIsPosting(false);
+            return;
+          }
+          if (batch.urls.length > 0) {
+            repostImageUrl = joinImageUrls(batch.urls);
           }
         }
 
@@ -323,15 +334,9 @@ export default function CreateScreen() {
               imageUrls: repostData.imageUrl ? [repostData.imageUrl] : undefined,
             },
           };
-          try {
-            const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
-            const feedCached = await AsyncStorage.getItem(accountKey('@san:feed_posts'));
-            const feedPosts = feedCached ? JSON.parse(feedCached) : [];
-            await AsyncStorage.setItem(accountKey('@san:feed_posts'), JSON.stringify([newRepost, ...feedPosts].slice(0, 20)));
-            const myCached = await AsyncStorage.getItem(accountKey('@san:my_posts'));
-            const myPosts = myCached ? JSON.parse(myCached) : [];
-            await AsyncStorage.setItem(accountKey('@san:my_posts'), JSON.stringify([newRepost, ...myPosts].slice(0, 20)));
-          } catch {}
+          // Through kvStore, so the feed actually sees it. The previous direct
+          // AsyncStorage write went to a store the feed never reads.
+          prependToPostCaches(newRepost);
           const currentProfilePosts = useFeedStore.getState().profilePosts;
           useFeedStore.getState().setProfilePosts([newRepost, ...currentProfilePosts].slice(0, 20));
         }
@@ -352,22 +357,17 @@ export default function CreateScreen() {
 
           if (imageUris.length > 0) {
             setImageUploading(true);
-            const uploadedUrls: string[] = [];
-            for (const uri of imageUris) {
-              if (uri.startsWith('https://')) {
-                // Existing remote URL — use as-is without re-uploading
-                uploadedUrls.push(uri);
-              } else {
-                // Local file (file://) — upload via uploadPostImage
-                const uploadedUrl = await uploadImage(uri);
-                if (uploadedUrl) {
-                  uploadedUrls.push(uploadedUrl);
-                }
-              }
-            }
+            const batch = await uploadAllImages(imageUris);
             setImageUploading(false);
-            if (uploadedUrls.length > 0) {
-              imageUrl = joinImageUrls(uploadedUrls);
+            if (batch.outcome !== 'ok') {
+              // Editing has no queue path either. Critically, continuing here
+              // would PATCH `image_url: null` and destroy the images already on
+              // the post — a failed upload would delete existing content.
+              showUploadAborted(batch.reason);
+              return;
+            }
+            if (batch.urls.length > 0) {
+              imageUrl = joinImageUrls(batch.urls);
             }
           }
 
@@ -392,26 +392,9 @@ export default function CreateScreen() {
             imageUrls: parsedImages.length > 0 ? parsedImages : undefined,
           };
 
-          // Update AsyncStorage cache — find post by id and replace data
-          const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
-
-          const feedCached = await AsyncStorage.getItem(accountKey('@san:feed_posts'));
-          if (feedCached) {
-            const feedPosts = JSON.parse(feedCached);
-            const updatedFeed = feedPosts.map((p: any) =>
-              p.id === editingPostId ? { ...p, ...updatedPostData } : p
-            );
-            await AsyncStorage.setItem(accountKey('@san:feed_posts'), JSON.stringify(updatedFeed));
-          }
-
-          const myCached = await AsyncStorage.getItem(accountKey('@san:my_posts'));
-          if (myCached) {
-            const myPosts = JSON.parse(myCached);
-            const updatedMy = myPosts.map((p: any) =>
-              p.id === editingPostId ? { ...p, ...updatedPostData } : p
-            );
-            await AsyncStorage.setItem(accountKey('@san:my_posts'), JSON.stringify(updatedMy));
-          }
+          // Through kvStore — the edit used to land in AsyncStorage while the feed
+          // read MMKV, so an edited post kept showing its old text until a refetch.
+          updateInPostCaches(editingPostId, updatedPostData);
 
           // Update Zustand store
           useFeedStore.getState().updatePost(editingPostId, updatedPostData);
@@ -441,16 +424,37 @@ export default function CreateScreen() {
 
           if (imageUris.length > 0) {
             setImageUploading(true);
-            const uploadedUrls: string[] = [];
-            for (const uri of imageUris) {
-              const uploadedUrl = await uploadImage(uri);
-              if (uploadedUrl) {
-                uploadedUrls.push(uploadedUrl);
-              }
-            }
+            const batch = await uploadAllImages(imageUris);
             setImageUploading(false);
-            if (uploadedUrls.length > 0) {
-              imageUrl = joinImageUrls(uploadedUrls);
+
+            if (batch.outcome === 'aborted') {
+              // Auth, validation or server failure. Retrying blindly will not fix
+              // it, so stop here and keep everything: `createPost` is NOT called,
+              // the draft and the picked images survive, and there is no
+              // navigation. This is the branch that previously published a
+              // text-only post and then wiped the form.
+              showUploadAborted(batch.reason);
+              return;
+            }
+
+            if (batch.outcome === 'queue') {
+              // Transient transport failure — existing behaviour preserved: queue
+              // the LOCAL uris and let `offlineQueue` upload them on retry.
+              await queueMutation('create_post', {
+                tempId,
+                authorId: user.id,
+                content: postContent,
+                imageUris: [...imageUris],
+              });
+              setContent('');
+              setImageUris([]);
+              setIsSpoilerPhoto(false);
+              router.replace('/(tabs)');
+              return;
+            }
+
+            if (batch.urls.length > 0) {
+              imageUrl = joinImageUrls(batch.urls);
             }
           }
 
@@ -478,16 +482,9 @@ export default function CreateScreen() {
               isRepost: false,
             };
 
-            // Update feed cache
-            const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
-            const feedCached = await AsyncStorage.getItem(accountKey('@san:feed_posts'));
-            const feedPosts = feedCached ? JSON.parse(feedCached) : [];
-            await AsyncStorage.setItem(accountKey('@san:feed_posts'), JSON.stringify([newPost, ...feedPosts].slice(0, 20)));
-
-            // Update profile posts cache
-            const myCached = await AsyncStorage.getItem(accountKey('@san:my_posts'));
-            const myPosts = myCached ? JSON.parse(myCached) : [];
-            await AsyncStorage.setItem(accountKey('@san:my_posts'), JSON.stringify([newPost, ...myPosts].slice(0, 20)));
+            // Both caches, through kvStore, so the new post is on screen the
+            // instant we navigate back instead of after the next network round trip.
+            prependToPostCaches(newPost);
 
             // Update Zustand profile posts store so profile shows the new post immediately
             const currentProfilePosts = useFeedStore.getState().profilePosts;

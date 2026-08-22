@@ -88,6 +88,59 @@ register('GET', '/v1/admin/counts', async (req, env) => {
   });
 });
 
+// ── GET /v1/admin/auth-fingerprint ───────────────────────────────────
+//
+// Reports which `JWT_SECRET` this Worker signs with — as a truncated HMAC over a
+// public constant, never as the secret itself.
+//
+// The Worker is the auth authority: it signs the HS256 tokens (`../auth.ts`) that
+// the Vercel functions verify with their own copy of the same secret. When the two
+// copies drift, `api/_lib/verifyToken.ts` fails closed and EVERY upload gets
+// `401 unauthorised` — indistinguishable, from the client, from a bad token.
+// Comparing this fingerprint with `GET /api/admin/auth-fingerprint` on Vercel
+// resolves that ambiguity without either side transmitting the key.
+//
+// Must stay byte-compatible with `api/_lib/authFingerprint.ts`: same message, same
+// truncation. Different crypto APIs (Web Crypto here, Node `crypto` there), same
+// digest — that equivalence is asserted by a unit test, because a silent drift
+// would make every comparison read as "secrets differ" and send an operator
+// chasing a mismatch that does not exist.
+const FINGERPRINT_MESSAGE = 'san-mes-jwt-fingerprint-v1';
+const FINGERPRINT_LENGTH = 8;
+
+async function secretFingerprint(
+  secret: string | undefined,
+): Promise<{ configured: boolean; fingerprint: string | null; alg: 'HS256'; iss: string }> {
+  if (!secret) {
+    return { configured: false, fingerprint: null, alg: 'HS256', iss: 'san-mes-api' };
+  }
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw',
+    enc.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(FINGERPRINT_MESSAGE));
+  const hex = Array.from(new Uint8Array(sig))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+  return {
+    configured: true,
+    fingerprint: hex.slice(0, FINGERPRINT_LENGTH),
+    alg: 'HS256',
+    iss: 'san-mes-api',
+  };
+}
+
+register('GET', '/v1/admin/auth-fingerprint', async (req, env) => {
+  const guard = assertAdmin(req, env);
+  if (guard) return guard;
+  const jwt = await secretFingerprint(env.JWT_SECRET);
+  return ok(req, { side: 'worker', jwt });
+});
+
 // ── GET /v1/admin/profiles ────────────────────────────────────────────
 register('GET', '/v1/admin/profiles', async (req, env) => {
   const guard = assertAdmin(req, env);

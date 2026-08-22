@@ -16,6 +16,7 @@ import { Toast } from '../src/components/ui/Toast';
 import { initRateLimits } from '../src/services/rateLimit';
 import { cacheCleanup } from '../src/services/cacheManager';
 import { installImageMemoryManager } from '../src/services/imageMemoryManager';
+import { installPowerMode } from '../src/services/powerMode';
 import { useConnectivityStore } from '../src/services/connectivityMonitor';
 import { useEntityStore } from '../src/services/entityStore';
 import { setCacheAccount } from '../src/services/cacheService';
@@ -320,6 +321,18 @@ function RootLayout() {
   // expo-image's decoded-bitmap memory cache so an image-heavy marathon
   // session can't grow native memory into an OOM-kill — disk bytes are kept,
   // so visible images repaint instantly from local cache. Best-effort + guarded.
+  // Start watching Low Power Mode. Until this ran, the app had no idea the state
+  // existed and kept requesting full-cost frames while the OS had halved the
+  // budget — the direct cause of "it lags when the battery is low".
+  //
+  // Resolves to `unknown` (= behave exactly as today) on any binary that does not
+  // contain the expo-battery native module, which is every build currently
+  // installed. It activates with the next native build, never over OTA.
+  useEffect(() => {
+    const dispose = installPowerMode();
+    return dispose;
+  }, []);
+
   useEffect(() => {
     const dispose = installImageMemoryManager();
     return dispose;
