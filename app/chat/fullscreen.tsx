@@ -642,12 +642,27 @@ const ComposerInput = React.memo(function ComposerInput({
       placeholder={placeholder}
       placeholderTextColor={theme.colors.text.tertiary}
       multiline
+      // A `multiline` TextInput aligns its text to the TOP of its own box on iOS, and
+      // Android adds its own font padding on top of that. Inside a field that centres
+      // its children (`composerField`: alignItems 'center', minHeight 44,
+      // paddingVertical 10) the result was a placeholder and caret sitting visibly
+      // above the middle of the pill.
+      //
+      // An explicit `lineHeight` makes the glyph box a known height instead of
+      // font-metric-dependent, `includeFontPadding: false` removes Android's extra
+      // inset, and `textAlignVertical: 'center'` handles Android's own alignment. With
+      // those three the input's box is exactly one line tall and the parent's centring
+      // then actually centres it.
+      textAlignVertical="center"
       style={{
         flex: 1,
         fontSize: 15,
+        lineHeight: 20,
         maxHeight: 100,
-        minHeight: 22,
-        paddingVertical: 0,
+        minHeight: 20,
+        paddingTop: 0,
+        paddingBottom: 0,
+        includeFontPadding: false,
         color: theme.colors.text.primary,
         fontFamily: theme.fontFamily.regular,
       }}
