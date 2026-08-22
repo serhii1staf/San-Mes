@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import { View, Pressable, StyleSheet, Text as RNText } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
-import { FadingBlurHeader, isFadingBlurAvailable } from './FadingBlurHeader';
 import { router } from 'expo-router';
 import Animated, {
   useSharedValue,
@@ -12,6 +11,7 @@ import Animated, {
   Easing,
 } from 'react-native-reanimated';
 import { useTheme } from '../../theme';
+import { scrimStops } from '../../theme/scrim';
 import { Text } from './Text';
 import { CachedImage } from './CachedImage';
 import { useBrowserStore } from '../../store/browserStore';
@@ -85,13 +85,12 @@ export function BrowserBottomBand() {
   const theme = useTheme();
   const t = useT();
 
-  // Gradient ramp for the band's own surface. Mirrors the scrim behind the tab bar
-  // so the two read as one continuous piece of chrome rather than a slab sitting on
-  // top of a gradient.
-  const bandBg = theme.colors.background.primary;
-  const bandFadeTop = theme.isDark ? 'rgba(0,0,0,0.42)' : bandBg + '8C';
-  const bandFadeMid = theme.isDark ? 'rgba(0,0,0,0.62)' : bandBg + 'C4';
-  const bandFadeBottom = theme.isDark ? 'rgba(0,0,0,0.78)' : bandBg + 'F2';
+  // Same ramp as the scrim behind the tab bar (see `scrimStops`), so the band reads
+  // as a continuation of that treatment rather than as its own surface.
+  const { top: bandFadeTop, mid: bandFadeMid, end: bandFadeBottom } = scrimStops(
+    theme.isDark,
+    theme.colors.background.primary,
+  );
   const minimizedUrl = useBrowserStore((s) => s.minimizedUrl);
   const minimizedDomain = useBrowserStore((s) => s.minimizedDomain);
   const minimizedFavicon = useBrowserStore((s) => s.minimizedFavicon);
@@ -200,33 +199,28 @@ export function BrowserBottomBand() {
           innerStyle,
         ]}
       >
-        {/* ── Surface ────────────────────────────────────────────────────────
-            This was a flat `background.primary` fill. Against a chat — which has
-            its own scrim behind the input bar — that read fine, but on the feed,
-            profile, search and the chat list it sat as an opaque slab with a hard
-            edge against the content, which is what "the widget looks awful
-            everywhere except chats" was describing. It also read as glass having
-            been removed, even though `useLiquidGlassActive` was untouched.
+        {/* ── Surface: the app's scrim, nothing else ─────────────────────────
+            History, because this has now been wrong twice in opposite directions:
 
-            It now uses the same two-layer treatment as every other piece of
-            bottom chrome in the app: a gradient base that ramps into the
-            background, plus the real frosted blur on top where the binary
-            supports it. So it blends into the scrim on every screen instead of
-            covering it. */}
+              1. A flat opaque `background.primary` fill. Fine in a chat, where a
+                 scrim already sits behind the input bar for it to land on; an
+                 opaque slab with a hard edge everywhere else.
+              2. Gradient PLUS a frosted `FadingBlurHeader` on top. That made it a
+                 blur panel of its own — a third visual language competing with
+                 both the content and the scrim, described as "some kind of
+                 incomprehensible thing".
+
+            What was asked for is simpler than either: it should look like the
+            scrim, the way it does in chats. So it is exactly the scrim ramp and
+            nothing more — same colours and stops as the fade behind the tab bar,
+            so wherever it appears it continues that treatment instead of
+            introducing a surface. */}
         <LinearGradient
           colors={[bandFadeTop, bandFadeMid, bandFadeBottom]}
           locations={[0, 0.5, 1]}
           style={StyleSheet.absoluteFill}
           pointerEvents="none"
         />
-        {isFadingBlurAvailable() ? (
-          <FadingBlurHeader
-            isDark={theme.isDark}
-            direction="up"
-            intensity={28}
-            blendColor={theme.colors.background.primary + '55'}
-          />
-        ) : null}
         <Pressable
           onPress={handleOpen}
           style={{

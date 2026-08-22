@@ -9,7 +9,6 @@ import {
   type ViewStyle,
 } from 'react-native';
 import { useSettingsStore } from '../../store/settingsStore';
-import { useRenderBudget } from '../../hooks/useRenderBudget';
 
 // ── Native liquid glass (iOS 26+) — single integration point ───────────────
 //
@@ -117,16 +116,24 @@ export function useLiquidGlassActive(): boolean {
     isReduceTransparencyEnabled,
     isReduceTransparencyEnabled,
   );
-  // Real-time blur is a per-frame GPU compositing cost. On weak silicon and under
-  // Low Power Mode it is one of the largest things we can stop paying for, and both
-  // fallback paths (plain surface / gradient) already exist in the codebase, so
-  // nothing new has to be designed.
+  // ── GLASS IS NOT PERFORMANCE-GATED. DO NOT REINTRODUCE THAT. ────────────────
   //
-  // Composed by conjunction of negatives on purpose: `reduced` (the accessibility
-  // setting) can never be overridden by the power state. A budget may only remove
-  // an effect, never restore one the user asked to be off.
-  const { glassAllowed } = useRenderBudget();
-  return NATIVE_GLASS_CAPABLE && enabled && !reduced && glassAllowed;
+  // This briefly also required `glassAllowed` from `renderBudget`, which switched
+  // glass off under Low Power Mode. That looked defensible on paper and was wrong in
+  // practice: a phone that spends most of its time in Low Power Mode simply had no
+  // glass anywhere, with the user's own toggle still switched on. Reported as "liquid
+  // glass disappeared on iPhone even though the setting is enabled" — and it was
+  // genuinely hard to see from the code alone, because the condition reads as
+  // healthy right up until the power state flips.
+  //
+  // Glass is a deliberate part of the product's appearance, and the instruction was
+  // explicit: keep it. Performance is bought elsewhere — pre-render distance, image
+  // decode concurrency, cache policy, carousel eager slides — all of which are
+  // invisible. Never spend the app's look to buy frames.
+  //
+  // The only things that may switch glass off are the user's own setting and the OS
+  // accessibility flag, which is what `enabled` and `reduced` already are.
+  return NATIVE_GLASS_CAPABLE && enabled && !reduced;
 }
 
 function subscribeReduceTransparency(onStoreChange: () => void): () => void {

@@ -2,6 +2,7 @@ import React, { useEffect, useCallback, useState, useRef, useMemo } from 'react'
 import { View, RefreshControl, Pressable, StyleSheet, ActivityIndicator, Modal, InteractionManager, Animated, Easing } from 'react-native';
 import { AnimatedFlashList } from '@shopify/flash-list';
 import { feedGetItemType } from '../../src/lib/feedItemType';
+import { SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
 import { useRenderBudget } from '../../src/hooks/useRenderBudget';
 import { currentRenderBudget } from '../../src/utils/renderBudget';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -955,13 +956,8 @@ export default function FeedScreen() {
   const budget = useRenderBudget();
 
   const bgColor = theme.colors.background.primary;
-  const bgTransparent = bgColor + '00';
-  // Top scrim. Biased toward black in dark themes so it reads as depth rather than as
-  // a flat tint of the surface it sits on, but deliberately NOT fully opaque — a
-  // solid black bar is heavier than what either platform does. Kept in step with the
-  // bottom scrim behind the tab bar.
-  const scrimTop = theme.isDark ? 'rgba(0,0,0,0.9)' : bgColor;
-  const scrimTopMid = theme.isDark ? 'rgba(0,0,0,0.5)' : bgColor + 'A6';
+  // Single shared definition — see src/theme/scrim.ts.
+  const topScrim = topScrimColors(theme.isDark, bgColor);
   const headerContentHeight = insets.top + 48;
   const headerGradientHeight = headerContentHeight + 28;
 
@@ -1000,7 +996,7 @@ export default function FeedScreen() {
       <View style={{ flex: 1, backgroundColor: bgColor }}>
         <View style={[styles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">
           {!isFadingBlurAvailable() && (
-            <LinearGradient colors={[scrimTop, scrimTopMid, bgTransparent]} locations={[0, 0.5, 1]} style={StyleSheet.absoluteFill} />
+            <LinearGradient colors={topScrim} locations={SCRIM_LOCATIONS} style={StyleSheet.absoluteFill} />
           )}
           <FadingBlurHeader isDark={theme.isDark} direction="down" height={insets.top + 38} fadeStart={0.5} blendColor={bgColor + '8C'} />
           <View style={[styles.headerContent, { paddingTop: insets.top }]}>
@@ -1025,7 +1021,7 @@ export default function FeedScreen() {
     <View style={{ flex: 1, backgroundColor: bgColor }}>
       <View style={[styles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">
         {!isFadingBlurAvailable() && (
-          <LinearGradient colors={[scrimTop, scrimTopMid, bgTransparent]} locations={[0, 0.5, 1]} style={StyleSheet.absoluteFill} />
+          <LinearGradient colors={topScrim} locations={SCRIM_LOCATIONS} style={StyleSheet.absoluteFill} />
         )}
         <FadingBlurHeader isDark={theme.isDark} direction="down" height={insets.top + 38} fadeStart={0.5} blendColor={bgColor + '8C'} />
         <View style={[styles.headerContent, { paddingTop: insets.top }]} pointerEvents="auto">
