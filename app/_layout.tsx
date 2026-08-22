@@ -521,19 +521,22 @@ function RootLayout() {
         <MusicBottomIndicator />
         <MusicFullPlayer />
         <Toast />
-        {/* The Stack + bottom-docked browser band sit in a single flex column.
-            When the band appears (settings: bottom-position) it occupies its
-            own height inside this column, which pushes the entire Stack
-            (including the floating tab bar absolutely positioned inside it)
-            upward by exactly that height — i.e. the app "lifts" rather than
-            the band overlaying. The transition is smoothed by LayoutAnimation
-            inside BrowserBottomBand. */}
+        {/* The minimized-session card OVERLAYS the Stack — it is absolutely
+            positioned and reserves no space, so nothing below it moves when a
+            session is minimized or dismissed.
+            
+            It used to sit in a flex column and reserve its own height, which
+            pushed the whole Stack (and the floating tab bar inside it) upward.
+            That was both unwanted visually and expensive: reserving and releasing
+            the height re-laid out the Stack, the active screen and everything in
+            it twice per session — a hitch exactly when the card appeared or left,
+            worst in a chat where that tree holds a live message list. */}
         <View style={styles.rootColumn}>
           <View style={styles.stackWrapper}>
             <AppStack />
           </View>
-          <BrowserBottomBand />
         </View>
+        <BrowserBottomBand />
         {/* Floating performance monitor — sits above everything else so it
             stays visible on every screen. Defaults to ON; users can hide it
             from the panel that opens when they tap the bubble. */}

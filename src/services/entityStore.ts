@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { InteractionManager } from 'react-native';
-import { CONVERSATION_FIELDS, listEqualOn } from '../utils/listEquality';
+import { conversationsEqual } from '../utils/listEquality';
 
 import {
   cacheFeed,
@@ -443,7 +443,7 @@ export const useEntityStore = create<EntityState>()((set, get) => ({
     // row, which is what made the chat list blink and rebuild on each focus, sync
     // tick and realtime event.
     const prev = get().conversations;
-    if (listEqualOn(prev, convs, CONVERSATION_FIELDS)) return;
+    if (conversationsEqual(prev, convs)) return;
 
     set({ conversations: convs });
     // Persist to cache so conversations survive app restart (even offline)
