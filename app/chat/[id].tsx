@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, useSyncExternalStore } from 'react';
 import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, Alert, Animated, Dimensions, Keyboard, InteractionManager, AppState, type ViewToken } from 'react-native';
 import { useReanimatedKeyboardAnimation, useKeyboardHandler } from 'react-native-keyboard-controller';
-import { FlashList, type FlashListRef } from '@shopify/flash-list';
+import { FlashList, useRecyclingState, type FlashListRef } from '@shopify/flash-list';
 import Reanimated, { useAnimatedStyle, interpolate, Extrapolation, useSharedValue, withSpring, withTiming, withSequence, withDelay, runOnJS, useAnimatedRef, measure, Easing, type SharedValue } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import * as Clipboard from 'expo-clipboard';
@@ -41,6 +41,7 @@ import { ChatBackgroundLayer } from '../../src/components/ui/ChatBackgroundLayer
 import { PixelIcon } from '../../src/components/pixel-icons/PixelIcon';
 import { uploadChatImage } from '../../src/lib/supabase';
 import { getImageDims, setImageDims } from '../../src/services/imageDimsCache';
+import { useRenderBudget } from '../../src/hooks/useRenderBudget';
 import { kvGetJSONSync, kvSetJSON, kvWarm } from '../../src/services/kvStore';
 import { mockMessages, mockConversations, formatMessageTime } from '../../src/utils/mockData';
 import { showToast } from '../../src/store/toastStore';
@@ -330,22 +331,37 @@ function SingleChatImage({ uri, isVisible, onPress }: { uri: string; isVisible?:
   // Seed from the persisted dimension cache so a previously-seen photo mounts
   // at the correct aspect-ratio box on the very first frame — this removes the
   // "container changes size / photo reloads every time I open the chat" jump.
-  const [size, setSize] = useState<{ w: number; h: number }>(() => {
+  // `useRecyclingState`, NOT `useState`.
+  //
+  // A lazy `useState` initialiser runs on MOUNT ONLY. FlashList recycles a row by
+  // re-rendering it with a different message rather than unmounting it, so when a
+  // photo bubble was reused for a different photo the initialiser never re-ran:
+  // the new image kept the PREVIOUS photo's box size, and `loading` kept the
+  // previous photo's state. In a long chat every image row recycles as you scroll,
+  // so each one mis-sized itself and forced a relayout on a scroll frame — which is
+  // a large part of why chats with a lot of media stutter.
+  //
+  // `useRecyclingState` re-evaluates during render when `uri` changes, so the box is
+  // correct on the first frame the new photo is shown.
+  const [size, setSize] = useRecyclingState<{ w: number; h: number }>(() => {
     const d = getImageDims(uri);
     return d ? fitChatImageBox(d.w, d.h) : { w: 220, h: 220 };
-  });
+  }, [uri]);
   // Skip the spinner when we already know the size AND the bytes are almost
   // certainly disk-cached (we've decoded this exact URL before) — a known
   // photo should just appear, not flash a loader.
-  const [loading, setLoading] = useState(() => !getImageDims(uri));
+  const [loading, setLoading] = useRecyclingState(() => !getImageDims(uri), [uri]);
+  // `setSize` / `setLoading` come from `useRecyclingState` and are stable
+  // (useCallback'd on a stable counter setter inside the hook), so listing them
+  // does not widen the callback's identity churn.
   const handleLoad = useCallback((e: any) => {
     setLoading(false);
     const s = e?.source;
     if (!s?.width || !s?.height) return;
     setImageDims(uri, s.width, s.height);
     setSize(fitChatImageBox(s.width, s.height));
-  }, [uri]);
-  const handleError = useCallback(() => setLoading(false), []);
+  }, [uri, setLoading, setSize]);
+  const handleError = useCallback(() => setLoading(false), [setLoading]);
   return (
     <Pressable onPress={onPress}>
       {/* Fixed-size rounded container holds the image AND a centered loading
@@ -1094,8 +1110,36 @@ export default function ChatScreen() {
   // huge history from rendering all at once while still letting the user page
   // up through the whole cached conversation.
   const [renderWindow, setRenderWindow] = useState(INITIAL_WINDOW);
-  // Reset to the initial window whenever the conversation changes.
-  useEffect(() => { setRenderWindow(INITIAL_WINDOW); }, [conversationId]);
+  // Frame budget for this device and power state (see src/utils/renderBudget.ts).
+  const chatBudget = useRenderBudget();
+
+  /**
+   * Set when `conversationId` changes because the SAME chat got its canonical id
+   * (a profile-initiated chat is opened under the peer's user id, and the first
+   * send resolves the real conversation row). That is an id MIGRATION, not a
+   * different conversation, so nothing about the view should reset.
+   *
+   * Without the distinction, the reset below fired at exactly the wrong moment —
+   * immediately after the user's first message — collapsing the rendered data from
+   * N rows to 30 and then re-expanding it, which is a guaranteed viewport jump.
+   * The hydration flag is carried over too, so the full history is not re-parsed.
+   */
+  const migratedFromRef = useRef<{ from: string; to: string } | null>(null);
+
+  // Reset to the initial window on a genuine conversation change only.
+  useEffect(() => {
+    const migration = migratedFromRef.current;
+    if (migration && migration.to === conversationId) {
+      migratedFromRef.current = null;
+      // Carry the hydration flag across, so `historyHydratedRef` does not think it
+      // needs to re-read and re-heal the whole history under the new id.
+      if (historyHydratedRef.current === migration.from) {
+        historyHydratedRef.current = conversationId;
+      }
+      return;
+    }
+    setRenderWindow(INITIAL_WINDOW);
+  }, [conversationId]);
 
   // ── The window's FRONT EDGE is monotonic ───────────────────────────────────
   //
@@ -2090,6 +2134,12 @@ export default function ChatScreen() {
               cs.setMessages(convId, [...intoNew, ...fromOld.filter((m: any) => !seen.has(m.id))] as any);
             }
           } catch {}
+          // Mark this as an ID MIGRATION, not a chat switch, BEFORE the state
+          // change so the effects that key on `conversationId` can tell them
+          // apart — see `migratedFromRef`. Without this the window reset below
+          // collapsed the transcript from N rows to 30 and back, right after the
+          // user's first send.
+          migratedFromRef.current = { from: id, to: convId };
           setConversationId(convId);
         });
       })
@@ -3618,6 +3668,12 @@ export default function ChatScreen() {
         // per-bubble mount-on-scroll cost (gestures + Reanimated layers) that
         // FlatList re-paid on every row scrolling into view.
         maintainVisibleContentPosition={MVCP_FROM_BOTTOM}
+        // Bound how far ahead rows are built. Chat bubbles are expensive — each
+        // carries gesture handlers and Reanimated layers — so an unbounded
+        // pre-render window turns a fling through a media-heavy chat into a burst
+        // of row construction plus image decodes landing on the same frames.
+        // Halved again on weak hardware and in Low Power Mode.
+        drawDistance={chatBudget.drawDistance}
         contentContainerStyle={LIST_CONTENT_CONTAINER_STYLE}
         // Non-inverted: ListHeaderComponent is the TOP (oldest) spacer under the
         // header gradient; ListFooterComponent is the BOTTOM spacer above the
