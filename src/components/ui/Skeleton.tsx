@@ -23,9 +23,10 @@
  * unmount (cancel the loop). Reduced-motion is read once in an effect.
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useSyncExternalStore } from 'react';
 import {
   AccessibilityInfo,
+  AppState,
   StyleProp,
   StyleSheet,
   View,
@@ -34,6 +35,7 @@ import {
 import Animated, {
   cancelAnimation,
   Easing,
+  makeMutable,
   useAnimatedStyle,
   useSharedValue,
   withRepeat,
@@ -67,6 +69,112 @@ export interface SkeletonProps {
  * a full second so the band feels alive without being frantic.
  */
 const SHIMMER_DURATION = 1150;
+
+// ─── ONE clock for every skeleton on screen ─────────────────────────────────────
+//
+// Each `Skeleton` used to own its own `withRepeat(…, -1)`. The header above is right that
+// this costs no JS per frame — but it is one INFINITE UI-thread animation per instance, and
+// instances are not rare: a loading feed is several skeleton cards, each made of several
+// boxes, so a single screen could hold dozens of forever-looping animations. They also never
+// stop. `cancelAnimation` runs on unmount, and nothing else does, so a skeleton scrolled
+// off-screen or left behind on a backgrounded app keeps sweeping.
+//
+// The sweep is the same phase for every skeleton of the same age, so there is nothing to gain
+// from per-instance clocks. One module-level shared value, reference-counted, gives identical
+// output for one animation instead of N.
+//
+// Visible consequence, and it is an improvement rather than a regression: skeletons are now
+// exactly in phase instead of each starting when its own cell mounted. A list whose rows
+// mount progressively used to shimmer in a ragged cascade; it now sweeps as one surface,
+// which is what iOS and Telegram both do.
+const shimmerProgress = makeMutable(0);
+let shimmerMounted = 0;
+let shimmerRunning = false;
+
+function startShimmerClock(): void {
+  if (shimmerRunning) return;
+  shimmerRunning = true;
+  shimmerProgress.value = 0;
+  shimmerProgress.value = withRepeat(
+    withTiming(1, { duration: SHIMMER_DURATION, easing: Easing.inOut(Easing.ease) }),
+    -1, // repeat forever — but only while at least one skeleton is mounted
+    false, // don't reverse — always sweep left -> right
+  );
+}
+
+function stopShimmerClock(): void {
+  if (!shimmerRunning) return;
+  cancelAnimation(shimmerProgress);
+  shimmerRunning = false;
+}
+
+/** Mount one skeleton. Starts the shared clock on the first one. */
+function acquireShimmer(): void {
+  shimmerMounted += 1;
+  if (shimmerMounted === 1 && !reduceMotion) startShimmerClock();
+}
+
+/** Unmount one skeleton. Stops the shared clock when the last one goes. */
+function releaseShimmer(): void {
+  shimmerMounted = Math.max(0, shimmerMounted - 1);
+  if (shimmerMounted === 0) stopShimmerClock();
+}
+
+// Backgrounding the app stops the clock outright. An animation the user cannot see has no
+// reason to hold the UI thread awake, and on return it restarts from phase 0 — which is
+// invisible, because a shimmer has no meaningful position to preserve.
+try {
+  AppState.addEventListener('change', (state) => {
+    if (state === 'active') {
+      if (shimmerMounted > 0 && !reduceMotion) startShimmerClock();
+    } else {
+      stopShimmerClock();
+    }
+  });
+} catch { /* no AppState in this environment — the clock simply never pauses */ }
+
+// ─── ONE reduce-motion subscription ─────────────────────────────────────────────
+//
+// This was per-instance too: every skeleton fired its own
+// `AccessibilityInfo.isReduceMotionEnabled()` promise and registered its own
+// `reduceMotionChanged` listener on mount. Dozens of native round-trips and dozens of
+// listeners for a value that is global and changes almost never.
+//
+// Module-level store read through `useSyncExternalStore`, mirroring the pattern
+// `src/components/ui/LiquidGlass.tsx` already uses for Reduce Transparency.
+let reduceMotion = false;
+const reduceMotionListeners = new Set<() => void>();
+
+function setReduceMotion(next: boolean): void {
+  if (next === reduceMotion) return;
+  reduceMotion = next;
+  // Honour the change immediately: stop a running clock, or start one if skeletons are up.
+  if (next) stopShimmerClock();
+  else if (shimmerMounted > 0) startShimmerClock();
+  reduceMotionListeners.forEach((fn) => {
+    try { fn(); } catch { /* a torn-down subscriber must not break the others */ }
+  });
+}
+
+// Guarded because these now run at MODULE scope, i.e. on import. Per-instance they sat inside
+// an effect, where a throw would have been contained to one component; here an older binary or
+// a test environment without the accessibility module would take down every screen that
+// imports a Skeleton. The failure mode is "shimmer stays on", which is the correct default.
+try {
+  AccessibilityInfo.isReduceMotionEnabled()
+    .then(setReduceMotion)
+    .catch(() => { /* keep the default (animated) */ });
+  AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotion);
+} catch { /* accessibility API unavailable — stay animated */ }
+
+function subscribeReduceMotion(onChange: () => void): () => void {
+  reduceMotionListeners.add(onChange);
+  return () => { reduceMotionListeners.delete(onChange); };
+}
+
+function getReduceMotion(): boolean {
+  return reduceMotion;
+}
 
 /**
  * Resolve the base (box) and highlight (sweep band) colors for the
@@ -126,11 +234,6 @@ function SkeletonBase({
   const isDark = colorMode ? colorMode === 'dark' : theme.isDark;
   const { base, gradient } = getColors(isDark);
 
-  // `progress` drives the sweep: 0 -> 1 maps to the highlight band
-  // travelling from fully off the left edge to fully off the right.
-  // It is mutated only on the UI thread by the Reanimated runtime.
-  const progress = useSharedValue(0);
-
   // Measured box width (px). Used to drive a NUMERIC translateX in the
   // sweep worklet — a string-percentage translateX can throw
   // "translateX must be a number" on some Reanimated versions. Stays 0
@@ -138,50 +241,16 @@ function SkeletonBase({
   // translate (harmless) until the real width is known.
   const boxW = useSharedValue(0);
 
-  // Reduced-motion: default to animated, then flip to static if the OS
-  // setting is enabled. Read once on mount (plus a subscription so a
-  // mid-session toggle is respected). `undefined` = not yet resolved.
-  const [reduceMotion, setReduceMotion] = useState(false);
+  // Reduced-motion, read from the ONE module-level subscription rather than each skeleton
+  // opening its own. See the note beside `subscribeReduceMotion`.
+  const reduceMotion = useSyncExternalStore(subscribeReduceMotion, getReduceMotion, getReduceMotion);
 
+  // Join / leave the shared shimmer clock. The clock itself runs at module scope and is
+  // reference-counted, so this is a counter bump rather than starting an animation.
   useEffect(() => {
-    let mounted = true;
-    AccessibilityInfo.isReduceMotionEnabled().then((enabled) => {
-      if (mounted) setReduceMotion(enabled);
-    });
-    const sub = AccessibilityInfo.addEventListener(
-      'reduceMotionChanged',
-      (enabled) => {
-        if (mounted) setReduceMotion(enabled);
-      }
-    );
-    return () => {
-      mounted = false;
-      sub.remove();
-    };
+    acquireShimmer();
+    return releaseShimmer;
   }, []);
-
-  // Start / stop the UI-thread loop. When reduced-motion is on we never
-  // start it (static base box). Cleanup cancels the animation so the
-  // worklet loop is torn down on unmount.
-  useEffect(() => {
-    if (reduceMotion) {
-      cancelAnimation(progress);
-      progress.value = 0;
-      return;
-    }
-    progress.value = 0;
-    progress.value = withRepeat(
-      withTiming(1, {
-        duration: SHIMMER_DURATION,
-        easing: Easing.inOut(Easing.ease),
-      }),
-      -1, // repeat forever
-      false // don't reverse — always sweep left -> right
-    );
-    return () => {
-      cancelAnimation(progress);
-    };
-  }, [reduceMotion, progress]);
 
   // Translate the highlight band across the box. The gradient layer is
   // 2x the box width (`width: '200%'`) and starts shifted one box-width
@@ -196,7 +265,7 @@ function SkeletonBase({
   // involvement per frame.
   const sweepStyle = useAnimatedStyle(() => {
     return {
-      transform: [{ translateX: (progress.value * 2 - 1) * boxW.value }],
+      transform: [{ translateX: (shimmerProgress.value * 2 - 1) * boxW.value }],
     };
   });
 
