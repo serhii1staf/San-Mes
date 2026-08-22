@@ -363,6 +363,18 @@ function RootLayout() {
       initRateLimits();
       cacheCleanup();
       useConnectivityStore.getState().start();
+      // Pull the remembered image dimensions into memory HERE, on the idle frame,
+      // rather than lazily on whichever frame first renders a photo.
+      //
+      // `getImageDims` is called from render paths (chat photo bubbles sizing their box,
+      // the feed hero/carousel aspect seeding). Its backing map loads lazily, so the first
+      // call in a session did a synchronous MMKV read + JSON.parse of up to 600 entries —
+      // and it landed on a chat-open or feed-open frame, which is already carrying a
+      // navigation transition. Warming it here means every render-path read is a plain
+      // object lookup, which is what the cache was designed to be.
+      import('../src/services/imageDimsCache')
+        .then(({ warmImageDims }) => warmImageDims())
+        .catch(() => {});
       // Proactively cap expo-image's unbounded on-disk cache so a long-running
       // image-heavy session can't grow it into storage-exhaustion / crash
       // territory. Dynamically imported + fully guarded so it never blocks

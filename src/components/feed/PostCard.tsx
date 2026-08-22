@@ -462,9 +462,22 @@ function ImageCarousel({ imageUrls, onDoubleTap, heroPriority, postId }: { image
     return Math.min(MAX_IMAGE_HEIGHT, Math.round(slideImgWidth / ratio));
   }, [firstAspect, slideImgWidth]);
 
+  // Page-dot index. `scrollEventThrottle={16}` means this fires ~60×/s while the user
+  // drags the carousel, and this component is a FEED ROW — so every dispatch re-rendered
+  // a post card mid-gesture. The index only actually changes once per page, roughly once
+  // per 300 ms of dragging; the other ~55 dispatches per second set the value it already
+  // had. React would still re-run this component for each one, because `setState` only
+  // bails on an unchanged value when it can compare it BEFORE scheduling, which is what
+  // the functional form below lets it do.
+  //
+  // Kept as state rather than a shared value on purpose: the dots are a handful of tiny
+  // Views whose `width`/`backgroundColor` differ per index, so driving them from the UI
+  // thread would mean one `useAnimatedStyle` per dot — more machinery than the ~3 renders
+  // per gesture this now costs.
   const handleScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
     const index = Math.round(e.nativeEvent.contentOffset.x / imgWidth);
-    setActiveIndex(Math.max(0, Math.min(index, imageUrls.length - 1)));
+    const next = Math.max(0, Math.min(index, imageUrls.length - 1));
+    setActiveIndex((prev) => (prev === next ? prev : next));
   };
 
   const handlePress = () => { const now = Date.now(); if (now - lastTapRef.current < 300) onDoubleTap(); lastTapRef.current = now; };

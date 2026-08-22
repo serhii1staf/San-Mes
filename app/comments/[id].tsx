@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, useSyncExternalStore, useImperativeHandle } from 'react';
-import { View, FlatList, TextInput, Pressable, Platform, ActivityIndicator, StyleSheet, Text as RNText, Modal, Alert, LayoutAnimation, UIManager, InteractionManager, ScrollView, Dimensions, Keyboard } from 'react-native';
+import { View, FlatList, TextInput, Pressable, Platform, ActivityIndicator, StyleSheet, Text as RNText, Modal, Alert, InteractionManager, ScrollView, Dimensions, Keyboard } from 'react-native';
 import { useReanimatedKeyboardAnimation, useKeyboardHandler } from 'react-native-keyboard-controller';
 import { FlashList, type FlashListRef } from '@shopify/flash-list';
 import Reanimated, { useAnimatedStyle, useSharedValue, withTiming, runOnJS, Easing } from 'react-native-reanimated';
@@ -91,10 +91,11 @@ const REPORT_CATS: { key: string; labelKey: string }[] = [
   { key: 'other', labelKey: 'report.cat.other' },
 ];
 
-// Enable LayoutAnimation on Android (no-op on iOS where it's already on by default).
-if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
-  UIManager.setLayoutAnimationEnabledExperimental(true);
-}
+// NOTE: the Android `setLayoutAnimationEnabledExperimental(true)` call that used to sit
+// here is gone along with the composer's `configureNext` (see `handleContentSizeChange`).
+// Nothing on this screen requests a layout animation any more, so arming the flag only
+// widened the blast radius of any OTHER screen's `configureNext` that happened to commit
+// while this screen was mounted.
 
 // Reply quoting without a schema change. A reply comment is stored as:
 //   ::re::<base64(JSON{u, sn, gif})>::<actual body>
@@ -380,11 +381,23 @@ const CommentField = React.memo(React.forwardRef<CommentFieldHandle, CommentFiel
   }), [text]);
 
   const handleChangeText = useCallback((val: string) => setText(val), []);
-  // Identical to the previous inline composer behaviour: animate height changes
-  // as the field grows/shrinks across lines.
-  const handleContentSizeChange = useCallback(() => {
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-  }, []);
+  // ── NO `LayoutAnimation` ON COMPOSER GROWTH ─────────────────────────────────
+  //
+  // This used to call `LayoutAnimation.configureNext(easeInEaseOut)` from
+  // `onContentSizeChange` to ease the field's height as it gained/lost a line.
+  //
+  // `configureNext` is GLOBAL for the next layout commit — it is not scoped to the view
+  // that requested it. So every time the composer crossed a line boundary WHILE TYPING, it
+  // armed an animation for every other view whose frame changed in that same commit,
+  // which on this screen means comment rows. The chat composer has the same shape and
+  // deliberately does not do this (`ChatInputBar.heightTransition.bug.test.tsx` asserts
+  // `configureNext` is never called); comments was the remaining caller.
+  //
+  // The field now resizes in one step. Doing it properly would mean the composer
+  // publishing its height as a shared value and each affected surface applying its own
+  // transform — no layout involved — which is a real change to how this screen is
+  // positioned, not a one-liner.
+  const handleContentSizeChange = undefined;
 
   return (
     <TextInput
@@ -699,16 +712,33 @@ export default function CommentsScreen() {
   }
   const gifTracker = gifTrackerRef.current;
   const gifScrollIdleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Latch mirroring `revealScrollPaused`, so the pause is dispatched to React ONCE per
+  // gesture instead of once per scroll event.
+  //
+  // This was calling `setRevealScrollPaused(true)` unconditionally on every scroll event.
+  // At `scrollEventThrottle={64}` that is ~15 React dispatches per second, and this screen
+  // OWNS the comment list — so the very gesture the pause exists to protect was paying for
+  // a render storm. `app/chat/[id].tsx` already carries this exact fix (see the long note
+  // on its `scrollPausedRef`); the comments screen was missed at the time.
+  //
+  // The pause semantics are unchanged: the flag still goes true on the first scroll event
+  // and false 200 ms after the last one. Only the dispatch count changes — twice per
+  // gesture instead of once per event.
+  const commentsScrollPausedRef = useRef(false);
   const onCommentsScroll = useCallback(() => {
     gifTracker.setScrolling(true);
-    setRevealScrollPaused(true);
+    if (!commentsScrollPausedRef.current) {
+      commentsScrollPausedRef.current = true;
+      setRevealScrollPaused(true);
+    }
     if (gifScrollIdleRef.current) clearTimeout(gifScrollIdleRef.current);
     gifScrollIdleRef.current = setTimeout(() => {
       gifTracker.setScrolling(false);
+      commentsScrollPausedRef.current = false;
       setRevealScrollPaused(false);
     }, 200);
   }, [gifTracker]);
-  useEffect(() => () => { if (gifScrollIdleRef.current) clearTimeout(gifScrollIdleRef.current); setRevealScrollPaused(false); }, []);
+  useEffect(() => () => { if (gifScrollIdleRef.current) clearTimeout(gifScrollIdleRef.current); commentsScrollPausedRef.current = false; setRevealScrollPaused(false); }, []);
   const onCommentsViewable = useRef(({ viewableItems }: { viewableItems: any[] }) => {
     const next = new Set<string>();
     for (const v of viewableItems) { const id = v?.item?.id; if (id) next.add(id); }
