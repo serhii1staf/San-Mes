@@ -1175,7 +1175,33 @@ export default function ChatScreen() {
   // `windowedMessagesRef` below is: the value is derived from this very render
   // pass, so there is no subscription that could tear. Keyed on the conversation
   // id so switching chats starts a fresh window rather than inheriting one.
-  const windowStartRef = useRef<{ conv: string | null; start: number }>({ conv: null, start: 0 });
+  // ── The window's front edge is remembered by MESSAGE ID, not by index ───────
+  //
+  // `computeWindowStart` enforces one rule: the front edge never moves forward, so an
+  // append can never splice the oldest rendered row off the front. That rule is right, and
+  // it is stated in terms of an INDEX — which is only meaningful while the array grows at
+  // the BACK.
+  //
+  // Hydration grows it at the FRONT. When the full history lands, the same messages are
+  // still there but every index shifts by however many older ones were prepended (up to
+  // ~940). A remembered index of 30 then means something completely different: with
+  // `total` now 1000, `slice(30)` is 970 rows instead of 30. That is the second half of the
+  // "BAM, every message appears at once" report — removing the window expansion alone did
+  // not fix it, because the monotonic rule re-created the same explosion from the other
+  // direction.
+  //
+  // An id survives a prepend. Resolving it back to an index each time the array changes
+  // makes all four cases fall out of the same `min(previousStart, raw)`:
+  //
+  //   append          anchor index unchanged, raw + 1   → window grows by one row
+  //   prepend of P    anchor index + P,       raw + P   → window size unchanged
+  //   renderWindow +C anchor index unchanged, raw − C   → C older rows revealed
+  //   delete before   anchor index − 1,       raw − 1   → tracks
+  //
+  // Cached on the array reference so the lookup runs once per data change rather than on
+  // every render of this screen (which re-renders for reply banners, panels, search, …).
+  const windowAnchorRef = useRef<{ conv: string | null; id: string | null }>({ conv: null, id: null });
+  const anchorLookupRef = useRef<{ arr: ChatMessage[] | null; id: string | null; idx: number }>({ arr: null, id: null, idx: -1 });
 
   // ── Lazy full-history hydration ────────────────────────────────────────
   // The open path deliberately holds only the bounded `SEED_CAP` tail (see
@@ -1235,23 +1261,43 @@ export default function ChatScreen() {
   const hydrateFullHistoryRef = useRef(hydrateFullHistory);
   hydrateFullHistoryRef.current = hydrateFullHistory;
 
-  // ── Post-open: disable data windowing for the rest of the session ──────────
-  // The FIRST paint of a newly-opened chat uses the cheap bounded seed (the
-  // `setRenderWindow(INITIAL_WINDOW)` reset on conversation change). One tick
-  // AFTER the open transition we hydrate the full history ONCE and expand
-  // `renderWindow` to cover the entire conversation, so `windowedMessages`
-  // becomes the whole (stable) array for the rest of the session. FlashList v2
-  // virtualizes/recycles, so a large data array is cheap — and crucially there
-  // is no more `onStartReached`-driven prepend mid-scroll (which, with
-  // `startRenderingFromBottom`, re-anchored the list toward the bottom and
-  // yanked the view down when the user scrolled up fast). Runs once per
-  // conversation; subsequent appends grow the window via the effect above.
+  // ── Post-open: hydrate the STORE, do NOT expand the render window ──────────
+  //
+  // This effect used to also do `setRenderWindow(Math.max(cur, total))`, i.e. one tick after
+  // the open transition it expanded the rendered data from the 30-row window to the ENTIRE
+  // conversation. That is the cause of the reported "I scroll a bit, then BAM, I'm at the
+  // very top and every message appears at once".
+  //
+  // WHY IT LOOKS LIKE A TELEPORT
+  //   `windowedMessages` is `chatMessages.slice(windowStart)`. On open the seed is ~60
+  //   messages and the window is 30, so the list renders 30 rows. This effect then hydrates
+  //   the full blob (up to `MAX_PERSISTED_MESSAGES` = 1000) AND set the window to 1000, so in
+  //   ONE commit the data went from 30 rows to 1000 and `windowStart` collapsed to 0.
+  //
+  //   `maintainVisibleContentPosition` can absorb a prepend. It cannot absorb the data array
+  //   growing 33× in a single commit while `startRenderingFromBottom` re-anchors — the
+  //   content height above the viewport changes by thousands of points at once. The user is
+  //   thrown to one end, and because every row materialises on that same commit it reads as
+  //   "the messages were not there, then they all appeared".
+  //
+  //   It also fired unconditionally a beat after EVERY open, so it hit users who had already
+  //   started scrolling — which is exactly when it is most violent.
+  //
+  // WHY THE EXPANSION WAS ADDED, AND WHY THAT REASONING WAS BACKWARDS
+  //   The comment it replaced said the expansion removed `onStartReached`-driven prepends,
+  //   which "yanked the view down when the user scrolled up fast". Those prepends are 30 rows
+  //   — one `WINDOW_CHUNK` — and mvcp handles that. Trading a bounded, user-initiated,
+  //   30-row prepend for an unbounded 970-row one that fires on its own is strictly worse.
+  //
+  // The store hydration stays. It is what makes search, reply-jump and delete work against
+  // the whole history, and it is invisible: growing `chatMessages` does not by itself change
+  // what is rendered, because `windowStart` keeps the window pinned to the newest rows.
+  // Growth of the RENDERED set now happens only where the user asks for it, in
+  // `onStartReached`, one chunk at a time, with `OlderMessagesLoader` visible while it works.
   useEffect(() => {
     if (!conversationId) return;
     const h = InteractionManager.runAfterInteractions(() => {
       if (historyHydratedRef.current !== conversationId) hydrateFullHistory();
-      const total = (useChatStore.getState().messages[conversationId] || []).length;
-      setRenderWindow((cur) => Math.max(cur, total || cur));
     });
     return () => h.cancel();
   }, [conversationId, hydrateFullHistory]);
@@ -3078,13 +3124,32 @@ export default function ChatScreen() {
   // Monotonic front edge — the rule, and why it exists, are documented on
   // `computeWindowStart`. Extracted so the invariant is property-tested rather than
   // living as inline arithmetic in a 4000-line screen.
+  // Resolve the remembered front-edge id back to an index in the CURRENT array. See the
+  // long note on `windowAnchorRef` for why the anchor is an id rather than an index.
+  const sameConversation = windowAnchorRef.current.conv === (conversationId ?? null);
+  const anchorId = sameConversation ? windowAnchorRef.current.id : null;
+  let anchorIndex = -1;
+  if (anchorId) {
+    const cache = anchorLookupRef.current;
+    if (cache.arr === chatMessages && cache.id === anchorId) {
+      anchorIndex = cache.idx;
+    } else {
+      anchorIndex = chatMessages.findIndex((m) => m.id === anchorId);
+      anchorLookupRef.current = { arr: chatMessages, id: anchorId, idx: anchorIndex };
+    }
+  }
   const windowStart = computeWindowStart({
     total: chatMessages.length,
     renderWindow,
-    previousStart:
-      windowStartRef.current.conv === (conversationId ?? null) ? windowStartRef.current.start : null,
+    // A missing anchor (first render of this conversation, or the anchored message was
+    // deleted) means there is nothing to preserve — `computeWindowStart` then takes the
+    // freshly-computed edge, which is the correct fallback.
+    previousStart: anchorIndex >= 0 ? anchorIndex : null,
   });
-  windowStartRef.current = { conv: conversationId ?? null, start: windowStart };
+  windowAnchorRef.current = {
+    conv: conversationId ?? null,
+    id: chatMessages[windowStart]?.id ?? null,
+  };
 
   const windowedMessages = useMemo(
     () => (windowStart > 0 ? chatMessages.slice(windowStart) : chatMessages),
