@@ -242,17 +242,20 @@ export const HEADER_ROW_HEIGHT = 48;
 /**
  * How far the top scrim extends PAST the header row, into the content.
  *
- * This used to be 28. The bottom scrim, which is the reference, spans exactly the tab
- * bar plus its bottom margin (84 pt) and hangs over the content by nothing at all — so
- * a 28 pt overhang at the top was visibly lower than the bottom equivalent, which is
- * what "hangs too far down" was describing.
+ * History, because this value has moved twice and the reasons matter:
  *
- * It is not 0: the ramp needs some distance to reach transparent, otherwise content
- * scrolling under the header pops at a hard edge instead of fading. The bottom gets away
- * with no overhang because the opaque glass capsule sits on top of its ramp's dark end;
- * there is no equivalent opaque element at the top of these screens.
+ *   28 → 12  The ramp was a background-coloured fade at the time and it read as a haze
+ *            hanging into the content, so it was pulled back to sit close to the header.
+ *   12 → 28  Once the ramp became the black STRONG one, the same distance read as too
+ *            short — a strong ramp compressed into 12 pt is a band, not a fade. Restored,
+ *            and now it is the length that lets the stronger ramp actually dissolve.
+ *
+ * It must not be 0: the ramp needs distance to reach transparent, otherwise content
+ * scrolling under the header pops at a hard edge. The bottom scrim behind the TAB BAR
+ * gets away with no overhang because the opaque glass capsule sits on its dark end;
+ * nothing equivalent exists at the top of a screen.
  */
-export const HEADER_SCRIM_OVERHANG = 12;
+export const HEADER_SCRIM_OVERHANG = 28;
 
 /**
  * Paired heights for a screen's top scrim.
@@ -299,5 +302,28 @@ export const COMPOSER_PADDING_TOP = 8;
  * height would mean animating a gradient's frame on every keystroke.
  */
 export function composerScrimHeight(insetsBottom: number, minBottomPad = 12): number {
-  return COMPOSER_PADDING_TOP + COMPOSER_FIELD_HEIGHT + Math.max(insetsBottom, minBottomPad);
+  return (
+    COMPOSER_PADDING_TOP +
+    COMPOSER_FIELD_HEIGHT +
+    Math.max(insetsBottom, minBottomPad) +
+    COMPOSER_SCRIM_OVERHANG
+  );
 }
+
+/**
+ * How far the bottom scrim reaches ABOVE the composer, into the transcript.
+ *
+ * This was 0 — the ramp stopped exactly at the composer's top edge. That was the right
+ * answer for the ramp it had at the time: a weak, background-coloured fade reaching over
+ * the messages read as a haze, so it was clipped to the chrome.
+ *
+ * With the STRONG black ramp the opposite is true. Ending it flush with the composer
+ * means the ramp has only the composer's own 86 pt to travel from transparent to 0.97,
+ * all of it hidden behind the composer, so from the transcript's point of view the scrim
+ * starts and ends out of sight — which is why it read as not being there at all.
+ *
+ * 28 pt matches `HEADER_SCRIM_OVERHANG`, so the two ends of a chat screen now hang into
+ * the content by the same amount. Deliberately symmetric: the previous asymmetry (top 12,
+ * bottom 0) is what made the two edges look like different effects.
+ */
+export const COMPOSER_SCRIM_OVERHANG = 28;
