@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
 import { useSettingsStore } from '../../src/store/settingsStore';
+import { BOTTOM_BAND_ENABLED } from '../../src/lib/browserWidget';
 import { useT } from '../../src/i18n/store';
 import { triggerHaptic } from '../../src/utils/haptics';
 
@@ -51,29 +52,36 @@ export default function BrowserSettingsScreen() {
           </View>
         </View>
 
-        {/* Position picker — visual side-by-side cards */}
-        <Text variant="caption" weight="semibold" color={theme.colors.text.secondary} style={{ marginLeft: 4, marginBottom: 8, textTransform: 'uppercase', fontSize: 11 }}>
-          {t('browser_settings.position_label')}
-        </Text>
-        <View style={{ flexDirection: 'row', gap: 12, marginBottom: 12 }}>
-          <PositionCard
-            label={t('browser_settings.position_top')}
-            active={browserWidgetPosition === 'top'}
-            onPress={() => { triggerHaptic('selection'); setBrowserWidgetPosition('top'); }}
-            theme={theme}
-            kind="top"
-          />
-          <PositionCard
-            label={t('browser_settings.position_bottom')}
-            active={browserWidgetPosition === 'bottom'}
-            onPress={() => { triggerHaptic('selection'); setBrowserWidgetPosition('bottom'); }}
-            theme={theme}
-            kind="bottom"
-          />
-        </View>
-        <Text variant="caption" color={theme.colors.text.tertiary} style={{ paddingHorizontal: 4 }}>
-          {t('browser_settings.position_hint')}
-        </Text>
+        {/* Position picker — hidden while the bottom variant is switched off, rather
+            than left on screen as a choice that silently does nothing. The stored
+            preference is untouched, so flipping `BOTTOM_BAND_ENABLED` back on restores
+            both this picker and whatever the user had selected. */}
+        {BOTTOM_BAND_ENABLED ? (
+          <>
+            <Text variant="caption" weight="semibold" color={theme.colors.text.secondary} style={{ marginLeft: 4, marginBottom: 8, textTransform: 'uppercase', fontSize: 11 }}>
+              {t('browser_settings.position_label')}
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 12, marginBottom: 12 }}>
+              <PositionCard
+                label={t('browser_settings.position_top')}
+                active={browserWidgetPosition === 'top'}
+                onPress={() => { triggerHaptic('selection'); setBrowserWidgetPosition('top'); }}
+                theme={theme}
+                kind="top"
+              />
+              <PositionCard
+                label={t('browser_settings.position_bottom')}
+                active={browserWidgetPosition === 'bottom'}
+                onPress={() => { triggerHaptic('selection'); setBrowserWidgetPosition('bottom'); }}
+                theme={theme}
+                kind="bottom"
+              />
+            </View>
+            <Text variant="caption" color={theme.colors.text.tertiary} style={{ paddingHorizontal: 4 }}>
+              {t('browser_settings.position_hint')}
+            </Text>
+          </>
+        ) : null}
       </ScrollView>
     </View>
   );

@@ -10,7 +10,8 @@ import { Text } from '../../src/components/ui';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { kvAllEntries, kvDeleteRawKeys, kvGetJSONSync, kvGetStringRawSync } from '../../src/services/kvStore';
 import { measureImageCacheBytes, clearImageCache } from '../../src/services/imageCacheStore';
-import { t as tStatic, useT } from '../../src/i18n/store';
+import { t as tStatic, useT } from '../../src/i18n/store';
+import { SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
 
 // Storage screen — the on-device cache is visualised as a clean, segmented
 // progress ring: each category contributes one rounded arc sized to its share
@@ -328,7 +329,7 @@ export default function StorageScreen() {
           LinearGradient + pointerEvents="box-none" lets the scroll content
           read through everywhere except on the back button. */}
       <View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10, height: insets.top + 56 }} pointerEvents="box-none">
-        <LinearGradient colors={[theme.colors.background.primary, theme.colors.background.primary, theme.colors.background.primary + '00']} locations={[0, 0.7, 1]} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} />
+        <LinearGradient colors={topScrimColors(theme.isDark, theme.colors.background.primary)} locations={SCRIM_LOCATIONS} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} />
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingTop: insets.top + 8, paddingHorizontal: 24, height: insets.top + 48 }} pointerEvents="box-none">
           <Pressable onPress={() => router.back()} hitSlop={8} style={{ position: 'absolute', left: 24, top: insets.top + 8 }}>
             <Feather name="chevron-left" size={24} color={theme.colors.text.primary} />

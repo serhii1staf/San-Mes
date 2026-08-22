@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { View, Pressable, ViewStyle, StyleSheet, FlatList, ActivityIndicator, RefreshControl } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import { SCRIM_LOCATIONS, topScrimColors } from '../src/theme/scrim';
+import { headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../src/theme/scrim';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useTheme } from '../src/theme';
@@ -175,8 +175,7 @@ export default function NotificationsScreen() {
   const containerStyle: ViewStyle = { flex: 1, backgroundColor: theme.colors.background.primary };
   const bgColor = theme.colors.background.primary;
   const bgTransparent = theme.colors.background.primary + '00';
-  const headerContentHeight = insets.top + 48;
-  const headerGradientHeight = headerContentHeight + 28;
+  const { content: headerContentHeight, gradient: headerGradientHeight } = headerScrimHeights(insets.top);
 
   const renderItem = useCallback(({ item }: { item: Notification }) => {
     return <NotificationRow item={item} theme={theme} />;

@@ -17,7 +17,8 @@ import { SlideUpSheet } from '../../src/components/ui/SlideUpSheet';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { useT } from '../../src/i18n/store';
 import { PixelIcon } from '../../src/components/pixel-icons/PixelIcon';
-import { parseDecoration, emojiToken } from '../../src/components/pixel-icons/decoration';
+import { parseDecoration, emojiToken } from '../../src/components/pixel-icons/decoration';
+import { headerScrimHeights } from '../../src/theme/scrim';
 
 // Inline-preview font for each family option. Mirrors the regular weight
 // ThemeProvider builds, so the right-side font label renders in the family
@@ -50,8 +51,7 @@ export default function FontsScreen() {
   const textSecondary = theme.colors.text.secondary;
   const textTertiary = theme.colors.text.tertiary;
 
-  const headerContentHeight = insets.top + 48;
-  const headerGradientHeight = headerContentHeight + 28;
+  const { content: headerContentHeight, gradient: headerGradientHeight } = headerScrimHeights(insets.top);
   const bgTransparent = bgPrimary + '00';
 
   // Right-side meta strings for the size + font rows

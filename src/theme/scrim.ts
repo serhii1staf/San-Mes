@@ -88,3 +88,38 @@ export function bottomScrimColors(isDark: boolean, backgroundColor: string): [st
   const s = scrimStops(isDark, backgroundColor);
   return [s.clear, s.mid, s.end];
 }
+
+// ─── Header geometry ────────────────────────────────────────────────────────────
+//
+// The height of a top scrim was written out longhand on eleven screens
+// (`insets.top + 48`, then `+ 28` for the gradient). Same drift problem as the colour
+// stops had: a correction lands on one screen and not the other ten.
+
+/** Height of the header row itself, below the status-bar inset. */
+export const HEADER_ROW_HEIGHT = 48;
+
+/**
+ * How far the top scrim extends PAST the header row, into the content.
+ *
+ * This used to be 28. The bottom scrim, which is the reference, spans exactly the tab
+ * bar plus its bottom margin (84 pt) and hangs over the content by nothing at all — so
+ * a 28 pt overhang at the top was visibly lower than the bottom equivalent, which is
+ * what "hangs too far down" was describing.
+ *
+ * It is not 0: the ramp needs some distance to reach transparent, otherwise content
+ * scrolling under the header pops at a hard edge instead of fading. The bottom gets away
+ * with no overhang because the opaque glass capsule sits on top of its ramp's dark end;
+ * there is no equivalent opaque element at the top of these screens.
+ */
+export const HEADER_SCRIM_OVERHANG = 12;
+
+/**
+ * Paired heights for a screen's top scrim.
+ *
+ * `content` is what the scroll view should use as `paddingTop` so the first item clears
+ * the header. `gradient` is the height of the scrim wrapper itself.
+ */
+export function headerScrimHeights(insetsTop: number): { content: number; gradient: number } {
+  const content = insetsTop + HEADER_ROW_HEIGHT;
+  return { content, gradient: content + HEADER_SCRIM_OVERHANG };
+}

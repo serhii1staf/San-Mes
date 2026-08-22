@@ -42,7 +42,8 @@ import { PixelIcon } from '../../src/components/pixel-icons/PixelIcon';
 import { uploadChatImage } from '../../src/lib/supabase';
 import { getImageDims, setImageDims } from '../../src/services/imageDimsCache';
 import { useRenderBudget } from '../../src/hooks/useRenderBudget';
-import { bottomScrimColors, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
+import { useEffectiveBrowserWidgetPosition } from '../../src/lib/browserWidget';
+import { bottomScrimColors, headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
 import { kvGetJSONSync, kvSetJSON, kvWarm } from '../../src/services/kvStore';
 import { mockMessages, mockConversations, formatMessageTime } from '../../src/utils/mockData';
 import { showToast } from '../../src/store/toastStore';
@@ -1317,8 +1318,7 @@ export default function ChatScreen() {
 
   const bgColor = theme.colors.background.primary;
   const bgTransparent = bgColor + '00';
-  const headerContentHeight = insets.top + 48;
-  const headerGradientHeight = headerContentHeight + 28;
+  const { content: headerContentHeight, gradient: headerGradientHeight } = headerScrimHeights(insets.top);
   const inputBarBottomPad = Math.max(insets.bottom, 12);
 
   // Gradient backdrop is now rendered as a STATIC absolute-positioned
@@ -1354,7 +1354,7 @@ export default function ChatScreen() {
   // overlapped region (the keyboard hides the band anyway), so the
   // input lands flush against the keyboard top in both states.
   const minimizedUrl = useBrowserStore((s) => s.minimizedUrl);
-  const browserWidgetPosition = useSettingsStore((s) => s.browserWidgetPosition);
+  const browserWidgetPosition = useEffectiveBrowserWidgetPosition();
   const stickyOpenedOffset = !!minimizedUrl && browserWidgetPosition === 'bottom' ? 56 : 0;
 
   // ── Input-bar lift: robust max() of keyboard height and panel height ──

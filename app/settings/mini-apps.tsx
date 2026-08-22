@@ -16,7 +16,8 @@ import { useT } from '../../src/i18n/store';
 import { buildMiniAppShareUrl } from '../../src/utils/miniAppShare';
 import { MiniAppConsentDialog } from '../../src/components/mini-apps/MiniAppConsentDialog';
 import { openLegalLink } from '../../src/components/mini-apps/openLegalLink';
-import { planSave, dispatchAccept } from '../../src/components/mini-apps/consentGate';
+import { planSave, dispatchAccept } from '../../src/components/mini-apps/consentGate';
+import { headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
 
 // HTTPS-only legal page literals (same destinations as the consent dialog).
 const TERMS_URL = 'https://legal.san-m-app.com/terms.html';
@@ -142,14 +143,13 @@ export default function MiniAppsScreen() {
 
   const bgColor = theme.colors.background.primary;
   const bgTransparent = bgColor + '00';
-  const headerContentHeight = insets.top + 48;
-  const headerGradientHeight = headerContentHeight + 28;
+  const { content: headerContentHeight, gradient: headerGradientHeight } = headerScrimHeights(insets.top);
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
       {/* Gradient fade header */}
       <View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100, height: headerGradientHeight }} pointerEvents="box-none">
-        <LinearGradient colors={[bgColor, bgColor, bgTransparent]} locations={[0, 0.55, 1]} style={StyleSheet.absoluteFill} />
+        <LinearGradient colors={topScrimColors(theme.isDark, bgColor)} locations={SCRIM_LOCATIONS} style={StyleSheet.absoluteFill} />
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: insets.top + 8, paddingBottom: 8 }} pointerEvents="auto">
           <Pressable onPress={() => router.back()} style={glassActive ? { borderRadius: 17 } : { borderRadius: 17, overflow: 'hidden' }}>
             {glassActive ? (

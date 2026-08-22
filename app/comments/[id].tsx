@@ -8,7 +8,7 @@ import * as Clipboard from 'expo-clipboard';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import { SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
+import { bottomScrimColors, headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../../src/theme';
 import { useLiquidGlassActive, NativeGlassView, GlassBg } from '../../src/components/ui/LiquidGlass';
@@ -43,6 +43,7 @@ import { showToast } from '../../src/store/toastStore';
 import { useT } from '../../src/i18n/store';
 import { perfMonitor } from '../../src/services/perfMonitor';
 import { useSettingsStore } from '../../src/store/settingsStore';
+import { useEffectiveBrowserWidgetPosition } from '../../src/lib/browserWidget';
 import { useBrowserStore } from '../../src/store/browserStore';
 import { useIsBlocked } from '../../src/store/blockedUsersStore';
 import { BlockedContentPlaceholder } from '../../src/components/feed/BlockedContentPlaceholder';
@@ -464,7 +465,7 @@ export default function CommentsScreen() {
   // keyboard hides the band anyway), so the input lands flush against
   // the keyboard top in both states.
   const minimizedUrl = useBrowserStore((s) => s.minimizedUrl);
-  const browserWidgetPosition = useSettingsStore((s) => s.browserWidgetPosition);
+  const browserWidgetPosition = useEffectiveBrowserWidgetPosition();
   const stickyOpenedOffset = !!minimizedUrl && browserWidgetPosition === 'bottom' ? 56 : 0;
   // Keyboard-driven list repositioning is now handled NATIVELY by the official
   // KeyboardChatScrollView (wired via `renderScrollComponent` on the FlatList
@@ -717,8 +718,7 @@ export default function CommentsScreen() {
 
   const bgColor = theme.colors.background.primary;
   const bgTransparent = bgColor + '00';
-  const headerContentHeight = insets.top + 48;
-  const headerGradientHeight = headerContentHeight + 28;
+  const { content: headerContentHeight, gradient: headerGradientHeight } = headerScrimHeights(insets.top);
 
   // Defer all non-critical mount work past the navigation transition so the
   // first paint carries only the cached header + cached comments. The
@@ -1431,8 +1431,8 @@ export default function CommentsScreen() {
             container is gone, so comments scroll UNDER the input and dissolve
             into the background instead of hitting a hard bar edge. */}
         <LinearGradient
-          colors={[bgTransparent, bgColor + 'B3', bgColor]}
-          locations={[0, 0.45, 1]}
+          colors={bottomScrimColors(theme.isDark, bgColor)}
+          locations={SCRIM_LOCATIONS}
           pointerEvents="none"
           style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: insets.bottom + 120 }}
         />

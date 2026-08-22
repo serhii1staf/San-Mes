@@ -2,7 +2,7 @@ import React, { useEffect, useCallback, useState, useRef, useMemo } from 'react'
 import { View, RefreshControl, Pressable, StyleSheet, ActivityIndicator, Modal, InteractionManager, Animated, Easing } from 'react-native';
 import { AnimatedFlashList } from '@shopify/flash-list';
 import { feedGetItemType } from '../../src/lib/feedItemType';
-import { SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
+import { headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
 import { useRenderBudget } from '../../src/hooks/useRenderBudget';
 import { currentRenderBudget } from '../../src/utils/renderBudget';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -42,7 +42,6 @@ import { PixelIcon } from '../../src/components/pixel-icons/PixelIcon';
 //
 // Gradient first, blur on top: the darkness comes from the ramp, the frost from the
 // blur, and both edges now read the same.
-import { FadingBlurHeader } from '../../src/components/ui/FadingBlurHeader';
 
 const FEED_CACHE_KEY = '@san:feed_posts';
 const FEED_LIMIT = 20;
@@ -969,8 +968,7 @@ export default function FeedScreen() {
   const bgColor = theme.colors.background.primary;
   // Single shared definition — see src/theme/scrim.ts.
   const topScrim = topScrimColors(theme.isDark, bgColor);
-  const headerContentHeight = insets.top + 48;
-  const headerGradientHeight = headerContentHeight + 28;
+  const { content: headerContentHeight, gradient: headerGradientHeight } = headerScrimHeights(insets.top);
 
   // Render-time (non-hook) derived values. The spinner's reveal combines TWO
   // native-driven contributions so it animates with the pull AND keeps a clean
@@ -1006,8 +1004,7 @@ export default function FeedScreen() {
     return (
       <View style={{ flex: 1, backgroundColor: bgColor }}>
         <View style={[styles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">
-            <LinearGradient colors={topScrim} locations={SCRIM_LOCATIONS} style={StyleSheet.absoluteFill} />
-          <FadingBlurHeader isDark={theme.isDark} direction="down" height={insets.top + 38} fadeStart={0.5} blendColor={bgColor + '8C'} />
+          <LinearGradient colors={topScrim} locations={SCRIM_LOCATIONS} style={StyleSheet.absoluteFill} />
           <View style={[styles.headerContent, { paddingTop: insets.top }]}>
             <Pressable onLongPress={onTitleLongPress} delayLongPress={350} hitSlop={6} style={styles.titleRow}>
               {homeHeaderIcon ? <PixelIcon id={homeHeaderIcon} size={26} /> : null}
@@ -1028,9 +1025,14 @@ export default function FeedScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: bgColor }}>
+      {/* The scrim is this gradient and NOTHING ELSE. A `FadingBlurHeader` used to sit
+          on top of it, and that is the whole reason the feed's scrim never looked like
+          the one under the tab bar: the blur lifts and desaturates whatever it samples,
+          so the same black ramp read as a pale frost here and as dimming there. The
+          create screen was the one place that matched, precisely because it had no blur
+          over its gradient. Do not add a blur layer back on top of a scrim. */}
       <View style={[styles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">
-          <LinearGradient colors={topScrim} locations={SCRIM_LOCATIONS} style={StyleSheet.absoluteFill} />
-        <FadingBlurHeader isDark={theme.isDark} direction="down" height={insets.top + 38} fadeStart={0.5} blendColor={bgColor + '8C'} />
+        <LinearGradient colors={topScrim} locations={SCRIM_LOCATIONS} style={StyleSheet.absoluteFill} />
         <View style={[styles.headerContent, { paddingTop: insets.top }]} pointerEvents="auto">
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <Pressable onLongPress={onTitleLongPress} delayLongPress={350} hitSlop={6} style={styles.titleRow}>

@@ -10,7 +10,8 @@ import { showToast } from '../../src/store/toastStore';
 import { reloadWidgetNow, isWidgetAvailable } from '../../src/services/widgetBridge';
 import { useWidgetSettingsStore, WidgetContent } from '../../src/store/widgetSettingsStore';
 import { triggerHaptic } from '../../src/utils/haptics';
-import { useT } from '../../src/i18n/store';
+import { useT } from '../../src/i18n/store';
+import { headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
 
 function Step({ index, text, theme }: { index: number; text: string; theme: any }) {
   return (
@@ -66,16 +67,15 @@ export default function WidgetScreen() {
 
   const bgColor = theme.colors.background.primary;
   const bgTransparent = theme.colors.background.primary + '00';
-  const headerContentHeight = insets.top + 48;
-  const headerGradientHeight = headerContentHeight + 28;
+  const { content: headerContentHeight, gradient: headerGradientHeight } = headerScrimHeights(insets.top);
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background.primary }}>
       {/* Gradient fade header (same pattern as Settings) */}
       <View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100, height: headerGradientHeight }} pointerEvents="box-none">
         <LinearGradient
-          colors={[bgColor, bgColor, bgTransparent]}
-          locations={[0, 0.55, 1]}
+          colors={topScrimColors(theme.isDark, bgColor)}
+          locations={SCRIM_LOCATIONS}
           style={StyleSheet.absoluteFill}
         />
         <View
