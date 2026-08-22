@@ -310,6 +310,9 @@ export default function ChatFullscreenScreen() {
           pointerEvents="none"
         />
         <View style={[styles.headerRow, { paddingTop: insets.top }]} pointerEvents="box-none">
+          {/* Left slot reserves the same width as the right action cluster — see the note on
+              `headerSide` for why the caption drifts without it. */}
+          <View style={styles.headerSide} pointerEvents="box-none">
           <Pressable
             onPress={close}
             hitSlop={10}
@@ -322,6 +325,7 @@ export default function ChatFullscreenScreen() {
             ) : null}
             <Feather name="x" size={18} color={theme.colors.text.primary} />
           </Pressable>
+          </View>
 
           {/* Name + day/page caption. Framed for the same reason as the buttons: this header
               sits over a PHOTO, so unbacked text has no guaranteed contrast. Glass supplies
@@ -749,7 +753,19 @@ const styles = StyleSheet.create({
     gap: 8,
     flex: 1,
   },
-  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  // ── Both side slots reserve the SAME width ──────────────────────────────────────
+  //
+  // The caption is centred inside the space LEFT OVER between the two sides, so it is only
+  // optically centred on screen when those sides are equal. They were not: one 36 pt close
+  // button on the left against a right cluster that is 36 when the page is text and
+  // 36 + 8 + 36 = 80 when the page is an image and the download button appears. So the
+  // caption sat centred at rest and slid left the moment the user paged onto a photo — with
+  // no way to tell that a button had appeared, only that the title moved.
+  //
+  // 80 is the widest the right cluster ever gets, so reserving it on both sides keeps the
+  // caption fixed whether the download button is showing or not.
+  headerSide: { minWidth: 80, flexDirection: 'row', alignItems: 'center' },
+  headerActions: { minWidth: 80, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 8 },
   headerBtn: {
     width: 36,
     height: 36,
