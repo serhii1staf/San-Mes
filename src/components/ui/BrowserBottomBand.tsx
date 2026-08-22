@@ -11,7 +11,7 @@ import Animated, {
   Easing,
 } from 'react-native-reanimated';
 import { useTheme } from '../../theme';
-import { scrimStops } from '../../theme/scrim';
+import { SCRIM_LOCATIONS, scrimStops } from '../../theme/scrim';
 import { Text } from './Text';
 import { CachedImage } from './CachedImage';
 import { useBrowserStore } from '../../store/browserStore';
@@ -183,6 +183,23 @@ export function BrowserBottomBand() {
       style={{ height: reserved ? BAND_HEIGHT : 0, overflow: 'hidden' }}
       pointerEvents={visible ? 'auto' : 'none'}
     >
+      {/* Backing scrim, UNROUNDED, filling the whole strip.
+          
+          The band itself has rounded top corners with `overflow: hidden`, so its two
+          corner triangles are transparent. On a chat that goes unnoticed because the
+          chat already paints a scrim there; on the feed, search, create and profile
+          there is nothing behind it, so raw list content showed through the corners
+          and read as a stray strip along the top edge.
+          
+          Filling the strip behind the band with the same ramp means the corners
+          reveal scrim instead of content, so the rounding stays visible without an
+          artefact. */}
+      <LinearGradient
+        colors={[bandFadeTop, bandFadeMid, bandFadeBottom]}
+        locations={SCRIM_LOCATIONS}
+        style={StyleSheet.absoluteFill}
+        pointerEvents="none"
+      />
       <Animated.View
         style={[
           {

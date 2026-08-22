@@ -16,6 +16,7 @@ import { createRepost, createPost, uploadPostImage, joinImageUrls } from '../../
 import { uploadFailureMessageKey, type UploadFailureReason } from '../../src/lib/uploadFailure';
 import { uploadImageBatch } from '../../src/lib/uploadBatch';
 import { prependToPostCaches, updateInPostCaches } from '../../src/services/postCacheWrite';
+import { SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
 import { queueMutation, generateTempId } from '../../src/services/offlineQueue';
 import { sanitizeUserText } from '../../src/utils/sanitizeText';
 import { accountKey } from '../../src/services/cacheService';
@@ -573,7 +574,10 @@ export default function CreateScreen() {
     <View style={containerStyle}>
       {/* Custom gradient header like feed screen */}
       <View style={[createStyles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">
-        <LinearGradient colors={[bgColor, bgColor, bgTransparent]} locations={HEADER_GRADIENT_LOCATIONS} style={StyleSheet.absoluteFill} />
+        {/* Shared scrim ramp (src/theme/scrim.ts) instead of the local
+            `[bgColor, bgColor, bgTransparent]` stops this used to carry — those were
+            one of the copies that drifted out of step with the rest of the app. */}
+        <LinearGradient colors={topScrimColors(theme.isDark, bgColor)} locations={SCRIM_LOCATIONS} style={StyleSheet.absoluteFill} />
         <View style={[createStyles.headerContent, { paddingTop: insets.top }]} pointerEvents="auto">
           <Text variant="body" weight="bold">{headerTitle}</Text>
           <Pressable
