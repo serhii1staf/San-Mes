@@ -16,27 +16,6 @@
         "EAS_BUILD_NO_EXPO_GO_WARNING": "true"
       }
     },
-    "//simulator": [
-      "iOS SIMULATOR build. This profile did not exist, and its absence wasted a lot of time.",
-      "",
-      "Every iOS build on record is distribution=STORE, isForIosSimulator=false. So testing",
-      "'through the simulator' could only have meant a locally-run dev build or Expo Go — and",
-      "NEITHER APPLIES EAS UPDATES. A dev client loads its bundle from Metro; Expo Go ignores",
-      "the project's update configuration entirely. Every `eas update` published to the",
-      "production branch was therefore invisible on that simulator, and round after round of",
-      "fixes were evaluated against whatever code happened to be in that build.",
-      "",
-      "Two properties make this profile reflect what is actually shipped:",
-      "  ios.simulator: true  — produces a .app runnable in the Simulator, and needs NO code",
-      "                         signing, so it cannot fail on credentials.",
-      "  channel: production  — binds it to the SAME update branch the OTA workflow publishes",
-      "                         to, so an `eas update` reaches it exactly as it reaches a real",
-      "                         build. A different channel here would recreate the original",
-      "                         problem in a new place.",
-      "",
-      "`developmentClient` is deliberately absent: with it, the app loads from Metro and",
-      "ignores updates again, which is the very thing being fixed."
-    ],
     "simulator": {
       "distribution": "internal",
       "channel": "production",
