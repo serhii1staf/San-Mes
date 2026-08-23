@@ -431,6 +431,11 @@ const en: Record<string, string> = {
   'chat.replying': 'Reply to message',
   'chat.you': 'You',
   'chat.peer': 'Other',
+  // Typing indicators. Shared by the chat and comments composers.
+  'typing.one': '{name} is typing…',
+  'typing.two': '{a} and {b} are typing…',
+  'typing.many': '{n} people are typing…',
+  'typing.someone': 'Typing…',
   'chat.photo': 'Photo',
   'chat.photos_count': '{n} photos',
   'chat.open_fullscreen': 'Open fullscreen',

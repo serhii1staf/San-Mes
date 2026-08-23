@@ -175,6 +175,9 @@ interface ChatInputBarProps {
   onToggleEmoji?: () => void;
   // Tapping the top-left emoji button asks the parent to open the panel.
   onOpenEmoji?: () => void;
+  // Called on every keystroke so the screen can broadcast a typing indicator.
+  // MUST be a stable, state-free callback — see the note on `ChatFieldProps.onTyping`.
+  onTyping?: () => void;
 }
 
 // ── Isolated text field (PER-KEYSTROKE RECONCILIATION FIX #4) ──────────────
@@ -203,10 +206,15 @@ interface ChatFieldProps {
   onHasTextChange: (hasText: boolean) => void;
   onFocus: () => void;
   onPaste: (payload: any) => void;
+  // Fires on EVERY keystroke, unlike `onHasTextChange`. Safe only because the
+  // implementation is a stable, state-free callback that throttles internally
+  // (see `useTypingPublisher`); a handler that set state here would reintroduce
+  // the per-keystroke parent render this whole component exists to avoid.
+  onTyping?: () => void;
 }
 
 const ChatField = memo(forwardRef<ChatFieldHandle, ChatFieldProps>(function ChatField(
-  { onContentSizeChange, onHasTextChange, onFocus, onPaste },
+  { onContentSizeChange, onHasTextChange, onFocus, onPaste, onTyping },
   ref,
 ) {
   const theme = useTheme();
@@ -237,7 +245,13 @@ const ChatField = memo(forwardRef<ChatFieldHandle, ChatFieldProps>(function Chat
     focus: () => { textInputRef.current?.focus(); },
   }), [text]);
 
-  const handleChangeText = useCallback((val: string) => setText(val), []);
+  const handleChangeText = useCallback((val: string) => {
+    setText(val);
+    // Announce typing from the change handler rather than an effect on `text`: an effect
+    // would also fire for programmatic `setText` (opening the edit composer, inserting an
+    // emoji, backspacing from the media panel), none of which is the user typing.
+    if (val.length > 0) onTyping?.();
+  }, [onTyping]);
 
   const textInputEl = (
     <TextInput
@@ -273,7 +287,7 @@ const ChatField = memo(forwardRef<ChatFieldHandle, ChatFieldProps>(function Chat
 }));
 
 export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProps>(function ChatInputBar(
-  { isEditing, hasPendingImages, onSend, onPickImages, onPasteImage, onPasteImages, onOpenGif, inputRowStyle, emojiOpen, gifOpen, onToggleEmoji, onOpenEmoji },
+  { isEditing, hasPendingImages, onSend, onPickImages, onPasteImage, onPasteImages, onOpenGif, inputRowStyle, emojiOpen, gifOpen, onToggleEmoji, onOpenEmoji, onTyping },
   ref,
 ) {
   const theme = useTheme();
@@ -432,6 +446,7 @@ export const ChatInputBar = memo(forwardRef<ChatInputBarHandle, ChatInputBarProp
     >
       <ChatField
         ref={fieldRef}
+        onTyping={onTyping}
         onContentSizeChange={handleContentSizeChange}
         onHasTextChange={handleHasTextChange}
         onFocus={handleFieldFocus}

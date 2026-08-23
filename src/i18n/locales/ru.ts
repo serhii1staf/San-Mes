@@ -429,6 +429,11 @@ const ru: Record<string, string> = {
   'chat.replying': 'Ответ на сообщение',
   'chat.you': 'Вы',
   'chat.peer': 'Собеседник',
+  // Typing indicators. Shared by the chat and comments composers.
+  'typing.one': '{name} печатает…',
+  'typing.two': '{a} и {b} печатают…',
+  'typing.many': 'Печатают: {n}',
+  'typing.someone': 'Печатает…',
   'chat.photo': 'Фото',
   'chat.photos_count': '{n} фото',
   'chat.open_fullscreen': 'Открыть на весь экран',
