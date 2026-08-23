@@ -28,6 +28,7 @@ import { Text } from './Text';
 import { useTheme } from '../../theme';
 import { useT } from '../../i18n/store';
 import { useTypingPeers } from '../../services/realtime/typing';
+import { GlassBg, useLiquidGlassActive } from './LiquidGlass';
 
 /**
  * Cap on rendered emoji. A comment thread can have many simultaneous typists and the strip
@@ -38,6 +39,7 @@ const MAX_EMOJI = 3;
 function TypingIndicatorImpl({ channelName }: { channelName: string | null }) {
   const theme = useTheme();
   const t = useT();
+  const glassActive = useLiquidGlassActive();
   const peers = useTypingPeers(channelName);
 
   if (peers.length === 0) return null;
@@ -75,9 +77,12 @@ function TypingIndicatorImpl({ channelName }: { channelName: string | null }) {
         style={[
           styles.pill,
           {
-            backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
-            borderColor: theme.isDark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.12)',
+            borderColor: theme.isDark ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.12)',
           },
+          // The flat fill is only for devices without liquid glass. With glass active the
+          // `GlassBg` below supplies the material, and painting a translucent fill on top of it
+          // would mute the blur it exists to provide.
+          glassActive ? null : { backgroundColor: theme.isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)' },
         ]}
         // Announced as a live status so a screen reader mentions it without stealing focus
         // from the field the user is typing into.
@@ -85,6 +90,27 @@ function TypingIndicatorImpl({ channelName }: { channelName: string | null }) {
         accessibilityLiveRegion="polite"
         accessibilityLabel={label}
       >
+        {/* Blur behind the pill, as requested — the flat translucent fill read as "just
+            transparent" over a busy transcript.
+
+            `GlassBg` sits BEHIND the content as an absolute sibling rather than wrapping it. That
+            is the app-wide rule for this material (see the reply/edit banners in both composers):
+            wrapping text in a glass view puts the text INSIDE the blur, which optically warps it.
+            Behind it, the text stays crisp and only what is underneath is blurred.
+
+            `interactive={false}` because this pill is `pointerEvents="none"` — an interactive
+            glass surface animates in response to touches it can never receive, which is pure
+            cost. `overflow: 'hidden'` on the pill is what clips the material to the rounded
+            corners. */}
+        {glassActive ? (
+          <GlassBg
+            borderRadius={13}
+            glassStyle="regular"
+            interactive={false}
+            colorScheme={theme.isDark ? 'dark' : 'light'}
+            tintColor={theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.45)'}
+          />
+        ) : null}
         {emoji.length > 0 ? (
           // Emoji are decorative — the label already names who is typing — so they are hidden
           // from assistive tech rather than read out as stray characters.
@@ -124,10 +150,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
     paddingHorizontal: 10,
-    // Vertical padding follows the emoji's line box rather than the label's: 20 pt of glyph in
-    // a pill sized for 12 pt text is the other half of "the emoji is cut off".
-    paddingVertical: 5,
+    // Vertical padding follows the emoji's box (22) rather than the label's (12): a tall glyph in
+    // a pill sized for small text is the other half of "the emoji is cut off".
+    paddingVertical: 4,
     borderRadius: 13,
+    // Clips `GlassBg` to the rounded corners. Without it the material paints a square behind the
+    // pill and the border looks detached from the blur.
+    overflow: 'hidden',
     borderWidth: StyleSheet.hairlineWidth,
     // Bounded so a long display name cannot push the pill past the screen edge.
     maxWidth: '86%',
@@ -147,7 +176,24 @@ const styles = StyleSheet.create({
   // sizes, so at 13 pt the renderer scales a larger strike down and the result looks soft. 16 pt
   // lands closer to a native strike and reads crisp. It is also simply easier to recognise
   // whose emoji it is, which is the point of showing it.
-  emoji: { fontSize: 16, lineHeight: 20 },
+  // ── STILL CLIPPED AFTER lineHeight, SO THE BOX IS MADE EXPLICIT ───────────
+  //
+  // Reported as still cut off after the first fix. `lineHeight` alone is not enough on Android:
+  // the text view's height comes from the font's ascent+descent metrics, and a colour emoji's
+  // bitmap routinely exceeds them — so the glyph overflows a box that `lineHeight` merely
+  // *suggested*. Reanimated/RN then clips to the measured view, not to the line box.
+  //
+  // Giving the Text an explicit `height` and `textAlignVertical: 'center'` makes the box
+  // authoritative and comfortably larger than the glyph at this size, so there is nothing left to
+  // trim. `includeFontPadding: false` removes Android's extra ascent/descent padding, which
+  // otherwise pushes the glyph off-centre inside that taller box.
+  emoji: {
+    fontSize: 17,
+    lineHeight: 22,
+    height: 22,
+    textAlignVertical: 'center',
+    includeFontPadding: false,
+  },
   label: { fontSize: 12, flexShrink: 1 },
 });
 
