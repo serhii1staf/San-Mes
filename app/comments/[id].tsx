@@ -35,6 +35,8 @@ import { getRecentGif, pushRecentGif } from '../../src/services/recentGif';
 import { kvGetJSONSync, kvSetJSON } from '../../src/services/kvStore';
 import { useAuthStore, useConnectivityStore } from '../../src/store';
 import { getRealtime, postChannelName } from '../../src/services/realtime/ably';
+import { TypingIndicator } from '../../src/components/ui/TypingIndicator';
+import { typingPostChannelName, useTypingPublisher } from '../../src/services/realtime/typing';
 import { getComments, createComment, updateComment, deleteComment, isRepost, parseImageUrls } from '../../src/lib/supabase';
 import { generateClientMutationId, queueMutation } from '../../src/services/offlineQueue';
 import { triggerHaptic } from '../../src/utils/haptics';
@@ -350,10 +352,15 @@ interface CommentFieldProps {
   // enabled state / colors without a per-keystroke screen render.
   onHasTextChange: (hasText: boolean) => void;
   onFocus: () => void;
+  // Fires on EVERY keystroke, so the screen can broadcast a typing indicator.
+  // MUST be a stable, state-free callback (see `useTypingPublisher`) — anything
+  // that set state here would reintroduce the per-keystroke screen render this
+  // component exists to prevent.
+  onTyping?: () => void;
 }
 
 const CommentField = React.memo(React.forwardRef<CommentFieldHandle, CommentFieldProps>(function CommentField(
-  { onHasTextChange, onFocus },
+  { onHasTextChange, onFocus, onTyping },
   ref,
 ) {
   const theme = useTheme();
@@ -381,7 +388,13 @@ const CommentField = React.memo(React.forwardRef<CommentFieldHandle, CommentFiel
     focus: () => { textInputRef.current?.focus(); },
   }), [text]);
 
-  const handleChangeText = useCallback((val: string) => setText(val), []);
+  const handleChangeText = useCallback((val: string) => {
+    setText(val);
+    // From the change handler, not an effect on `text`: an effect would also fire for
+    // programmatic `setText` (entering edit mode, an emoji pick, a media-panel backspace),
+    // none of which is the user typing.
+    if (val.length > 0) onTyping?.();
+  }, [onTyping]);
   // ── NO `LayoutAnimation` ON COMPOSER GROWTH ─────────────────────────────────
   //
   // This used to call `LayoutAnimation.configureNext(easeInEaseOut)` from
@@ -1010,12 +1023,23 @@ export default function CommentsScreen() {
     return () => { cancelled = true; handle.cancel(); };
   }, [postData?.content]);
 
+  // ── Typing indicator ────────────────────────────────────────────────────────
+  //
+  // Its own `typing:post:<id>` channel, NOT the `post:<id>` one the comment events use: that
+  // namespace is subscribe-only in the Ably token so a device cannot forge a `comment.new`,
+  // and typing has to be client-published. See src/services/realtime/typing.ts.
+  const typingChannel = postId ? typingPostChannelName(postId) : null;
+  const { notifyTyping, notifyStopped } = useTypingPublisher(typingChannel);
+
   const handleSend = async () => {
     // RE-ENTRY GUARD: prevent a double-send if invoked again while a send is
     // already in flight (the button is also disabled, but this is belt-and-braces).
     if (isSending) return;
     const draft = inputRef.current?.getText() ?? '';
     if (!draft.trim() || !user?.id || !postId) return;
+    // Clear the indicator at once — the comment itself is about to appear, so leaving
+    // "is typing" up would read as a second one on the way.
+    notifyStopped();
     playSendSound();
     // Strip dangerous invisible / control / bidi-override chars; keep
     // decorative Unicode + emoji. sanitizeUserText also trims.
@@ -1569,6 +1593,10 @@ export default function CommentsScreen() {
             backgroundColor: the fade above supplies the darkening so the
             composer floats over content like the other chats. */}
         <Reanimated.View style={[{ position: 'absolute', left: 0, right: 0, bottom: 0 }, barWrapStyle]}>
+          {/* "…is typing" — topmost in the composer stack so it never covers the field.
+              Owns its own realtime subscription, so a typing event in a busy thread
+              re-renders this strip alone and not the comment list. */}
+          <TypingIndicator channelName={typingChannel} />
           {editing ? (
             <View style={[{ flexDirection: 'row', alignItems: 'center', marginHorizontal: 12, marginBottom: 6, paddingHorizontal: 14, paddingVertical: 7, borderRadius: 12, overflow: 'hidden' }, glassActive ? null : { backgroundColor: theme.colors.background.elevated, borderWidth: 1, borderColor: theme.colors.border.light }]}>
               {glassActive ? <GlassBg borderRadius={12} glassStyle="regular" interactive={false} colorScheme={theme.isDark ? 'dark' : 'light'} tintColor={theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.5)'} /> : null}
@@ -1608,6 +1636,7 @@ export default function CommentsScreen() {
               <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={{ flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 22, paddingHorizontal: 16, paddingVertical: 10, minHeight: 44 }}>
                 <CommentField
                   ref={inputRef}
+                  onTyping={notifyTyping}
                   onHasTextChange={handleHasTextChange}
                   onFocus={handleInputFocus}
                 />
@@ -1629,6 +1658,7 @@ export default function CommentsScreen() {
               <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 22, paddingHorizontal: 16, paddingVertical: 10, borderWidth: 1, borderColor: theme.colors.border.light, minHeight: 44 }}>
                 <CommentField
                   ref={inputRef}
+                  onTyping={notifyTyping}
                   onHasTextChange={handleHasTextChange}
                   onFocus={handleInputFocus}
                 />

@@ -176,6 +176,22 @@ function send(res: ServerResponse, status: number, body: unknown): void {
  *   - `post:*` and `feed:public` are SUBSCRIBE-ONLY. Only the Worker
  *     publishes there; the device should never be able to fabricate a
  *     `post.new` or `comment.delete`.
+ *   - `typing:*` is publish + subscribe + presence. Typing indicators are
+ *     inherently client-published: only the device knows a key was pressed,
+ *     and no server is involved.
+ *
+ *     It is a SEPARATE namespace rather than publish rights on `post:*`
+ *     precisely so that stays subscribe-only. Granting the device publish on
+ *     `post:*` to carry a typing event would also let it fabricate a
+ *     `comment.new` or `comment.delete`, which is the one thing the
+ *     subscribe-only rule above exists to prevent. Channel names are
+ *     `typing:chat:<conversationId>` and `typing:post:<postId>` — see
+ *     `src/services/realtime/typing.ts`.
+ *
+ *     Worst case for a leaked token on this namespace is a fake "someone is
+ *     typing" on a channel the holder could already read. Nothing is stored,
+ *     nothing is authoritative, and the payload is ignored unless it carries a
+ *     user id the viewer is already able to see.
  *
  * Granting broad rights on `chat:*` is a deliberate tradeoff
  * documented here so a future hardening pass (per-conversation tokens)
@@ -192,6 +208,9 @@ function buildCapability(userId: string): Record<string, string[]> {
     [`user:${userId}:*`]: ['publish', 'subscribe', 'presence', 'history'],
     'post:*': ['subscribe', 'history'],
     'feed:public': ['subscribe', 'history'],
+    // Typing indicators. No `history`: a typing event is meaningless a moment after it was
+    // sent, so replaying one on attach would only ever show a stale "is typing".
+    'typing:*': ['publish', 'subscribe', 'presence'],
   };
 }
 

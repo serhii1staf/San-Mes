@@ -46,6 +46,8 @@ import { useEffectiveBrowserWidgetPosition } from '../../src/lib/browserWidget';
 import { bottomScrimColorsStrong, composerScrimHeight, headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
 import { kvGetJSONSync, kvSetJSON, kvWarm } from '../../src/services/kvStore';
 import { addTombstones, filterTombstoned } from '../../src/services/messageTombstones';
+import { TypingIndicator } from '../../src/components/ui/TypingIndicator';
+import { typingChatChannelName, useTypingPublisher } from '../../src/services/realtime/typing';
 import { mockMessages, mockConversations, formatMessageTime } from '../../src/utils/mockData';
 import { showToast } from '../../src/store/toastStore';
 import { ChatMessage } from '../../src/types';
@@ -3200,9 +3202,22 @@ export default function ChatScreen() {
     }
   }, [activePin, pinnedResolved.length]);
 
+  // ── Typing indicator ────────────────────────────────────────────────────────
+  //
+  // `typingChannel` is null until the canonical conversation id is resolved, which is what
+  // keeps typing off the transient peer-user-id bucket a chat opened from a profile starts in.
+  // The publisher holds no state and returns stable callbacks, so handing `notifyTyping` to
+  // the memoized composer does not cost a re-render per keystroke.
+  const typingChannel = conversationId ? typingChatChannelName(conversationId) : null;
+  const { notifyTyping, notifyStopped } = useTypingPublisher(typingChannel);
+
   const handleSend = useCallback(async (rawText: string) => {
     const hasImages = pendingImages.length > 0;
     if ((!rawText.trim() && !hasImages) || !conversationId) return;
+    // Clear the peer's "is typing" immediately rather than letting it lapse — the message
+    // itself is about to arrive, so leaving the indicator up for another few seconds would
+    // read as a second message on the way.
+    notifyStopped();
     triggerHaptic('medium');
     playSendSound();
     // Strip dangerous invisible / control / bidi-override chars; keep
@@ -3379,7 +3394,7 @@ export default function ChatScreen() {
       // participant, migrates optimistic messages, and re-keys the route.
       reconcileConversation(convId, text || (uploadedUrls.length > 0 ? '📷' : ''));
     } catch {}
-  }, [pendingImages, conversationId, editing, replyTo, currentUserId, chatSettings.replyPixelIcon, participantId, id, t, addMessage, revealNewest, setMessages, reconcileConversation]);
+  }, [pendingImages, conversationId, editing, replyTo, currentUserId, chatSettings.replyPixelIcon, participantId, id, t, addMessage, revealNewest, setMessages, reconcileConversation, notifyStopped]);
 
   // ── Media-panel long-press actions (Task B) ───────────────────────────────
   // Additive callbacks wired down through MediaPanel → Emoji/Gif panels. A
@@ -4313,6 +4328,12 @@ export default function ChatScreen() {
           handoff jump. Hidden while searching. */}
       {!searchMode && (
       <Reanimated.View style={[{ position: 'absolute', left: 0, right: 0, bottom: 0 }, barWrapStyle]}>
+        {/* "…is typing" — above the reply/edit banner so it is the topmost thing in the
+            composer stack and never covers the field. Owns its own realtime subscription
+            (see the note in the component) so a typing event re-renders this strip alone
+            rather than the whole transcript. Rides `barWrapStyle` with the rest of the
+            stack, so it stays put relative to the input when the keyboard moves. */}
+        <TypingIndicator channelName={typingChannel} />
         {banner && (
           <View style={[{ marginHorizontal: 12, marginTop: 6, flexDirection: 'row', alignItems: 'center', gap: 10, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 6, overflow: 'hidden' }, glassActive ? null : { backgroundColor: theme.colors.background.elevated, borderWidth: 1, borderColor: theme.colors.border.light }]}>
             {glassActive ? <GlassBg borderRadius={12} glassStyle="regular" interactive={false} colorScheme={theme.isDark ? 'dark' : 'light'} tintColor={theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.5)'} /> : null}
@@ -4371,6 +4392,7 @@ export default function ChatScreen() {
           isEditing={!!editing}
           hasPendingImages={pendingImages.length > 0}
           onSend={handleSend}
+          onTyping={notifyTyping}
           onPickImages={openPhotoPanel}
           onPasteImage={pasteImageFromClipboard}
           onPasteImages={addPastedImages}
