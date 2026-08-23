@@ -1359,6 +1359,16 @@ export default function ChatScreen() {
    */
   const OLDER_LOAD_COOLDOWN_MS = 900;
   const lastOlderLoadAtRef = useRef(0);
+
+  /**
+   * Set when the list has asked for an older page; cleared when that page is committed.
+   *
+   * The request and the commit are deliberately separated. `onStartReached` fires during the
+   * gesture, and committing a prepend there makes FlashList's offset correction fight an
+   * in-flight fling. The commit therefore happens on the scroll-settle timer in `onChatScroll`,
+   * with the list stationary, where the same correction is imperceptible.
+   */
+  const pendingOlderLoadRef = useRef(false);
   const hydrateFullHistory = useCallback((): ChatMessage[] | null => {
     if (!conversationId) return null;
     if (historyHydratedRef.current === conversationId) return null;
@@ -3801,6 +3811,7 @@ export default function ChatScreen() {
       olderHandleRef.current = null;
       loadingOlderRef.current = false;
       lastOlderLoadAtRef.current = 0;
+      pendingOlderLoadRef.current = false;
       // Paging state is per conversation. Without this reset a chat opened after one that had
       // been scrolled to its oldest message would start with `moreOlderRef` false and refuse
       // to load any history at all.
@@ -3879,15 +3890,12 @@ export default function ChatScreen() {
     //
     // So: one prepend, compensated by measured layouts, and nothing of ours competing with
     // it. Both hand-rolled restores that used to live here are gone.
-    const handle = InteractionManager.runAfterInteractions(() => {
-      olderHandleRef.current = null;
-      loadOlderChunkRef.current();
-      // Released only after the chunk has been committed, so a fling that keeps the list at
-      // the top loads page after page instead of firing several loads at the same offset.
-      loadingOlderRef.current = false;
-    });
-    olderHandleRef.current = handle;
-  }, [conversationId]);
+    // Request it; do not perform it. The commit happens on the scroll-settle timer in
+    // `onChatScroll`, so the prepend's offset correction never competes with an in-flight
+    // fling — see the long note there. `loadingOlderRef` stays true until that commit, which
+    // is what stops a second request being queued for the same gesture.
+    pendingOlderLoadRef.current = true;
+  }, []);
 
   // Tap-a-reply-to-jump: scroll to the message a reply is quoting and flash it.
   // `replyToId` is stored on every reply message (see sendText/sendGif). The
@@ -4301,6 +4309,33 @@ export default function ChatScreen() {
       visTrackerRef.current?.setScrolling(false);
       scrollPausedRef.current = false;
       setRevealScrollPaused(false);
+      // ── OLDER PAGES ARE COMMITTED HERE, WHEN THE LIST IS STILL ───────────────
+      //
+      // This is the fix for "it throws me to the top", and it is about WHEN, not how much.
+      //
+      // Prepending older messages requires FlashList to correct the scroll offset: it records
+      // the first visible item's measured layout, re-finds that key after the update, and
+      // scrolls by the difference. That is correct and it is what `maintainVisibleContentPosition`
+      // is documented to do ("maintaining scroll position when content changes... enabled by
+      // default to reduce visible glitches"). Our FlashList config already matches the chat
+      // example in those docs exactly.
+      //
+      // The problem was never the correction — it was that `onStartReached` fires DURING the
+      // gesture, so the correction competed with an in-flight fling. A scroll being corrected
+      // while the finger is still moving it is precisely the sensation reported: content
+      // shifting on its own, and the viewport being dragged toward the top.
+      //
+      // Committing on the settle timer instead means the prepend lands ~180 ms after the last
+      // scroll event, with the list stationary. The correction then has nothing to fight, so
+      // it is invisible — the same operation, at a moment when it cannot be felt.
+      //
+      // The cooldown and the `moreOlderRef` latch still apply inside `onStartReached`; this
+      // only defers the work it requested.
+      if (pendingOlderLoadRef.current) {
+        pendingOlderLoadRef.current = false;
+        loadOlderChunkRef.current();
+        loadingOlderRef.current = false;
+      }
     }, 180);
     const now = Date.now();
     if (now - lastScrollEventAt.current < 32) return;
@@ -4416,6 +4451,24 @@ export default function ChatScreen() {
         // of row construction plus image decodes landing on the same frames.
         // Halved again on weak hardware and in Low Power Mode.
         drawDistance={chatBudget.drawDistance}
+        // ── BOUND THE RECYCLE POOL ────────────────────────────────────────────
+        //
+        // From the FlashList v2 prop docs: "Maximum number of items in the recycle pool. These
+        // are the items that are cached in the recycle pool when they are scrolled off the
+        // screen. [...] There's no limit by default."
+        //
+        // No limit is the wrong default for THIS list. A chat bubble is one of the most
+        // expensive rows in the app — a GestureDetector with a composed gesture, three
+        // Reanimated views with their own animated styles, and for gradient bubbles a
+        // LinearGradient. Scrolling a long conversation therefore accumulates retained native
+        // views for every distinct item type it has passed, and none are ever released.
+        //
+        // 24 is comfortably more than fits on screen plus overscan at `drawDistance` 250, so
+        // recycling still hits the pool on normal scrolling; it just stops the pool growing
+        // without bound over a long session. Deliberately not 0 — the docs note that disables
+        // the pool entirely and unmounts rows as they leave, which would re-pay the full mount
+        // cost for every row scrolled back into view.
+        maxItemsInRecyclePool={24}
         contentContainerStyle={LIST_CONTENT_CONTAINER_STYLE}
         // Non-inverted: ListHeaderComponent is the TOP (oldest) spacer under the
         // header gradient; ListFooterComponent is the BOTTOM spacer above the
