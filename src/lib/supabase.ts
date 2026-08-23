@@ -286,19 +286,29 @@ export async function getConversations(_userId: string): Promise<{ conversations
 /**
  * A conversation's messages, oldest-first.
  *
- * `limit` is worth passing explicitly. The route's default is 50 and its query is
- * `ORDER BY created_at ASC LIMIT ?`, so the default returns the OLDEST 50 rather than the
- * most recent ones — fine for a short conversation, wrong for a long one. 200 is the route's
- * ceiling, so asking for it covers as much as the endpoint can currently give.
+ * `limit` is worth passing explicitly. The route's default is 50 and its ceiling is 200, so
+ * asking for 200 covers as much as the endpoint can give in one call.
+ *
+ * The route used to be `ORDER BY created_at ASC LIMIT ?`, i.e. it returned the OLDEST rows —
+ * so on a conversation longer than `limit` it could never return the newest message at all.
+ * It now returns the NEWEST `limit` rows in chronological order.
+ *
+ * `since` is an ISO-8601 cursor. Pass the newest `created_at` already held locally and the
+ * response contains only what arrived after it — an idle poll then transfers an empty array
+ * instead of re-sending the whole tail every six seconds. Comparison is server-side and
+ * strictly greater-than, so passing the newest known timestamp does not re-fetch that row.
+ *
+ * Omit `since` to get the newest page (a cold open, or any time the local tail cannot be
+ * trusted as a contiguous cursor).
  */
 export async function getMessages(
   conversationId: string,
-  opts: { limit?: number } = {},
+  opts: { limit?: number; since?: string } = {},
 ): Promise<{ messages: any[]; error: string | null }> {
   const limit = Math.max(1, Math.min(opts.limit ?? 50, 200));
-  const { data, error } = await apiGet<any[]>(
-    `/v1/conversations/${encodeURIComponent(conversationId)}/messages?limit=${limit}`,
-  );
+  let path = `/v1/conversations/${encodeURIComponent(conversationId)}/messages?limit=${limit}`;
+  if (opts.since) path += `&since=${encodeURIComponent(opts.since)}`;
+  const { data, error } = await apiGet<any[]>(path);
   if (error) return { messages: [], error };
   return { messages: data || [], error: null };
 }

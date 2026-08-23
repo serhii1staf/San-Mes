@@ -2057,11 +2057,35 @@ export default function ChatScreen() {
     // Off the open frame: this is a network round trip plus a store write, and first paint is
     // already served from cache.
     const handle = InteractionManager.runAfterInteractions(() => {
+      // Cursor for the polls AFTER the first one. The first fetch of a session deliberately
+      // has none: the local tail may have gaps (messages that arrived while the app was
+      // closed land after whatever is cached), so a cursor built from it could skip them. Once
+      // a full page has been reconciled the newest timestamp IS a trustworthy watermark, and
+      // from then on an idle poll transfers an empty array instead of re-sending the tail
+      // every six seconds.
+      let sinceCursor: string | null = null;
       const runFetch = async () => {
         try {
           const { getMessages } = await import('../../src/lib/supabase');
-          const { messages, error } = await getMessages(conversationId, { limit: 200 });
-          if (cancelled || error || !Array.isArray(messages) || messages.length === 0) return;
+          const { messages, error } = await getMessages(conversationId, {
+            limit: 200,
+            ...(sinceCursor ? { since: sinceCursor } : {}),
+          });
+          if (cancelled || error) return;
+          // Advance the watermark even when the page is empty — nothing new means the cursor
+          // is still correct, and an empty response is the steady state we want.
+          if (Array.isArray(messages) && messages.length > 0) {
+            const newest = messages[messages.length - 1];
+            const at = newest?.created_at;
+            if (typeof at === 'string' && (!sinceCursor || at > sinceCursor)) sinceCursor = at;
+          } else if (!sinceCursor) {
+            // First fetch came back empty: seed the cursor from what we hold so later polls
+            // are incremental instead of repeatedly asking for a full page.
+            const local = (useChatStore.getState().messages[conversationId] || []) as ChatMessage[];
+            const newestLocal = local[local.length - 1]?.createdAt;
+            if (typeof newestLocal === 'string') sinceCursor = newestLocal;
+          }
+          if (!Array.isArray(messages) || messages.length === 0) return;
 
           const remote: ChatMessage[] = (messages as any[])
             .filter((row) => row && String(row.id ?? '').length > 0)

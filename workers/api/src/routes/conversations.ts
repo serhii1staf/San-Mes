@@ -139,20 +139,78 @@ register('GET', '/v1/conversations/:id/messages', async (req, env, _ctx, params,
   );
   if (!participant) return fail(req, 'forbidden', 403);
 
-  const rows = await query<{
-    id: string;
-    conversation_id: string;
-    sender_id: string;
-    text: string;
-    created_at: string;
-  }>(
-    env,
-    `SELECT id, conversation_id, sender_id, text, created_at
-       FROM messages
-      WHERE conversation_id = ?
-   ORDER BY created_at ASC
-      LIMIT ?`,
-    [conversationId, limit],
-  );
+  // ── NEWEST N, NOT OLDEST N ──────────────────────────────────────────────
+  //
+  // This was `ORDER BY created_at ASC LIMIT ?`, which returns the OLDEST rows in the
+  // conversation. For a chat that is the wrong end: a client opening a conversation wants
+  // what was said recently, and on any conversation longer than `limit` this endpoint could
+  // never return the newest message at all.
+  //
+  // It also had a visible cost on the client. The chat screen seeds from a local cache of the
+  // newest messages and then fetches here, so the response arrived as a block of ancient
+  // history that got merged IN FRONT of everything on screen — a large prepend a second after
+  // the chat painted, which is what the "messages vanish, come back, and the view is yanked
+  // up and down" report was. The client now defends itself by dropping rows older than what it
+  // holds, but that is a workaround for this query being backwards.
+  //
+  // `DESC` + reverse gives the newest `limit` rows in chronological order, which is what the
+  // response contract has always claimed (oldest-first) and what every caller assumes.
+  //
+  // ── ?since=<iso8601> ────────────────────────────────────────────────────
+  //
+  // The client polls this every six seconds while a chat is open. Without a cursor, an idle
+  // conversation transfers its whole tail on every tick forever — the client merges it,
+  // finds nothing new, and discards it. With `since` an idle poll transfers an empty array.
+  //
+  // `since` is compared as a STRING, which is correct for ISO-8601 in the fixed-width,
+  // zero-padded, UTC form this app stores everywhere (it sorts identically under
+  // lexicographic and chronological comparison). Anything not matching that shape is ignored
+  // rather than rejected, so a malformed cursor degrades to a normal fetch instead of a 400
+  // that would leave the client with no way to catch up.
+  //
+  // Strictly greater than, so passing the newest known `created_at` back does not re-fetch
+  // that row. Ties within the same millisecond are possible in principle; the client's merge
+  // dedupes on id, so a missed simultaneous message is recovered by the next full fetch.
+  const sinceRaw = url.searchParams.get('since');
+  const since = sinceRaw && /^\d{4}-\d{2}-\d{2}T[\d:.]+Z?$/.test(sinceRaw) ? sinceRaw : null;
+
+  const rows = since
+    ? await query<{
+        id: string;
+        conversation_id: string;
+        sender_id: string;
+        text: string;
+        created_at: string;
+      }>(
+        env,
+        `SELECT id, conversation_id, sender_id, text, created_at
+           FROM messages
+          WHERE conversation_id = ?
+            AND created_at > ?
+       ORDER BY created_at ASC
+          LIMIT ?`,
+        [conversationId, since, limit],
+      )
+    : await query<{
+        id: string;
+        conversation_id: string;
+        sender_id: string;
+        text: string;
+        created_at: string;
+      }>(
+        env,
+        `SELECT id, conversation_id, sender_id, text, created_at
+           FROM messages
+          WHERE conversation_id = ?
+       ORDER BY created_at DESC
+          LIMIT ?`,
+        [conversationId, limit],
+      );
+
+  // The `since` branch is already ascending — it takes everything after a cursor, so the limit
+  // bites at the NEWEST end and reversing would be wrong. The unfiltered branch selected
+  // descending to get the newest rows, so it needs flipping back into the contract's order.
+  if (!since) rows.reverse();
+
   return ok(req, rows);
 });
