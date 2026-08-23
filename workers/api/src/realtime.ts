@@ -85,6 +85,16 @@ export async function publishEvent(
 /** Channel-name builders so typos can't reach a route handler. */
 export const channels = {
   feedPublic: () => 'feed:public',
+  /**
+   * One conversation's live transcript. Must match `chatChannelName` in
+   * src/services/realtime/ably.ts.
+   *
+   * The Worker did not publish here at all until the delete route was added: sends are
+   * published by the SENDER's client and the Worker only fans out a
+   * `user:<peer>:notifications` event. That split is why a delete had no server half — there
+   * was no server-side publisher for this channel to extend.
+   */
+  chat: (conversationId: string) => `chat:${conversationId}`,
   post: (postId: string) => `post:${postId}`,
   userNotifications: (userId: string) => `user:${userId}:notifications`,
   userProfile: (userId: string) => `user:${userId}:profile`,
