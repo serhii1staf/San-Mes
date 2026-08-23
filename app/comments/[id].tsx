@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, useSyncExternalStore, useImperativeHandle } from 'react';
-import { View, FlatList, TextInput, Pressable, Platform, ActivityIndicator, StyleSheet, Text as RNText, Modal, Alert, InteractionManager, ScrollView, Dimensions, Keyboard } from 'react-native';
+import { View, FlatList, TextInput, Pressable, Platform, ActivityIndicator, StyleSheet, Text as RNText, Modal, Alert, InteractionManager, ScrollView, Dimensions, Keyboard, AppState } from 'react-native';
 import { useReanimatedKeyboardAnimation, useKeyboardHandler } from 'react-native-keyboard-controller';
 import { FlashList, type FlashListRef } from '@shopify/flash-list';
 import Reanimated, { useAnimatedStyle, useSharedValue, withTiming, runOnJS, Easing } from 'react-native-reanimated';
@@ -37,6 +37,7 @@ import { useAuthStore, useConnectivityStore } from '../../src/store';
 import { getRealtime, postChannelName } from '../../src/services/realtime/ably';
 import { TypingIndicator } from '../../src/components/ui/TypingIndicator';
 import { typingPostChannelName, useTypingPublisher } from '../../src/services/realtime/typing';
+import { clearActiveThread, setActiveThread } from '../../src/services/activeThread';
 import { getComments, createComment, updateComment, deleteComment, isRepost, parseImageUrls } from '../../src/lib/supabase';
 import { generateClientMutationId, queueMutation } from '../../src/services/offlineQueue';
 import { triggerHaptic } from '../../src/utils/haptics';
@@ -1030,6 +1031,22 @@ export default function CommentsScreen() {
   // and typing has to be client-published. See src/services/realtime/typing.ts.
   const typingChannel = postId ? typingPostChannelName(postId) : null;
   const { notifyTyping, notifyStopped } = useTypingPublisher(typingChannel);
+
+  // Tell the push handler this comment thread is on screen, so a comment on THIS post does not
+  // raise a banner the user does not need — it is already arriving over Ably. Comments on other
+  // posts still notify. Re-registers on foreground; the root drops the register on background.
+  useEffect(() => {
+    if (!postId) return;
+    const ids = [postId];
+    setActiveThread('post', ids);
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next === 'active') setActiveThread('post', ids);
+    });
+    return () => {
+      try { sub.remove(); } catch {}
+      clearActiveThread('post', ids);
+    };
+  }, [postId]);
 
   const handleSend = async () => {
     // RE-ENTRY GUARD: prevent a double-send if invoked again while a send is
