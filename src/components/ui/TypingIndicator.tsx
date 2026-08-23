@@ -96,7 +96,13 @@ function TypingIndicatorImpl({ channelName }: { channelName: string | null }) {
             ))}
           </View>
         ) : null}
-        <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={styles.label}>
+        {/* `text.secondary`, not `text.tertiary`. Reported as the label reading dark rather than
+            white: tertiary is the dimmest step in the palette, intended for de-emphasised
+            metadata sitting on an opaque surface. This pill is translucent and floats over the
+            transcript — often over a message bubble — so the dimmest step does not have the
+            contrast to carry. Secondary is still clearly subordinate to message text without
+            disappearing into whatever is behind it, on either theme. */}
+        <Text variant="caption" color={theme.colors.text.secondary} numberOfLines={1} style={styles.label}>
           {label}
         </Text>
       </View>
@@ -116,17 +122,32 @@ const styles = StyleSheet.create({
   pill: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
+    gap: 6,
     paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 11,
+    // Vertical padding follows the emoji's line box rather than the label's: 20 pt of glyph in
+    // a pill sized for 12 pt text is the other half of "the emoji is cut off".
+    paddingVertical: 5,
+    borderRadius: 13,
     borderWidth: StyleSheet.hairlineWidth,
     // Bounded so a long display name cannot push the pill past the screen edge.
     maxWidth: '86%',
   },
   emojiRow: { flexDirection: 'row', alignItems: 'center' },
-  // Slight negative margin so several emoji read as a small cluster rather than a spaced list.
-  emoji: { fontSize: 13, marginRight: -2 },
+  // ── EMOJI SIZING: TWO SEPARATE CAUSES OF THE CLIPPING ─────────────────────
+  //
+  // Reported as the emoji being cut off and looking low quality. Both parts were real.
+  //
+  // CUT OFF — the glyph had `fontSize: 13` and no `lineHeight`. A colour emoji is drawn taller
+  // than a Latin glyph of the same point size, so the default line box is shorter than the
+  // bitmap and the top and bottom are trimmed. An explicit `lineHeight` comfortably above the
+  // font size gives the glyph room. The `marginRight: -2` made it worse by pulling the next
+  // emoji into the previous one's box; the row uses the pill's `gap` for spacing instead.
+  //
+  // LOW QUALITY — a knock-on of the same thing. Colour emoji ship as bitmap strikes at fixed
+  // sizes, so at 13 pt the renderer scales a larger strike down and the result looks soft. 16 pt
+  // lands closer to a native strike and reads crisp. It is also simply easier to recognise
+  // whose emoji it is, which is the point of showing it.
+  emoji: { fontSize: 16, lineHeight: 20 },
   label: { fontSize: 12, flexShrink: 1 },
 });
 
