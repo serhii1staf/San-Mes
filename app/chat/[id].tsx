@@ -615,7 +615,24 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
         <View>
           {/* Reply-jump glow — absolute sibling BEHIND the bubble. Negative
               inset + position:absolute means it adds zero layout, so the bubble
-              never moves/resizes when highlighted. */}
+              never moves/resizes when highlighted.
+
+              ── MOUNTED ONLY WHILE HIGHLIGHTED ─────────────────────────────────
+              This used to mount on EVERY row, permanently, at opacity 0. It carries an
+              iOS shadow (`shadowRadius: 10`, `shadowOpacity: 0.9`), and a shadow with a
+              radius forces the layer to be rasterized offscreen — so every bubble within
+              `drawDistance` was paying for an offscreen pass to render something invisible,
+              and paying it again each time a recycled cell scrolled into view. That is
+              per-row cost on the scroll frame, which is the same class of problem the swipe
+              icon's comment describes for `UIVisualEffectView`.
+
+              Gating the mount is visually identical rather than a trade-off, because the
+              glow's own timeline finishes BEFORE the flag clears: the sequence runs
+              240 + 900 + 440 = 1580 ms and the screen clears `jumpHighlightId` at 1600 ms
+              (see `scrollToMessageId`). So opacity is already 0 by the time `highlighted`
+              flips false and this unmounts — there is no fade-out to lose. Keep those two
+              numbers in that order if either is ever changed. */}
+          {highlighted ? (
           <Reanimated.View
             pointerEvents="none"
             style={[
@@ -636,6 +653,7 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
               },
             ]}
           />
+          ) : null}
           {/* The expand-to-fullscreen affordance now lives inline next to the
               timestamp, further down — see `bubbleStyles.metaRow`. */}
 
