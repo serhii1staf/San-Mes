@@ -23,7 +23,10 @@ register('PATCH', '/v1/comments/:id', async (req, env, ctx, params, authedUserId
 
   const body = await readJson<{ content?: unknown }>(req);
   if (!body.ok) return fail(req, body.error, 400);
-  const content = typeof body.value.content === 'string' ? body.value.content.slice(0, 4000) : '';
+  // 5000, matching MAX_MESSAGE_CHARS / the comments composer. Was 4000, i.e. BELOW the client
+  // cap — so a comment the app let the user type could be silently truncated on write, with no
+  // error and no indication which characters were lost.
+  const content = typeof body.value.content === 'string' ? body.value.content.slice(0, 5000) : '';
   if (!content) return fail(req, 'empty comment', 400);
 
   // Authorship check first — same reason as the delete-post handler.

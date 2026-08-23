@@ -429,7 +429,10 @@ register('POST', '/v1/posts/:id/comments', async (req, env, ctx, params, authedU
 
   const body = await readJson<{ content?: unknown; clientMutationId?: unknown }>(req);
   if (!body.ok) return fail(req, body.error, 400);
-  const content = typeof body.value.content === 'string' ? body.value.content.slice(0, 4000) : '';
+  // 5000, matching the comments composer and the comment-EDIT route in comments.ts. Was 4000,
+  // below the client cap, so a long comment was truncated on create with no error — and the
+  // create and edit paths disagreed, meaning editing a comment could change its allowed length.
+  const content = typeof body.value.content === 'string' ? body.value.content.slice(0, 5000) : '';
   if (!content) return fail(req, 'empty comment', 400);
 
   // Re-read a comment by id with its author profile embedded, shaped

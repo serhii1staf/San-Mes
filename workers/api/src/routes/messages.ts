@@ -80,7 +80,12 @@ register('POST', '/v1/conversations/:id/messages', async (req, env, ctx, params,
 
   const body = await readJson<{ text?: unknown; clientMutationId?: unknown }>(req);
   if (!body.ok) return fail(req, body.error, 400);
-  const text = typeof body.value.text === 'string' ? body.value.text.slice(0, 16000) : '';
+  // 5000, matching `MAX_MESSAGE_CHARS` in src/utils/textLimits.ts, which the composer enforces
+  // with `maxLength`. This was 16000 — over three times the client's cap, so the server's limit
+  // was not a limit at all for any message the app can produce, and a non-app client could
+  // store a message no screen in the app is built to render. The two numbers are a contract;
+  // keep them equal.
+  const text = typeof body.value.text === 'string' ? body.value.text.slice(0, 5000) : '';
   if (!text) return fail(req, 'empty message', 400);
 
   // Participation check — same EXISTS gate the GET path uses.
