@@ -3466,12 +3466,38 @@ export default function ChatScreen() {
         setMessages(conversationId, (useChatStore.getState().messages[conversationId] || []).map((m) => (m.id === editing.id ? { ...m, imageUrls: urls.length ? urls : undefined } : m)) as any);
         finalImages = urls.length ? urls : undefined;
       }
+      // ── PERSIST THE EDIT ON THE SERVER ────────────────────────────────────
+      //
+      // The step that never existed. Reported as "editing does not work anywhere — I edit and
+      // the old message stays".
+      //
+      // Everything else in this branch is local: the store is rewritten and `msg.edit` is
+      // published so the peer rewrites theirs. Nothing updated D1, so the server kept the
+      // ORIGINAL text for ever and it came back the moment the transcript was rebuilt from it —
+      // reopening the chat, opening it on another device, or a history fetch. Exactly the
+      // disease delete had.
+      //
+      // Awaited, unlike the delete call, because the local store has already been rewritten
+      // above: if this fails we want to know before the user walks away believing it saved.
+      // Failure is surfaced as a toast rather than reverted — reverting would throw away text
+      // the user typed, and the edit is still correct locally and on the peer's screen.
+      void (async () => {
+        try {
+          const serverId = editing.serverId || editing.id;
+          // Local-only ids were never on the server; there is nothing to PATCH. The row will
+          // carry the edited text when its create finally lands.
+          if (serverId.startsWith('m-')) return;
+          const { apiPatch } = await import('../../src/services/apiClient');
+          const { error } = await apiPatch(`/v1/messages/${encodeURIComponent(serverId)}`, { text });
+          if (error) showToast(t('toast.error_generic'), 'alert-circle');
+        } catch {
+          showToast(t('toast.error_generic'), 'alert-circle');
+        }
+      })();
       // Sync the edit to the peer's open chat. The receiver's subscription
-      // handler updates the message in place by id. Same caveats as
-      // realtime delete — only matches by message.id, so peers viewing
-      // history loaded from Supabase (which has its own UUIDs) won't see
-      // the edit; but anyone who received the message via the live Ably
-      // stream WILL.
+      // handler updates the message in place by id. The Worker now publishes the same event
+      // after a successful PATCH, so a peer whose socket missed this client-side publish still
+      // gets it — and a peer who was offline entirely reads the edited text from the server.
       try {
         const realtime = getRealtime();
         if (realtime && conversationId) {

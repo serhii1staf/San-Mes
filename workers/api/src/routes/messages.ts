@@ -268,3 +268,64 @@ register('DELETE', '/v1/messages/:id', async (req, env, ctx, params, authedUserI
 
   return ok(req, { deleted: true });
 });
+
+// ── PATCH /v1/messages/:id ────────────────────────────────────────────
+//
+// THIS ROUTE DID NOT EXIST EITHER, AND IT IS THE SAME BUG AS DELETE WAS.
+//
+// Reported as: "editing does not work anywhere — I edit and the old message stays."
+//
+// Editing was two purely local acts: rewrite the row in the in-memory array, and publish
+// `msg.edit` on `chat:<id>` so the peer rewrites theirs. Nothing ever updated D1. The server
+// kept the original text for ever, so the edit survived exactly as long as the array holding
+// it: reopen the chat, open it on another device, or let the history poll refill from the
+// server, and the old text was back. Comments and posts both have a PATCH route
+// (`/v1/comments/:id`, `/v1/posts/:id`); messages were the one content type without one.
+//
+// Sender-only, for the same reason as DELETE: an edit rewrites the message for everybody in
+// the conversation, so letting a recipient do it would let one participant put words in
+// another's mouth.
+//
+// The text cap matches MAX_MESSAGE_CHARS (5000) and the create path, so an edit cannot be used
+// to exceed a limit the composer enforces.
+//
+// Publishes the SAME event and channel the client already publishes — `msg.edit` on
+// `chat:<conversationId>` — so peers need no new handler. Published server-side as well as
+// client-side because the client's publish depends on the editor's socket being connected at
+// that instant, and this one does not.
+//
+// Deliberately NOT touching `created_at`: an edit is not a new message, and moving its
+// timestamp would reorder the transcript and move the conversation in the chat list.
+register('PATCH', '/v1/messages/:id', async (req, env, ctx, params, authedUserId) => {
+  if (!authedUserId) return fail(req, 'unauthorised', 401);
+  const id = parseUuid(params.id);
+  if (!id) return fail(req, 'invalid message id', 400);
+
+  const body = await readJson<{ text?: unknown }>(req);
+  if (!body.ok) return fail(req, body.error, 400);
+  const text = typeof body.value.text === 'string' ? body.value.text.slice(0, 5000) : null;
+  // An empty edit is a delete, and delete has its own route with its own semantics (it
+  // publishes `msg.delete`, which peers handle by removing the row). Silently turning one into
+  // the other here would make the peer's UI disagree with the database.
+  if (text === null) return fail(req, 'text required', 400);
+
+  const row = await queryOne<{ sender_id: string; conversation_id: string }>(
+    env,
+    `SELECT sender_id, conversation_id FROM messages WHERE id = ? LIMIT 1`,
+    [id],
+  );
+  if (!row) return fail(req, 'not found', 404);
+  if (row.sender_id !== authedUserId) return fail(req, 'forbidden', 403);
+
+  await exec(env, `UPDATE messages SET text = ? WHERE id = ?`, [text, id]);
+
+  publishEvent(
+    env,
+    channels.chat(row.conversation_id),
+    'msg.edit',
+    { id, text, conversation_id: row.conversation_id },
+    ctx,
+  );
+
+  return ok(req, { id, text });
+});
