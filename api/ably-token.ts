@@ -7,17 +7,15 @@
 // auth token.
 //
 // Auth model:
-//   This app uses device-key + PIN auth (not Supabase JWT). Login produces a
-//   `user.id` (UUID, the auth.users primary key) and stores `device_key` /
-//   `pin` in the auth store. The client posts both to this endpoint:
+//   The caller sends the Worker-issued JWT it already holds:
 //
 //       POST /api/ably-token
-//       { "userId": "<uuid>", "deviceKey": "<base32>" }
+//       Authorization: Bearer <worker jwt>
 //
-//   We verify the pair exists in the `profiles` table; if so we mint a
-//   scoped Ably token for that user. The PIN never reaches our endpoint —
-//   it's used only for password-style auth on the login screen via Supabase
-//   directly.
+//   No request body is read. The user id is resolved from that token by asking the Worker
+//   (`GET /v1/auth/me`) and a scoped Ably token is minted for whoever the Worker says the
+//   caller is. An earlier revision accepted `{ userId, deviceKey }` and treated a device-key
+//   match as proof of identity; that is gone — see the note on `resolveUserId`.
 //
 // Capability scope:
 //   - `chat:*`                          → publish + subscribe + presence + history
@@ -29,14 +27,100 @@
 // Required Vercel env:
 //   ABLY_ROOT_KEY  — `appId.keyId:keySecret` admin key (NEVER bundled)
 //
+// NOT required, deliberately: `JWT_SECRET`. Identity is resolved by asking the Worker, which
+// is the service that issues these tokens. See `resolveUserId` — the previous local
+// verification depended on a variable that was never set on this project, which silently 401'd
+// every realtime token request the app has ever made.
+//
 // Lifetime: tokens TTL 1 hour. The Ably SDK auto-renews via the same
 // `authUrl`, so there's no client-side renewal loop to maintain.
 
 import type { IncomingMessage, ServerResponse } from 'http';
 import * as Ably from 'ably';
-import { extractBearer, verifyWorkerToken } from './_lib/verifyToken';
+import { extractBearer } from './_lib/verifyToken';
 
 const TOKEN_TTL_MS = 60 * 60 * 1000;
+
+/**
+ * Where identity is checked. See `resolveUserId` for why this is a round trip rather than a
+ * local signature verification.
+ *
+ * Same host list the app itself uses (src/services/apiHost.ts); the first entry is the one
+ * that is actually provisioned today.
+ */
+const WORKER_BASE = process.env.WORKER_BASE_URL || 'https://san-mes-api.odi44972.workers.dev';
+
+/** Identity check must not hang a token mint. The Ably SDK is waiting on this. */
+const IDENTITY_TIMEOUT_MS = 6000;
+
+/**
+ * Resolve the caller's user id by ASKING THE WORKER, not by verifying the JWT here.
+ *
+ * ── WHY THIS CHANGED, AND WHY IT IS NOT A DOWNGRADE ─────────────────────────────
+ *
+ * This endpoint used to call `verifyWorkerToken`, which reads `process.env.JWT_SECRET` and is
+ * fail-closed. That secret was NEVER SET on this Vercel project. Verified against the Vercel
+ * API: the project has exactly eight environment variables —
+ *
+ *     ABLY_ROOT_KEY (development, preview, production)
+ *     ADMIN_KEY
+ *     R2_ACCOUNT_ID, R2_API_TOKEN, R2_BUCKET, R2_PUBLIC_BASE
+ *
+ * — and `JWT_SECRET` is not among them. So `verifyWorkerToken` returned null for every
+ * request that has ever reached this function, and every client got 401.
+ *
+ * The consequence was total and silent: the Ably SDK's `authCallback` errored, no realtime
+ * connection was ever established, and the app fell back to nothing. Ably's own statistics
+ * confirm it from the other side — messages published 15–60/hour (the Worker publishes over
+ * REST with the root key, which needs no client connection), and the `connections` metric
+ * EMPTY for every hour on record. Not low. Empty. No device has ever connected.
+ *
+ * That presented as "messages do not arrive in real time", "comments do not update", "edits
+ * do not propagate" — every symptom pointing at feature code, none of it at a missing
+ * variable on a service that is not even the one issuing the token.
+ *
+ * The fix could have been "set JWT_SECRET on Vercel to match the Worker's". That was
+ * rejected: it duplicates a signing key across two services, and the failure mode of getting
+ * it wrong is exactly what happened here — invisible, total, and blamed on something else.
+ * `wrangler secret` cannot read a secret back either, so keeping two copies in sync is a
+ * manual ritual with no way to check it short of the fingerprint endpoints that had to be
+ * written for a previous instance of this same bug.
+ *
+ * So identity is now resolved by the service that OWNS it. The Worker issues these JWTs and
+ * already verifies them on every request; `GET /v1/auth/me` returns the authed profile or
+ * 401. Forwarding the caller's bearer token there and trusting the answer means:
+ *
+ *   - no shared secret between Vercel and the Worker, so nothing to drift;
+ *   - no new environment variable anywhere — `ABLY_ROOT_KEY` is already configured here,
+ *     which is the only secret this endpoint genuinely needs;
+ *   - the same guarantee as before. A caller can only obtain a token for the user whose
+ *     valid JWT they hold, and the authority on that is the Worker either way.
+ *
+ * Cost: one HTTPS round trip per mint. Tokens live an hour, so that is once per user per
+ * hour — against a feature that currently does not work at all.
+ */
+async function resolveUserId(bearer: string | null): Promise<string | null> {
+  if (!bearer) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), IDENTITY_TIMEOUT_MS);
+  try {
+    const resp = await fetch(`${WORKER_BASE}/v1/auth/me`, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${bearer}` },
+      signal: controller.signal,
+    });
+    if (!resp.ok) return null;
+    const body: any = await resp.json();
+    // The Worker wraps successful responses; accept either shape rather than coupling to one.
+    const id = body?.data?.id ?? body?.id ?? null;
+    return typeof id === 'string' && id.length > 0 ? id : null;
+  } catch {
+    // Timeout, DNS, or the Worker being down. Fail CLOSED — no token without proven identity.
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 // Production web origin for the app. Used to scope CORS instead of a wildcard, so a
 // bearer token is never accepted from / echoed to arbitrary origins. Override via
@@ -129,14 +213,16 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
 
   // ── Identity ──────────────────────────────────────────────────────────────
   //
-  // SECURITY: the user id comes from a VERIFIED Worker-issued JWT and is never
-  // taken from the request body. The endpoint used to accept `{ userId, deviceKey }`
-  // and treat a device-key match as proof of identity, which was exploitable two
-  // ways: the device key never rotates, and it was being returned by
-  // unauthenticated profile endpoints — so anybody could mint a realtime token for
-  // anybody. Deriving the id from the signature means a caller can only ever get a
-  // token for themselves.
-  const authedUserId = verifyWorkerToken(extractBearer(req.headers as any))?.userId;
+  // SECURITY: the user id is resolved from the caller's Worker-issued JWT and is never taken
+  // from the request body. The endpoint used to accept `{ userId, deviceKey }` and treat a
+  // device-key match as proof of identity, which was exploitable two ways: the device key
+  // never rotates, and it was being returned by unauthenticated profile endpoints — so
+  // anybody could mint a realtime token for anybody.
+  //
+  // The check itself is now delegated to the Worker rather than done with a local copy of the
+  // signing key. See `resolveUserId` for the full reason; the short version is that the local
+  // copy was never configured, so this endpoint 401'd every request ever made to it.
+  const authedUserId = await resolveUserId(extractBearer(req.headers as any));
   if (!authedUserId) {
     return send(res, 401, { error: 'unauthorized' });
   }
