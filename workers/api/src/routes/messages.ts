@@ -203,3 +203,63 @@ register('POST', '/v1/conversations/:id/messages', async (req, env, ctx, params,
     created_at: now,
   });
 });
+
+// ── DELETE /v1/messages/:id ───────────────────────────────────────────
+//
+// THIS ROUTE DID NOT EXIST, AND THAT WAS THE BUG.
+//
+// Reported as: delete a message, wait a second or two, and it comes back — for the person who
+// deleted it and for the peer, every time.
+//
+// "Delete" on the client was two purely local acts: filter the row out of the in-memory array,
+// and publish `msg.delete` on `chat:<id>` so the peer filters it out of theirs. Nothing ever
+// removed the row from D1. That was invisible for as long as nothing re-read the server's
+// copy, and it stopped being invisible the moment the chat screen began polling
+// `GET /v1/conversations/:id/messages` every six seconds: the poll returned the row, the merge
+// saw an id it did not have locally, and added it back. Both devices poll, so both resurrected
+// it independently.
+//
+// Authorisation is SENDER-ONLY, deliberately narrower than "any participant". Deleting a
+// message removes it for everybody in the conversation (that is what the realtime event does),
+// so allowing a recipient to do it would let one participant destroy another's messages. If
+// "delete for me only" is ever wanted it is a different feature with different storage, not a
+// wider permission on this one.
+//
+// Hard DELETE rather than a `deleted_at` flag. The table has no such column, and adding one
+// would mean every read path in the app has to remember to filter it — a fine design when
+// deleted content must be recoverable or auditable, and unnecessary weight when it must not
+// be. If moderation ever needs recoverable deletes, that is a schema migration plus a filter
+// in every SELECT, and it should be done deliberately rather than implied by this route.
+//
+// The realtime publish is the SAME event and channel the client already publishes, so peers
+// need no new handler: `msg.delete` on `chat:<conversationId>`. It is published server-side as
+// well as client-side because the client's publish depends on the deleter's socket being
+// connected at that instant, and this one does not.
+register('DELETE', '/v1/messages/:id', async (req, env, ctx, params, authedUserId) => {
+  if (!authedUserId) return fail(req, 'unauthorised', 401);
+  const id = parseUuid(params.id);
+  if (!id) return fail(req, 'invalid message id', 400);
+
+  // One lookup gets both the authorisation subject and the channel to publish on.
+  const row = await queryOne<{ sender_id: string; conversation_id: string }>(
+    env,
+    `SELECT sender_id, conversation_id FROM messages WHERE id = ? LIMIT 1`,
+    [id],
+  );
+  // Already gone. Idempotent on purpose: the client retries this on a flaky connection, and a
+  // second delete of the same message is a success, not an error.
+  if (!row) return ok(req, { deleted: true });
+  if (row.sender_id !== authedUserId) return fail(req, 'forbidden', 403);
+
+  await exec(env, `DELETE FROM messages WHERE id = ?`, [id]);
+
+  publishEvent(
+    env,
+    channels.chat(row.conversation_id),
+    'msg.delete',
+    { id, conversation_id: row.conversation_id },
+    ctx,
+  );
+
+  return ok(req, { deleted: true });
+});

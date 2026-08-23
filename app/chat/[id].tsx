@@ -45,6 +45,7 @@ import { useRenderBudget } from '../../src/hooks/useRenderBudget';
 import { useEffectiveBrowserWidgetPosition } from '../../src/lib/browserWidget';
 import { bottomScrimColorsStrong, composerScrimHeight, headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
 import { kvGetJSONSync, kvSetJSON, kvWarm } from '../../src/services/kvStore';
+import { addTombstones, filterTombstoned } from '../../src/services/messageTombstones';
 import { mockMessages, mockConversations, formatMessageTime } from '../../src/utils/mockData';
 import { showToast } from '../../src/store/toastStore';
 import { ChatMessage } from '../../src/types';
@@ -115,6 +116,22 @@ const LIST_CONTENT_CONTAINER_STYLE = { paddingBottom: 8 } as const;
  * attempts to compensate them.
  */
 const SEED_CAP = 60;
+
+/**
+ * Does `m` answer to `candidate` under either of its two identities?
+ *
+ * A message can be held under a local `m-<ts>` id with the server uuid in `serverId` (an
+ * optimistic send) or under the server uuid directly (anything fetched or received). So any
+ * "is this the row I mean" test has to consider both, in both directions.
+ *
+ * Module scope on purpose: the realtime `onEdit`/`onDelete` handlers and the delete menu
+ * action all need it, and the delete action previously matched on `id` alone — which silently
+ * failed to remove a row the caller identified by its server uuid.
+ */
+function matchesEitherId(m: { id: string; serverId?: string }, candidate: string | undefined | null): boolean {
+  if (typeof candidate !== 'string' || candidate.length === 0) return false;
+  return m.id === candidate || (!!m.serverId && m.serverId === candidate);
+}
 
 // Hard cap on how many messages we keep in the durable `chat_messages:<id>`
 // blob. Without this, every send/receive grows the MMKV blob unbounded, and
@@ -1225,7 +1242,7 @@ export default function ChatScreen() {
     }
     historyHydratedRef.current = conversationId;
     if (full.length === 0) return null;
-    const healed = full.map((m) => healLegacySender(m, currentUserId, participantId));
+    let healed = full.map((m) => healLegacySender(m, currentUserId, participantId));
     // Merge any in-store messages the cache doesn't have yet (optimistic
     // sends / realtime appends / edits that happened since open) so hydration
     // never DROPS them: existing ids are overwritten in place (keep the latest
@@ -1240,6 +1257,11 @@ export default function ChatScreen() {
         else { healed[at] = sm; }
       }
     }
+    // Deleted messages must not come back out of the cache either. The delete path hydrates
+    // before it filters, so the blob it writes is already clean — but a delete that races a
+    // hydration in flight, or a peer delete that arrived while the full history was being
+    // read, would otherwise reintroduce the row from disk. Same-reference on the common path.
+    healed = filterTombstoned(conversationId, healed) as ChatMessage[];
     setMessages(conversationId, healed as any);
     // Warm the bounded recent-tail cache off the critical path so a chat that
     // predates this cache (or was just opened the first time) takes the cheap
@@ -1875,7 +1897,39 @@ export default function ChatScreen() {
             }));
 
           const local = (useChatStore.getState().messages[conversationId] || []) as ChatMessage[];
-          const merged = mergeHistory(local, remote);
+
+          // ── NEVER PREPEND OLDER HISTORY FROM A POLL ─────────────────────────
+          //
+          // Reported as: open a chat and the messages vanish, come back, and the view is
+          // yanked up and then down.
+          //
+          // The Worker's read is `ORDER BY created_at ASC LIMIT ?` — it returns the OLDEST
+          // rows, not the newest. The local seed is the NEWEST 60. So roughly a second after
+          // the chat painted, this merge inserted up to 200 messages IN FRONT of everything
+          // on screen. FlashList's offset correction then did its job on a 200-row prepend,
+          // which is a large, sudden, unrequested scroll — the "teleport".
+          //
+          // Older history is not this poll's job. It already exists on disk and is hydrated,
+          // once, when the user actually scrolls to the top. What the poll is for is catching
+          // up on what arrived while this device was not listening, and everything in that
+          // category is at or after our oldest loaded message.
+          //
+          // So: drop remote rows strictly older than the oldest row we hold. Appends and
+          // gap-fills still land; surprise prepends cannot. An empty local array (fresh
+          // install, first ever open) keeps everything, because there is nothing on screen to
+          // yank and that is the case where the server's copy IS the transcript.
+          //
+          // The server-side half of this belongs in the Worker (`DESC` + reverse, plus a
+          // `?since=` filter so an idle poll transfers nothing at all). That needs a Worker
+          // deploy; this does not, and it is correct on its own.
+          const oldestLocal = local.length > 0 ? local[0].createdAt : null;
+          const inRange = oldestLocal ? remote.filter((r) => r.createdAt >= oldestLocal) : remote;
+
+          // Suppress anything the user deleted. Without this the poll re-adds it within six
+          // seconds — for the deleter and, because both devices poll, for the peer too.
+          const admissible = filterTombstoned(conversationId, inRange) as ChatMessage[];
+
+          const merged = mergeHistory(local, admissible);
           // `mergeHistory` hands back the SAME array reference when nothing was new, so this
           // is the cheap way to skip a store write and the re-render it would cause.
           if (cancelled || merged === local) return;
@@ -2506,6 +2560,10 @@ export default function ChatScreen() {
       // merge overlays the store onto the cached full array by id — a message
       // only deleted from the bounded seed would otherwise survive in cache).
       hydrateFullHistoryRef.current();
+      // Record it here too, for the same reason the deleter does: this device polls the
+      // server independently, and without a tombstone its own poll resurrects a message the
+      // peer deleted. That is why the message came back for BOTH users.
+      addTombstones(conversationId, [String(payload.id)]);
       const current = useChatStore.getState().messages[conversationId] || [];
       // Same either-identity match as `onEdit` — a delete published with the server
       // uuid has to find a row we hold under a local id.
@@ -2988,9 +3046,44 @@ export default function ChatScreen() {
             // correctly (the lazy hydrate-merge would otherwise resurrect a
             // message removed only from the bounded seed window).
             hydrateFullHistoryRef.current();
+            // ── REMEMBER THE DELETION BEFORE PERFORMING IT ────────────────────
+            //
+            // Without this the row comes back within six seconds, because the history poll
+            // refetches it from the server and the merge has no way to know the user removed
+            // it on purpose. Both identities are recorded: this device may hold the message
+            // under a local `m-<ts>` id while the server (and therefore the poll response)
+            // knows it by its uuid. See src/services/messageTombstones.ts.
+            addTombstones(conversationId, [message.id, message.serverId]);
             const current = useChatStore.getState().messages[conversationId] || [];
-            setMessages(conversationId, current.filter((m) => m.id !== message.id) as any);
+            // Match on EITHER identity, like the realtime handler does. Filtering on `id`
+            // alone left a row held under a server uuid in place when the tapped object
+            // carried a local id.
+            setMessages(
+              conversationId,
+              current.filter((m) => !matchesEitherId(m, message.id) && !matchesEitherId(m, message.serverId)) as any,
+            );
             triggerHaptic('medium');
+            // ── AND DELETE IT ON THE SERVER ───────────────────────────────────
+            //
+            // The step that never existed. Everything above is local; the row stayed in D1
+            // for ever, which is what made the poll able to resurrect it at all.
+            //
+            // Tolerates a 404/405: the Worker route ships separately from this bundle (OTA
+            // cannot deploy a Worker), so until it is deployed this is a no-op and the
+            // tombstone above is what holds the delete. Once deployed, deletion becomes real
+            // and even a fresh install stops seeing the message.
+            void (async () => {
+              try {
+                const serverId = message.serverId || message.id;
+                // Local-only ids were never on the server; nothing to delete.
+                if (serverId.startsWith('m-')) return;
+                const { apiDelete } = await import('../../src/services/apiClient');
+                await apiDelete(`/v1/messages/${encodeURIComponent(serverId)}`);
+              } catch {
+                // Offline or route not deployed yet. The tombstone keeps the row hidden on
+                // this device, and the peer's tombstone does the same on theirs.
+              }
+            })();
             // Sync delete to the peer in realtime — so when this user
             // deletes a message on their side, it disappears from the
             // peer's open chat too. Telegram-style "delete for both".
