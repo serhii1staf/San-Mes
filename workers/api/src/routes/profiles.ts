@@ -36,7 +36,10 @@ import { validateThemeId } from '../themeIds';
 // Mirrors the same split already documented in `routes/admin.ts`.
 
 /** No credential columns. Used by every unauthenticated / third-party read. */
-const PROFILE_PUBLIC_COLUMNS = `id, username, display_name, emoji, bio, banner_url, links, badge, is_verified, created_at, updated_at, theme_id, header_scene`;
+// `header_scene` is deliberately absent — the live database has no such column and naming it
+// fails the whole query. See the long note on `PROFILE_AUTH_COLUMNS` in routes/auth.ts for the
+// full reason and for how to restore it after applying migration 0003.
+const PROFILE_PUBLIC_COLUMNS = `id, username, display_name, emoji, bio, banner_url, links, badge, is_verified, created_at, updated_at, theme_id`;
 
 /**
  * Public columns plus `device_key`. Only for callers that have already PROVEN they
@@ -495,7 +498,13 @@ register('PATCH', '/v1/profiles/me', async (req, env, ctx, _params, authedUserId
   // or null; stored as a length-capped JSON TEXT (mirrors `links`). Returned
   // verbatim on GET /v1/profiles/:id so any viewer renders it. Joins the
   // realtime `profile.edit` delta so a mounted profile updates live.
-  if ((v.header_scene && typeof v.header_scene === 'object') || v.header_scene === null) {
+  // DISABLED until migration 0003 is applied — writing to a column the database does not have
+  // fails the whole profile UPDATE, so a user editing anything else at the same time would lose
+  // that edit too. Reading is already stripped (see `PROFILE_PUBLIC_COLUMNS`); accepting a write
+  // that cannot land, and taking the rest of the update down with it, is worse than ignoring the
+  // field. Re-enable together with the column. See routes/auth.ts for the restore steps.
+  const HEADER_SCENE_COLUMN_EXISTS = false;
+  if (HEADER_SCENE_COLUMN_EXISTS && ((v.header_scene && typeof v.header_scene === 'object') || v.header_scene === null)) {
     const nextStored = v.header_scene == null ? null : JSON.stringify(v.header_scene).slice(0, 8000);
     sets.push('header_scene = ?');
     binds.push(nextStored);

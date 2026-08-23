@@ -33,7 +33,32 @@ import { asStr, readJson } from '../validate';
 // so handing it out is equivalent to handing out the PIN. It is still used as a
 // WHERE predicate below — comparing against it server-side is exactly what it is
 // for — but it never travels in a response.
-const PROFILE_AUTH_COLUMNS = `id, username, display_name, emoji, bio, device_key, banner_url, theme_id, header_scene, links, badge, is_verified, created_at, updated_at`;
+// ── `header_scene` IS NOT IN THIS LIST ON PURPOSE ───────────────────────────
+//
+// The live D1 database does not have that column. `workers/migrations/0003_profiles_header_scene.sql`
+// adds it and has never been applied, so every query naming it fails outright:
+//
+//   D1_ERROR: no such column: header_scene at offset 81: SQLITE_ERROR
+//
+// which is a hard failure of LOGIN and of every profile read — not a degraded feature. The
+// code was written against a schema that only ever existed in `schema.sql`, and it stayed
+// invisible because the Worker had not been redeployed since. Deploying current `main` shipped
+// it and broke the app.
+//
+// So the column is dropped from the read path until the migration is actually applied. Nothing
+// is lost that ever worked: with no column in the database, header decorations have never been
+// readable in production.
+//
+// TO RESTORE: apply the migration, then add `header_scene` back here and in
+// `PROFILE_PUBLIC_COLUMNS` (workers/api/src/routes/profiles.ts).
+//
+//   cd workers/api
+//   npx wrangler d1 execute san-mes --remote --file=../migrations/0003_profiles_header_scene.sql
+//
+// That needs an API token with Account → D1 → Edit. Verify with
+// `SELECT name FROM pragma_table_info('profiles') WHERE name='header_scene'` before re-adding —
+// re-adding it without the column reintroduces exactly this outage.
+const PROFILE_AUTH_COLUMNS = `id, username, display_name, emoji, bio, device_key, banner_url, theme_id, links, badge, is_verified, created_at, updated_at`;
 
 // Mirror of `hashPin` in `src/lib/supabase.ts`. Keeps the on-the-wire
 // PIN hash compatible with any client build that still computes it
