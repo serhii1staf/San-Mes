@@ -225,6 +225,72 @@ function schedulePersist(conversationId: string, write: () => void): void {
   persistTimer = setTimeout(runPendingPersist, PERSIST_DEBOUNCE_MS);
 }
 
+// ── THE FULL-BLOB WRITE IS THE FREEZE. IT NEEDS ITS OWN, MUCH SLOWER CHANNEL ──
+//
+// The in-app performance monitor finally named this. `chat/[id]`: 35 long tasks, worst
+// 1318 ms, average 285 ms, FPS down to 1 — and `Mounts: 0`. Zero mounts is the decisive
+// number: nothing was mounting, so it was never the list, the bubbles or the render path.
+// It was ~10 seconds of synchronously blocked JS thread per session.
+//
+// The cause is this file writing the ENTIRE conversation to disk on every store change.
+// `kvSetJSON('chat_messages:<id>', …)` JSON-stringifies up to MAX_PERSISTED_MESSAGES (1000)
+// messages — text, imageUrls, reply fields, the lot — and hands MMKV a multi-megabyte string
+// synchronously. On the un-hydrated branch it also reads and re-parses the same blob first and
+// builds a Map over it.
+//
+// And the store changes constantly: every send, every realtime arrival, every history poll
+// merge, every 60-message page load, every photo-heal pass, every edit, every delete.
+//
+// The existing 450 ms debounce coalesces BURSTS, which is why sending three photos in a row
+// costs one write instead of three. It does nothing about the cost of a single write, so a
+// conversation being actively used pays ~285 ms at every quiet moment. That is the freeze.
+//
+// ── WHY TWO CHANNELS FIXES IT RATHER THAN JUST HIDING IT ─────────────────────
+//
+// The two cached keys have completely different read patterns, and only one of them is on any
+// hot path:
+//
+//   `chat_tail:<id>`      60 messages. Read SYNCHRONOUSLY on chat open to paint the first
+//                         frame. Must be current, and costs ~nothing to write.
+//   `chat_messages:<id>`  up to 1000. Read only by `hydrateFullHistory` / `ensureCachedHistory`
+//                         — i.e. when the user scrolls to the top, opens search, or jumps to an
+//                         old reply. Never on open, never per message.
+//
+// So the hot path only ever needed the tail. Writing the full blob at the same cadence was
+// paying a 1000-message serialisation to keep a key that nothing reads until the user
+// deliberately goes looking for old history.
+//
+// Now: the tail is written on the fast debounce, and the full blob on a 6 s trailing debounce —
+// plus unconditionally on background and on teardown, through the durability wiring that
+// already exists. So the hot path drops from stringify(1000) to stringify(60), and the full
+// blob still lands before the app can be killed.
+//
+// DURABILITY, precisely: the worst case is the process dying between a tail write and the full
+// write with no background transition — a crash, or an OS kill while foregrounded. Then the
+// newest messages exist in the tail (which is what chat-open reads) and on the server (the
+// history fetch backfills them), but not yet in the full blob. Scrolling far up in that state
+// could miss them until the next successful full write. That is an acceptable trade against
+// ten seconds of frozen UI per session, and it is strictly better than the previous behaviour
+// on a crash mid-debounce, which lost the same messages from BOTH keys.
+const FULL_PERSIST_DEBOUNCE_MS = 6000;
+let fullPersistTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingFullWrite: (() => void) | null = null;
+let pendingFullConv: string | null = null;
+function runPendingFullPersist(): void {
+  if (fullPersistTimer) { clearTimeout(fullPersistTimer); fullPersistTimer = null; }
+  const fn = pendingFullWrite;
+  pendingFullWrite = null;
+  pendingFullConv = null;
+  if (fn) { try { fn(); } catch {} }
+}
+function scheduleFullPersist(conversationId: string, write: () => void): void {
+  if (pendingFullConv && pendingFullConv !== conversationId) runPendingFullPersist();
+  pendingFullWrite = write;
+  pendingFullConv = conversationId;
+  if (fullPersistTimer) clearTimeout(fullPersistTimer);
+  fullPersistTimer = setTimeout(runPendingFullPersist, FULL_PERSIST_DEBOUNCE_MS);
+}
+
 // How many of the most-recent messages the chat-open warm prefetches. Bounded
 // low (the first screen is only a handful of bubbles) so opening a chat never
 // front-loads a burst of image fetches onto the navigation frame. The rest
@@ -319,12 +385,27 @@ const bubbleStyles = StyleSheet.create({
   timestampInline: { fontSize: 10 },
 });
 
-// Soft glowing "loading older messages" indicator shown at the TOP of the chat
-// (oldest end) while the next older chunk is being revealed from cache. Pure
-// cosmetic pulse — the data is already local, so this just gives the
-// Telegram-style "more is loading above" affordance instead of messages
-// silently popping in. Animated with the native driver (opacity only) so it
-// never touches the JS thread during scroll.
+/**
+ * The three glyphs the older-history indicator shimmers through.
+ *
+ * A message, a like and a comment — the three things a chat and its thread are made of, which is
+ * what makes the strip read as "more of your content is coming" rather than as a generic spinner.
+ * Module scope so the array identity is stable and the component never re-creates it.
+ */
+const OLDER_LOADER_EMOJI = ['💬', '❤️', '💭'] as const;
+
+// "Loading older messages" indicator shown at the TOP of the chat (oldest end) while the next
+// older chunk is revealed from cache. The data is already local, so this is purely the
+// Telegram-style "more is loading above" affordance instead of messages silently popping in.
+//
+// It was a pulsing bar. Now it is three shimmering emoji, as requested — a bar reads as a
+// progress indicator, which is misleading here because there is no progress to report: the
+// history is on disk and arrives in one commit. Emoji fading in and out say "something is
+// coming" without implying a measurable percentage.
+//
+// Still opacity-only on the native driver, so it never touches the JS thread during a scroll —
+// which matters more here than anywhere, since this is on screen exactly when the user is
+// flicking through history.
 function OlderMessagesLoader({ visible, color }: { visible: boolean; color: string }) {
   const pulse = useRef(new Animated.Value(0.25)).current;
   useEffect(() => {
@@ -354,17 +435,31 @@ function OlderMessagesLoader({ visible, color }: { visible: boolean; color: stri
   // space when idle.
   return (
     <View style={styles.olderLoader} pointerEvents="none">
-      <Animated.View
-        style={{
-          width: 84,
-          height: 6,
-          borderRadius: 3,
-          backgroundColor: color,
-          // `visible` gates the opacity rather than the mount. Safe to fade here:
-          // this is a plain View, not a glass surface.
-          opacity: visible ? pulse : 0,
-        }}
-      />
+      {OLDER_LOADER_EMOJI.map((glyph, i) => (
+        <Animated.Text
+          key={glyph}
+          style={{
+            fontSize: 15,
+            lineHeight: 19,
+            height: 19,
+            includeFontPadding: false,
+            textAlignVertical: 'center',
+            marginHorizontal: 3,
+            // Each glyph reads the SAME shared `pulse` value through its own interpolation,
+            // offset by a third of the cycle. One driver, three phases — so they shimmer in
+            // sequence rather than blinking together, and there is still only one animation to
+            // run. Three separate loops would be three native animations plus three JS timers.
+            opacity: visible
+              ? pulse.interpolate({
+                  inputRange: [0.25, 1],
+                  outputRange: i === 0 ? [0.35, 1] : i === 1 ? [0.7, 0.45] : [1, 0.35],
+                })
+              : 0,
+          }}
+        >
+          {glyph}
+        </Animated.Text>
+      ))}
     </View>
   );
 }
@@ -2284,6 +2379,9 @@ export default function ChatScreen() {
     // A still-pending write for a PREVIOUS conversation must land before we
     // start coalescing writes for this one (never drop a write on chat switch).
     if (pendingPersistConv && pendingPersistConv !== conversationId) runPendingPersist();
+    // Same rule for the slow channel: a full write still owed to the PREVIOUS conversation must
+    // land before this one starts accumulating, or switching chats quickly would drop it.
+    if (pendingFullConv && pendingFullConv !== conversationId) runPendingFullPersist();
     // This effect also tears down on a mere `myMessages` re-render; a re-run
     // for the (same) conversation cancels any deferred teardown flush so the
     // debounce keeps coalescing the burst.
@@ -2302,14 +2400,27 @@ export default function ChatScreen() {
     // and still lands the write, so nothing is lost.
     const wireDurability = (handle?: { cancel: () => void }) => {
       const sub = AppState.addEventListener('change', (s) => {
-        if (s === 'background' || s === 'inactive') runPendingPersist();
+        if (s === 'background' || s === 'inactive') {
+          runPendingPersist();
+          // The full blob is on a 6 s debounce, so it is the one most likely to be outstanding
+          // when the app goes away. Flushing it here is what keeps the slow channel safe:
+          // backgrounding is the moment before an OS kill, and it is a frame nobody is looking
+          // at, so a 285 ms write there costs the user nothing.
+          runPendingFullPersist();
+        }
       });
       return () => {
         sub.remove();
         handle?.cancel();
         persistTeardownPending = true;
         Promise.resolve().then(() => {
-          if (persistTeardownPending) { persistTeardownPending = false; runPendingPersist(); }
+          if (persistTeardownPending) {
+            persistTeardownPending = false;
+            runPendingPersist();
+            // Leaving the chat is also a safe place to pay for the full write: the screen is
+            // already gone, so the blocked frame is not one the user is scrolling.
+            runPendingFullPersist();
+          }
         });
       };
     };
@@ -2317,9 +2428,16 @@ export default function ChatScreen() {
     if (historyHydratedRef.current === convId) {
       // Full history hydrated → the store IS the complete authoritative array
       // → safe to mirror wholesale (capped to the newest MAX_PERSISTED_MESSAGES).
+      // HOT PATH: the tail only. 60 messages, which is what chat-open reads. See the note on
+      // `scheduleFullPersist` — this used to serialise the whole 1000-message array here, on
+      // every store change, and that was the 285 ms freeze the perf monitor measured.
       schedulePersist(convId, () => {
-        kvSetJSON(`chat_messages:${convId}`, capPersisted(snapshot));
         writeTailCache(convId, snapshot);
+      });
+      // COLD PATH: the full blob, on a 6 s trailing debounce. Nothing reads this key until the
+      // user scrolls to the top, searches, or jumps to an old reply.
+      scheduleFullPersist(convId, () => {
+        kvSetJSON(`chat_messages:${convId}`, capPersisted(snapshot));
       });
       return wireDurability();
     }
@@ -2335,7 +2453,23 @@ export default function ChatScreen() {
     // into the frame budget (the FPS crash). Durability is preserved by the
     // module-level timer (survives unmount), the AppState 'background' flush,
     // and the teardown flush wired above.
+    // HOT PATH: the tail, unconditionally. The store window always contains the newest
+    // messages, so the tail derived from it is correct regardless of what the full blob holds.
+    // Cheap, and it is the key chat-open reads.
     schedulePersist(convId, () => {
+      writeTailCache(convId, snapshot);
+    });
+
+    // COLD PATH: the read-merge-write against the full blob, on the slow debounce.
+    //
+    // This branch is the expensive one — it PARSES up to 1000 messages, builds a Map over them,
+    // merges, then serialises the result back. Roughly double the work of the hydrated branch,
+    // and it was running on every store change too.
+    //
+    // The merge itself is still required here and cannot be simplified away: the store holds
+    // only the bounded seed window on this branch, so writing it wholesale would TRUNCATE the
+    // older history already on disk. Merging by id is what makes the write non-destructive.
+    scheduleFullPersist(convId, () => {
       try {
         const cached = kvGetJSONSync<ChatMessage[]>(`chat_messages:${convId}`, []);
         if (cached.length > 0) {
@@ -2347,11 +2481,9 @@ export default function ChatScreen() {
             else { merged[at] = sm; }
           }
           kvSetJSON(`chat_messages:${convId}`, capPersisted(merged));
-          writeTailCache(convId, merged);
         } else {
           // Brand-new chat (no cached history yet) → the store is the whole truth.
           kvSetJSON(`chat_messages:${convId}`, capPersisted(snapshot));
-          writeTailCache(convId, snapshot);
         }
       } catch {}
     });
@@ -5374,7 +5506,9 @@ const styles = StyleSheet.create({
   // Reserved strip for the "loading older" indicator. Height is CONSTANT so the
   // indicator appearing or disappearing at the top of the transcript can never
   // shift content — see the note in `OlderMessagesLoader`.
-  olderLoader: { height: 24, alignItems: 'center', justifyContent: 'center' },
+  // `flexDirection: row` so the three glyphs sit side by side. Height stays 24 — the reserved
+  // strip must not change size, and the 19 pt emoji boxes fit inside it with room to spare.
+  olderLoader: { height: 24, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
   // Search-result action bar. Shrink-wraps to a centred pill (`alignSelf: center`,
   // no `right`) so two controls sit close together instead of stretching across
   // the display. zIndex clears the message list and the under-input gradient.
