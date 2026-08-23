@@ -1351,6 +1351,14 @@ export default function ChatScreen() {
   const cachedHistoryRef = useRef<{ convId: string; rows: ChatMessage[] } | null>(null);
   /** False once a chunk load finds nothing older left to give. Drives the top loading glow. */
   const moreOlderRef = useRef(true);
+
+  /**
+   * Minimum gap between two older-page loads. See the long note in `onStartReached` — without
+   * it, the offset correction a prepend triggers generates the scroll event that requests the
+   * next page, and one flick chains pages until the history runs out.
+   */
+  const OLDER_LOAD_COOLDOWN_MS = 900;
+  const lastOlderLoadAtRef = useRef(0);
   const hydrateFullHistory = useCallback((): ChatMessage[] | null => {
     if (!conversationId) return null;
     if (historyHydratedRef.current === conversationId) return null;
@@ -3792,6 +3800,7 @@ export default function ChatScreen() {
       olderHandleRef.current?.cancel();
       olderHandleRef.current = null;
       loadingOlderRef.current = false;
+      lastOlderLoadAtRef.current = 0;
       // Paging state is per conversation. Without this reset a chat opened after one that had
       // been scrolled to its oldest message would start with `moreOlderRef` false and refuse
       // to load any history at all.
@@ -3829,6 +3838,26 @@ export default function ChatScreen() {
     // nothing older left.
     if (loadingOlderRef.current) return;
     if (!moreOlderRef.current) return;
+
+    // ── ONE PAGE PER GESTURE, NOT A CASCADE ──────────────────────────────────
+    //
+    // Reported after paging landed as: it still throws me to the top, and messages move by
+    // themselves. Both were this.
+    //
+    // `loadingOlderRef` is released as soon as a chunk commits, and `onChatScroll` re-arms
+    // `startReachedArmedRef` on EVERY scroll event. A prepend makes FlashList apply offset
+    // correction, which scrolls — which produces another scroll event, which re-arms, and the
+    // list is still near the top, so `onStartReached` fires again immediately. One flick to the
+    // top therefore chained page after page, each one a prepend that moved content under the
+    // user. Replacing the old load-everything hydrate with paging reduced the size of each
+    // jump and multiplied their number, which is why it did not feel fixed.
+    //
+    // A cooldown bounds it to one page per interval regardless of how many scroll events the
+    // correction generates. 900 ms is longer than the correction takes to settle, and short
+    // enough that deliberately scrolling up through history still feels continuous.
+    const now = Date.now();
+    if (now - lastOlderLoadAtRef.current < OLDER_LOAD_COOLDOWN_MS) return;
+    lastOlderLoadAtRef.current = now;
     loadingOlderRef.current = true;
 
     // ── Hydration must NOT run on the scroll frame ──────────────────────────
