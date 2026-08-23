@@ -383,6 +383,10 @@ describe('ChatInputBar preservation baseline (Task 2 — ¬isBugCondition behavi
       '../../theme',
       '../../i18n/store',
       '../../services/perfMonitor',
+      // Pure-TS constants module (MAX_MESSAGE_CHARS). Listed here deliberately: it is not a
+      // native module, so it does not weaken what this test guards — no new native surface,
+      // therefore still OTA-deliverable with no Info.plist change.
+      '../../utils/textLimits',
       '../ui/LiquidGlass',
       './AnimatedKeyboardIcon',
       './AnimatedEmojiIcon',
