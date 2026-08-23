@@ -99,7 +99,18 @@ const SCREEN_HEIGHT = Dimensions.get('window').height;
 // `autoscrollToBottomThreshold: 0.1` is deliberate and correct: when a new message arrives at
 // the bottom and the user is already near the newest message, follow it. That is the
 // stick-to-newest behaviour a chat wants.
-const MVCP_FROM_BOTTOM = { startRenderingFromBottom: true, autoscrollToBottomThreshold: 0.1 } as const;
+// ── INVERTED CONFIG ─────────────────────────────────────────────────────────────────
+//
+// `startRenderingFromBottom` is GONE, and its absence is deliberate. It existed to make a
+// non-inverted list open at its last row; an inverted list opens at index 0, which IS the newest
+// message, so asking for it again would be asking the list to start at the oldest end.
+//
+// `autoscrollToBottomThreshold` is KEPT and still means the right thing. New messages arrive at
+// index 0 — the anchored end — so this is the stick-to-newest behaviour a chat wants: follow a
+// new message when the user is already near it, leave them alone when they are reading history.
+//
+// The note below about `autoscrollToTopThreshold` still applies and still says do not add it.
+const MVCP_INVERTED = { autoscrollToBottomThreshold: 0.1 } as const;
 const LIST_CONTENT_CONTAINER_STYLE = { paddingBottom: 8 } as const;
 
 /**
@@ -2557,7 +2568,11 @@ export default function ChatScreen() {
     // Unknown metrics (nothing scrolled yet) means we are at the bottom on a
     // freshly-opened chat — the native autoscroll has it.
     if (!m || m.layoutH <= 0) return;
-    const distanceFromBottom = m.contentH - (m.y + m.layoutH);
+    // INVERTED: `contentOffset.y` measures distance from the NEWEST end, because index 0 is at
+    // the bottom and scrolling up increases y. So the old `contentH - (y + layoutH)` arithmetic
+    // is not just wrong here, it is inverted — it would report "far from newest" precisely when
+    // the user is sitting on the newest message.
+    const distanceFromBottom = m.y;
     // Comfortably inside the native threshold → let FlashList do it.
     if (distanceFromBottom <= m.layoutH * 0.25) return;
 
@@ -2578,16 +2593,18 @@ export default function ChatScreen() {
     const gen = ++scrollGenRef.current;
     requestAnimationFrame(() => {
       if (gen !== scrollGenRef.current) return;
-      const lastIndex = windowedMessagesRef.current.length - 1;
-      if (lastIndex < 0) return;
+      // INVERTED: the newest message is index 0, not `length - 1`. And the follow-up is
+      // `scrollToOffset({ offset: 0 })` rather than `scrollToEnd()` — "end" in an inverted list
+      // is the OLDEST message, so `scrollToEnd` would fling the user to the top of the history.
+      if (windowedMessagesRef.current.length === 0) return;
       void (async () => {
         try {
-          await flatListRef.current?.scrollToIndex({ index: lastIndex, animated: true, viewPosition: 1 });
+          await flatListRef.current?.scrollToIndex({ index: 0, animated: true, viewPosition: 0 });
           if (gen !== scrollGenRef.current) return;
-          flatListRef.current?.scrollToEnd({ animated: false });
+          flatListRef.current?.scrollToOffset({ offset: 0, animated: false });
         } catch {
           if (gen !== scrollGenRef.current) return;
-          try { flatListRef.current?.scrollToEnd({ animated: true }); } catch {}
+          try { flatListRef.current?.scrollToOffset({ offset: 0, animated: true }); } catch {}
         }
       })();
     });
@@ -3769,7 +3786,43 @@ export default function ChatScreen() {
   //   the conversation is. The full history is hydrated lazily, on demand, and now that is
   //   the ONLY event that ever grows the array at the front -- once per screen, instead of
   //   once per 400 ms of upward scrolling.
-  const windowedMessages = chatMessages;
+  // ── INVERTED LIST: DATA IS NEWEST-FIRST ─────────────────────────────────────
+  //
+  // This is the change every previous scroll fix was working around.
+  //
+  // The list used to be non-inverted with `startRenderingFromBottom`, so the newest message was
+  // at the END of `data` and loading older history was a PREPEND. A prepend cannot be free:
+  // FlashList has to record the first visible item's layout, re-find it after the update and
+  // scroll by the difference. That correction is what produced every "it throws me to the top"
+  // report — deleting the render window, deleting a competing scrollToIndex, paging in 60s,
+  // adding a cooldown and deferring the commit to the scroll-settle all reduced its size or
+  // moved its timing, and none of them removed it.
+  //
+  // Inverted, index 0 is the newest message and sits at the bottom. Loading older history
+  // becomes an APPEND at the far end of the data — off-screen, below the anchor, with no
+  // measured row above the viewport changing position. There is nothing to correct, so there is
+  // nothing to feel. That is why every messenger builds its transcript this way, and FlashList's
+  // own prop docs name `inverted` as being for exactly this: "chat-like interfaces where the
+  // newest content appears at the bottom".
+  //
+  // WHAT THIS DOES NOT BREAK, AND WHY
+  //   Reply-jump, search-jump and pinned-jump all resolve by ID, not by index: `scrollToIndex`
+  //   converts its argument to `chatMessages[index].id` immediately and the resolver does a
+  //   `findIndex` on the RENDERED array. So they follow the inversion for free, and
+  //   `searchMatches` can keep holding chronological indices.
+  //
+  //   Day separators are keyed by message id (`buildDaySeparators` returns id → iso), so they
+  //   are direction-independent as long as the CHRONOLOGICAL array is what gets analysed — see
+  //   `dayLabels`, which is passed `chatMessages` rather than this.
+  //
+  // The reverse is a shallow copy per message-list change. That is O(n) on an array we already
+  // rebuild on those same commits, and it buys the removal of offset correction from every
+  // scroll — not a trade worth optimising away with a mutable structure.
+  const windowedMessages = useMemo(() => {
+    const out = chatMessages.slice();
+    out.reverse();
+    return out;
+  }, [chatMessages]);
   // Mirror of the rendered rows, so `onScrollBtnTap` can address the last
   // message by index while staying a STABLE callback (depending on
   // `windowedMessages` directly would re-create it on every message change, and
@@ -4164,7 +4217,11 @@ export default function ChatScreen() {
   // "Today"/"Yesterday", and reading a fresh clock per row would let two chips
   // disagree if the list happened to render across midnight.
   const dayLabels = useMemo(() => {
-    const separators = buildDaySeparators(windowedMessages);
+    // CHRONOLOGICAL array on purpose, not the inverted render array. `buildDaySeparators` marks
+    // the first message of each local day by comparing each row with the one before it, so it
+    // needs time to run forwards. Its output is keyed by message id, which makes it independent
+    // of render order — the renderer looks the label up by id.
+    const separators = buildDaySeparators(chatMessages);
     const now = Date.now();
     const out = new Map<string, string>();
     for (const [id, iso] of separators) {
@@ -4175,7 +4232,7 @@ export default function ChatScreen() {
     // `t` is intentionally NOT a dependency — it is a fresh function every
     // render, and `locale` is the value that actually changes the output.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [windowedMessages, locale]);
+  }, [chatMessages, locale]);
 
   // `dayLabels` is rebuilt on every data change, so depending on it directly gave
   // `renderItem` a new identity on those exact commits — and FlashList re-renders
@@ -4346,17 +4403,21 @@ export default function ChatScreen() {
       // default to reduce visible glitches"). Our FlashList config already matches the chat
       // example in those docs exactly.
       //
-      // The problem was never the correction — it was that `onStartReached` fires DURING the
-      // gesture, so the correction competed with an in-flight fling. A scroll being corrected
-      // while the finger is still moving it is precisely the sensation reported: content
-      // shifting on its own, and the viewport being dragged toward the top.
+      // The problem was never the correction — it was that the request fires DURING the gesture,
+      // so the correction competed with an in-flight fling. A scroll being corrected while the
+      // finger is still moving it is precisely the sensation reported: content shifting on its
+      // own, and the viewport being dragged toward the top.
       //
-      // Committing on the settle timer instead means the prepend lands ~180 ms after the last
-      // scroll event, with the list stationary. The correction then has nothing to fight, so
-      // it is invisible — the same operation, at a moment when it cannot be felt.
+      // Committing on the settle timer means the load lands ~180 ms after the last scroll event,
+      // with the list stationary.
       //
-      // The cooldown and the `moreOlderRef` latch still apply inside `onStartReached`; this
-      // only defers the work it requested.
+      // KEPT AFTER THE INVERSION even though the inversion removes the correction entirely (older
+      // messages now APPEND below the anchor — see the note on `windowedMessages`). Two reasons
+      // it still earns its place: the work itself is a store write plus a re-render of the data
+      // array, which is real JS-thread cost that has no business landing mid-fling; and a
+      // deferred commit is the safer default if the list ever stops being inverted.
+      //
+      // The cooldown and the `moreOlderRef` latch still gate the request; this only defers it.
       if (pendingOlderLoadRef.current) {
         pendingOlderLoadRef.current = false;
         loadOlderChunkRef.current();
@@ -4370,11 +4431,12 @@ export default function ChatScreen() {
     const y = ne?.contentOffset?.y ?? 0;
     const layoutH = ne?.layoutMeasurement?.height ?? 0;
     const contentH = ne?.contentSize?.height ?? 0;
-    // Non-inverted list: the newest message is at the BOTTOM. Show the
-    // scroll-to-bottom button when the user has scrolled UP away from it.
-    const distanceFromBottom = contentH - (y + layoutH);
+    // INVERTED list: index 0 (the newest message) is at the bottom, and `contentOffset.y` grows
+    // as the user scrolls UP into history. So y IS the distance from the newest message — no
+    // arithmetic needed, and the old `contentH - (y + layoutH)` would now be backwards, hiding
+    // the scroll-to-newest button exactly when it is needed and showing it when it is not.
     scrollMetricsRef.current = { y, layoutH, contentH };
-    const next = distanceFromBottom > SCROLL_BTN_THRESHOLD;
+    const next = y > SCROLL_BTN_THRESHOLD;
     setScrollBtnVisible((prev) => (prev === next ? prev : next));
   }, []);
   useEffect(() => () => { if (scrollIdleRef.current) clearTimeout(scrollIdleRef.current); scrollPausedRef.current = false; setRevealScrollPaused(false); }, []);
@@ -4409,12 +4471,14 @@ export default function ChatScreen() {
     // is also why v2 removed `onScrollToIndexFailed` — the retry ladder it used
     // to need is now the library's job.)
     //
-    // So: ask for the last message and await it. The single follow-up
-    // `scrollToEnd` is ordered by the promise rather than by a guessed timer,
-    // and only covers the footer spacer below the final bubble — a few points,
-    // un-animated, therefore invisible. One gesture, one move.
-    const lastIndex = windowedMessagesRef.current.length - 1;
-    if (lastIndex < 0) return;
+    // So: ask for the newest message and await it. The single follow-up is ordered by the promise
+    // rather than by a guessed timer, and only covers the spacer beyond the final bubble — a few
+    // points, un-animated, therefore invisible. One gesture, one move.
+    //
+    // INVERTED: the newest message is index 0, and the follow-up is `scrollToOffset({ offset: 0 })`
+    // rather than `scrollToEnd()` — "end" now means the OLDEST message, so `scrollToEnd` would
+    // send the user to the top of the entire history, which is the opposite of this button.
+    if (windowedMessagesRef.current.length === 0) return;
 
     // Claim the scroll generation so any other chain already in flight
     // (`revealNewest`, a reply jump) abandons its follow-up instead of fighting
@@ -4423,17 +4487,17 @@ export default function ChatScreen() {
 
     void (async () => {
       try {
-        await fl.scrollToIndex({ index: lastIndex, animated: true, viewPosition: 1 });
-        // Land past the footer spacer. Guarded because the user may have started
-        // scrolling again, or navigated away, while the animation ran.
+        await fl.scrollToIndex({ index: 0, animated: true, viewPosition: 0 });
+        // Land past the spacer beyond the newest bubble. Guarded because the user may have
+        // started scrolling again, or navigated away, while the animation ran.
         if (gen !== scrollGenRef.current) return;
-        flatListRef.current?.scrollToEnd({ animated: false });
+        flatListRef.current?.scrollToOffset({ offset: 0, animated: false });
       } catch {
         // Any rejection (index out of range after a concurrent data change,
         // list unmounted) falls back to the plain call, which is still correct
         // — just without the measured animation.
         if (gen !== scrollGenRef.current) return;
-        try { flatListRef.current?.scrollToEnd({ animated: true }); } catch {}
+        try { flatListRef.current?.scrollToOffset({ offset: 0, animated: true }); } catch {}
       }
     })();
   }, []);
@@ -4470,7 +4534,12 @@ export default function ChatScreen() {
         // virtualization knob — and it's exactly what removes the heavy
         // per-bubble mount-on-scroll cost (gestures + Reanimated layers) that
         // FlatList re-paid on every row scrolling into view.
-        maintainVisibleContentPosition={MVCP_FROM_BOTTOM}
+        // Newest at the bottom, and — the reason this exists — loading older history becomes an
+        // APPEND instead of a prepend, so there is no offset correction to fight. See the long
+        // note on `windowedMessages`. From the v2 prop docs: "Reverses the direction of the
+        // list... Useful for chat-like interfaces where the newest content appears at the bottom."
+        inverted
+        maintainVisibleContentPosition={MVCP_INVERTED}
         // Bound how far ahead rows are built. Chat bubbles are expensive — each
         // carries gesture handlers and Reanimated layers — so an unbounded
         // pre-render window turns a fling through a media-heavy chat into a burst
@@ -4499,20 +4568,29 @@ export default function ChatScreen() {
         // Non-inverted: ListHeaderComponent is the TOP (oldest) spacer under the
         // header gradient; ListFooterComponent is the BOTTOM spacer above the
         // input bar. (Swapped from the old inverted layout.)
-        ListHeaderComponent={listHeaderEl}
-        ListFooterComponent={listFooterEl}
+        // SWAPPED for the inversion. `inverted` flips the visual order of header and footer along
+        // with everything else, so the element that must appear at the TOP of the screen (the
+        // spacer under the header gradient, plus the loading-older affordance) is now the FOOTER,
+        // and the bottom spacer above the composer is the HEADER. The names refer to positions in
+        // the data, and in an inverted list the start of the data is the bottom of the screen.
+        ListHeaderComponent={listFooterEl}
+        ListFooterComponent={listHeaderEl}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
         viewabilityConfig={viewabilityConfig}
         onViewableItemsChanged={onViewableItemsChanged}
         // Load OLDER history when the user nears the TOP (oldest) of the list.
-        onStartReached={onStartReached}
+        // `onEndReached`, not `onStartReached`. Older messages live at the END of an inverted
+        // list's data, so reaching the end is what "the user scrolled up to the oldest loaded
+        // message" now means. Wiring the start would fire when the user reached the NEWEST
+        // message, i.e. immediately and constantly, since that is where the list rests.
+        onEndReached={onStartReached}
         // 0.05, not 0.15. The threshold is a FRACTION of the content length, so on a short
         // window 0.15 is satisfied while the user is still nowhere near the top — the list
         // asked for older history unprompted. Combined with the cooldown in `onStartReached`,
         // loading now begins when the user is genuinely approaching the oldest loaded message.
-        onStartReachedThreshold={0.05}
+        onEndReachedThreshold={0.05}
         // Scroll-to-bottom button visibility — onChatScroll computes distance
         // from the bottom (newest) from the scroll event.
         onScroll={onChatScroll}
