@@ -63,47 +63,66 @@ function TypingIndicatorImpl({ channelName }: { channelName: string | null }) {
 
   return (
     <View style={styles.row} pointerEvents="none">
-      {emoji.length > 0 ? (
-        <View style={styles.emojiRow}>
-          {emoji.map((p) => (
-            // Emoji are decorative here — the label already names who is typing — so they are
-            // hidden from assistive tech rather than read out as stray characters.
-            <Text
-              key={p.id}
-              variant="caption"
-              style={styles.emoji}
-              accessibilityElementsHidden
-              importantForAccessibility="no-hide-descendants"
-            >
-              {p.emoji}
-            </Text>
-          ))}
-        </View>
-      ) : null}
-      <Text
-        variant="caption"
-        color={theme.colors.text.tertiary}
-        numberOfLines={1}
-        style={styles.label}
-        // Announced as a status so a screen reader mentions it without stealing focus from
-        // the text field the user is typing into.
+      {/* Outlined pill. The strip used to be bare text floating over the transcript, which
+          read as a stray line rather than a piece of chrome — a border plus a faint fill gives
+          it an edge so it separates from whatever message happens to sit behind it.
+
+          Accessibility props live on these Views, not on `Text`: the app's `Text` wrapper
+          exposes a narrow prop surface (variant/color/weight/numberOfLines/style) and does not
+          forward accessibility props, so putting them here is both type-correct and the right
+          granularity — the pill is one status, not several strings. */}
+      <View
+        style={[
+          styles.pill,
+          {
+            backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+            borderColor: theme.isDark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.12)',
+          },
+        ]}
+        // Announced as a live status so a screen reader mentions it without stealing focus
+        // from the field the user is typing into.
         accessibilityRole="text"
         accessibilityLiveRegion="polite"
+        accessibilityLabel={label}
       >
-        {label}
-      </Text>
+        {emoji.length > 0 ? (
+          // Emoji are decorative — the label already names who is typing — so they are hidden
+          // from assistive tech rather than read out as stray characters.
+          <View style={styles.emojiRow} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+            {emoji.map((p) => (
+              <Text key={p.id} variant="caption" style={styles.emoji}>
+                {p.emoji}
+              </Text>
+            ))}
+          </View>
+        ) : null}
+        <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={styles.label}>
+          {label}
+        </Text>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  // `flex-start` so the pill hugs its content instead of stretching the full width.
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 18,
+    paddingHorizontal: 16,
     paddingTop: 4,
     paddingBottom: 2,
-    gap: 6,
+  },
+  pill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 11,
+    borderWidth: StyleSheet.hairlineWidth,
+    // Bounded so a long display name cannot push the pill past the screen edge.
+    maxWidth: '86%',
   },
   emojiRow: { flexDirection: 'row', alignItems: 'center' },
   // Slight negative margin so several emoji read as a small cluster rather than a spaced list.

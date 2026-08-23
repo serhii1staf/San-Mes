@@ -48,6 +48,7 @@ import { kvGetJSONSync, kvSetJSON, kvWarm } from '../../src/services/kvStore';
 import { addTombstones, filterTombstoned } from '../../src/services/messageTombstones';
 import { TypingIndicator } from '../../src/components/ui/TypingIndicator';
 import { typingChatChannelName, useTypingPublisher } from '../../src/services/realtime/typing';
+import { clearActiveThread, setActiveThread } from '../../src/services/activeThread';
 import { mockMessages, mockConversations, formatMessageTime } from '../../src/utils/mockData';
 import { showToast } from '../../src/store/toastStore';
 import { ChatMessage } from '../../src/types';
@@ -267,6 +268,11 @@ function healLegacySender(
 // React happily diffs without re-walking the whole tree.
 const bubbleStyles = StyleSheet.create({
   row: { justifyContent: 'center' },
+  // Full-width swipe target. `width: '100%'` rather than `flex: 1` because the parent is not
+  // a flex row — it is the message row, and the child must span it so a two-character bubble
+  // is as easy to swipe as a long one. No padding or background: the bubble's own margins
+  // still position it, so this adds a hit area and nothing visual.
+  gestureRow: { width: '100%' },
   swipeIcon: { position: 'absolute', right: 16 },
   swipeIconCircle: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
   bubbleBase: { paddingHorizontal: 14, paddingVertical: 10 },
@@ -605,7 +611,23 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
         </View>
       </Reanimated.View>
 
+      {/* ── THE GESTURE TARGET IS THE ROW, NOT THE BUBBLE ─────────────────────────
+          Reported as: a peer sends a message of a few characters and it is very hard to
+          swipe it to reply.
+
+          The GestureDetector used to wrap the bubble itself, and the bubble is sized to its
+          content (`alignSelf` + `maxWidth: 78%`). So for "ok" the grabbable area was about
+          forty points wide, sitting at one edge of the screen — the gesture worked exactly
+          as designed and was simply almost impossible to hit.
+
+          Wrapping the full-width row instead makes the whole line swipeable regardless of
+          how short the message is, which is what every messenger does. What MOVES is still
+          only the bubble: `bubbleAnimStyle` stays on the inner view, so the visual is
+          unchanged. The pan already yields to vertical motion (`failOffsetY([-10, 10])`), so
+          a wider target cannot start competing with list scrolling, and the long-press still
+          measures the bubble's own rect through `bubbleRef` for the delete burst. */}
       <GestureDetector gesture={composedGesture}>
+        <View style={bubbleStyles.gestureRow} collapsable={false}>
         <Reanimated.View ref={bubbleRef} style={[bubbleAnimStyle, { alignSelf: isOwn ? 'flex-end' : 'flex-start', maxWidth: '78%', marginLeft: isOwn ? 0 : 16, marginRight: isOwn ? 16 : 0, marginBottom: 4 }]}>
         {/* Long-press + drag-select is handled by `composedGesture` on the
             GestureDetector above (UI thread). This wrapper used to be a
@@ -795,6 +817,7 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
           </View>
         </View>
         </Reanimated.View>
+        </View>
       </GestureDetector>
     </View>
   );
@@ -958,6 +981,34 @@ export default function ChatScreen() {
     });
     return () => handle.cancel();
   }, [conversationId]);
+
+  // ── Tell the push handler this chat is on screen ──────────────────────────
+  //
+  // So a message for THIS conversation does not raise a banner the user does not need — it is
+  // already arriving over Ably and rendering in the transcript. Other chats still notify.
+  //
+  // BOTH ids are registered because they can differ: the route id is a peer USER id when the
+  // chat was opened from a profile, while the push always carries the canonical
+  // `conversation_id`. Registering only one would leave banners firing for the conversation
+  // the user is literally looking at, until the async resolve landed.
+  //
+  // Re-registers on foreground because the root drops the register on background (a push that
+  // arrives while the app is away must always be shown).
+  useEffect(() => {
+    if (!conversationId && !id) return;
+    // The route id and the resolved conversation id, which differ when the chat was opened
+    // from a profile. NOT the peer's user id: a push carries `conversation_id`, never a user
+    // id, so registering the peer's id could only ever produce a false match.
+    const ids = [conversationId, id];
+    setActiveThread('chat', ids);
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next === 'active') setActiveThread('chat', ids);
+    });
+    return () => {
+      try { sub.remove(); } catch {}
+      clearActiveThread('chat', ids);
+    };
+  }, [conversationId, id]);
   // Mount-time marker — captures how long the chat screen took to commit
   // its first render so the perf-monitor panel can attribute open-the-chat
   // freezes. Reads `Date.now()` once at first render via useRef so the
@@ -1251,6 +1302,55 @@ export default function ChatScreen() {
   // mirror can't truncate the older history still on disk).
   const historyHydratedRef = useRef<string | null>(null);
   const seededArrayRef = useRef<ChatMessage[] | null>(null);
+
+  /**
+   * How many older messages one scroll-to-top hands to the list.
+   *
+   * ── WHY THIS EXISTS ─────────────────────────────────────────────────────────
+   *
+   * Reported as: "I open a chat and it feels like the app is dragging everything in, it
+   * loads all the messages, then it lags and throws me up and down."
+   *
+   * That was literally what happened. Reaching the top called `hydrateFullHistory`, which
+   * puts the ENTIRE cached conversation — up to `MAX_PERSISTED_MESSAGES` = 1000 rows — into
+   * the store in ONE commit. On a long chat that is a ~940-row PREPEND handed to FlashList
+   * in a single update.
+   *
+   * FlashList can compensate a prepend (`applyOffsetCorrection` records the first visible
+   * item's layout, re-finds it after the update, and scrolls by the delta), but that is a
+   * correction, not free: it has to lay out the new rows to know the delta, and 940 chat
+   * bubbles is a large amount of layout to do inside one frame. The visible result is a
+   * stall followed by the viewport being dragged — the up-and-down.
+   *
+   * FlashList's own documentation names the right shape for this. From the `inverted` prop
+   * docs: it exists for "chat-like interfaces where the newest content appears at the
+   * bottom", and `maintainVisibleContentPosition` is documented as "Configuration for
+   * maintaining scroll position when content changes... enabled by default to reduce visible
+   * glitches". Both are built around content arriving in the increments a user actually
+   * scrolls through, not a whole history at once.
+   *
+   * So the parse stays a one-off (reading the blob is one JSON parse and it is already
+   * deferred off the gesture) but the COMMIT is now bounded: the parsed history lives in a
+   * ref, and each trip to the top hands the list the next `OLDER_CHUNK` rows. 60 rows is
+   * roughly two screens on a phone, so the user can keep scrolling without ever waiting, and
+   * no single commit is large enough to stall.
+   *
+   * `hydrateFullHistory` is NOT deleted — search and reply-jump genuinely need the whole
+   * array in the store, and both are explicit user actions where one beat is acceptable.
+   * Scrolling is not, and scrolling is what was calling it.
+   */
+  const OLDER_CHUNK = 60;
+
+  /**
+   * The parsed, healed, tombstone-filtered cache for this conversation — oldest→newest.
+   *
+   * Parsed at most once per conversation. Held in a ref rather than state because handing
+   * chunks to the store is the only thing that should cause a render; having the source array
+   * in state would render on parse too, for no visible change.
+   */
+  const cachedHistoryRef = useRef<{ convId: string; rows: ChatMessage[] } | null>(null);
+  /** False once a chunk load finds nothing older left to give. Drives the top loading glow. */
+  const moreOlderRef = useRef(true);
   const hydrateFullHistory = useCallback((): ChatMessage[] | null => {
     if (!conversationId) return null;
     if (historyHydratedRef.current === conversationId) return null;
@@ -1296,6 +1396,70 @@ export default function ChatScreen() {
   // channel subscription).
   const hydrateFullHistoryRef = useRef(hydrateFullHistory);
   hydrateFullHistoryRef.current = hydrateFullHistory;
+
+  /**
+   * Read (once) and cache the full on-disk history for this conversation.
+   *
+   * Same read, heal and tombstone-filter as `hydrateFullHistory`, minus the store write —
+   * this only fills `cachedHistoryRef` so chunks can be served from it.
+   */
+  const ensureCachedHistory = useCallback((): ChatMessage[] => {
+    if (!conversationId) return [];
+    const held = cachedHistoryRef.current;
+    if (held && held.convId === conversationId) return held.rows;
+    let full: ChatMessage[] = [];
+    try {
+      full = kvGetJSONSync<ChatMessage[]>(`chat_messages:${conversationId}`, []);
+    } catch {
+      full = [];
+    }
+    const healed = full.map((m) => healLegacySender(m, currentUserId, participantId));
+    const rows = filterTombstoned(conversationId, healed) as ChatMessage[];
+    cachedHistoryRef.current = { convId: conversationId, rows };
+    return rows;
+  }, [conversationId, currentUserId, participantId]);
+
+  /**
+   * Prepend the next `OLDER_CHUNK` older messages from the cached history.
+   *
+   * Selection is by ID, walking the cached array from newest to oldest and taking rows the
+   * store does not already hold under either identity. Deliberately not `slice` by count:
+   * the store is not guaranteed to be the exact tail of the cache — realtime arrivals and
+   * optimistic sends land in the store without being on disk yet — so counting would skip or
+   * duplicate rows at the boundary. Walking by id is correct regardless of how the two
+   * diverge.
+   *
+   * Returns true when it added something, so the caller can tell "more to come" from
+   * "that was everything".
+   */
+  const loadOlderChunk = useCallback((): boolean => {
+    if (!conversationId) return false;
+    const rows = ensureCachedHistory();
+    if (rows.length === 0) { moreOlderRef.current = false; return false; }
+    const store = (useChatStore.getState().messages[conversationId] || []) as ChatMessage[];
+    const known = new Set<string>();
+    for (const m of store) {
+      if (m?.id) known.add(m.id);
+      if (m?.serverId) known.add(m.serverId);
+    }
+    const chunk: ChatMessage[] = [];
+    for (let i = rows.length - 1; i >= 0 && chunk.length < OLDER_CHUNK; i--) {
+      const row = rows[i];
+      if (!row?.id) continue;
+      if (known.has(row.id) || (row.serverId && known.has(row.serverId))) continue;
+      chunk.push(row);
+    }
+    if (chunk.length === 0) { moreOlderRef.current = false; return false; }
+    // Collected newest-first while walking backwards; the array is oldest→newest.
+    chunk.reverse();
+    // Whether anything remains is answered by the NEXT call rather than guessed here — a
+    // count comparison would be wrong for the same reason slicing would be.
+    moreOlderRef.current = chunk.length === OLDER_CHUNK;
+    setMessages(conversationId, [...chunk, ...store] as any);
+    return true;
+  }, [conversationId, ensureCachedHistory, setMessages]);
+  const loadOlderChunkRef = useRef(loadOlderChunk);
+  loadOlderChunkRef.current = loadOlderChunk;
 
   // ── Post-open: hydrate the STORE, do NOT expand the render window ──────────
   //
@@ -2575,11 +2739,10 @@ export default function ChatScreen() {
     const onDelete = (msg: { data?: any }) => {
       const payload = msg?.data;
       if (!payload || typeof payload !== 'object' || !payload.id) return;
-      // Ensure the FULL history is in the store before removing, so the delete
-      // can't be "resurrected" when the lazy hydrate-merge later runs (the
-      // merge overlays the store onto the cached full array by id — a message
-      // only deleted from the bounded seed would otherwise survive in cache).
-      hydrateFullHistoryRef.current();
+      // The full-history hydrate that used to run here is gone for the same reason it is gone
+      // from the delete menu action: the tombstone makes the delete durable at every layer,
+      // and loading up to 1000 rows into the list in response to a PEER's delete was a large
+      // commit nobody asked for — arriving at an arbitrary moment, mid-scroll.
       // Record it here too, for the same reason the deleter does: this device polls the
       // server independently, and without a tombstone its own poll resurrects a message the
       // peer deleted. That is why the message came back for BOTH users.
@@ -3065,7 +3228,13 @@ export default function ChatScreen() {
             // Ensure the FULL history is loaded first so the delete persists
             // correctly (the lazy hydrate-merge would otherwise resurrect a
             // message removed only from the bounded seed window).
-            hydrateFullHistoryRef.current();
+            // NOTE: this used to call `hydrateFullHistoryRef.current()` first, so the row
+            // was guaranteed to be in the store before being filtered out — otherwise the
+            // lazy hydrate would later reintroduce a message deleted from the bounded seed.
+            // The tombstone below solves that properly and at every layer, so the hydrate is
+            // gone: pulling up to 1000 rows into the list as a side effect of a delete was a
+            // large unrequested commit, and it fired on the same frame as the delete
+            // animation.
             // ── REMEMBER THE DELETION BEFORE PERFORMING IT ────────────────────
             //
             // Without this the row comes back within six seconds, because the history poll
@@ -3579,7 +3748,10 @@ export default function ChatScreen() {
   // bounded seed hit its cap, so the tail cache has more history behind it that has not
   // been hydrated yet. There is no `windowStart > 0` case any more -- once hydrated, the
   // array IS the whole history. Drives the top "loading older" glow.
-  const hasMoreOlder = historyHydratedRef.current !== conversationId && seedMessages.length >= SEED_CAP;
+  // Older messages exist above what is rendered until a chunk load comes back empty. The old
+  // condition (`not hydrated && seed hit its cap`) could only ever be true once, because
+  // hydration was all-or-nothing; with paged loading the answer changes per page.
+  const hasMoreOlder = moreOlderRef.current && chatMessages.length > 0;
 
   // Reaching the TOP hydrates the rest of the history from the local cache — once, ever.
   // Never the network, and no window to grow any more.
@@ -3596,6 +3768,11 @@ export default function ChatScreen() {
       olderHandleRef.current?.cancel();
       olderHandleRef.current = null;
       loadingOlderRef.current = false;
+      // Paging state is per conversation. Without this reset a chat opened after one that had
+      // been scrolled to its oldest message would start with `moreOlderRef` false and refuse
+      // to load any history at all.
+      moreOlderRef.current = true;
+      cachedHistoryRef.current = null;
     },
     [conversationId],
   );
@@ -3619,8 +3796,15 @@ export default function ChatScreen() {
     // is never released. The old 400 ms cooldown existed to rate-limit repeated window
     // growth; with no window there is nothing to rate-limit, and a latch that never opens
     // is strictly safer than a timer that re-arms mid-gesture.
+    // ── NOT A ONE-WAY LATCH ANY MORE ─────────────────────────────────────────
+    //
+    // It used to be, because there was exactly one thing to do here (hydrate everything) and
+    // it could only happen once. Now the top loads ONE CHUNK, so it has to be re-armed: the
+    // guard exists to stop overlapping loads within a single gesture, not to stop the second
+    // page from ever loading. `moreOlderRef` is what ends the sequence, when a load finds
+    // nothing older left.
     if (loadingOlderRef.current) return;
-    if (historyHydratedRef.current === conversationId) return;
+    if (!moreOlderRef.current) return;
     loadingOlderRef.current = true;
 
     // ── Hydration must NOT run on the scroll frame ──────────────────────────
@@ -3644,7 +3828,10 @@ export default function ChatScreen() {
     // it. Both hand-rolled restores that used to live here are gone.
     const handle = InteractionManager.runAfterInteractions(() => {
       olderHandleRef.current = null;
-      hydrateFullHistoryRef.current();
+      loadOlderChunkRef.current();
+      // Released only after the chunk has been committed, so a fling that keeps the list at
+      // the top loads page after page instead of firing several loads at the same offset.
+      loadingOlderRef.current = false;
     });
     olderHandleRef.current = handle;
   }, [conversationId]);

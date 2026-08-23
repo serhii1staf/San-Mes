@@ -80,6 +80,19 @@ const EV_STOP = 'typing.stop';
 const PUBLISH_THROTTLE_MS = 2000;
 
 /**
+ * Silence after which the publisher announces a STOP by itself.
+ *
+ * Without this the only stops were on send and on unmount, so someone who typed a word and
+ * then thought about it kept showing as typing for the full `TYPING_TTL_MS`. Reported as the
+ * indicator being shown with a delay when nobody is typing — it was not a delay, it was the
+ * TTL running down with nothing to cut it short.
+ *
+ * Longer than the throttle so a normal pause between words never trips it, shorter than the
+ * TTL so it is the stop, and not the expiry, that clears the indicator in the common case.
+ */
+const IDLE_STOP_MS = 2600;
+
+/**
  * How long an announcement keeps someone "typing" without a refresh.
  *
  * Must be comfortably longer than `PUBLISH_THROTTLE_MS` or a steady typist would flicker
@@ -135,16 +148,38 @@ export function useTypingPublisher(channelName: string | null): {
     }
   }, []);
 
+  // Fires a stop when typing goes quiet, so the indicator clears on the peer promptly instead
+  // of waiting out the TTL. Rearmed on every keystroke.
+  const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearIdleTimer = useCallback(() => {
+    if (idleTimerRef.current) {
+      clearTimeout(idleTimerRef.current);
+      idleTimerRef.current = null;
+    }
+  }, []);
+
   const notifyStopped = useCallback(() => {
+    clearIdleTimer();
     if (!announcedRef.current) return;
     announcedRef.current = false;
     lastPublishRef.current = 0;
     const user = useAuthStore.getState().user;
     if (!user?.id) return;
     publish(EV_STOP, { id: user.id });
-  }, [publish]);
+  }, [publish, clearIdleTimer]);
+
+  const stopRef = useRef(notifyStopped);
+  stopRef.current = notifyStopped;
 
   const notifyTyping = useCallback(() => {
+    // Rearm the idle stop on EVERY keystroke, even the throttled ones. The throttle governs
+    // how often we announce; it must not govern how quickly we notice silence.
+    clearIdleTimer();
+    idleTimerRef.current = setTimeout(() => {
+      idleTimerRef.current = null;
+      stopRef.current();
+    }, IDLE_STOP_MS);
+
     const now = Date.now();
     if (now - lastPublishRef.current < PUBLISH_THROTTLE_MS) return;
     const user = useAuthStore.getState().user;
@@ -156,12 +191,11 @@ export function useTypingPublisher(channelName: string | null): {
       name: user.displayName || user.username || '',
       emoji: user.emoji || undefined,
     });
-  }, [publish]);
+  }, [publish, clearIdleTimer]);
 
   // Leaving the screen must clear the indicator on everybody else's device. Without this,
-  // closing a chat mid-word leaves the peer looking at "typing…" until the TTL lapses.
-  const stopRef = useRef(notifyStopped);
-  stopRef.current = notifyStopped;
+  // closing a chat mid-word leaves the peer looking at "typing…" until the TTL lapses. Also
+  // disposes the idle timer, so a stop can never fire into an unmounted screen.
   useEffect(() => () => { stopRef.current(); }, []);
 
   return { notifyTyping, notifyStopped };
@@ -187,7 +221,6 @@ export function useTypingPeers(channelName: string | null): TypingPeer[] {
       setPeers((prev) => (prev.length === 0 ? prev : []));
       return;
     }
-    const selfId = useAuthStore.getState().user?.id;
     const entries = entriesRef.current;
     entries.clear();
     let sweep: ReturnType<typeof setInterval> | null = null;
@@ -233,7 +266,18 @@ export function useTypingPeers(channelName: string | null): TypingPeer[] {
       const p = msg?.data;
       if (!p || typeof p !== 'object') return;
       const id = typeof p.id === 'string' ? p.id : '';
-      if (!id || id === selfId) return;
+      // ── SELF ID IS READ PER EVENT, NOT ONCE AT SUBSCRIBE ─────────────────────
+      //
+      // Reported as: "I am not typing and it still shows that I am typing."
+      //
+      // This used to capture `useAuthStore.getState().user?.id` when the effect ran. The
+      // effect is keyed on `channelName`, which is available as soon as the screen has a
+      // conversation id — which can be BEFORE the auth store has hydrated, and always before
+      // it on a cold start into a chat. `selfId` was then `undefined`, the own-echo filter
+      // never matched, and the device rendered its own typing announcement back to itself —
+      // appearing about two seconds in, because that is when the first throttled publish
+      // fires. Reading it per event means it is whatever is true at that moment.
+      if (!id || id === useAuthStore.getState().user?.id) return;
       const peer: TypingPeer = {
         id,
         name: typeof p.name === 'string' ? p.name : '',

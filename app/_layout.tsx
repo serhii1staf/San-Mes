@@ -130,6 +130,47 @@ function AuthNavigationGuard({ children }: { children: React.ReactNode }) {
     return () => clearTimeout(tid);
   }, [isAuthenticated, hasHydrated]);
 
+  // ── Tapping a push must open the thread it came from ──────────────────────
+  //
+  // Installed here rather than inside `registerForPush` because it must exist even when
+  // registration bails (push already registered, permission previously granted, master switch
+  // off but a notification from before it was turned off is still in the tray). It also has to
+  // survive independently of the 1500 ms deferral above: the cold-start path reads the response
+  // that LAUNCHED the app, and that must not wait on a token round trip.
+  //
+  // Mounted inside the auth guard, so a tap can never navigate a signed-out user into a chat.
+  useEffect(() => {
+    if (!isAuthenticated || !hasHydrated) return;
+    let dispose: (() => void) | null = null;
+    let cancelled = false;
+    import('../src/services/pushNotifications')
+      .then((m) => {
+        if (cancelled) return;
+        dispose = m.installNotificationTapHandler((path) => {
+          try { router.push(path as any); } catch {}
+        });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      try { dispose?.(); } catch {}
+    };
+  }, [isAuthenticated, hasHydrated, router]);
+
+  // A push that arrives while the app is NOT in the foreground must always be presented, even
+  // for the thread that was on screen when the user switched away — that banner is how they
+  // come back. So the on-screen-thread register is dropped on background and the screen
+  // re-registers on foreground (see the chat/comments screens' AppState wiring).
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next === 'active') return;
+      import('../src/services/activeThread')
+        .then((m) => m.suspendActiveThread())
+        .catch(() => {});
+    });
+    return () => { try { sub.remove(); } catch {} };
+  }, []);
+
   if (!hasHydrated || showSplash || isLoggingOut) {
     return <CustomSplash />;
   }
