@@ -4,6 +4,30 @@ compatibility_date = "2025-12-01"
 compatibility_flags = ["nodejs_compat"]
 account_id = "8e0d53f0faad2f48870d0a570dadd03f"
 
+# ── MUST BE SET EXPLICITLY, AND MUST STAY ABOVE THE FIRST [[table]]. ─────────
+#
+# Two separate traps, both hit on the same deploy.
+#
+# 1. Omitting the key does NOT mean "leave it enabled". Current wrangler treats an
+#    absent `workers_dev` as FALSE and disables the route, announcing it as:
+#
+#      ▲ [WARNING] Because 'workers_dev' is not in your Wrangler file, it will be
+#        disabled for this deployment by default.
+#
+#    A comment further down this file used to claim the opposite ("deliberately NOT set
+#    to false — keeping both reachable is the whole point of the failover"). The first
+#    deploy after that was written disabled the route, and
+#    `san-mes-api.odi44972.workers.dev` began returning 404 — while it is the FIRST
+#    candidate in src/services/apiHost.ts and the host every installed build tries
+#    first. The client's failover held (api.san-m-app.com answered 200), which is the
+#    only reason it was not a full outage.
+#
+# 2. This key belongs to the TOP-LEVEL table, so it has to appear BEFORE the first
+#    `[[...]]` header. Placed after one, TOML makes it a member of that table and
+#    wrangler reports `Unexpected fields found in d1_databases[0] field: "workers_dev"`
+#    and ignores it — which looks like the fix was applied when it was not.
+workers_dev = true
+
 [[d1_databases]]
 binding = "DB"
 database_name = "san-mes"
@@ -26,9 +50,8 @@ database_id = "62428750-5f61-4ed8-9bd9-51241ad95d16"
 # release: while the DNS record does not exist the client simply keeps using
 # workers.dev.
 #
-# `workers_dev` is deliberately NOT set to false — keeping both reachable is the
-# whole point of the failover. Removing the workers.dev URL would trade one single
-# point of failure for another.
+# Keeping BOTH hostnames reachable is the whole point of the failover — see `workers_dev`
+# at the top of this file, which is where that is actually enforced.
 #
 # Requires `san-m-app.com` to be a zone on account 8e0d53f0faad2f48870d0a570dadd03f.
 # Cloudflare creates the DNS record and the certificate on deploy.
