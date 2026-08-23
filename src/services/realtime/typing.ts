@@ -277,7 +277,15 @@ export function useTypingPeers(channelName: string | null): TypingPeer[] {
       // never matched, and the device rendered its own typing announcement back to itself —
       // appearing about two seconds in, because that is when the first throttled publish
       // fires. Reading it per event means it is whatever is true at that moment.
-      if (!id || id === useAuthStore.getState().user?.id) return;
+      if (!id) return;
+      if (id === useAuthStore.getState().user?.id) {
+        // Own echo. Logged rather than dropped in silence: the previous revision failed to
+        // filter these at all, so "the indicator works" and "the indicator is showing me
+        // myself" looked identical. If this fires it means the local account id is known and
+        // publishing works — which narrows a missing indicator to the PEER's publish.
+        if (__DEV__) console.log('[typing] dropped own echo (publish works, subscribe works)');
+        return;
+      }
       const peer: TypingPeer = {
         id,
         name: typeof p.name === 'string' ? p.name : '',
@@ -321,6 +329,17 @@ export function useTypingPeers(channelName: string | null): TypingPeer[] {
           if (__DEV__) console.warn(`[typing] subscribe failed on ${channelName}`, err);
         });
         channel.subscribe(EV_STOP, onStop).catch(() => {});
+      } else if (__DEV__) {
+        // ── WHY THIS BRANCH IS LOUD ───────────────────────────────────────────
+        //
+        // `getRealtime()` returns null when there are no credentials, and a null return here
+        // is indistinguishable from "nobody is typing" — the exact ambiguity that let an
+        // app-wide realtime outage look like a feature that simply never fired. The indicator
+        // was reported as "disappeared" when in fact the only thing ever rendered was the
+        // device's own echo (the self-filter was reading an unhydrated auth store, so it
+        // filtered nothing). With that fixed, "nothing shows" now means "no peer events
+        // arrived", and this log distinguishes the two causes.
+        console.warn(`[typing] getRealtime() returned null for ${channelName} — no realtime credentials, indicator cannot work`);
       }
     } catch {
       channel = null;
