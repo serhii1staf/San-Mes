@@ -26,6 +26,7 @@ import { ChatInputBar, ChatInputBarHandle } from '../../src/components/chat/Chat
 import { MediaPanel } from '../../src/components/chat/MediaPanel';
 import { PhotoPickerPanel } from '../../src/components/chat/PhotoPickerPanel';
 import { ImageViewerModal, ViewerActionButton } from '../../src/components/chat/ImageViewerModal';
+import { toPreviewText } from '../../src/utils/previewText';
 import { EmojiDeleteBurst, EmojiBurstHandle } from '../../src/components/chat/EmojiDeleteBurst';
 import { getRealtime, chatChannelName } from '../../src/services/realtime/ably';
 import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
@@ -3881,7 +3882,19 @@ export default function ChatScreen() {
       const realtime = getRealtime();
       if (realtime) {
         const channel = realtime.channels.get(chatChannelName(conversationId));
-        void channel.publish('msg.edit', { id: target.serverId || target.id, text, imageUrls: nextImages });
+        // ALWAYS an array, never `undefined` — this is the fix for "he deletes the photo and it
+        // stays on my side".
+        //
+        // The receiver applies images with `Array.isArray(payload.imageUrls) ? payload.imageUrls :
+        // m.imageUrls`, i.e. a non-array means "no information, keep what you have". Publishing
+        // `nextImages` sent `undefined` in precisely the case that matters most — a message with ONE
+        // photo and some text, where removing the photo leaves the text behind — so the peer kept the
+        // photo for ever while it was gone locally.
+        //
+        // `remaining` is `[]` there, which IS an array, so the peer clears its list. Every render path
+        // guards on `imageUrls && imageUrls.length > 0`, so an empty array reads as "no photos"
+        // everywhere without a second change.
+        void channel.publish('msg.edit', { id: target.serverId || target.id, text, imageUrls: remaining });
       }
     } catch {}
   }, [viewerMsg, viewerImages, conversationId, pinnedIds, unpinMessage, handleMenuAction, closeImageViewer, setMessages, t]);
@@ -3964,6 +3977,13 @@ export default function ChatScreen() {
     }
     handleMenuAction('delete', activeMatchMessage);
   }, [activeMatchMessage, conversationId, pinnedIds, unpinMessage, handleMenuAction]);
+
+  // Labels for `toPreviewText`, memoized on the translator so the object identity is stable — it is
+  // passed into a util on every render of this very busy screen.
+  const pinPreviewLabels = useMemo(
+    () => ({ photo: t('chat.photo'), gif: 'GIF', link: t('chat.link', 'Ссылка'), reply: t('chat.reply_label', 'Ответ') }),
+    [t],
+  );
 
   const onUnpin = useCallback(() => {
     if (!conversationId || !activePin) return;
@@ -5615,8 +5635,19 @@ export default function ChatScreen() {
               ? `${t('chat.pinned_message', 'Закреплённое сообщение')} ${(pinCursor % pinnedResolved.length) + 1}/${pinnedResolved.length}`
               : t('chat.pinned_message', 'Закреплённое сообщение')
           }
+          // Cleaned, not raw.
+          //
+          // Reported: pinning a photo-with-text message showed "dots, image, ID and a link" in the
+          // pinned bar. That is the stored `::img::<url>::` marker rendered verbatim — the bar printed
+          // `message.text` straight out of the store, and a message that arrived from the server (or
+          // whose parse left the marker in place) carries the marker inside its text.
+          //
+          // `toPreviewText` is the shared cleaner the chat list already uses for exactly this: it strips
+          // every marker and labels media instead of printing a URL. Reusing it rather than adding a
+          // strip here is the point — the marker vocabulary now has ONE reader on the client, so a new
+          // marker cannot leak into a fourth surface.
           preview={
-            activePin.message.text ||
+            toPreviewText(activePin.message.text, pinPreviewLabels) ||
             (activePin.message.imageUrls && activePin.message.imageUrls.length > 0
               ? t('chat.photo')
               : '')
