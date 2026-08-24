@@ -29,7 +29,7 @@ import { GlassSurface, NativeGlassView, useLiquidGlassActive } from '../ui/Liqui
 import { useTabBarStore } from '../../store/tabBarStore';
 import { Avatar } from '../ui/Avatar';
 import { useAuthStore } from '../../store';
-import { useNotificationsBadge } from '../../store/notificationsBadgeStore';
+import { useChatUnread, totalChatUnread } from '../../store/chatUnreadStore';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -349,7 +349,18 @@ const MessagesTabIconWithBadge = memo(function MessagesTabIconWithBadge({
   color: string;
   iconName: keyof typeof Feather.glyphMap;
 }) {
-  const unread = useNotificationsBadge((s) => s.unread);
+  // Unread MESSAGES, not unread notifications.
+  //
+  // This first shipped reading `useNotificationsBadge.unread`, because that was the only unread
+  // number that existed. It is the wrong number for this tab: it counts the notifications feed —
+  // likes, follows, comments — so the badge on the chats icon would move when someone liked a post
+  // and stay still when a message arrived. A count on the chats icon has to mean messages.
+  //
+  // `chatUnreadStore` now holds real per-conversation counts, so this sums those instead. Same
+  // source as the badges on the rows inside, which means the tab total and the rows can never
+  // disagree.
+  const counts = useChatUnread((s) => s.counts);
+  const unread = totalChatUnread(counts);
   return (
     <View style={tabIconStyles.iconBox}>
       <Feather name={iconName} size={22} color={color} />
