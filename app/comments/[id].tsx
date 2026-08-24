@@ -47,7 +47,7 @@ import { triggerHaptic } from '../../src/utils/haptics';
 import { sanitizeUserText } from '../../src/utils/sanitizeText';
 import { playSendSound } from '../../src/utils/sounds';
 import { showToast } from '../../src/store/toastStore';
-import { useT } from '../../src/i18n/store';
+import { useT } from '../../src/i18n/store';
 import { useMediaPanelLabels } from '../../src/components/chat/useMediaPanelLabels';
 import { perfMonitor } from '../../src/services/perfMonitor';
 import { useSettingsStore } from '../../src/store/settingsStore';
