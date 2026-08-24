@@ -44,6 +44,33 @@ interface LinkPreviewProps {
   // would swallow the gesture and the bubble's onLongPress would never fire.
   onLongPress?: () => void;
   delayLongPress?: number;
+  /**
+   * Whether this preview may hit the NETWORK yet. Defaults to true, so every existing call site
+   * behaves exactly as before.
+   *
+   * ── WHY ─────────────────────────────────────────────────────────────────────
+   *
+   * The unfurl fetch fires on mount. In a chat that is not the same thing as "on screen":
+   * FlashList mounts rows within `drawDistance` (250 pt) of the viewport, so scrolling through a
+   * conversation with several links mounts several previews the user cannot see, and each one
+   * fires its own request.
+   *
+   * The perf log shows what that costs. In one chat session: `linkPreview fetch play.google.com`
+   * 335 ms, `accounts.google.com` 257 ms and 313 ms, `san-m-app.com` 799 ms — followed by long
+   * tasks of 356 ms and 175 ms. The fetches themselves are network, but their resolution is not:
+   * each one lands a JSON parse, a state update, a re-render of the card and an MMKV write on the
+   * JS thread, and four of those can complete inside the same few frames
+   * (`MAX_CONCURRENT_FETCHES` is 4).
+   *
+   * Gating on visibility does not make previews appear later for the user — a preview they can
+   * see is by definition visible, so it fetches immediately. It removes the work for rows that
+   * were mounted speculatively and may never be looked at.
+   *
+   * CACHED previews are deliberately NOT gated: `getCachedPreviewSync` is a synchronous map/MMKV
+   * read with no network and no async resolution, so an already-known preview still paints on the
+   * first frame whether visible or not. Only the cache-MISS path waits.
+   */
+  active?: boolean;
 }
 
 const THUMB_RADIUS = 14;
@@ -75,7 +102,7 @@ export const LinkPreview = React.memo(function LinkPreview(props: LinkPreviewPro
   return <LinkPreviewInner {...props} />;
 });
 
-const LinkPreviewInner = React.memo(function LinkPreviewInner({ url, onError, textColor, emoji, static: isStatic, onLongPress, delayLongPress }: LinkPreviewProps) {
+const LinkPreviewInner = React.memo(function LinkPreviewInner({ url, onError, textColor, emoji, static: isStatic, onLongPress, delayLongPress, active }: LinkPreviewProps) {
   const theme = useTheme();
   const cached = getCachedPreviewSync(url);
   const [data, setData] = useState<LinkPreviewData | null>(cached === undefined ? null : cached);
@@ -119,6 +146,14 @@ const LinkPreviewInner = React.memo(function LinkPreviewInner({ url, onError, te
         mounted.current = false;
       };
     }
+    // Nothing cached AND this row is not on screen yet → do not spend a request on it. The effect
+    // re-runs when `active` flips true (it is in the dep array), so the fetch starts the moment the
+    // row actually becomes visible. See the note on the `active` prop for the measurements.
+    if (active === false) {
+      return () => {
+        mounted.current = false;
+      };
+    }
     // Time the very first network resolve for this URL so the perf monitor
     // can attribute SLOW UI frames to slow unfurl backends. Cheap (one host
     // parse + one Date.now diff) and entirely skipped when the bubble is off.
@@ -152,7 +187,10 @@ const LinkPreviewInner = React.memo(function LinkPreviewInner({ url, onError, te
     return () => {
       mounted.current = false;
     };
-  }, [url]);
+    // `active` belongs here: a row that mounts off-screen skips the fetch above, and this effect
+    // re-running when it scrolls into view is what starts it. Without the dependency the preview
+    // would stay empty for the rest of that row's mounted life.
+  }, [url, active]);
 
   // Rewrite YouTube `hqdefault.jpg` (480×360) to `mqdefault.jpg` (320×180)
   // even when the cached metadata still holds the old URL. Same byte/decode
