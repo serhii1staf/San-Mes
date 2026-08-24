@@ -51,6 +51,52 @@ export interface DaySeparatorInput {
  * Messages with unusable timestamps are skipped entirely: they neither get a chip
  * nor break the run of the day around them.
  */
+/**
+ * Per-message day-key cache.
+ *
+ * WHY THIS EXISTS
+ *
+ * `buildDaySeparators` is recomputed on EVERY change to a conversation's message array, and in
+ * `app/chat/[id].tsx` that array changes constantly: every send (a photo send writes it about three
+ * times — optimistic add, server-id reconcile, upload-URL swap), every realtime arrival, every edit,
+ * every delete, every history-poll merge, every older page loaded, every photo-heal pass. Once the
+ * user has opened search or jumped to an old reply, the full history is in the store, so each of
+ * those recomputes walked up to a thousand messages.
+ *
+ * And per message the walk did the expensive part of date handling: `Date.parse` on an ISO string,
+ * a `Date` allocation, three getter calls and a template-string allocation for the key. None of it
+ * cheap in Hermes, and all of it repeated for messages whose timestamp had not changed — which is
+ * every message except the one that just arrived.
+ *
+ * A message's day key is a pure function of its immutable `createdAt`, so it can be cached against
+ * the message object itself. The walk still visits every row (it has to — a separator depends on the
+ * row before it), but each visit becomes a WeakMap lookup and a string comparison instead of parsing
+ * a date.
+ *
+ * A WeakMap keyed on the message object is the right cache here: entries disappear with the messages
+ * themselves, so a long session moving through many conversations cannot accumulate anything, and
+ * there is no key to invalidate. Writers that rebuild rows with `.map(m => ({ ...m }))` produce new
+ * objects and correctly miss the cache — which is what we want, since a rebuilt row may carry a new
+ * timestamp.
+ */
+const dayKeyCache = new WeakMap<object, string | null>();
+
+/** `localDayKey` for a message, memoized on the message object. `null` = unusable timestamp. */
+function cachedDayKey(m: DaySeparatorInput): string | null {
+  // `m` is always an object in practice, but a primitive would throw on WeakMap.get — and a
+  // day-separator pass must never be the thing that takes a chat screen down.
+  if (typeof m !== 'object' || m === null) return null;
+  const hit = dayKeyCache.get(m);
+  // `undefined` means "not cached"; `null` is a cached negative (unusable timestamp), which must
+  // NOT be recomputed on every pass either — a transcript full of malformed rows would otherwise
+  // keep paying the full `Date.parse` cost forever.
+  if (hit !== undefined) return hit;
+  const d = parseIso(m.createdAt);
+  const key = d ? localDayKey(d) : null;
+  dayKeyCache.set(m, key);
+  return key;
+}
+
 export function buildDaySeparators(
   messages: readonly DaySeparatorInput[],
 ): Map<string, string> {
@@ -58,9 +104,9 @@ export function buildDaySeparators(
   let prevKey: string | null = null;
 
   for (const m of messages) {
-    const d = parseIso(m.createdAt);
-    if (!d) continue;
-    const key = localDayKey(d);
+    const key = cachedDayKey(m);
+    // Unusable timestamp: no chip, and the run of the day around it is not broken.
+    if (key === null) continue;
     if (key !== prevKey) {
       out.set(m.id, m.createdAt as string);
       prevKey = key;
@@ -174,7 +220,13 @@ export function formatDaySeparator(
   return withYear ? `${day}.${month}.${d.getFullYear()}` : `${day}.${month}`;
 }
 
-/** Test seam: drop the memoized `Intl` probe + formatter cache. */
+/**
+ * Test seam: drop the memoized `Intl` probe + formatter cache.
+ *
+ * The per-message day-key cache is deliberately NOT cleared here. It is a WeakMap keyed on message
+ * objects, so a test that builds fresh message objects (which every test does) cannot see a stale
+ * entry — and exposing a clear for it would suggest the cache needs invalidating, which it does not.
+ */
 export function __resetDaySeparatorCaches(): void {
   intlUsable = null;
   formatterCache.clear();
