@@ -80,10 +80,21 @@ function MediaPanelComponent({
   // before that deferral fires, we mount it immediately.
   const initialTab = useRef(tab).current;
   const [mountInactive, setMountInactive] = useState(false);
-  useEffect(() => {
-    const h = InteractionManager.runAfterInteractions(() => setMountInactive(true));
-    return () => h.cancel();
-  }, []);
+  // ── THE INACTIVE TAB IS NO LONGER PRE-MOUNTED ─────────────────────────────
+  //
+  // This used to be `runAfterInteractions(() => setMountInactive(true))`, so a tick after the
+  // panel opened, the tab the user did NOT ask for mounted too, off-screen behind the track's
+  // `overflow: hidden`.
+  //
+  // For the GIF grid that is not a cheap warm-up: mounting it runs its trending fetch and
+  // starts a thumbnail request per visible cell. So opening EMOJI paid for the entire GIF
+  // thumbnail storm, invisibly, every time — while the panel was animating in.
+  //
+  // The intent was that sliding to the other tab should feel instant. It still does: the effect
+  // below mounts the other tab the moment `tab` actually changes, and the horizontal slide is a
+  // 260 ms UI-thread transform, which is more than enough time for a grid to commit behind it.
+  // The difference is that the cost is now paid by users who slide, at the moment they slide,
+  // instead of by everyone on every open.
   useEffect(() => {
     if (tab !== initialTab) setMountInactive(true);
   }, [tab, initialTab]);

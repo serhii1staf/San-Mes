@@ -131,6 +131,30 @@ function GifPanelComponent({ height, onSelect, onLongPress, theme, bottomInset =
             resizeMode="cover"
             priority="low"
             autoplay={false}
+            // ── noProxy: THE FIX FOR THE THUMBNAIL STORM ──────────────────────────────
+            //
+            // A perf snapshot of opening this panel showed ~26 image loads starting together
+            // and completing at 117, 355, 503, 650, 737, 894, 971, 1070, 1183, 1351, 1419,
+            // 1634, 1677 ms — a monotonic climb, which is the signature of a QUEUE, not of
+            // slow images.
+            //
+            // The queue was one host. `style.width` here is `'100%'`, which is not numeric,
+            // and no `proxyWidth` was passed, so `CachedImage` fell through to
+            // `DEFAULT_PROXY_WIDTH` and routed every cell to images.weserv.nl as
+            // `?w=800&output=gif&n=-1`. So all 26 requests went to a single shared free proxy,
+            // each asking it to cold-fetch from Giphy and RE-ENCODE a GIF at 800 px wide —
+            // for a cell that is 88 px on screen.
+            //
+            // Giphy is already a CDN and `stillUrl` is already the right size: the mapping in
+            // giphy.ts prefers `fixed_width_small_still`, a single frame around 100 px. There
+            // is nothing for the proxy to save here, and three things for it to cost — a
+            // bigger payload, an extra network hop, and the loss of Giphy's own sharding
+            // across media0-4.giphy.com, which is exactly the parallelism the climb was
+            // missing.
+            //
+            // Passing a numeric `proxyWidth={CELL_W}` would fix the 800 px part but keep the
+            // single-host funnel. Bypassing the proxy fixes both.
+            noProxy
           />
         ) : null}
       </Pressable>
@@ -169,7 +193,20 @@ function GifPanelComponent({ height, onSelect, onLongPress, theme, bottomInset =
         />
       ) : null}
 
-      {(!decodeReady || (loading && data.length === 0)) ? (
+      {/* `!decodeReady` is NO LONGER part of this condition.
+   
+          It used to be, which meant the panel showed a full-height spinner for the first tick
+          and then swapped it for the grid — a second full relayout landing in the middle of the
+          300 ms rise, on top of the image mounts. The user sees that as the panel stuttering as
+          it opens.
+   
+          The grid can render from the very first frame at no cost, because `decodeReady` already
+          gates the IMAGES inside each cell: until it flips, every cell is just the Pressable's
+          tinted background. So the layout is committed once, in its final shape, and the
+          thumbnails fade into cells that are already in place.
+   
+          The spinner now means only what it says — a network fetch with nothing cached yet. */}
+      {(loading && data.length === 0) ? (
         <View style={styles.center}>
           <ActivityIndicator size="large" color={theme.colors.accent.primary} />
         </View>
@@ -185,9 +222,20 @@ function GifPanelComponent({ height, onSelect, onLongPress, theme, bottomInset =
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="always"
           removeClippedSubviews
-          initialNumToRender={9}
-          maxToRenderPerBatch={6}
-          windowSize={5}
+          // ── THESE NUMBERS ARE ROWS, NOT CELLS ──────────────────────────────────
+          // With `numColumns={4}` FlatList groups items into rows before handing them to
+          // VirtualizedList, so every count here is multiplied by 4. `initialNumToRender={9}`
+          // therefore meant 36 CELLS committed at once — and since the data on open is
+          // recents + 24 trending, that was usually the ENTIRE dataset mounting in one
+          // commit. 36 simultaneous image mounts is where the request storm came from.
+          //
+          // 3 rows = 12 cells covers the panel's visible area with a little headroom; 2 rows
+          // per batch = 8 cells refills fast enough for a flick without ever committing a
+          // large group; windowSize 3 retains roughly a panel and a half, plenty for a grid
+          // this dense.
+          initialNumToRender={3}
+          maxToRenderPerBatch={2}
+          windowSize={3}
           onEndReachedThreshold={0.6}
           onEndReached={handleEndReached}
           ListFooterComponent={loadingMore ? <View style={{ paddingVertical: 16 }}><ActivityIndicator color={theme.colors.accent.primary} /></View> : null}
