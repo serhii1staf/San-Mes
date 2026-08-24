@@ -192,8 +192,65 @@ async function viaLibreTranslate(text: string, target: string): Promise<Translat
 }
 
 /**
- * Translate `text` into the user's `target` language. Returns null only when
- * every provider in the cascade failed. Source language is auto-detected.
+ * Translate one URL-free chunk. Cache + provider cascade, exactly as before.
+ */
+async function translateChunk(
+  chunk: string,
+  target: string,
+): Promise<TranslationResult | null> {
+  // 1) Cache hit? Identical (text, target) requests are served instantly.
+  try {
+    const cached = kvGetJSONSync<CacheEntry | null>(cacheKey(chunk, target), null);
+    if (cached && Date.now() - cached.t < CACHE_TTL_MS) return cached.d;
+  } catch {}
+
+  // 2) Provider cascade — first hit wins.
+  const result =
+    (await viaGoogleGtx(chunk, target)) ||
+    (await viaMyMemory(chunk, target)) ||
+    (await viaLibreTranslate(chunk, target));
+
+  if (!result) return null;
+
+  // 3) Stash for 7 days. Best-effort.
+  try {
+    kvSetJSON(cacheKey(chunk, target), { t: Date.now(), d: result });
+  } catch {}
+
+  return result;
+}
+
+// ── URLs MUST NOT BE SENT TO A TRANSLATOR ──────────────────────────────────
+//
+// A URL is not language. Handing one to a translation provider produces damage that ranges from
+// cosmetic to link-breaking: the host gets "translated" word by word, path segments are reordered to
+// suit the target language's grammar, percent-escapes are mangled, and Google's gtx endpoint in
+// particular splits long input into segments and can insert spaces inside what it considers a word —
+// a space inside a URL makes it dead. So "translate this message" could silently destroy the only
+// actionable thing in it.
+//
+// The obvious fix is to swap each URL for a placeholder and put it back afterwards. That does not
+// work reliably, and the reason is worth recording so it is not attempted again: there is no token a
+// translator is guaranteed to leave alone. Bracketed numbers get spaced or reordered, rare unicode
+// gets dropped, and gtx returns its output as SEGMENTS which may split a placeholder across two of
+// them. Any restore step therefore needs fuzzy matching, and a fuzzy restore that misses leaves the
+// user with visible junk where their link was.
+//
+// So the URLs are never sent at all. The text is split on them, only the prose between them is
+// translated, and the original URLs are spliced back in unchanged. Nothing to restore, nothing to
+// match, and the link is byte-identical to what was typed.
+//
+// Same pattern as `LinkedText` uses to make links tappable, kept local: a service must not import
+// from a UI component.
+const URL_SPLIT_REGEX = /(https?:\/\/[^\s]+)/g;
+
+/** How many separate prose chunks we are willing to spend provider calls on. */
+const MAX_TRANSLATED_CHUNKS = 4;
+
+/**
+ * Translate `text` into the user's `target` language, leaving any URLs untouched.
+ * Returns null only when there was nothing translatable or every provider failed.
+ * Source language is auto-detected.
  */
 export async function translateText(
   text: string,
@@ -202,24 +259,72 @@ export async function translateText(
   const trimmed = text.trim();
   if (!trimmed) return null;
 
-  // 1) Cache hit? Identical (text, target) requests are served instantly.
+  // Whole-message cache first, so re-tapping "translate" on the same message is instant and does not
+  // even pay for the split.
   try {
     const cached = kvGetJSONSync<CacheEntry | null>(cacheKey(trimmed, target), null);
     if (cached && Date.now() - cached.t < CACHE_TTL_MS) return cached.d;
   } catch {}
 
-  // 2) Provider cascade — first hit wins.
-  const result =
-    (await viaGoogleGtx(trimmed, target)) ||
-    (await viaMyMemory(trimmed, target)) ||
-    (await viaLibreTranslate(trimmed, target));
+  // `split` with a capturing group keeps the delimiters, so the pieces alternate prose / URL / prose
+  // and rejoining them is lossless. `lastIndex` is irrelevant to `split`, so no reset dance here.
+  const pieces = trimmed.split(URL_SPLIT_REGEX);
 
-  if (!result) return null;
+  // No URL in the message: the original single-call path, unchanged.
+  if (pieces.length === 1) {
+    const only = await translateChunk(trimmed, target);
+    if (only) {
+      try { kvSetJSON(cacheKey(trimmed, target), { t: Date.now(), d: only }); } catch {}
+    }
+    return only;
+  }
 
-  // 3) Stash for 7 days. Best-effort.
-  try {
-    kvSetJSON(cacheKey(trimmed, target), { t: Date.now(), d: result });
-  } catch {}
+  let translatedAny: TranslationResult | null = null;
+  let budget = MAX_TRANSLATED_CHUNKS;
+  const out: string[] = [];
 
-  return result;
+  for (const piece of pieces) {
+    // A URL, or an empty piece produced by a URL at the very start/end. Passed through verbatim.
+    if (!piece || URL_SPLIT_REGEX.test(piece)) {
+      URL_SPLIT_REGEX.lastIndex = 0; // `test` on a /g regex advances state — reset it.
+      out.push(piece);
+      continue;
+    }
+    URL_SPLIT_REGEX.lastIndex = 0;
+
+    const core = piece.trim();
+    if (!core) { out.push(piece); continue; }        // whitespace between two URLs
+    if (budget <= 0) { out.push(piece); continue; }  // absurd number of links: stop spending calls
+
+    // Preserve the exact spacing around the prose. `translateChunk` trims, and without this the
+    // space before a link would be eaten — "look at this https://x" would come back as
+    // "посмотри на этоhttps://x".
+    const lead = piece.slice(0, piece.indexOf(core[0]));
+    const trail = piece.slice(lead.length + core.length);
+
+    budget -= 1;
+    const res = await translateChunk(core, target);
+    if (res) {
+      if (!translatedAny) translatedAny = res;
+      out.push(lead + res.text + trail);
+    } else {
+      // This chunk failed; keep the original words rather than dropping them.
+      out.push(piece);
+    }
+  }
+
+  // Every prose chunk failed — report failure so the UI shows its error state instead of echoing the
+  // message back and claiming it is a translation.
+  if (!translatedAny) return null;
+
+  const composed: TranslationResult = {
+    text: out.join(''),
+    // Detection comes from the first chunk that succeeded; it is the same message throughout.
+    detectedSource: translatedAny.detectedSource,
+    detectedConfidence: translatedAny.detectedConfidence,
+    provider: translatedAny.provider,
+  };
+
+  try { kvSetJSON(cacheKey(trimmed, target), { t: Date.now(), d: composed }); } catch {}
+  return composed;
 }

@@ -13,6 +13,7 @@ import { useAuthStore } from '../src/store';
 import { kvGetJSONSync } from '../src/services/kvStore';
 import { useNotificationsBadge } from '../src/store/notificationsBadgeStore';
 import { formatTimeAgo } from '../src/utils/mockData';
+import { stripMarkers } from '../src/utils/previewText';
 import { triggerHaptic } from '../src/utils/haptics';
 import { useT } from '../src/i18n/store';
 
@@ -73,26 +74,17 @@ function replyGifUrl(text: string): string {
   catch { return ''; }
 }
 
-function stripMediaTokens(text: string): string {
-  if (!text) return '';
-  let s = text;
-  if (s.startsWith(REPLY_TOKEN)) {
-    // Skip past the base64 metadata block to the actual reply body. If the
-    // closing "::" terminator is missing (e.g. the stored content was
-    // truncated mid-blob), there is no readable body — return empty rather
-    // than leaking the raw "::re::eyJ1..." marker.
-    const idx = s.indexOf('::', REPLY_TOKEN.length);
-    s = idx > 0 ? s.slice(idx + 2) : '';
-  } else if (s.startsWith('::re:')) {
-    // Legacy single-colon reply format: ::re:<b64>:<b64>[:<b64>]::<body>
-    const idx = s.indexOf('::', 5);
-    s = idx > 0 ? s.slice(idx + 2) : '';
-  }
-  if (s.startsWith(GIF_TOKEN)) return '';
-  // Safety net: any residual leading marker must never reach the UI.
-  if (s.trimStart().startsWith('::')) return '';
-  return s.trim();
-}
+// The screen-local copy of this is gone. It knew `::re::`, its legacy form and `::gif::`, and
+// everything else hit its "leading `::` means return nothing" safety net — right about never leaking
+// protocol, wrong about the outcome: a comment posted as a PHOTO WITH A CAPTION rendered a completely
+// empty line, because the caption sits after an `::img::` marker the copy had never heard of. Same for
+// `::rp::` replies and `::repost::`.
+//
+// `stripMarkers` is the shared reader (src/utils/previewText.ts). It is deliberately NOT
+// `toPreviewText`: that one LABELS media ("Photo", "Link"), and `mediaTagsFor` below needs the raw
+// residual text so it can still find a bare URL and pick the right chip. Handed a label it would find
+// the word "Photo" and no URL, and the chips would quietly stop working.
+const stripMediaTokens = stripMarkers;
 
 interface MediaTag { icon: string; labelKey: string }
 
@@ -100,7 +92,11 @@ function mediaTagsFor(text: string): MediaTag[] {
   if (!text) return [];
   const tags: MediaTag[] = [];
   // Reply context first — most informative tag for "X replied" notifications.
-  if (text.startsWith(REPLY_TOKEN) || text.startsWith('::re:')) tags.push({ icon: 'corner-up-left', labelKey: 'notifications.tag_reply' });
+  if (text.startsWith(REPLY_TOKEN) || text.startsWith('::re:') || text.startsWith('::rp::')) tags.push({ icon: 'corner-up-left', labelKey: 'notifications.tag_reply' });
+  // A photo comment declares itself with `::img::`, which this never checked — so a photo with a
+  // caption got no photo chip, and one without a caption got no chip and no text either. The URL scan
+  // below cannot cover it now that the caption (rather than the raw urls) is what survives stripping.
+  if (text.includes('::img::')) tags.push({ icon: 'camera', labelKey: 'notifications.tag_photo' });
   // GIF can be a standalone ::gif:: comment OR embedded inside a reply's
   // quoted metadata — detect both so a reply-to-a-gif reads "Ответ · Гифка".
   if (text.includes(GIF_TOKEN) || replyGifUrl(text)) tags.push({ icon: 'image', labelKey: 'notifications.tag_gif' });
@@ -111,7 +107,11 @@ function mediaTagsFor(text: string): MediaTag[] {
   const urlMatch = stripped.match(/https?:\/\/\S+/i);
   if (urlMatch) {
     const url = urlMatch[0].toLowerCase();
-    if (/\.(jpg|jpeg|png|webp|heic|heif)(\?|$)/i.test(url)) tags.push({ icon: 'camera', labelKey: 'notifications.tag_photo' });
+    // Deduped the same way the GIF branch already is — a photo comment whose caption also contains an
+    // image URL would otherwise show the camera chip twice.
+    if (/\.(jpg|jpeg|png|webp|heic|heif)(\?|$)/i.test(url)) {
+      if (!tags.some((tg) => tg.labelKey === 'notifications.tag_photo')) tags.push({ icon: 'camera', labelKey: 'notifications.tag_photo' });
+    }
     else if (/\.gif(\?|$)/i.test(url) || url.includes('giphy.com') || url.includes('tenor.com')) {
       if (!tags.some((tg) => tg.labelKey === 'notifications.tag_gif')) tags.push({ icon: 'image', labelKey: 'notifications.tag_gif' });
     }
