@@ -212,6 +212,46 @@ function postsShallowEqual(a: Post[], b: Post[]): boolean {
 // path flips this same set — so reading it here keeps the feed in sync without
 // a separate per-post network call. When `viewerId` is undefined (e.g. mapped
 // before auth resolves) we fall back to `false`, matching prior behaviour.
+/**
+ * Map raw rows into posts IN CHUNKS, yielding the thread between them.
+ *
+ * The feed did this in one synchronous pass at all three of its call sites. A perf snapshot put
+ * (tabs) at 13 long tasks, worst 644 ms, average 281 ms - several with pendingDecodes: 0, so JS,
+ * not image work - and this is the one unbounded synchronous loop the screen owns.
+ *
+ * mapRawPost is not cheap per row: a regex repost test, parseImageUrls, a spoiler check, and for
+ * a repost a chain walk up to ten levels deep with another regex per level. Times a full page, on one
+ * frame.
+ *
+ * The fix is not new. loadMyPosts in the profile tab already does exactly this, with the same
+ * CHUNK_SIZE of 5 and the same setTimeout(0) yield, and its comment records why: a microtask
+ * (wait Promise.resolve()) does NOT split the task, because microtasks drain inside the current
+ * macrotask. Only handing control back to the event loop breaks the burst. That change fixed a
+ * measured 1311 ms task there; the feed was simply never given the same treatment.
+ *
+ * Five rows per chunk keeps each batch around 25-30 ms - under the 60 ms long-task threshold even
+ * with chain walking on top.
+ */
+const FEED_MAP_CHUNK = 5;
+
+async function mapRawPostsChunked(
+  rawPosts: any[],
+  postsById: Record<string, any>,
+  viewerId?: string,
+): Promise<Post[]> {
+  const out: Post[] = [];
+  for (let i = 0; i < rawPosts.length; i += FEED_MAP_CHUNK) {
+    const end = Math.min(i + FEED_MAP_CHUNK, rawPosts.length);
+    for (let j = i; j < end; j++) {
+      const post = mapRawPost(rawPosts[j], postsById, viewerId);
+      if (post) out.push(post);
+    }
+    // Yield to the MACROTASK queue, so a queued input or animation frame can run between chunks.
+    if (end < rawPosts.length) await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  }
+  return out;
+}
+
 function mapRawPost(p: any, postsById: Record<string, any>, viewerId?: string): Post | null {
   const repostInfo = isRepost(p.content || '');
   const parsedImages = parseImageUrls(p.image_url);
@@ -675,11 +715,7 @@ export default function FeedScreen() {
         }
       }
 
-      const mapped: Post[] = [];
-      for (const p of rawPosts) {
-        const post = mapRawPost(p, postsById, userIdRef.current);
-        if (post) mapped.push(post);
-      }
+      const mapped: Post[] = await mapRawPostsChunked(rawPosts, postsById, userIdRef.current);
 
       // Short-circuit when the server returned the same payload we already
       // have on screen. `setPosts(mapped)` would otherwise replace the
@@ -764,11 +800,7 @@ export default function FeedScreen() {
         }
       }
 
-      const mapped: Post[] = [];
-      for (const p of rawPosts) {
-        const post = mapRawPost(p, postsById, userIdRef.current);
-        if (post) mapped.push(post);
-      }
+      const mapped: Post[] = await mapRawPostsChunked(rawPosts, postsById, userIdRef.current);
 
       // Same short-circuit as `loadFeed`: skip the setPosts cascade and the
       // cache rewrite when the server returned content-equal data, since the
@@ -871,11 +903,7 @@ export default function FeedScreen() {
         }
       }
 
-      const mapped: Post[] = [];
-      for (const p of rawPosts) {
-        const post = mapRawPost(p, postsById, userIdRef.current);
-        if (post) mapped.push(post);
-      }
+      const mapped: Post[] = await mapRawPostsChunked(rawPosts, postsById, userIdRef.current);
 
       // Reached the oldest post once the server returns a short page.
       if (rawPosts.length < FEED_LIMIT) hasMoreRef.current = false;

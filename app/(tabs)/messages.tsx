@@ -1648,6 +1648,20 @@ export default function MessagesScreen() {
   // Set rather than `Array.includes` per row: `renderConversationItem` runs this lookup for
   // every mounted row on each list recompute, and `pinned` is unbounded.
   const pinnedSet = useMemo(() => new Set(pinned), [pinned]);
+  // ── THE SAME REASONING AS pinnedSet, APPLIED WHERE IT WAS MEASURED ──────────
+  //
+  // A perf snapshot put (tabs)/messages at 3 long tasks, worst 496 ms, average 328 ms, with
+  // imgCount: 0. No images at all, so all of it is JS - and the bucket filter below was doing four
+  // Array.includes scans PER CONVERSATION over four unbounded arrays. That is O(conversations x
+  // (archived + blocked + deleted + blockedUsers)) every time the tab, the query or any of those
+  // lists changes, which on this screen is often.
+  //
+  // The note on pinnedSet above already made this exact argument for pinned; these four were
+  // simply left as arrays. Sets make each test O(1) and the filter linear, with identical results -
+  // membership is the only thing ever asked of them.
+  const archivedSet = useMemo(() => new Set(archived), [archived]);
+  const blockedSet = useMemo(() => new Set(blocked), [blocked]);
+  const deletedSet = useMemo(() => new Set(deleted), [deleted]);
   // `openedAt` feeds ONLY the float-to-top recency sort (the `filtered` memo
   // below), never the bucket filter. The chat screen defers its markChatOpened
   // write past its own open transition, so the openedAt bump lands ~one
@@ -1671,6 +1685,9 @@ export default function MessagesScreen() {
   // Blocked tab merges synthetic rows for these into the existing
   // chat-level blocked list so both kinds of blocks live in one place.
   const blockedUserIds = useBlockedUsersStore((s) => s.ids);
+  // Declared HERE and not with the other three Sets, because lockedUserIds is defined on this line -
+  // a Set built above it is a block-scoped use before declaration, which tsc catches.
+  const blockedUserSet = useMemo(() => new Set(blockedUserIds), [blockedUserIds]);
   // Locale value (not the unstable `t` hook) drives the `filtered` memo's
   // dependency. `useT()` allocates a NEW function every render, so listing
   // `t` as a memo dep forced the O(n log n) filter+sort to re-run on EVERY
@@ -1944,16 +1961,16 @@ export default function MessagesScreen() {
       return conversations.filter(
         (c) =>
           c.participantName.toLowerCase().includes(q) &&
-          !deleted.includes(c.id) &&
-          !blocked.includes(c.id) &&
-          !blockedUserIds.includes(c.participantId),
+          !deletedSet.has(c.id) &&
+          !blockedSet.has(c.id) &&
+          !blockedUserSet.has(c.participantId),
       );
     }
-    if (activeTab === 'archive') return conversations.filter(c => archived.includes(c.id) && !deleted.includes(c.id) && !blocked.includes(c.id) && !blockedUserIds.includes(c.participantId));
+    if (activeTab === 'archive') return conversations.filter(c => archivedSet.has(c.id) && !deletedSet.has(c.id) && !blockedSet.has(c.id) && !blockedUserSet.has(c.participantId));
     if (activeTab === 'blocked') {
       // Chat-level blocked conversations come straight from
       // `chatSettingsStore.blocked` (existing behaviour).
-      const chatBlocked = conversations.filter(c => blocked.includes(c.id) && !deleted.includes(c.id));
+      const chatBlocked = conversations.filter(c => blockedSet.has(c.id) && !deletedSet.has(c.id));
       // User-level blocked users get synthetic Conversation rows so
       // they show up next to chat-level blocks. We hydrate the row
       // visuals from `entityStore.profiles` when available so the
@@ -1986,10 +2003,10 @@ export default function MessagesScreen() {
         });
       return [...chatBlocked, ...userBlocked];
     }
-    if (activeTab === 'deleted') return conversations.filter(c => deleted.includes(c.id));
+    if (activeTab === 'deleted') return conversations.filter(c => deletedSet.has(c.id));
     // 'chats' — exclude archived, blocked (chat or user), deleted.
-    return conversations.filter(c => !archived.includes(c.id) && !blocked.includes(c.id) && !deleted.includes(c.id) && !blockedUserIds.includes(c.participantId));
-  }, [conversations, activeTab, searchQuery, archived, blocked, deleted, blockedUserIds, locale]);
+    return conversations.filter(c => !archivedSet.has(c.id) && !blockedSet.has(c.id) && !deletedSet.has(c.id) && !blockedUserSet.has(c.participantId));
+  }, [conversations, activeTab, searchQuery, archivedSet, blockedSet, deletedSet, blockedUserSet, locale]);
 
   // ─── Recency sort (the ONLY openedAt-dependent step) ──────────────────────
   // Newest activity first. `lastMessageAt`/`openedAt` are ISO strings, so a
@@ -2131,10 +2148,10 @@ export default function MessagesScreen() {
       selectActiveToday(
         conversations.filter(
           (c) =>
-            !archived.includes(c.id) &&
-            !blocked.includes(c.id) &&
-            !deleted.includes(c.id) &&
-            !blockedUserIds.includes(c.participantId),
+            !archivedSet.has(c.id) &&
+            !blockedSet.has(c.id) &&
+            !deletedSet.has(c.id) &&
+            !blockedUserSet.has(c.participantId),
         ),
       ),
     [conversations, archived, blocked, deleted, blockedUserIds],

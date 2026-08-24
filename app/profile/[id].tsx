@@ -1825,10 +1825,13 @@ export default function UserProfileScreen() {
         // Same retune as app/(tabs)/profile.tsx — see the long note there. Was 3 / 2 / 5 with
         // a 100 ms batching period; the refill rate while scrolling UP was the cause of the
         // list oscillating. initialNumToRender is unchanged so the open frame is unaffected.
+        // Same change as the own-profile tab, for the same measured reason: three expensive cards
+        // committing to one frame IS the long task, and `windowSize: 7` already removes the blank-space
+        // problem that made a smaller batch bad when the window was 3. See the long note there.
         initialNumToRender={3}
-        maxToRenderPerBatch={3}
+        maxToRenderPerBatch={2}
         windowSize={7}
-        updateCellsBatchingPeriod={50}
+        updateCellsBatchingPeriod={80}
         // ── removeClippedSubviews is OFF, deliberately ──────────────────────────
         //
         // Scrolling DOWN was fine; scrolling back UP juddered, jumping up and down
