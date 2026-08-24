@@ -62,9 +62,46 @@ export interface ImageViewerModalProps {
    * from the memory cache instead of being re-fetched at a new size.
    */
   proxyWidth: number;
+  /**
+   * Chrome drawn ABOVE the photo, pinned to the top. Used by the profile viewers for the author
+   * row (avatar, name, date). Rendered as a sibling of the pager, so it never inherits the drag's
+   * translate or scale, and it fades on the same curve as the close button.
+   *
+   * A slot rather than props-per-field on purpose: the three callers want visibly different
+   * headers (own profile resolves the original author for reposts, the other-profile route does
+   * not), and encoding all of that here would mean this component knowing about posts.
+   */
+  header?: React.ReactNode;
+  /**
+   * Chrome drawn BELOW the photo, pinned to the bottom. Used for the edit / share / delete row.
+   *
+   * Callers pass a bare row — this component supplies the safe-area padding and the fade, and
+   * deliberately paints NO surface behind it. The profile viewers used to wrap their buttons in a
+   * translucent pill, which put a second background behind buttons that already have their own
+   * circular fills; reported as "there is another container in the bottom area that should not be
+   * there".
+   */
+  footer?: React.ReactNode;
+  /** Bottom safe-area inset, for the footer's padding. */
+  bottomInset?: number;
+  /**
+   * Allow pinch-to-zoom. Off for the chat (bubbles open a pager, not a zoomable canvas) and on
+   * for the profile viewers, which had `maximumZoomScale` before this component replaced them —
+   * losing that would have been a regression, so it is a capability of the shared viewer now.
+   */
+  zoomable?: boolean;
 }
 
-function ImageViewerModalComponent({ payload, onClose, topInset, proxyWidth }: ImageViewerModalProps) {
+function ImageViewerModalComponent({
+  payload,
+  onClose,
+  topInset,
+  proxyWidth,
+  header,
+  footer,
+  bottomInset = 0,
+  zoomable = false,
+}: ImageViewerModalProps) {
   // Kept mounted for the length of the exit animation so the content does not blink
   // out before the backdrop has faded.
   const [mounted, setMounted] = useState(!!payload);
@@ -74,12 +111,30 @@ function ImageViewerModalComponent({ payload, onClose, topInset, proxyWidth }: I
 
   const enter = useSharedValue(0);
   const dragY = useSharedValue(0);
+  // ── ZOOM ──────────────────────────────────────────────────────────────────
+  //
+  // The profile viewers this component replaces had `maximumZoomScale={3}` on a native
+  // ScrollView, so dropping zoom would have been a regression. Reimplemented in worklets instead
+  // of nesting a zoom ScrollView, because a native scroll view inside the pan would fight it for
+  // the same vertical drag and the resolution differs per platform.
+  //
+  // `zoom` is also what keeps the two interactions from colliding: while the photo is enlarged a
+  // vertical drag means "look at another part of this photo", not "dismiss". The pan below reads
+  // this value and does nothing while zoomed, so the dismiss can never fire under the user's
+  // fingers as they inspect a photo. Panning a zoomed photo is `zoomPanX/Y`.
+  const zoom = useSharedValue(1);
+  const zoomPanX = useSharedValue(0);
+  const zoomPanY = useSharedValue(0);
 
   useEffect(() => {
     if (payload) {
       setShown(payload);
       setMounted(true);
       dragY.value = 0;
+      // Reset zoom on every open, so a photo closed while enlarged does not reopen enlarged.
+      zoom.value = 1;
+      zoomPanX.value = 0;
+      zoomPanY.value = 0;
       enter.value = withTiming(1, { duration: 220, easing: Easing.out(Easing.cubic) });
     } else if (mounted) {
       enter.value = withTiming(0, { duration: 170, easing: Easing.in(Easing.cubic) }, (finished) => {
@@ -104,15 +159,41 @@ function ImageViewerModalComponent({ payload, onClose, topInset, proxyWidth }: I
 
   const contentStyle = useAnimatedStyle(() => ({
     transform: [
-      { translateY: dragY.value },
+      { translateY: dragY.value + zoomPanY.value },
+      { translateX: zoomPanX.value },
       // A small scale-in on open, and a slight shrink while dragging away, which is
       // what makes the dismiss read as "throwing it back into the chat".
       {
         scale:
           interpolate(enter.value, [0, 1], [0.92, 1], Extrapolation.CLAMP) *
-          interpolate(Math.abs(dragY.value), [0, SCREEN_H * 0.6], [1, 0.85], Extrapolation.CLAMP),
+          interpolate(Math.abs(dragY.value), [0, SCREEN_H * 0.6], [1, 0.85], Extrapolation.CLAMP) *
+          zoom.value,
       },
     ],
+  }));
+
+  // ── CHROME FADE — THE FIX FOR THE "X DISSOLVES WITH AN ARTIFACT" REPORT ────
+  //
+  // The close button used to be a plain `Pressable` sibling with no animation at all. Two visible
+  // consequences, both reported:
+  //
+  //   While dragging, it stayed fully opaque and pinned in the corner while the backdrop faded to
+  //   nothing — so a solid white pill floated over the chat showing through behind it.
+  //
+  //   On dismissal it did not animate out. It vanished the instant `mounted` flipped: a hard
+  //   one-frame cut at the END of the 180 ms exit, over a backdrop that had already gone. That cut,
+  //   landing on the same frame as `ModalStatusBar` unmounting, is the artifact.
+  //
+  // Now every piece of chrome — close button, header, footer — shares this style. It fades over the
+  // FIRST 80 pt of drag rather than half a screen, so the controls are gone well before the photo
+  // is, and multiplies by `enter` so they also fade on open and on a button-driven close.
+  //
+  // Deliberately NOT folded into `contentStyle`: chrome must not inherit the photo's translate,
+  // scale or zoom. It stays put and fades; only the photo moves.
+  const chromeStyle = useAnimatedStyle(() => ({
+    opacity:
+      enter.value *
+      interpolate(Math.abs(dragY.value), [0, 80], [1, 0], Extrapolation.CLAMP),
   }));
 
   const dismissGesture = useMemo(
@@ -121,10 +202,21 @@ function ImageViewerModalComponent({ payload, onClose, topInset, proxyWidth }: I
         // Vertical only, so the horizontal pager keeps its own gesture.
         .activeOffsetY([-14, 14])
         .failOffsetX([-20, 20])
-        .onUpdate((e) => {
+        // `onChange`, not `onUpdate`: its payload carries the per-frame deltas (`changeX/changeY`)
+        // as well as the cumulative translation, and the zoomed branch below needs deltas so the
+        // photo accumulates movement instead of snapping back to the gesture's origin each frame.
+        .onChange((e) => {
+          // While zoomed, a drag MOVES THE PHOTO instead of dismissing — otherwise inspecting an
+          // enlarged photo would throw the viewer away under the user's finger.
+          if (zoom.value > 1.01) {
+            zoomPanX.value += e.changeX;
+            zoomPanY.value += e.changeY;
+            return;
+          }
           dragY.value = e.translationY;
         })
         .onEnd((e) => {
+          if (zoom.value > 1.01) return;
           const far = Math.abs(e.translationY) > DISMISS_DISTANCE;
           const fast = Math.abs(e.velocityY) > DISMISS_VELOCITY;
           if (far || fast) {
@@ -141,7 +233,59 @@ function ImageViewerModalComponent({ payload, onClose, topInset, proxyWidth }: I
             dragY.value = withSpring(0, { damping: 20, stiffness: 260, mass: 0.7 });
           }
         }),
-    [dragY, enter, requestClose],
+    [dragY, enter, requestClose, zoom, zoomPanX, zoomPanY],
+  );
+
+  /**
+   * Pinch to zoom, composed SIMULTANEOUSLY with the pan so a two-finger gesture is not swallowed by
+   * the drag. Snaps back to 1 (and recentres) when released below a threshold, so the photo cannot
+   * be left slightly and permanently off-centre — and clamps at 4x so a hard pinch cannot blow the
+   * bitmap up past anything useful.
+   */
+  const pinchGesture = useMemo(
+    () =>
+      Gesture.Pinch()
+        .onUpdate((e) => {
+          zoom.value = Math.min(Math.max(e.scale, 0.6), 4);
+        })
+        .onEnd(() => {
+          if (zoom.value < 1.05) {
+            zoom.value = withSpring(1, { damping: 20, stiffness: 240 });
+            zoomPanX.value = withSpring(0, { damping: 20, stiffness: 240 });
+            zoomPanY.value = withSpring(0, { damping: 20, stiffness: 240 });
+          }
+        }),
+    [zoom, zoomPanX, zoomPanY],
+  );
+
+  /**
+   * Double-tap toggles between fit and 2x. The gesture people reach for before they try to pinch,
+   * and it costs one composed recogniser.
+   */
+  const doubleTapGesture = useMemo(
+    () =>
+      Gesture.Tap()
+        .numberOfTaps(2)
+        .onEnd(() => {
+          if (zoom.value > 1.01) {
+            zoom.value = withSpring(1, { damping: 20, stiffness: 240 });
+            zoomPanX.value = withSpring(0, { damping: 20, stiffness: 240 });
+            zoomPanY.value = withSpring(0, { damping: 20, stiffness: 240 });
+          } else {
+            zoom.value = withSpring(2, { damping: 20, stiffness: 240 });
+          }
+        }),
+    [zoom, zoomPanX, zoomPanY],
+  );
+
+  // Pan and pinch must run together (a pinch that also drifts should do both); the double-tap is
+  // exclusive so a quick second tap is not read as the start of a pan.
+  const composedGesture = useMemo(
+    () =>
+      zoomable
+        ? Gesture.Exclusive(doubleTapGesture, Gesture.Simultaneous(dismissGesture, pinchGesture))
+        : dismissGesture,
+    [zoomable, doubleTapGesture, dismissGesture, pinchGesture],
   );
 
   // ── Stable pager callbacks ────────────────────────────────────────────────
@@ -171,7 +315,7 @@ function ImageViewerModalComponent({ payload, onClose, topInset, proxyWidth }: I
       <ModalStatusBar />
       <Reanimated.View style={[StyleSheet.absoluteFill, styles.backdrop, backdropStyle]} />
 
-      <GestureDetector gesture={dismissGesture}>
+      <GestureDetector gesture={composedGesture}>
         <Reanimated.View style={[StyleSheet.absoluteFill, contentStyle]}>
           <FlatList
             data={images}
@@ -192,14 +336,40 @@ function ImageViewerModalComponent({ payload, onClose, topInset, proxyWidth }: I
         </Reanimated.View>
       </GestureDetector>
 
-      <Pressable
-        onPress={requestClose}
-        hitSlop={10}
-        accessibilityRole="button"
-        style={[styles.closeBtn, { top: topInset + 12 }]}
-      >
-        <Feather name="x" size={20} color="#FFFFFF" />
-      </Pressable>
+      {/* Caller-supplied top chrome (author, date). Sits BELOW the close button in z-order and is
+          inset on the right so it can never run under it. */}
+      {header ? (
+        <Reanimated.View
+          style={[styles.header, { top: topInset + 12 }, chromeStyle]}
+          pointerEvents="box-none"
+        >
+          {header}
+        </Reanimated.View>
+      ) : null}
+
+      {/* Caller-supplied bottom chrome (actions). NO surface is painted behind it — see the
+          `footer` prop's note. The safe-area padding lives here so callers pass a bare row. */}
+      {footer ? (
+        <Reanimated.View
+          style={[styles.footer, { paddingBottom: bottomInset + 20 }, chromeStyle]}
+          pointerEvents="box-none"
+        >
+          {footer}
+        </Reanimated.View>
+      ) : null}
+
+      {/* Wrapped in an animated view so it fades WITH the drag and WITH the exit, instead of being
+          cut off in one frame at the end — the reported dissolve artifact. */}
+      <Reanimated.View style={[styles.closeBtnWrap, { top: topInset + 12 }, chromeStyle]}>
+        <Pressable
+          onPress={requestClose}
+          hitSlop={10}
+          accessibilityRole="button"
+          style={styles.closeBtn}
+        >
+          <Feather name="x" size={20} color="#FFFFFF" />
+        </Pressable>
+      </Reanimated.View>
     </View>
   );
 }
@@ -223,10 +393,8 @@ const styles = StyleSheet.create({
   pager: { flex: 1 },
   page: { width: SCREEN_W, height: '100%', justifyContent: 'center', alignItems: 'center' },
   image: { width: SCREEN_W, height: '100%' },
+  closeBtnWrap: { position: 'absolute', right: 16, zIndex: 20 },
   closeBtn: {
-    position: 'absolute',
-    right: 16,
-    zIndex: 10,
     width: 36,
     height: 36,
     borderRadius: 18,
@@ -234,6 +402,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  // Right inset clears the 36 pt close button plus its margin, so a long display name truncates
+  // instead of sliding underneath it.
+  header: { position: 'absolute', left: 16, right: 64, zIndex: 10 },
+  footer: { position: 'absolute', left: 0, right: 0, bottom: 0, alignItems: 'center', zIndex: 10 },
 });
 
 /**
@@ -248,5 +420,13 @@ export const ImageViewerModal = memo(
     prev.payload === next.payload &&
     prev.onClose === next.onClose &&
     prev.topInset === next.topInset &&
-    prev.proxyWidth === next.proxyWidth,
+    prev.proxyWidth === next.proxyWidth &&
+    // Chrome nodes are compared by reference, so a caller MUST memoize them — an inline
+    // `header={<View/>}` would defeat this comparator and re-render the pager (all three mounted
+    // images) on every parent render, which is precisely the bug that made the chat viewer stutter
+    // when it was inline JSX. Both profile callers memoize.
+    prev.header === next.header &&
+    prev.footer === next.footer &&
+    prev.bottomInset === next.bottomInset &&
+    prev.zoomable === next.zoomable,
 );

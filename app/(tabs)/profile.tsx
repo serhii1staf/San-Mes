@@ -11,6 +11,7 @@ import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { LinkedText } from '../../src/components/ui/LinkedText';
 import { CachedImage, prefetchImages } from '../../src/components/ui/CachedImage';
+import { ImageViewerModal } from '../../src/components/chat/ImageViewerModal';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { UserBadge } from '../../src/components/ui/UserBadge';
 import { ProfilePostCard } from '../../src/components/profile/ProfilePostCard';
@@ -1359,6 +1360,126 @@ export default function ProfileScreen() {
     </View>
   ), [theme.colors.text.tertiary, activeTab, t]);
 
+  // ─── FULLSCREEN VIEWER ────────────────────────────────────────────────────
+  //
+  // This screen used to hand-roll the viewer: a native `Modal` with
+  // `animationType="none"`, a static `rgba(0,0,0,0.92)` backdrop, zoom ScrollViews, and no gestures
+  // at all — no drag-to-dismiss, no dim that responds to the drag, not even tap-outside-to-close.
+  // The chat had a good one, and there were THREE hand-copied inferior versions (this screen,
+  // app/profile/[id].tsx, app/comments/[id].tsx) which had already drifted apart in metrics,
+  // glass usage, repost handling and action gating.
+  //
+  // It now renders the SAME component the chat uses, so the interaction is identical everywhere:
+  // drag the photo any distance and the backdrop dims proportionally, release past 120 pt or with
+  // enough flick to dismiss, pinch or double-tap to zoom.
+  //
+  // The viewer needs `{ images, index }`; this screen stores `{ uri, postId, allImages }`. Mapped
+  // here, defaulting to the single tapped uri when a post has no image array.
+  const viewerPayload = useMemo(() => {
+    if (!viewingImage) return null;
+    const images = viewingImage.allImages && viewingImage.allImages.length > 0
+      ? viewingImage.allImages
+      : [viewingImage.uri];
+    const idx = Math.max(0, images.indexOf(viewingImage.uri));
+    return { images, index: idx };
+  }, [viewingImage]);
+
+  const closeViewer = useCallback(() => setViewingImage(null), []);
+
+  // The post behind the open viewer. Every piece of chrome below reads from it, so it is resolved
+  // once instead of `userPosts.find(...)` being re-run inside each button's JSX — which is what the
+  // previous inline version did, four times per render.
+  const viewingPost = useMemo(
+    () => (viewingImage ? userPosts.find((p: any) => p.id === viewingImage.postId) : undefined),
+    [viewingImage, userPosts],
+  );
+
+  // Memoized because the viewer compares chrome by reference — an inline node would defeat its
+  // memo and re-render all three mounted pager images on every render of this screen.
+  const viewerHeader = useMemo(() => {
+    if (!viewingImage) return null;
+    const isRepostViewing = !!(viewingPost?.isRepost && viewingPost?.originalPost);
+    const displayEmoji = isRepostViewing ? (viewingPost!.originalPost?.authorEmoji || '😊') : (user?.emoji || '😊');
+    const displayName = isRepostViewing ? viewingPost!.originalPost?.authorName : user?.displayName;
+    return (
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <Avatar emoji={displayEmoji} size="xs" />
+        <View style={{ flexShrink: 1 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+            <Text variant="caption" weight="semibold" color="#FFFFFF" numberOfLines={1} style={{ fontSize: 11 }}>{displayName}</Text>
+            {user?.is_verified && <VerifiedBadge size={10} />}
+          </View>
+          {isRepostViewing ? (
+            <Text variant="caption" color="rgba(255,255,255,0.5)" numberOfLines={1} style={{ fontSize: 9 }}>{t('profile.repost_from', undefined, { name: user?.displayName || '' })}</Text>
+          ) : (
+            <Text variant="caption" color="rgba(255,255,255,0.6)" style={{ fontSize: 9 }}>{formatTimeAgo(viewingPost?.createdAt || '')}</Text>
+          )}
+        </View>
+      </View>
+    );
+  }, [viewingImage, viewingPost, user?.emoji, user?.displayName, user?.is_verified, t]);
+
+  // A BARE ROW — no pill, no glass, no background.
+  //
+  // Reported: "the buttons each have a container, which is good, but the bottom area has another
+  // container that should not be there." That was a `NativeGlassView` (or a translucent `View` on
+  // the flat path) wrapping the row with `borderRadius: 28` and its own fill, sitting behind
+  // buttons that already have their own circular fills. The wrapper is gone; each button keeps its
+  // circle. The viewer supplies the safe-area padding and the fade.
+  const viewerFooter = useMemo(() => {
+    if (!viewingImage) return null;
+    const isRepostPost = !!viewingPost?.isRepost;
+    return (
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+        {!isRepostPost && (
+          <Pressable
+            onPress={() => {
+              const ep = viewingPost;
+              const pid = viewingImage.postId;
+              setViewingImage(null);
+              useFeedStore.getState().setEditingPost({
+                id: pid,
+                content: ep?.content || '',
+                imageUrl: ep?.imageUrl,
+                imageUrls: ep?.imageUrls && ep.imageUrls.length > 0 ? ep.imageUrls : (ep?.imageUrl ? [ep.imageUrl] : undefined),
+              });
+              router.push('/(tabs)/create');
+            }}
+            style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: 'rgba(255,255,255,0.16)', alignItems: 'center', justifyContent: 'center' }}
+          >
+            <Feather name="edit-2" size={17} color="#FFFFFF" />
+          </Pressable>
+        )}
+        <Pressable
+          onPress={async () => {
+            const { shareImageUrl } = require('../../src/utils/sharePost');
+            await shareImageUrl(viewingImage.uri, viewingPost?.content);
+          }}
+          style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: 'rgba(255,255,255,0.16)', alignItems: 'center', justifyContent: 'center' }}
+        >
+          <Feather name="share" size={17} color="#FFFFFF" />
+        </Pressable>
+        <Pressable
+          onPress={() => {
+            if (!user?.id) return;
+            const pid = viewingImage.postId;
+            Alert.alert(t('profile.delete_post_title'), t('profile.delete_post_msg'), [
+              { text: t('common.cancel'), style: 'cancel' },
+              {
+                text: t('common.delete'),
+                style: 'destructive',
+                onPress: async () => { await deletePost(pid, user.id); setViewingImage(null); loadMyPosts(); },
+              },
+            ]);
+          }}
+          style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: 'rgba(255,60,50,0.24)', alignItems: 'center', justifyContent: 'center' }}
+        >
+          <Feather name="trash-2" size={17} color="#FF3B30" />
+        </Pressable>
+      </View>
+    );
+  }, [viewingImage, viewingPost, user?.id, t, loadMyPosts]);
+
   // "No user yet" spinner. Deliberately placed AFTER every hook above so the
   // hook order/count is identical whether or not a session is loaded — see the
   // long note where this guard used to live.
@@ -1586,111 +1707,18 @@ export default function ProfileScreen() {
         </Pressable>
       </Modal>
 
-      {/* Fullscreen Image Viewer */}
-      <Modal visible={!!viewingImage} transparent animationType="none" onRequestClose={() => setViewingImage(null)} statusBarTranslucent>
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.92)' }}>
-          {/* Top bar with gradient blur */}
-          <LinearGradient colors={['rgba(0,0,0,0.8)', 'rgba(0,0,0,0.5)', 'transparent']} locations={[0, 0.6, 1]} style={{ position: 'absolute', top: 0, left: 0, right: 0, height: insets.top + 80, zIndex: 10 }}>
-            <View style={{ position: 'absolute', top: insets.top + 12, left: 16, right: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-              {/* Author info — show original author for reposts */}
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                {(() => {
-                  const post = userPosts.find(p => p.id === viewingImage?.postId);
-                  const isRepostViewing = post?.isRepost && post?.originalPost;
-                  const displayEmoji = isRepostViewing ? (post.originalPost?.authorEmoji || '😊') : (user?.emoji || '😊');
-                  const displayName = isRepostViewing ? post.originalPost?.authorName : user?.displayName;
-                  return (
-                    <>
-                      <Avatar emoji={displayEmoji} size="xs" />
-                      <View>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-                          <Text variant="caption" weight="semibold" color="#FFFFFF" style={{ fontSize: 11 }}>{displayName}</Text>
-                          {user?.is_verified && <VerifiedBadge size={10} />}
-                        </View>
-                        {isRepostViewing && <Text variant="caption" color="rgba(255,255,255,0.5)" numberOfLines={1} style={{ fontSize: 9 }}>{t('profile.repost_from', undefined, { name: user?.displayName || '' })}</Text>}
-                        {!isRepostViewing && viewingImage && <Text variant="caption" color="rgba(255,255,255,0.6)" style={{ fontSize: 9 }}>{formatTimeAgo(post?.createdAt || '')}</Text>}
-                      </View>
-                    </>
-                  );
-                })()}
-              </View>
-              {/* Close */}
-              {glassActive ? (
-                <Pressable onPress={() => setViewingImage(null)} style={{ borderRadius: 18 }}>
-                  <NativeGlassView glassStyle="regular" isInteractive colorScheme="dark" style={{ width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' }}>
-                    <Feather name="x" size={20} color="#FFFFFF" />
-                  </NativeGlassView>
-                </Pressable>
-              ) : (
-                <Pressable onPress={() => setViewingImage(null)} style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' }}>
-                  <Feather name="x" size={20} color="#FFFFFF" />
-                </Pressable>
-              )}
-            </View>
-          </LinearGradient>
-          {/* Image — full width, zoomable + horizontal scroll for multi-image */}
-          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-            {viewingImage && (
-              viewingImage.allImages && viewingImage.allImages.length > 1 ? (
-                <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false} style={{ flex: 1 }} contentContainerStyle={{ alignItems: 'center' }}>
-                  {viewingImage.allImages.map((imgUri, idx) => (
-                    <ScrollView key={idx} maximumZoomScale={3} minimumZoomScale={1} showsHorizontalScrollIndicator={false} showsVerticalScrollIndicator={false} contentContainerStyle={{ justifyContent: 'center', alignItems: 'center', width: SCREEN_WIDTH, height: '100%' }} centerContent bouncesZoom>
-                      <CachedImage uri={imgUri} style={{ width: SCREEN_WIDTH, height: SCREEN_WIDTH }} resizeMode="contain" />
-                    </ScrollView>
-                  ))}
-                </ScrollView>
-              ) : (
-                <ScrollView maximumZoomScale={3} minimumZoomScale={1} showsHorizontalScrollIndicator={false} showsVerticalScrollIndicator={false} contentContainerStyle={{ justifyContent: 'center', alignItems: 'center', flex: 1 }} centerContent bouncesZoom>
-                  <CachedImage uri={viewingImage.uri} style={{ width: SCREEN_WIDTH, height: SCREEN_WIDTH }} resizeMode="contain" />
-                </ScrollView>
-              )
-            )}
-          </View>
-          {/* Description (if exists) — for reposts, fall back to the original post's content */}
-          {viewingImage && (() => {
-            const post = userPosts.find(p => p.id === viewingImage.postId);
-            const caption = post?.content || (post as any)?.originalPost?.content || '';
-            return caption ? (
-              <ScrollView style={{ maxHeight: 60, marginHorizontal: 24, marginBottom: 8 }} showsVerticalScrollIndicator={false}>
-                <Text variant="caption" color="rgba(255,255,255,0.8)" style={{ fontSize: 12 }}>{caption}</Text>
-              </ScrollView>
-            ) : null;
-          })()}
-          {/* Bottom actions — compact rounded container, centered */}
-          <View style={{ alignItems: 'center', paddingBottom: insets.bottom + 20 }}>
-            {glassActive ? (
-              <NativeGlassView glassStyle="regular" colorScheme="dark" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 28, paddingHorizontal: 24, paddingVertical: 12 }}>
-                {!userPosts.find(p => p.id === viewingImage?.postId)?.isRepost && (
-                <Pressable onPress={() => { const ep = userPosts.find(p => p.id === viewingImage!.postId); setViewingImage(null); useFeedStore.getState().setEditingPost({ id: viewingImage!.postId, content: ep?.content || '', imageUrl: ep?.imageUrl, imageUrls: ep?.imageUrls && ep.imageUrls.length > 0 ? ep.imageUrls : (ep?.imageUrl ? [ep.imageUrl] : undefined) }); router.push('/(tabs)/create'); }} style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: 'rgba(255,255,255,0.14)', alignItems: 'center', justifyContent: 'center' }}>
-                  <Feather name="edit-2" size={17} color="#FFFFFF" />
-                </Pressable>
-                )}
-                <Pressable onPress={async () => { if (viewingImage) { const ep = userPosts.find(p => p.id === viewingImage.postId); const { shareImageUrl } = require('../../src/utils/sharePost'); await shareImageUrl(viewingImage.uri, ep?.content); } }} style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: 'rgba(255,255,255,0.14)', alignItems: 'center', justifyContent: 'center' }}>
-                  <Feather name="share" size={17} color="#FFFFFF" />
-                </Pressable>
-                <Pressable onPress={() => { if (viewingImage && user?.id) { Alert.alert(t('profile.delete_post_title'), t('profile.delete_post_msg'), [{ text: t('common.cancel'), style: 'cancel' }, { text: t('common.delete'), style: 'destructive', onPress: async () => { await deletePost(viewingImage.postId, user.id); setViewingImage(null); loadMyPosts(); } }]); } }} style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: 'rgba(255,60,50,0.22)', alignItems: 'center', justifyContent: 'center' }}>
-                  <Feather name="trash-2" size={17} color="#FF3B30" />
-                </Pressable>
-              </NativeGlassView>
-            ) : (
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 28, paddingHorizontal: 24, paddingVertical: 12 }}>
-              {!userPosts.find(p => p.id === viewingImage?.postId)?.isRepost && (
-              <Pressable onPress={() => { const ep = userPosts.find(p => p.id === viewingImage!.postId); setViewingImage(null); useFeedStore.getState().setEditingPost({ id: viewingImage!.postId, content: ep?.content || '', imageUrl: ep?.imageUrl, imageUrls: ep?.imageUrls && ep.imageUrls.length > 0 ? ep.imageUrls : (ep?.imageUrl ? [ep.imageUrl] : undefined) }); router.push('/(tabs)/create'); }} style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center' }}>
-                <Feather name="edit-2" size={17} color="#FFFFFF" />
-              </Pressable>
-              )}
-              <Pressable onPress={async () => { if (viewingImage) { const ep = userPosts.find(p => p.id === viewingImage.postId); const { shareImageUrl } = require('../../src/utils/sharePost'); await shareImageUrl(viewingImage.uri, ep?.content); } }} style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center' }}>
-                <Feather name="share" size={17} color="#FFFFFF" />
-              </Pressable>
-              <Pressable onPress={() => { if (viewingImage && user?.id) { Alert.alert(t('profile.delete_post_title'), t('profile.delete_post_msg'), [{ text: t('common.cancel'), style: 'cancel' }, { text: t('common.delete'), style: 'destructive', onPress: async () => { await deletePost(viewingImage.postId, user.id); setViewingImage(null); loadMyPosts(); } }]); } }} style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: 'rgba(255,60,50,0.2)', alignItems: 'center', justifyContent: 'center' }}>
-                <Feather name="trash-2" size={17} color="#FF3B30" />
-              </Pressable>
-            </View>
-            )}
-          </View>
-        </View>
-      </Modal>
-      <AccountSwitcher visible={showAccountSwitcher} onClose={() => setShowAccountSwitcher(false)} />
+      {/* Fullscreen viewer — the SAME component the chat uses (see the note where its payload and
+          chrome are built). Replaces a hand-rolled native Modal that had no gestures at all. */}
+      <ImageViewerModal
+        payload={viewerPayload}
+        onClose={closeViewer}
+        topInset={insets.top}
+        bottomInset={insets.bottom}
+        proxyWidth={SCREEN_WIDTH}
+        header={viewerHeader}
+        footer={viewerFooter}
+        zoomable
+      />      <AccountSwitcher visible={showAccountSwitcher} onClose={() => setShowAccountSwitcher(false)} />
       <PostContextMenu visible={!!contextPost} post={contextPost} isOwnPost={true} onClose={closeContextMenu} onDelete={async (postId) => { if (user?.id) { await deletePost(postId, user.id); useFeedStore.getState().removePost(postId); loadMyPosts(); showToast(t('toast.post_deleted'), 'trash-2'); } }} />
       <FollowsListModal visible={!!followsModal} mode={followsModal || 'followers'} userId={user?.id || null} onClose={() => setFollowsModal(null)} />
       {/* Long-press tab editor — own profile only. The modal seeds with the
