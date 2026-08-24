@@ -112,6 +112,19 @@ export interface Conversation {
   participantBadge?: string | null;
   lastMessage?: string;
   lastMessageAt?: string;
+  /**
+   * Who wrote the newest message in this conversation.
+   *
+   * Added because unread reconciliation had no way to tell "the peer wrote" from "I wrote". It was
+   * comparing against `participantId`, which is ALWAYS the peer and never the signed-in user, so the
+   * guard could not fire — and since `lastMessageAt` carries the SERVER's timestamp, it can land a
+   * moment after the local read watermark, which made a message the user had just SENT look unread to
+   * them. Reported three times as "I write to someone and get an unread indicator myself".
+   *
+   * Optional so every existing cached row stays valid; when it is missing, reconciliation falls back
+   * to the watermark comparison exactly as before.
+   */
+  lastSenderId?: string;
   unreadCount: number;
   isOnline?: boolean;
 }

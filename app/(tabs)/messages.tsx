@@ -1870,6 +1870,10 @@ export default function MessagesScreen() {
           participantBadge: (c as any).participantBadge ?? profiles[c.participantId]?.badge ?? null,
           lastMessage: useLocal ? local!.text : (c.lastMessage || ''),
           lastMessageAt: useLocal ? local!.at : storedAt,
+          // Forwarded so reconcile can tell our own outgoing message from an incoming one. The row is
+          // rebuilt from the entity store on every list pass, so dropping the field here would have
+          // silently reinstated the bug the moment the list re-rendered.
+          lastSenderId: (c as any).lastSenderId,
           unreadCount: unreadCounts[c.id] || 0,
           isOnline: false,
         };

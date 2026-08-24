@@ -140,6 +140,10 @@ export function RealtimeAccountBridge(): null {
               participantEmoji: String(payload.senderEmoji || payload.sender_emoji || '😊'),
               lastMessage,
               lastMessageAt,
+              // Recorded so unread reconciliation can tell our own outgoing message from an incoming
+              // one. It arrives on the same ping that sets `lastMessageAt`, so the two can never
+              // disagree about which message the row is describing.
+              lastSenderId: senderId || undefined,
             };
             if (idx >= 0) {
               const merged = [...existing];

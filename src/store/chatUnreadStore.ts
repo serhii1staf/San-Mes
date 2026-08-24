@@ -85,7 +85,7 @@ interface ChatUnreadState {
    * changed, so it cannot loop a subscriber.
    */
   reconcile: (
-    rows: ReadonlyArray<{ id: string; lastMessageAt?: string; participantId?: string }>,
+    rows: ReadonlyArray<{ id: string; lastMessageAt?: string; participantId?: string; lastSenderId?: string }>,
     myUserId: string | undefined,
   ) => void;
 }
@@ -139,8 +139,22 @@ export const useChatUnread = create<ChatUnreadState>((set, get) => ({
     for (const r of rows) {
       if (!r?.id || !r.lastMessageAt) continue;
       if ((counts[r.id] || 0) > 0) continue; // already have an observed count, trust it
-      // Never mark our own outgoing message as unread.
-      if (myUserId && r.participantId === myUserId) continue;
+      // ── NEVER RAISE A BADGE FOR OUR OWN MESSAGE ─────────────────────────────
+      //
+      // This used to read `r.participantId === myUserId`, which cannot ever be true:
+      // `participantId` is the PEER on a one-to-one row, never the signed-in user. So the guard was
+      // dead code and the comment above it was a lie.
+      //
+      // What then let a self-sent message through: `lastMessageAt` carries the SERVER's timestamp,
+      // and the read watermark is stamped from the LOCAL clock when the message is sent. If the
+      // server's is even a second later — clock skew, or simply the row being created after the tap —
+      // then `last > seen` and the reconcile raises a 1 for a message the user just typed. Reported
+      // three times as "I write to someone and immediately get an unread indicator myself".
+      //
+      // `lastSenderId` is recorded on the row by the realtime bridge, on the same ping that sets
+      // `lastMessageAt`, so the two describe the same message. Comparing THAT against the signed-in
+      // id is the check the old line was trying and failing to be.
+      if (myUserId && r.lastSenderId && r.lastSenderId === myUserId) continue;
       const last = Date.parse(r.lastMessageAt);
       if (!Number.isFinite(last)) continue;
       const seen = readAt[r.id] || 0;
