@@ -187,14 +187,21 @@ register('GET', '/v1/stickers/telegram', async (req, env, _ctx, _params, authedU
         p = f?.file_path;
       }
 
-      if (!p || !STATIC_EXT.test(p)) return null;
-      return { path: p, emoji: s.emoji || '' };
+      // Rejected. Report WHAT was rejected rather than just failing: a pack that produces nothing
+      // usable is otherwise indistinguishable from a pack that produced nothing at all, and the
+      // difference is the whole question — "which format is blocking this" is what decides whether the
+      // answer is a better fallback or a new renderer. See the 422 below.
+      if (!p || !STATIC_EXT.test(p)) {
+        const ext = p ? (p.match(/\.[a-z0-9]+$/i)?.[0] || 'no-ext') : 'unresolved';
+        return { path: null as string | null, emoji: s.emoji || '', rejected: ext };
+      }
+      return { path: p as string | null, emoji: s.emoji || '', rejected: '' };
     }),
   );
 
   const origin = url.origin;
   const stickers = paths
-    .filter((p): p is { path: string; emoji: string } => !!p)
+    .filter((p): p is { path: string; emoji: string; rejected: string } => !!p && !!p.path)
     // The URL points at US, never at Telegram — see the note above about the token being embedded in
     // Telegram's own download URLs.
     .map((p) => ({
@@ -204,8 +211,13 @@ register('GET', '/v1/stickers/telegram', async (req, env, _ctx, _params, authedU
 
   if (stickers.length === 0) {
     // The pack exists but nothing in it resolved to a displayable image. Reported separately from
-    // 'not found' because the user's link was correct and there is nothing for them to fix.
-    return fail(req, 'pack has no usable stickers', 422);
+    // 'not found' because the user's link was correct and there is nothing for them to fix - AND
+    // with the offending formats named, because that is the fact that decides what to build next.
+    // A .tgs answer is a Lottie renderer (the app already depends on lottie-react-native); a
+    // .webm answer is VP9, which iOS cannot decode at all and would need transcoding. Without
+    // this line the two are indistinguishable and the next step is a guess.
+    const kinds = Array.from(new Set(paths.map((p) => p?.rejected).filter(Boolean))).join(', ');
+    return fail(req, 'pack has no usable stickers: ' + (kinds || 'unknown format'), 422);
   }
 
   return jsonResponse(req, {

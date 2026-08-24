@@ -85,7 +85,14 @@ export async function importTelegramPack(link: string): Promise<ImportResult> {
       // Signed out / expired session. This used to fall through to "pack not found", which sent the user
       // to inspect a link that had nothing wrong with it.
       if (error.includes('unauthoris') || error.includes('unauthoriz')) return { ok: false, reason: 'unauthorised' };
-      if (error.includes('no usable')) return { ok: false, reason: 'empty' };
+      if (error.includes('no usable')) {
+        // The Worker names the formats that blocked it after the colon (`.tgs`, `.webm`, …). Carried
+        // through so the message can say which one, instead of "nothing works" — that distinction is what
+        // decides whether the fix is a Lottie renderer or a transcode, and it is the user who can get us
+        // that fact in one attempt.
+        const idx = error.indexOf(':');
+        return { ok: false, reason: 'empty', detail: idx >= 0 ? error.slice(idx + 1).trim() : undefined };
+      }
       if (error.includes('unavailable') || error.includes('not found')) {
         // Everything after the colon is Telegram's own description — surfaced so a rate limit or a dead
         // token is distinguishable from a wrong name.
