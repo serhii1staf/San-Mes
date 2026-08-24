@@ -97,24 +97,45 @@ export type GifLinkResult =
   | { ok: false; reason: 'empty' | 'not_https' | 'not_media' };
 
 /**
- * Decide whether a pasted string is a usable direct media link.
+ * Turn whatever the user pasted into a usable media URL.
  *
- * HTTPS only, and not as a formality: App Transport Security is left at its iOS default in this app
- * (see the compliance notes), so an `http://` sticker would simply fail to load at runtime with no
- * explanation. Rejecting it here turns a silent broken image into a sentence the user can act on.
+ * ── "HOW DOES IT WORK IN DISCORD THEN?" ─────────────────────────────────────
  *
- * A recognised image extension is accepted immediately. Anything else gets ONE `HEAD` request to read
- * its content type, because plenty of legitimate direct links carry no extension (CDN paths, signed
- * URLs). If that says `image/*` it is media; if it says `text/html` it is a web page and the user is
- * asked for the image's own address instead. A failed request is treated as "not media" rather than
- * accepted on faith — an entry that cannot load is worse than a rejection, because it lands in the grid
- * looking permanent.
+ * Asked exactly that, after pasting a link copied from Discord's GIF picker and being told it was a web
+ * page. It was a web page: Discord's "Copy Link" hands you a TENOR PAGE — `tenor.com/view/…-gif-12345`
+ * — not the file. Discord shows the GIF because it RESOLVES that page. So did we need to, and did not.
+ *
+ * The resolution step is now here, and it is the same mechanism a page's author publishes it for: Open
+ * Graph metadata. `og:image` on a Tenor page IS the GIF; on a Giphy page it is the GIF; on a Discord
+ * CDN link it is the file itself. Reading tags a site puts in its own `<head>` for exactly this purpose
+ * is not scraping a private API — it is the difference between this and the Instagram case, which needs
+ * their internal endpoints and is therefore still refused.
+ *
+ * And we already had the machinery: `getLinkPreview` talks to our own `/api/unfurl`, which extracts
+ * `og:image:secure_url` / `og:image` / `twitter:image` and absolutizes the result. It is the same
+ * endpoint that renders link preview cards in chat, with the same cache — so the second person to paste
+ * a popular GIF pays nothing.
+ *
+ * ── THE ORDER OF THE CHECKS, AND WHY ────────────────────────────────────────
+ *
+ *   1. HTTPS. Not a formality: ATS is at its iOS default, so an `http://` sticker would fail to load at
+ *      runtime with no explanation at all. Rejecting it turns a silent broken image into a sentence.
+ *   2. A recognised image extension → accept with no network at all. The common case is free.
+ *   3. `HEAD` for the content type, because plenty of legitimate direct links carry no extension (CDN
+ *      paths, signed URLs). `image/*` → accept.
+ *   4. Otherwise unfurl it and take `og:image`. This is the Discord/Tenor/Giphy path.
+ *
+ * A failure at the end is a rejection rather than an optimistic accept: an entry that cannot load is
+ * worse than one that was refused, because it lands in the grid looking permanent and the user has no
+ * way to tell it from a slow one.
  */
 export async function validateGifLink(raw: string): Promise<GifLinkResult> {
   const url = (raw || '').trim();
   if (!url) return { ok: false, reason: 'empty' };
   if (!/^https:\/\//i.test(url)) return { ok: false, reason: 'not_https' };
   if (DIRECT_MEDIA.test(url)) return { ok: true, url };
+
+  // Step 3 — is it already a file, just without a telling extension?
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 6000);
@@ -126,8 +147,20 @@ export async function validateGifLink(raw: string): Promise<GifLinkResult> {
       clearTimeout(timer);
     }
     if (/^image\//i.test(type)) return { ok: true, url };
-    return { ok: false, reason: 'not_media' };
   } catch {
-    return { ok: false, reason: 'not_media' };
+    // A failed HEAD says nothing conclusive — some hosts refuse the method outright. Fall through to
+    // the unfurl attempt rather than rejecting here.
   }
+
+  // Step 4 — a page. Ask it what image it advertises.
+  try {
+    const { getLinkPreview } = await import('../services/linkPreview');
+    const preview = await getLinkPreview(url);
+    const image = preview?.image;
+    if (image && /^https:\/\//i.test(image)) return { ok: true, url: image };
+  } catch {
+    // fall through
+  }
+
+  return { ok: false, reason: 'not_media' };
 }

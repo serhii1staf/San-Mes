@@ -34,6 +34,8 @@ export function useMediaPanelLabels(): MediaPanelProps['labels'] {
         errNotHttps: t('gif.add.err_https'),
         errNotMedia: t('gif.add.err_not_media'),
         added: t('gif.add.added'),
+        sourcesTitle: t('gif.add.sources_title'),
+        sourcesBody: t('gif.add.sources_body'),
       },
     }),
     [t],

@@ -1,5 +1,6 @@
 import React, { useCallback, useState } from 'react';
-import { View, Modal, Pressable, TextInput, ActivityIndicator, Text as RNText, StyleSheet } from 'react-native';
+import { View, Modal, Pressable, TextInput, ActivityIndicator, ScrollView, Text as RNText, StyleSheet } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import { validateGifLink, useCustomGifs } from '../../store/customGifsStore';
@@ -20,6 +21,8 @@ export interface AddGifModalProps {
     errNotHttps: string;
     errNotMedia: string;
     added: string;
+    sourcesTitle: string;
+    sourcesBody: string;
   };
 }
 
@@ -87,16 +90,36 @@ export function AddGifModal({ visible, onClose, theme, labels }: AddGifModalProp
   const canSubmit = url.trim().length > 0 && !checking;
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={close} statusBarTranslucent>
-      <View style={styles.root}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={close} />
-        <View style={[styles.card, { backgroundColor: theme.colors.background.elevated }]}>
-          <View style={styles.header}>
-            <Feather name="plus-circle" size={17} color={theme.colors.accent.primary} />
+    // ── A FULL SCREEN, NOT A DIALOG ────────────────────────────────────────────
+    //
+    // Asked for: "when I press Add GIF a proper full window should open."
+    //
+    // It is also the right shape for what this does. The dialog had to fit a paste field, an explanation
+    // of which links work, and an error that is two sentences long — inside a card floating over a
+    // half-open keyboard panel. Something was always going to be cramped or clipped. Full screen gives
+    // the explanation room to be read instead of skimmed, which matters here because the explanation is
+    // the difference between the user pasting the right thing and pasting a page again.
+    //
+    // `slide` rather than `fade`: this comes from a button at the bottom of the panel, so it should
+    // arrive from that direction.
+    <Modal visible={visible} animationType="slide" onRequestClose={close} presentationStyle="fullScreen">
+      <View style={[styles.root, { backgroundColor: theme.colors.background.primary }]}>
+        <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
+          <View style={styles.headerRow}>
             <RNText style={[styles.title, { color: theme.colors.text.primary }]}>{labels.title}</RNText>
+            {/* Close lives in the header, because a full screen has no backdrop to tap. */}
+            <Pressable onPress={close} hitSlop={10} accessibilityRole="button" style={styles.closeBtn}>
+              <Feather name="x" size={22} color={theme.colors.text.secondary} />
+            </Pressable>
           </View>
 
-          <RNText style={[styles.hint, { color: theme.colors.text.tertiary }]}>{labels.hint}</RNText>
+          <ScrollView
+            style={styles.body}
+            contentContainerStyle={styles.bodyContent}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="interactive"
+          >
+          <RNText style={[styles.hint, { color: theme.colors.text.secondary }]}>{labels.hint}</RNText>
 
           <View style={[styles.inputRow, { borderColor: error ? '#FF3B30' : theme.colors.border.light }]}>
             <TextInput
@@ -122,9 +145,18 @@ export function AddGifModal({ visible, onClose, theme, labels }: AddGifModalProp
 
           {error ? <RNText style={styles.error}>{error}</RNText> : null}
 
+          {/* Which links resolve, spelled out. The Discord case was reported as a bug precisely because
+              the app looked like it could not do something Discord does — it could, it just was not
+              resolving the page. Saying so here is cheaper than the user guessing. */}
+          <View style={[styles.sources, { borderColor: theme.colors.border.light }]}>
+            <RNText style={[styles.sourcesTitle, { color: theme.colors.text.primary }]}>{labels.sourcesTitle}</RNText>
+            <RNText style={[styles.sourcesBody, { color: theme.colors.text.tertiary }]}>{labels.sourcesBody}</RNText>
+          </View>
+          </ScrollView>
+
           <View style={styles.actions}>
             <Pressable onPress={close} style={[styles.btn, styles.btnFlat, { borderColor: theme.colors.border.light }]}>
-              <RNText style={{ color: theme.colors.text.secondary, fontSize: 14, fontWeight: '600' }}>{labels.cancel}</RNText>
+              <RNText style={{ color: theme.colors.text.secondary, fontSize: 15, fontWeight: '600' }}>{labels.cancel}</RNText>
             </Pressable>
             <Pressable
               onPress={submit}
@@ -134,27 +166,34 @@ export function AddGifModal({ visible, onClose, theme, labels }: AddGifModalProp
               {checking ? (
                 <ActivityIndicator size="small" color="#FFFFFF" />
               ) : (
-                <RNText style={{ color: canSubmit ? '#FFFFFF' : theme.colors.text.tertiary, fontSize: 14, fontWeight: '700' }}>{labels.add}</RNText>
+                <RNText style={{ color: canSubmit ? '#FFFFFF' : theme.colors.text.tertiary, fontSize: 15, fontWeight: '700' }}>{labels.add}</RNText>
               )}
             </Pressable>
           </View>
-        </View>
+        </SafeAreaView>
       </View>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 },
-  card: { width: '100%', maxWidth: 420, borderRadius: 22, padding: 18, shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.25, shadowRadius: 18, elevation: 12 },
-  header: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  title: { fontSize: 16, fontWeight: '700' },
-  hint: { fontSize: 12, lineHeight: 17, marginTop: 8 },
-  inputRow: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderRadius: 12, paddingLeft: 12, paddingRight: 6, marginTop: 12, height: 44 },
-  input: { flex: 1, fontSize: 14, paddingVertical: 0 },
-  pasteBtn: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
-  error: { color: '#FF3B30', fontSize: 12, lineHeight: 17, marginTop: 8 },
-  actions: { flexDirection: 'row', gap: 10, marginTop: 16 },
-  btn: { flex: 1, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  root: { flex: 1 },
+  safe: { flex: 1 },
+  headerRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingTop: 8, paddingBottom: 12 },
+  title: { fontSize: 22, fontWeight: '700', flex: 1 },
+  closeBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
+  body: { flex: 1 },
+  bodyContent: { paddingHorizontal: 20, paddingBottom: 24 },
+  hint: { fontSize: 14, lineHeight: 21 },
+  inputRow: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderRadius: 14, paddingLeft: 14, paddingRight: 6, marginTop: 18, height: 52 },
+  input: { flex: 1, fontSize: 15, paddingVertical: 0 },
+  pasteBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
+  error: { color: '#FF3B30', fontSize: 13, lineHeight: 19, marginTop: 10 },
+  sources: { borderWidth: 1, borderRadius: 14, padding: 14, marginTop: 22 },
+  sourcesTitle: { fontSize: 13, fontWeight: '700', marginBottom: 6 },
+  sourcesBody: { fontSize: 12, lineHeight: 19 },
+  // Pinned below the scroll area so the two buttons never scroll out of reach on a small screen.
+  actions: { flexDirection: 'row', gap: 12, paddingHorizontal: 20, paddingTop: 12, paddingBottom: 8 },
+  btn: { flex: 1, height: 50, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   btnFlat: { borderWidth: 1 },
 });

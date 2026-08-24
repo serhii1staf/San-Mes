@@ -236,13 +236,15 @@ const en: Record<string, string> = {
 
   // ─── Add your own GIF ──────────────────────────────────────────────────
   'gif.add.title': 'Add a GIF',
-  'gif.add.hint': 'Paste a direct link to a GIF or image. Works with Telegram, Giphy, Tenor and anything else that gives you the file address. Long-press one of your own GIFs to remove it.',
+  'gif.add.hint': 'Paste a link. Copy Link from Discord, Giphy or Tenor works as it is — the page is resolved to the GIF for you. A direct file address works too.',
   'gif.add.placeholder': 'https://…',
   'gif.add.paste': 'Paste',
   'gif.add.action': 'Add',
   'gif.add.err_https': 'The link must start with https://',
-  'gif.add.err_not_media': 'That looks like a web page, not an image. Open it, copy the image address itself, and paste that.',
+  'gif.add.err_not_media': 'No image found at that link. If it is a post page, open the GIF itself and copy its address.',
   'gif.add.added': 'GIF added',
+  'gif.add.sources_title': 'What works',
+  'gif.add.sources_body': 'Discord, Giphy and Tenor "Copy Link" · Telegram file links · any direct .gif, .webp or .png address.\n\nOne GIF at a time. A whole Telegram sticker pack is a different thing — it needs Telegram\'s official Bot API, so it will arrive separately.\n\nLong-press one of your own GIFs to remove it.',
   'toast.report_sent': 'Report sent',
   'toast.will_send_offline': 'Will send when online',
   'toast.post_deleted': 'Post deleted',
