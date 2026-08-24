@@ -33,13 +33,31 @@ import type { GiphyItem } from '../services/giphy';
 
 const KEY = '@san:custom_gifs';
 
-/** Plenty for a personal sticker set, and bounded so the grid and the MMKV blob stay small. */
-const MAX_CUSTOM = 60;
+/**
+ * Bounded so the grid and the MMKV blob stay small, but large enough for several imported packs.
+ *
+ * Was 60, which is exactly the per-pack import ceiling — so importing one Telegram pack filled the entire
+ * allowance and silently evicted everything the user had added before it. A cap that a single ordinary
+ * action can exhaust is not a cap, it is a bug with a constant.
+ *
+ * Entries are ~120 bytes of JSON each, so this is well under 30 KB even when full.
+ */
+const MAX_CUSTOM = 240;
 
 interface CustomGifsState {
   items: GiphyItem[];
   /** Add a validated GIF. Newest first; re-adding an existing URL moves it to the front. */
   add: (url: string) => void;
+  /**
+   * Add many at once — a whole imported sticker pack.
+   *
+   * One store write and one disk write for the set, rather than calling `add` in a loop. A sixty-sticker
+   * pack would otherwise be sixty state updates and sixty MMKV serializations of a growing array, all in
+   * one tick, which is a visible freeze for something the user experiences as a single action.
+   *
+   * Order within the batch is preserved, and the batch lands in front of everything already there.
+   */
+  addMany: (urls: string[]) => void;
   remove: (id: string) => void;
   /** Re-read from disk — used when the active account changes. */
   hydrate: () => void;
@@ -76,6 +94,22 @@ export const useCustomGifs = create<CustomGifsState>((set, get) => ({
       stillUrl: clean,
     } as GiphyItem;
     const next = [item, ...existing].slice(0, MAX_CUSTOM);
+    set({ items: next });
+    kvSetJSON(KEY, next);
+  },
+
+  addMany: (urls) => {
+    const clean = urls.map((u) => (u || '').trim()).filter(Boolean);
+    if (clean.length === 0) return;
+    const incomingIds = new Set(clean.map(idForUrl));
+    const kept = get().items.filter((g) => !incomingIds.has(g.id));
+    const fresh: GiphyItem[] = clean.map((u) => ({
+      id: idForUrl(u),
+      previewUrl: u,
+      sendUrl: u,
+      stillUrl: u,
+    }) as GiphyItem);
+    const next = [...fresh, ...kept].slice(0, MAX_CUSTOM);
     set({ items: next });
     kvSetJSON(KEY, next);
   },

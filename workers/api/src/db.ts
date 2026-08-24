@@ -23,6 +23,17 @@ export interface Env {
    * requests.
    */
   ABLY_ROOT_KEY?: string;
+  /**
+   * Telegram Bot API token, for importing sticker packs — `wrangler secret put TELEGRAM_BOT_TOKEN`.
+   *
+   * Optional: without it `/v1/stickers/telegram` answers 503 and the app tells the user the feature is
+   * not set up, rather than failing as if their link were wrong.
+   *
+   * NEVER sent to a client, and that takes more than not putting it in a JSON body: Telegram's own
+   * download URLs embed the token (`api.telegram.org/file/bot<TOKEN>/<path>`), so the sticker route
+   * proxies the bytes instead of handing those URLs out. See routes/stickers.ts.
+   */
+  TELEGRAM_BOT_TOKEN?: string;
 }
 
 export type Row = Record<string, unknown>;
