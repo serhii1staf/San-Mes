@@ -27,6 +27,7 @@ import { MediaPanel } from '../../src/components/chat/MediaPanel';
 import { PhotoPickerPanel } from '../../src/components/chat/PhotoPickerPanel';
 import { ImageViewerModal, ViewerActionButton } from '../../src/components/chat/ImageViewerModal';
 import { toPreviewText } from '../../src/utils/previewText';
+import { useMediaPanelLabels } from '../../src/components/chat/useMediaPanelLabels';
 import { encodeReplyMarker, decodeReplyMarker } from '../../src/utils/chatReplyMarker';
 import { EmojiDeleteBurst, EmojiBurstHandle } from '../../src/components/chat/EmojiDeleteBurst';
 import { getRealtime, chatChannelName } from '../../src/services/realtime/ably';
@@ -430,7 +431,6 @@ const bubbleStyles = StyleSheet.create({
   replyTextWrap: { flexShrink: 1, minWidth: 0 },
   replyAvatar: { width: 30, height: 30, borderRadius: 6 },
   replyPixel: { borderRadius: 6 },
-  replyHeading: { fontSize: 11 },
   replyBody: { fontSize: 11 },
   imagesRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4 },
   imageSingle: { width: 200, height: 200, borderRadius: 12 },
@@ -735,7 +735,7 @@ function quotedLinePreview(
   return '';
 }
 
-function MessageBubble({ message, isOwn, ownName, peerName, fontSize, bubbleRadius, fontFamily, linkEmoji, bubbleColors, bubbleOpacity, bubbleTextColor, inColors, inOpacity, inTextColor, highlighted, isVisible, imagesReady, onReply, onReplyJump, onLongPress, onMeasured, onSwipeActive, onImagePress, dragActive, dragFingerY, hoveredAction, actionZones, onFireDragAction, onOpenFullscreen }: { message: ChatMessage; ownName: string; peerName: string; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string; linkEmoji?: string; bubbleColors: string[]; bubbleOpacity: number; bubbleTextColor: string; inColors: string[]; inOpacity: number; inTextColor: string; highlighted?: boolean; isVisible?: boolean; imagesReady?: boolean; onReply: (m: ChatMessage) => void; onReplyJump?: (messageId?: string) => void; onLongPress: (m: ChatMessage) => void; onMeasured?: (id: string, x: number, y: number, w: number, h: number) => void; onSwipeActive: (active: boolean) => void; onImagePress: (images: string[], index: number, message: ChatMessage) => void; dragActive: SharedValue<boolean>; dragFingerY: SharedValue<number>; hoveredAction: SharedValue<string>; actionZones: SharedValue<ActionZone[]>; onFireDragAction: (m: ChatMessage, action: string) => void; onOpenFullscreen: (m: ChatMessage) => void }) {
+function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, linkEmoji, bubbleColors, bubbleOpacity, bubbleTextColor, inColors, inOpacity, inTextColor, highlighted, isVisible, imagesReady, onReply, onReplyJump, onLongPress, onMeasured, onSwipeActive, onImagePress, dragActive, dragFingerY, hoveredAction, actionZones, onFireDragAction, onOpenFullscreen }: { message: ChatMessage; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string; linkEmoji?: string; bubbleColors: string[]; bubbleOpacity: number; bubbleTextColor: string; inColors: string[]; inOpacity: number; inTextColor: string; highlighted?: boolean; isVisible?: boolean; imagesReady?: boolean; onReply: (m: ChatMessage) => void; onReplyJump?: (messageId?: string) => void; onLongPress: (m: ChatMessage) => void; onMeasured?: (id: string, x: number, y: number, w: number, h: number) => void; onSwipeActive: (active: boolean) => void; onImagePress: (images: string[], index: number, message: ChatMessage) => void; dragActive: SharedValue<boolean>; dragFingerY: SharedValue<number>; hoveredAction: SharedValue<string>; actionZones: SharedValue<ActionZone[]>; onFireDragAction: (m: ChatMessage, action: string) => void; onOpenFullscreen: (m: ChatMessage) => void }) {
   const theme = useTheme();
   const t = useT();
   // The quoted message's one-line preview. Cheap (a few string checks) and only meaningful when this
@@ -776,8 +776,23 @@ function MessageBubble({ message, isOwn, ownName, peerName, fontSize, bubbleRadi
   const sideTextFaint = sideTextColor === '#FFFFFF' ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.5)';
   // Reply/heading/body/link/timestamp colors: contrast tint on a colored
   // bubble, theme defaults on the neutral incoming surface.
+  /**
+   * Nothing but media: images and no text, no quoted message, no pixel icon.
+   *
+   * Such a message is rendered WITHOUT the bubble fill so a cut-out (alpha) GIF has no background
+   * behind it — see the long note at the container below. The conditions are all "is there anything
+   * else in here that needs a surface to sit on": text needs one to stay legible, a reply quote draws
+   * its own left rule against it, and the pixel icon is a decoration on the bubble.
+   */
+  const isMediaOnly =
+    !!message.imageUrls &&
+    message.imageUrls.length > 0 &&
+    !message.text &&
+    !message.replyToText &&
+    !message.replyToImage &&
+    !message.replyPixelIconId;
+
   const replyBorderColor = coloredBubble ? sideTextDim : theme.colors.accent.primary;
-  const replyHeadingColor = coloredBubble ? sideTextStrong : theme.colors.accent.primary;
   const replyBodyColor = coloredBubble ? sideTextDim : theme.colors.text.tertiary;
   const bodyTextColor = coloredBubble ? sideTextColor : theme.colors.text.primary;
   const linkTextColor = coloredBubble ? sideTextColor : theme.colors.accent.primary;
@@ -992,16 +1007,34 @@ function MessageBubble({ message, isOwn, ownName, peerName, fontSize, bubbleRadi
           {/* The expand-to-fullscreen affordance now lives inline next to the
               timestamp, further down — see `bubbleStyles.metaRow`. */}
 
+          {/* ── A MEDIA-ONLY MESSAGE GETS NO BUBBLE ──────────────────────────────────
+   
+              Asked for: "GIFs that have no background — a dance, or a photo with no backdrop. I want
+              them with no background everywhere."
+   
+              The transparency was never lost in transit. The proxy already keeps GIF alpha intact
+              (`output=gif&n=-1`, deliberately never re-encoding to WebP — see `proxiedImageUrl`). What
+              filled it in was THIS view: the bubble paints its fill, or its gradient, directly behind
+              the image. So a cut-out sticker showed the bubble colour where its background should have
+              been, which is exactly "it has a background".
+   
+              A message that is nothing but media does not need a bubble at all. No text to sit on, no
+              quote, no padding to earn — so the fill, the gradient and the 14/10 padding all go, and the
+              image sits on the chat background. A cut-out GIF then reads as a sticker, and an ordinary
+              photo loses a coloured frame it never needed either.
+   
+              Safe because the timestamp lives OUTSIDE this view (see `metaRowOwn`/`metaRowPeer`), so it
+              keeps its own colour against the chat background and cannot be lost with the fill. */}
           <View style={{
-            paddingHorizontal: 14,
-            paddingVertical: 10,
+            paddingHorizontal: isMediaOnly ? 0 : 14,
+            paddingVertical: isMediaOnly ? 0 : 10,
             borderRadius: bubbleRadius,
-            backgroundColor: isGradient ? 'transparent' : solidBg,
+            backgroundColor: isMediaOnly || isGradient ? 'transparent' : solidBg,
             borderBottomRightRadius: isOwn ? 4 : bubbleRadius,
             borderBottomLeftRadius: isOwn ? bubbleRadius : 4,
-            overflow: isGradient ? 'hidden' : undefined,
+            overflow: !isMediaOnly && isGradient ? 'hidden' : undefined,
           }}>
-            {isGradient && gradFill ? (
+            {isGradient && gradFill && !isMediaOnly ? (
               <LinearGradient
                 colors={gradFill as any}
                 start={{ x: 0, y: 0 }}
@@ -1026,10 +1059,17 @@ function MessageBubble({ message, isOwn, ownName, peerName, fontSize, bubbleRadi
                 {message.replyPixelIconId ? (
                   <PixelIcon id={message.replyPixelIconId} size={22} style={bubbleStyles.replyPixel} />
                 ) : null}
+                {/* NO AUTHOR LINE. Just the message being answered.
+   
+                    Asked for directly: "it writes his name — make it simply what I replied to. He writes
+                    hello, I swipe and reply, and it shows hello."
+   
+                    It is also the better design for a one-to-one chat, which is the only kind this screen
+                    renders. There are exactly two possible authors and the quote sits inside a bubble that
+                    is already on one side or the other, so the name was restating what the layout says
+                    while costing the quote a whole line — and on a short quote the name was the larger
+                    half of it. A group chat would need the name back; there are no group chats. */}
                 <View style={bubbleStyles.replyTextWrap}>
-                  <Text variant="caption" weight="semibold" color={replyHeadingColor} numberOfLines={1} style={bubbleStyles.replyHeading}>
-                    {message.replyToIsOwn ? ownName : peerName}
-                  </Text>
                   <Text variant="caption" color={replyBodyColor} numberOfLines={1} style={bubbleStyles.replyBody}>
                     {quotedPreview}
                   </Text>
@@ -1161,9 +1201,7 @@ const MemoMessageBubble = React.memo(MessageBubble, (prev, next) => {
     pm.replyToText === nm.replyToText &&
     pm.replyToImage === nm.replyToImage &&
     pm.replyToIsOwn === nm.replyToIsOwn &&
-    prev.ownName === next.ownName &&
-    prev.peerName === next.peerName &&
-    pm.replyPixelIconId === nm.replyPixelIconId &&
+   pm.replyPixelIconId === nm.replyPixelIconId &&
     (pm.imageUrls === nm.imageUrls ||
       (pm.imageUrls?.length === nm.imageUrls?.length &&
         (pm.imageUrls || []).every((u, i) => u === nm.imageUrls?.[i]))) &&
@@ -1264,6 +1302,8 @@ export default function ChatScreen() {
   // button). iOS-only and gated on the user toggle; false everywhere else, so
   // all the fallback paths below render exactly as before. Read once, reused.
   const glassActive = useLiquidGlassActive();
+  // Media-panel strings, shared with the comments screen. See the hook for why they are not inline.
+  const mediaPanelLabels = useMediaPanelLabels();
   const { id, participantId: paramParticipantId } = useLocalSearchParams<{ id: string; participantId?: string }>();
   // ── Canonical conversation id (peers-on-different-channels fix) ────────
   // The route `id` is EITHER a real conversation id (messages-list
@@ -2946,9 +2986,6 @@ export default function ChatScreen() {
   const chatLocalName = specificSettings?.localName;
   const displayName = chatLocalName || conversation?.participantName || profileData?.display_name || entityConv?.participantName || t('chat.fallback_name');
   const displayEmoji = (conversation as any)?.participantEmoji || profileData?.emoji || entityConv?.participantEmoji || '😊';
-  // The signed-in account's own name, for the reply heading. Falls back to the localized "Вы" rather
-  // than an empty heading if the profile has no display name yet.
-  const ownDisplayName = useAuthStore((s) => s.user?.displayName) || t('chat.you', 'Вы');
   const displayVerified = profileData?.is_verified || cachedProfile?.is_verified || (entityConv as any)?.participantVerified || false;
   const displayBadge = profileData?.badge || cachedProfile?.badge || (entityConv as any)?.participantBadge || null;
   const profileId = participantId;
@@ -5073,12 +5110,7 @@ export default function ChatScreen() {
         tracker={visTracker}
         message={m}
         isOwn={m.senderId === currentUserId}
-        // Real names in the reply heading, instead of "Вы" / "Собеседник". Read at render time (not
-        // captured into the message when it was sent) for the same reason bubble ownership is: one
-        // device can switch accounts, and a rename must show up on old replies too.
-        ownName={ownDisplayName}
-        peerName={displayName}
-        fontSize={chatSettings.fontSize}
+       fontSize={chatSettings.fontSize}
         bubbleRadius={chatSettings.bubbleRadius}
         fontFamily={chatSettings.fontFamily}
         linkEmoji={chatSettings.linkEmoji}
@@ -5111,7 +5143,7 @@ export default function ChatScreen() {
     // NOTE: `scrollToMessageId` and `dayLabels` are deliberately absent too — both
     // change identity on every data/window change and are reached through refs
     // (`stableJumpToMessage`, `dayLabelsRef`) for exactly that reason.
-  }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, chatSettings.linkEmoji, bubbleColorsKey, bubbleColors, bubbleOpacity, bubbleTextColor, inColorsKey, inColors, inOpacity, inTextColor, startReply, stableJumpToMessage, handleSwipeActive, openImageViewer, parseMessage, activeMatchId, jumpHighlightId, onMessageLongPress, currentUserId, ownDisplayName, displayName, dragActiveSV, dragFingerYSV, hoveredActionSV, actionZonesSV, fireDragAction, visTracker, imagesReady, glassActive, theme, openFullscreen]);
+  }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, chatSettings.linkEmoji, bubbleColorsKey, bubbleColors, bubbleOpacity, bubbleTextColor, inColorsKey, inColors, inOpacity, inTextColor, startReply, stableJumpToMessage, handleSwipeActive, openImageViewer, parseMessage, activeMatchId, jumpHighlightId, onMessageLongPress, currentUserId, dragActiveSV, dragFingerYSV, hoveredActionSV, actionZonesSV, fireDragAction, visTracker, imagesReady, glassActive, theme, openFullscreen]);
 
   // Stable list header / footer elements. Passing INLINE JSX to FlashList's
   // ListHeaderComponent / ListFooterComponent handed it a fresh element
@@ -5688,7 +5720,7 @@ export default function ChatScreen() {
               recentGifs={recentGif}
               theme={theme}
               bottomInset={insets.bottom}
-              labels={{ gif: t('media.tab.gif'), emoji: t('media.tab.emoji'), copy: t('media.action.copy'), send: t('media.action.send') }}
+              labels={mediaPanelLabels}
               onSendEmoji={onSendEmojiMessage}
               onCopyEmoji={onCopyEmoji}
               onSendGif={onPickGif}

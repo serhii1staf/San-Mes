@@ -36,11 +36,19 @@ export interface GifPanelProps {
   bottomInset?: number;
   /** Embedded in the shared MediaPanel surface → no own bg/rounding. */
   bare?: boolean;
-  /** Most-recently-used GIFs — prepended to the trending grid. */
+  /** Most-recently-used GIFs - prepended to the trending grid. */
   recentGifs?: GiphyItem[];
+  /** Top content padding, so the overlaying recents strip does not cover the first row. */
+  topInset?: number;
+  /** Raw scroll notification. The parent latches it to hide/restore its chrome. */
+  onScrollTick?: () => void;
+  /** GIFs the user added by pasting a link. Shown first - they asked for them, so they lead. */
+  customGifs?: GiphyItem[];
+  /** Long-press a user-added GIF to drop it. Absent for Giphy items, which are not the user's. */
+  onRemoveCustomGif?: (id: string) => void;
 }
 
-function GifPanelComponent({ height, onSelect, onLongPress, theme, bottomInset = 0, bare = false, recentGifs }: GifPanelProps) {
+function GifPanelComponent({ height, onSelect, onLongPress, theme, bottomInset = 0, bare = false, recentGifs, topInset = 0, onScrollTick, customGifs, onRemoveCustomGif }: GifPanelProps) {
   const t = useT();
   const glassActive = useLiquidGlassActive();
   const [gifs, setGifs] = useState<GiphyItem[]>(() => getCachedTrending() || []);
@@ -101,15 +109,27 @@ function GifPanelComponent({ height, onSelect, onLongPress, theme, bottomInset =
   }, [loading, loadingMore, load]);
 
   const contentStyle = useMemo(
-    () => [styles.listContent, { paddingBottom: 12 + bottomInset }],
-    [bottomInset],
+    () => [styles.listContent, { paddingTop: 10 + topInset, paddingBottom: 12 + bottomInset }],
+    [bottomInset, topInset],
   );
 
   const renderItem = useCallback(
     ({ item }: { item: GiphyItem }) => (
       <Pressable
         onPress={() => onSelect(item)}
-        onLongPress={onLongPress ? () => onLongPress(item) : undefined}
+        // A GIF the user added is the only one they can delete, so long-press means two different things
+        // depending on the cell — remove for their own, preview for Giphy's. Keyed off the `custom:` id
+        // prefix the store mints, which is the only marker that survives being persisted and reloaded.
+        //
+        // Without this there is no way to undo an add: the picker would accumulate every mistyped link
+        // for ever, which is the failure mode of every "add your own" feature that ships without a remove.
+        onLongPress={
+          onRemoveCustomGif && item.id.startsWith('custom:')
+            ? () => onRemoveCustomGif(item.id)
+            : onLongPress
+              ? () => onLongPress(item)
+              : undefined
+        }
         delayLongPress={280}
         style={{ width: CELL_W, height: CELL_W, borderRadius: 10, overflow: 'hidden', marginBottom: CELL_GAP, backgroundColor: theme.colors.background.secondary }}
       >
@@ -159,15 +179,26 @@ function GifPanelComponent({ height, onSelect, onLongPress, theme, bottomInset =
         ) : null}
       </Pressable>
     ),
-    [onSelect, onLongPress, theme, decodeReady],
+    [onSelect, onLongPress, onRemoveCustomGif, theme, decodeReady],
   );
 
   // Recently-used GIFs first, then trending (deduped by id).
+  // Order: the user's own GIFs, then what they used recently, then trending. Their own come first
+  // because they were added deliberately - a sticker you saved and cannot find is the same as not
+  // having saved it. Deduped by id across all three so a GIF cannot occupy two cells.
   const data = useMemo(() => {
-    if (!recentGifs || recentGifs.length === 0) return gifs;
-    const seen = new Set(recentGifs.map((g) => g.id));
-    return [...recentGifs, ...gifs.filter((g) => !seen.has(g.id))];
-  }, [recentGifs, gifs]);
+    const own = customGifs && customGifs.length > 0 ? customGifs : [];
+    const recent = recentGifs && recentGifs.length > 0 ? recentGifs : [];
+    if (own.length === 0 && recent.length === 0) return gifs;
+    const seen = new Set<string>();
+    const out: GiphyItem[] = [];
+    for (const g of [...own, ...recent, ...gifs]) {
+      if (!g?.id || seen.has(g.id)) continue;
+      seen.add(g.id);
+      out.push(g);
+    }
+    return out;
+  }, [customGifs, recentGifs, gifs]);
 
   return (
     <View
@@ -220,6 +251,11 @@ function GifPanelComponent({ height, onSelect, onLongPress, theme, bottomInset =
           columnWrapperStyle={{ gap: CELL_GAP }}
           contentContainerStyle={contentStyle}
           showsVerticalScrollIndicator={false}
+          onScroll={onScrollTick}
+          // 64 ms, not 16. This only has to tell the parent that a scroll IS happening; the parent
+          // latches the first tick and restores on an idle timer, so a higher rate would buy nothing
+          // and cost a bridge callback per frame during exactly the gesture we are protecting.
+          scrollEventThrottle={64}
           keyboardShouldPersistTaps="always"
           removeClippedSubviews
           // ── THESE NUMBERS ARE ROWS, NOT CELLS ──────────────────────────────────

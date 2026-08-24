@@ -233,6 +233,16 @@ const en: Record<string, string> = {
   'share.send': 'Send',
   'share.sent': 'Sent',
   'share.no_chats': 'No one to send to yet — start a conversation',
+
+  // ─── Add your own GIF ──────────────────────────────────────────────────
+  'gif.add.title': 'Add a GIF',
+  'gif.add.hint': 'Paste a direct link to a GIF or image. Works with Telegram, Giphy, Tenor and anything else that gives you the file address. Long-press one of your own GIFs to remove it.',
+  'gif.add.placeholder': 'https://…',
+  'gif.add.paste': 'Paste',
+  'gif.add.action': 'Add',
+  'gif.add.err_https': 'The link must start with https://',
+  'gif.add.err_not_media': 'That looks like a web page, not an image. Open it, copy the image address itself, and paste that.',
+  'gif.add.added': 'GIF added',
   'toast.report_sent': 'Report sent',
   'toast.will_send_offline': 'Will send when online',
   'toast.post_deleted': 'Post deleted',
