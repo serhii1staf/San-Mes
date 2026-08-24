@@ -365,6 +365,16 @@ function healLegacySender(
 // open-the-chat frame. The remaining truly-dynamic bits (theme colors,
 // alignSelf, margins) are still applied as small override objects, which
 // React happily diffs without re-walking the whole tree.
+// ── BUBBLE WIDTH BUDGET — declared BEFORE the StyleSheet that consumes it ────
+//
+// These must sit above `bubbleStyles`, because `StyleSheet.create` runs at module evaluation and
+// reads them immediately. Declaring them further down produced
+// `Block-scoped variable 'META_ROW_MARGIN' used before its declaration`.
+const META_ROW_MARGIN = 16;
+const META_COL_WIDTH = 46; // metaOutsideCol: width 34 + marginHorizontal 6 * 2
+const BUBBLE_H_PADDING = 28; // the bubble's paddingHorizontal (14) on both sides
+const BUBBLE_MAX_W = SCREEN_WIDTH - META_ROW_MARGIN * 2 - META_COL_WIDTH;
+
 const bubbleStyles = StyleSheet.create({
   row: { justifyContent: 'center' },
   // Full-width swipe target. `width: '100%'` rather than `flex: 1` because the parent is not
@@ -407,10 +417,22 @@ const bubbleStyles = StyleSheet.create({
   // longer the outermost element on its side — the row is, so it is the row that must clear the
   // screen edge. `alignItems: flex-end` sits the meta level with the bottom of the bubble, which
   // is where a timestamp reads correctly on a multi-line message.
-  metaOutsideRow: { alignItems: 'flex-end', marginHorizontal: 16 },
+  // Two frozen variants instead of one style plus an inline `{ flexDirection }` literal. The
+  // literal was allocated per render PER ROW and handed React a new style identity every time,
+  // which defeats the whole point of the memo comparator above it.
+  metaRowOwn: { flexDirection: 'row-reverse', alignItems: 'flex-end', marginHorizontal: META_ROW_MARGIN },
+  metaRowPeer: { flexDirection: 'row', alignItems: 'flex-end', marginHorizontal: META_ROW_MARGIN },
+  // A POINT maximum, not a percentage — see the note on BUBBLE_MAX_W. `flexShrink: 1` lets a long
+  // message stop at the limit instead of forcing the row wider than the screen, and hoisting this
+  // into the StyleSheet means every bubble shares one frozen style object rather than allocating a
+  // fresh literal on each render of each row.
+  bubbleBox: { maxWidth: BUBBLE_MAX_W, flexShrink: 1, marginBottom: 4 },
   // `flexShrink: 0` is load-bearing: without it a long message squeezes the column to zero width
   // and the time disappears. `alignItems: center` stacks the button directly over the time.
-  metaOutsideCol: { flexShrink: 0, alignItems: 'center', justifyContent: 'flex-end', gap: 1, marginHorizontal: 6, paddingBottom: 2 },
+  // FIXED width, so `META_COL_WIDTH` above is a fact rather than an estimate: 34 + 6 + 6 = 46.
+  // If this width changes, change META_COL_WIDTH with it or the bubble limit silently stops
+  // matching reality — which is precisely the bug this block exists to prevent.
+  metaOutsideCol: { width: 34, flexShrink: 0, alignItems: 'center', justifyContent: 'flex-end', gap: 1, marginHorizontal: 6, paddingBottom: 2 },
   timestampOutside: { fontSize: 10, lineHeight: 12, opacity: 0.9 },
   // The icon's own box is small, but `hitSlop={10}` on the Pressable takes the touch
   // target well past Apple's 44 pt guidance without affecting layout.
@@ -518,7 +540,32 @@ function OlderMessagesLoader({ visible, color }: { visible: boolean; color: stri
 // Max bounds for a single sent photo. The container is sized to the image's
 // natural aspect ratio (capped to these bounds) so the WHOLE image is visible
 // in the bubble — no crop — instead of being squeezed into a fixed square.
-const CHAT_IMG_MAX_W = Math.min(Math.round(SCREEN_WIDTH * 0.66), 270);
+// ── BUBBLE WIDTH MUST BE A NUMBER, AND IT MUST FIT AN IMAGE ─────────────────
+//
+// Moving the timestamp outside the bubble broke this, badly, and the perf monitor showed how
+// badly: chat/[id] went from 2-4 long tasks to 176, worst 562 ms, FPS down to 21. Reported at the
+// same time as GIFs, photos and link previews "breaking — not opening fully".
+//
+// Both symptoms are one cause. I gave the bubble `maxWidth: '70%'`, a percentage of the ROW, while
+// images inside it are sized by `CHAT_IMG_MAX_W`, an absolute number. On a 390 pt screen the row is
+// 358 pt wide, 70% of that is 250, and the bubble's own padding leaves 222 pt of content — but
+// `CHAT_IMG_MAX_W` asks for 257. Every media bubble therefore overflowed its own constraint, and a
+// child that cannot satisfy its parent's max is exactly what makes a flex layout re-measure
+// repeatedly. Hundreds of long tasks, and clipped media.
+//
+// So the bubble's limit is now derived from the same arithmetic that sizes the image, in points
+// rather than percent:
+//
+//   SCREEN_WIDTH
+//     − META_ROW_MARGIN * 2   the row's own horizontal margins (it owns them now, not the bubble)
+//     − META_COL_WIDTH        the timestamp/fullscreen column plus its margins
+//     = BUBBLE_MAX_W
+//
+// and `CHAT_IMG_MAX_W` is then clamped to fit INSIDE that, minus the bubble's horizontal padding.
+// Deriving both from one expression is what stops them drifting apart again — the previous pair
+// disagreed only because one was a percentage and the other was not, so no single edit could ever
+// have kept them consistent.
+const CHAT_IMG_MAX_W = Math.min(Math.round(SCREEN_WIDTH * 0.66), 270, BUBBLE_MAX_W - BUBBLE_H_PADDING);
 const CHAT_IMG_MAX_H = 340;
 
 // Fit a photo's natural pixel size into the bubble's max bounds, preserving
@@ -805,8 +852,8 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
 
             `alignItems: flex-end` puts the meta level with the BOTTOM of the bubble, which is
             where a timestamp belongs on a multi-line message. */}
-        <View style={[bubbleStyles.metaOutsideRow, { flexDirection: isOwn ? 'row-reverse' : 'row' }]}>
-        <Reanimated.View ref={bubbleRef} style={[bubbleAnimStyle, { maxWidth: '70%', marginBottom: 4 }]}>
+        <View style={isOwn ? bubbleStyles.metaRowOwn : bubbleStyles.metaRowPeer}>
+        <Reanimated.View ref={bubbleRef} style={[bubbleAnimStyle, bubbleStyles.bubbleBox]}>
         {/* Long-press + drag-select is handled by `composedGesture` on the
             GestureDetector above (UI thread). This wrapper used to be a
             `Pressable onLongPress`; it's now a plain View so the gesture owns
