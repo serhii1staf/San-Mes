@@ -28,7 +28,6 @@ const PREVIEW_MAX_HEIGHT = SCREEN_HEIGHT * 0.45;
  * than the post menu on devices with a home indicator.
  */
 const SHEET_BOTTOM_GAP = 16;
-const LONG_TEXT_THRESHOLD = 220;
 
 export type MessageAction = 'reply' | 'copy' | 'copyImage' | 'edit' | 'delete' | 'translate';
 
@@ -133,9 +132,12 @@ function ActionRow({
 //   - Held content rendered as a neutral elevated card (NOT a colored bubble),
 //     so all rich children (LinkPreview videos, image grids, formatted text)
 //     fit at their natural size without being recolored or clipped.
-//   - For "long" messages (text > LONG_TEXT_THRESHOLD chars) the card uses a
-//     ScrollView capped at 45% of screen height. Short messages use a plain
-//     View so they shrink-wrap to their content.
+//   - The card is ALWAYS a ScrollView capped at 45% of screen height. It used to
+//     switch to a plain View for short text, gated on a character count — but the
+//     card's height also comes from photos, the reply quote and a link preview, so
+//     a photo-only message (no text at all) always took the non-scrolling branch
+//     and could overflow the cap unreachably. A ScrollView shrink-wraps content
+//     that fits, so the branch bought nothing.
 //   - Action sheet underneath ALWAYS stays fully on screen — that's what the
 //     45% cap guarantees.
 export const MessageContextMenu = forwardRef<MessageContextMenuHandle, MessageContextMenuProps>(function MessageContextMenu({ visible, message, isOwn, linkEmoji, imageProxyWidth, onClose, onAction, dragActive, hoveredAction, actionZones }, ref) {
@@ -280,7 +282,6 @@ export const MessageContextMenu = forwardRef<MessageContextMenuHandle, MessageCo
   const hasImages = !!message.imageUrls && message.imageUrls.length > 0;
   const imageCount = hasImages ? message.imageUrls!.length : 0;
   const link = (!hasImages && !hasCodeBlock(message.text)) ? extractFirstUrl(message.text) : null;
-  const isLong = (message.text?.length || 0) > LONG_TEXT_THRESHOLD;
 
   // Tapping a link in the held-message preview must dismiss this overlay
   // first. Even though we render as an absolute View (not a Modal), the
@@ -373,20 +374,25 @@ export const MessageContextMenu = forwardRef<MessageContextMenuHandle, MessageCo
               internally only for long-text cases. */}
           <View style={{ marginHorizontal: 12, marginBottom: 8, alignItems: 'stretch' }} pointerEvents="box-none">
             <View style={{ borderRadius: 18, backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF', overflow: 'hidden' }}>
-              {isLong ? (
-                <ScrollView
-                  style={{ maxHeight: PREVIEW_MAX_HEIGHT }}
-                  showsVerticalScrollIndicator={false}
-                  contentContainerStyle={{ paddingHorizontal: 14, paddingVertical: 12 }}
-                  bounces={false}
-                >
-                  {previewInner}
-                </ScrollView>
-              ) : (
-                <View style={{ paddingHorizontal: 14, paddingVertical: 12 }}>
-                  {previewInner}
-                </View>
-              )}
+              {/* ALWAYS a ScrollView — the `isLong` branch is gone here too.
+   
+                  Same latent bug the comments menu had: `isLong` only measures `message.text`, but a
+                  held message's card height also comes from the reply quote, an image GRID of up to
+                  six 220 pt photos, and a link-preview card. A photo-only message has no text at
+                  all, so it always took the non-scrolling branch and could overflow the 45 % cap
+                  with no way to reach the rest.
+   
+                  A ScrollView with `maxHeight` shrink-wraps content that fits, so short messages are
+                  unchanged. `nestedScrollEnabled` for Android, which needs it explicitly. */}
+              <ScrollView
+                style={{ maxHeight: PREVIEW_MAX_HEIGHT }}
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={{ paddingHorizontal: 14, paddingVertical: 12 }}
+                bounces={false}
+                nestedScrollEnabled
+              >
+                {previewInner}
+              </ScrollView>
             </View>
           </View>
 

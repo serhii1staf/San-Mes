@@ -11,7 +11,7 @@ import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { LinkedText } from '../../src/components/ui/LinkedText';
 import { CachedImage, prefetchImages } from '../../src/components/ui/CachedImage';
-import { ImageViewerModal } from '../../src/components/chat/ImageViewerModal';
+import { ImageViewerModal, ViewerActionButton } from '../../src/components/chat/ImageViewerModal';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { UserBadge } from '../../src/components/ui/UserBadge';
 import { ProfilePostCard } from '../../src/components/profile/ProfilePostCard';
@@ -1432,7 +1432,9 @@ export default function ProfileScreen() {
     return (
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
         {!isRepostPost && (
-          <Pressable
+          <ViewerActionButton
+            icon="edit-2"
+            accessibilityLabel={t('common.edit')}
             onPress={() => {
               const ep = viewingPost;
               const pid = viewingImage.postId;
@@ -1445,21 +1447,20 @@ export default function ProfileScreen() {
               });
               router.push('/(tabs)/create');
             }}
-            style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: 'rgba(255,255,255,0.16)', alignItems: 'center', justifyContent: 'center' }}
-          >
-            <Feather name="edit-2" size={17} color="#FFFFFF" />
-          </Pressable>
+          />
         )}
-        <Pressable
+        <ViewerActionButton
+          icon="share"
+          accessibilityLabel={t('post.share')}
           onPress={async () => {
             const { shareImageUrl } = require('../../src/utils/sharePost');
             await shareImageUrl(viewingImage.uri, viewingPost?.content);
           }}
-          style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: 'rgba(255,255,255,0.16)', alignItems: 'center', justifyContent: 'center' }}
-        >
-          <Feather name="share" size={17} color="#FFFFFF" />
-        </Pressable>
-        <Pressable
+        />
+        <ViewerActionButton
+          icon="trash-2"
+          destructive
+          accessibilityLabel={t('common.delete')}
           onPress={() => {
             if (!user?.id) return;
             const pid = viewingImage.postId;
@@ -1472,10 +1473,7 @@ export default function ProfileScreen() {
               },
             ]);
           }}
-          style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: 'rgba(255,60,50,0.24)', alignItems: 'center', justifyContent: 'center' }}
-        >
-          <Feather name="trash-2" size={17} color="#FF3B30" />
-        </Pressable>
+        />
       </View>
     );
   }, [viewingImage, viewingPost, user?.id, t, loadMyPosts]);

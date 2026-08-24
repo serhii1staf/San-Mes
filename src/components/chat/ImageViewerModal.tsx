@@ -15,6 +15,90 @@ import Reanimated, {
 import { CachedImage } from '../ui/CachedImage';
 import { ModalStatusBar } from '../ui/ModalStatusBar';
 import { useTabBarStore } from '../../store/tabBarStore';
+import { GlassBg, useLiquidGlassActive } from '../ui/LiquidGlass';
+
+/**
+ * One round control in the viewer's chrome — the close X, and every action the callers put in the
+ * footer (edit, share, delete, pin).
+ *
+ * ── WHY IT IS SHARED ────────────────────────────────────────────────────────
+ *
+ * Asked for: "the edit, share and close buttons must support liquid glass."
+ *
+ * They did not, and the reason they did not is that there were four separate hand-written button
+ * styles — the X in here, and a row each in the own-profile, other-profile and (soon) chat footers,
+ * all using a flat `rgba(255,255,255,0.16)` circle. Adding glass to each would have been four
+ * copies of the same branch, and the fourth would have drifted like the viewers themselves did.
+ *
+ * So the button is a component and the glass decision lives in it once. Callers pass an icon and a
+ * handler; they cannot get this wrong or forget the glass path.
+ *
+ * ── THE APP-WIDE GLASS RULE, FOLLOWED ───────────────────────────────────────
+ *
+ * `GlassBg` goes BEHIND the icon as a SIBLING, never as a parent. The codebase states this rule in
+ * several places (the chat's day-separator chip spells it out) and the reason is that the material
+ * optically warps whatever it contains — an icon inside a GlassView reads as slightly distorted.
+ *
+ * Also note `overflow: hidden` is only applied on the flat path. Clipping a native glass view kills
+ * the outward liquid morph on touch, which is the whole point of the interactive material.
+ */
+export function ViewerActionButton({
+  icon,
+  onPress,
+  destructive = false,
+  accessibilityLabel,
+}: {
+  icon: keyof typeof Feather.glyphMap;
+  onPress: () => void;
+  /** Tints the glyph red. Used by delete. */
+  destructive?: boolean;
+  accessibilityLabel?: string;
+}) {
+  const glassActive = useLiquidGlassActive();
+  const color = destructive ? '#FF3B30' : '#FFFFFF';
+  return (
+    <Pressable
+      onPress={onPress}
+      hitSlop={8}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      style={[
+        actionBtnStyles.base,
+        glassActive
+          ? null
+          : {
+              // The flat fallback. A destructive action keeps a red-tinted fill so it is
+              // distinguishable at a glance without relying on the glyph colour alone.
+              backgroundColor: destructive ? 'rgba(255,60,50,0.24)' : 'rgba(255,255,255,0.16)',
+              overflow: 'hidden',
+            },
+      ]}
+    >
+      {glassActive ? (
+        <GlassBg
+          borderRadius={21}
+          glassStyle="regular"
+          interactive
+          colorScheme="dark"
+          // A faint red wash keeps delete readable as destructive through the material, which on
+          // its own is colourless and would make every action look identical.
+          tintColor={destructive ? 'rgba(255,60,50,0.22)' : undefined}
+        />
+      ) : null}
+      <Feather name={icon} size={18} color={color} />
+    </Pressable>
+  );
+}
+
+const actionBtnStyles = StyleSheet.create({
+  base: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+});
 
 /**
  * Full-screen photo viewer for the chat.
@@ -509,14 +593,9 @@ function ImageViewerModalComponent({
       {/* Wrapped in an animated view so it fades WITH the drag and WITH the exit, instead of being
           cut off in one frame at the end — the reported dissolve artifact. */}
       <Reanimated.View style={[styles.closeBtnWrap, { top: topInset + 12 }, topChromeStyle]}>
-        <Pressable
-          onPress={requestClose}
-          hitSlop={10}
-          accessibilityRole="button"
-          style={styles.closeBtn}
-        >
-          <Feather name="x" size={20} color="#FFFFFF" />
-        </Pressable>
+        {/* Same component as the footer actions, so the X picks up liquid glass along with them
+            rather than being the one control that stayed flat. */}
+        <ViewerActionButton icon="x" onPress={requestClose} />
       </Reanimated.View>
     </View>
   );
@@ -542,17 +621,9 @@ const styles = StyleSheet.create({
   page: { width: SCREEN_W, height: '100%', justifyContent: 'center', alignItems: 'center' },
   image: { width: SCREEN_W, height: '100%' },
   closeBtnWrap: { position: 'absolute', right: 16, zIndex: 20 },
-  closeBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: 'rgba(255,255,255,0.15)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  // Right inset clears the 36 pt close button plus its margin, so a long display name truncates
+  // Right inset clears the 42 pt close button plus its margin, so a long display name truncates
   // instead of sliding underneath it.
-  header: { position: 'absolute', left: 16, right: 64, zIndex: 10 },
+  header: { position: 'absolute', left: 16, right: 70, zIndex: 10 },
   footer: { position: 'absolute', left: 0, right: 0, bottom: 0, alignItems: 'center', zIndex: 10 },
 });
 

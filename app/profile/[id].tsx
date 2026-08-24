@@ -23,7 +23,7 @@ import { triggerHaptic } from '../../src/utils/haptics';
 import { showToast } from '../../src/store/toastStore';
 import { formatTimeAgo } from '../../src/utils/mockData';
 import { CachedImage } from '../../src/components/ui/CachedImage';
-import { ImageViewerModal } from '../../src/components/chat/ImageViewerModal';
+import { ImageViewerModal, ViewerActionButton } from '../../src/components/chat/ImageViewerModal';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { UserBadge } from '../../src/components/ui/UserBadge';
 import { PostContextMenu } from '../../src/components/ui/PostContextMenu';
@@ -1595,7 +1595,9 @@ export default function UserProfileScreen() {
     return (
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
         {isOwnProfile && (
-          <Pressable
+          <ViewerActionButton
+            icon="edit-2"
+            accessibilityLabel={t('common.edit')}
             onPress={() => {
               const post = viewingPost;
               const pid = viewingImage.postId;
@@ -1608,23 +1610,22 @@ export default function UserProfileScreen() {
               setViewingImage(null);
               router.push('/(tabs)/create');
             }}
-            style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: 'rgba(255,255,255,0.16)', alignItems: 'center', justifyContent: 'center' }}
-          >
-            <Feather name="edit-2" size={17} color="#FFFFFF" />
-          </Pressable>
+          />
         )}
-        <Pressable
+        <ViewerActionButton
+          icon="share"
+          accessibilityLabel={t('post.share')}
           onPress={async () => {
             const caption = viewingPost?.content || viewingPost?.originalPost?.content || '';
             const { shareImageUrl } = require('../../src/utils/sharePost');
             await shareImageUrl(viewingImage.uri, caption);
           }}
-          style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: 'rgba(255,255,255,0.16)', alignItems: 'center', justifyContent: 'center' }}
-        >
-          <Feather name="share" size={17} color="#FFFFFF" />
-        </Pressable>
+        />
         {isOwnProfile && (
-          <Pressable
+          <ViewerActionButton
+            icon="trash-2"
+            destructive
+            accessibilityLabel={t('common.delete')}
             onPress={() => {
               const pid = viewingImage.postId;
               Alert.alert(t('profile.delete_post_title'), t('profile.delete_post_msg'), [
@@ -1639,10 +1640,7 @@ export default function UserProfileScreen() {
                 },
               ]);
             }}
-            style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: 'rgba(255,60,50,0.24)', alignItems: 'center', justifyContent: 'center' }}
-          >
-            <Feather name="trash-2" size={17} color="#FF3B30" />
-          </Pressable>
+          />
         )}
       </View>
     );
