@@ -2672,14 +2672,36 @@ export default function ChatScreen() {
       } catch {}
     });
 
-    // Hydrate the full history into the STORE (off the input frame) so
-    // scroll-up / reply-jump / search have the complete array in memory. Safe
-    // to defer — the coalesced durable write above will land regardless.
-    const handle = InteractionManager.runAfterInteractions(() => {
-      hydrateFullHistory();
-    });
-    return wireDurability(handle);
-  }, [conversationId, myMessages, hydrateFullHistory]);
+    // ── NO EAGER FULL HYDRATION HERE ANY MORE ────────────────────────────────
+    //
+    // This used to be `runAfterInteractions(() => hydrateFullHistory())`, and it was measured as the
+    // single worst freeze in the app: a 1105 ms long task on chat/[id], arriving ~2.3 s after the
+    // chat opened, with `pendingDecodes: 0` and the last image mark 1.8 s earlier — so unambiguously
+    // JS, not image work.
+    //
+    // Look at what it does in one synchronous pass: JSON.parse up to 1000 messages out of MMKV, map
+    // `healLegacySender` over all of them, build a Map over all of them, merge the store in,
+    // `filterTombstoned` over the result, then `setMessages` — which pushes a 1000-item array into
+    // the store, so `buildDaySeparators` walks all 1000 and the list reconciles against a data prop
+    // that just grew twentyfold. None of that can be split by the scheduler; it is one task.
+    //
+    // It was also redundant. Its stated purpose was "so scroll-up / reply-jump / search have the
+    // complete array in memory", and every one of those already hydrates for itself, on demand:
+    //
+    //   search      → openSearch() calls hydrateFullHistory() when the user opens search
+    //   reply-jump  → the jump handler calls it before resolving a target older than the window
+    //   delete      → the Ably msg.delete path calls it through hydrateFullHistoryRef
+    //   scroll-up   → served by the Worker's paged older-messages route, not from this blob
+    //
+    // So the whole array was being materialised on EVERY chat open to serve three interactions that
+    // each fetch it themselves, and a fourth that does not use it at all. The guard
+    // (`historyHydratedRef`) meant it ran once per conversation — that once being the 1105 ms.
+    //
+    // The tail cache is unaffected: `writeTailCache(convId, snapshot)` above runs on the hot path,
+    // unconditionally and from data already in hand, so the cheap next-open path is still warmed.
+    // That was never the eager hydration's job.
+    return wireDurability();
+  }, [conversationId, myMessages]);
 
   // ── Heal stuck local images (root-cause fix for "one chat lags, an
   // identical-looking one doesn't") ────────────────────────────────────────
