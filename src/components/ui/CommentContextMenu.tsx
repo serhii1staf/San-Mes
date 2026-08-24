@@ -20,7 +20,6 @@ import { useT } from '../../i18n/store';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 const PREVIEW_MAX_HEIGHT = SCREEN_HEIGHT * 0.45;
-const LONG_TEXT_THRESHOLD = 220;
 
 export type CommentAction = 'reply' | 'copy' | 'edit' | 'delete' | 'report';
 
@@ -143,7 +142,6 @@ export function CommentContextMenu({ visible, comment, isOwn, displayBody, reply
   const profile = comment.profiles || {};
   const body: string = displayBody ?? comment.content ?? '';
   const link = (!gifUrl && !hasCodeBlock(body)) ? extractFirstUrl(body) : null;
-  const isLong = body.length > LONG_TEXT_THRESHOLD;
 
   // Tapping a link from inside the modal must close THIS modal first, else
   // the modal (with `<StatusBar hidden />` and full-screen backdrop) stays
@@ -196,9 +194,29 @@ export function CommentContextMenu({ visible, comment, isOwn, displayBody, reply
   return (
     <Modal visible={visible} transparent animationType="none" onRequestClose={() => dismiss()} statusBarTranslucent>
       <ModalStatusBar />
-      <Pressable style={{ flex: 1 }} onPress={() => dismiss()}>
-        <Animated.View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', opacity: fade }} />
+      {/* ── WHY THE BACKDROP IS A SIBLING NOW ────────────────────────────────────────────
+   
+          Reported: in comments the held content inside the menu cannot be scrolled, while in the
+          chat it can.
+   
+          The preview here already had the same `ScrollView` the chat uses. What it did not have was
+          a free path to the touch: the ENTIRE sheet was wrapped in `<Pressable onPress={dismiss}>`
+          as a dismiss affordance. A Pressable ancestor competes for the responder on every child,
+          so the ScrollView's vertical pan was being claimed before it could start — the content was
+          scrollable in principle and unscrollable in practice.
+   
+          The chat menu never had this problem because its backdrop is an `absoluteFill` SIBLING of
+          the sheet, not a parent of it (see MessageContextMenu). Same structure here now: the
+          dimmed layer owns its own Pressable, the sheet sits above it, and nothing between the
+          finger and the ScrollView wants the gesture.
+   
+          `pointerEvents="box-none"` on the wrapper keeps taps that miss the sheet falling through to
+          the backdrop, so tapping outside still dismisses. */}
+      <Animated.View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', opacity: fade }}>
+        <Pressable style={{ flex: 1 }} onPress={() => dismiss()} />
+      </Animated.View>
 
+      <View style={{ flex: 1 }} pointerEvents="box-none">
         <Animated.View
           style={{ flex: 1, justifyContent: 'flex-end', paddingBottom: 16, opacity: fade, transform: [{ translateY: slideAnim }] }}
           pointerEvents="box-none"
@@ -206,15 +224,27 @@ export function CommentContextMenu({ visible, comment, isOwn, displayBody, reply
           {/* Held comment preview — wide so rich previews fit */}
           <View style={{ marginHorizontal: 12, marginBottom: 8, alignItems: 'stretch' }} pointerEvents="box-none">
             <View style={{ borderRadius: 18, backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF', overflow: 'hidden' }}>
-              {isLong ? (
-                <ScrollView style={{ maxHeight: PREVIEW_MAX_HEIGHT }} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 14, paddingVertical: 12 }} bounces={false}>
-                  {previewInner}
-                </ScrollView>
-              ) : (
-                <View style={{ paddingHorizontal: 14, paddingVertical: 12 }}>
-                  {previewInner}
-                </View>
-              )}
+              {/* ALWAYS a ScrollView, no `isLong` branch.
+   
+                  The branch was the second half of the "cannot scroll" bug. `isLong` is measured on
+                  the comment BODY only (`body.length > 220`), but the card's height also comes from
+                  the author row, the reply-quote block, a 160 pt GIF and a link-preview card. So a
+                  comment with a short body and tall content rendered in the plain `View` branch and
+                  had no way to scroll, no matter how far past the cap it overflowed.
+   
+                  A ScrollView with `maxHeight` shrink-wraps content that fits, so short comments look
+                  exactly as before and the branch bought nothing. `nestedScrollEnabled` is required
+                  on Android for a ScrollView inside another scrollable ancestor — neither menu set
+                  it, which is a second reason Android behaved worse than iOS here. */}
+              <ScrollView
+                style={{ maxHeight: PREVIEW_MAX_HEIGHT }}
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={{ paddingHorizontal: 14, paddingVertical: 12 }}
+                bounces={false}
+                nestedScrollEnabled
+              >
+                {previewInner}
+              </ScrollView>
             </View>
           </View>
 
@@ -237,7 +267,7 @@ export function CommentContextMenu({ visible, comment, isOwn, displayBody, reply
             <View style={{ height: 8 }} />
           </View>
         </Animated.View>
-      </Pressable>
+      </View>
     </Modal>
   );
 }
