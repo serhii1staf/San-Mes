@@ -400,7 +400,18 @@ const bubbleStyles = StyleSheet.create({
   timestamp: { marginTop: 3, alignSelf: 'flex-end', fontSize: 10 },
   // Metadata line: [expand] [time], right-aligned inside the bubble. `gap` keeps the
   // two apart without padding that would widen the bubble on a short message.
-  metaRow: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-end', gap: 5, marginTop: 3 },
+  // ── META OUTSIDE THE BUBBLE ─────────────────────────────────────────────────
+  // `metaRow` (the old in-bubble row) is gone. These two replace it.
+  //
+  // The row carries the horizontal margins the bubble used to own, because the bubble is no
+  // longer the outermost element on its side — the row is, so it is the row that must clear the
+  // screen edge. `alignItems: flex-end` sits the meta level with the bottom of the bubble, which
+  // is where a timestamp reads correctly on a multi-line message.
+  metaOutsideRow: { alignItems: 'flex-end', marginHorizontal: 16 },
+  // `flexShrink: 0` is load-bearing: without it a long message squeezes the column to zero width
+  // and the time disappears. `alignItems: center` stacks the button directly over the time.
+  metaOutsideCol: { flexShrink: 0, alignItems: 'center', justifyContent: 'flex-end', gap: 1, marginHorizontal: 6, paddingBottom: 2 },
+  timestampOutside: { fontSize: 10, lineHeight: 12, opacity: 0.9 },
   // The icon's own box is small, but `hitSlop={10}` on the Pressable takes the touch
   // target well past Apple's 44 pt guidance without affecting layout.
   expandInline: { paddingVertical: 1 },
@@ -774,7 +785,28 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
           measures the bubble's own rect through `bubbleRef` for the delete burst. */}
       <GestureDetector gesture={composedGesture}>
         <View style={bubbleStyles.gestureRow} collapsable={false}>
-        <Reanimated.View ref={bubbleRef} style={[bubbleAnimStyle, { alignSelf: isOwn ? 'flex-end' : 'flex-start', maxWidth: '78%', marginLeft: isOwn ? 0 : 16, marginRight: isOwn ? 16 : 0, marginBottom: 4 }]}>
+        {/* ── META OUTSIDE THE BUBBLE ────────────────────────────────────────────
+            Asked for repeatedly: the time and the full-screen button should sit BESIDE the
+            bubble, not in it — on the far side from the sender, so an own message has them on
+            its left and a received one on its right, Telegram-style.
+
+            Why this is the right shape and not just a move: inside the bubble, the metadata row
+            set a FLOOR on bubble width. "ok" still had to be wide enough for a timestamp plus a
+            button plus padding, so short messages looked padded out and the transcript lost its
+            rhythm. Outside, the bubble shrink-wraps its text and short messages finally read as
+            short.
+
+            LAYOUT: this is a flex row whose direction flips with `isOwn`, so the bubble is
+            always adjacent to the screen edge on the sender's side and the meta column sits
+            inboard of it. `flexShrink: 0` on the meta keeps it from being squeezed to nothing by
+            a long message, and the bubble's `maxWidth` drops from 78% to 70% to pay for the
+            space the column now occupies — without that, a long message would push the meta off
+            screen, which is exactly the failure mode this layout invites.
+
+            `alignItems: flex-end` puts the meta level with the BOTTOM of the bubble, which is
+            where a timestamp belongs on a multi-line message. */}
+        <View style={[bubbleStyles.metaOutsideRow, { flexDirection: isOwn ? 'row-reverse' : 'row' }]}>
+        <Reanimated.View ref={bubbleRef} style={[bubbleAnimStyle, { maxWidth: '70%', marginBottom: 4 }]}>
         {/* Long-press + drag-select is handled by `composedGesture` on the
             GestureDetector above (UI thread). This wrapper used to be a
             `Pressable onLongPress`; it's now a plain View so the gesture owns
@@ -940,29 +972,32 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
                 />
               </View>
             ) : null}
-            {/* Timestamp row, with the full-screen button immediately to its LEFT.
-                The button used to be an absolute badge floating on the bubble's
-                outer top corner; that read as a sticker pasted over the message.
-                Sitting inline next to the time it becomes part of the bubble's own
-                metadata line — compact, always in the same place, and it no longer
-                overlaps the first line of text on a short message. */}
-            <View style={bubbleStyles.metaRow}>
-              <Pressable
-                onPress={handleOpenFullscreen}
-                hitSlop={10}
-                accessibilityRole="button"
-                accessibilityLabel={t('chat.open_fullscreen', 'Открыть на весь экран')}
-                style={bubbleStyles.expandInline}
-              >
-                <Feather name="maximize-2" size={11} color={timeColor} />
-              </Pressable>
-              <Text variant="caption" color={timeColor} style={bubbleStyles.timestampInline}>
-                {timeLabel}
-              </Text>
-            </View>
+            {/* The timestamp and the full-screen button used to live HERE, inside the bubble.
+                They now sit OUTSIDE it — see the meta column rendered as a sibling of the
+                bubble further down. Keeping them inside is what made every bubble at least as
+                wide as `time + button + padding`, so a two-character message still occupied a
+                third of the row. */}
           </View>
         </View>
         </Reanimated.View>
+        {/* The meta column: full-screen button ABOVE the time, as requested. Both are tiny and
+            tinted from the theme rather than from the bubble's contrast colour — they are no
+            longer ON the bubble, so they must read against the chat background instead. */}
+        <View style={bubbleStyles.metaOutsideCol}>
+          <Pressable
+            onPress={handleOpenFullscreen}
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityLabel={t('chat.open_fullscreen', 'Открыть на весь экран')}
+            style={bubbleStyles.expandInline}
+          >
+            <Feather name="maximize-2" size={10} color={theme.colors.text.tertiary} />
+          </Pressable>
+          <Text variant="caption" color={theme.colors.text.tertiary} style={bubbleStyles.timestampOutside}>
+            {timeLabel}
+          </Text>
+        </View>
+        </View>
         </View>
       </GestureDetector>
     </View>
@@ -2212,7 +2247,28 @@ export default function ChatScreen() {
   // The obvious follow-up is a `?since=<iso>` parameter so an idle poll transfers nothing at
   // all. That is a Worker change; the same deploy should also fix `ORDER BY created_at ASC
   // LIMIT ?` returning the OLDEST N instead of the newest.
-  const HISTORY_POLL_MS = 6000;
+  // ── 6 s WAS A CRUTCH FOR DEAD REALTIME. REALTIME WORKS NOW. ────────────────
+  //
+  // This interval was added when `/api/ably-token` was 401ing every request and no device had
+  // ever opened a realtime connection — polling was the only thing delivering messages at all.
+  // That is fixed and confirmed from both ends: Ably's stats show real client connections, and
+  // typing indicators (which are pure realtime, with no poll fallback) work on the device.
+  //
+  // The perf snapshot shows what the leftover cadence costs. Two long tasks inside one chat
+  // session, 167 ms and 193 ms, at 8.3 s and 13.3 s after navigation — no mount nearby, no
+  // pending decodes, nothing else running. Those are poll ticks: a fetch, a JSON parse of up to
+  // 200 rows, a map to ChatMessage, a tombstone filter and a merge, all synchronous.
+  //
+  // So it goes from a delivery mechanism to what it should always have been: a safety net for
+  // the gap realtime genuinely cannot cover — messages published while the app was backgrounded
+  // or between token refreshes. 30 s is frequent enough for that (the first tick still runs
+  // immediately on open, which is the case that actually matters) and rare enough that its cost
+  // stops being something the user can feel.
+  //
+  // The `?since` cursor makes each subsequent tick nearly free anyway, but "nearly free" times
+  // ten fewer ticks is still the right direction, and the FIRST tick — the expensive one, with no
+  // cursor yet — is unaffected either way.
+  const HISTORY_POLL_MS = 30000;
   useEffect(() => {
     if (!conversationId) return;
     if (!useConnectivityStore.getState().isOnline) return;
