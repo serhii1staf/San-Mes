@@ -1631,10 +1631,32 @@ export default function ProfileScreen() {
         // frame carries the same two cards) while giving the list enough retained cells and
         // enough refill rate that scrolling back up finds them already mounted. FlatList's
         // own default windowSize is 21, so 7 is still conservative.
+        // ── 3 → 2, AND 50 → 80, BECAUSE THE BATCH SIZE IS THE MULTIPLIER ────────
+        //
+        // A perf snapshot attributed this precisely. On one visit to this screen: 74 mounts, worst long
+        // task 520 ms, average 206 ms — and the long tasks land immediately after mount clusters, with
+        // `pendingDecodes: 0`, so this is JS, not image work:
+        //
+        //   ts 230162  MOUNT ProfilePostCard 23, 22, 21, 21 ms   (same millisecond)
+        //   ts 230364  MOUNT ProfilePostCard 46, 44, 43 ms       (same millisecond)
+        //   ts 230566  LONG 135 ms, recentMarks: three ProfilePostCard mounts, 5 ms ago
+        //
+        // Three cards per batch at 20–46 ms each IS the 60–138 ms task. The batch size multiplies the
+        // per-card cost directly, so halving it halves the worst frame.
+        //
+        // The note below records why `maxToRenderPerBatch: 1` was bad before: with `windowSize: 3` the
+        // list discarded cells the moment they left the screen, so a 1-card refill rate meant scrolling
+        // up hit blank space. That condition is gone — `windowSize` is 7 now, so ~1.5 viewports above and
+        // below stay mounted and the refill rate barely matters. 2 is the conservative middle: it keeps
+        // a real refill rate while never committing three expensive cards to one frame.
+        //
+        // `updateCellsBatchingPeriod` 50 → 80 spaces the batches further apart, so two batches cannot
+        // coalesce into one frame's work — which is what produced the four-mounts-in-one-millisecond
+        // clusters above.
         initialNumToRender={2}
-        maxToRenderPerBatch={3}
+        maxToRenderPerBatch={2}
         windowSize={7}
-        updateCellsBatchingPeriod={50}
+        updateCellsBatchingPeriod={80}
         // ── removeClippedSubviews is OFF, deliberately ──────────────────────────
         //
         // Scrolling DOWN was fine; scrolling back UP juddered, jumping up and down
