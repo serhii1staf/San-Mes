@@ -21,6 +21,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
 import { BOTTOM_CHROME_SPRING } from '../../src/theme/motion';
 import ContextMenu from 'react-native-context-menu-view';
+import { toPreviewText } from '../../src/utils/previewText';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { useLiquidGlassActive, NativeGlassView, GlassBg } from '../../src/components/ui/LiquidGlass';
@@ -470,7 +471,19 @@ function ConversationItemBase({
   // photo/GIF message (the derived preview keeps the timestamp and leaves the text
   // empty on purpose — the store must not do i18n), so label it here rather than
   // rendering a blank line that reads as "no messages".
-  const previewText = item.lastMessage || (item.lastMessageAt ? t('chat.photo') : '');
+  // Raw stored text is not a preview: media messages carry a marker plus a URL
+  // (`::gif::<url>`), and rendering that verbatim is the reported "it looks like a link ID".
+  // `toPreviewText` strips the markers and labels media; labels are passed in so the util does no
+  // i18n. Falls back to the photo label when there is content we cannot summarise, and to empty
+  // only when there is genuinely nothing.
+  // Labels for 	oPreviewText, memoized on the translator so the object identity is stable across
+  // renders of this row — it is passed into a util on every render, and a fresh literal there would
+  // be a per-row allocation in a list.
+  const previewLabels = useMemo(
+    () => ({ photo: t('chat.photo'), gif: 'GIF', link: t('chat.link', 'Ссылка'), reply: t('chat.reply_label', 'Ответ') }),
+    [t],
+  );
+  const previewText = toPreviewText(item.lastMessage, previewLabels) || (item.lastMessageAt ? t('chat.photo') : '');
 
   // Defer the native ContextMenu wrapper off the cold-mount frame. iOS's
   // `UIContextMenuInteraction` is set up per-view by the ContextMenu library;
