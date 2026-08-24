@@ -2,7 +2,9 @@
 //
 // Reads:
 //   GET    /v1/posts/:id                — single post + author profile via JOIN.
-//   GET    /v1/posts/:id/comments       — comments for one post, oldest-first.
+//   GET    /v1/posts/:id/comments       — comments for one post, chronological.
+//                                         Paginated: `?limit=` (default 50, max 200) returns the
+//                                         NEWEST page; `?before=<iso>` walks older pages.
 //
 // Writes (authed):
 //   POST   /v1/posts                    — create. Body: { content, image_url? }
@@ -577,6 +579,40 @@ register('GET', '/v1/posts/:id/comments', async (req, env, _ctx, params) => {
     profile_badge: string | null;
     profile_is_verified: number | null;
   }
+  // ── PAGINATION ────────────────────────────────────────────────────────
+  //
+  // This route had NO LIMIT: `ORDER BY created_at ASC` returned every comment on the post. A
+  // thread with a thousand comments shipped all thousand in one response and the client parsed,
+  // cached and laid out all of them before it could show anything — which is precisely the
+  // "make sure a 1000-comment thread does not lag when it opens" concern.
+  //
+  // Same shape as the messages route, for the same reason and with the same trap avoided:
+  //
+  //   ORDER BY created_at DESC LIMIT ?   then reverse in JS
+  //
+  // ASC + LIMIT returns the OLDEST rows, so on a thread longer than the limit the newest comment
+  // could never be in the response at all. The comments screen opens at the newest comment, so
+  // that would have been the one thing guaranteed missing. DESC + reverse returns the NEWEST
+  // `limit` rows in chronological order, which is what the screen renders directly.
+  //
+  // `before` is an ISO-8601 cursor for older pages: pass the oldest `created_at` already held and
+  // the response contains only what precedes it. Strict `<`, so the cursor row itself is not
+  // resent and cannot duplicate.
+  const url = new URL(req.url);
+  const limitRaw = parseInt(url.searchParams.get('limit') || '', 10);
+  // Default 50 — enough to fill a screen with headroom. Ceiling 200 so one call cannot be turned
+  // back into "send me everything" by a client passing a huge number.
+  const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 200) : 50;
+  const before = url.searchParams.get('before');
+
+  const binds: unknown[] = [postId];
+  let cursorSql = '';
+  if (before) {
+    cursorSql = ' AND c.created_at < ?';
+    binds.push(before);
+  }
+  binds.push(limit);
+
   const rows = await query<CommentRow>(
     env,
     `SELECT c.id,
@@ -592,10 +628,13 @@ register('GET', '/v1/posts/:id/comments', async (req, env, _ctx, params) => {
             pr.is_verified   AS profile_is_verified
        FROM comments c
   LEFT JOIN profiles pr ON pr.id = c.author_id
-      WHERE c.post_id = ?
-   ORDER BY c.created_at ASC`,
-    [postId],
+      WHERE c.post_id = ?${cursorSql}
+   ORDER BY c.created_at DESC
+      LIMIT ?`,
+    binds,
   );
+  // Back to chronological order — the screen renders the array as-is.
+  rows.reverse();
   const out = rows.map((row) => ({
     id: row.id,
     post_id: row.post_id,

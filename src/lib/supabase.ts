@@ -271,8 +271,31 @@ export async function getProfiles(): Promise<{ profiles: DBProfile[]; error: str
   return { profiles: data || [], error: null };
 }
 
-export async function getComments(postId: string): Promise<{ comments: any[]; error: string | null }> {
-  const { data, error } = await apiGet<any[]>(`/v1/posts/${encodeURIComponent(postId)}/comments`);
+/**
+ * A post's comments, oldest-first within the page.
+ *
+ * PAGINATED. The route used to return EVERY comment on the post — no LIMIT at all — so opening a
+ * thread with a thousand comments transferred, parsed, cached and laid out all thousand before
+ * anything could be shown.
+ *
+ * `limit` defaults to 50 on the server, ceiling 200. The page returned is the NEWEST one, in
+ * chronological order, because the screen opens at the newest comment.
+ *
+ * `before` is an ISO-8601 cursor for walking backwards: pass the oldest `created_at` currently
+ * held and the response contains only what precedes it. Strict `<` on the server, so the cursor
+ * row is never resent.
+ */
+export async function getComments(
+  postId: string,
+  opts?: { limit?: number; before?: string },
+): Promise<{ comments: any[]; error: string | null }> {
+  const qs = new URLSearchParams();
+  if (opts?.limit) qs.set('limit', String(opts.limit));
+  if (opts?.before) qs.set('before', opts.before);
+  const suffix = qs.toString() ? `?${qs.toString()}` : '';
+  const { data, error } = await apiGet<any[]>(
+    `/v1/posts/${encodeURIComponent(postId)}/comments${suffix}`,
+  );
   if (error) return { comments: [], error };
   return { comments: data || [], error: null };
 }
