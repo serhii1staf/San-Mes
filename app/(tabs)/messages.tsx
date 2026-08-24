@@ -22,6 +22,7 @@ import { headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/t
 import { BOTTOM_CHROME_SPRING } from '../../src/theme/motion';
 import ContextMenu from 'react-native-context-menu-view';
 import { toPreviewText } from '../../src/utils/previewText';
+import { useChatUnread } from '../../src/store/chatUnreadStore';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { useLiquidGlassActive, NativeGlassView, GlassBg } from '../../src/components/ui/LiquidGlass';
@@ -476,7 +477,7 @@ function ConversationItemBase({
   // `toPreviewText` strips the markers and labels media; labels are passed in so the util does no
   // i18n. Falls back to the photo label when there is content we cannot summarise, and to empty
   // only when there is genuinely nothing.
-  // Labels for 	oPreviewText, memoized on the translator so the object identity is stable across
+  // Labels for toPreviewText, memoized on the translator so the object identity is stable across
   // renders of this row — it is passed into a util on every render, and a fresh literal there would
   // be a per-row allocation in a list.
   const previewLabels = useMemo(
@@ -1805,6 +1806,11 @@ export default function MessagesScreen() {
   // Keyed on the messages map + the persisted map, so it recomputes only when one of
   // them actually changes — not on every render of this screen.
   const messagesByConv = useChatStore((s) => s.messages);
+  // Per-conversation unread counts. This is the data the row badge never had: the badge markup has
+  // always been there, but rows were built with unreadCount: 0 hardcoded and the Worker has no
+  // read-state concept at all, so item.unreadCount > 0 was tested against a constant zero.
+  const unreadCounts = useChatUnread((s) => s.counts);
+  const reconcileUnread = useChatUnread((s) => s.reconcile);
   const previewByConv = useMemo(() => {
     const out = new Map<string, { text: string; at: string; hasImage: boolean }>();
     for (const convId in persistedPreviews) {
@@ -1851,13 +1857,28 @@ export default function MessagesScreen() {
           participantBadge: (c as any).participantBadge ?? profiles[c.participantId]?.badge ?? null,
           lastMessage: useLocal ? local!.text : (c.lastMessage || ''),
           lastMessageAt: useLocal ? local!.at : storedAt,
-          unreadCount: 0,
+          unreadCount: unreadCounts[c.id] || 0,
           isOnline: false,
         };
       });
     }
     return chatStoreConversations;
-  }, [entityConversations, chatStoreConversations, previewByConv]);
+  }, [entityConversations, chatStoreConversations, previewByConv, unreadCounts]);
+
+  // "At least one new message" for conversations we never saw an event for.
+  //
+  // A device only counts what it observed while running: a message that lands while the app is
+  // killed produces no realtime event, so the observed count would be 0 and the row would look read.
+  // reconcile raises those to 1 by comparing each row's newest-message time against a persisted
+  // per-conversation read watermark. It only ever lifts a 0 to a 1 — it never overwrites a real
+  // count and never invents unread for a message we sent.
+  //
+  // Safe as an effect on every list change: reconcile returns the SAME state object when nothing
+  // changed, so it cannot feed itself.
+  useEffect(() => {
+    if (conversations.length === 0) return;
+    reconcileUnread(conversations, user?.id);
+  }, [conversations, user?.id, reconcileUnread]);
 
   // ─── Bucket filter (openedAt-INDEPENDENT) ─────────────────────────────────
   // Each chat belongs to exactly one bucket. The "apps" tab shows no chats.

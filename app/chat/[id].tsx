@@ -49,6 +49,7 @@ import { addTombstones, filterTombstoned } from '../../src/services/messageTombs
 import { TypingIndicator } from '../../src/components/ui/TypingIndicator';
 import { typingChatChannelName, useTypingPublisher } from '../../src/services/realtime/typing';
 import { clearActiveThread, setActiveThread } from '../../src/services/activeThread';
+import { useChatUnread } from '../../src/store/chatUnreadStore';
 import { mockMessages, mockConversations, formatMessageTime } from '../../src/utils/mockData';
 import { showToast } from '../../src/store/toastStore';
 import { ChatMessage } from '../../src/types';
@@ -1238,8 +1239,24 @@ export default function ChatScreen() {
     // id, so registering the peer's id could only ever produce a false match.
     const ids = [conversationId, id];
     setActiveThread('chat', ids);
+    // Being on screen IS reading it — so clear this conversation's unread count here, alongside the
+    // registration that already means "on screen". Both ids, because the badge in the list is keyed
+    // by conversation id while this screen may still be holding only the route id.
+    //
+    // This is the call that was missing. `chatStore.markAsRead` existed but a repo-wide search found
+    // NO caller, so nothing ever marked a conversation read anywhere in the app. Clearing on the
+    // registration effect also means re-foregrounding into an open chat re-clears anything that
+    // arrived while away.
+    try {
+      for (const cid of ids) if (cid) useChatUnread.getState().clear(cid);
+    } catch {}
     const sub = AppState.addEventListener('change', (next) => {
-      if (next === 'active') setActiveThread('chat', ids);
+      if (next === 'active') {
+        setActiveThread('chat', ids);
+        try {
+          for (const cid of ids) if (cid) useChatUnread.getState().clear(cid);
+        } catch {}
+      }
     });
     return () => {
       try { sub.remove(); } catch {}

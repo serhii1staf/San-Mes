@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { ChatMessage as Message, Conversation } from '../types';
 import { bumpPreviewFromTranscript } from './conversationPreviewStore';
+import { useChatUnread } from './chatUnreadStore';
 
 export type { ChatMessage as Message, Conversation } from '../types';
 
@@ -257,11 +258,21 @@ export const useChatStore = create<ChatStoreState>()((set) => ({
 
       return { messages: evictIfNeeded(updated, conversationId), conversations };
     }),
-  markAsRead: (conversationId) =>
+  markAsRead: (conversationId) => {
+    // Clear the DERIVED count too, not just the field on the row.
+    //
+    // The `unreadCount` on a conversation row is rebuilt as 0 from the server on every list fetch —
+    // the backend has no read state — so zeroing it here only holds until the next refresh. The
+    // count that actually drives the row badge lives in `chatUnreadStore` (per-install, MMKV-backed,
+    // fed by the realtime bridge). Clearing it here also advances that conversation's read
+    // watermark, which is what stops the "at least one new message" reconcile from immediately
+    // re-raising a badge for the chat just read.
+    try { useChatUnread.getState().clear(conversationId); } catch {}
     set((state) => ({
       conversations: state.conversations.map((c) =>
         c.id === conversationId ? { ...c, unreadCount: 0 } : c
       ),
-    })),
+    }));
+  },
   setLoading: (isLoading) => set({ isLoading }),
 }));

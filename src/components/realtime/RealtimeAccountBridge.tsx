@@ -5,6 +5,7 @@ import { useEntityStore } from '../../services/entityStore';
 import { useChatStore } from '../../store/chatStore';
 import { useFeedStore } from '../../store/feedStore';
 import { useNotificationsBadge } from '../../store/notificationsBadgeStore';
+import { useChatUnread } from '../../store/chatUnreadStore';
 import {
   feedPublicChannelName,
   getRealtime,
@@ -146,6 +147,26 @@ export function RealtimeAccountBridge(): null {
               store.setConversations(merged);
             } else {
               store.setConversations([nextRow, ...existing]);
+            }
+          } catch {}
+
+          // 1b) Count it as unread for that conversation, which is what makes the badge on the
+          //     chat-list row appear. The row's badge markup has existed all along; nothing ever
+          //     supplied a non-zero count (the screen hardcodes `unreadCount: 0` and the Worker has
+          //     no read-state concept), so the badge could never render. See chatUnreadStore.
+          //
+          //     `bump` itself skips the conversation currently on screen, using the same
+          //     `isActiveThread` register that suppresses the push for it — reading a chat live must
+          //     not accumulate a count, and that is the same judgement as "do not banner this".
+          //
+          //     Deliberately NOT inside the try above: a failure to upsert the row must not skip the
+          //     count, and vice versa.
+          try {
+            // Our own outgoing message echoes back on this channel too. `senderId` is the real author
+            // uuid, so compare against the signed-in id and ignore our own.
+            const myId = useAuthStore.getState().user?.id;
+            if (!senderId || senderId !== myId) {
+              useChatUnread.getState().bump(conversationId);
             }
           } catch {}
 
