@@ -143,7 +143,10 @@ function ImageViewerModalComponent({
       zoomPanY.value = 0;
       enter.value = withTiming(1, { duration: 220, easing: Easing.out(Easing.cubic) });
     } else if (mounted) {
-      enter.value = withTiming(0, { duration: 170, easing: Easing.in(Easing.cubic) }, (finished) => {
+      // Parent-driven close (e.g. the edit action navigating away) gets the SAME downward exit as
+      // the X and the flick, so there is no third way for a photo to leave the screen.
+      dragY.value = withTiming(SCREEN_H * 0.6, { duration: 200, easing: Easing.out(Easing.cubic) });
+      enter.value = withTiming(0, { duration: 200, easing: Easing.in(Easing.cubic) }, (finished) => {
         if (finished) runOnJS(setMounted)(false);
       });
     }
@@ -152,9 +155,38 @@ function ImageViewerModalComponent({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [payload, enter, dragY]);
 
+  /**
+   * Close by flying the photo DOWNWARD while it shrinks, then hand back to the parent.
+   *
+   * Reported: "when I just tap the X and it disappears, the photo simply vanishes. I'd like it to
+   * disappear downward — as if it shrank and went away smoothly but quickly, downward. Everywhere."
+   *
+   * It used to call `onClose()` immediately. The parent then cleared the payload, and the only
+   * animation left was `enter` fading to 0 — a fade with a faint 0.92 scale, no travel. So the photo
+   * did just vanish.
+   *
+   * Now the X takes the SAME exit the drag-dismiss takes, which is the point: dismissing by flick
+   * and dismissing by button should not be two different animations. `dragY` runs to 60 % of the
+   * screen rather than a full screen — the photo is invisible well before that, so the extra travel
+   * would only make the timing feel slow — and `contentStyle` already multiplies in a shrink as
+   * `dragY` grows and `enter` falls, which is where "as if it shrank" comes from at no extra cost.
+   *
+   * 200 ms: fast enough to read as immediate, long enough to read as motion rather than a cut.
+   *
+   * `onClose` fires from the completion callback, not up front. That ordering matters — clearing the
+   * payload first would make the effect below run its own exit at the same time, and two animations
+   * driving `enter` would fight. By the time the parent hears about it, `mounted` is already false,
+   * so that branch is a no-op.
+   */
   const requestClose = useCallback(() => {
-    onClose();
-  }, [onClose]);
+    dragY.value = withTiming(SCREEN_H * 0.6, { duration: 200, easing: Easing.out(Easing.cubic) });
+    enter.value = withTiming(0, { duration: 200, easing: Easing.in(Easing.cubic) }, (finished) => {
+      if (finished) {
+        runOnJS(setMounted)(false);
+        runOnJS(onClose)();
+      }
+    });
+  }, [dragY, enter, onClose]);
 
   // ── HIDE THE TAB BAR WHILE OPEN, DELIBERATELY ─────────────────────────────
   //
@@ -225,10 +257,35 @@ function ImageViewerModalComponent({
   //
   // Deliberately NOT folded into `contentStyle`: chrome must not inherit the photo's translate,
   // scale or zoom. It stays put and fades; only the photo moves.
-  const chromeStyle = useAnimatedStyle(() => ({
+  // ── DIRECTIONAL CHROME ────────────────────────────────────────────────────
+  //
+  // Asked for: "when I open a GIF, the X appears from the top downward, and the elements at the
+  // bottom appear from the bottom upward."
+  //
+  // So the fade is shared but the travel is not: chrome enters FROM THE EDGE IT LIVES ON. Both
+  // slides are driven by the same `enter` value that drives the photo's scale-in, so the whole
+  // opening reads as one movement instead of three things starting at once.
+  //
+  // The drag fade stays common to both (first 80 pt), because while dragging the photo the controls
+  // should get out of the way together — a header that lingered while the footer left would look
+  // like a glitch, not a hierarchy.
+  //
+  // Neither is folded into `contentStyle`: chrome must not inherit the photo's translate, scale or
+  // zoom. It arrives, sits still, and fades.
+  // Top chrome (close button, author row) slides DOWN into place — from -22 pt to 0.
+  const topChromeStyle = useAnimatedStyle(() => ({
     opacity:
       enter.value *
       interpolate(Math.abs(dragY.value), [0, 80], [1, 0], Extrapolation.CLAMP),
+    transform: [{ translateY: interpolate(enter.value, [0, 1], [-22, 0], Extrapolation.CLAMP) }],
+  }));
+
+  // Bottom chrome (action row) slides UP into place — from +22 pt to 0.
+  const bottomChromeStyle = useAnimatedStyle(() => ({
+    opacity:
+      enter.value *
+      interpolate(Math.abs(dragY.value), [0, 80], [1, 0], Extrapolation.CLAMP),
+    transform: [{ translateY: interpolate(enter.value, [0, 1], [22, 0], Extrapolation.CLAMP) }],
   }));
 
   // Read from `shown` rather than the `images` local further down: this memo runs during render at
@@ -344,12 +401,27 @@ function ImageViewerModalComponent({
     [zoom, zoomPanX, zoomPanY],
   );
 
-  // Pan and pinch must run together (a pinch that also drifts should do both); the double-tap is
-  // exclusive so a quick second tap is not read as the start of a pan.
+  // ── ALL THREE SIMULTANEOUS — NOT Exclusive ────────────────────────────────
+  //
+  // Reported, after the previous fix: "the up/down gesture still doesn't work on the first try. It
+  // works, but as if not the first time."
+  //
+  // This composition was the cause. It used to be
+  // `Gesture.Exclusive(doubleTap, Simultaneous(pan, pinch))`, and `Exclusive` means STRICT PRIORITY:
+  // the double-tap is offered the touch first, and the pan is not allowed to activate until the
+  // double-tap has definitively FAILED. A double-tap only fails once the window for the second tap
+  // has expired — so the very first drag after opening was held hostage for that timeout, then
+  // discarded because the finger had already moved. Try again and the recogniser is warm, so it
+  // works. Exactly "not the first time".
+  //
+  // Simultaneous removes the wait: every recogniser evaluates the touch independently. They cannot
+  // fight, because their activation conditions are disjoint by construction — the pan needs 12 pt of
+  // vertical travel before it activates, and a double-tap that moved 12 pt is not a double-tap. The
+  // pinch needs a second finger, which neither of the others accepts.
   const composedGesture = useMemo(
     () =>
       zoomable
-        ? Gesture.Exclusive(doubleTapGesture, Gesture.Simultaneous(dismissGesture, pinchGesture))
+        ? Gesture.Simultaneous(dismissGesture, pinchGesture, doubleTapGesture)
         : dismissGesture,
     [zoomable, doubleTapGesture, dismissGesture, pinchGesture],
   );
@@ -416,7 +488,7 @@ function ImageViewerModalComponent({
           inset on the right so it can never run under it. */}
       {header ? (
         <Reanimated.View
-          style={[styles.header, { top: topInset + 12 }, chromeStyle]}
+          style={[styles.header, { top: topInset + 12 }, topChromeStyle]}
           pointerEvents="box-none"
         >
           {header}
@@ -427,7 +499,7 @@ function ImageViewerModalComponent({
           `footer` prop's note. The safe-area padding lives here so callers pass a bare row. */}
       {footer ? (
         <Reanimated.View
-          style={[styles.footer, { paddingBottom: bottomInset + 20 }, chromeStyle]}
+          style={[styles.footer, { paddingBottom: bottomInset + 20 }, bottomChromeStyle]}
           pointerEvents="box-none"
         >
           {footer}
@@ -436,7 +508,7 @@ function ImageViewerModalComponent({
 
       {/* Wrapped in an animated view so it fades WITH the drag and WITH the exit, instead of being
           cut off in one frame at the end — the reported dissolve artifact. */}
-      <Reanimated.View style={[styles.closeBtnWrap, { top: topInset + 12 }, chromeStyle]}>
+      <Reanimated.View style={[styles.closeBtnWrap, { top: topInset + 12 }, topChromeStyle]}>
         <Pressable
           onPress={requestClose}
           hitSlop={10}
