@@ -1585,18 +1585,41 @@ export default function CommentsScreen() {
               gap between the two columns rather than on the screen — iOS does the same,
               and the chat header documents it as deliberate. Perfectly centring it would
               need absolute positioning, which lets a long title run under the label. */}
-          <Pressable onPress={() => router.back()} hitSlop={8} style={styles.backRow}>
-            <Feather name="chevron-left" size={24} color={theme.colors.text.primary} />
-            <Text
-              variant="caption"
-              weight="semibold"
-              numberOfLines={1}
-              color={theme.colors.text.primary}
-              style={styles.backLabel}
+          {/* ── SAME BACK AFFORDANCE AS THE CHAT HEADER ───────────────────────────
+              Asked for as "put an outline around the back button in comments, like in chat".
+
+              It was a bare chevron plus a label with nothing around it; the chat header wraps the
+              same two elements in a PILL — interactive liquid glass where the material is
+              available, and a bordered elevated capsule where it is not. Two branches rather than
+              one bordered box, because that is exactly what the chat does: on a glass device a
+              border drawn over the material reads as a seam, and on a flat device the border IS
+              the edge. Sharing the geometry (height 36, radius 18, the same paddings) is what
+              makes them read as the same control rather than as two similar ones.
+
+              `flexShrink: 0` on the pill and on the label, so a long screen title can never
+              squeeze the affordance or truncate its text — the chat header documents the same
+              constraint for the same reason. */}
+          {glassActive ? (
+            <Pressable onPress={() => router.back()} hitSlop={8} style={styles.backPillPress}>
+              <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.backPillGlass}>
+                <Feather name="chevron-left" size={22} color={theme.colors.text.primary} />
+                <Text variant="caption" weight="semibold" numberOfLines={1} color={theme.colors.text.primary} style={styles.backLabel}>
+                  {t('common.back')}
+                </Text>
+              </NativeGlassView>
+            </Pressable>
+          ) : (
+            <Pressable
+              onPress={() => router.back()}
+              hitSlop={8}
+              style={[styles.backPill, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}
             >
-              {t('common.back')}
-            </Text>
-          </Pressable>
+              <Feather name="chevron-left" size={22} color={theme.colors.text.primary} />
+              <Text variant="caption" weight="semibold" numberOfLines={1} color={theme.colors.text.primary} style={styles.backLabel}>
+                {t('common.back')}
+              </Text>
+            </Pressable>
+          )}
           <View style={styles.headerTitleWrap}>
             <Text variant="body" weight="bold" numberOfLines={1}>{t('comments.title')}</Text>
           </View>
@@ -1874,7 +1897,12 @@ const styles = StyleSheet.create({
   headerContent: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingBottom: 8, gap: 8 },
   // Back affordance: chevron + localized label. `flexShrink: 0` so the label is never
   // squeezed by a long title. Mirrors `backPill` / `backLabel` in the chat header.
-  backRow: { flexShrink: 0, flexDirection: 'row', alignItems: 'center', gap: 2 },
+  // Geometry copied deliberately from `backPill` / `backPillGlass` in the chat header so the two
+  // controls are the same control. If one is ever retuned, retune both — they are compared
+  // side by side by anyone moving between the screens.
+  backPillPress: { borderRadius: 18 },
+  backPill: { flexShrink: 0, flexDirection: 'row', alignItems: 'center', height: 36, borderRadius: 18, borderWidth: 1, paddingLeft: 6, paddingRight: 14, gap: 2 },
+  backPillGlass: { flexShrink: 0, flexDirection: 'row', alignItems: 'center', height: 36, borderRadius: 18, paddingLeft: 8, paddingRight: 16, gap: 2 },
   backLabel: { marginLeft: -2, flexShrink: 0 },
   // Title takes the space between the two side columns and truncates within it.
   headerTitleWrap: { flex: 1, minWidth: 0, alignItems: 'center', justifyContent: 'center' },
