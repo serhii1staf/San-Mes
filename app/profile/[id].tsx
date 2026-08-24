@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
-import { View, Pressable, ActivityIndicator, Image, Dimensions, Modal, Animated, Share, Alert, InteractionManager, Text as RNText } from 'react-native';
+import { View, Pressable, ActivityIndicator, Image, Dimensions, Modal, Animated, Share, Alert, ScrollView, InteractionManager, Text as RNText } from 'react-native';
 import { Feather, FontAwesome5 } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -1590,10 +1590,50 @@ export default function UserProfileScreen() {
   // background behind buttons that already have their own circular fills, which is the "there is
   // another container in the bottom area" report. Metrics now match the own-profile viewer (42 pt
   // buttons, gap 10) so the two screens stop drifting.
+  // The post body shown over the photo in the viewer. A post has ONE body regardless of how many
+  // images it carries, so this does not change as the pager moves between them. A repost falls back to
+  // the original's body when the repost itself added no comment, which is what the share action already
+  // does — so the two never disagree about what this post "says".
+  const postViewerCaption = useMemo(() => {
+    const own = viewingPost?.content || '';
+    if (own.trim()) return own;
+    return (viewingPost as any)?.originalPost?.content || '';
+  }, [viewingPost]);
   const viewerFooter = useMemo(() => {
     if (!viewingImage) return null;
     return (
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+      <View style={{ alignItems: 'center', gap: 10 }}>
+        {/* THE POST'S OWN TEXT, over the photo.
+   
+            Same treatment as the chat viewer, asked for explicitly: opening a photo from a profile
+            should show the caption that was published with it. Works for a single photo and for a
+            multi-photo post alike, because a post has ONE body regardless of how many images it
+            carries — so it does not change as the pager moves.
+   
+            No background, no border, no card. A shadow so it reads on a bright image. Capped at 96 pt
+            and scrollable, because a post body can be long and the actions must never be pushed off
+            screen. `nestedScrollEnabled` for Android, which needs it stated inside another gesture area.
+   
+            For a repost the original's body is used when the repost itself has none, matching what the
+            share action already does. */}
+        {postViewerCaption ? (
+          <ScrollView
+            style={{ maxHeight: 96, alignSelf: 'stretch', marginHorizontal: 24 }}
+            contentContainerStyle={{ paddingBottom: 2 }}
+            showsVerticalScrollIndicator={false}
+            bounces={false}
+            nestedScrollEnabled
+          >
+            <Text
+              variant="caption"
+              color="#FFFFFF"
+              style={{ fontSize: 13, lineHeight: 18, textAlign: 'center', textShadowColor: 'rgba(0,0,0,0.55)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 }}
+            >
+              {postViewerCaption}
+            </Text>
+          </ScrollView>
+        ) : null}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
         {isOwnProfile && (
           <ViewerActionButton
             icon="edit-2"
@@ -1642,6 +1682,7 @@ export default function UserProfileScreen() {
             }}
           />
         )}
+        </View>
       </View>
     );
   }, [viewingImage, viewingPost, isOwnProfile, currentUser?.id, t]);
