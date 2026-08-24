@@ -22,6 +22,7 @@ import { extractFirstUrl } from '../../src/services/linkPreview';
 import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
 import { useChatKeyboardMode } from '../../src/hooks/useChatKeyboardMode';
 import { CachedImage } from '../../src/components/ui/CachedImage';
+import { ImageViewerModal } from '../../src/components/chat/ImageViewerModal';
 import Skeleton from '../../src/components/ui/Skeleton';
 import { useStaggeredReveal, useStaggeredGifReveal, setRevealScrollPaused } from '../../src/hooks/useStaggeredReveal';
 import { CommentContextMenu, CommentAction } from '../../src/components/ui/CommentContextMenu';
@@ -839,6 +840,24 @@ export default function CommentsScreen() {
     gifTrackerRef.current?.update(next);
   }).current;
   const commentsViewabilityConfig = useRef({ itemVisiblePercentThreshold: 35 }).current;
+
+  // ─── FULLSCREEN VIEWER ────────────────────────────────────────────────────
+  //
+  // Maps this screen's `{ uri, images?, index? }` onto the shared viewer's `{ images, index }`.
+  // Falls back to the single tapped uri, which is the common case here: a comment carrying one GIF.
+  const viewerPayload = useMemo(() => {
+    if (!viewingImage) return null;
+    const images = viewingImage.images && viewingImage.images.length > 0
+      ? viewingImage.images
+      : [viewingImage.uri];
+    // Prefer the explicit index the opener passed; otherwise locate the tapped uri.
+    const idx = typeof viewingImage.index === 'number'
+      ? Math.min(Math.max(viewingImage.index, 0), images.length - 1)
+      : Math.max(0, images.indexOf(viewingImage.uri));
+    return { images, index: idx };
+  }, [viewingImage]);
+
+  const closeViewer = useCallback(() => setViewingImage(null), []);
 
   // Frozen at module-constant identity via `useRef`, not an inline literal on the FlashList. v2's
   // docs are explicit that memoizing props matters more than in v1 ("we will instead allow
@@ -1965,54 +1984,20 @@ export default function CommentsScreen() {
 
         {/* GIF picker now lives in the inline MediaPanel (emoji/GIF switcher). */}
 
-        {/* Fullscreen Image Viewer — mirrors the profile-screen viewer. Black
-            backdrop, glass-aware close button top-right, contain-fit image, and
-            a horizontal pager for multi-image posts starting on the tapped one.
-            Tapping the backdrop (or any letterboxed area) closes it. */}
-        <Modal visible={!!viewingImage} transparent animationType="fade" onRequestClose={() => setViewingImage(null)} statusBarTranslucent>
-          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.95)' }}>
-            {/* Image — full width, contain-fit. Multi-image posts get a paged
-                horizontal scroll starting at the tapped index. */}
-            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-              {viewingImage && (
-                viewingImage.images && viewingImage.images.length > 1 ? (
-                  <ScrollView
-                    horizontal
-                    pagingEnabled
-                    showsHorizontalScrollIndicator={false}
-                    style={{ flex: 1 }}
-                    contentOffset={{ x: (viewingImage.index || 0) * SCREEN_WIDTH, y: 0 }}
-                  >
-                    {viewingImage.images.map((imgUri, idx) => (
-                      <Pressable key={idx} onPress={() => setViewingImage(null)} style={{ width: SCREEN_WIDTH, height: '100%', justifyContent: 'center', alignItems: 'center' }}>
-                        <CachedImage uri={imgUri} style={{ width: SCREEN_WIDTH, height: SCREEN_WIDTH }} resizeMode="contain" />
-                      </Pressable>
-                    ))}
-                  </ScrollView>
-                ) : (
-                  <Pressable onPress={() => setViewingImage(null)} style={{ flex: 1, width: '100%', justifyContent: 'center', alignItems: 'center' }}>
-                    <CachedImage uri={viewingImage.uri} style={{ width: SCREEN_WIDTH, height: SCREEN_WIDTH }} resizeMode="contain" />
-                  </Pressable>
-                )
-              )}
-            </View>
-            {/* Close (X) — top-right, respects safe-area insets. Liquid glass when active. */}
-            <View style={{ position: 'absolute', top: insets.top + 12, right: 16, zIndex: 10 }}>
-              {glassActive ? (
-                <Pressable onPress={() => setViewingImage(null)} style={{ borderRadius: 18 }}>
-                  <NativeGlassView glassStyle="regular" isInteractive colorScheme="dark" style={{ width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' }}>
-                    <Feather name="x" size={20} color="#FFFFFF" />
-                  </NativeGlassView>
-                </Pressable>
-              ) : (
-                <Pressable onPress={() => setViewingImage(null)} style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' }}>
-                  <Feather name="x" size={20} color="#FFFFFF" />
-                </Pressable>
-              )}
-            </View>
-          </View>
-        </Modal>
-    </View>
+        {/* Fullscreen viewer — the SAME component the chat and both profiles use.
+   
+            This was the third hand-copied Modal viewer: a static backdrop, tap-anywhere to close,
+            and no gestures. Comments show GIFs, which is exactly where dragging one away and
+            pinching into it are wanted, so it gets the shared viewer too. The tab bar hides itself
+            from inside the component, so this screen needs no extra wiring for that. */}
+        <ImageViewerModal
+          payload={viewerPayload}
+          onClose={closeViewer}
+          topInset={insets.top}
+          bottomInset={insets.bottom}
+          proxyWidth={SCREEN_WIDTH}
+          zoomable
+        />    </View>
   );
 }
 

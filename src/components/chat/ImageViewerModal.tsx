@@ -14,6 +14,7 @@ import Reanimated, {
 } from 'react-native-reanimated';
 import { CachedImage } from '../ui/CachedImage';
 import { ModalStatusBar } from '../ui/ModalStatusBar';
+import { useTabBarStore } from '../../store/tabBarStore';
 
 /**
  * Full-screen photo viewer for the chat.
@@ -125,6 +126,11 @@ function ImageViewerModalComponent({
   const zoom = useSharedValue(1);
   const zoomPanX = useSharedValue(0);
   const zoomPanY = useSharedValue(0);
+  // JS mirror of "is the photo enlarged", used only to switch the pager off. A shared value cannot
+  // drive a plain prop, and this flips at most twice per zoom gesture (in, then out) rather than
+  // per frame, so it is not a render cost. Without it, the horizontal FlatList keeps its own scroll
+  // gesture while zoomed and competes with dragging the enlarged photo sideways.
+  const [zoomedJS, setZoomedJS] = useState(false);
 
   useEffect(() => {
     if (payload) {
@@ -149,6 +155,35 @@ function ImageViewerModalComponent({
   const requestClose = useCallback(() => {
     onClose();
   }, [onClose]);
+
+  // ── HIDE THE TAB BAR WHILE OPEN, DELIBERATELY ─────────────────────────────
+  //
+  // Reported: "I tap a photo in a profile and for some reason the bottom navigation disappears."
+  //
+  // It was disappearing by ACCIDENT. Nothing asked the tab bar to go; the viewer is an in-tree
+  // overlay at `zIndex: 3000` and it simply happened to paint over a bar that is rendered outside
+  // the screen's tree. That is not a behaviour to rely on — it depends on z-order between two
+  // subtrees that know nothing about each other, it differs between a tab screen and a pushed
+  // screen, and it means the bar is still mounted and still hit-testable underneath a photo.
+  //
+  // So it is now explicit. `tabBarStore` exists for exactly this ("lets a screen temporarily take
+  // over the bottom of the display") and hides by translating the bar off-screen rather than fading
+  // it — which matters, because `expo-glass-effect` stops rendering glass entirely at opacity 0.
+  // The bar now slides away instead of being occluded.
+  //
+  // Restored in the cleanup, which is what makes it safe: whether the viewer closes by the X, by a
+  // drag, or because the whole screen unmounted mid-view, the bar comes back. That is the failure
+  // the store's own documentation warns about ("screens MUST restore visibility on unmount/blur ...
+  // so backing out can never leave the app with no tab bar").
+  //
+  // Keyed on `mounted`, not on `payload`, so the bar stays away for the whole exit animation and
+  // does not slide back up underneath a photo that is still on screen.
+  useEffect(() => {
+    if (!mounted) return;
+    const setHidden = useTabBarStore.getState().setHidden;
+    setHidden(true);
+    return () => setHidden(false);
+  }, [mounted]);
 
   // Backdrop opacity folds in the drag so pulling the photo down reveals the chat
   // behind it, rather than dimming at full strength until the very last frame.
@@ -196,12 +231,34 @@ function ImageViewerModalComponent({
       interpolate(Math.abs(dragY.value), [0, 80], [1, 0], Extrapolation.CLAMP),
   }));
 
+  // Read from `shown` rather than the `images` local further down: this memo runs during render at
+  // the point it appears, and `images` is declared below it, so referencing it here would be a
+  // temporal-dead-zone error.
+  const isPager = (shown?.images?.length ?? 0) > 1;
+
   const dismissGesture = useMemo(
-    () =>
-      Gesture.Pan()
-        // Vertical only, so the horizontal pager keeps its own gesture.
-        .activeOffsetY([-14, 14])
-        .failOffsetX([-20, 20])
+    () => {
+      const g = Gesture.Pan()
+        // ── WHY THESE NUMBERS CHANGED ───────────────────────────────────────────────────
+        //
+        // Reported: "it conflicts with something — sometimes I just cannot drag the photo up or
+        // down."
+        //
+        // `failOffsetX([-20, 20])` was the conflict. It CANCELS the gesture as soon as the finger
+        // has moved 20 pt horizontally. A real vertical swipe on a phone is never vertical: it
+        // arcs, and 20 pt of sideways drift over a full-screen swipe is completely ordinary. So
+        // the dismiss died mid-drag, at random, depending on how straight the swipe happened to
+        // be. That is the intermittency.
+        //
+        // The bound existed to protect the horizontal pager. But it only needs protecting when
+        // there is something to page TO — and in a profile there is usually one photo, so the
+        // pager had nothing to do while still breaking the drag. It is now applied only for a
+        // multi-image payload, and widened to 40 pt there, which still distinguishes a deliberate
+        // horizontal swipe from vertical drift.
+        //
+        // `activeOffsetY` tightened 14 → 12 so the drag takes hold slightly sooner, which makes
+        // the photo feel attached to the finger from the start rather than after a dead zone.
+        .activeOffsetY([-12, 12])
         // `onChange`, not `onUpdate`: its payload carries the per-frame deltas (`changeX/changeY`)
         // as well as the cumulative translation, and the zoomed branch below needs deltas so the
         // photo accumulates movement instead of snapping back to the gesture's origin each frame.
@@ -232,8 +289,12 @@ function ImageViewerModalComponent({
           } else {
             dragY.value = withSpring(0, { damping: 20, stiffness: 260, mass: 0.7 });
           }
-        }),
-    [dragY, enter, requestClose, zoom, zoomPanX, zoomPanY],
+        });
+      // Only guard against the pager when a pager actually exists — see the note above.
+      if (isPager) g.failOffsetX([-40, 40]);
+      return g;
+    },
+    [dragY, enter, requestClose, zoom, zoomPanX, zoomPanY, isPager],
   );
 
   /**
@@ -253,6 +314,9 @@ function ImageViewerModalComponent({
             zoom.value = withSpring(1, { damping: 20, stiffness: 240 });
             zoomPanX.value = withSpring(0, { damping: 20, stiffness: 240 });
             zoomPanY.value = withSpring(0, { damping: 20, stiffness: 240 });
+            runOnJS(setZoomedJS)(false);
+          } else {
+            runOnJS(setZoomedJS)(true);
           }
         }),
     [zoom, zoomPanX, zoomPanY],
@@ -271,8 +335,10 @@ function ImageViewerModalComponent({
             zoom.value = withSpring(1, { damping: 20, stiffness: 240 });
             zoomPanX.value = withSpring(0, { damping: 20, stiffness: 240 });
             zoomPanY.value = withSpring(0, { damping: 20, stiffness: 240 });
+            runOnJS(setZoomedJS)(false);
           } else {
             zoom.value = withSpring(2, { damping: 20, stiffness: 240 });
+            runOnJS(setZoomedJS)(true);
           }
         }),
     [zoom, zoomPanX, zoomPanY],
@@ -327,6 +393,16 @@ function ImageViewerModalComponent({
             renderItem={renderItem}
             showsHorizontalScrollIndicator={false}
             style={styles.pager}
+            // The second half of the "sometimes I cannot drag the photo" conflict.
+            //
+            // A horizontal FlatList keeps its own scroll recogniser whether or not it has anywhere
+            // to scroll, and that recogniser competes with the pan for the same touch. With ONE
+            // image there is nothing to page to, so it was pure interference; while ZOOMED, a
+            // sideways drag should move the enlarged photo, not flip to the next one.
+            //
+            // Off in both cases, so the pan is the only recogniser for the touch exactly when it
+            // should be, and paging still works normally for a multi-image payload at 1x.
+            scrollEnabled={isPager && !zoomedJS}
             // Three mounted pages at most: the one on screen and one either side.
             initialNumToRender={1}
             maxToRenderPerBatch={1}
