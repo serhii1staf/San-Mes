@@ -24,6 +24,7 @@ import { showToast } from '../../src/store/toastStore';
 import { formatTimeAgo } from '../../src/utils/mockData';
 import { CachedImage } from '../../src/components/ui/CachedImage';
 import { ImageViewerModal, ViewerActionButton } from '../../src/components/chat/ImageViewerModal';
+import { ShareToChatSheet } from '../../src/components/ui/ShareToChatSheet';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { UserBadge } from '../../src/components/ui/UserBadge';
 import { PostContextMenu } from '../../src/components/ui/PostContextMenu';
@@ -468,6 +469,8 @@ export default function UserProfileScreen() {
   const [chromeReady, setChromeReady] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const [viewingImage, setViewingImage] = useState<{ uri: string; postId: string; allImages?: string[] } | null>(null);
+  // Which post the in-app share picker is open for. Null keeps the sheet closed.
+  const [sharePost, setSharePost] = useState<{ id: string; caption: string } | null>(null);
   // Followers / Following list modal opened from the header counters.
   const [followsModal, setFollowsModal] = useState<FollowsListMode | null>(null);
   const { target: contextPost, open: openContextMenu, close: closeContextMenu } = useContextMenuGuard<any>();
@@ -1561,6 +1564,10 @@ export default function UserProfileScreen() {
 
   const closeViewer = useCallback(() => setViewingImage(null), []);
 
+  const closeShareSheet = useCallback(() => setSharePost(null), []);
+  // Never offer to share to yourself. Memoized because the sheet compares this prop by reference.
+  const shareExclude = useMemo(() => [currentUser?.id], [currentUser?.id]);
+
   const viewingPost = useMemo(
     () => (viewingImage ? displayPosts.find((p: any) => p.id === viewingImage.postId) : undefined),
     [viewingImage, displayPosts],
@@ -1655,10 +1662,10 @@ export default function UserProfileScreen() {
         <ViewerActionButton
           icon="share"
           accessibilityLabel={t('post.share')}
-          onPress={async () => {
+          onPress={() => {
+            triggerHaptic('light');
             const caption = viewingPost?.content || viewingPost?.originalPost?.content || '';
-            const { shareImageUrl } = require('../../src/utils/sharePost');
-            await shareImageUrl(viewingImage.uri, caption);
+            setSharePost({ id: viewingImage.postId, caption });
           }}
         />
         {isOwnProfile && (
@@ -1979,7 +1986,14 @@ export default function UserProfileScreen() {
         header={viewerHeader}
         footer={viewerFooter}
         zoomable
-      />      <PostContextMenu visible={!!contextPost} post={contextPost} isOwnPost={isOwnProfile} onClose={closeContextMenu} onDelete={isOwnProfile ? async (postId) => { if (currentUser?.id) { await deletePost(postId, currentUser.id); } closeContextMenu(); } : undefined} />
+      />      <ShareToChatSheet
+        visible={!!sharePost}
+        onClose={closeShareSheet}
+        shareUrl={sharePost ? ('https://san-m-app.com/post/' + sharePost.id) : ''}
+        caption={sharePost?.caption}
+        excludeUserIds={shareExclude}
+      />
+      <PostContextMenu visible={!!contextPost} post={contextPost} isOwnPost={isOwnProfile} onClose={closeContextMenu} onDelete={isOwnProfile ? async (postId) => { if (currentUser?.id) { await deletePost(postId, currentUser.id); } closeContextMenu(); } : undefined} />
       {/* Long-press tab editor — own profile only. Mounted unconditionally
           but only ever opened from the long-press handler, which itself
           is gated on `isOwnProfile`. Cheap when idle (returns null until
