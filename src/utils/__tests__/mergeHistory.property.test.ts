@@ -9,7 +9,7 @@
  */
 
 import fc from 'fast-check';
-import { mergeHistory, knownIds, sortByCreatedAt, MergeableItem } from '../mergeHistory';
+import { mergeHistory, pruneServerDeleted, knownIds, sortByCreatedAt, MergeableItem } from '../mergeHistory';
 
 interface Msg extends MergeableItem {
   text: string;
@@ -218,5 +218,116 @@ describe('sortByCreatedAt', () => {
       }),
       { numRuns: 200 },
     );
+  });
+});
+
+/**
+ * Property tests for `pruneServerDeleted`.
+ *
+ * This is the only function in the read path that REMOVES a user's messages, so its safety
+ * preconditions are stated as properties rather than trusted to the call site. Each of the three
+ * things it must never touch is a separate property, because each protects a different real failure:
+ * wiping the transcript from a truncated page, destroying an in-flight send, and deleting messages
+ * the server was never asked about.
+ */
+describe('pruneServerDeleted', () => {
+  /** A locally-confirmed row: it has a server id, so the server's silence about it is meaningful. */
+  const confirmedArb = fc.record({
+    id: fc.integer({ min: 0, max: 30 }).map((n) => `l${n}`),
+    serverId: fc.integer({ min: 0, max: 30 }).map((n) => `srv-${n}`),
+    createdAt: isoArb,
+    text: fc.string({ maxLength: 8 }),
+  });
+
+  /** A row that has never reached the server — an optimistic, queued or failed send. */
+  const unconfirmedArb = fc.record({
+    id: fc.integer({ min: 0, max: 30 }).map((n) => `p${n}`),
+    createdAt: isoArb,
+    text: fc.string({ maxLength: 8 }),
+  });
+
+  it('removes NOTHING when the page was truncated', () => {
+    fc.assert(
+      fc.property(fc.array(confirmedArb, { maxLength: 20 }), fc.array(msgArb('r'), { maxLength: 20 }), (l, r) => {
+        const local = dedupeById(l as Msg[]);
+        const { kept, removedIds } = pruneServerDeleted<Msg>(local, r as Msg[], false);
+        expect(removedIds).toEqual([]);
+        // Reference-stable, so the caller can skip the store write entirely.
+        expect(kept).toBe(local);
+      }),
+    );
+  });
+
+  it('never removes a row the server has not confirmed', () => {
+    fc.assert(
+      fc.property(
+        fc.array(unconfirmedArb, { maxLength: 20 }),
+        fc.array(msgArb('r'), { minLength: 1, maxLength: 20 }),
+        (l, r) => {
+          const local = dedupeById(l as Msg[]);
+          const { kept, removedIds } = pruneServerDeleted<Msg>(local, r as Msg[], true);
+          expect(removedIds).toEqual([]);
+          for (const item of local) expect(kept).toContain(item);
+        },
+      ),
+    );
+  });
+
+  it('never removes a row outside the span the response covers', () => {
+    fc.assert(
+      fc.property(fc.array(confirmedArb, { minLength: 1, maxLength: 20 }), (l) => {
+        const local = dedupeById(l as Msg[]);
+        const stamps = local.map((m) => m.createdAt).sort();
+        // A response whose span is a single instant strictly before everything local: every local
+        // row is then outside it, so nothing may be dropped however absent it looks.
+        const before = new Date(Date.parse(stamps[0]) - 60_000).toISOString();
+        const remote: Msg[] = [{ id: 'srv-elsewhere', createdAt: before, text: 'x' }];
+        const { kept, removedIds } = pruneServerDeleted<Msg>(local, remote, true);
+        expect(removedIds).toEqual([]);
+        expect(kept).toBe(local);
+      }),
+    );
+  });
+
+  it('removes a confirmed in-span row the server no longer has, and keeps the rest', () => {
+    const remote: Msg[] = [
+      { id: 'srv-1', createdAt: '2024-01-01T00:00:00.000Z', text: 'a' },
+      { id: 'srv-3', createdAt: '2024-01-03T00:00:00.000Z', text: 'c' },
+    ];
+    const local: Msg[] = [
+      { id: 'l1', serverId: 'srv-1', createdAt: '2024-01-01T00:00:00.000Z', text: 'a' },
+      // Deleted on another device: confirmed, inside the span, and absent from the response.
+      { id: 'l2', serverId: 'srv-2', createdAt: '2024-01-02T00:00:00.000Z', text: 'b' },
+      { id: 'l3', serverId: 'srv-3', createdAt: '2024-01-03T00:00:00.000Z', text: 'c' },
+      // Newer than the whole response — our own send, a beat after the fetch.
+      { id: 'l4', serverId: 'srv-4', createdAt: '2024-01-09T00:00:00.000Z', text: 'd' },
+      // Never confirmed: still sending, or queued offline.
+      { id: 'p5', createdAt: '2024-01-02T12:00:00.000Z', text: 'e' },
+    ];
+    const { kept, removedIds } = pruneServerDeleted<Msg>(local, remote, true);
+    // The local id, not the server id — that is what the store, the tombstone list and the on-disk
+    // blob are keyed by, so reporting `srv-2` would purge the store and leave the cache intact.
+    expect(removedIds).toEqual(['l2']);
+    expect(kept.map((m) => m.id)).toEqual(['l1', 'l3', 'l4', 'p5']);
+  });
+
+  it('matches on EITHER identity, so a row claimed by its local id is not dropped', () => {
+    // The response carries the id the local row is stored under rather than its `serverId`. Both
+    // must count as "the server still has this", or every such row would be deleted.
+    const remote: Msg[] = [{ id: 'l1', createdAt: '2024-01-01T00:00:00.000Z', text: 'a' }];
+    const local: Msg[] = [{ id: 'l1', serverId: 'srv-9', createdAt: '2024-01-01T00:00:00.000Z', text: 'a' }];
+    const { kept, removedIds } = pruneServerDeleted<Msg>(local, remote, true);
+    expect(removedIds).toEqual([]);
+    expect(kept).toBe(local);
+  });
+
+  it('removes nothing when the response is empty, however complete it claims to be', () => {
+    // An empty page cannot establish a span, and is anyway indistinguishable from a fetch that
+    // failed or was filtered to nothing. Treating it as "the server has no messages" would wipe
+    // the whole transcript.
+    const local: Msg[] = [{ id: 'l1', serverId: 'srv-1', createdAt: '2024-01-01T00:00:00.000Z', text: 'a' }];
+    const { kept, removedIds } = pruneServerDeleted<Msg>(local, [], true);
+    expect(removedIds).toEqual([]);
+    expect(kept).toBe(local);
   });
 });

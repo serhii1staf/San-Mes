@@ -63,7 +63,7 @@ import { playSendSound } from '../../src/utils/sounds';
 import { GiphyItem } from '../../src/services/giphy';
 import { useT, useI18nStore } from '../../src/i18n/store';
 import { buildDaySeparators, formatDaySeparator } from '../../src/utils/chatDaySeparators';
-import { mergeHistory } from '../../src/utils/mergeHistory';
+import { mergeHistory, pruneServerDeleted } from '../../src/utils/mergeHistory';
 
 import { perfMonitor } from '../../src/services/perfMonitor';
 import { useSettingsStore } from '../../src/store/settingsStore';
@@ -2396,6 +2396,11 @@ export default function ChatScreen() {
   // ten fewer ticks is still the right direction, and the FIRST tick — the expensive one, with no
   // cursor yet — is unaffected either way.
   const HISTORY_POLL_MS = 30000;
+  // Page size for the history poll. Named because the delete-detection below compares the response
+  // length against it: a page that came back SHORT of the limit was not truncated, which is what
+  // makes "the server did not return this row" mean "the row is gone" rather than "the row is on
+  // another page". A literal in two places would let those two drift apart silently.
+  const POLL_PAGE_LIMIT = 200;
   useEffect(() => {
     if (!conversationId) return;
     if (!useConnectivityStore.getState().isOnline) return;
@@ -2411,11 +2416,15 @@ export default function ChatScreen() {
       // from then on an idle poll transfers an empty array instead of re-sending the tail
       // every six seconds.
       let sinceCursor: string | null = null;
+      // Only the FIRST fetch of a session can be used to detect deletions — it is the only one that
+      // asks from the beginning of the conversation rather than from a cursor. See the prune block
+      // below for why that distinction is the whole safety argument.
+      let isFirstPage = true;
       const runFetch = async () => {
         try {
           const { getMessages } = await import('../../src/lib/supabase');
           const { messages, error } = await getMessages(conversationId, {
-            limit: 200,
+            limit: POLL_PAGE_LIMIT,
             ...(sinceCursor ? { since: sinceCursor } : {}),
           });
           if (cancelled || error) return;
@@ -2451,7 +2460,50 @@ export default function ChatScreen() {
               serverId: String(row.id),
             }));
 
-          const local = (useChatStore.getState().messages[conversationId] || []) as ChatMessage[];
+          let local = (useChatStore.getState().messages[conversationId] || []) as ChatMessage[];
+
+          // ── A MESSAGE DELETED ON ANOTHER DEVICE MUST DISAPPEAR HERE TOO ─────
+          //
+          // Reported: "I deleted messages on one device. I open the same chat on my other phone,
+          // scroll up, and they are still there."
+          //
+          // Deleting hard-deletes on the server and publishes `msg.delete` on the conversation
+          // channel. THIS device only learns from that event, which requires it to be subscribed at
+          // that exact moment — app open, this chat on screen. Miss it and nothing ever tells it
+          // again: the poll's merge is additive by design, its tombstone list is empty (tombstones
+          // belong to whoever pressed delete), and the row sits in its own MMKV blob across
+          // restarts. The two devices then disagree for ever.
+          //
+          // This is the poll noticing. The precondition is what makes it safe, and it is only
+          // available on the FIRST fetch of a session:
+          //
+          //   • no cursor  — the Worker reads `ORDER BY created_at ASC LIMIT ?` from the beginning
+          //                  of the conversation, so the page starts at the true oldest row;
+          //   • under the  — a page that came back short of the limit was not truncated, so it is
+          //     limit        the server's COMPLETE answer for the span it covers.
+          //
+          // Once `sinceCursor` is set every later page is incremental and deliberately excludes
+          // almost everything, so absence from it proves nothing at all. Hence `isFirstPage`.
+          //
+          // `pruneServerDeleted` holds the rest of the guarantees (never touches an unconfirmed
+          // local send, never touches anything outside the span the response covers) — see its
+          // note. It is a separate function from `mergeHistory` on purpose: that one's additive
+          // contract is what protects queued and failed sends.
+          if (isFirstPage) {
+            const { kept, removedIds } = pruneServerDeleted(local, remote, messages.length < POLL_PAGE_LIMIT);
+            if (removedIds.length > 0) {
+              // Tombstone them, do not merely drop them from the store. The on-disk history blob
+              // still holds these rows, and the full-blob persist path MERGES the store into the
+              // cache rather than replacing it — so a store-only purge would be undone the moment
+              // the user scrolled to the top and `hydrateFullHistory` read the blob back in.
+              // `filterTombstoned` is already applied by both history readers, which is exactly
+              // the seam this needs.
+              addTombstones(conversationId, removedIds);
+              setMessages(conversationId, kept as any);
+              local = kept;
+            }
+          }
+          isFirstPage = false;
 
           // ── NEVER PREPEND OLDER HISTORY FROM A POLL ─────────────────────────
           //

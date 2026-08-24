@@ -145,3 +145,102 @@ export function mergeHistory<T extends MergeableItem>(local: readonly T[], remot
   if (additions.length === 0) return localArr as T[];
   return sortByCreatedAt([...localArr, ...additions]);
 }
+
+/**
+ * pruneServerDeleted — the other half of reconciliation: rows the server no longer has.
+ *
+ * ── THE BUG THIS FIXES ──────────────────────────────────────────────────────
+ *
+ * Reported as: "I deleted messages on one device. I open the same chat on my other phone, scroll up,
+ * and they are still there — and on the first phone they are gone."
+ *
+ * Exactly what the code did. Deleting a message hard-deletes it on the server and publishes
+ * `msg.delete` on the conversation channel, and the deleting device records a local tombstone. The
+ * OTHER device only learns about it from that realtime event, which requires it to be subscribed at
+ * that instant — app open, this chat on screen. Miss it (app closed, different screen, no network,
+ * asleep) and nothing ever tells it again:
+ *
+ *   • `mergeHistory` is additive by design, so a poll cannot remove anything;
+ *   • its tombstone store is empty, because tombstones are local to whoever pressed delete;
+ *   • the row is in its own MMKV history blob, so it survives restarts indefinitely.
+ *
+ * So the two devices disagree permanently. This is the function that lets a poll notice.
+ *
+ * ── WHY IT IS SEPARATE FROM `mergeHistory` AND NOT A FLAG ON IT ─────────────
+ *
+ * `mergeHistory`'s additive guarantee is load-bearing: it is what lets a queued, sending or failed
+ * message survive a fetch from a server that has not caught up. Making it capable of removal — even
+ * behind an option — would put "delete the user's pending message" one bad argument away from
+ * happening, in the function every history path calls. The file's own note says deletions belong
+ * outside it. They do.
+ *
+ * Keeping them separate also keeps the SAFETY PRECONDITION where the caller can actually evaluate
+ * it, which matters more than the tidiness. "The server did not return this row" only means "it was
+ * deleted" if the server was asked a question whose answer covers that row. A page capped by `limit`
+ * does not qualify: half the transcript is missing from it by construction, and pruning on that
+ * would wipe most of the conversation. So the caller must state, explicitly, that the response was
+ * complete — hence `complete`, which is not a flag with a sensible default.
+ *
+ * ── WHAT IT WILL NOT TOUCH ──────────────────────────────────────────────────
+ *
+ *   • Anything when `complete` is false, or when the remote array is empty. An empty response cannot
+ *     establish a range, and is anyway indistinguishable from a fetch that failed or was filtered.
+ *   • Rows with no `serverId`. Those were never confirmed by the server, so its silence about them
+ *     is expected, not evidence — this is what protects an optimistic send that is still in flight,
+ *     a queued offline send, and a send that failed and is awaiting retry.
+ *   • Rows outside the timestamp span the remote array actually covers. A message newer than the
+ *     newest row in the response is one the response predates (our own send, a beat ago). A message
+ *     older than the oldest is outside what the server spoke about at all, which is the conservative
+ *     reading when server-side history may itself have been trimmed.
+ *
+ * Reference-stable: returns `local` itself when nothing is dropped, so the caller can skip the store
+ * write and the re-render.
+ */
+export function pruneServerDeleted<T extends MergeableItem>(
+  local: readonly T[],
+  remote: readonly T[],
+  complete: boolean,
+): { kept: T[]; removedIds: string[] } {
+  const localArr: readonly T[] = Array.isArray(local) ? local : [];
+  const none = { kept: localArr as T[], removedIds: [] as string[] };
+
+  if (!complete) return none;
+  if (!Array.isArray(remote) || remote.length === 0) return none;
+  if (localArr.length === 0) return none;
+
+  // The span the server's answer actually covers. Computed rather than assuming the array is
+  // sorted, because that is the caller's business and a wrong assumption here deletes messages.
+  let oldest = remote[0]?.createdAt;
+  let newest = remote[0]?.createdAt;
+  const remoteIds = new Set<string>();
+  for (const r of remote) {
+    if (!r?.id) continue;
+    remoteIds.add(r.id);
+    if (r.serverId) remoteIds.add(r.serverId);
+    const at = r.createdAt;
+    if (typeof at !== 'string') continue;
+    if (!oldest || at < oldest) oldest = at;
+    if (!newest || at > newest) newest = at;
+  }
+  if (!oldest || !newest || remoteIds.size === 0) return none;
+
+  const kept: T[] = [];
+  const removedIds: string[] = [];
+  for (const item of localArr) {
+    const confirmed = !!item?.serverId;
+    const at = item?.createdAt;
+    const inSpan = typeof at === 'string' && at >= oldest && at <= newest;
+    const claimed =
+      (item?.id && remoteIds.has(item.id)) || (item?.serverId && remoteIds.has(item.serverId));
+    if (confirmed && inSpan && !claimed) {
+      // Report the local id: that is what the store, the tombstone list and the on-disk blob are
+      // all keyed by. Reporting the server id would purge the store and leave the cache intact.
+      removedIds.push(item.id);
+      continue;
+    }
+    kept.push(item);
+  }
+
+  if (removedIds.length === 0) return none;
+  return { kept, removedIds };
+}
