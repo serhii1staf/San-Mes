@@ -123,3 +123,69 @@ export function toPreviewText(raw: string | null | undefined, labels: PreviewLab
 
   return trimmed;
 }
+
+/**
+ * The RAW human body of a stored message/comment, with every marker removed and nothing labelled.
+ *
+ * ── WHY THIS IS SEPARATE FROM `toPreviewText` ───────────────────────────────
+ *
+ * They look like the same function and are not. `toPreviewText` answers "what one line should this
+ * row show", so for a photo with no caption it returns the word "Photo". This answers "what did the
+ * human actually write", so for the same input it returns an empty string.
+ *
+ * That distinction matters to any caller that needs to inspect the body rather than print it. The
+ * activity feed is one: it scans the residual text for a bare URL to decide whether to show a photo,
+ * GIF or link chip beside the row. Handed a labelled preview it would find the word "Photo" and no
+ * URL, and the chips would stop working. So the two contracts stay separate while the knowledge of
+ * what the markers ARE lives here once.
+ *
+ * ── WHAT THIS FIXES WHERE IT IS NOW USED ────────────────────────────────────
+ *
+ * `app/notifications.tsx` had its own copy that knew only `::re::`, its legacy form, and `::gif::`.
+ * Everything else fell through to its safety net — "leading `::` means return nothing" — which is
+ * right about never leaking protocol and wrong about the result: a comment posted as a photo WITH a
+ * caption showed a completely empty line, because the caption sits after the `::img::` marker the
+ * copy had never heard of. Same for a chat-style `::rp::` reply and a `::repost::`.
+ *
+ * Returns an empty string when the content was markers only, or when a marker is present but
+ * unterminated (a truncated store would otherwise leak a raw base64 blob — that exact bug is
+ * recorded in the Worker's copy of this logic).
+ */
+export function stripMarkers(raw: string | null | undefined): string {
+  if (!raw) return '';
+  let s = raw;
+
+  // Reply wrappers come first, because a send writes them BEFORE any media marker. Each carries a
+  // base64 metadata blob terminated by `::`; the body is whatever follows.
+  if (s.startsWith('::re::')) {
+    const idx = s.indexOf('::', 6);
+    s = idx > 0 ? s.slice(idx + 2) : '';
+  } else if (s.startsWith('::rp::')) {
+    const idx = s.indexOf('::', 6);
+    s = idx > 0 ? s.slice(idx + 2) : '';
+  } else if (s.startsWith('::re:')) {
+    // Legacy single-colon reply: `::re:<b64>:<b64>[:<b64>]::<body>`
+    const idx = s.indexOf('::', 5);
+    s = idx > 0 ? s.slice(idx + 2) : '';
+  } else if (s.startsWith('::repost::')) {
+    const idx = s.indexOf('::', 10);
+    s = idx > 0 ? s.slice(idx + 2) : '';
+  }
+
+  // Media markers, which may follow a reply wrapper — hence a second, non-exclusive check.
+  if (s.startsWith('::img::')) {
+    // `::img::url1|url2::<caption>` — the caption is the body. This is the line the activity feed
+    // was dropping entirely.
+    const idx = s.indexOf('::', 7);
+    s = idx > 0 ? s.slice(idx + 2) : '';
+  } else if (s.startsWith('::gif::')) {
+    // A GIF message is nothing but its URL, so there is no body.
+    return '';
+  }
+
+  const trimmed = s.trim();
+  // Any residual unrecognised marker must not reach the UI. An empty string lets the caller show its
+  // own placeholder, which is always better than a row of raw protocol.
+  if (trimmed.startsWith('::')) return '';
+  return trimmed;
+}
