@@ -12,7 +12,7 @@ import { Text, Avatar } from '../../src/components/ui';
 import { LinkedText } from '../../src/components/ui/LinkedText';
 import { CachedImage, prefetchImages } from '../../src/components/ui/CachedImage';
 import { ImageViewerModal, ViewerActionButton } from '../../src/components/chat/ImageViewerModal';
-import { ShareToChatSheet } from '../../src/components/ui/ShareToChatSheet';
+import { openPostShareSheet } from '../../src/store/shareSheetStore';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { UserBadge } from '../../src/components/ui/UserBadge';
 import { ProfilePostCard } from '../../src/components/profile/ProfilePostCard';
@@ -309,8 +309,6 @@ export default function ProfileScreen() {
   // counters in the profile header. `null` means the modal is closed.
   const [followsModal, setFollowsModal] = useState<FollowsListMode | null>(null);
   const [viewingImage, setViewingImage] = useState<{ uri: string; postId: string; allImages?: string[] } | null>(null);
-  // Which post the in-app share picker is open for. Null keeps the sheet closed.
-  const [sharePost, setSharePost] = useState<{ id: string; caption: string } | null>(null);
   const [showAccountSwitcher, setShowAccountSwitcher] = useState(false);
   const { target: contextPost, open: openContextMenu, close: closeContextMenu } = useContextMenuGuard<any>();
 
@@ -1389,11 +1387,7 @@ export default function ProfileScreen() {
 
   const closeViewer = useCallback(() => setViewingImage(null), []);
 
-  const closeShareSheet = useCallback(() => setSharePost(null), []);
-  // Never offer to share to yourself. Memoized because the sheet compares this prop by reference — a
-  // fresh array each render would defeat its memo and re-render the people row on every render of this
-  // screen.
-  const shareExclude = useMemo(() => [user?.id], [user?.id]);
+
 
   // The post behind the open viewer. Every piece of chrome below reads from it, so it is resolved
   // once instead of `userPosts.find(...)` being re-run inside each button's JSX — which is what the
@@ -1506,13 +1500,13 @@ export default function ProfileScreen() {
             It sends a LINK to the post rather than a copy of its content — a copy looks richer for a day
             and is then wrong for ever, because editing or deleting the post cannot reach it. The chat
             already unfurls links into preview cards, so the recipient sees the author, the text and the
-            image, and tapping it opens the real post. See ShareToChatSheet. */}
+            image, and tapping it opens the real post. See src/store/shareSheetStore.ts. */}
         <ViewerActionButton
           icon="share"
           accessibilityLabel={t('post.share')}
           onPress={() => {
             triggerHaptic('light');
-            setSharePost({ id: viewingImage.postId, caption: viewingPost?.content || '' });
+            openPostShareSheet(viewingImage.postId, viewingPost?.content || '');
           }}
         />
         <ViewerActionButton
@@ -1775,12 +1769,6 @@ export default function ProfileScreen() {
         header={viewerHeader}
         footer={viewerFooter}
         zoomable
-      />      <ShareToChatSheet
-        visible={!!sharePost}
-        onClose={closeShareSheet}
-        shareUrl={sharePost ? ('https://san-m-app.com/post/' + sharePost.id) : ''}
-        caption={sharePost?.caption}
-        excludeUserIds={shareExclude}
       />
       <AccountSwitcher visible={showAccountSwitcher} onClose={() => setShowAccountSwitcher(false)} />
       <PostContextMenu visible={!!contextPost} post={contextPost} isOwnPost={true} onClose={closeContextMenu} onDelete={async (postId) => { if (user?.id) { await deletePost(postId, user.id); useFeedStore.getState().removePost(postId); loadMyPosts(); showToast(t('toast.post_deleted'), 'trash-2'); } }} />

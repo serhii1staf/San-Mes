@@ -13,6 +13,7 @@ import { MusicBottomIndicator } from '../src/components/ui/MusicBottomIndicator'
 import { MusicFullPlayer } from '../src/components/ui/MusicFullPlayer';
 import { MiniAppHost } from '../src/components/ui/MiniAppHost';
 import { Toast } from '../src/components/ui/Toast';
+import { ShareSheetHost } from '../src/components/ui/ShareSheetHost';
 import { initRateLimits } from '../src/services/rateLimit';
 import { cacheCleanup } from '../src/services/cacheManager';
 import { installImageMemoryManager } from '../src/services/imageMemoryManager';
@@ -574,6 +575,10 @@ function RootLayout() {
         <MusicBottomIndicator />
         <MusicFullPlayer />
         <Toast />
+        {/* The app's one share sheet. Every "send this to someone" action anywhere routes here through
+            `openShareSheet` — see `src/store/shareSheetStore.ts` for why this is a store and not a prop.
+            Renders literally nothing until the first time it is opened. */}
+        <ShareSheetHost />
         {/* The Stack and the minimized-session band share one flex column, so the
             band occupies its own height and the Stack — including the chat input bar
             and the floating tab bar inside it — is pushed up by exactly that much.
