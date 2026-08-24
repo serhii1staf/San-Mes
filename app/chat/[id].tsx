@@ -272,7 +272,29 @@ function schedulePersist(conversationId: string, write: () => void): void {
 // could miss them until the next successful full write. That is an acceptable trade against
 // ten seconds of frozen UI per session, and it is strictly better than the previous behaviour
 // on a crash mid-debounce, which lost the same messages from BOTH keys.
-const FULL_PERSIST_DEBOUNCE_MS = 6000;
+// ── 6 s WAS STILL A CADENCE, AND A CADENCE IS THE PROBLEM ───────────────────
+//
+// Splitting tail from full blob took chat/[id] from 35 freezes (worst 1318 ms) to zero. The next
+// measurement showed SEVEN freezes back, worst 356 ms, average 194 ms — with Mounts still 0. Seven
+// is what a 6 s debounce produces across a minute or so of active conversation: I made the hot
+// path cheap and left the expensive path on a timer, so an actively-used chat paid ~200-350 ms
+// every six seconds instead of every 450 ms. Better, and still wrong.
+//
+// The full blob does not need a cadence at all. Nothing reads it while the user is in the chat —
+// `hydrateFullHistory` and `ensureCachedHistory` are the only readers, and both are triggered by
+// deliberate actions (scroll to top, search, jump to an old reply) that run against the STORE,
+// which is already correct in memory. The blob only has to be current at two moments: before the
+// process can die, and before a future session reads it.
+//
+// Both are already wired: `runPendingFullPersist()` fires on background/inactive and on teardown.
+// Those are frames nobody is looking at — the screen is gone or the app is leaving — so a 300 ms
+// block there costs the user nothing.
+//
+// So this is now a SAFETY NET, not a schedule. Two minutes, so a marathon session in a chat that
+// somehow never backgrounds still checkpoints occasionally rather than risking the whole session's
+// divergence on one crash. During normal use it never fires: leaving the chat or switching apps
+// happens first, and both flush.
+const FULL_PERSIST_DEBOUNCE_MS = 120000;
 let fullPersistTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingFullWrite: (() => void) | null = null;
 let pendingFullConv: string | null = null;
