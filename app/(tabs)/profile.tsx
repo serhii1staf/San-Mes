@@ -10,7 +10,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
 import { LinkedText } from '../../src/components/ui/LinkedText';
-import { CachedImage } from '../../src/components/ui/CachedImage';
+import { CachedImage, prefetchImages } from '../../src/components/ui/CachedImage';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { UserBadge } from '../../src/components/ui/UserBadge';
 import { ProfilePostCard } from '../../src/components/profile/ProfilePostCard';
@@ -38,7 +38,6 @@ import { perfMonitor } from '../../src/services/perfMonitor';
 import { useSettingsStore } from '../../src/store/settingsStore';
 import { useLiquidGlassActive, NativeGlassView } from '../../src/components/ui/LiquidGlass';
 import { parseBannerTransform, stripBannerTransform } from '../../src/utils/bannerTransform';
-import { useBannerBrightness } from '../../src/hooks/useBannerBrightness';
 import { useScreenCaptureGuard } from '../../src/hooks/useScreenCaptureGuard';
 import { ScreenshotShield } from '../../src/components/ui/ScreenshotShield';
 import { HeaderSceneLayer } from '../../src/components/profile/HeaderSceneLayer';
@@ -237,6 +236,41 @@ export default function ProfileScreen() {
     const handle = requestAnimationFrame(() => setChromeReady(true));
     return () => cancelAnimationFrame(handle);
   }, [postsReady]);
+
+  // ── START THE BANNER DOWNLOAD IMMEDIATELY, RENDER IT LATER ────────────────
+  //
+  // Reported: "I open the app, then immediately open my profile, and I can SEE the banner loading."
+  //
+  // Correct observation, and the staggering above is why. The banner `CachedImage` is gated behind
+  // `chromeReady`, which is one frame behind `postsReady`, which is one frame behind mount. The image
+  // is not merely painted late — it does not even START ITS NETWORK REQUEST until two render+commit
+  // cycles of this screen have completed. And because those are `requestAnimationFrame` callbacks,
+  // they queue behind whatever long task the JS thread is already running on a cold open, so the wait
+  // is not two frames in practice: it is two frames plus however busy the app is. Hence a visible load
+  // on exactly the "open the app, go straight to profile" path.
+  //
+  // The stagger itself is worth keeping. The comments above it record what happens without it: the
+  // BlurView chrome and the banner decode landing on the same commit as the post cards drove the UI
+  // thread to ~32fps and read as a one-second hang.
+  //
+  // So separate the two things that were conflated. The FETCH starts now, on mount, off the render
+  // path entirely; the RENDER stays gated. By the time `chromeReady` flips, the bytes are in
+  // expo-image's cache and mounting the image is a cache hit instead of a network round-trip.
+  //
+  // `prefetchImages` routes through the same weserv proxy helper the component uses, and is passed
+  // the SAME `SCREEN_WIDTH` that the `CachedImage` below passes as `proxyWidth`. That matters: the
+  // proxy width is part of the URL, and the URL is expo-image's cache key, so warming at a different
+  // width would produce a guaranteed cache miss and waste the egress it just spent.
+  //
+  // `'disk'` rather than the default `'memory-disk'`: download without decoding. The decode is the
+  // expensive half and the reason the stagger exists — doing it here would move the storm back onto
+  // the open frames, which is the bug this is meant to avoid. The decode happens when the image
+  // actually mounts, by which point it is a local file read.
+  const bannerUrlForWarm = stripBannerTransform((user as any)?.bannerUrl) || undefined;
+  useEffect(() => {
+    if (!bannerUrlForWarm) return;
+    prefetchImages([bannerUrlForWarm], SCREEN_WIDTH, 'disk');
+  }, [bannerUrlForWarm]);
   const [activeTab, setActiveTab] = useState<TabName>('posts');
   // Lazy-loaded secondary tab data. We don't fetch these on profile mount —
   // fetching only fires the first time the user actually flips to that tab.
@@ -871,7 +905,11 @@ export default function ProfileScreen() {
   const screenFocused = useIsFocused();
   // True while a drag / momentum scroll is in progress — freezes the ambient
   // particles within 100 ms and resumes within 200 ms (Req 6.2, 6.3).
-  const [scrollActive, setScrollActive] = useState(false);
+  // Was `useState(false)` with setters on drag start / momentum end. Now a constant, because nothing
+  // sets it any more and its only consumer discards it — see the note on the scroll handlers below.
+  // Kept as a named value rather than inlining `false` at the call site so the prop stays visible and
+  // the wiring is obvious if the theme layers are re-enabled.
+  const scrollActive = false;
   // Optimistic per-account theme id wins; fall back to the persisted user row
   // (`themeId`, mapped from `theme_id`), then the resolver's default (Req 4.2).
   const activeProfileThemeId = useActiveProfileThemeId(user?.id ?? '');
@@ -966,10 +1004,35 @@ export default function ProfileScreen() {
   const userLinks = useMemo<{ type: string; url: string }[]>(() => userLinksRaw || [], [userLinksRaw]);
   // "Build-your-own" header decorations. Prefer the in-memory user value (set
   // right after editing), else the locally-cached scene (instant on cold start).
+  // Keyed on the scene field and the id, NOT on the whole `user` object.
+  //
+  // This was `[user]`, and it was the most expensive avoidable work on the screen. The body is not
+  // cheap: `normalizeScene` JSON.parses the raw value, then walks every item (up to 24) coercing and
+  // clamping numbers, then walks every freehand stroke (up to 60) running a regex test plus a global
+  // match on each. When the in-memory scene is empty it ALSO calls `getLocalScene`, which is a second
+  // synchronous MMKV read feeding a second `normalizeScene` pass.
+  //
+  // Keyed on the whole object, every auth-store mutation re-ran all of that — and the badge-sync
+  // effect on this very screen calls `updateProfile`, which mints a new `user` object by design. The
+  // result is also in `bannerHeader`'s dependency list, so each of those re-runs rebuilt the entire
+  // header tree (banner image, blurred avatar, scene layers) for a value that had not changed.
+  //
+  // These two fields are the only inputs the body actually reads.
+  const userHeaderSceneRaw = (user as any)?.headerScene;
+  const userId = user?.id;
   const ownScene = useMemo(() => {
-    const s = normalizeScene((user as any)?.headerScene);
-    return s.items.length > 0 ? s : getLocalScene(user?.id);
-  }, [user]);
+    const s = normalizeScene(userHeaderSceneRaw);
+    return s.items.length > 0 ? s : getLocalScene(userId);
+  }, [userHeaderSceneRaw, userId]);
+  // The individual user fields the header tree reads. Pulled out as locals so `bannerHeader`'s
+  // dependency list can name them instead of the whole `user` object — see the note at that memo.
+  const userEmoji = user?.emoji;
+  const userDisplayName = user?.displayName;
+  const userUsername = user?.username;
+  const userBio = user?.bio;
+  const userIsVerified = user?.is_verified;
+  const userBadge = user?.badge;
+
   const bannerUrlRaw = (user as any)?.bannerUrl as string | undefined;
   // Banner URL is stored with an optional `#x=&y=&s=` hash carrying the
   // user-chosen position + zoom. The hash must be stripped before the
@@ -985,7 +1048,17 @@ export default function ProfileScreen() {
   // Adaptive name + @username colour — when the banner reads as light,
   // we render dark text; when it reads as dark (or unknown), we keep
   // the white-with-shadow legacy look.
-  const { isLight: bannerIsLight } = useBannerBrightness(bannerUrl);
+  // `useBannerBrightness(bannerUrl)` was called here and its result was NEVER READ.
+  //
+  // It was left behind when the adaptive name/username colour was removed from this screen (the note
+  // further up records that removal: the dual-Text colour crossfade was dropped as distracting). The
+  // hook stayed, and it is not free — a synchronous MMKV read in its state initializer, a second one
+  // in an effect, a network call to api/banner-brightness on a cache miss, and a `setBrightness` that
+  // re-renders this entire screen when it lands. All of it on the cold-open path, for a value nothing
+  // consumed.
+  //
+  // The hook itself is untouched: app/profile/[id].tsx still calls it and still uses the result for
+  // adaptive text on OTHER people's profiles.
   // Tabs labels depend on the i18n `t` function. The result is content-
   // stable per locale; memoize so the ListHeader memo doesn't see a fresh
   // array on every render.
@@ -1168,7 +1241,15 @@ export default function ProfileScreen() {
         />
       </Animated.View>
     </View>
-  ), [theme, user, bannerUrl, bannerTransform, chromeReady, userLinks, followCounts, insets.top, t, glassActive, ownScene]);
+    // Depends on the SIX user fields this tree actually reads, not on `user`.
+    //
+    // With `user` in the list the memo was defeated by design: the badge-sync effect on this screen
+    // calls `updateProfile`, which mints a new object, and so does every unrelated profile edit and
+    // every session restore. Each one rebuilt this entire subtree — the banner CachedImage, the
+    // BlurView-wrapped avatar, the scene layers, the frosted overlay — which is exactly the
+    // reconciliation the memo was added to prevent. The fields below are the complete set referenced
+    // in the JSX above; anything else on `user` changing now correctly changes nothing here.
+  ), [theme, userEmoji, userDisplayName, userUsername, userBio, userIsVerified, userBadge, bannerUrl, bannerTransform, chromeReady, userLinks, followCounts, insets.top, t, glassActive, ownScene]);
 
   // Tabs row is split out of the banner header so switching tabs only
   // reconciles this lightweight subtree — the heavy banner (CachedImage,
@@ -1254,8 +1335,22 @@ export default function ProfileScreen() {
     () => Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true }),
     [scrollY],
   );
-  const handleScrollBeginDrag = useCallback(() => setScrollActive(true), []);
-  const handleScrollSettle = useCallback(() => setScrollActive(false), []);
+  // These used to be `setScrollActive(true)` / `setScrollActive(false)`, wired to
+  // onScrollBeginDrag / onScrollEndDrag / onMomentumScrollEnd. That is a full re-render of this
+  // ~1500-line screen function at the start of every drag and again at the end of every momentum
+  // scroll — including the pinned-tabs overlay, which is built inline and not memoized, so all four
+  // tab pills were rebuilt each time.
+  //
+  // The value was pure waste: `scrollActive` is passed only to `ProfileThemeScope`, which discards it
+  // (`void scrollActive;`) because `PROFILE_THEMES_ENABLED` is false, so no ambient particle layer
+  // exists to pause. Two full re-renders per gesture to feed a `void`.
+  //
+  // The handlers stay wired as no-ops rather than being removed from the list: keeping the prop
+  // identities stable and present means the ScrollView's event configuration does not change, and
+  // when the theme layers are switched back on the pause can be re-implemented from a Reanimated
+  // shared value instead of React state.
+  const handleScrollBeginDrag = useCallback(() => {}, []);
+  const handleScrollSettle = useCallback(() => {}, []);
   const listEmpty = useMemo(() => (
     <View style={{ alignItems: 'center', paddingVertical: 40 }}>
       <Text variant="caption" color={theme.colors.text.tertiary}>
