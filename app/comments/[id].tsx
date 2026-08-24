@@ -47,7 +47,8 @@ import { triggerHaptic } from '../../src/utils/haptics';
 import { sanitizeUserText } from '../../src/utils/sanitizeText';
 import { playSendSound } from '../../src/utils/sounds';
 import { showToast } from '../../src/store/toastStore';
-import { useT } from '../../src/i18n/store';
+import { useT } from '../../src/i18n/store';
+import { useMediaPanelLabels } from '../../src/components/chat/useMediaPanelLabels';
 import { perfMonitor } from '../../src/services/perfMonitor';
 import { useSettingsStore } from '../../src/store/settingsStore';
 import { useEffectiveBrowserWidgetPosition } from '../../src/lib/browserWidget';
@@ -512,6 +513,8 @@ export default function CommentsScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
+  // Shared with the chat screen so the two label sets cannot drift apart.
+  const mediaPanelLabels = useMediaPanelLabels();
   // Android: while focused, stop the OS window resize so ONLY our JS-driven
   // input lift moves content (kills the first-focus jump). No-op on iOS.
   useChatKeyboardMode();
@@ -2034,7 +2037,7 @@ export default function CommentsScreen() {
                 recentGifs={recentGif}
                 theme={theme}
                 bottomInset={insets.bottom}
-                labels={{ gif: t('media.tab.gif'), emoji: t('media.tab.emoji'), copy: t('media.action.copy'), send: t('media.action.send') }}
+                labels={mediaPanelLabels}
                 onSendEmoji={onSendEmojiMessage}
                 onCopyEmoji={onCopyEmoji}
                 onSendGif={onPickGif}

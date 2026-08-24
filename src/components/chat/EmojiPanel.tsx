@@ -96,6 +96,10 @@ export interface EmojiPanelProps {
    *  clears the home indicator while the panel itself bleeds to the screen
    *  bottom edge. */
   bottomInset?: number;
+  /** Top content padding, so the overlaying recents strip does not cover the first row. */
+  topInset?: number;
+  /** Raw scroll notification. The parent latches it to hide/restore its chrome. */
+  onScrollTick?: () => void;
   /** When embedded inside the shared MediaPanel surface, render without the
    *  own rounded background / glass (the parent provides the surface). */
   bare?: boolean;
@@ -179,7 +183,7 @@ const EmojiCell = memo(function EmojiCell({
   );
 });
 
-function EmojiPanelComponent({ height, onSelect, onLongPress, theme, bottomInset = 0, bare = false }: EmojiPanelProps) {
+function EmojiPanelComponent({ height, onSelect, onLongPress, theme, bottomInset = 0, bare = false, topInset = 0, onScrollTick }: EmojiPanelProps) {
   const t = useT();
   const glassActive = useLiquidGlassActive();
 
@@ -242,8 +246,8 @@ function EmojiPanelComponent({ height, onSelect, onLongPress, theme, bottomInset
   // sits above the home indicator even though the panel extends to the very
   // bottom edge of the screen.
   const contentStyle = useMemo(
-    () => [styles.listContent, { paddingBottom: 10 + bottomInset }],
-    [bottomInset],
+    () => [styles.listContent, { paddingTop: 10 + topInset, paddingBottom: 10 + bottomInset }],
+    [bottomInset, topInset],
   );
 
   return (
@@ -276,6 +280,9 @@ function EmojiPanelComponent({ height, onSelect, onLongPress, theme, bottomInset
           renderItem={renderCategory}
           style={styles.list}
           showsVerticalScrollIndicator={false}
+          onScroll={onScrollTick}
+          // See GifPanel: this only reports THAT a scroll is happening, so a low rate is correct.
+          scrollEventThrottle={64}
           contentContainerStyle={contentStyle}
           keyboardShouldPersistTaps="always"
           // A category is ~40 Pressables. Mounting two of them in one commit put

@@ -8,10 +8,21 @@ import { CachedImage } from '../ui/CachedImage';
 import { EmojiPanel } from './EmojiPanel';
 import { GifPanel } from './GifPanel';
 import { GiphyItem } from '../../services/giphy';
+import { useCustomGifs } from '../../store/customGifsStore';
+import { AddGifModal } from './AddGifModal';
+import { triggerHaptic } from '../../utils/haptics';
 
 const PANEL_W = Dimensions.get('window').width;
+// Height of the recents strip. Shared by its own style, the grids' top content padding and the
+// hide-on-scroll travel, so those three cannot drift out of agreement.
+const RECENT_ROW_H = 46;
+// Travel needed to put the bottom switcher fully outside the clipped container.
+const BOTTOM_CHROME_H = 56;
 
 export type MediaTab = 'emoji' | 'gif';
+
+/** Strings for the add-GIF dialog, passed down so this tree does no i18n of its own. */
+export type AddGifLabels = React.ComponentProps<typeof AddGifModal>['labels'];
 
 export interface MediaPanelProps {
   /** Panel height (≈ last real keyboard height) supplied by the parent. */
@@ -33,7 +44,7 @@ export interface MediaPanelProps {
   theme: any;
   bottomInset?: number;
   /** Localized labels so we don't pull the i18n hook here. */
-  labels: { gif: string; emoji: string; copy: string; send: string };
+  labels: { gif: string; emoji: string; copy: string; send: string; addGif: AddGifLabels };
   /** Long-press popup → send a single emoji as its own chat message. */
   onSendEmoji?: (e: string) => void;
   /** Long-press popup → copy an emoji to the clipboard. */
@@ -156,6 +167,59 @@ function MediaPanelComponent({
 
   const hasRecents = recentEmoji.length > 0;
 
+  // ── Scroll-driven chrome ───────────────────────────────────────────────────
+  //
+  // 1 = both strips in place, 0 = both gone. Driven by raw scroll ticks reported by whichever grid is
+  // active, latched so the animation is STARTED ONCE per gesture rather than re-issued on every scroll
+  // event — a `withTiming` restarted 60 times a second never finishes, and the JS-thread churn of
+  // dispatching it is precisely what made an earlier version of the chat's scroll handler a perf bug.
+  const chromeSV = useSharedValue(1);
+  const chromeHiddenRef = useRef(false);
+  const chromeIdleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const onScrollTick = useCallback(() => {
+    if (!chromeHiddenRef.current) {
+      chromeHiddenRef.current = true;
+      chromeSV.value = withTiming(0, { duration: 170, easing: Easing.out(Easing.cubic) });
+    }
+    if (chromeIdleRef.current) clearTimeout(chromeIdleRef.current);
+    // Restore shortly after the last scroll event, which covers a finger drag and a momentum fling
+    // with one rule. Slower coming back than going away: leaving should feel like it got out of the
+    // way, returning should feel deliberate.
+    chromeIdleRef.current = setTimeout(() => {
+      chromeHiddenRef.current = false;
+      chromeSV.value = withTiming(1, { duration: 280, easing: Easing.out(Easing.cubic) });
+    }, 240);
+  }, [chromeSV]);
+
+  useEffect(() => () => { if (chromeIdleRef.current) clearTimeout(chromeIdleRef.current); }, []);
+
+  const topChromeStyle = useAnimatedStyle(() => ({
+    opacity: chromeSV.value,
+    transform: [{ translateY: -(1 - chromeSV.value) * RECENT_ROW_H }],
+  }));
+  const bottomChromeStyle = useAnimatedStyle(() => ({
+    opacity: chromeSV.value,
+    transform: [{ translateY: (1 - chromeSV.value) * (BOTTOM_CHROME_H + bottomInset) }],
+  }));
+
+  // Grid content padding. The top strip overlays the grid, so the grid has to start below it.
+  const gridTopInset = hasRecents ? RECENT_ROW_H : 0;
+
+  // The user's own GIFs, added by pasting a link. Field selectors so an unrelated store write cannot
+  // re-render this panel while it is animating open.
+  const customGifs = useCustomGifs((s) => s.items);
+  const removeCustomGif = useCustomGifs((s) => s.remove);
+  const [addOpen, setAddOpen] = useState(false);
+  const openAddGif = useCallback(() => {
+    triggerHaptic('light');
+    // Switch to the GIF tab first: adding a GIF while looking at the emoji grid would put the new
+    // sticker somewhere the user cannot see it, which reads as the button having done nothing.
+    if (tab !== 'gif') onTabChange('gif');
+    setAddOpen(true);
+  }, [tab, onTabChange]);
+  const closeAddGif = useCallback(() => setAddOpen(false), []);
+
   const renderSwitch = useCallback(
     (key: MediaTab, label: string) => {
       const active = tab === key;
@@ -200,9 +264,26 @@ function MediaPanelComponent({
         />
       ) : null}
 
-      {/* Recently-used emoji quick row — shared across both tabs. */}
+      {/* ── BOTH STRIPS GET OUT OF THE WAY WHILE YOU SCROLL ──────────────────────
+   
+          Asked for: the recents strip at the top and the GIF/Эмодзи row at the bottom should disappear
+          while scrolling — top upward, bottom downward — and come back smoothly.
+   
+          The top row is ABSOLUTE now, and that is the part that makes it work rather than merely look
+          animated. In normal flow, sliding it up would have left a 46 pt hole above the grid and then
+          filled it again on the way back — two layout passes per gesture, on the thread the scroll is
+          running on. Absolute, with the grid padded by the same amount, means the grid content simply
+          slides under it and NOTHING is laid out: the whole thing is one transform on the UI thread.
+          The bottom row already worked this way, which is why the switcher has always floated over the
+          grid with `56 + inset` of content padding beneath it.
+   
+          Each strip travels far enough to leave the container entirely, and the container clips
+          (`overflow: 'hidden'`). So a hidden strip is not merely invisible — it is outside, and cannot
+          swallow a tap meant for the grid. That avoids needing a `pointerEvents` flag, and therefore
+          avoids a React state dispatch during a scroll, which is exactly the mistake the chat screen's
+          scroll handler carries a long note about. */}
       {hasRecents ? (
-        <View style={[styles.recentRow, { borderBottomColor: theme.colors.border.light }]}>
+        <Reanimated.View style={[styles.recentRow, topChromeStyle, { borderBottomColor: theme.colors.border.light }]}>
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -222,7 +303,7 @@ function MediaPanelComponent({
               </Pressable>
             ))}
           </ScrollView>
-        </View>
+        </Reanimated.View>
       ) : null}
 
       {/* Sliding track — both grids mounted side by side. */}
@@ -230,12 +311,12 @@ function MediaPanelComponent({
         <Reanimated.View style={[styles.track, trackStyle]}>
           <View style={styles.page}>
             {showEmoji ? (
-              <EmojiPanel bare height={height} onSelect={onSelectEmoji} onLongPress={onSendEmoji || onCopyEmoji ? onLongPressEmoji : undefined} theme={theme} bottomInset={56 + bottomInset} />
+              <EmojiPanel bare height={height} onSelect={onSelectEmoji} onLongPress={onSendEmoji || onCopyEmoji ? onLongPressEmoji : undefined} theme={theme} bottomInset={56 + bottomInset} topInset={gridTopInset} onScrollTick={onScrollTick} />
             ) : <View style={styles.bareFill} />}
           </View>
           <View style={styles.page}>
             {showGif ? (
-              <GifPanel bare height={height} onSelect={onSelectGif} onLongPress={onSendGif || onCopyGif ? onLongPressGif : undefined} recentGifs={recentGifs} theme={theme} bottomInset={56 + bottomInset} />
+              <GifPanel bare height={height} onSelect={onSelectGif} onLongPress={onSendGif || onCopyGif ? onLongPressGif : undefined} recentGifs={recentGifs} theme={theme} bottomInset={56 + bottomInset} topInset={gridTopInset} onScrollTick={onScrollTick} customGifs={customGifs} onRemoveCustomGif={removeCustomGif} />
             ) : <View style={styles.bareFill} />}
           </View>
         </Reanimated.View>
@@ -243,7 +324,29 @@ function MediaPanelComponent({
 
       {/* Bottom row: segmented GIF/Эмодзи switcher (glass on iOS-26, blur
           elsewhere) + a round backspace button so picks can be undone. */}
-      <View style={[styles.switchWrap, { paddingBottom: 8 + bottomInset }]} pointerEvents="box-none">
+      <Reanimated.View style={[styles.switchWrap, bottomChromeStyle, { paddingBottom: 8 + bottomInset }]} pointerEvents="box-none">
+        {/* ADD-YOUR-OWN, mirroring the backspace circle on the other side.
+   
+            Asked for: "on the left side, like the delete button but on the left next to the GIF, make a
+            plus, and there the user can add their own GIFs or import from other social networks — they
+            just paste a link."
+   
+            Left of the switcher rather than inside the grid, because it is a panel-level action like
+            backspace is, not a cell. The symmetry is the affordance: one round button either side of the
+            pill, one adds and one removes. */}
+        {glassActive ? (
+          <Pressable onPress={openAddGif} hitSlop={6} style={[styles.backspace, styles.addBtn]}>
+            <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.backspaceFill}>
+              <Feather name="plus" size={20} color={theme.colors.text.secondary} />
+            </NativeGlassView>
+          </Pressable>
+        ) : (
+          <Pressable onPress={openAddGif} hitSlop={6} style={[styles.backspace, styles.backspaceFlat, styles.addBtn]}>
+            <BlurView intensity={28} tint={theme.isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
+            <Feather name="plus" size={20} color={theme.colors.text.secondary} />
+          </Pressable>
+        )}
+
         {glassActive ? (
           <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.pill}>
             {renderSwitch('gif', labels.gif)}
@@ -269,7 +372,7 @@ function MediaPanelComponent({
             <Feather name="delete" size={18} color={theme.colors.text.secondary} />
           </Pressable>
         )}
-      </View>
+      </Reanimated.View>
 
       {/* Long-press preview popup — additive absolute overlay. Sits ABOVE the
           slide track and switcher; never affects their layout/animation. */}
@@ -316,6 +419,13 @@ function MediaPanelComponent({
           </View>
         </View>
       ) : null}
+
+      {/* Add-your-own-GIF dialog. Rendered last so it paints above the grids and the switcher, and
+          mounted only while open - it owns a TextInput and a Modal, neither of which should exist
+          in the tree of a picker that is usually just being scrolled. */}
+      {addOpen ? (
+        <AddGifModal visible={addOpen} onClose={closeAddGif} theme={theme} labels={labels.addGif} />
+      ) : null}
     </View>
   );
 }
@@ -326,7 +436,9 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 28,
     overflow: 'hidden',
   },
-  recentRow: { height: 46, borderBottomWidth: 0.5, justifyContent: 'center' },
+  // ABSOLUTE, so hiding it on scroll is a transform and not a relayout. The grids pad their content
+  // by RECENT_ROW_H to compensate, exactly as they already do for the bottom switcher.
+  recentRow: { position: 'absolute', top: 0, left: 0, right: 0, height: RECENT_ROW_H, borderBottomWidth: 0.5, justifyContent: 'center', zIndex: 2 },
   recentContent: { paddingHorizontal: 10, alignItems: 'center', gap: 2 },
   recentCell: { width: 38, height: 38, alignItems: 'center', justifyContent: 'center' },
   recentEmoji: { fontSize: 26 },
@@ -341,6 +453,9 @@ const styles = StyleSheet.create({
   pillFlat: { backgroundColor: 'rgba(127,127,127,0.16)' },
   segment: { paddingHorizontal: 20, paddingVertical: 8, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
   backspace: { width: 40, height: 40, borderRadius: 20, marginLeft: 10, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
+  // Same circle as `backspace`, mirrored: the margin moves to the other side so the pill keeps equal
+  // gaps and stays centred in the row.
+  addBtn: { marginLeft: 0, marginRight: 10 },
   backspaceFill: { width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center' },
   backspaceFlat: { backgroundColor: 'rgba(127,127,127,0.16)' },
   // Long-press preview popup.
