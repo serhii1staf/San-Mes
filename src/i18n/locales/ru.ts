@@ -225,6 +225,12 @@ const ru: Record<string, string> = {
   'toast.error_generic': 'Не удалось выполнить действие',
   'toast.no_clipboard_image': 'В буфере обмена нет изображения',
   'toast.link_copied': 'Ссылка скопирована',
+
+  // ─── Окно «Поделиться» ─────────────────────────────────────────────────
+  'share.title': 'Поделиться',
+  'share.send': 'Отправить',
+  'share.sent': 'Отправлено',
+  'share.no_chats': 'Пока некому отправить — начните переписку',
   'toast.report_sent': 'Жалоба отправлена',
   'toast.will_send_offline': 'Отправится при подключении',
   'toast.post_deleted': 'Пост удалён',

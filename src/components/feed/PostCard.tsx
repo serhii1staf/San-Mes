@@ -20,6 +20,7 @@ import { formatTimeAgo } from '../../utils/mockData';
 import { triggerHaptic } from '../../utils/haptics';
 import { useT } from '../../i18n/store';
 import { useIsBlocked } from '../../store/blockedUsersStore';
+import { openPostShareSheet } from '../../store/shareSheetStore';
 import { useEntityStore } from '../../store';
 import { BlockedContentPlaceholder } from './BlockedContentPlaceholder';
 
@@ -402,7 +403,17 @@ export const PostCard = memo(function PostCard({ post, currentUserId, onLike, on
         </Pressable>
 
         {/* Share */}
-        <Pressable onPress={async () => { triggerHaptic('light'); try { const { sharePost } = require('../../utils/sharePost'); await sharePost(post); } catch {} }} style={styles.actionBtnLast}>
+        {/* Opens the in-app picker (people you have talked to recently) rather than the OS share sheet.
+            Routed through the global store because this card is rendered by a virtualized list several
+            screens deep — see src/store/shareSheetStore.ts. */}
+        <Pressable
+          onPress={() => {
+            triggerHaptic('light');
+            const target = post.isRepost && post.originalPost ? post.originalPost : post;
+            openPostShareSheet(post.id, (target as any)?.content || '');
+          }}
+          style={styles.actionBtnLast}
+        >
           <Feather name="send" size={15} color={theme.colors.text.tertiary} />
         </Pressable>
       </View>

@@ -19,7 +19,7 @@ import { useBlockedUsersStore } from '../../store/blockedUsersStore';
 import { deletePost } from '../../lib/supabase';
 import { showToast } from '../../store/toastStore';
 import { submitReport } from '../../services/moderation';
-import { sharePost } from '../../utils/sharePost';
+import { openPostShareSheet } from '../../store/shareSheetStore';
 import { useT } from '../../i18n/store';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -60,6 +60,8 @@ export function PostMenuModal({ visible, post, onClose }: PostMenuModalProps) {
   // cancelled on cleanup / when `visible` flips before they fire.
   const rafA = useRef<number | null>(null);
   const rafB = useRef<number | null>(null);
+  // Action to run after this menu has fully closed. See `dismiss`.
+  const afterCloseRef = useRef<(() => void) | null>(null);
 
   const panResponder = useRef(
     PanResponder.create({
@@ -109,6 +111,13 @@ export function PostMenuModal({ visible, post, onClose }: PostMenuModalProps) {
       setTimeout(() => {
         setMode('menu');
         onClose();
+        // Hand off to whatever asked to run once this menu is actually gone. This exists for the
+        // share action: this menu is an RN <Modal> and so is the share sheet, and two overlapping
+        // RN Modals on iOS reliably end with the second one never appearing. So the handoff is
+        // sequenced on the real close instead of guessed at with a delay.
+        const next = afterCloseRef.current;
+        afterCloseRef.current = null;
+        if (next) { try { next(); } catch {} }
       }, 30);
     });
   };
@@ -131,7 +140,15 @@ export function PostMenuModal({ visible, post, onClose }: PostMenuModalProps) {
   const previewImage = post.isRepost && post.originalPost ? post.originalPost.imageUrl : post.imageUrl;
 
   const handleCopyLink = async () => { triggerHaptic('light'); await Clipboard.setStringAsync(`https://san-m-app.com/post/${post.id}`); showToast(t('toast.link_copied'), 'link'); dismiss(); };
-  const handleShare = async () => { triggerHaptic('light'); await sharePost(post); dismiss(); };
+  // Share opens the in-app picker — a row of people you have talked to recently — instead of the OS
+  // share sheet. Queued to run after this menu closes, because two overlapping RN Modals do not both
+  // appear on iOS.
+  const handleShare = () => {
+    triggerHaptic('light');
+    const target = post.isRepost && post.originalPost ? post.originalPost : post;
+    afterCloseRef.current = () => openPostShareSheet(post.id, (target as any)?.content || '');
+    dismiss();
+  };
   const handleDelete = () => {
     triggerHaptic('medium');
     Alert.alert(t('profile.delete_post_title'), t('profile.delete_post_msg'), [

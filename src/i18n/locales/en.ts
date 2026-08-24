@@ -227,6 +227,12 @@ const en: Record<string, string> = {
   'toast.error_generic': 'Could not complete the action',
   'toast.no_clipboard_image': 'No image in the clipboard',
   'toast.link_copied': 'Link copied',
+
+  // ─── Share sheet ───────────────────────────────────────────────────────
+  'share.title': 'Share',
+  'share.send': 'Send',
+  'share.sent': 'Sent',
+  'share.no_chats': 'No one to send to yet — start a conversation',
   'toast.report_sent': 'Report sent',
   'toast.will_send_offline': 'Will send when online',
   'toast.post_deleted': 'Post deleted',
