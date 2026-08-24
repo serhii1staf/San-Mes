@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
-import { View, Pressable, ActivityIndicator, Image, Dimensions, Modal, Animated, Share, Alert, ScrollView as RNScrollView, InteractionManager, Text as RNText } from 'react-native';
+import { View, Pressable, ActivityIndicator, Image, Dimensions, Modal, Animated, Share, Alert, InteractionManager, Text as RNText } from 'react-native';
 import { Feather, FontAwesome5 } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -23,6 +23,7 @@ import { triggerHaptic } from '../../src/utils/haptics';
 import { showToast } from '../../src/store/toastStore';
 import { formatTimeAgo } from '../../src/utils/mockData';
 import { CachedImage } from '../../src/components/ui/CachedImage';
+import { ImageViewerModal } from '../../src/components/chat/ImageViewerModal';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { UserBadge } from '../../src/components/ui/UserBadge';
 import { PostContextMenu } from '../../src/components/ui/PostContextMenu';
@@ -1539,6 +1540,114 @@ export default function UserProfileScreen() {
     </View>
   ), [theme.colors.text.tertiary, activeTab, t]);
 
+  // ─── FULLSCREEN VIEWER ────────────────────────────────────────────────────
+  //
+  // Same replacement as the own-profile tab: this screen also hand-rolled a native `Modal` with
+  // `animationType="none"`, a static backdrop and zero gestures. It was the MOST drifted of the
+  // three copies — no liquid glass anywhere, no repost handling in the header, different corner
+  // radii and button sizes than the own-profile twin, and it never refetched after a delete.
+  //
+  // Rendering the chat's viewer here means one interaction and one set of metrics everywhere:
+  // drag to dismiss with the dim following the drag, pinch or double-tap to zoom, and chrome that
+  // fades with the gesture instead of being cut off in a frame.
+  const viewerPayload = useMemo(() => {
+    if (!viewingImage) return null;
+    const images = viewingImage.allImages && viewingImage.allImages.length > 0
+      ? viewingImage.allImages
+      : [viewingImage.uri];
+    const idx = Math.max(0, images.indexOf(viewingImage.uri));
+    return { images, index: idx };
+  }, [viewingImage]);
+
+  const closeViewer = useCallback(() => setViewingImage(null), []);
+
+  const viewingPost = useMemo(
+    () => (viewingImage ? displayPosts.find((p: any) => p.id === viewingImage.postId) : undefined),
+    [viewingImage, displayPosts],
+  );
+
+  // Memoized: the viewer compares chrome by reference, so an inline node would re-render its pager
+  // on every render of this screen.
+  const viewerHeader = useMemo(() => {
+    if (!viewingImage) return null;
+    return (
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <Avatar emoji={displayProfile?.emoji || '😊'} size="xs" />
+        <View style={{ flexShrink: 1 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+            <Text variant="caption" weight="semibold" color="#FFFFFF" numberOfLines={1} style={{ fontSize: 11 }}>{displayProfile?.display_name || 'User'}</Text>
+            {displayProfile?.is_verified && <VerifiedBadge size={10} />}
+          </View>
+          <Text variant="caption" color="rgba(255,255,255,0.6)" style={{ fontSize: 9 }}>
+            {viewingPost?.createdAt ? formatTimeAgo(viewingPost.createdAt) : ''}
+          </Text>
+        </View>
+      </View>
+    );
+  }, [viewingImage, viewingPost, displayProfile?.emoji, displayProfile?.display_name, displayProfile?.is_verified]);
+
+  // A BARE ROW — the translucent pill that used to wrap these buttons is gone. It put a second
+  // background behind buttons that already have their own circular fills, which is the "there is
+  // another container in the bottom area" report. Metrics now match the own-profile viewer (42 pt
+  // buttons, gap 10) so the two screens stop drifting.
+  const viewerFooter = useMemo(() => {
+    if (!viewingImage) return null;
+    return (
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+        {isOwnProfile && (
+          <Pressable
+            onPress={() => {
+              const post = viewingPost;
+              const pid = viewingImage.postId;
+              useFeedStore.getState().setEditingPost({
+                id: pid,
+                content: post?.content || '',
+                imageUrl: post?.imageUrl,
+                imageUrls: post?.imageUrls && post.imageUrls.length > 0 ? post.imageUrls : (post?.imageUrl ? [post.imageUrl] : undefined),
+              });
+              setViewingImage(null);
+              router.push('/(tabs)/create');
+            }}
+            style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: 'rgba(255,255,255,0.16)', alignItems: 'center', justifyContent: 'center' }}
+          >
+            <Feather name="edit-2" size={17} color="#FFFFFF" />
+          </Pressable>
+        )}
+        <Pressable
+          onPress={async () => {
+            const caption = viewingPost?.content || viewingPost?.originalPost?.content || '';
+            const { shareImageUrl } = require('../../src/utils/sharePost');
+            await shareImageUrl(viewingImage.uri, caption);
+          }}
+          style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: 'rgba(255,255,255,0.16)', alignItems: 'center', justifyContent: 'center' }}
+        >
+          <Feather name="share" size={17} color="#FFFFFF" />
+        </Pressable>
+        {isOwnProfile && (
+          <Pressable
+            onPress={() => {
+              const pid = viewingImage.postId;
+              Alert.alert(t('profile.delete_post_title'), t('profile.delete_post_msg'), [
+                { text: t('common.cancel'), style: 'cancel' },
+                {
+                  text: t('common.delete'),
+                  style: 'destructive',
+                  onPress: async () => {
+                    if (currentUser?.id) await deletePost(pid, currentUser.id);
+                    setViewingImage(null);
+                  },
+                },
+              ]);
+            }}
+            style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: 'rgba(255,60,50,0.24)', alignItems: 'center', justifyContent: 'center' }}
+          >
+            <Feather name="trash-2" size={17} color="#FF3B30" />
+          </Pressable>
+        )}
+      </View>
+    );
+  }, [viewingImage, viewingPost, isOwnProfile, currentUser?.id, t]);
+
   // Loading / not-found guards — placed AFTER every hook so hook count is
   // identical on every render (see the rules-of-hooks note above).
   if (isLoading && !displayProfile) {
@@ -1821,88 +1930,17 @@ export default function UserProfileScreen() {
       <ScreenshotShield visible={screenshotDetected} />
       <FollowsListModal visible={!!followsModal} mode={followsModal || 'followers'} userId={displayProfile?.id || null} onClose={() => setFollowsModal(null)} />
 
-      {/* Fullscreen Image Viewer */}
-      <Modal visible={!!viewingImage} transparent animationType="none" onRequestClose={() => setViewingImage(null)} statusBarTranslucent>
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.92)' }}>
-          {/* Top bar with gradient blur */}
-          <LinearGradient colors={['rgba(0,0,0,0.8)', 'rgba(0,0,0,0.5)', 'transparent']} locations={[0, 0.6, 1]} style={{ position: 'absolute', top: 0, left: 0, right: 0, height: insets.top + 80, zIndex: 10 }}>
-            <View style={{ position: 'absolute', top: insets.top + 12, left: 16, right: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-              {/* Author info */}
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <Avatar emoji={displayProfile?.emoji || '😊'} size="xs" />
-                <View>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-                    <Text variant="caption" weight="semibold" color="#FFFFFF" style={{ fontSize: 11 }}>{displayProfile?.display_name || 'User'}</Text>
-                    {displayProfile?.is_verified && <VerifiedBadge size={10} />}
-                  </View>
-                  {viewingImage && <Text variant="caption" color="rgba(255,255,255,0.6)" style={{ fontSize: 9 }}>{(() => { const p = displayPosts.find((pp: any) => pp.id === viewingImage.postId); return p?.createdAt ? formatTimeAgo(p.createdAt) : ''; })()}</Text>}
-                </View>
-              </View>
-              {/* Close */}
-              <Pressable onPress={() => setViewingImage(null)} style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' }}>
-                <Feather name="x" size={20} color="#FFFFFF" />
-              </Pressable>
-            </View>
-          </LinearGradient>
-
-          {/* Image — zoomable + horizontal scroll for multi-image */}
-          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-            {viewingImage && (
-              viewingImage.allImages && viewingImage.allImages.length > 1 ? (
-                <RNScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false} style={{ flex: 1 }} contentContainerStyle={{ alignItems: 'center' }}>
-                  {viewingImage.allImages.map((imgUri, idx) => (
-                    <RNScrollView key={idx} maximumZoomScale={3} minimumZoomScale={1} showsHorizontalScrollIndicator={false} showsVerticalScrollIndicator={false} contentContainerStyle={{ justifyContent: 'center', alignItems: 'center', width: SCREEN_WIDTH, height: '100%' }} centerContent bouncesZoom>
-                      <CachedImage uri={imgUri} style={{ width: SCREEN_WIDTH, height: SCREEN_WIDTH }} resizeMode="contain" />
-                    </RNScrollView>
-                  ))}
-                </RNScrollView>
-              ) : (
-                <RNScrollView maximumZoomScale={3} minimumZoomScale={1} showsHorizontalScrollIndicator={false} showsVerticalScrollIndicator={false} contentContainerStyle={{ justifyContent: 'center', alignItems: 'center', flex: 1 }} centerContent bouncesZoom>
-                  <CachedImage uri={viewingImage.uri} style={{ width: SCREEN_WIDTH, height: SCREEN_WIDTH }} resizeMode="contain" />
-                </RNScrollView>
-              )
-            )}
-          </View>
-
-          {/* Description (if exists) — for reposts, fall back to the original post's content */}
-          {viewingImage && (() => {
-            const post = displayPosts.find((pp: any) => pp.id === viewingImage.postId);
-            const caption = post?.content || post?.originalPost?.content || '';
-            return caption ? (
-              <RNScrollView style={{ maxHeight: 60, marginHorizontal: 24, marginBottom: 8 }} showsVerticalScrollIndicator={false}>
-                <Text variant="caption" color="rgba(255,255,255,0.8)" style={{ fontSize: 12 }}>{caption}</Text>
-              </RNScrollView>
-            ) : null;
-          })()}
-
-          {/* Bottom actions — compact rounded container, centered */}
-          <View style={{ alignItems: 'center', paddingBottom: insets.bottom + 20 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 24, paddingHorizontal: 20, paddingVertical: 10 }}>
-              {isOwnProfile && (
-                <Pressable onPress={() => { 
-                  if (viewingImage) {
-                    const post = displayPosts.find((p: any) => p.id === viewingImage.postId);
-                    useFeedStore.getState().setEditingPost({ id: viewingImage.postId, content: post?.content || '', imageUrl: post?.imageUrl, imageUrls: post?.imageUrls && post.imageUrls.length > 0 ? post.imageUrls : (post?.imageUrl ? [post.imageUrl] : undefined) });
-                  }
-                  setViewingImage(null); 
-                  router.push('/(tabs)/create'); 
-                }} style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center' }}>
-                  <Feather name="edit-2" size={16} color="#FFFFFF" />
-                </Pressable>
-              )}
-              <Pressable onPress={async () => { if (viewingImage) { const post = displayPosts.find((p: any) => p.id === viewingImage.postId); const caption = post?.content || post?.originalPost?.content || ''; const { shareImageUrl } = require('../../src/utils/sharePost'); await shareImageUrl(viewingImage.uri, caption); } }} style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center' }}>
-                <Feather name="share" size={16} color="#FFFFFF" />
-              </Pressable>
-              {isOwnProfile && (
-                <Pressable onPress={() => { if (viewingImage) { Alert.alert(t('profile.delete_post_title'), t('profile.delete_post_msg'), [{ text: t('common.cancel'), style: 'cancel' }, { text: t('common.delete'), style: 'destructive', onPress: async () => { if (currentUser?.id) { await deletePost(viewingImage.postId, currentUser.id); } setViewingImage(null); } }]); } }} style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,60,50,0.2)', alignItems: 'center', justifyContent: 'center' }}>
-                  <Feather name="trash-2" size={16} color="#FF3B30" />
-                </Pressable>
-              )}
-            </View>
-          </View>
-        </View>
-      </Modal>
-      <PostContextMenu visible={!!contextPost} post={contextPost} isOwnPost={isOwnProfile} onClose={closeContextMenu} onDelete={isOwnProfile ? async (postId) => { if (currentUser?.id) { await deletePost(postId, currentUser.id); } closeContextMenu(); } : undefined} />
+      {/* Fullscreen viewer — the SAME component the chat and the own-profile tab use. */}
+      <ImageViewerModal
+        payload={viewerPayload}
+        onClose={closeViewer}
+        topInset={insets.top}
+        bottomInset={insets.bottom}
+        proxyWidth={SCREEN_WIDTH}
+        header={viewerHeader}
+        footer={viewerFooter}
+        zoomable
+      />      <PostContextMenu visible={!!contextPost} post={contextPost} isOwnPost={isOwnProfile} onClose={closeContextMenu} onDelete={isOwnProfile ? async (postId) => { if (currentUser?.id) { await deletePost(postId, currentUser.id); } closeContextMenu(); } : undefined} />
       {/* Long-press tab editor — own profile only. Mounted unconditionally
           but only ever opened from the long-press handler, which itself
           is gated on `isOwnProfile`. Cheap when idle (returns null until
