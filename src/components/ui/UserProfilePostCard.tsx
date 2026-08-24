@@ -6,6 +6,7 @@ import { useTheme } from '../../theme';
 import { Text } from './Text';
 import { Avatar } from './Avatar';
 import { CachedImage } from './CachedImage';
+import { enqueueReveal } from '../../utils/revealQueue';
 import { VerifiedBadge } from './VerifiedBadge';
 import { UserBadge } from './UserBadge';
 import { FormattedText } from './FormattedText';
@@ -139,10 +140,26 @@ function UserProfilePostCardBase({
   // commit from a full subtree to a single empty View, which is what
   // gives each scroll-induced card mount one cheap "warm-up" frame
   // before the real subtree commits.
+  // ── SHARED FRAME-PACED QUEUE, NOT A BARE RAF ──────────────────────────────
+  //
+  // This was `requestAnimationFrame(() => setHydrated(true))`, and a device snapshot showed exactly
+  // what that costs on this card: ELEVEN mounts stamped at the same millisecond, immediately followed
+  // by a 208 ms long task, and a burst of fourteen image loads whose durations climbed 202 → 219 ms in
+  // lockstep because they all started together.
+  //
+  // A per-card rAF delays each card by one frame but does NOT serialise cards against each other.
+  // Every card the list mounts in the same virtualization batch schedules its callback for the SAME
+  // next frame, so all of their bodies commit together — the delay moves the storm rather than
+  // breaking it up.
+  //
+  // `enqueueReveal` releases at most two bodies per frame, in mount order, and returns a canceller so
+  // a card recycled by a fast scroll before its turn never hydrates off-screen. The own-profile card
+  // has used this scheduler for a while; it lived inside that file, which is why this one never got
+  // it. It is a shared module now.
   const [hydrated, setHydrated] = useState(false);
   useEffect(() => {
-    const handle = requestAnimationFrame(() => setHydrated(true));
-    return () => cancelAnimationFrame(handle);
+    const cancel = enqueueReveal(() => setHydrated(true));
+    return cancel;
   }, []);
 
   const postImages: string[] = useMemo(() => {
