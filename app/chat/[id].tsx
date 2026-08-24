@@ -1261,6 +1261,21 @@ export default function ChatScreen() {
     return () => {
       try { sub.remove(); } catch {}
       clearActiveThread('chat', ids);
+      // CLEAR ON LEAVE, not just on enter.
+      //
+      // Reported: "I open a chat, write to him, close it — and I get an unread indicator on MY OWN
+      // row." Exactly what the enter-only clear produced. The watermark was stamped when the screen
+      // opened; the message was then sent, so that conversation's `lastMessageAt` became NEWER than
+      // the watermark, and the reconcile pass that exists to catch "arrived while the app was
+      // killed" could not tell the difference — a `Conversation` row carries no author for its last
+      // message, and `participantId` is always the PEER, so no guard there can recognise our own
+      // send.
+      //
+      // Stamping the watermark on the way out fixes it at the source: everything up to the moment
+      // you left is read, including whatever you just sent. Which is also simply true.
+      try {
+        for (const cid of ids) if (cid) useChatUnread.getState().clear(cid);
+      } catch {}
     };
   }, [conversationId, id]);
   // Mount-time marker — captures how long the chat screen took to commit
