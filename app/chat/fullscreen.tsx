@@ -54,7 +54,7 @@ import { bottomScrimColorsStrong, composerScrimHeight, headerScrimHeights, SCRIM
 import { useTheme } from '../../src/theme';
 import { Text } from '../../src/components/ui';
 import { CachedImage } from '../../src/components/ui/CachedImage';
-import { FormattedText } from '../../src/components/ui/FormattedText';
+import { FormattedText, hasCodeBlock } from '../../src/components/ui/FormattedText';
 import { LinkPreview } from '../../src/components/ui/LinkPreview';
 import { extractFirstUrl } from '../../src/services/linkPreview';
 import { useChatStore, useAuthStore } from '../../src/store';
@@ -473,7 +473,26 @@ const FullscreenPage = React.memo(function FullscreenPage({
   peerLabel: string;
 }) {
   const images = message.imageUrls ?? [];
-  const linkUrl = message.text ? extractFirstUrl(message.text) : null;
+  // ── THE SAME TWO GUARDS THE CHAT BUBBLE APPLIES ────────────────────────────
+  //
+  // Reported as: in fullscreen an emoji/GIF message "looks like a link with a micro-preview", and
+  // previews generally do not match the chat.
+  //
+  // This read `message.text ? extractFirstUrl(message.text) : null` — missing BOTH conditions the
+  // bubble uses. The consequences are exactly what was described:
+  //
+  //   • no `!hasImages` — media messages are stored with their URL in the text (`::gif::<url>`),
+  //     so a GIF or photo message extracted its OWN url and rendered a link card of it. That is
+  //     the "emoji shown as a link with a tiny preview".
+  //   • no `!hasCodeBlock` — a URL inside a fenced code block got unfurled, which is wrong
+  //     anywhere and doubly odd next to monospaced text.
+  //
+  // Written as one expression matching `previewLink` in the bubble, so the two are diffable by
+  // eye. They drifted because the decision was duplicated rather than shared, and duplicating it
+  // is what let one copy grow two guards while the other kept none.
+  const linkUrl = !images.length && message.text && !hasCodeBlock(message.text)
+    ? extractFirstUrl(message.text)
+    : null;
 
   const textColor = isOwn ? ownTextColor : theme.colors.text.primary;
   const bubbleBg = isOwn ? ownBg : theme.colors.background.elevated;

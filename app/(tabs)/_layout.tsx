@@ -2,6 +2,7 @@ import React from 'react';
 import { Tabs } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { StyleSheet, Text, View } from 'react-native';
+import { Avatar } from '../../src/components/ui/Avatar';
 import { useAuthStore } from '../../src/store';
 import { useNotificationsBadge } from '../../src/store/notificationsBadgeStore';
 import { CustomTabBar } from '../../src/components/navigation/CustomTabBar';
@@ -97,19 +98,24 @@ const tabBadgeStyles = StyleSheet.create({
  */
 const ProfileTabIcon = ({ color, size }: TabBarIconProps) => {
   const emoji = useAuthStore((s) => s.user?.emoji);
+  const name = useAuthStore((s) => s.user?.displayName || s.user?.username);
   if (!emoji) return <Feather name="user" size={size} color={color} />;
-  return (
-    <Text
-      // Sized to the icon box and given an explicit line box: a colour emoji is drawn taller than a
-      // Latin glyph of the same point size, so without `lineHeight` the default line box clips it —
-      // the same trap the typing indicator hit. `includeFontPadding: false` removes Android's extra
-      // ascent/descent so the glyph sits centred in that box.
-      style={{ fontSize: size - 1, lineHeight: size + 3, includeFontPadding: false, textAlign: 'center' }}
-      allowFontScaling={false}
-    >
-      {emoji}
-    </Text>
-  );
+  // ── THE ACTUAL AVATAR, not a bare emoji ────────────────────────────────────
+  //
+  // My first attempt rendered the emoji as plain text, and the report was that it still did not
+  // look like an avatar. Correct — in this app an avatar is not the glyph, it is the glyph inside
+  // `Avatar`'s tinted circle: a fill and hairline ring whose hue is hashed from the account's name,
+  // so a given user keeps the same colour everywhere. That circle is what makes it read as "me"
+  // rather than as a stray emoji sitting in the tab bar, and it is the same treatment the chat list
+  // and the feed already use.
+  //
+  // `tint` is opt-in precisely because some places want the bare glyph; a tab bar is not one of
+  // them — it needs a shape at a glance. `name` is passed so the hue matches this user's avatar in
+  // every other list, since `getEmojiTint` seeds on `name || emoji`.
+  //
+  // `xs` (24 pt) rather than the `size` the navigator passes: `Avatar`'s sizes are a fixed scale and
+  // 24 is the step that fits a tab bar icon box without the ring being clipped by it.
+  return <Avatar emoji={emoji} name={name} size="xs" tint />;
 };
 
 // Long-pressing the Home tab summons the Dynamic Island companion overlay.
