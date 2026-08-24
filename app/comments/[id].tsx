@@ -183,6 +183,34 @@ function reconcileComments(prev: any[], next: any[]): any[] {
   return identical ? prev : merged;
 }
 
+/** How many comments one page holds. Also bounds the cold-paint slice and the cache write. */
+const COMMENTS_PAGE_SIZE = 50;
+
+/**
+ * Union a freshly fetched page into what is already on screen.
+ *
+ * `reconcileComments` REPLACES the list with `next` (it maps over `next`, reusing old objects only
+ * to keep identities stable). That was correct when every fetch returned the whole thread. It is
+ * wrong now: a refetch after sending returns only the newest page, so replacing would silently
+ * discard every older page the reader had scrolled up to load.
+ *
+ * Union by id with the server row winning, then sort chronologically, then hand the result through
+ * `reconcileComments` so unchanged rows keep their object identity and FlashList can go on recycling
+ * their cells. Locally-pending comments not present in the page survive, because the union starts
+ * from what is already there.
+ */
+function mergeCommentPages(prev: any[], page: any[]): any[] {
+  if (!Array.isArray(page)) return prev;
+  if (!Array.isArray(prev) || prev.length === 0) return page;
+  const byId = new Map<string, any>();
+  for (const c of prev) if (c && c.id != null) byId.set(String(c.id), c);
+  for (const c of page) if (c && c.id != null) byId.set(String(c.id), c);
+  const out = Array.from(byId.values());
+  // `created_at` is ISO-8601 from the Worker, so lexicographic order IS chronological order.
+  out.sort((a, b) => String(a?.created_at || '').localeCompare(String(b?.created_at || '')));
+  return reconcileComments(prev, out);
+}
+
 // ─── Memoized comment row ──────────────────────────────────────────────────
 // Hoisted out of CommentsScreen so the FlatList's renderItem can hand each row
 // a STABLE component reference. Previously the row JSX lived inline inside
@@ -617,9 +645,17 @@ export default function CommentsScreen() {
   const initialCommentsRef = useRef<any[] | null>(null);
   if (initialCommentsRef.current === null) {
     try {
-      initialCommentsRef.current = postId
-        ? kvGetJSONSync<any[]>(`comments:${postId}`, [])
-        : [];
+      // Bounded to the newest page, same as what the network now returns.
+      //
+      // Caches written before pagination existed can hold an entire thread — a thousand rows — and
+      // painting all of them on the cold-open frame is the cost pagination is meant to remove. The
+      // slice keeps the first painted list the same size as the first fetched page, so the two
+      // agree and the list does not visibly shrink when the fetch lands. Older rows come back on
+      // scroll from the server, and the cache is rewritten bounded from now on.
+      const cached = postId ? kvGetJSONSync<any[]>(`comments:${postId}`, []) : [];
+      initialCommentsRef.current = Array.isArray(cached) && cached.length > COMMENTS_PAGE_SIZE
+        ? cached.slice(-COMMENTS_PAGE_SIZE)
+        : cached;
     } catch {
       initialCommentsRef.current = [];
     }
@@ -958,9 +994,9 @@ export default function CommentsScreen() {
     // Safety: never let the spinner spin forever if the request stalls.
     const safety = setTimeout(() => setIsLoading(false), 8000);
     try {
-      const { comments: data } = await getComments(postId);
+      const { comments: data } = await getComments(postId, { limit: COMMENTS_PAGE_SIZE });
       if (Array.isArray(data)) {
-        setComments((prev) => reconcileComments(prev, data));
+        setComments((prev) => mergeCommentPages(prev, data));
         // Defer the cache serialize off the open/render frame: JSON.stringify of
         // a long thread is synchronous and was landing on the same frame as the
         // list mount → a contributor to the cold-open long task.
@@ -990,6 +1026,44 @@ export default function CommentsScreen() {
     clearTimeout(safety);
     setIsLoading(false);
   };
+  // ── OLDER PAGES, ON SCROLL ────────────────────────────────────────────────
+  //
+  // The thread opens with the newest page only. Scrolling toward the top fetches the page before it,
+  // which is the behaviour asked for: "it should not load the whole thread, just the first 50, and
+  // the rest as I scroll up".
+  //
+  // `before` is the oldest `created_at` currently held. The server compares with a strict `<`, so
+  // the cursor row is never resent and pages cannot overlap into duplicates.
+  //
+  // Two guards, both refs so they never cause a render:
+  //   • in-flight — `onStartReached` fires repeatedly while the edge stays in range, and without
+  //     this a single flick would launch a burst of identical requests.
+  //   • exhausted — a short page means there is nothing older, so stop asking forever. Without it
+  //     the top of a fully-loaded thread would poll the Worker on every scroll.
+  //
+  // Scroll position is preserved by `maintainVisibleContentPosition`, which is already enabled for
+  // the open-at-the-bottom behaviour, so prepending does not shift what the reader is looking at.
+  const loadingOlderRef = useRef(false);
+  const noMoreOlderRef = useRef(false);
+  const loadOlderComments = useCallback(async () => {
+    if (!postId) return;
+    if (loadingOlderRef.current || noMoreOlderRef.current) return;
+    const oldest = comments[0]?.created_at;
+    if (!oldest) return;
+    loadingOlderRef.current = true;
+    try {
+      const { comments: older } = await getComments(postId, {
+        limit: COMMENTS_PAGE_SIZE,
+        before: String(oldest),
+      });
+      if (Array.isArray(older)) {
+        // A page shorter than requested means the beginning of the thread is now loaded.
+        if (older.length < COMMENTS_PAGE_SIZE) noMoreOlderRef.current = true;
+        if (older.length > 0) setComments((prev) => mergeCommentPages(prev, older));
+      }
+    } catch {}
+    loadingOlderRef.current = false;
+  }, [postId, comments]);
 
   // ── LIVE COMMENTS. THIS SUBSCRIPTION DID NOT EXIST. ─────────────────────────
   //
@@ -1162,8 +1236,8 @@ export default function CommentsScreen() {
     const { error } = await createComment(postId, user.id, sendText, cmid);
     if (!error) {
       inputRef.current?.clear();
-      const { comments: data } = await getComments(postId);
-      setComments((prev) => reconcileComments(prev, data));
+      const { comments: data } = await getComments(postId, { limit: COMMENTS_PAGE_SIZE });
+      setComments((prev) => mergeCommentPages(prev, data));
       // Defer the cache serialize past the send interaction — JSON.stringify of
       // a long thread is synchronous and was piling onto the same frame as the
       // list re-render + scroll-to-end.
@@ -1229,8 +1303,8 @@ export default function CommentsScreen() {
     setIsSending(true);
     const { error } = await createComment(postId, user.id, content, cmid);
     if (!error) {
-      const { comments: data } = await getComments(postId);
-      setComments((prev) => reconcileComments(prev, data));
+      const { comments: data } = await getComments(postId, { limit: COMMENTS_PAGE_SIZE });
+      setComments((prev) => mergeCommentPages(prev, data));
       InteractionManager.runAfterInteractions(() => kvSetJSON(`comments:${postId}`, data));
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
     } else {
@@ -1258,8 +1332,8 @@ export default function CommentsScreen() {
     setIsSending(true);
     const { error } = await createComment(postId, user.id, sendText, cmid);
     if (!error) {
-      const { comments: data } = await getComments(postId);
-      setComments((prev) => reconcileComments(prev, data));
+      const { comments: data } = await getComments(postId, { limit: COMMENTS_PAGE_SIZE });
+      setComments((prev) => mergeCommentPages(prev, data));
       InteractionManager.runAfterInteractions(() => kvSetJSON(`comments:${postId}`, data));
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
     } else {
@@ -1693,6 +1767,15 @@ export default function CommentsScreen() {
                would move the post to the visual bottom. FlashList v2's docs cover exactly this case:
                "Chat apps without inverted will also be possible." */
             maintainVisibleContentPosition={COMMENTS_MVCP}
+            /* Older pages arrive as the reader approaches the top, rather than the whole thread
+               arriving up front. `onStartReached` is FlashList v2's start-edge callback (v1 had no
+               equivalent, which is part of why this screen fetched everything). The threshold is
+               expressed in viewports, so 0.3 means "start fetching while roughly a third of a screen
+               of unread scroll remains" — early enough that the page is usually merged before the
+               reader gets there, late enough that opening a thread does not immediately pull a
+               second page it may never need. */
+            onStartReached={loadOlderComments}
+            onStartReachedThreshold={0.3}
           />
           </GestureDetector>
           </Reanimated.View>
