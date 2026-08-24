@@ -1,6 +1,7 @@
 import React, { memo, useEffect, useMemo, useState } from 'react';
 import { View, Pressable, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import { enqueueReveal } from '../../utils/revealQueue';
 import { router } from 'expo-router';
 import { useTheme } from '../../theme';
 import { Text, Avatar } from '../ui';
@@ -19,68 +20,17 @@ import { formatTimeAgo } from '../../utils/mockData';
 import { useT } from '../../i18n/store';
 import { perfMonitor } from '../../services/perfMonitor';
 import { useSettingsStore } from '../../store/settingsStore';
-
-// ─── Shared frame-paced hydrate scheduler ───────────────────────────────
-// Each card mounts as an empty same-size placeholder and asks a SHARED FIFO
-// "reveal permit" scheduler (the module-level singleton below) for
-// permission to hydrate its heavy body (FormattedText, LinkPreview,
-// EmojiPattern/PixelIconPattern, SwipeablePostCard wrapper, image grid).
+// ── CARD HYDRATION IS FRAME-PACED ───────────────────────────────────────────
 //
-// Why a shared queue instead of a bare per-card RAF: a plain
-// `requestAnimationFrame(() => setHydrated(true))` only delays each card by
-// ONE frame — it does NOT serialize cards relative to each other. Every card
-// that FlatList mounts in the same virtualization batch schedules its RAF
-// for the SAME next frame, so all of their heavy bodies commit together one
-// frame later = N × ~11-36 ms of native shadow-tree work stacked into a
-// single long task. That was the "~1 second hang" (ui < 30 markers) the perf
-// audit flagged when the profile tab mounts/scrolls a batch of cards.
+// A card first commits an empty placeholder and hydrates its heavy body (FormattedText, LinkPreview,
+// the emoji/pixel pattern, the SwipeablePostCard wrapper, the image grid) when the shared queue grants
+// it a turn — at most two per frame, in mount order.
 //
-// The scheduler below grants hydration to at most REVEAL_CARDS_PER_FRAME
-// cards PER animation frame, in mount order (FIFO). A single rAF "pump"
-// releases the next waiter(s) each frame and re-arms itself while the queue
-// is non-empty. Each card enqueues on mount and REMOVES itself from the queue
-// on unmount (cancel-on-unmount), so a fast scroll that recycles cards before
-// their turn never hydrates an offscreen card and never leaks queue slots.
-// A card that unmounts while queued simply drops its slot; the pump shifts
-// the next waiter, so the queue can never deadlock. Mirrors the proven
-// `useStaggeredReveal` pump and `scheduleRowArm` one-per-frame pattern.
-const __revealQueue: Array<() => void> = [];
-let __revealPumpScheduled = false;
-// At most this many card bodies hydrate per frame. Two keeps the cascade
-// fast (a screenful reveals in a handful of frames) while guaranteeing no
-// single frame ever commits more than ~2 full card bodies — so the stacked
-// long task is gone whether cards land on cold open or mid-scroll.
-const REVEAL_CARDS_PER_FRAME = 2;
-
-function __pumpRevealQueue() {
-  __revealPumpScheduled = false;
-  // Release up to REVEAL_CARDS_PER_FRAME waiters this frame, in FIFO order.
-  for (let i = 0; i < REVEAL_CARDS_PER_FRAME; i++) {
-    const fn = __revealQueue.shift();
-    if (!fn) break;
-    try { fn(); } catch { /* card unmounted between enqueue + pump */ }
-  }
-  // Re-arm while there is still pending work — one waiter (batch) per frame.
-  if (__revealQueue.length > 0) {
-    __revealPumpScheduled = true;
-    requestAnimationFrame(__pumpRevealQueue);
-  }
-}
-
-// Enqueue a hydration waiter; returns a canceller that drops this card's slot
-// if it unmounts (recycles) before its turn. Safe to call the canceller after
-// the waiter already fired — it just finds nothing to remove.
-function enqueueReveal(fn: () => void): () => void {
-  __revealQueue.push(fn);
-  if (!__revealPumpScheduled) {
-    __revealPumpScheduled = true;
-    requestAnimationFrame(__pumpRevealQueue);
-  }
-  return () => {
-    const i = __revealQueue.indexOf(fn);
-    if (i >= 0) __revealQueue.splice(i, 1);
-  };
-}
+// The queue used to live in this file. It now lives in src/utils/revealQueue.ts, because the OTHER
+// post card (src/components/ui/UserProfilePostCard.tsx, used by other people's profiles and the Likes
+// tab) had only a bare per-card requestAnimationFrame, and a device snapshot caught what that costs:
+// eleven mounts stamped at the same millisecond followed by a 208 ms long task. The full rationale for
+// why a shared FIFO beats a per-card rAF is documented there.
 
 interface ProfilePostCardProps {
   post: any;
