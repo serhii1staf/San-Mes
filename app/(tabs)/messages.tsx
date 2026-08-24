@@ -361,6 +361,16 @@ const TAB_ORDER: ChatTab[] = ['chats', 'apps', 'archive', 'blocked', 'deleted'];
 // Tapping a synthetic row routes to the user's profile (it has no chat
 // to open); the long-press menu offers an "Unblock user" action that
 // removes the id from the user-level block list.
+// Right-edge status column for a conversation row (pin marker + unread bell). Module-level so the
+// style object is created once for the whole list instead of per row per render.
+//
+// lignItems: center keeps a 13 pt bell optically aligned with the pin glyph above it even though
+// the two differ in width, and the small gap is what makes two markers read as a stack rather
+// than as one crowded blob.
+const conversationStatusStyles = StyleSheet.create({
+  column: { alignItems: 'center', justifyContent: 'center', gap: 4, marginLeft: 6 },
+});
+
 const SYNTHETIC_USER_BLOCK_PREFIX = '__user_block:';
 const isSyntheticUserBlockId = (id: string) => id.startsWith(SYNTHETIC_USER_BLOCK_PREFIX);
 const userIdFromSyntheticId = (id: string) => id.slice(SYNTHETIC_USER_BLOCK_PREFIX.length);
@@ -824,7 +834,28 @@ function ConversationItemBase({
       </View>
       {/* Pin marker. Outside edit mode this is the only affordance that tells the user why
           a chat is sitting above a more recent one. */}
-      {isPinned ? <PinMarker editProgress={editProgress} color={theme.colors.text.tertiary} /> : null}
+      {/* RIGHT-EDGE STATUS COLUMN: pin marker and a "something arrived from this contact"
+          bell, stacked. A COLUMN rather than two independently-positioned icons, because the
+          requirement was that the bell must not conflict with the pin -- and it cannot, if
+          neither owns an absolute position. Whichever markers apply lay out in order: a pinned
+          chat with unread messages shows both, one above the other; a chat with only one shows
+          only that, with no reserved gap where the other would have been. Adding a future marker
+          means adding a child here rather than recalculating offsets, which is the property that
+          keeps this from breaking next time.
+
+          The bell is deliberately NOT a second copy of the count -- the numeric badge already
+          sits inline next to the preview text. This is a glyph that survives being glanced at
+          from the screen edge, which is what the right rail is for. */}
+      {isPinned || item.unreadCount > 0 ? (
+        <View style={conversationStatusStyles.column}>
+          {isPinned ? <PinMarker editProgress={editProgress} color={theme.colors.text.tertiary} /> : null}
+          {item.unreadCount > 0 ? (
+            <Reanimated.View style={editFade}>
+              <Feather name="bell" size={13} color={theme.colors.accent.primary} />
+            </Reanimated.View>
+          ) : null}
+        </View>
+      ) : null}
       </Reanimated.View>
       {/* Reorder handle — right-hand column, selection mode only. Collapsed to width 0
           rather than unmounted, for the same reason as the checkbox column on the left:
