@@ -57,7 +57,12 @@ const MAX_STICKERS = 60;
 function parsePackName(raw: string): string | null {
   const s = (raw || '').trim();
   if (!s) return null;
-  const byUrl = s.match(/(?:t\.me|telegram\.me)\/addstickers\/([A-Za-z0-9_]+)/i);
+  // `addemoji` too, not just `addstickers`. Telegram's custom-emoji packs share through that path, they
+  // are returned by the SAME `getStickerSet` call (with `sticker_type: "custom_emoji"`), and a user
+  // copying a link has no reason to know the two are different products. Rejecting it sent the link down
+  // the single-image path, where it unfurled to Telegram's logo — the original complaint, in a second
+  // disguise.
+  const byUrl = s.match(/(?:t\.me|telegram\.me)\/add(?:stickers|emoji)\/([A-Za-z0-9_]+)/i);
   if (byUrl) return byUrl[1];
   const byScheme = s.match(/[?&]set=([A-Za-z0-9_]+)/i);
   if (byScheme) return byScheme[1];
@@ -74,15 +79,42 @@ interface TgSticker {
   thumb?: { file_id: string };
 }
 
-async function tg<T>(env: Env, method: string, params: Record<string, string>): Promise<T | null> {
+/**
+ * Call the Bot API. Returns the result AND Telegram's own description on failure.
+ *
+ * The description is carried through deliberately. The first version swallowed it and returned null, so
+ * every possible failure — a name that does not exist, a rate limit, a revoked token — arrived at the app
+ * as the single message "pack not found. Check the link, the pack may be private." That was reported as
+ * "непонятно, что это", and rightly: it named one cause out of several and was wrong most of the time.
+ *
+ * Telegram's descriptions are diagnostic and contain nothing sensitive (`STICKERSET_INVALID`,
+ * `Too Many Requests`, `Unauthorized`), so passing them on costs nothing and turns a guess into an answer.
+ */
+async function tg<T>(
+  env: Env,
+  method: string,
+  params: Record<string, string>,
+): Promise<{ result: T | null; detail: string }> {
   const token = env.TELEGRAM_BOT_TOKEN;
-  if (!token) return null;
+  if (!token) return { result: null, detail: 'no token' };
   const qs = new URLSearchParams(params).toString();
-  const resp = await fetch(`https://api.telegram.org/bot${token}/${method}?${qs}`);
-  if (!resp.ok) return null;
-  const body = (await resp.json()) as { ok?: boolean; result?: T };
-  if (!body?.ok) return null;
-  return (body.result ?? null) as T | null;
+  let resp: Response;
+  try {
+    resp = await fetch(`https://api.telegram.org/bot${token}/${method}?${qs}`);
+  } catch {
+    return { result: null, detail: 'telegram unreachable' };
+  }
+  // Named rather than `typeof body`: after `let body: X | null = null`, `typeof body` narrows to `null`,
+  // so the cast erased the shape and every property read became an error on `never`.
+  type TgEnvelope = { ok?: boolean; result?: T; description?: string };
+  let body: TgEnvelope | null = null;
+  try {
+    body = (await resp.json()) as TgEnvelope;
+  } catch {
+    return { result: null, detail: `bad response ${resp.status}` };
+  }
+  if (!body?.ok) return { result: null, detail: body?.description || `http ${resp.status}` };
+  return { result: (body.result ?? null) as T | null, detail: '' };
 }
 
 // ── GET /v1/stickers/telegram?pack=<link|name> ────────────────────────────
@@ -104,12 +136,17 @@ register('GET', '/v1/stickers/telegram', async (req, env, _ctx, _params, authedU
     return fail(req, 'sticker import not configured', 503);
   }
 
-  const set = await tg<{ name: string; title: string; sticker_type?: string; stickers: TgSticker[] }>(
+  const got = await tg<{ name: string; title: string; sticker_type?: string; stickers: TgSticker[] }>(
     env,
     'getStickerSet',
     { name },
   );
-  if (!set || !Array.isArray(set.stickers)) return fail(req, 'pack not found', 404);
+  const set = got.result;
+  if (!set || !Array.isArray(set.stickers)) {
+    // Telegram's own words, so the app can tell a nonexistent pack from a rate limit from a dead token
+    // instead of printing one guess for all three.
+    return fail(req, 'pack unavailable: ' + (got.detail || 'unknown'), 404);
+  }
 
   const wanted = set.stickers.slice(0, MAX_STICKERS);
 
@@ -139,14 +176,14 @@ register('GET', '/v1/stickers/telegram', async (req, env, _ctx, _params, authedU
       const preferThumb = (!!s.is_animated || !!s.is_video) && !!thumbId;
       const firstId = preferThumb ? (thumbId as string) : s.file_id;
 
-      let f = await tg<{ file_path?: string }>(env, 'getFile', { file_id: firstId });
+      let f = (await tg<{ file_path?: string }>(env, 'getFile', { file_id: firstId })).result;
       let p = f?.file_path;
 
       // Safety net for anything the flags did not catch. If what came back is not a static image and a
       // thumbnail exists, resolve that instead. Cheap (only fires on the odd sticker) and it means a
       // future Telegram format cannot silently fill the picker with unrenderable cells.
       if ((!p || !STATIC_EXT.test(p)) && thumbId && !preferThumb) {
-        f = await tg<{ file_path?: string }>(env, 'getFile', { file_id: thumbId });
+        f = (await tg<{ file_path?: string }>(env, 'getFile', { file_id: thumbId })).result;
         p = f?.file_path;
       }
 
@@ -165,7 +202,11 @@ register('GET', '/v1/stickers/telegram', async (req, env, _ctx, _params, authedU
       emoji: p.emoji,
     }));
 
-  if (stickers.length === 0) return fail(req, 'pack has no usable stickers', 422);
+  if (stickers.length === 0) {
+    // The pack exists but nothing in it resolved to a displayable image. Reported separately from
+    // 'not found' because the user's link was correct and there is nothing for them to fix.
+    return fail(req, 'pack has no usable stickers', 422);
+  }
 
   return jsonResponse(req, {
     name: set.name,

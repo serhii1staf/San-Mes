@@ -324,6 +324,29 @@ function scheduleFullPersist(conversationId: string, write: () => void): void {
 // to the open-the-chat decode burst.
 const WARM_RECENT = 6;
 
+/**
+ * Can this URL plausibly carry transparency, i.e. is it a sticker or a GIF rather than a photograph?
+ *
+ * Used to decide whether a media-only message drops its bubble (see `isStickerLike`). Alpha itself cannot
+ * be known without decoding, so this goes by SOURCE, which is reliable in both directions here:
+ *
+ *   • `.gif` / `.webp` / `.png`   the formats cut-outs actually come in. A camera photo is `.jpg`.
+ *   • giphy / tenor hosts         the GIF picker's own sources, whatever the path looks like.
+ *   • `/v1/stickers/`             our Telegram sticker proxy — always a `.webp` cut-out.
+ *
+ * `.jpg` is deliberately absent: JPEG has no alpha channel at all, so a JPEG can never be a cut-out, and
+ * that is exactly the "my own photos from the phone" case that must keep its bubble.
+ */
+function isCutoutCapableUrl(u: string): boolean {
+  if (!u || typeof u !== 'string') return false;
+  const low = u.toLowerCase();
+  if (low.indexOf('/v1/stickers/') !== -1) return true;
+  if (low.indexOf('giphy') !== -1 || low.indexOf('tenor') !== -1) return true;
+  const q = low.indexOf('?');
+  const path = q >= 0 ? low.slice(0, q) : low;
+  return path.endsWith('.gif') || path.endsWith('.webp') || path.endsWith('.png');
+}
+
 // Detect an animated GIF by URL. Mirrors the `hasGif` test used by the
 // visibility tracker so the warm path and the off-screen-pause path agree on
 // what counts as a "heavy animated decode". Animated GIFs are excluded from the
@@ -777,20 +800,35 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
   // Reply/heading/body/link/timestamp colors: contrast tint on a colored
   // bubble, theme defaults on the neutral incoming surface.
   /**
-   * Nothing but media: images and no text, no quoted message, no pixel icon.
+   * Should this message render as a STICKER — no bubble at all?
    *
-   * Such a message is rendered WITHOUT the bubble fill so a cut-out (alpha) GIF has no background
-   * behind it — see the long note at the container below. The conditions are all "is there anything
-   * else in here that needs a surface to sit on": text needs one to stay legible, a reply quote draws
-   * its own left rule against it, and the pixel icon is a decoration on the bubble.
+   * ── THE PREVIOUS VERSION OF THIS WAS TOO BROAD, AND IT WAS A REGRESSION ───
+   *
+   * It asked only "is this media with no text", and dropped the bubble for all of them. Reported
+   * immediately: "the containers disappeared from my photos — not the ones I pick from a pack, my own
+   * ones from the phone."
+   *
+   * Right, and the goal never needed that much. What had to lose its background was a CUT-OUT image — a
+   * sticker or an alpha GIF, where the bubble fill was showing through the transparent part. An ordinary
+   * photo has no transparency to reveal, so removing its bubble changed nothing for the better and took
+   * away the frame that separates one photo from the next in a column of them.
+   *
+   * So the test is now about the KIND of media, not merely the absence of text. Alpha cannot be detected
+   * without decoding the image, but the SOURCE is known from the URL, and the sources that carry cut-outs
+   * are exactly the ones the picker offers: GIFs, and stickers imported through our own proxy. A camera
+   * roll photo lands on R2 as `.jpg`/`.webp` and keeps its bubble.
+   *
+   * Every URL in the message has to qualify, so a mixed group falls back to a normal bubble rather than
+   * leaving one photo of several unframed.
    */
-  const isMediaOnly =
+  const isStickerLike =
     !!message.imageUrls &&
     message.imageUrls.length > 0 &&
     !message.text &&
     !message.replyToText &&
     !message.replyToImage &&
-    !message.replyPixelIconId;
+    !message.replyPixelIconId &&
+    message.imageUrls.every(isCutoutCapableUrl);
 
   const replyBorderColor = coloredBubble ? sideTextDim : theme.colors.accent.primary;
   const replyBodyColor = coloredBubble ? sideTextDim : theme.colors.text.tertiary;
@@ -1026,15 +1064,15 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
               Safe because the timestamp lives OUTSIDE this view (see `metaRowOwn`/`metaRowPeer`), so it
               keeps its own colour against the chat background and cannot be lost with the fill. */}
           <View style={{
-            paddingHorizontal: isMediaOnly ? 0 : 14,
-            paddingVertical: isMediaOnly ? 0 : 10,
+            paddingHorizontal: isStickerLike ? 0 : 14,
+            paddingVertical: isStickerLike ? 0 : 10,
             borderRadius: bubbleRadius,
-            backgroundColor: isMediaOnly || isGradient ? 'transparent' : solidBg,
+            backgroundColor: isStickerLike || isGradient ? 'transparent' : solidBg,
             borderBottomRightRadius: isOwn ? 4 : bubbleRadius,
             borderBottomLeftRadius: isOwn ? bubbleRadius : 4,
-            overflow: !isMediaOnly && isGradient ? 'hidden' : undefined,
+            overflow: !isStickerLike && isGradient ? 'hidden' : undefined,
           }}>
-            {isGradient && gradFill && !isMediaOnly ? (
+            {isGradient && gradFill && !isStickerLike ? (
               <LinearGradient
                 colors={gradFill as any}
                 start={{ x: 0, y: 0 }}

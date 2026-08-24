@@ -1,5 +1,6 @@
 import React, { useCallback, useState } from 'react';
-import { View, Modal, Pressable, TextInput, ActivityIndicator, ScrollView, Text as RNText, StyleSheet } from 'react-native';
+import { View, Pressable, TextInput, ActivityIndicator, ScrollView, Text as RNText, StyleSheet } from 'react-native';
+import { SlideUpSheet } from '../ui/SlideUpSheet';
 import { Feather } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import { validateGifLink, useCustomGifs } from '../../store/customGifsStore';
@@ -19,6 +20,8 @@ export interface AddGifLabelSet {
   errNotHttps: string;
   errNotMedia: string;
   errPackNotFound: string;
+  errPackEmpty: string;
+  errPackAuth: string;
   errPackNotConfigured: string;
   added: string;
   foundOne: string;
@@ -48,16 +51,22 @@ const PREVIEW_CAP = 12;
 /**
  * Add a GIF, or a whole sticker pack, by pasting a link.
  *
- * ── THIS WAS A FULL SCREEN AND SHOULD NOT HAVE BEEN ─────────────────────────
+ * ── IT IS THE APP'S OWN SHEET NOW, NOT A SHAPE OF MY OWN ────────────────────
  *
- * The previous version took over the display, which was wrong for a two-field action reached from a
- * button inside a keyboard-height panel. It is a compact centred sheet again, matching the other pickers
- * in the app.
+ * Two wrong answers before this one: a full screen, then a centred card. Both were invented here, and
+ * neither matched anything else in the app — which is the actual complaint. The app HAS a modal, and it is
+ * `SlideUpSheet`: spring slide-up from the bottom, a 0.4 backdrop fading in over 200 ms, 250 ms slide-down
+ * on close. It is what the profile-edit sheet uses, what the feed's three-dots menu uses, and what the
+ * share sheet uses. So this uses it too, and owns none of that chrome itself.
  *
- * The reason it grew was the explanation of which links work — genuinely useful, because "Copy Link" from
- * Discord gives a page and not a file, and knowing that is the difference between success and confusion.
- * The fix for "useful but long" is not a bigger window, it is a window that only shows it when asked: the
- * `⋯` button toggles it, and it starts closed, so the sheet is small by default and complete on demand.
+ * The explanation of which links work is still here and still needed — "Copy Link" from Discord gives a
+ * page and not a file, and knowing that is the difference between success and confusion. It sits behind
+ * the `⋯` toggle, closed by default, so the sheet stays short and is complete on demand. That was the
+ * right half of the previous attempt and is kept.
+ *
+ * NOTE for anyone extending this: `SlideUpSheet` is itself an RN `<Modal>`, so nothing in here may open
+ * another one. On Android a nested Modal renders BEHIND its parent and its teardown can leave the screen
+ * unresponsive — the warning is recorded at length in `EditProfileTabModal`, which hit it.
  *
  * ── AND IT NOW SHOWS WHAT IT FOUND, BEFORE COMMITTING ───────────────────────
  *
@@ -73,6 +82,10 @@ export function AddGifModal({ visible, onClose, theme, labels }: AddGifModalProp
   const [url, setUrl] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Telegram's own words, when there are any. Shown small under the message so a rate limit or a dead
+  // token is distinguishable from a wrong name - reported as `непонятно, что это` when every cause
+  // printed the same sentence.
+  const [detail, setDetail] = useState<string | null>(null);
   const [resolved, setResolved] = useState<Resolved | null>(null);
   const [showHint, setShowHint] = useState(false);
   const add = useCustomGifs((s) => s.add);
@@ -81,6 +94,7 @@ export function AddGifModal({ visible, onClose, theme, labels }: AddGifModalProp
   const reset = useCallback(() => {
     setUrl('');
     setError(null);
+    setDetail(null);
     setResolved(null);
     setBusy(false);
     setShowHint(false);
@@ -98,6 +112,7 @@ export function AddGifModal({ visible, onClose, theme, labels }: AddGifModalProp
       if (!target || busy) return;
       setBusy(true);
       setError(null);
+      setDetail(null);
       setResolved(null);
 
       // A pack link is checked first and by shape, so a whole set never goes down the single-image path
@@ -109,8 +124,13 @@ export function AddGifModal({ visible, onClose, theme, labels }: AddGifModalProp
           setError(
             res.reason === 'not_configured'
               ? labels.errPackNotConfigured
-              : labels.errPackNotFound,
+              : res.reason === 'unauthorised'
+                ? labels.errPackAuth
+                : res.reason === 'empty'
+                  ? labels.errPackEmpty
+                  : labels.errPackNotFound,
           );
+          setDetail(res.detail || null);
           return;
         }
         setResolved({ urls: res.pack.urls, title: res.pack.title, animated: res.pack.animated });
@@ -154,11 +174,8 @@ export function AddGifModal({ visible, onClose, theme, labels }: AddGifModalProp
   const onPrimary = resolved ? commit : () => void resolve(url);
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={close} statusBarTranslucent>
-      <View style={styles.root}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={close} />
-
-        <View style={[styles.card, { backgroundColor: theme.colors.background.elevated }]}>
+    <SlideUpSheet visible={visible} onClose={close}>
+      <View style={styles.card}>
           <View style={styles.header}>
             <RNText style={[styles.title, { color: theme.colors.text.primary }]}>{labels.title}</RNText>
             {/* The instructions live behind this. Closed by default so the sheet stays small; one tap
@@ -180,7 +197,7 @@ export function AddGifModal({ visible, onClose, theme, labels }: AddGifModalProp
           <View style={[styles.inputRow, { borderColor: error ? '#FF3B30' : theme.colors.border.light }]}>
             <TextInput
               value={url}
-              onChangeText={(v) => { setUrl(v); setError(null); setResolved(null); }}
+              onChangeText={(v) => { setUrl(v); setError(null); setDetail(null); setResolved(null); }}
               placeholder={labels.placeholder}
               placeholderTextColor={theme.colors.text.tertiary}
               style={[styles.input, { color: theme.colors.text.primary }]}
@@ -197,6 +214,7 @@ export function AddGifModal({ visible, onClose, theme, labels }: AddGifModalProp
           </View>
 
           {error ? <RNText style={styles.error}>{error}</RNText> : null}
+          {detail ? <RNText style={[styles.detail, { color: theme.colors.text.tertiary }]}>{detail}</RNText> : null}
 
           {busy ? (
             <View style={styles.busy}>
@@ -258,15 +276,15 @@ export function AddGifModal({ visible, onClose, theme, labels }: AddGifModalProp
               </RNText>
             </Pressable>
           </View>
-        </View>
       </View>
-    </Modal>
+    </SlideUpSheet>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 22 },
-  card: { width: '100%', maxWidth: 400, borderRadius: 22, padding: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.25, shadowRadius: 18, elevation: 12 },
+  // No surface, no rounding, no backdrop, no shadow here: SlideUpSheet owns all of it, which is the
+  // point of using it. This is only the sheet's inner padding.
+  card: { paddingHorizontal: 18, paddingTop: 4, paddingBottom: 6 },
   header: { flexDirection: 'row', alignItems: 'center' },
   title: { fontSize: 17, fontWeight: '700', flex: 1 },
   iconBtn: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
@@ -275,6 +293,7 @@ const styles = StyleSheet.create({
   input: { flex: 1, fontSize: 14, paddingVertical: 0 },
   pasteBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
   error: { color: '#FF3B30', fontSize: 12, lineHeight: 18, marginTop: 8 },
+  detail: { fontSize: 11, lineHeight: 16, marginTop: 3 },
   busy: { paddingVertical: 16, alignItems: 'center' },
   found: { marginTop: 12 },
   foundLine: { fontSize: 12, fontWeight: '600' },
