@@ -19,6 +19,7 @@ export interface AddGifLabelSet {
   cancel: string;
   errNotHttps: string;
   errNotMedia: string;
+  errTgMessage: string;
   errPackNotFound: string;
   errPackEmpty: string;
   errPackAuth: string;
@@ -140,7 +141,13 @@ export function AddGifModal({ visible, onClose, theme, labels }: AddGifModalProp
       const single = await validateGifLink(target);
       setBusy(false);
       if (!single.ok) {
-        setError(single.reason === 'not_https' ? labels.errNotHttps : labels.errNotMedia);
+        setError(
+          single.reason === 'not_https'
+            ? labels.errNotHttps
+            : single.reason === 'tg_message'
+              ? labels.errTgMessage
+              : labels.errNotMedia,
+        );
         return;
       }
       setResolved({ urls: [single.url] });

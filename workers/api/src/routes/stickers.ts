@@ -183,24 +183,41 @@ register('GET', '/v1/stickers/telegram', async (req, env, _ctx, _params, authedU
   // trips, and Telegram's limits are generous enough for a single import burst.
   const paths = await Promise.all(
     wanted.map(async (s) => {
+      // -- TRY BOTH CANDIDATES, IN THE ORDER THE FLAGS SUGGEST --------------------
+      //
+      // This used to give up after ONE attempt when the flags said video: it resolved the thumbnail,
+      // and if that came back non-static it rejected the sticker with no second try, because the
+      // fallback was guarded by && !preferThumb.
+      //
+      // That is a real hole, and it is the shape of the remaining failure. Telegram VIDEO packs are
+      // now the common kind, and a video sticker whose thumbnail ALSO resolves to .webm had nowhere
+      // left to go: every sticker rejected, the whole pack refused, and the main file never even
+      // examined - although for some packs that file is a perfectly ordinary .webp.
+      //
+      // Symmetric now: two candidates, ordered by what the flags suggest, first usable one wins. No
+      // flag combination and no thumbnail format can leave a sticker unexamined. The second getFile
+      // only happens when the first choice is unusable.
       const thumbId = s.thumbnail?.file_id || s.thumb?.file_id;
-      // Animated or video sticker → go straight for the static thumbnail. `thumbnail` is the current
-      // field name; `thumb` is the legacy one, still returned alongside it.
-      // Only VIDEO stickers fall back to a still. Animated .tgs is rendered for real now, so
-      // reaching for its thumbnail would throw away the animation we can actually play.
-      const preferThumb = !!s.is_video && !!thumbId;
-      const firstId = preferThumb ? (thumbId as string) : s.file_id;
+      const usable = (fp?: string) => !!fp && (STATIC_EXT.test(fp) || LOTTIE_EXT.test(fp));
 
-      let f = (await tg<{ file_path?: string }>(env, 'getFile', { file_id: firstId })).result;
-      let p = f?.file_path;
+      // Video first tries the thumbnail, because the real file is VP9 and iOS cannot decode it at
+      // all. Everything else tries the real file first: .webp and .tgs both render, and a thumbnail
+      // would be a needless downgrade.
+      const order: string[] =
+        s.is_video && thumbId ? [thumbId, s.file_id] : [s.file_id, ...(thumbId ? [thumbId] : [])];
 
-      // Safety net for anything the flags did not catch. If what came back is not a static image and a
-      // thumbnail exists, resolve that instead. Cheap (only fires on the odd sticker) and it means a
-      // future Telegram format cannot silently fill the picker with unrenderable cells.
-      if ((!p || (!STATIC_EXT.test(p) && !LOTTIE_EXT.test(p))) && thumbId && !preferThumb) {
-        f = (await tg<{ file_path?: string }>(env, 'getFile', { file_id: thumbId })).result;
-        p = f?.file_path;
+      let p: string | undefined;
+      let lastSeen: string | undefined;
+      for (const candidate of order) {
+        const got = (await tg<{ file_path?: string }>(env, 'getFile', { file_id: candidate })).result;
+        const fp = got?.file_path;
+        if (fp) lastSeen = fp;
+        if (usable(fp)) { p = fp; break; }
       }
+      // Nothing usable: keep the last path we DID see, so the rejection below can name its format
+      // instead of reporting unresolved for a file that resolved perfectly well and was merely
+      // the wrong kind.
+      if (!p) p = lastSeen;
 
       // Rejected. Report WHAT was rejected rather than just failing: a pack that produces nothing
       // usable is otherwise indistinguishable from a pack that produced nothing at all, and the

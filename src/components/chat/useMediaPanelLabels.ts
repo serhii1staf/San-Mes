@@ -34,6 +34,7 @@ export function useMediaPanelLabels(): MediaPanelProps['labels'] {
         find: t('gif.add.find'),
         errNotHttps: t('gif.add.err_https'),
         errNotMedia: t('gif.add.err_not_media'),
+        errTgMessage: t('gif.add.err_tg_message'),
         errPackNotFound: t('gif.add.err_pack_not_found'),
         errPackEmpty: t('gif.add.err_pack_empty'),
         errPackAuth: t('gif.add.err_pack_auth'),

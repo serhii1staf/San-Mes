@@ -243,6 +243,7 @@ const en: Record<string, string> = {
   'gif.add.find': 'Look up',
   'gif.add.err_https': 'The link must start with https://',
   'gif.add.err_not_media': 'No image found at that link. If it is a post page, open the GIF itself and copy its address.',
+  'gif.add.err_tg_message': 'That is a link to a Telegram message, not to a sticker pack. For a sticker: hold it, open the pack, then ⋯ → Copy link. For a GIF: Telegram has no link for one, so save it and add it from your gallery.',
   'gif.add.err_pack_not_found': 'Telegram does not know that pack. Copy the link again from the pack itself: hold a sticker, open the pack, then ⋯ → Copy link.',
   'gif.add.err_pack_empty': 'That pack exists, but nothing in it can be shown as an image yet. Your link is fine.',
   'gif.add.err_pack_auth': 'Your session expired. Reopen the app and try again.',

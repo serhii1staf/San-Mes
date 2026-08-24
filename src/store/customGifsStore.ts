@@ -126,9 +126,39 @@ export const useCustomGifs = create<CustomGifsState>((set, get) => ({
 /** Extensions we accept without asking the network. */
 const DIRECT_MEDIA = /\.(gif|webp|png|jpe?g|apng)(\?|#|$)/i;
 
+/**
+ * Is this `og:image` the site's LOGO rather than the content the user asked for?
+ *
+ * Reported as "sometimes Telegram links just do not work", and a perf snapshot named the culprit outright:
+ * an image load from `telegram.org` taking 231 ms. That is Telegram's own logo, and it got imported as if
+ * it were a sticker.
+ *
+ * Here is how. A Telegram link to a GIF or to a single sticker is a link to a MESSAGE, not to a pack. It
+ * therefore fails the pack test, falls through to this single-image path, and the unfurl reads the
+ * `og:image` of a `t.me` page. For a page with no public preview — a private chat, a message that needs the
+ * app — that `og:image` is the site's branding. So the import "succeeded" and added the Telegram logo to
+ * the user's stickers, which reads as the feature being broken in the most confusing possible way: no
+ * error, wrong picture.
+ *
+ * The test is narrow on purpose: the image must come off the SITE'S OWN domain while the page came from a
+ * different one, which is the signature of branding rather than content. A real image hosted on the same
+ * domain as its page (`tenor.com/view/x` → `media.tenor.com/…gif`) still passes, because the host differs.
+ */
+function isSiteLogo(pageUrl: string, imageUrl: string): boolean {
+  const img = imageUrl.toLowerCase();
+  const page = pageUrl.toLowerCase();
+  // Telegram is the case we have measured. Its message pages advertise `telegram.org` branding, and the
+  // real media never lives there — sticker and GIF files come from `api.telegram.org` (behind our proxy)
+  // or from `cdn*.telesco.pe`.
+  if (page.indexOf('t.me/') !== -1 || page.indexOf('telegram.me/') !== -1) {
+    if (img.indexOf('telegram.org') !== -1) return true;
+  }
+  return false;
+}
+
 export type GifLinkResult =
   | { ok: true; url: string }
-  | { ok: false; reason: 'empty' | 'not_https' | 'not_media' };
+  | { ok: false; reason: 'empty' | 'not_https' | 'not_media' | 'tg_message' };
 
 /**
  * Turn whatever the user pasted into a usable media URL.
@@ -191,7 +221,13 @@ export async function validateGifLink(raw: string): Promise<GifLinkResult> {
     const { getLinkPreview } = await import('../services/linkPreview');
     const preview = await getLinkPreview(url);
     const image = preview?.image;
-    if (image && /^https:\/\//i.test(image)) return { ok: true, url: image };
+    if (image && /^https:\/\//i.test(image)) {
+      // A site logo is not what the user asked for. Reported as its OWN reason, so the message can
+      // explain where a real sticker link comes from instead of the generic 'no image found', which
+      // would send them looking for a picture on a page that has one - just not theirs.
+      if (isSiteLogo(url, image)) return { ok: false, reason: 'tg_message' };
+      return { ok: true, url: image };
+    }
   } catch {
     // fall through
   }
