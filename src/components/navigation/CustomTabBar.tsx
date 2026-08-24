@@ -27,7 +27,6 @@ import { BOTTOM_CHROME_SPRING } from '../../theme/motion';
 import { triggerHaptic } from '../../utils/haptics';
 import { GlassSurface, NativeGlassView, useLiquidGlassActive } from '../ui/LiquidGlass';
 import { useTabBarStore } from '../../store/tabBarStore';
-import { Avatar } from '../ui/Avatar';
 import { useAuthStore } from '../../store';
 import { useChatUnread, totalChatUnread } from '../../store/chatUnreadStore';
 
@@ -381,6 +380,41 @@ const tabIconStyles = StyleSheet.create({
     justifyContent: 'center',
   },
   badgeText: { color: '#FFFFFF', fontSize: 10, fontWeight: '700', lineHeight: 13, includeFontPadding: false },
+
+  // ── THE PROFILE EMOJI ─────────────────────────────────────────────────────
+  //
+  // Rendered as bare text rather than through `Avatar`, for two reasons that came straight from what
+  // was on screen:
+  //
+  //   NO RING. `Avatar`'s `tint` draws a fill and a hairline border whose hue is HASHED from the
+  //   name, and for this account the hash landed on red — reported as "there is some red outline
+  //   around it, that should not be there". The ring is right in the chat list, where a row of
+  //   avatars needs per-user separation from the background. In the tab bar the glyph sits alone
+  //   inside a glass capsule that already provides the container, so a second container around it is
+  //   just an artefact — and one whose colour we do not control.
+  //
+  //   BIGGER. `Avatar size="xs"` is a 24pt box holding a 13pt emoji, deliberately conservative to
+  //   avoid clipping inside its circle. Next to the 22pt Feather glyphs on the other tabs that reads
+  //   as noticeably small — "the icon should be a bit bigger". Without a circle to fit inside, the
+  //   emoji can be sized to match its neighbours optically instead.
+  //
+  // 24pt against the neighbours' 22pt: an emoji's drawn ink is smaller than its em box, so matching
+  // the numbers would look smaller, not equal.
+  //
+  // Centring needs all three of these together. `includeFontPadding: false` removes Android's extra
+  // ascent/descent padding, which otherwise pushes the glyph down; an explicit `lineHeight` equal to
+  // the box height gives the text a known height to centre within instead of a font-derived one; and
+  // `textAlign: 'center'` handles the horizontal axis. Without the lineHeight the emoji sits low on
+  // Android — reported as "it should be in the centre of the button".
+  profileEmoji: {
+    fontSize: 24,
+    lineHeight: 28,
+    height: 28,
+    width: 30,
+    textAlign: 'center',
+    includeFontPadding: false,
+    textAlignVertical: 'center',
+  },
 });
 
 // ─── Sliding Lens (translucent pill) ─────────────────────────────────────────
@@ -755,9 +789,20 @@ const ProfileCapsule = React.memo(function ProfileCapsule({
  */
 const ProfileCapsuleAvatar = memo(function ProfileCapsuleAvatar({ fallbackColor }: { fallbackColor: string }) {
   const emoji = useAuthStore((s) => s.user?.emoji);
-  const name = useAuthStore((s) => s.user?.displayName || s.user?.username);
   if (!emoji) return <Feather name="user" size={22} color={fallbackColor} />;
-  return <Avatar emoji={emoji} name={name} size="xs" tint />;
+  return (
+    <RNText
+      style={tabIconStyles.profileEmoji}
+      allowFontScaling={false}
+      numberOfLines={1}
+      // The tab already announces itself as "Profile"; the glyph is decoration on top of that, and
+      // a screen reader spelling out an emoji name here would just be noise.
+      accessibilityElementsHidden
+      importantForAccessibility="no"
+    >
+      {emoji}
+    </RNText>
+  );
 });
 
 // ─── Main Tab Bar ────────────────────────────────────────────────────────────

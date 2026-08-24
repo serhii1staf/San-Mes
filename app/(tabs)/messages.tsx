@@ -370,7 +370,15 @@ const TAB_ORDER: ChatTab[] = ['chats', 'apps', 'archive', 'blocked', 'deleted'];
 // the two differ in width, and the small gap is what makes two markers read as a stack rather
 // than as one crowded blob.
 const conversationStatusStyles = StyleSheet.create({
-  column: { alignItems: 'center', justifyContent: 'center', gap: 4, marginLeft: 6 },
+  // A ROW, not a column. Reported: the count and the pin sat one above the other, so neither was
+  // level with the row's text and the pair drifted off-centre as soon as both were present. Asked
+  // for: "first the unread count, then the pin icon on the SAME level, properly centred."
+  //
+  // `alignItems: 'center'` centres them against each other on the cross axis, so a 20pt pill and a
+  // 13pt glyph share one centreline regardless of which is taller. `justifyContent: 'center'` keeps
+  // the pair centred in the rail whether one marker is present or both. The order in JSX is count
+  // then pin, which is the requested reading order.
+  column: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginLeft: 6 },
   // `minWidth` with symmetric padding makes one digit a circle and two or three a pill, without
   // measuring text. Capped at 99+ by the caller so the width cannot grow enough to shift the row.
   unreadPill: {
@@ -864,7 +872,7 @@ function ConversationItemBase({
           as its neighbours -- one motion, one direction. */}
       {isPinned || item.unreadCount > 0 ? (
         <View style={conversationStatusStyles.column}>
-          {isPinned ? <PinMarker editProgress={editProgress} color={theme.colors.text.tertiary} /> : null}
+          {/* Count FIRST, pin SECOND — the requested reading order, on one level. */}
           {item.unreadCount > 0 ? (
             <Reanimated.View style={[conversationStatusStyles.unreadPill, { backgroundColor: theme.colors.accent.primary }, editFade]}>
               <Text variant="caption" weight="bold" color={theme.colors.text.inverse}>
@@ -872,6 +880,7 @@ function ConversationItemBase({
               </Text>
             </Reanimated.View>
           ) : null}
+          {isPinned ? <PinMarker editProgress={editProgress} color={theme.colors.text.tertiary} /> : null}
         </View>
       ) : null}
       </Reanimated.View>
@@ -959,8 +968,8 @@ const PinMarker = React.memo(function PinMarker({
 }) {
   const style = useAnimatedStyle(() => ({ opacity: 1 - editProgress.value }));
   return (
-    <Reanimated.View style={[{ marginLeft: 6 }, style]}>
-      <Feather name="bookmark" size={13} color={color} />
+    <Reanimated.View style={style}>
+      <Feather name="anchor" size={13} color={color} />
     </Reanimated.View>
   );
 });
