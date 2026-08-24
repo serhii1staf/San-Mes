@@ -371,6 +371,16 @@ const TAB_ORDER: ChatTab[] = ['chats', 'apps', 'archive', 'blocked', 'deleted'];
 // than as one crowded blob.
 const conversationStatusStyles = StyleSheet.create({
   column: { alignItems: 'center', justifyContent: 'center', gap: 4, marginLeft: 6 },
+  // `minWidth` with symmetric padding makes one digit a circle and two or three a pill, without
+  // measuring text. Capped at 99+ by the caller so the width cannot grow enough to shift the row.
+  unreadPill: {
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 6,
+  },
 });
 
 const SYNTHETIC_USER_BLOCK_PREFIX = '__user_block:';
@@ -825,47 +835,41 @@ function ConversationItemBase({
             >
               {previewText}
             </Text>
-            {item.unreadCount > 0 && (
-              <Reanimated.View
-                style={[{
-                  backgroundColor: theme.colors.accent.primary,
-                  borderRadius: 10,
-                  minWidth: 20,
-                  height: 20,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  paddingHorizontal: 6,
-                  marginLeft: theme.spacing.sm,
-                }, editFade]}
-              >
-                <Text variant="caption" weight="bold" color={theme.colors.text.inverse}>
-                  {item.unreadCount}
-                </Text>
-              </Reanimated.View>
-            )}
           </View>
         ) : null}
       </View>
       {/* Pin marker. Outside edit mode this is the only affordance that tells the user why
           a chat is sitting above a more recent one. */}
-      {/* RIGHT-EDGE STATUS COLUMN: pin marker and a "something arrived from this contact"
-          bell, stacked. A COLUMN rather than two independently-positioned icons, because the
-          requirement was that the bell must not conflict with the pin -- and it cannot, if
-          neither owns an absolute position. Whichever markers apply lay out in order: a pinned
-          chat with unread messages shows both, one above the other; a chat with only one shows
-          only that, with no reserved gap where the other would have been. Adding a future marker
-          means adding a child here rather than recalculating offsets, which is the property that
-          keeps this from breaking next time.
+      {/* RIGHT-EDGE STATUS COLUMN: pin marker and the unread count, stacked. A COLUMN rather than
+          two independently-positioned markers, because the requirement was that unread must not
+          conflict with the pin -- and it cannot, if neither owns an absolute position. Whichever
+          markers apply lay out in order: a pinned chat with unread shows both, one above the other;
+          a chat with only one shows only that, with no reserved gap where the other would have
+          been. A future marker means adding a child here rather than recalculating offsets, which
+          is the property that keeps this from breaking next time.
 
-          The bell is deliberately NOT a second copy of the count -- the numeric badge already
-          sits inline next to the preview text. This is a glyph that survives being glanced at
-          from the screen edge, which is what the right rail is for. */}
+          THE COUNT LIVES HERE, NOT INLINE BY THE PREVIEW TEXT. Two reports, one cause:
+
+            "there is a number AND a bell next to it, the bell should not be there" -- the bell was
+            a second, redundant announcement of the same fact. Gone; the number says it better.
+
+            "in edit mode the number does not slide right with everything else; it jumps toward the
+            middle of the screen, drifts left, then disappears" -- exactly what an inline pill had
+            to do there. It sat AFTER a `flex: 1` preview text, so when edit mode narrowed the row
+            to make room for the checkbox column, the text shrank and everything after it moved
+            LEFT, against the direction the rest of the row travels. Fading could not hide that it
+            was also translating the wrong way.
+
+          Pinned to the row's right edge it travels WITH that edge and fades on the same `editFade`
+          as its neighbours -- one motion, one direction. */}
       {isPinned || item.unreadCount > 0 ? (
         <View style={conversationStatusStyles.column}>
           {isPinned ? <PinMarker editProgress={editProgress} color={theme.colors.text.tertiary} /> : null}
           {item.unreadCount > 0 ? (
-            <Reanimated.View style={editFade}>
-              <Feather name="bell" size={13} color={theme.colors.accent.primary} />
+            <Reanimated.View style={[conversationStatusStyles.unreadPill, { backgroundColor: theme.colors.accent.primary }, editFade]}>
+              <Text variant="caption" weight="bold" color={theme.colors.text.inverse}>
+                {item.unreadCount > 99 ? '99+' : item.unreadCount}
+              </Text>
             </Reanimated.View>
           ) : null}
         </View>

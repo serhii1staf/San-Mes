@@ -156,16 +156,24 @@ const ICON_NAMES: Record<string, keyof typeof Feather.glyphMap> = {
   profile: 'user',
 };
 
-// ── THIS FILE IS WHERE TAB ICONS ACTUALLY COME FROM ─────────────────────────
+// ── THIS FILE IS WHERE TAB ICONS ACTUALLY COME FROM — TWO TRAPS ─────────────
 //
-// Worth stating loudly, because I got it wrong once and shipped dead code: `CustomTabBar` renders
-// `<Feather name={ICON_NAMES[routeName]} />` from the map above. It NEVER reads
-// `options.tabBarIcon`. So the `tabBarIcon` entries in app/(tabs)/_layout.tsx are inert — I edited
-// them to put the account's avatar on the profile tab and an unread badge on messages, and nothing
-// changed on the device, because this component never asks for them.
+// Stated loudly because I fell into both, and each one shipped a change that did nothing on the
+// device while looking correct in the diff.
 //
-// Anything that must appear in the tab bar has to be built HERE. The `_layout.tsx` icons are kept
-// only because React Navigation's types want them and because removing them is a separate change.
+// TRAP 1 — `options.tabBarIcon` IS NEVER READ.
+//   `CustomTabBar` renders `<Feather name={ICON_NAMES[routeName]} />` from the map above. The
+//   `tabBarIcon` entries in app/(tabs)/_layout.tsx are inert. Anything that must appear in the tab
+//   bar has to be built HERE. Those entries are kept only because React Navigation's types want
+//   them; removing them is a separate change.
+//
+// TRAP 2 — `TabBarButton` NEVER RECEIVES 'profile'.
+//   The routes are SPLIT further down: `mainRoutes` filters the profile route out, and profile is
+//   rendered by the detached `ProfileCapsule`. So `ICON_NAMES.profile` below is effectively unused,
+//   and a `routeName === 'profile'` branch inside `TabBarButton` can never run. The profile button's
+//   content lives in `ProfileCapsule` / `ProfileCapsuleAvatar`.
+//
+// Before changing a tab's appearance, check WHICH of the two renderers owns it.
 
 // Worklet helper — pick the standard slot closest to a given finger slot index
 function snapToStandardSlot(fingerSlot: number): number {
@@ -296,16 +304,7 @@ const TabBarButton = React.memo(function TabBarButton({
       accessibilityState={{ selected: isFocused }}
     >
       <Animated.View style={iconAnimStyle}>
-        {routeName === 'profile' ? (
-          /* THE ACCOUNT'S AVATAR, not a generic person glyph. An avatar in this app is the
-             account's emoji inside `Avatar`'s tinted circle — a fill and hairline ring whose hue is
-             hashed from the name, so the same user is the same colour in the tab bar, the chat list
-             and the feed. That circle is what makes it read as "me". Falls back to the Feather glyph
-             when the account has no emoji, so a profile that never picked one looks deliberate.
-             Wrapped in the same `iconAnimStyle` as every other tab, so it magnifies under the lens
-             exactly like the icons it sits beside. */
-          <ProfileTabAvatar fallbackColor={color} />
-        ) : routeName === 'messages' ? (
+        {routeName === 'messages' ? (
           /* Chats icon plus an unread badge. Both live here because this component is the only
              thing that renders the tab bar — see the note on ICON_NAMES. */
           <MessagesTabIconWithBadge color={color} iconName={iconName} />
@@ -315,21 +314,6 @@ const TabBarButton = React.memo(function TabBarButton({
       </Animated.View>
     </Pressable>
   );
-});
-
-/**
- * Profile tab content: the account's avatar.
- *
- * Its own component so the auth-store subscription lives at a leaf. Subscribing inside
- * `TabBarButton` would re-render every tab button whenever any watched auth field changed, and the
- * tab bar is mounted on the root stack — it stays alive under every screen, so a needless re-render
- * here is a needless re-render everywhere.
- */
-const ProfileTabAvatar = memo(function ProfileTabAvatar({ fallbackColor }: { fallbackColor: string }) {
-  const emoji = useAuthStore((s) => s.user?.emoji);
-  const name = useAuthStore((s) => s.user?.displayName || s.user?.username);
-  if (!emoji) return <Feather name="user" size={22} color={fallbackColor} />;
-  return <Avatar emoji={emoji} name={name} size="xs" tint />;
 });
 
 /**
@@ -742,10 +726,38 @@ const ProfileCapsule = React.memo(function ProfileCapsule({
             pointerEvents="none"
           />
         )}
-        <Feather name="user" size={22} color={color} />
+        {/* THE ACCOUNT'S AVATAR — and THIS is the profile button that exists.
+   
+            Third time reported as "the emoji still is not showing". My first attempt edited
+            `tabBarIcon` in _layout.tsx (never read — see the note at ICON_NAMES). My second put the
+            avatar in `TabBarButton`'s `routeName === 'profile'` branch, which is UNREACHABLE:
+            `mainRoutes` is built by filtering the profile route OUT (see the split below), so
+            `TabBarButton` is never handed 'profile'. The profile button is THIS detached capsule.
+   
+            An avatar here rather than a person glyph: the account's emoji inside `Avatar`'s tinted
+            circle, hue hashed from the name, so the same identity is the same colour here, in the
+            chat list and in the feed. Falls back to the Feather glyph when the account has no emoji
+            so a profile that never picked one still looks deliberate. */}
+        <ProfileCapsuleAvatar fallbackColor={color} />
       </Pressable>
     </Animated.View>
   );
+});
+
+/**
+ * The avatar shown in the detached profile capsule.
+ *
+ * Its own leaf component so the auth-store subscription does not sit in `ProfileCapsule`.
+ * `ProfileCapsule` is `React.memo`'d and receives hoisted stable handlers precisely so it does not
+ * re-render; subscribing there would defeat that on every watched auth change. The tab bar is
+ * mounted on the ROOT stack, so it stays alive under every screen and a needless re-render here is
+ * a needless re-render everywhere.
+ */
+const ProfileCapsuleAvatar = memo(function ProfileCapsuleAvatar({ fallbackColor }: { fallbackColor: string }) {
+  const emoji = useAuthStore((s) => s.user?.emoji);
+  const name = useAuthStore((s) => s.user?.displayName || s.user?.username);
+  if (!emoji) return <Feather name="user" size={22} color={fallbackColor} />;
+  return <Avatar emoji={emoji} name={name} size="xs" tint />;
 });
 
 // ─── Main Tab Bar ────────────────────────────────────────────────────────────
