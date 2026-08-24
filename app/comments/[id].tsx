@@ -804,6 +804,15 @@ export default function CommentsScreen() {
   }).current;
   const commentsViewabilityConfig = useRef({ itemVisiblePercentThreshold: 35 }).current;
 
+  // Frozen at module-constant identity via `useRef`, not an inline literal on the FlashList. v2's
+  // docs are explicit that memoizing props matters more than in v1 ("we will instead allow
+  // developers to ensure that props are memoized"), and a fresh object here every render would hand
+  // the list a changed scroll-behaviour config on each keystroke in the composer.
+  const COMMENTS_MVCP = useRef({
+    startRenderingFromBottom: true,
+    autoscrollToBottomThreshold: 0.2,
+  }).current;
+
   const bgColor = theme.colors.background.primary;
   const bgTransparent = bgColor + '00';
   const { content: headerContentHeight, gradient: headerGradientHeight } = headerScrimHeights(insets.top);
@@ -959,9 +968,23 @@ export default function CommentsScreen() {
           kvSetJSON(`comments:${postId}`, data);
           kvSetJSON(tsKey, Date.now());
         });
-        if (data.length > 0) {
-          setTimeout(() => listRef.current?.scrollToEnd({ animated: false }), 150);
-        }
+        // NO `scrollToEnd` HERE ANY MORE. This line was the "it flings me violently" bug.
+        //
+        // It was `setTimeout(() => scrollToEnd({ animated: false }), 150)`. The list painted from
+        // the TOP, then 150ms later got yanked to the bottom. Two things went wrong with that:
+        //
+        //   1. 150ms is a guess about when layout has settled. When rows are still measuring, the
+        //      content height at t=150ms is not the final height, so the jump lands short and the
+        //      following layout passes drag the viewport again — the "it jerks, then ends up back
+        //      at the top" part of the report. Android measures slower, which is exactly why it
+        //      showed up there more ("maybe only on Android").
+        //   2. Even when it landed correctly, it is still a visible trip from top to bottom.
+        //
+        // The list now opens AT the newest comment with no scroll at all, via
+        // `maintainVisibleContentPosition.startRenderingFromBottom` on the FlashList below. There
+        // is nothing to time and nothing to animate. New comments arriving are handled by
+        // `autoscrollToBottomThreshold` in the same prop, and reconciling the fetched page against
+        // the cached one keeps its position because `maintainVisibleContentPosition` is on.
       }
     } catch {}
     clearTimeout(safety);
@@ -1652,6 +1675,24 @@ export default function CommentsScreen() {
             viewabilityConfig={commentsViewabilityConfig}
             ListHeaderComponent={listHeader}
             ListEmptyComponent={listEmpty}
+            /* OPEN AT THE NEWEST COMMENT — the documented FlashList v2 way, replacing the timed
+               `scrollToEnd` that caused the violent fling (see the note in the fetch above).
+   
+               `startRenderingFromBottom` makes the INITIAL render begin at the bottom, so the
+               newest comment is on screen from the first painted frame. No timer, no animation, no
+               dependence on when measurement finishes — which is what made the old approach
+               unreliable on Android.
+   
+               `autoscrollToBottomThreshold: 0.2` keeps the thread following new comments while the
+               reader is near the bottom (within 20% of a viewport), and leaves the viewport alone
+               when they have scrolled up to read — so a comment arriving mid-read does not snatch
+               the screen away.
+   
+               Chosen over `inverted` deliberately. The chat list could be inverted because it has no
+               header content; this screen renders the POST as `ListHeaderComponent`, and inverting
+               would move the post to the visual bottom. FlashList v2's docs cover exactly this case:
+               "Chat apps without inverted will also be possible." */
+            maintainVisibleContentPosition={COMMENTS_MVCP}
           />
           </GestureDetector>
           </Reanimated.View>
