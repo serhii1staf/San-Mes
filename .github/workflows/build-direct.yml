@@ -14,10 +14,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node 20
+      # Node 22, not 20. `eas-cli@latest` pulls `@oclif/plugin-autocomplete@3.3.0`, which declares
+      # `engines.node >= 22`, so yarn refuses the install with "Found incompatible module" and the
+      # Setup Expo step exits 1 before any command runs. Verified against the failing run: the OTA
+      # for 0ab2a8a failed here with nothing wrong in the app at all, and it would have failed for
+      # any commit. Pinning eas-cli to an older release would work too, and is worse: it freezes the
+      # tool that talks to the build service in order to avoid moving a runtime that Expo already
+      # supports.
+      - name: Setup Node 22
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
