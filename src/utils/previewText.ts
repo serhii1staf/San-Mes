@@ -88,6 +88,30 @@ export function toPreviewText(raw: string | null | undefined, labels: PreviewLab
     s = idx > 0 ? s.slice(idx + 2).trim() : '';
   }
 
+  // `::rp::<base64>::<body>` — a CHAT reply. Added when reply context started being persisted so it
+  // survives the server (see src/utils/chatReplyMarker.ts). Handled explicitly rather than being left
+  // to the unknown-marker safety net below, because that net returns an empty string: correct in that
+  // it never leaks protocol, wrong in that a reply would show no preview at all. The body after the
+  // marker is the actual message, which is exactly what a preview should show.
+  if (s.startsWith('::rp::')) {
+    const idx = s.indexOf('::', 6);
+    const body = idx > 0 ? s.slice(idx + 2).trim() : '';
+    // A reply carrying only media has no body of its own; the image branch below then labels it, and
+    // failing that we name the act rather than showing nothing.
+    if (!body) return labels.reply;
+    s = body;
+    // Fall through: the remaining text may itself begin with `::img::` or `::gif::`, because a send
+    // writes the reply marker BEFORE the image marker.
+  }
+
+  if (s.startsWith('::img::')) {
+    // Image marker: `::img::url1|url2::<caption>`. Prefer the caption when there is one, otherwise
+    // label it — printing the urls is the "it looks like a link ID" bug this module exists to prevent.
+    const idx = s.indexOf('::', 7);
+    const body = idx > 0 ? s.slice(idx + 2).trim() : '';
+    return body || labels.photo;
+  }
+
   if (s.startsWith('::gif::')) return labels.gif;
 
   const trimmed = s.trim();

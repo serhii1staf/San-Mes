@@ -165,21 +165,21 @@ export function RealtimeAccountBridge(): null {
           //
           //     Deliberately NOT inside the try above: a failure to upsert the row must not skip the
           //     count, and vice versa.
+          // ── ONE AUTHORSHIP TEST, USED BY EVERY BADGE ──────────────────────
+          //
+          // Our own outgoing message echoes back on this channel, so anything that counts has to know
+          // whether the ping came from somebody else. Requires POSITIVE evidence: a sender id that is
+          // present AND different from mine. An unidentifiable ping is dropped rather than guessed at —
+          // a missed badge is invisible, a wrong badge is a bug report.
+          //
+          // Computed ONCE, here, and read by both badge writers below. It used to be inline at the
+          // unread counter only, which is how the notifications bell kept the bug after the counter was
+          // fixed: two badges, two independent decisions, one of them never made.
+          const myId = useAuthStore.getState().user?.id;
+          const isFromOther = !!senderId && !!myId && senderId !== myId;
+
           try {
-            // Our own outgoing message echoes back on this channel too, so it must not count.
-            //
-            // This used to read `if (!senderId || senderId !== myId)`, which is backwards for the
-            // missing case: an echo whose payload carried no `sender_id` satisfied `!senderId` and got
-            // counted. Reported as "I send a message and then see an unread indicator for it myself
-            // for a second or two."
-            //
-            // Now a bump requires POSITIVE evidence that someone else sent it: a sender id that is
-            // present and different from mine. An unidentifiable ping is dropped rather than guessed
-            // at — a missed badge is invisible, a wrong badge is a bug report.
-            const myId = useAuthStore.getState().user?.id;
-            if (senderId && myId && senderId !== myId) {
-              useChatUnread.getState().bump(conversationId);
-            }
+            if (isFromOther) useChatUnread.getState().bump(conversationId);
           } catch {}
 
           // 2) Drop the previewed message into this conversation's chat
@@ -248,9 +248,21 @@ export function RealtimeAccountBridge(): null {
             }
           } catch {}
 
-          // 3) Bump the unread notifications badge so the bell updates
-          //    live even when the recipient isn't on the messages tab.
-          try { useNotificationsBadge.getState().increment(1); } catch {}
+          // 3) Bump the unread notifications badge so the bell updates live even when the recipient
+          //    isn't on the messages tab.
+          //
+          //    GUARDED BY AUTHORSHIP — this is the line that kept the reported bug alive.
+          //
+          //    "I send a message and the indicator appears on MY side for about a second, then
+          //    disappears." That is this increment, exactly: it fired on EVERY `notif.message`,
+          //    including the echo of our own send, so the bell jumped immediately. A second later
+          //    `recompute()` derives the real count from the notifications cache — which does not
+          //    contain our own outgoing message — and corrects it back to zero. Appear, then vanish.
+          //
+          //    Three previous fixes went to the per-conversation unread counter and left this one
+          //    untouched, because they were two separate decisions about the same question. There is
+          //    one decision now (`isFromOther` above).
+          try { if (isFromOther) useNotificationsBadge.getState().increment(1); } catch {}
           return;
         }
 

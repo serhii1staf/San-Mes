@@ -27,6 +27,7 @@ import { MediaPanel } from '../../src/components/chat/MediaPanel';
 import { PhotoPickerPanel } from '../../src/components/chat/PhotoPickerPanel';
 import { ImageViewerModal, ViewerActionButton } from '../../src/components/chat/ImageViewerModal';
 import { toPreviewText } from '../../src/utils/previewText';
+import { encodeReplyMarker, decodeReplyMarker } from '../../src/utils/chatReplyMarker';
 import { EmojiDeleteBurst, EmojiBurstHandle } from '../../src/components/chat/EmojiDeleteBurst';
 import { getRealtime, chatChannelName } from '../../src/services/realtime/ably';
 import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
@@ -4165,9 +4166,31 @@ export default function ChatScreen() {
         // Encode attached images into the stored text with a marker so it
         // round-trips without schema changes.
         const imageMarker = uploadedUrls.length > 0 ? `::img::${uploadedUrls.join('|')}::` : '';
+        // ── THE REPLY IS PERSISTED NOW ────────────────────────────────────────
+        //
+        // This payload used to be `{ text: imageMarker + text }`, and that single omission is the whole
+        // "the other person does not see that I replied" report. The realtime publish below already
+        // carried the reply fields and the receiver already applied them — but nothing was stored, so
+        // the reply lived only in the two devices' memory. Visible while both had the chat open, gone
+        // the moment the peer opened it later and the transcript came from the database.
+        //
+        // The quoted AUTHOR's id goes in rather than a "is it mine" boolean: that answer is relative to
+        // whoever is looking, so a stored boolean is wrong on one of the two devices by construction.
+        // See src/utils/chatReplyMarker.ts.
+        const replyMarker = encodeReplyMarker(
+          currentReply
+            ? {
+                id: currentReply.id,
+                text: newMessage.replyToText,
+                image: newMessage.replyToImage,
+                senderId: currentReply.senderId,
+                pixelIconId: newMessage.replyPixelIconId,
+              }
+            : null,
+        );
         const { data: sentData } = await apiPost<{ id: string }>(
           `/v1/conversations/${encodeURIComponent(convId)}/messages`,
-          { text: imageMarker + text },
+          { text: replyMarker + imageMarker + text },
         );
         // Reconcile the optimistic row's id with the server's canonical id.
         // The optimistic message was added with a client id (`m-<ts>`), but
@@ -4303,7 +4326,30 @@ export default function ChatScreen() {
   const parseMessage = useCallback((m: ChatMessage): ChatMessage => {
     const cached = parseCache.get(m);
     if (cached) return cached;
-    const healed = healLegacySender(m, currentUserId, participantId);
+    let healed = healLegacySender(m, currentUserId, participantId);
+
+    // ── REPLY CONTEXT, DECODED FROM THE STORED TEXT ──────────────────────────
+    //
+    // Reported repeatedly: "I reply to a message and the other person just sees an ordinary message."
+    //
+    // The live path was never the problem — the realtime publish carries the reply fields and the
+    // receiver applies them. What was missing is PERSISTENCE. Only `{ text: imageMarker + text }` was
+    // ever sent to the server, so the reply existed solely in the two devices' memory: visible while
+    // both had the chat open, gone the moment the peer opened it later and the transcript was rebuilt
+    // from the database. That is why it looked like replies "sometimes" worked.
+    //
+    // `decodeReplyMarker` reads the `::rp::` prefix a send now writes. Ownership of the QUOTED message
+    // is derived here from the quoted author's id against the signed-in user, rather than trusting a
+    // transmitted boolean — "is this mine" is relative to whoever is looking, so a stored `true` would
+    // be wrong on exactly one of the two devices.
+    //
+    // Runs BEFORE the image parse, because a send writes the reply marker first and the two are
+    // stripped in the same order they were written.
+    const decodedReply = decodeReplyMarker(healed.text, currentUserId);
+    if (decodedReply) {
+      healed = { ...healed, ...decodedReply.fields, text: decodedReply.rest };
+    }
+
     let result: ChatMessage;
     if (healed.imageUrls || !healed.text?.startsWith('::img::')) {
       result = healed;
