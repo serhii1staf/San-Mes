@@ -335,6 +335,38 @@ function isAnimatedImageUrl(u: string): boolean {
   return path.endsWith('.gif') || low.indexOf('giphy') !== -1;
 }
 
+// ── PER-STAGE ATTRIBUTION FOR THIS SCREEN'S LONG TASKS ─────────────────────
+//
+// The perf monitor reports `chat/[id]`: 38 long tasks, worst 709 ms, average 262 ms, worst fps 36 —
+// and the worst task had `pendingDecodes: 1`, so it is not image work. What it does NOT report is
+// WHICH of this screen's stages the time went into, because the only mark in this file is the screen
+// mount. So the panel says "the chat blocks the thread for a quarter of a second, 38 times" and
+// nothing about where.
+//
+// That gap has cost real regressions: several previous attempts at this screen changed a stage that
+// turned out not to be the expensive one, and one of them had to be reverted. `UserProfilePostCard`
+// was found the other way round — it was named by a mark, then fixed once, correctly.
+//
+// So: name the stages. Every wrap below is behaviour-neutral (`fn()` is called exactly once, its
+// value returned, exceptions propagate through `finally`) and completely inert when the monitor is
+// off — the store read short-circuits before any timing work, so a user who never opens the perf
+// panel pays one boolean check per stage.
+//
+// `Date.now()` is millisecond-resolution, so a stage that is genuinely cheap will report 0. That is
+// the correct outcome: we are looking for something in the hundreds of milliseconds, and a stage
+// reporting 0 has been positively ruled out rather than left as a suspect.
+function perfSpan<T>(label: string, fn: () => T): T {
+  let enabled = false;
+  try { enabled = useSettingsStore.getState().perfMonitorEnabled; } catch {}
+  if (!enabled) return fn();
+  const startedAt = Date.now();
+  try {
+    return fn();
+  } finally {
+    try { perfMonitor.mark(label, Date.now() - startedAt); } catch {}
+  }
+}
+
 // ── Legacy relative-sender healing ────────────────────────────────────────
 // Older builds stored chat messages with a RELATIVE sentinel senderId:
 // 'current' (whoever was logged in when the message was cached) or 'peer'
@@ -1498,7 +1530,7 @@ export default function ChatScreen() {
       // Cheap first-paint path: read the bounded recent-tail cache (only the
       // last ~SEED_CAP messages), NOT the full history blob. This keeps the
       // open-frame parse O(SEED_CAP) regardless of how long the chat is.
-      const tail = kvGetJSONSync<ChatMessage[]>(tailKey(conversationId), []);
+      const tail = perfSpan('chat.seed.tailRead', () => kvGetJSONSync<ChatMessage[]>(tailKey(conversationId), []));
       if (tail.length > 0) {
         return tail.map((m) => healLegacySender(m, currentUserId, participantId));
       }
@@ -1511,7 +1543,10 @@ export default function ChatScreen() {
       // FULL history is hydrated into the store off the critical path (see the
       // deferred effect below), so scroll-up and reply-jump to older messages
       // still work — we just don't parse/hold all of it on the open frame.
-      const cached = kvGetJSONSync<ChatMessage[]>(`chat_messages:${conversationId}`, []);
+      // The expensive branch: parses the WHOLE blob (up to MAX_PERSISTED_MESSAGES) during render.
+      // Marked separately from the tail read above so the panel distinguishes "cold chat, full blob
+      // parsed on the open frame" from "warm tail, cheap open".
+      const cached = perfSpan('chat.seed.fullBlobRead', () => kvGetJSONSync<ChatMessage[]>(`chat_messages:${conversationId}`, []));
       if (cached.length > 0) {
         const tailFromFull = cached.length > SEED_CAP ? cached.slice(cached.length - SEED_CAP) : cached;
         return tailFromFull.map((m) => healLegacySender(m, currentUserId, participantId));
@@ -1647,7 +1682,7 @@ export default function ChatScreen() {
     if (historyHydratedRef.current === conversationId) return null;
     let full: ChatMessage[];
     try {
-      full = kvGetJSONSync<ChatMessage[]>(`chat_messages:${conversationId}`, []);
+      full = perfSpan('chat.hydrateFull.read', () => kvGetJSONSync<ChatMessage[]>(`chat_messages:${conversationId}`, []));
     } catch {
       return null;
     }
@@ -1700,7 +1735,7 @@ export default function ChatScreen() {
     if (held && held.convId === conversationId) return held.rows;
     let full: ChatMessage[] = [];
     try {
-      full = kvGetJSONSync<ChatMessage[]>(`chat_messages:${conversationId}`, []);
+      full = perfSpan('chat.cachedHistory.read', () => kvGetJSONSync<ChatMessage[]>(`chat_messages:${conversationId}`, []));
     } catch {
       full = [];
     }
@@ -2620,12 +2655,12 @@ export default function ChatScreen() {
       // `scheduleFullPersist` — this used to serialise the whole 1000-message array here, on
       // every store change, and that was the 285 ms freeze the perf monitor measured.
       schedulePersist(convId, () => {
-        writeTailCache(convId, snapshot);
+        perfSpan(`chat.persist.tail(${snapshot.length})`, () => writeTailCache(convId, snapshot));
       });
       // COLD PATH: the full blob, on a 6 s trailing debounce. Nothing reads this key until the
       // user scrolls to the top, searches, or jumps to an old reply.
       scheduleFullPersist(convId, () => {
-        kvSetJSON(`chat_messages:${convId}`, capPersisted(snapshot));
+        perfSpan(`chat.persist.full(${snapshot.length})`, () => kvSetJSON(`chat_messages:${convId}`, capPersisted(snapshot)));
       });
       return wireDurability();
     }
@@ -2645,7 +2680,7 @@ export default function ChatScreen() {
     // messages, so the tail derived from it is correct regardless of what the full blob holds.
     // Cheap, and it is the key chat-open reads.
     schedulePersist(convId, () => {
-      writeTailCache(convId, snapshot);
+      perfSpan(`chat.persist.tail(${snapshot.length})`, () => writeTailCache(convId, snapshot));
     });
 
     // COLD PATH: the read-merge-write against the full blob, on the slow debounce.
@@ -2657,7 +2692,7 @@ export default function ChatScreen() {
     // The merge itself is still required here and cannot be simplified away: the store holds
     // only the bounded seed window on this branch, so writing it wholesale would TRUNCATE the
     // older history already on disk. Merging by id is what makes the write non-destructive.
-    scheduleFullPersist(convId, () => {
+    scheduleFullPersist(convId, () => perfSpan('chat.persist.fullMerge', () => {
       try {
         const cached = kvGetJSONSync<ChatMessage[]>(`chat_messages:${convId}`, []);
         if (cached.length > 0) {
@@ -2674,7 +2709,7 @@ export default function ChatScreen() {
           kvSetJSON(`chat_messages:${convId}`, capPersisted(snapshot));
         }
       } catch {}
-    });
+    }));
 
     // ── NO EAGER FULL HYDRATION HERE ANY MORE ────────────────────────────────
     //
@@ -3277,21 +3312,57 @@ export default function ChatScreen() {
     setJumpNonce((n) => n + 1);
   }, [chatMessages, conversationId]);
 
-  // Recompute matches when the query changes; jump to the most recent match
+  // ── SEARCH: DON'T RE-SCAN THE WHOLE TRANSCRIPT ON EVERY KEYSTROKE ──────────
+  //
+  // This effect used to run its full scan synchronously for each character typed, and `openSearch`
+  // deliberately hydrates the ENTIRE history first — so on a long conversation every keystroke was
+  // up to a thousand `toLowerCase()` calls (a thousand fresh string allocations), a thousand
+  // `includes`, then a `setSearchMatches` that re-renders this screen, then `scrollToIndex` which
+  // does another `findIndex` over the same thousand rows. Typing a five-letter word paid for that
+  // five times over, and the third character's scan was still running while the fourth arrived.
+  //
+  // Two changes, both of which remove work rather than hide it:
+  //
+  //   1. The lowercased form of each message is cached against the message object. Message text is
+  //      immutable for a given object, so this is a pure memo — and it means only the FIRST scan of
+  //      a session pays for the allocations. Subsequent keystrokes compare against strings that
+  //      already exist. A WeakMap so it cannot leak: entries die with the messages.
+  //
+  //   2. The scan is debounced. A scan mid-word is work whose result is discarded by the next
+  //      character, and the jump it triggers moves the viewport to a match for a prefix the user
+  //      has not finished typing — so the old behaviour was not merely expensive, it was visibly
+  //      wrong, yanking the list around while typing. 180 ms is below the threshold where typing
+  //      feels laggy and above a fast typist's inter-key gap.
+  //
+  // Clearing on an empty query stays SYNCHRONOUS: emptying the field must drop the highlights
+  // immediately, and there is no scan to pay for.
+  const lowerTextCache = useRef(new WeakMap<object, string>()).current;
+  const lowerTextOf = useCallback((m: ChatMessage): string => {
+    if (!m.text) return '';
+    const hit = lowerTextCache.get(m);
+    if (hit !== undefined) return hit;
+    const low = m.text.toLowerCase();
+    lowerTextCache.set(m, low);
+    return low;
+  }, [lowerTextCache]);
+
   useEffect(() => {
     const q = searchQuery.trim().toLowerCase();
     if (!q) { setSearchMatches([]); setSearchActiveIdx(0); return; }
-    const matches: number[] = [];
-    chatMessages.forEach((m, i) => {
-      if (m.text && m.text.toLowerCase().includes(q)) matches.push(i);
-    });
-    setSearchMatches(matches);
-    if (matches.length > 0) {
-      const last = matches.length - 1;
-      setSearchActiveIdx(last);
-      scrollToIndex(matches[last]);
-    }
-  }, [searchQuery, chatMessages, scrollToIndex]);
+    const timer = setTimeout(() => {
+      const matches: number[] = [];
+      for (let i = 0; i < chatMessages.length; i++) {
+        if (lowerTextOf(chatMessages[i]).includes(q)) matches.push(i);
+      }
+      setSearchMatches(matches);
+      if (matches.length > 0) {
+        const last = matches.length - 1;
+        setSearchActiveIdx(last);
+        scrollToIndex(matches[last]);
+      }
+    }, 180);
+    return () => clearTimeout(timer);
+  }, [searchQuery, chatMessages, scrollToIndex, lowerTextOf]);
 
   const goToPrevMatch = useCallback(() => {
     if (searchMatches.length === 0) return;
@@ -4437,11 +4508,11 @@ export default function ChatScreen() {
   // The reverse is a shallow copy per message-list change. That is O(n) on an array we already
   // rebuild on those same commits, and it buys the removal of offset correction from every
   // scroll — not a trade worth optimising away with a mutable structure.
-  const windowedMessages = useMemo(() => {
+  const windowedMessages = useMemo(() => perfSpan(`chat.reverse(${chatMessages.length})`, () => {
     const out = chatMessages.slice();
     out.reverse();
     return out;
-  }, [chatMessages]);
+  }), [chatMessages]);
   // Mirror of the rendered rows, so `onScrollBtnTap` can address the last
   // message by index while staying a STABLE callback (depending on
   // `windowedMessages` directly would re-create it on every message change, and
@@ -4835,11 +4906,18 @@ export default function ChatScreen() {
   // `Date.now()` is read once per recompute rather than per row: it decides
   // "Today"/"Yesterday", and reading a fresh clock per row would let two chips
   // disagree if the list happened to render across midnight.
-  const dayLabels = useMemo(() => {
+  const dayLabels = useMemo(() => perfSpan(`chat.dayLabels(${chatMessages.length})`, () => {
     // CHRONOLOGICAL array on purpose, not the inverted render array. `buildDaySeparators` marks
     // the first message of each local day by comparing each row with the one before it, so it
     // needs time to run forwards. Its output is keyed by message id, which makes it independent
     // of render order — the renderer looks the label up by id.
+    //
+    // This runs on EVERY change to the message array, and after the full history is hydrated that
+    // is a walk over up to a thousand rows. The per-message date parsing it used to do on each of
+    // those walks is now cached against the message objects (see `buildDaySeparators`), so a
+    // recompute costs a WeakMap lookup and a string compare per row rather than a `Date.parse`,
+    // a `Date` allocation and a key-string allocation. The row count is in the mark's label so the
+    // perf panel shows how the cost scales with transcript length.
     const separators = buildDaySeparators(chatMessages);
     const now = Date.now();
     const out = new Map<string, string>();
@@ -4848,10 +4926,11 @@ export default function ChatScreen() {
       if (label) out.set(id, label);
     }
     return out;
+  }),
     // `t` is intentionally NOT a dependency — it is a fresh function every
     // render, and `locale` is the value that actually changes the output.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chatMessages, locale]);
+  [chatMessages, locale]);
 
   // `dayLabels` is rebuilt on every data change, so depending on it directly gave
   // `renderItem` a new identity on those exact commits — and FlashList re-renders
