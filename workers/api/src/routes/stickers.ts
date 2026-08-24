@@ -163,8 +163,21 @@ register('GET', '/v1/stickers/telegram', async (req, env, _ctx, _params, authedU
   // API; only the per-sticker ones did.
   const animated = wanted.some((s) => !!s.is_animated || !!s.is_video);
 
-  /** Static image formats we can actually display. */
+  /** Static image formats we can display directly. */
   const STATIC_EXT = /\.(webp|png|jpe?g)$/i;
+  /**
+   * Animated Telegram stickers. NO LONGER A REJECTION.
+   *
+   * A `.tgs` is plain gzip around Lottie JSON — the container is packaging, not an encoding — so it needs
+   * decompressing, not transcoding. The file proxy below gunzips it and serves `application/json`, and the
+   * app renders it with `lottie-react-native`, which it already depends on.
+   *
+   * That is why this stopped being a dead end: the ready-made converters on GitHub all rasterize `.tgs`
+   * into GIF/PNG with native binaries (rlottie, ffmpeg, puppeteer) and none of them can run in a Worker.
+   * The part that IS reusable is the renderer we already ship. So an animated pack now arrives ANIMATED
+   * rather than as a still thumbnail.
+   */
+  const LOTTIE_EXT = /\.tgs$/i;
 
   // One `getFile` per sticker, in parallel: a 60-sticker pack would otherwise be 60 sequential round
   // trips, and Telegram's limits are generous enough for a single import burst.
@@ -173,7 +186,9 @@ register('GET', '/v1/stickers/telegram', async (req, env, _ctx, _params, authedU
       const thumbId = s.thumbnail?.file_id || s.thumb?.file_id;
       // Animated or video sticker → go straight for the static thumbnail. `thumbnail` is the current
       // field name; `thumb` is the legacy one, still returned alongside it.
-      const preferThumb = (!!s.is_animated || !!s.is_video) && !!thumbId;
+      // Only VIDEO stickers fall back to a still. Animated .tgs is rendered for real now, so
+      // reaching for its thumbnail would throw away the animation we can actually play.
+      const preferThumb = !!s.is_video && !!thumbId;
       const firstId = preferThumb ? (thumbId as string) : s.file_id;
 
       let f = (await tg<{ file_path?: string }>(env, 'getFile', { file_id: firstId })).result;
@@ -182,7 +197,7 @@ register('GET', '/v1/stickers/telegram', async (req, env, _ctx, _params, authedU
       // Safety net for anything the flags did not catch. If what came back is not a static image and a
       // thumbnail exists, resolve that instead. Cheap (only fires on the odd sticker) and it means a
       // future Telegram format cannot silently fill the picker with unrenderable cells.
-      if ((!p || !STATIC_EXT.test(p)) && thumbId && !preferThumb) {
+      if ((!p || (!STATIC_EXT.test(p) && !LOTTIE_EXT.test(p))) && thumbId && !preferThumb) {
         f = (await tg<{ file_path?: string }>(env, 'getFile', { file_id: thumbId })).result;
         p = f?.file_path;
       }
@@ -191,22 +206,29 @@ register('GET', '/v1/stickers/telegram', async (req, env, _ctx, _params, authedU
       // usable is otherwise indistinguishable from a pack that produced nothing at all, and the
       // difference is the whole question — "which format is blocking this" is what decides whether the
       // answer is a better fallback or a new renderer. See the 422 below.
-      if (!p || !STATIC_EXT.test(p)) {
+      if (!p || (!STATIC_EXT.test(p) && !LOTTIE_EXT.test(p))) {
         const ext = p ? (p.match(/\.[a-z0-9]+$/i)?.[0] || 'no-ext') : 'unresolved';
-        return { path: null as string | null, emoji: s.emoji || '', rejected: ext };
+        return { path: null as string | null, emoji: s.emoji || '', rejected: ext, lottie: false };
       }
-      return { path: p as string | null, emoji: s.emoji || '', rejected: '' };
+      return { path: p as string | null, emoji: s.emoji || '', rejected: '', lottie: LOTTIE_EXT.test(p) };
     }),
   );
 
   const origin = url.origin;
   const stickers = paths
-    .filter((p): p is { path: string; emoji: string; rejected: string } => !!p && !!p.path)
+    .filter((p): p is { path: string; emoji: string; rejected: string; lottie: boolean } => !!p && !!p.path)
     // The URL points at US, never at Telegram — see the note above about the token being embedded in
     // Telegram's own download URLs.
     .map((p) => ({
-      url: `${origin}/v1/stickers/telegram/file?path=${encodeURIComponent(p.path)}`,
+      // mt=lottie is carried IN THE URL rather than only in this JSON, so that any consumer
+      // holding just the url - a stored sticker, a chat message, an image cell - can still tell it
+      // needs a Lottie renderer. The alternative was a parallel kind field that every layer would
+      // have to remember to pass along, and one that forgets shows a blank cell.
+      url:
+        `${origin}/v1/stickers/telegram/file?path=${encodeURIComponent(p.path)}` +
+        (p.lottie ? '&fmt=lottie' : ''),
       emoji: p.emoji,
+      kind: p.lottie ? 'lottie' : 'image',
     }));
 
   if (stickers.length === 0) {
@@ -249,6 +271,9 @@ register('GET', '/v1/stickers/telegram/file', async (req, env) => {
   if (!path || !/^[A-Za-z0-9_\-./]+$/.test(path) || path.includes('..')) {
     return fail(req, 'invalid path', 400);
   }
+  // NOTE: `fmt=lottie` on the URL is informational for the CLIENT, not an instruction to this route. What
+  // gets gunzipped is decided by the path's own extension below, so a tampered `fmt` cannot make this
+  // route mis-handle a file.
   if (!env.TELEGRAM_BOT_TOKEN) return fail(req, 'sticker import not configured', 503);
 
   const upstream = await fetch(`https://api.telegram.org/file/bot${env.TELEGRAM_BOT_TOKEN}/${path}`);
@@ -270,6 +295,40 @@ register('GET', '/v1/stickers/telegram/file', async (req, env) => {
   // The extension is trustworthy here in a way it usually is not: the path was produced by Telegram's own
   // `getFile` and is validated by the regex above, so it is not user input being sniffed.
   const lower = path.toLowerCase();
+
+  // ── `.tgs` IS GUNZIPPED HERE, AND THAT IS THE WHOLE TRICK ─────────────────
+  //
+  // A `.tgs` is plain gzip around Lottie JSON. So an animated Telegram sticker does not need
+  // transcoding, rasterizing or a native binary — it needs `gunzip`, which the Workers runtime provides
+  // as `DecompressionStream('gzip')`. Out comes ordinary Lottie JSON, which `lottie-react-native` (already
+  // a dependency of the app) renders directly.
+  //
+  // This is why the ready-made tools did not apply: every `.tgs`→GIF converter on GitHub rasterizes with
+  // rlottie or ffmpeg or headless Chrome, none of which can run in a Worker. The reusable part was never
+  // the converter, it was the renderer we already ship — so nothing is converted at all.
+  //
+  // Streamed, so a Worker never holds a whole animation in memory, and cached `immutable` exactly like the
+  // image path: the `file_path` is content-addressed, so the decompressed bytes are as permanent as the
+  // compressed ones.
+  if (lower.endsWith('.tgs')) {
+    let json: ReadableStream<Uint8Array>;
+    try {
+      json = upstream.body.pipeThrough(new DecompressionStream('gzip'));
+    } catch {
+      // A `.tgs` that is not actually gzipped is malformed. Reported rather than served as garbage that
+      // the renderer would fail on with no explanation.
+      return fail(req, 'sticker not decodable', 502);
+    }
+    return new Response(json, {
+      status: 200,
+      headers: {
+        'content-type': 'application/json',
+        'cache-control': 'public, max-age=31536000, immutable',
+        'access-control-allow-origin': '*',
+      },
+    });
+  }
+
   const type = lower.endsWith('.png')
     ? 'image/png'
     : lower.endsWith('.jpg') || lower.endsWith('.jpeg')

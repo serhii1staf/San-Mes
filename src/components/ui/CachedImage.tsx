@@ -5,6 +5,8 @@ import { perfMonitor } from '../../services/perfMonitor';
 import { useSettingsStore } from '../../store/settingsStore';
 import Skeleton from './Skeleton';
 
+import { LottieSticker } from './LottieSticker';
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Image proxy via images.weserv.nl
 //
@@ -262,6 +264,28 @@ export const CachedImage = memo(function CachedImage({
   }, [uri]);
 
   if (!uri) return null;
+
+  // ── ANIMATED TELEGRAM STICKERS ARE LOTTIE, NOT IMAGES ─────────────────────
+  //
+  // Branching HERE rather than at each call site is deliberate, and it is the reason this works
+  // everywhere at once. Every surface that shows a sticker already goes through this component: the chat
+  // bubble, the GIF grid, the add-sticker preview, the fullscreen viewer. Teaching each of them about a
+  // second media type would be four changes and a fifth surface added later that nobody remembers to
+  // update — a blank cell with no error.
+  //
+  // The gate is a URL shape only our own sticker proxy produces (`/v1/stickers/` plus `fmt=lottie`), so no
+  // existing URL in the app can fall into this branch. `lottie-react-native` is required lazily for the
+  // same reason: if it is ever missing from a build, ordinary images must not be affected — the sticker
+  // simply renders nothing rather than taking the screen down.
+  //
+  // See the Worker's file route: a `.tgs` is plain gzip around Lottie JSON, so it is gunzipped server-side
+  // and arrives here as ordinary JSON. Nothing is transcoded and no native converter is involved.
+  if (uri.indexOf('/v1/stickers/') !== -1 && uri.indexOf('fmt=lottie') !== -1) {
+    // `autoplay` is forwarded, not dropped. The GIF grid passes `false` to keep sixty cells still, and a
+    // Lottie that ignored it would animate sixty vector timelines at once — worse than the animated-GIF
+    // grid those cells were already changed to avoid.
+    return <LottieSticker uri={uri} style={style} autoplay={autoplay} />;
+  }
 
   let finalUri = uri;
   if (!noProxy && !proxyFailed) {
