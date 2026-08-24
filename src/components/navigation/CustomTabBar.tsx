@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Pressable, StyleSheet, Platform, LayoutChangeEvent } from 'react-native';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { View, Pressable, StyleSheet, Platform, LayoutChangeEvent, Text as RNText } from 'react-native';
 import { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -27,6 +27,9 @@ import { BOTTOM_CHROME_SPRING } from '../../theme/motion';
 import { triggerHaptic } from '../../utils/haptics';
 import { GlassSurface, NativeGlassView, useLiquidGlassActive } from '../ui/LiquidGlass';
 import { useTabBarStore } from '../../store/tabBarStore';
+import { Avatar } from '../ui/Avatar';
+import { useAuthStore } from '../../store';
+import { useNotificationsBadge } from '../../store/notificationsBadgeStore';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -146,9 +149,23 @@ const ICON_NAMES: Record<string, keyof typeof Feather.glyphMap> = {
   index: 'home',
   search: 'search',
   create: 'plus-circle',
-  messages: 'send',
+  // `message-circle`, not `send`. Reported as "the icon still is not a chats icon" — `send` is a
+  // paper plane, which means "compose/send", not "conversations". Every messenger uses a speech
+  // bubble for the list of chats, and the paper plane for the send action inside one.
+  messages: 'message-circle',
   profile: 'user',
 };
+
+// ── THIS FILE IS WHERE TAB ICONS ACTUALLY COME FROM ─────────────────────────
+//
+// Worth stating loudly, because I got it wrong once and shipped dead code: `CustomTabBar` renders
+// `<Feather name={ICON_NAMES[routeName]} />` from the map above. It NEVER reads
+// `options.tabBarIcon`. So the `tabBarIcon` entries in app/(tabs)/_layout.tsx are inert — I edited
+// them to put the account's avatar on the profile tab and an unread badge on messages, and nothing
+// changed on the device, because this component never asks for them.
+//
+// Anything that must appear in the tab bar has to be built HERE. The `_layout.tsx` icons are kept
+// only because React Navigation's types want them and because removing them is a separate change.
 
 // Worklet helper — pick the standard slot closest to a given finger slot index
 function snapToStandardSlot(fingerSlot: number): number {
@@ -279,10 +296,96 @@ const TabBarButton = React.memo(function TabBarButton({
       accessibilityState={{ selected: isFocused }}
     >
       <Animated.View style={iconAnimStyle}>
-        <Feather name={iconName} size={22} color={color} />
+        {routeName === 'profile' ? (
+          /* THE ACCOUNT'S AVATAR, not a generic person glyph. An avatar in this app is the
+             account's emoji inside `Avatar`'s tinted circle — a fill and hairline ring whose hue is
+             hashed from the name, so the same user is the same colour in the tab bar, the chat list
+             and the feed. That circle is what makes it read as "me". Falls back to the Feather glyph
+             when the account has no emoji, so a profile that never picked one looks deliberate.
+             Wrapped in the same `iconAnimStyle` as every other tab, so it magnifies under the lens
+             exactly like the icons it sits beside. */
+          <ProfileTabAvatar fallbackColor={color} />
+        ) : routeName === 'messages' ? (
+          /* Chats icon plus an unread badge. Both live here because this component is the only
+             thing that renders the tab bar — see the note on ICON_NAMES. */
+          <MessagesTabIconWithBadge color={color} iconName={iconName} />
+        ) : (
+          <Feather name={iconName} size={22} color={color} />
+        )}
       </Animated.View>
     </Pressable>
   );
+});
+
+/**
+ * Profile tab content: the account's avatar.
+ *
+ * Its own component so the auth-store subscription lives at a leaf. Subscribing inside
+ * `TabBarButton` would re-render every tab button whenever any watched auth field changed, and the
+ * tab bar is mounted on the root stack — it stays alive under every screen, so a needless re-render
+ * here is a needless re-render everywhere.
+ */
+const ProfileTabAvatar = memo(function ProfileTabAvatar({ fallbackColor }: { fallbackColor: string }) {
+  const emoji = useAuthStore((s) => s.user?.emoji);
+  const name = useAuthStore((s) => s.user?.displayName || s.user?.username);
+  if (!emoji) return <Feather name="user" size={22} color={fallbackColor} />;
+  return <Avatar emoji={emoji} name={name} size="xs" tint />;
+});
+
+/**
+ * Messages tab content: the chats glyph with an unread badge.
+ *
+ * The count comes from `useNotificationsBadge`, which already existed, is already derived from the
+ * cached notification feed against a last-seen watermark, and is already incremented by
+ * `RealtimeAccountBridge` the moment a message arrives. Nothing was displaying it.
+ *
+ * Also a leaf component, for the same reason as the avatar above: the subscription must not re-render
+ * the whole bar.
+ */
+const MessagesTabIconWithBadge = memo(function MessagesTabIconWithBadge({
+  color,
+  iconName,
+}: {
+  color: string;
+  iconName: keyof typeof Feather.glyphMap;
+}) {
+  const unread = useNotificationsBadge((s) => s.unread);
+  return (
+    <View style={tabIconStyles.iconBox}>
+      <Feather name={iconName} size={22} color={color} />
+      {unread > 0 ? (
+        // `pointerEvents: none` because the whole button is the touch target — a badge that
+        // intercepted taps would put a dead spot in the middle of it.
+        <View style={tabIconStyles.badge} pointerEvents="none">
+          <RNText style={tabIconStyles.badgeText} allowFontScaling={false} numberOfLines={1}>
+            {/* Capped: three digits would widen the pill past the icon and start shifting the
+                button's layout, and the exact number stops mattering well before 100. */}
+            {unread > 99 ? '99+' : String(unread)}
+          </RNText>
+        </View>
+      ) : null}
+    </View>
+  );
+});
+
+const tabIconStyles = StyleSheet.create({
+  // Sized to the glyph so the badge can be positioned against a known box; the badge itself is
+  // allowed to overflow it.
+  iconBox: { width: 22, height: 22, alignItems: 'center', justifyContent: 'center' },
+  // `minWidth` with symmetric padding makes one digit a circle and two a pill without measuring.
+  badge: {
+    position: 'absolute',
+    top: -6,
+    right: -9,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    paddingHorizontal: 4,
+    backgroundColor: '#FF3B30',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  badgeText: { color: '#FFFFFF', fontSize: 10, fontWeight: '700', lineHeight: 13, includeFontPadding: false },
 });
 
 // ─── Sliding Lens (translucent pill) ─────────────────────────────────────────
