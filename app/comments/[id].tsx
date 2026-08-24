@@ -10,6 +10,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { bottomScrimColorsStrong, composerScrimHeight, headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
 import { Feather } from '@expo/vector-icons';
+import { useSwipeToReply } from '../../src/hooks/useMessageGestures';
 import { useTheme } from '../../src/theme';
 import { useLiquidGlassActive, NativeGlassView, GlassBg } from '../../src/components/ui/LiquidGlass';
 import { Text, Avatar } from '../../src/components/ui';
@@ -208,6 +209,14 @@ type CommentRowProps = {
   gifTracker: GifVisTracker;
 };
 
+// Swipe-to-reply affordance. Module-level StyleSheet so the objects are created once for the whole
+// list rather than per row per render. `position: absolute` means the icon adds ZERO layout, so a
+// row's height cannot change mid-swipe.
+const commentSwipeStyles = StyleSheet.create({
+  replyIcon: { position: 'absolute', right: 8, top: 0, bottom: 0, justifyContent: 'center' },
+  replyIconCircle: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
+});
+
 const CommentRow = React.memo(function CommentRow({ item, onLongPress, onReply, onImagePress, gifTracker }: CommentRowProps) {
   const theme = useTheme();
   const t = useT();
@@ -217,6 +226,12 @@ const CommentRow = React.memo(function CommentRow({ item, onLongPress, onReply, 
   // user can also unblock from the messages-tab Blocked section.
   const authorId: string | undefined = item.profiles?.id || item.author_id;
   const isAuthorBlocked = useIsBlocked(authorId);
+  // Swipe-left-to-reply. Declared before any early return so the hook order is stable — the
+  // blocked-author branch below returns a placeholder, and hooks cannot be skipped.
+  const { gesture: swipeGesture, rowAnimStyle, replyIconAnimStyle } = useSwipeToReply({
+    item,
+    onReply,
+  });
   // Parsed body + GIF detection are computed BEFORE the early return so the
   // staggered-reveal hook below is always called (rules of hooks). Cheap.
   const parsed = parseReply(item.content || '');
@@ -262,7 +277,32 @@ const CommentRow = React.memo(function CommentRow({ item, onLongPress, onReply, 
   };
 
   return (
-    <Pressable onLongPress={() => onLongPress(item)} delayLongPress={300} style={{ flexDirection: 'row', marginBottom: 16 }}>
+    // ── SWIPE LEFT TO REPLY, same mechanism as the chat ───────────────────────
+    //
+    // The gesture comes from `useSwipeToReply`, which shares the chat's constants rather than
+    // copying them — `REPLY_THRESHOLD`, the [-80, 0] clamp, the activation offsets and the spring
+    // are literally the same values, so the two surfaces cannot drift apart.
+    //
+    // It cannot conflict with anything already here: `failOffsetY([-10, 10])` fails the pan the
+    // moment the finger moves 10 px vertically, so list scrolling always wins; `activeOffsetX`
+    // needs 12 px LEFT to activate, so the OS back-gesture is untouched; and a pan that never
+    // activates does not consume the touch, so the Pressables below (open profile, open image,
+    // tap-to-reply) and the long-press menu all keep working exactly as before.
+    //
+    // Only the row's content translates. The reply icon sits behind it as an absolute sibling, so
+    // it adds no layout and cannot change row height mid-gesture.
+    <GestureDetector gesture={swipeGesture}>
+      <View style={{ marginBottom: 16 }} collapsable={false}>
+        <Reanimated.View style={[commentSwipeStyles.replyIcon, replyIconAnimStyle]} pointerEvents="none">
+          {/* A flat tinted circle, deliberately not a glass view — the same decision the chat's
+              swipe icon documents: a UIVisualEffectView per row is one of the most expensive
+              native views to instantiate, and this icon exists on every comment. */}
+          <View style={[commentSwipeStyles.replyIconCircle, { backgroundColor: theme.colors.accent.primary + '20' }]}>
+            <Feather name="corner-up-left" size={15} color={theme.colors.accent.primary} />
+          </View>
+        </Reanimated.View>
+        <Reanimated.View style={rowAnimStyle}>
+    <Pressable onLongPress={() => onLongPress(item)} delayLongPress={300} style={{ flexDirection: 'row' }}>
       <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: item.profiles?.id || item.author_id } })} onLongPress={() => onLongPress(item)} delayLongPress={300}>
         <Avatar emoji={item.profiles?.emoji || '😊'} size="sm" />
       </Pressable>
@@ -310,6 +350,9 @@ const CommentRow = React.memo(function CommentRow({ item, onLongPress, onReply, 
         </Pressable>
       </View>
     </Pressable>
+        </Reanimated.View>
+      </View>
+    </GestureDetector>
   );
 }, (prev, next) =>
   // Only re-render a row when its underlying comment payload actually changed.

@@ -222,3 +222,107 @@ export function useMessageGestures<T extends { id: string }>({
 
   return { bubbleRef, composedGesture, glowStyle, bubbleAnimStyle, replyIconAnimStyle };
 }
+
+/**
+ * Swipe-left-to-reply, on its own.
+ *
+ * ── WHY THIS EXISTS SEPARATELY FROM `useMessageGestures` ────────────────────
+ *
+ * Comments needed swipe-to-reply "with the same mechanism as chat, and it must not conflict with
+ * anything". `useMessageGestures` is the wrong thing to reuse wholesale: it also owns the
+ * press-hold-then-drag-to-select choreography, which needs four SharedValues written from the
+ * screen (`dragActive`, `dragFingerY`, `hoveredAction`, `actionZones`), an `onFireDragAction`
+ * callback, and a measured action-zone map published by a context menu. Comments have none of
+ * that — they open `CommentContextMenu` from a plain `onLongPress` Pressable — so importing the
+ * whole hook would mean inventing dead shared values just to satisfy its signature.
+ *
+ * So the SWIPE half is extracted here and the numbers are shared rather than copied:
+ * `REPLY_THRESHOLD`, the [-80, 0] clamp, `activeOffsetX([-12, 9999])`, `failOffsetY([-10, 10])`
+ * and the spring are the exact values the chat uses. Same feel, by construction — if the chat's
+ * threshold is ever tuned, this follows it, because it reads the same constant.
+ *
+ * ── WHY IT CANNOT CONFLICT ─────────────────────────────────────────────────
+ *
+ *   Vertical scrolling wins: `failOffsetY([-10, 10])` fails the pan as soon as the finger moves
+ *   10 px vertically, handing the gesture to the list's scroll responder. So a scroll never
+ *   becomes a swipe.
+ *
+ *   Right-swipes never activate: `activeOffsetX([-12, 9999])` needs 12 px LEFT to begin, and the
+ *   +9999 upper bound means rightward motion cannot reach the activation threshold. That keeps
+ *   the OS back-gesture and any horizontal pager free.
+ *
+ *   Taps still work: a Pan gesture that never activates does not consume the touch, so the
+ *   Pressables inside the row (open profile, open image, tap-to-reply) still receive it. And a
+ *   long-press is not a pan, so the existing `onLongPress` menu is untouched.
+ *
+ * Everything runs on the UI thread; `runOnJS` fires at most once per gesture phase — for the
+ * threshold haptic and the reply callback — never per frame.
+ */
+export function useSwipeToReply<T extends { id: string }>({
+  item,
+  onReply,
+  onSwipeActive,
+}: {
+  item: T;
+  onReply: (m: T) => void;
+  /** Optional: lets the screen lock list scrolling for the duration, as the chat does. */
+  onSwipeActive?: (active: boolean) => void;
+}) {
+  const translateXSV = useSharedValue(0);
+  const gateFiredHapticSV = useSharedValue(false);
+  const activeSV = useSharedValue(false);
+
+  const gesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .activeOffsetX([-12, 9999])
+        .failOffsetY([-10, 10])
+        .onStart(() => {
+          'worklet';
+          activeSV.value = true;
+          if (onSwipeActive) runOnJS(onSwipeActive)(true);
+        })
+        .onUpdate((e) => {
+          'worklet';
+          const dx = Math.max(Math.min(Math.round(e.translationX), 0), -80);
+          translateXSV.value = dx;
+          if (!gateFiredHapticSV.value && dx <= -REPLY_THRESHOLD) {
+            gateFiredHapticSV.value = true;
+            runOnJS(triggerHaptic)('light');
+          }
+        })
+        .onEnd((e) => {
+          'worklet';
+          if (e.translationX <= -REPLY_THRESHOLD) {
+            runOnJS(onReply)(item);
+          }
+        })
+        .onFinalize(() => {
+          'worklet';
+          translateXSV.value = withSpring(0, { damping: 20, stiffness: 220, mass: 0.8 });
+          gateFiredHapticSV.value = false;
+          if (activeSV.value) {
+            activeSV.value = false;
+            if (onSwipeActive) runOnJS(onSwipeActive)(false);
+          }
+        }),
+    [item, onReply, onSwipeActive, translateXSV, gateFiredHapticSV, activeSV],
+  );
+
+  const rowAnimStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: translateXSV.value }],
+  }));
+
+  // Reply-icon opacity ramp, identical to the chat's: invisible until 24 px, fully opaque at the
+  // commit threshold, so the icon appearing IS the signal that releasing will reply.
+  const replyIconAnimStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(
+      translateXSV.value,
+      [-REPLY_THRESHOLD, -24, 0],
+      [1, 0, 0],
+      Extrapolation.CLAMP,
+    ),
+  }));
+
+  return { gesture, rowAnimStyle, replyIconAnimStyle };
+}
