@@ -686,6 +686,7 @@ export default function CommentsScreen() {
   // one of the post's own photos. Drives the viewer's caption and its delete action — the post images
   // deliberately leave this null, because deleting a comment from a post photo would be wrong.
   const [viewerComment, setViewerComment] = useState<any | null>(null);
+
   const inputRef = useRef<CommentFieldHandle>(null);
   const listRef = useRef<FlashListRef<any>>(null);
 
