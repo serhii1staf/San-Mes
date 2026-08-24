@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, useSyncExternalStore } from 'react';
-import { View, FlatList, TextInput, Pressable, Platform, StyleSheet, Alert, Animated, Dimensions, Keyboard, InteractionManager, AppState, type ViewToken } from 'react-native';
+import { View, FlatList, ScrollView, TextInput, Pressable, Platform, StyleSheet, Alert, Animated, Dimensions, Keyboard, InteractionManager, AppState, type ViewToken } from 'react-native';
 import { useReanimatedKeyboardAnimation, useKeyboardHandler } from 'react-native-keyboard-controller';
 import { FlashList, useRecyclingState, type FlashListRef } from '@shopify/flash-list';
 import Reanimated, { useAnimatedStyle, interpolate, Extrapolation, useSharedValue, withSpring, withTiming, withSequence, withDelay, runOnJS, useAnimatedRef, measure, Easing, type SharedValue } from 'react-native-reanimated';
@@ -3792,16 +3792,130 @@ export default function ChatScreen() {
     );
   }, [viewerMsg, currentUserId, displayEmoji, displayName, t]);
 
+  /**
+   * Delete THE PHOTO, not the message.
+   *
+   * Reported: "I can send a photo together with text. When I open the photo and delete, it should
+   * delete the photo, not the text. Right now the text is deleted."
+   *
+   * Correct — the button routed straight to `handleMenuAction('delete')`, which removes the whole
+   * message row. From the chat menu that is right: the user is holding the message. From inside the
+   * photo viewer it is not: the user is looking at ONE photo and asking for that photo to go.
+   *
+   * So this removes only the image currently on screen:
+   *
+   *   • other images or text remain → the message is EDITED. Store updated, the server PATCHed with
+   *     the same `::img::urls::` + text encoding a send uses (the image list lives inside the stored
+   *     text, so omitting the marker would have silently dropped the surviving photos on the next
+   *     history fetch), and `msg.edit` published so the peer's open chat rewrites in place.
+   *
+   *   • nothing would be left → falls through to the existing full-message delete, because an empty
+   *     message is not a thing. That path owns the confirmation, the tombstone that stops the
+   *     history poll resurrecting the row, the dissolve burst and the realtime publish.
+   *
+   * The viewer is closed first either way, so the user is not left staring at a photo that no longer
+   * exists.
+   */
+  const deleteViewerPhoto = useCallback(async () => {
+    const target = viewerMsg;
+    const shown = viewerImages;
+    if (!target || !conversationId) return;
+    const currentUri = shown ? shown.images[Math.min(shown.index, shown.images.length - 1)] : undefined;
+    const all = target.imageUrls || [];
+    const remaining = currentUri ? all.filter((u) => u !== currentUri) : [];
+    const text = target.text || '';
+
+    closeImageViewer();
+
+    // Nothing survives → this is a message delete after all.
+    if (remaining.length === 0 && !text.trim()) {
+      if (pinnedIds.includes(target.id)) unpinMessage(conversationId, target.id);
+      handleMenuAction('delete', target);
+      return;
+    }
+
+    triggerHaptic('medium');
+    const nextImages = remaining.length > 0 ? remaining : undefined;
+    setMessages(
+      conversationId,
+      (useChatStore.getState().messages[conversationId] || []).map((m) =>
+        (m.id === target.id ? { ...m, imageUrls: nextImages } : m),
+      ) as any,
+    );
+
+    // Persist. Same encoding as a send: the marker carries the image list inside the text column.
+    try {
+      const serverId = target.serverId || target.id;
+      if (!serverId.startsWith('m-')) {
+        const marker = remaining.length > 0 ? `::img::${remaining.join('|')}::` : '';
+        const { apiPatch } = await import('../../src/services/apiClient');
+        const { error } = await apiPatch(`/v1/messages/${encodeURIComponent(serverId)}`, { text: marker + text });
+        if (error) showToast(t('toast.error_generic'), 'alert-circle');
+      }
+    } catch {
+      showToast(t('toast.error_generic'), 'alert-circle');
+    }
+
+    // Tell the peer, so their open chat rewrites the row in place rather than keeping the photo.
+    try {
+      const realtime = getRealtime();
+      if (realtime) {
+        const channel = realtime.channels.get(chatChannelName(conversationId));
+        void channel.publish('msg.edit', { id: target.serverId || target.id, text, imageUrls: nextImages });
+      }
+    } catch {}
+  }, [viewerMsg, viewerImages, conversationId, pinnedIds, unpinMessage, handleMenuAction, closeImageViewer, setMessages, t]);
+
   const viewerFooter = useMemo(() => {
     if (!viewerMsg) return null;
     const own = viewerMsg.senderId === currentUserId || viewerMsg.senderId === 'current';
     const isPinned = !!conversationId && pinnedIds.includes(viewerMsg.id);
     return (
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-        {/* Pin is offered for ANY message, own or not — pinning is about what matters in the
+      <View style={{ alignItems: 'center', gap: 10 }}>
+        {/* THE MESSAGE'S OWN TEXT, when it has any.
+   
+            Asked for: a photo sent together with text should show that text in the viewer, compactly,
+            scrollable, with no container around it.
+   
+            So: no background, no border, no card — just the words over the photo, with a shadow so
+            they stay readable on a light image. Capped at 96 pt and scrollable, because a caption can
+            be a paragraph and the actions must never be pushed off screen. `bounces={false}` so a
+            short caption does not rubber-band, and `nestedScrollEnabled` because this sits inside the
+            viewer's own gesture area and Android needs it stated.
+   
+            Rendered above the buttons and inside the same fading footer, so it arrives and leaves with
+            them rather than being a fourth thing with its own timing. */}
+        {viewerMsg.text?.trim() ? (
+          <ScrollView
+            style={{ maxHeight: 96, alignSelf: 'stretch', marginHorizontal: 24 }}
+            contentContainerStyle={{ paddingBottom: 2 }}
+            showsVerticalScrollIndicator={false}
+            bounces={false}
+            nestedScrollEnabled
+          >
+            <Text
+              variant="caption"
+              color="#FFFFFF"
+              style={{ fontSize: 13, lineHeight: 18, textAlign: 'center', textShadowColor: 'rgba(0,0,0,0.55)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 }}
+            >
+              {viewerMsg.text}
+            </Text>
+          </ScrollView>
+        ) : null}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+        {/* THE ICON REFLECTS STATE.
+   
+            It did not: I wrote `icon={isPinned ? 'bookmark' : 'bookmark'}` — the same glyph in both
+            branches — so pressing it changed nothing visible and there was no way to tell a pinned
+            photo from an unpinned one. Reported as "it should become a checkmark, that I saved it".
+   
+            So it does: `check` once pinned, `bookmark` while not. Feather has no filled-bookmark
+            variant, and a tick is what "done, it is saved" looks like anyway.
+   
+            Pin is offered for ANY message, own or not — pinning is about what matters in the
             conversation, not about authorship, which is how the pinned bar already behaves. */}
         <ViewerActionButton
-          icon={isPinned ? 'bookmark' : 'bookmark'}
+          icon={isPinned ? 'check' : 'bookmark'}
           accessibilityLabel={isPinned ? t('chat.unpin', 'Открепить') : t('chat.pin', 'Закрепить')}
           onPress={() => {
             if (!conversationId) return;
@@ -3814,21 +3928,13 @@ export default function ChatScreen() {
             icon="trash-2"
             destructive
             accessibilityLabel={t('chat.menu.delete')}
-            onPress={() => {
-              // Routes through `handleMenuAction`, exactly as the search-result delete does. That
-              // path already owns the confirmation alert, the tombstone that stops the poll
-              // resurrecting the row, the dissolve burst and the realtime `msg.delete` publish —
-              // duplicating any of it would be a second place to keep in step.
-              const target = viewerMsg;
-              closeImageViewer();
-              if (conversationId && pinnedIds.includes(target.id)) unpinMessage(conversationId, target.id);
-              handleMenuAction('delete', target);
-            }}
+            onPress={() => { void deleteViewerPhoto(); }}
           />
         )}
+        </View>
       </View>
     );
-  }, [viewerMsg, currentUserId, conversationId, pinnedIds, togglePinnedMessage, unpinMessage, handleMenuAction, closeImageViewer, t]);
+  }, [viewerMsg, currentUserId, conversationId, pinnedIds, togglePinnedMessage, deleteViewerPhoto, t]);
 
   const onDeleteSearchResult = useCallback(() => {
     if (!activeMatchMessage) return;
