@@ -183,23 +183,43 @@ function MediaPanelComponent({
       chromeSV.value = withTiming(0, { duration: 170, easing: Easing.out(Easing.cubic) });
     }
     if (chromeIdleRef.current) clearTimeout(chromeIdleRef.current);
-    // Restore shortly after the last scroll event, which covers a finger drag and a momentum fling
-    // with one rule. Slower coming back than going away: leaving should feel like it got out of the
-    // way, returning should feel deliberate.
+    // ── COMING BACK HAD TO GET FASTER ─────────────────────────────────────────
+    //
+    // Reported: "it disappears, I stop, it comes back — but it takes too long."
+    //
+    // Correct, and the duration was only half of it. What the user waits through is the IDLE DELAY plus
+    // the animation: 240 + 280 was more than half a second of nothing happening after the finger had
+    // already stopped, and most of that half second was the delay, where there is no motion at all to
+    // tell them anything is coming.
+    //
+    // 90 + 190 now. The delay only has to outlast the gap between scroll events inside one continuous
+    // gesture — a fling still reports at least every 64 ms (see the panels' `scrollEventThrottle`), so 90
+    // is comfortably above it and cannot re-show mid-fling, while being short enough to read as
+    // immediate. The animation is then quick rather than deliberate: chrome returning to a list that has
+    // already stopped is not a transition worth watching.
     chromeIdleRef.current = setTimeout(() => {
       chromeHiddenRef.current = false;
-      chromeSV.value = withTiming(1, { duration: 280, easing: Easing.out(Easing.cubic) });
-    }, 240);
+      chromeSV.value = withTiming(1, { duration: 190, easing: Easing.out(Easing.cubic) });
+    }, 90);
   }, [chromeSV]);
 
   useEffect(() => () => { if (chromeIdleRef.current) clearTimeout(chromeIdleRef.current); }, []);
 
+  // ── TRANSFORM ONLY, NO OPACITY ─────────────────────────────────────────────
+  //
+  // Both of these used to fade as well as slide, and that was a second reported symptom: the strips
+  // "twitching" rather than moving cleanly.
+  //
+  // Fading was buying nothing. Each strip travels far enough to leave the container, which clips, so it
+  // is fully hidden by the transform alone — the opacity was animating something already out of sight.
+  // And it was actively costing: the bottom row contains a `NativeGlassView` (or a `BlurView`), and
+  // animating opacity on a blurred surface makes iOS re-composite the backdrop every frame, which is a
+  // well-known source of flicker on exactly these views. One property, on the UI thread, no blur
+  // re-composite.
   const topChromeStyle = useAnimatedStyle(() => ({
-    opacity: chromeSV.value,
     transform: [{ translateY: -(1 - chromeSV.value) * RECENT_ROW_H }],
   }));
   const bottomChromeStyle = useAnimatedStyle(() => ({
-    opacity: chromeSV.value,
     transform: [{ translateY: (1 - chromeSV.value) * (BOTTOM_CHROME_H + bottomInset) }],
   }));
 
@@ -284,6 +304,18 @@ function MediaPanelComponent({
           scroll handler carries a long note about. */}
       {hasRecents ? (
         <Reanimated.View style={[styles.recentRow, topChromeStyle, { borderBottomColor: theme.colors.border.light }]}>
+          {/* Opaque backing. Under glass the panel itself is translucent, so this has to match the
+              panel's own tint rather than a flat surface colour — otherwise the strip would be the one
+              opaque band in an otherwise translucent sheet. */}
+          <View
+            style={[
+              styles.recentFill,
+              { backgroundColor: glassActive
+                  ? (theme.isDark ? 'rgba(26,26,31,0.92)' : 'rgba(255,255,255,0.92)')
+                  : theme.colors.background.elevated },
+            ]}
+            pointerEvents="none"
+          />
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -439,6 +471,15 @@ const styles = StyleSheet.create({
   // ABSOLUTE, so hiding it on scroll is a transform and not a relayout. The grids pad their content
   // by RECENT_ROW_H to compensate, exactly as they already do for the bottom switcher.
   recentRow: { position: 'absolute', top: 0, left: 0, right: 0, height: RECENT_ROW_H, borderBottomWidth: 0.5, justifyContent: 'center', zIndex: 2 },
+  // Fills the strip so grid cells passing UNDERNEATH it are hidden.
+  //
+  // This is the artefact that was reported as the strip looking "see-through with the backing showing".
+  // In normal flow it never needed a background — nothing was behind it. Making it absolute so it could
+  // slide away without a relayout put the grid behind it, and an unfilled strip then showed emoji and
+  // GIF thumbnails scrolling through the row of recents. Opaque, not translucent: a blur here would
+  // still show motion through it, and motion behind a row of small static emoji is what made it read as
+  // broken rather than layered.
+  recentFill: { ...StyleSheet.absoluteFillObject },
   recentContent: { paddingHorizontal: 10, alignItems: 'center', gap: 2 },
   recentCell: { width: 38, height: 38, alignItems: 'center', justifyContent: 'center' },
   recentEmoji: { fontSize: 26 },
