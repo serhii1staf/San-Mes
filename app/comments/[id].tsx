@@ -22,7 +22,8 @@ import { extractFirstUrl } from '../../src/services/linkPreview';
 import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
 import { useChatKeyboardMode } from '../../src/hooks/useChatKeyboardMode';
 import { CachedImage } from '../../src/components/ui/CachedImage';
-import { ImageViewerModal } from '../../src/components/chat/ImageViewerModal';
+import { ImageViewerModal, ViewerActionButton } from '../../src/components/chat/ImageViewerModal';
+import { formatTimeAgo } from '../../src/utils/mockData';
 import Skeleton from '../../src/components/ui/Skeleton';
 import { useStaggeredReveal, useStaggeredGifReveal, setRevealScrollPaused } from '../../src/hooks/useStaggeredReveal';
 import { CommentContextMenu, CommentAction } from '../../src/components/ui/CommentContextMenu';
@@ -234,7 +235,7 @@ type CommentRowProps = {
   item: any;
   onLongPress: (c: any) => void;
   onReply: (c: any) => void;
-  onImagePress: (uri: string) => void;
+  onImagePress: (uri: string, comment?: any) => void;
   gifTracker: GifVisTracker;
 };
 
@@ -362,7 +363,7 @@ const CommentRow = React.memo(function CommentRow({ item, onLongPress, onReply, 
         ) : null}
         {gif ? null : <FormattedText style={{ marginTop: 3, fontSize: 14 }}>{parsed.body}</FormattedText>}
         {gif ? (
-          <Pressable onPress={() => onImagePress(gif)} onLongPress={() => onLongPress(item)} delayLongPress={300} style={{ marginTop: 6 }}>
+          <Pressable onPress={() => onImagePress(gif, item)} onLongPress={() => onLongPress(item)} delayLongPress={300} style={{ marginTop: 6 }}>
             {gifReveal ? (
               <CachedImage uri={gif} style={{ width: 160, height: 160, borderRadius: 14, backgroundColor: theme.colors.background.secondary }} resizeMode="cover" autoplay={gifActive} />
             ) : (
@@ -681,6 +682,10 @@ export default function CommentsScreen() {
   // the viewer opens a horizontal pager on the tapped image; single images and
   // comment GIFs just carry `uri`. Mirrors the profile-screen viewer.
   const [viewingImage, setViewingImage] = useState<{ uri: string; images?: string[]; index?: number } | null>(null);
+  // The COMMENT the open viewer belongs to, when it was opened from a comment's GIF rather than from
+  // one of the post's own photos. Drives the viewer's caption and its delete action — the post images
+  // deliberately leave this null, because deleting a comment from a post photo would be wrong.
+  const [viewerComment, setViewerComment] = useState<any | null>(null);
   const inputRef = useRef<CommentFieldHandle>(null);
   const listRef = useRef<FlashListRef<any>>(null);
 
@@ -857,7 +862,92 @@ export default function CommentsScreen() {
     return { images, index: idx };
   }, [viewingImage]);
 
-  const closeViewer = useCallback(() => setViewingImage(null), []);
+  const closeViewer = useCallback(() => { setViewingImage(null); setViewerComment(null); }, []);
+
+  // ── VIEWER CHROME — THE SAME SYSTEM THE CHAT HAS ──────────────────────────
+  //
+  // Asked for: if someone manages to send a GIF together with text in a comment, opening it should
+  // behave like the chat does — the text readable and scrollable over the media, and a delete.
+  //
+  // Only present when the viewer was opened from a COMMENT's GIF. The post's own photos open the same
+  // viewer (from the list header) and deliberately get no chrome here: they belong to the post, not to
+  // a comment, and offering "delete" there would delete the wrong thing.
+  //
+  // Both memoized because the viewer compares chrome by reference; an inline node would defeat its memo
+  // and re-render all mounted pager images on every render of this screen.
+  const viewerCommentBody = useMemo(() => {
+    if (!viewerComment) return '';
+    // The stored content carries the reply wrapper and the `::gif::` marker; `parseReply` strips the
+    // wrapper and `parseGif` tells us the body IS the gif (in which case there is no caption to show).
+    const parsed = parseReply(viewerComment.content || '');
+    return parseGif(parsed.body) ? '' : parsed.body;
+  }, [viewerComment]);
+
+  const viewerHeader = useMemo(() => {
+    if (!viewerComment) return null;
+    const profile = viewerComment.profiles || {};
+    return (
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <Avatar emoji={profile.emoji || '😊'} size="xs" />
+        <View style={{ flexShrink: 1 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+            <Text variant="caption" weight="semibold" color="#FFFFFF" numberOfLines={1} style={{ fontSize: 11 }}>
+              {profile.display_name || 'User'}
+            </Text>
+            {profile.is_verified && <VerifiedBadge size={10} />}
+          </View>
+          <Text variant="caption" color="rgba(255,255,255,0.6)" style={{ fontSize: 9 }}>
+            {viewerComment.created_at ? formatTimeAgo(viewerComment.created_at) : ''}
+          </Text>
+        </View>
+      </View>
+    );
+  }, [viewerComment]);
+
+  const viewerFooter = useMemo(() => {
+    if (!viewerComment) return null;
+    const isOwn = !!user?.id && (viewerComment.author_id === user.id || viewerComment.profiles?.id === user.id);
+    if (!viewerCommentBody && !isOwn) return null;
+    return (
+      <View style={{ alignItems: 'center', gap: 10 }}>
+        {/* Caption: no container, no card — the words over the media with a shadow so they read on a
+            bright GIF. Capped and scrollable for the same reason as the chat's: a caption can be a
+            paragraph and must never push the action off screen. */}
+        {viewerCommentBody ? (
+          <ScrollView
+            style={{ maxHeight: 96, alignSelf: 'stretch', marginHorizontal: 24 }}
+            contentContainerStyle={{ paddingBottom: 2 }}
+            showsVerticalScrollIndicator={false}
+            bounces={false}
+            nestedScrollEnabled
+          >
+            <Text
+              variant="caption"
+              color="#FFFFFF"
+              style={{ fontSize: 13, lineHeight: 18, textAlign: 'center', textShadowColor: 'rgba(0,0,0,0.55)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 }}
+            >
+              {viewerCommentBody}
+            </Text>
+          </ScrollView>
+        ) : null}
+        {isOwn ? (
+          <ViewerActionButton
+            icon="trash-2"
+            destructive
+            accessibilityLabel={t('common.delete')}
+            onPress={() => {
+              // The whole comment, not "the GIF out of the comment": a comment's media IS its content
+              // here, so removing it leaves nothing. Routes through `handleMenuAction('delete')`, which
+              // owns the confirmation and the optimistic removal.
+              const target = viewerComment;
+              closeViewer();
+              handleMenuAction('delete', target);
+            }}
+          />
+        ) : null}
+      </View>
+    );
+  }, [viewerComment, viewerCommentBody, user?.id, closeViewer, t]);
 
   // Frozen at module-constant identity via `useRef`, not an inline literal on the FlashList. v2's
   // docs are explicit that memoizing props matters more than in v1 ("we will instead allow
@@ -1532,8 +1622,9 @@ export default function CommentsScreen() {
   const closeCommentMenu = closeMenu;
 
   // Stable callbacks for the FlatList — see CommentRow for why this matters.
-  const openImageViewer = useCallback((uri: string) => {
+  const openImageViewer = useCallback((uri: string, comment?: any) => {
     setViewingImage({ uri });
+    setViewerComment(comment ?? null);
   }, []);
   const renderComment = useCallback(
     ({ item }: { item: any }) => (
@@ -1996,6 +2087,8 @@ export default function CommentsScreen() {
           topInset={insets.top}
           bottomInset={insets.bottom}
           proxyWidth={SCREEN_WIDTH}
+          header={viewerHeader}
+          footer={viewerFooter}
           zoomable
         />    </View>
   );
