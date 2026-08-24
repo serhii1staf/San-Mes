@@ -263,7 +263,10 @@ function ImageViewerModalComponent({
    * so that branch is a no-op.
    */
   const requestClose = useCallback(() => {
-    dragY.value = withTiming(SCREEN_H * 0.6, { duration: 200, easing: Easing.out(Easing.cubic) });
+    // Full screen height, not 60 %. At 60 % the photo came to rest still partly on screen, so it
+    // depended on the unmount to finish disappearing. Travelling the whole way means the exit is
+    // complete on its own.
+    dragY.value = withTiming(SCREEN_H, { duration: 200, easing: Easing.out(Easing.cubic) });
     enter.value = withTiming(0, { duration: 200, easing: Easing.in(Easing.cubic) }, (finished) => {
       if (finished) {
         runOnJS(setMounted)(false);
@@ -271,6 +274,25 @@ function ImageViewerModalComponent({
       }
     });
   }, [dragY, enter, onClose]);
+
+  /**
+   * Hand the close back to the parent WITHOUT animating anything.
+   *
+   * Used by the drag dismiss, and the distinction matters — it is the fix for a reported bug:
+   * "sometimes when I swipe UP the photo disappears, then abruptly comes back down, then disappears
+   * again."
+   *
+   * The gesture used to call `requestClose`, and `requestClose` became a downward fly-out in the
+   * previous change. So a swipe UP played its own upward exit to completion and then `requestClose`
+   * started a SECOND animation, downward, from wherever `dragY` had landed. Two exits for one
+   * dismissal, in opposite directions.
+   *
+   * The gesture already owns its exit — it animates `dragY` in the direction of travel and drives
+   * `enter` to 0 itself. All it needs from this is to tell the parent, which is all this does.
+   */
+  const notifyClosed = useCallback(() => {
+    onClose();
+  }, [onClose]);
 
   // ── HIDE THE TAB BAR WHILE OPEN, DELIBERATELY ─────────────────────────────
   //
@@ -309,6 +331,21 @@ function ImageViewerModalComponent({
   });
 
   const contentStyle = useAnimatedStyle(() => ({
+    // ── THE PHOTO FADES. IT DID NOT BEFORE. ─────────────────────────────────
+    //
+    // Reported: tapping the X slides the photo down, then it "stops for a second or two" and only
+    // then disappears.
+    //
+    // This style had transforms only — no opacity at all. So the photo stayed 100 % opaque for the
+    // whole exit, ended up parked partway down the screen where it was still visible, and did not
+    // actually vanish until `runOnJS(setMounted)(false)` reached the JS thread. When that thread is
+    // busy the callback waits, and the photo sits frozen mid-screen for exactly as long as the wait —
+    // which is the pause, and why its length varied.
+    //
+    // Binding opacity to `enter` means the exit is finished visually by the time the animation ends,
+    // whenever the unmount happens to land. A late unmount is now invisible instead of being the
+    // thing the user waits for.
+    opacity: interpolate(enter.value, [0, 1], [0, 1], Extrapolation.CLAMP),
     transform: [
       { translateY: dragY.value + zoomPanY.value },
       { translateX: zoomPanX.value },
@@ -424,7 +461,9 @@ function ImageViewerModalComponent({
             enter.value = withTiming(0, { duration: 180 }, (finished) => {
               if (finished) {
                 runOnJS(setMounted)(false);
-                runOnJS(requestClose)();
+                // `notifyClosed`, NOT `requestClose` — see the note on `notifyClosed`. Calling the
+                // animating one here played a second, downward exit after an upward swipe.
+                runOnJS(notifyClosed)();
               }
             });
           } else {
@@ -435,7 +474,7 @@ function ImageViewerModalComponent({
       if (isPager) g.failOffsetX([-40, 40]);
       return g;
     },
-    [dragY, enter, requestClose, zoom, zoomPanX, zoomPanY, isPager],
+    [dragY, enter, notifyClosed, zoom, zoomPanX, zoomPanY, isPager],
   );
 
   /**
