@@ -1016,6 +1016,15 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
                   url={previewLink}
                   textColor={coloredBubble ? sideTextColor : undefined}
                   emoji={linkEmoji}
+                  // Only unfurl what the user can actually see. FlashList mounts rows within
+                  // `drawDistance` of the viewport, so without this a scroll past several links
+                  // fires several requests for bubbles nobody is looking at — and each one lands a
+                  // parse, a state update, a card re-render and an MMKV write on the JS thread. The
+                  // perf log measured four such fetches (335, 257, 313, 799 ms) followed by long
+                  // tasks of 356 and 175 ms. A preview the user CAN see is visible by definition,
+                  // so nothing they look at appears any later; and an already-cached preview is
+                  // unaffected either way, because that path is a synchronous read.
+                  active={isVisible !== false}
                 />
               </View>
             ) : null}
