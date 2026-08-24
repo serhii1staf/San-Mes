@@ -155,6 +155,17 @@ export const useChatUnread = create<ChatUnreadState>((set, get) => ({
       // `lastMessageAt`, so the two describe the same message. Comparing THAT against the signed-in
       // id is the check the old line was trying and failing to be.
       if (myUserId && r.lastSenderId && r.lastSenderId === myUserId) continue;
+      // ── NEVER RAISE A BADGE FOR THE CHAT THE USER IS LOOKING AT ─────────────
+      //
+      // `bump` has always had this check and this function never did, which is the difference that
+      // let the badge appear while the chat was open on screen. Whatever the timestamps say, a
+      // conversation being read right now has no unread messages — that is the same judgement the
+      // push path makes when it declines to banner the thread you are in.
+      //
+      // Kept as a SECOND line of defence rather than the fix: the author comparison above is the
+      // fix, and this is what stops any future path that forgets to record an author from being
+      // visible in the one place the user would definitely see it.
+      if (isActiveThread('chat', r.id)) continue;
       const last = Date.parse(r.lastMessageAt);
       if (!Number.isFinite(last)) continue;
       const seen = readAt[r.id] || 0;

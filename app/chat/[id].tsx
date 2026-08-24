@@ -686,9 +686,62 @@ function SingleChatImage({ uri, isVisible, onPress }: { uri: string; isVisible?:
   );
 }
 
-function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, linkEmoji, bubbleColors, bubbleOpacity, bubbleTextColor, inColors, inOpacity, inTextColor, highlighted, isVisible, imagesReady, onReply, onReplyJump, onLongPress, onMeasured, onSwipeActive, onImagePress, dragActive, dragFingerY, hoveredAction, actionZones, onFireDragAction, onOpenFullscreen }: { message: ChatMessage; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string; linkEmoji?: string; bubbleColors: string[]; bubbleOpacity: number; bubbleTextColor: string; inColors: string[]; inOpacity: number; inTextColor: string; highlighted?: boolean; isVisible?: boolean; imagesReady?: boolean; onReply: (m: ChatMessage) => void; onReplyJump?: (messageId?: string) => void; onLongPress: (m: ChatMessage) => void; onMeasured?: (id: string, x: number, y: number, w: number, h: number) => void; onSwipeActive: (active: boolean) => void; onImagePress: (images: string[], index: number, message: ChatMessage) => void; dragActive: SharedValue<boolean>; dragFingerY: SharedValue<number>; hoveredAction: SharedValue<string>; actionZones: SharedValue<ActionZone[]>; onFireDragAction: (m: ChatMessage, action: string) => void; onOpenFullscreen: (m: ChatMessage) => void }) {
+/**
+ * One line describing the message a reply is quoting.
+ *
+ * ── WHAT WAS WRONG ──────────────────────────────────────────────────────────
+ *
+ * Reported: "when I reply to a message it should show WHICH message I replied to — a preview of it.
+ * When I reply to a GIF it says 'Вы'."
+ *
+ * Two separate faults produced that. The heading printed `t('chat.you')` / `t('chat.peer')` — "Вы" /
+ * "Собеседник" — instead of the person's actual name, which is what every messenger shows and the
+ * only thing that makes a quote identifiable in a group of them. And the body was baked at SEND time:
+ * both send paths wrote `replyToText = t('chat.photo')` for ANY quoted message carrying images, so a
+ * GIF was labelled "Фото", and a photo that had a caption lost the caption — the single most useful
+ * thing the preview could have shown.
+ *
+ * ── WHY IT IS DERIVED HERE RATHER THAN STORED ───────────────────────────────
+ *
+ * Baking a display label into stored data is what caused this: the label is a rendering decision (it
+ * depends on the reader's locale, and on rules that change) and it was frozen into the wire format at
+ * the moment of sending. `toPreviewText` is the app's one reader for stored content, so a quote now
+ * gets the same treatment as a conversation row: a caption shows as its text, a GIF says GIF, a photo
+ * says photo, a bare link says link, and no marker ever leaks.
+ *
+ * Old messages still read correctly. Their `replyToText` already holds a plain label like "Фото",
+ * which passes through `toPreviewText` unchanged because it is not a marker and not a URL.
+ */
+function quotedLinePreview(
+  replyToText: string | undefined,
+  replyToImage: string | undefined,
+  t: (key: string, fallback?: string) => string,
+): string {
+  // Same label keys the pinned-message bar already passes to `toPreviewText` (`pinPreviewLabels`).
+  // Deliberately identical: two label sets for one reader is how "GIF" ends up spelled two ways in
+  // two places on the same screen.
+  const labels = {
+    photo: t('chat.photo'),
+    gif: 'GIF',
+    link: t('chat.link', 'Ссылка'),
+    reply: t('chat.reply_label', 'Ответ'),
+  };
+  const fromText = toPreviewText(replyToText, labels);
+  if (fromText) return fromText;
+  // No text at all: the quote is pure media, so name it from the thumbnail's URL. This is where a
+  // GIF stops being called a photo — `toPreviewText` already knows how to tell them apart from a
+  // URL, so the same rule decides it here.
+  if (replyToImage) return toPreviewText(replyToImage, labels) || labels.photo;
+  return '';
+}
+
+function MessageBubble({ message, isOwn, ownName, peerName, fontSize, bubbleRadius, fontFamily, linkEmoji, bubbleColors, bubbleOpacity, bubbleTextColor, inColors, inOpacity, inTextColor, highlighted, isVisible, imagesReady, onReply, onReplyJump, onLongPress, onMeasured, onSwipeActive, onImagePress, dragActive, dragFingerY, hoveredAction, actionZones, onFireDragAction, onOpenFullscreen }: { message: ChatMessage; ownName: string; peerName: string; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string; linkEmoji?: string; bubbleColors: string[]; bubbleOpacity: number; bubbleTextColor: string; inColors: string[]; inOpacity: number; inTextColor: string; highlighted?: boolean; isVisible?: boolean; imagesReady?: boolean; onReply: (m: ChatMessage) => void; onReplyJump?: (messageId?: string) => void; onLongPress: (m: ChatMessage) => void; onMeasured?: (id: string, x: number, y: number, w: number, h: number) => void; onSwipeActive: (active: boolean) => void; onImagePress: (images: string[], index: number, message: ChatMessage) => void; dragActive: SharedValue<boolean>; dragFingerY: SharedValue<number>; hoveredAction: SharedValue<string>; actionZones: SharedValue<ActionZone[]>; onFireDragAction: (m: ChatMessage, action: string) => void; onOpenFullscreen: (m: ChatMessage) => void }) {
   const theme = useTheme();
   const t = useT();
+  // The quoted message's one-line preview. Cheap (a few string checks) and only meaningful when this
+  // bubble is a reply, so it is computed unconditionally rather than memoized — a memo here would
+  // cost more in hook bookkeeping than the work it saves, on the most-mounted component in the app.
+  const quotedPreview = quotedLinePreview(message.replyToText, message.replyToImage, t);
   // Resolve THIS bubble's fill from the per-side style. Outgoing always has a
   // colored fill (custom or theme accent). Incoming is the neutral tertiary
   // surface UNLESS the user set a custom incoming color/gradient. A gradient
@@ -975,10 +1028,10 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
                 ) : null}
                 <View style={bubbleStyles.replyTextWrap}>
                   <Text variant="caption" weight="semibold" color={replyHeadingColor} numberOfLines={1} style={bubbleStyles.replyHeading}>
-                    {message.replyToIsOwn ? t('chat.you') : t('chat.peer')}
+                    {message.replyToIsOwn ? ownName : peerName}
                   </Text>
                   <Text variant="caption" color={replyBodyColor} numberOfLines={1} style={bubbleStyles.replyBody}>
-                    {message.replyToText || (message.replyToImage ? t('chat.photo') : '')}
+                    {quotedPreview}
                   </Text>
                 </View>
               </Pressable>
@@ -1108,6 +1161,8 @@ const MemoMessageBubble = React.memo(MessageBubble, (prev, next) => {
     pm.replyToText === nm.replyToText &&
     pm.replyToImage === nm.replyToImage &&
     pm.replyToIsOwn === nm.replyToIsOwn &&
+    prev.ownName === next.ownName &&
+    prev.peerName === next.peerName &&
     pm.replyPixelIconId === nm.replyPixelIconId &&
     (pm.imageUrls === nm.imageUrls ||
       (pm.imageUrls?.length === nm.imageUrls?.length &&
@@ -2891,6 +2946,9 @@ export default function ChatScreen() {
   const chatLocalName = specificSettings?.localName;
   const displayName = chatLocalName || conversation?.participantName || profileData?.display_name || entityConv?.participantName || t('chat.fallback_name');
   const displayEmoji = (conversation as any)?.participantEmoji || profileData?.emoji || entityConv?.participantEmoji || '😊';
+  // The signed-in account's own name, for the reply heading. Falls back to the localized "Вы" rather
+  // than an empty heading if the profile has no display name yet.
+  const ownDisplayName = useAuthStore((s) => s.user?.displayName) || t('chat.you', 'Вы');
   const displayVerified = profileData?.is_verified || cachedProfile?.is_verified || (entityConv as any)?.participantVerified || false;
   const displayBadge = profileData?.badge || cachedProfile?.badge || (entityConv as any)?.participantBadge || null;
   const profileId = participantId;
@@ -2928,6 +2986,12 @@ export default function ChatScreen() {
           participantEmoji: displayEmoji,
           lastMessage,
           lastMessageAt: new Date().toISOString(),
+          // This row is being stamped because WE just sent something, so record that. Without it the
+          // row went back to carrying a fresh timestamp with no author roughly a second after every
+          // send — which is precisely the moment the unread badge was observed to appear on the
+          // sender's own screen. The realtime bridge writes this field for incoming messages; this is
+          // the outgoing half, and it is the only place the send path touches the list row.
+          lastSenderId: currentUserId || undefined,
         };
         if (idx >= 0) {
           const merged = [...existing];
@@ -2954,7 +3018,7 @@ export default function ChatScreen() {
         } catch {}
       }
     },
-    [id, participantId, displayName, displayEmoji, setMessages, t],
+    [id, participantId, displayName, displayEmoji, setMessages, t, currentUserId],
   );
 
   // Open the full-screen viewer on a specific message. A route (not a modal) so
@@ -3570,7 +3634,8 @@ export default function ChatScreen() {
       createdAt: new Date().toISOString(),
       isRead: true,
       replyToId: currentReply?.id,
-      replyToText: currentReply?.text || (currentReply?.imageUrls && currentReply.imageUrls.length > 0 ? t('chat.photo') : undefined),
+      // See handleSend: the quoted message own text only. The label is derived at render time.
+      replyToText: currentReply?.text || undefined,
       replyToIsOwn: currentReply ? (currentReply.senderId === currentUserId || currentReply.senderId === 'current') : undefined,
       replyToImage: currentReply?.imageUrls?.[0],
       // Per-chat decorative pixel icon stamped onto reply messages.
@@ -4242,7 +4307,12 @@ export default function ChatScreen() {
       createdAt: new Date().toISOString(),
       isRead: true,
       replyToId: currentReply?.id,
-      replyToText: currentReply?.text || (currentReply?.imageUrls && currentReply.imageUrls.length > 0 ? (currentReply.imageUrls.length > 1 ? t('chat.photos_count', undefined, { n: currentReply.imageUrls.length }) : t('chat.photo')) : undefined),
+      // The quoted message OWN text, never a display label. This used to bake a photo label in
+      // whenever the quote carried images, which is why replying to a GIF read as a photo and why a
+      // photo WITH a caption lost the caption - the most useful thing the preview could show. The
+      // label is a rendering decision and is now made at render time by quotedLinePreview, from the
+      // thumbnail when there is no text.
+      replyToText: currentReply?.text || undefined,
       replyToIsOwn: currentReply ? (currentReply.senderId === currentUserId || currentReply.senderId === 'current') : undefined,
       replyToImage: currentReply?.imageUrls?.[0],
       // See sendGif — same per-chat pixel-icon stamp on outgoing
@@ -5003,6 +5073,11 @@ export default function ChatScreen() {
         tracker={visTracker}
         message={m}
         isOwn={m.senderId === currentUserId}
+        // Real names in the reply heading, instead of "Вы" / "Собеседник". Read at render time (not
+        // captured into the message when it was sent) for the same reason bubble ownership is: one
+        // device can switch accounts, and a rename must show up on old replies too.
+        ownName={ownDisplayName}
+        peerName={displayName}
         fontSize={chatSettings.fontSize}
         bubbleRadius={chatSettings.bubbleRadius}
         fontFamily={chatSettings.fontFamily}
@@ -5036,7 +5111,7 @@ export default function ChatScreen() {
     // NOTE: `scrollToMessageId` and `dayLabels` are deliberately absent too — both
     // change identity on every data/window change and are reached through refs
     // (`stableJumpToMessage`, `dayLabelsRef`) for exactly that reason.
-  }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, chatSettings.linkEmoji, bubbleColorsKey, bubbleColors, bubbleOpacity, bubbleTextColor, inColorsKey, inColors, inOpacity, inTextColor, startReply, stableJumpToMessage, handleSwipeActive, openImageViewer, parseMessage, activeMatchId, jumpHighlightId, onMessageLongPress, currentUserId, dragActiveSV, dragFingerYSV, hoveredActionSV, actionZonesSV, fireDragAction, visTracker, imagesReady, glassActive, theme, openFullscreen]);
+  }, [chatSettings.fontSize, chatSettings.bubbleRadius, chatSettings.fontFamily, chatSettings.linkEmoji, bubbleColorsKey, bubbleColors, bubbleOpacity, bubbleTextColor, inColorsKey, inColors, inOpacity, inTextColor, startReply, stableJumpToMessage, handleSwipeActive, openImageViewer, parseMessage, activeMatchId, jumpHighlightId, onMessageLongPress, currentUserId, ownDisplayName, displayName, dragActiveSV, dragFingerYSV, hoveredActionSV, actionZonesSV, fireDragAction, visTracker, imagesReady, glassActive, theme, openFullscreen]);
 
   // Stable list header / footer elements. Passing INLINE JSX to FlashList's
   // ListHeaderComponent / ListFooterComponent handed it a fresh element
