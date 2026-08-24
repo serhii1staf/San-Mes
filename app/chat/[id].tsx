@@ -3827,12 +3827,32 @@ export default function ChatScreen() {
 
     closeImageViewer();
 
-    // Nothing survives → this is a message delete after all.
+    // Nothing survives → this is a message delete after all. That path asks for confirmation itself.
     if (remaining.length === 0 && !text.trim()) {
       if (pinnedIds.includes(target.id)) unpinMessage(conversationId, target.id);
       handleMenuAction('delete', target);
       return;
     }
+
+    // ── CONFIRM FIRST ─────────────────────────────────────────────────────────
+    //
+    // Reported: "before I press delete it should ask whether I really want to — right now it just
+    // deletes, too fast."
+    //
+    // Correct, and it was an inconsistency as much as a hazard: deleting a whole message asks (the
+    // menu path opens an Alert), while deleting one photo out of a message did not. Same finger, same
+    // icon, same screen, two different levels of ceremony — and the un-asked one is the irreversible
+    // one, because a removed photo cannot be recovered from the transcript.
+    //
+    // Reuses the message-delete strings rather than adding a near-duplicate pair, so both flows read
+    // the same in both locales.
+    const confirmed = await new Promise<boolean>((resolve) => {
+      Alert.alert(t('chat.delete_message_title'), '', [
+        { text: t('common.cancel'), style: 'cancel', onPress: () => resolve(false) },
+        { text: t('common.delete'), style: 'destructive', onPress: () => resolve(true) },
+      ], { onDismiss: () => resolve(false) });
+    });
+    if (!confirmed) return;
 
     triggerHaptic('medium');
     const nextImages = remaining.length > 0 ? remaining : undefined;
@@ -3990,6 +4010,13 @@ export default function ChatScreen() {
     // itself is about to arrive, so leaving the indicator up for another few seconds would
     // read as a second message on the way.
     notifyStopped();
+    // Sending is reading. Stamps this conversation's read watermark to NOW, which closes the window
+    // the "I see an unread badge for my own message" report came through: the outgoing row updates the
+    // conversation's `lastMessageAt`, and anything comparing that against an older watermark would
+    // raise a badge for a message the user just typed. Cheap, idempotent, and belt-and-braces with the
+    // bridge-side guard — that one requires positive evidence of another sender, this one makes the
+    // question moot for the chat you are actually in.
+    try { if (conversationId) useChatUnread.getState().clear(conversationId); } catch {}
     triggerHaptic('medium');
     playSendSound();
     // Strip dangerous invisible / control / bidi-override chars; keep

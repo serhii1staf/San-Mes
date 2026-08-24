@@ -162,10 +162,18 @@ export function RealtimeAccountBridge(): null {
           //     Deliberately NOT inside the try above: a failure to upsert the row must not skip the
           //     count, and vice versa.
           try {
-            // Our own outgoing message echoes back on this channel too. `senderId` is the real author
-            // uuid, so compare against the signed-in id and ignore our own.
+            // Our own outgoing message echoes back on this channel too, so it must not count.
+            //
+            // This used to read `if (!senderId || senderId !== myId)`, which is backwards for the
+            // missing case: an echo whose payload carried no `sender_id` satisfied `!senderId` and got
+            // counted. Reported as "I send a message and then see an unread indicator for it myself
+            // for a second or two."
+            //
+            // Now a bump requires POSITIVE evidence that someone else sent it: a sender id that is
+            // present and different from mine. An unidentifiable ping is dropped rather than guessed
+            // at — a missed badge is invisible, a wrong badge is a bug report.
             const myId = useAuthStore.getState().user?.id;
-            if (!senderId || senderId !== myId) {
+            if (senderId && myId && senderId !== myId) {
               useChatUnread.getState().bump(conversationId);
             }
           } catch {}
