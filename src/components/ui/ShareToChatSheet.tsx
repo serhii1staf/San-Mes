@@ -94,6 +94,19 @@ function ShareToChatSheetComponent({ visible, onClose, shareUrl, caption, exclud
     onClose();
   }, [onClose]);
 
+  const copyLink = useCallback(async () => {
+    if (!shareUrl) return;
+    triggerHaptic('light');
+    try {
+      const Clipboard = await import('expo-clipboard');
+      await Clipboard.setStringAsync(shareUrl);
+      showToast(t('toast.link_copied'), 'link');
+      close();
+    } catch {
+      showToast(t('toast.error_generic'), 'alert-circle');
+    }
+  }, [shareUrl, t, close]);
+
   const send = useCallback(async () => {
     if (!selected || sending) return;
     setSending(true);
@@ -142,15 +155,18 @@ function ShareToChatSheetComponent({ visible, onClose, shareUrl, caption, exclud
           }}
           style={styles.person}
         >
-          <View style={styles.avatarWrap}>
+          {/* SELECTION IS THE AVATAR DIMMING, not a badge stuck on top of it.
+   
+              A tick is a second object that has to be placed somewhere, and wherever it goes it covers
+              part of the face you are identifying the person by. Dimming uses the avatar itself as the
+              indicator: nothing is added, nothing is hidden, and the change reads at a glance across a
+              row of faces because the selected one is the only one that is not at full strength.
+   
+              Nothing about the layout moves either, which is what keeps a picker feeling reliable
+              under the finger — the same reason the tick had been placed on the avatar rather than
+              replacing it. */}
+          <View style={[styles.avatarWrap, isSelected ? styles.avatarSelected : null]}>
             <Avatar emoji={item.emoji || '😊'} name={item.name} size="md" tint />
-            {/* The tick sits ON the avatar rather than replacing it, so the row never changes layout as
-                selection moves — a shifting row under the finger is what makes pickers feel unreliable. */}
-            {isSelected ? (
-              <View style={[styles.tick, { backgroundColor: theme.colors.accent.primary }]}>
-                <Feather name="check" size={12} color="#FFFFFF" />
-              </View>
-            ) : null}
           </View>
           <View style={styles.nameRow}>
             <Text variant="caption" numberOfLines={1} style={styles.name} color={isSelected ? theme.colors.accent.primary : theme.colors.text.secondary}>
@@ -173,6 +189,19 @@ function ShareToChatSheetComponent({ visible, onClose, shareUrl, caption, exclud
         <Text variant="body" weight="semibold" style={styles.headerLabel}>
           {t('share.title', 'Поделиться')}
         </Text>
+        {/* Copy-link, top right. The fastest thing you can want from a share sheet is the link
+            itself, and reaching it used to mean closing this and finding the menu item that opens
+            this. One tap, and the sheet closes — copying then hunting for a second action is not a
+            flow anyone runs. */}
+        <Pressable
+          onPress={copyLink}
+          hitSlop={10}
+          accessibilityRole="button"
+          accessibilityLabel={t('post_menu.copy_link')}
+          style={[styles.copyBtn, { borderColor: theme.colors.border.light }]}
+        >
+          <Feather name="link" size={15} color={theme.colors.text.secondary} />
+        </Pressable>
       </View>
 
       {people.length === 0 ? (
@@ -230,20 +259,23 @@ function ShareToChatSheetComponent({ visible, onClose, shareUrl, caption, exclud
 
 const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, paddingTop: 8, paddingBottom: 10 },
-  headerLabel: { marginLeft: 8 },
-  listContent: { paddingHorizontal: 14, paddingBottom: 6 },
-  person: { width: 72, alignItems: 'center', marginHorizontal: 3 },
-  avatarWrap: { width: 44, height: 44 },
-  tick: {
-    position: 'absolute',
-    right: -2,
-    bottom: -2,
-    width: 18,
-    height: 18,
-    borderRadius: 9,
+  headerLabel: { marginLeft: 8, flex: 1 },
+  // Pushed to the right edge by the label's `flex: 1`, so the button stays pinned there whatever the
+  // translated title's length turns out to be.
+  copyBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
+  listContent: { paddingHorizontal: 14, paddingBottom: 6 },
+  person: { width: 72, alignItems: 'center', marginHorizontal: 3 },
+  avatarWrap: { width: 44, height: 44 },
+  // Selected = dimmed. Slightly inset as well, so the state is legible even to someone who cannot
+  // distinguish the opacity change — an indicator carried by opacity alone is not an accessible one.
+  avatarSelected: { opacity: 0.45, transform: [{ scale: 0.92 }] },
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: 2, marginTop: 6, maxWidth: 70 },
   name: { fontSize: 11, flexShrink: 1 },
   empty: { paddingHorizontal: 20, paddingVertical: 22, alignItems: 'center' },

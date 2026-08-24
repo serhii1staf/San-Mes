@@ -1825,7 +1825,7 @@ export default function MessagesScreen() {
   const unreadCounts = useChatUnread((s) => s.counts);
   const reconcileUnread = useChatUnread((s) => s.reconcile);
   const previewByConv = useMemo(() => {
-    const out = new Map<string, { text: string; at: string; hasImage: boolean }>();
+    const out = new Map<string, { text: string; at: string; hasImage: boolean; senderId?: string }>();
     for (const convId in persistedPreviews) {
       const p = persistedPreviews[convId];
       if (p?.at) out.set(convId, { text: p.text, at: p.at, hasImage: p.hasImage });
@@ -1842,6 +1842,19 @@ export default function MessagesScreen() {
         text: last.text || '',
         at: last.createdAt,
         hasImage: !!last.imageUrls && last.imageUrls.length > 0,
+        // WHO wrote the message this timestamp belongs to.
+        //
+        // This is the field whose absence kept the "I get an unread badge for my own message" bug
+        // alive through four fixes. The row lastMessageAt is taken from HERE - the newest message in
+        // the local transcript - while its lastSenderId was read off the entity-store row, which only
+        // the realtime bridge ever writes and only for INCOMING messages. So the two fields routinely
+        // described two different messages: the timestamp of the message I just sent, next to the
+        // author of the last one I received. Every author check downstream was then answering a
+        // question about the wrong message.
+        //
+        // Taking both from the same message makes that class of mismatch impossible rather than
+        // guarded against.
+        senderId: last.senderId || undefined,
       });
     }
     return out;
@@ -1873,7 +1886,20 @@ export default function MessagesScreen() {
           // Forwarded so reconcile can tell our own outgoing message from an incoming one. The row is
           // rebuilt from the entity store on every list pass, so dropping the field here would have
           // silently reinstated the bug the moment the list re-rendered.
-          lastSenderId: (c as any).lastSenderId,
+          // FROM THE SAME MESSAGE AS lastMessageAt, on the same useLocal branch.
+          //
+          // It used to read (c as any).lastSenderId unconditionally - the entity-store row, written
+          // only by the realtime bridge and only for INCOMING messages. So whenever useLocal was true
+          // (which it is for every chat you have just sent in) the row carried the timestamp of MY
+          // outgoing message beside the author of the last message I RECEIVED. The reconcile author
+          // guard then compared the wrong author, missed, and raised a badge for my own message. That
+          // is the whole "I write to someone and get an unread indicator myself" report, and it is why
+          // adding the guard did not fix it: the guard was correct and its input was not.
+          //
+          // Also survives syncConversations, which rebuilds every entity row from participant fields
+          // and drops lastSenderId entirely - so the old source went blank every few minutes even
+          // when the bridge had filled it in.
+          lastSenderId: useLocal ? local!.senderId : (c as any).lastSenderId,
           unreadCount: unreadCounts[c.id] || 0,
           isOnline: false,
         };
