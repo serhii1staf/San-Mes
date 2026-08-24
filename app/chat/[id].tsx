@@ -386,13 +386,28 @@ const bubbleStyles = StyleSheet.create({
 });
 
 /**
- * The three glyphs the older-history indicator shimmers through.
+ * Glyph sets the older-history indicator shimmers through, one set per mount.
  *
- * A message, a like and a comment — the three things a chat and its thread are made of, which is
- * what makes the strip read as "more of your content is coming" rather than as a generic spinner.
- * Module scope so the array identity is stable and the component never re-creates it.
+ * Module scope so the arrays have stable identities and are never re-created per render. Each set
+ * is three glyphs because three is what fits in the reserved 24 pt strip without crowding, and
+ * because three phases of one shared animation read as a wave rather than a blink.
  */
-const OLDER_LOADER_EMOJI = ['💬', '❤️', '💭'] as const;
+const OLDER_LOADER_SETS = [
+  ['💬', '❤️', '💭'],
+  ['✨', '💌', '🕊️'],
+  ['📨', '⭐', '💫'],
+  ['🫧', '💗', '📩'],
+] as const;
+
+/**
+ * Which set this mount shows. Rotates on every mount, so opening a chat again shows a different
+ * trio — requested as "let them change each time".
+ *
+ * A module-level counter rather than `Math.random()`: random repeats itself often enough with four
+ * options that it would not read as changing, and a counter guarantees the user sees all four
+ * before any repeat. Cheap, and it survives the screen unmounting.
+ */
+let olderLoaderSetCursor = 0;
 
 // "Loading older messages" indicator shown at the TOP of the chat (oldest end) while the next
 // older chunk is revealed from cache. The data is already local, so this is purely the
@@ -408,6 +423,9 @@ const OLDER_LOADER_EMOJI = ['💬', '❤️', '💭'] as const;
 // flicking through history.
 function OlderMessagesLoader({ visible, color }: { visible: boolean; color: string }) {
   const pulse = useRef(new Animated.Value(0.25)).current;
+  // Picked once per mount and held in a ref, so a re-render never swaps the glyphs mid-shimmer —
+  // that would read as a glitch rather than as variety.
+  const glyphs = useRef(OLDER_LOADER_SETS[olderLoaderSetCursor++ % OLDER_LOADER_SETS.length]).current;
   useEffect(() => {
     if (!visible) return;
     const loop = Animated.loop(
@@ -435,7 +453,7 @@ function OlderMessagesLoader({ visible, color }: { visible: boolean; color: stri
   // space when idle.
   return (
     <View style={styles.olderLoader} pointerEvents="none">
-      {OLDER_LOADER_EMOJI.map((glyph, i) => (
+      {glyphs.map((glyph, i) => (
         <Animated.Text
           key={glyph}
           style={{

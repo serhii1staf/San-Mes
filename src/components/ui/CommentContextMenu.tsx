@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Pressable, Modal, Animated, Dimensions, ScrollView, Easing } from 'react-native';
+// `Easing` is gone from this import along with the cubic curves it drove — the open is now a
+// spring and the close a plain timing, matching MessageContextMenu.
+import { View, Pressable, Modal, Animated, Dimensions, ScrollView } from 'react-native';
 import { ModalStatusBar } from './ModalStatusBar';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -43,7 +45,21 @@ export function CommentContextMenu({ visible, comment, isOwn, displayBody, reply
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
-  const slideAnim = useRef(new Animated.Value(40)).current;
+  // ── SAME OPENING MOTION AS THE CHAT MENU ────────────────────────────────────
+  //
+  // Reported as: the menu in comments does not open the way the one in chat does, and it should.
+  //
+  // It did not, and the difference was in two places at once. This started at 40 and eased in
+  // with `Easing.out(Easing.cubic)` over 240 ms — a short nudge upward. The chat menu
+  // (`MessageContextMenu`) starts at SCREEN_HEIGHT and arrives on a SPRING with
+  // `tension: 50, friction: 9` — a full sheet travelling in from off-screen with a little
+  // settle at the end. Those read as two different interactions on the same gesture.
+  //
+  // Matching the chat menu means both values have to match: a spring over 40 pt is
+  // imperceptible, and a 240 ms cubic over the full screen height feels mechanical. So the
+  // start offset moves to SCREEN_HEIGHT and the curve to the same spring, and the backdrop to
+  // the same 200 ms timing.
+  const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
   const fade = useRef(new Animated.Value(0)).current;
   const dismissing = useRef(false);
   // Reentrancy guard refs (Task 6.3 / Property 6):
@@ -70,11 +86,13 @@ export function CommentContextMenu({ visible, comment, isOwn, displayBody, reply
       isOpenRef.current = true;
       isTransitioningRef.current = true;
       dismissing.current = false;
-      slideAnim.setValue(40);
+      slideAnim.setValue(SCREEN_HEIGHT);
       fade.setValue(0);
+      // Identical to MessageContextMenu's open: spring on the sheet, 200 ms timing on the
+      // backdrop. Both native-driver, so the whole thing runs off the JS thread.
       Animated.parallel([
-        Animated.timing(slideAnim, { toValue: 0, duration: 240, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-        Animated.timing(fade, { toValue: 1, duration: 180, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+        Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 50, friction: 9 }),
+        Animated.timing(fade, { toValue: 1, duration: 200, useNativeDriver: true }),
       ]).start(() => { isTransitioningRef.current = false; });
       // Reveal the heavy preview leaves one paint after kicking off the open
       // animation, keeping the first (open) frame cheap.
@@ -105,9 +123,14 @@ export function CommentContextMenu({ visible, comment, isOwn, displayBody, reply
     dismissing.current = true;
     isOpenRef.current = false;
     isTransitioningRef.current = true;
+    // Matches MessageContextMenu's dismiss exactly: the sheet leaves to SCREEN_HEIGHT over
+    // 220 ms and the backdrop fades on the same 220 ms, so the close reads as the reverse of the
+    // open rather than as a different gesture. It stays a `timing` rather than a spring on the
+    // way out — the chat menu does the same, because a spring on dismissal overshoots past the
+    // screen edge and wastes frames animating something already invisible.
     Animated.parallel([
-      Animated.timing(slideAnim, { toValue: 40, duration: 200, easing: Easing.in(Easing.cubic), useNativeDriver: true }),
-      Animated.timing(fade, { toValue: 0, duration: 170, easing: Easing.in(Easing.quad), useNativeDriver: true }),
+      Animated.timing(slideAnim, { toValue: SCREEN_HEIGHT, duration: 220, useNativeDriver: true }),
+      Animated.timing(fade, { toValue: 0, duration: 220, useNativeDriver: true }),
     ]).start(() => {
       isTransitioningRef.current = false;
       onClose();
