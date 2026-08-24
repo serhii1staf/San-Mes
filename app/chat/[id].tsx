@@ -25,7 +25,7 @@ import { TranslationSheet } from '../../src/components/ui/TranslationSheet';
 import { ChatInputBar, ChatInputBarHandle } from '../../src/components/chat/ChatInputBar';
 import { MediaPanel } from '../../src/components/chat/MediaPanel';
 import { PhotoPickerPanel } from '../../src/components/chat/PhotoPickerPanel';
-import { ImageViewerModal } from '../../src/components/chat/ImageViewerModal';
+import { ImageViewerModal, ViewerActionButton } from '../../src/components/chat/ImageViewerModal';
 import { EmojiDeleteBurst, EmojiBurstHandle } from '../../src/components/chat/EmojiDeleteBurst';
 import { getRealtime, chatChannelName } from '../../src/services/realtime/ably';
 import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
@@ -652,7 +652,7 @@ function SingleChatImage({ uri, isVisible, onPress }: { uri: string; isVisible?:
   );
 }
 
-function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, linkEmoji, bubbleColors, bubbleOpacity, bubbleTextColor, inColors, inOpacity, inTextColor, highlighted, isVisible, imagesReady, onReply, onReplyJump, onLongPress, onMeasured, onSwipeActive, onImagePress, dragActive, dragFingerY, hoveredAction, actionZones, onFireDragAction, onOpenFullscreen }: { message: ChatMessage; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string; linkEmoji?: string; bubbleColors: string[]; bubbleOpacity: number; bubbleTextColor: string; inColors: string[]; inOpacity: number; inTextColor: string; highlighted?: boolean; isVisible?: boolean; imagesReady?: boolean; onReply: (m: ChatMessage) => void; onReplyJump?: (messageId?: string) => void; onLongPress: (m: ChatMessage) => void; onMeasured?: (id: string, x: number, y: number, w: number, h: number) => void; onSwipeActive: (active: boolean) => void; onImagePress: (images: string[], index: number) => void; dragActive: SharedValue<boolean>; dragFingerY: SharedValue<number>; hoveredAction: SharedValue<string>; actionZones: SharedValue<ActionZone[]>; onFireDragAction: (m: ChatMessage, action: string) => void; onOpenFullscreen: (m: ChatMessage) => void }) {
+function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, linkEmoji, bubbleColors, bubbleOpacity, bubbleTextColor, inColors, inOpacity, inTextColor, highlighted, isVisible, imagesReady, onReply, onReplyJump, onLongPress, onMeasured, onSwipeActive, onImagePress, dragActive, dragFingerY, hoveredAction, actionZones, onFireDragAction, onOpenFullscreen }: { message: ChatMessage; isOwn: boolean; fontSize: number; bubbleRadius: number; fontFamily: string; linkEmoji?: string; bubbleColors: string[]; bubbleOpacity: number; bubbleTextColor: string; inColors: string[]; inOpacity: number; inTextColor: string; highlighted?: boolean; isVisible?: boolean; imagesReady?: boolean; onReply: (m: ChatMessage) => void; onReplyJump?: (messageId?: string) => void; onLongPress: (m: ChatMessage) => void; onMeasured?: (id: string, x: number, y: number, w: number, h: number) => void; onSwipeActive: (active: boolean) => void; onImagePress: (images: string[], index: number, message: ChatMessage) => void; dragActive: SharedValue<boolean>; dragFingerY: SharedValue<number>; hoveredAction: SharedValue<string>; actionZones: SharedValue<ActionZone[]>; onFireDragAction: (m: ChatMessage, action: string) => void; onOpenFullscreen: (m: ChatMessage) => void }) {
   const theme = useTheme();
   const t = useT();
   // Resolve THIS bubble's fill from the per-side style. Outgoing always has a
@@ -964,10 +964,10 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
                     <SingleChatImage
                       uri={message.imageUrls[0]}
                       isVisible={isVisible}
-                      onPress={() => onImagePress(message.imageUrls!, 0)}
+                      onPress={() => onImagePress(message.imageUrls!, 0, message)}
                     />
                   ) : (
-                    <Pressable onPress={() => onImagePress(message.imageUrls!, 0)}>
+                    <Pressable onPress={() => onImagePress(message.imageUrls!, 0, message)}>
                       {(() => {
                         // Size the placeholder to the remembered photo box when
                         // known, so the swap placeholder → real image never
@@ -982,7 +982,7 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
                   )
                 ) : (
                   message.imageUrls.map((uri, idx) => (
-                    <Pressable key={idx} onPress={() => onImagePress(message.imageUrls!, idx)}>
+                    <Pressable key={idx} onPress={() => onImagePress(message.imageUrls!, idx, message)}>
                       {imgReveal || (!isGifBubble && uri.startsWith('http') && getImageDims(uri)) ? (
                         <CachedImage
                           uri={uri}
@@ -1405,6 +1405,8 @@ export default function ChatScreen() {
     return () => { handle.cancel(); if (raf) cancelAnimationFrame(raf); };
   }, []);
   const [viewerImages, setViewerImages] = useState<{ images: string[]; index: number } | null>(null);
+  // The message the open viewer belongs to — see openImageViewer.
+  const [viewerMsg, setViewerMsg] = useState<ChatMessage | null>(null);
   // ── Inline emoji / GIF panels ─────────────────────────────────────────────
   // `emojiOpen` / `gifOpen` drive the two docked panels (mutually exclusive),
   // and the composer's GIF↔keyboard icon swap. `keepLifted` keeps the input bar
@@ -3412,10 +3414,19 @@ export default function ChatScreen() {
   }, [t]);
 
   // Stable so the memoized viewer never re-renders because of this screen.
-  const closeImageViewer = useCallback(() => setViewerImages(null), []);
+  // Clears the message too, so the chrome cannot outlive the photo it described.
+  const closeImageViewer = useCallback(() => { setViewerImages(null); setViewerMsg(null); }, []);
 
-  const openImageViewer = useCallback((images: string[], index: number) => {
+  // Carries the MESSAGE the photo came from, not just the urls.
+  //
+  // The viewer had no idea which message it was showing, which is why it could only ever offer a
+  // close button: an author row needs the sender, a delete needs the message id and ownership, and a
+  // pin needs the id too. A sibling state rather than widening the viewer's `payload`, because the
+  // component freezes a copy of `payload` for the exit animation — chrome must keep reading the live
+  // value while the parent has already cleared it.
+  const openImageViewer = useCallback((images: string[], index: number, message: ChatMessage) => {
     setViewerImages({ images, index });
+    setViewerMsg(message);
   }, []);
 
   // Send a GIF (from GIPHY) as a message. We store the remote GIF URL directly in
@@ -3747,6 +3758,77 @@ export default function ChatScreen() {
     triggerHaptic('medium');
     togglePinnedMessage(conversationId, activeMatchMessage.id);
   }, [activeMatchMessage, conversationId, togglePinnedMessage]);
+
+  // ─── FULLSCREEN VIEWER CHROME ─────────────────────────────────────────────
+  //
+  // Author row and actions for the photo viewer, matching what the profile viewers already show.
+  //
+  // Declared HERE, after `handleMenuAction` and the pin handlers, deliberately: `const` bindings in a
+  // component body are not hoisted, so a memo declared above them and capturing them would throw a
+  // TDZ ReferenceError on the first render. The same ordering note already exists above for the
+  // search-result actions, for the same reason.
+  //
+  // Memoized because the viewer compares chrome BY REFERENCE — an inline node would defeat its memo
+  // and re-render all three mounted pager images on every render of this (very busy) screen, which is
+  // the bug that made dragging the viewer stutter when it was inline JSX.
+  const viewerHeader = useMemo(() => {
+    if (!viewerMsg) return null;
+    const own = viewerMsg.senderId === currentUserId || viewerMsg.senderId === 'current';
+    return (
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        {/* Own emoji is read from the auth store at render time rather than being captured, for the
+            same reason bubble ownership is: one device can switch accounts, and the viewer must show
+            the account that is signed in NOW. */}
+        <Avatar emoji={own ? (useAuthStore.getState().user?.emoji || '😊') : (displayEmoji || '😊')} size="xs" />
+        <View style={{ flexShrink: 1 }}>
+          <Text variant="caption" weight="semibold" color="#FFFFFF" numberOfLines={1} style={{ fontSize: 11 }}>
+            {own ? t('chat.you', 'Вы') : (displayName || t('chat.fallback_name'))}
+          </Text>
+          <Text variant="caption" color="rgba(255,255,255,0.6)" style={{ fontSize: 9 }}>
+            {viewerMsg.createdAt ? formatMessageTime(viewerMsg.createdAt) : ''}
+          </Text>
+        </View>
+      </View>
+    );
+  }, [viewerMsg, currentUserId, displayEmoji, displayName, t]);
+
+  const viewerFooter = useMemo(() => {
+    if (!viewerMsg) return null;
+    const own = viewerMsg.senderId === currentUserId || viewerMsg.senderId === 'current';
+    const isPinned = !!conversationId && pinnedIds.includes(viewerMsg.id);
+    return (
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+        {/* Pin is offered for ANY message, own or not — pinning is about what matters in the
+            conversation, not about authorship, which is how the pinned bar already behaves. */}
+        <ViewerActionButton
+          icon={isPinned ? 'bookmark' : 'bookmark'}
+          accessibilityLabel={isPinned ? t('chat.unpin', 'Открепить') : t('chat.pin', 'Закрепить')}
+          onPress={() => {
+            if (!conversationId) return;
+            triggerHaptic('medium');
+            togglePinnedMessage(conversationId, viewerMsg.id);
+          }}
+        />
+        {own && (
+          <ViewerActionButton
+            icon="trash-2"
+            destructive
+            accessibilityLabel={t('chat.menu.delete')}
+            onPress={() => {
+              // Routes through `handleMenuAction`, exactly as the search-result delete does. That
+              // path already owns the confirmation alert, the tombstone that stops the poll
+              // resurrecting the row, the dissolve burst and the realtime `msg.delete` publish —
+              // duplicating any of it would be a second place to keep in step.
+              const target = viewerMsg;
+              closeImageViewer();
+              if (conversationId && pinnedIds.includes(target.id)) unpinMessage(conversationId, target.id);
+              handleMenuAction('delete', target);
+            }}
+          />
+        )}
+      </View>
+    );
+  }, [viewerMsg, currentUserId, conversationId, pinnedIds, togglePinnedMessage, unpinMessage, handleMenuAction, closeImageViewer, t]);
 
   const onDeleteSearchResult = useCallback(() => {
     if (!activeMatchMessage) return;
@@ -5456,11 +5538,19 @@ export default function ChatScreen() {
           every re-render of this screen, so all three mounted full-screen images
           re-rendered mid-gesture. That was the "the modal lags badly when I drag it".
           `proxyWidth` matches the bubbles so pages come from the memory cache. */}
+      {/* Chrome added: the chat viewer used to show a close button and nothing else — no author, no
+          date, no actions — while the profile viewers had all three. Same component, so it was only
+          ever missing the props. `bottomInset` matters too: it was absent, and the footer's
+          safe-area padding comes from it, so actions would have sat under the home indicator. */}
       <ImageViewerModal
         payload={viewerImages}
         onClose={closeImageViewer}
         topInset={insets.top}
+        bottomInset={insets.bottom}
         proxyWidth={CHAT_IMG_MAX_W}
+        header={viewerHeader}
+        footer={viewerFooter}
+        zoomable
       />
       <ScreenshotShield visible={screenshotDetected} />
       {/* Emoji "dissolve" burst overlay — renders nothing until a delete fires.
