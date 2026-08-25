@@ -4,6 +4,7 @@ import { Image, ImageLoadEventData, ImageErrorEventData } from 'expo-image';
 import { perfMonitor } from '../../services/perfMonitor';
 import { useSettingsStore } from '../../store/settingsStore';
 import Skeleton from './Skeleton';
+import { noteVariantLoaded, bestLoadedVariantUrl } from '../../services/mediaVariants';
 
 import { LottieSticker } from './LottieSticker';
 
@@ -181,6 +182,12 @@ interface CachedImageProps {
    * image.
    */
   skeleton?: boolean;
+  /**
+   * Paint an already-decoded, differently-sized derivative of the SAME asset while the requested one
+   * loads. See the note at placeholderUri below - this is what makes a fullscreen open instant
+   * instead of a fresh download. Opt-in, because only surfaces that ENLARGE existing media benefit.
+   */
+  progressive?: boolean;
   [key: string]: any;
 }
 
@@ -192,6 +199,7 @@ export const CachedImage = memo(function CachedImage({
   noProxy,
   autoplay,
   skeleton,
+  progressive,
   ...props
 }: CachedImageProps) {
   // Reset proxy-failure state when the source URL changes — otherwise a row
@@ -288,11 +296,32 @@ export const CachedImage = memo(function CachedImage({
   }
 
   let finalUri = uri;
+  // The width that ends up IN THE CACHE KEY. Captured here rather than recomputed in the load handler
+  // so the recorded value cannot drift from the one actually requested. `0` means the proxy was
+  // bypassed, i.e. the original asset at full resolution.
+  let requestedWidth = 0;
   if (!noProxy && !proxyFailed) {
     const flat = StyleSheet.flatten(style) as ImageStyle | undefined;
     const styleW = typeof flat?.width === 'number' ? flat.width : undefined;
+    requestedWidth = proxyWidth ?? styleW ?? DEFAULT_PROXY_WIDTH;
     finalUri = proxiedImageUrl(uri, proxyWidth ?? styleW);
   }
+
+  // ── PAINT WHAT IS ALREADY DECODED, THEN SHARPEN ───────────────────────────
+  //
+  // The width is part of expo-image's cache key (see `finalUri` above and the long note in
+  // `mediaVariants.ts`), so a fullscreen viewer asking for more resolution than the inline thumbnail
+  // used is a guaranteed cache MISS — which is what "I tap the GIF and it loads again" was.
+  //
+  // `placeholder` is expo-image's own mechanism for exactly this: it renders immediately from the
+  // memory cache while `source` loads. Handing it the derivative some other surface already decoded
+  // makes the open cost one frame instead of a network round-trip, and the swap to the sharper version
+  // is invisible because it is the same picture.
+  //
+  // Opt-in per caller (`progressive`) rather than automatic: for a small inline thumbnail there is
+  // usually nothing better already loaded, and passing a placeholder there would add a second source
+  // for no gain. The viewers are the callers that benefit.
+  const placeholderUri = progressive && !noProxy ? bestLoadedVariantUrl(uri, requestedWidth) : null;
 
   // Honour any external onLoad while still firing our instrumentation hook.
   // Pulling it out of `props` keeps the spread below from clobbering the
@@ -323,6 +352,11 @@ export const CachedImage = memo(function CachedImage({
       perfMonitor.decrementPendingDecodes();
       pendingHere.current = false;
     }
+    // Tell the registry this derivative exists now. Doing it HERE, in the one component every
+    // surface renders media through, is what makes the progressive path total: chat, comments,
+    // profile, both pickers and the viewer all contribute without any per-screen wiring, and a
+    // surface added later gets it by default rather than by remembering to opt in.
+    try { noteVariantLoaded(uri, requestedWidth); } catch {}
     if (skeleton) setLoaded(true);
     externalOnLoad?.(e);
   };
@@ -354,6 +388,8 @@ export const CachedImage = memo(function CachedImage({
         <Image
           ref={imageRef as any}
           source={{ uri: finalUri }}
+          placeholder={placeholderUri ? { uri: placeholderUri } : undefined}
+          placeholderContentFit={resizeMode === 'contain' ? 'contain' : 'cover'}
           style={StyleSheet.absoluteFill}
           autoplay={autoplay}
           contentFit={resizeMode === 'contain' ? 'contain' : resizeMode === 'fill' ? 'fill' : 'cover'}
@@ -383,6 +419,11 @@ export const CachedImage = memo(function CachedImage({
     <Image
       ref={imageRef as any}
       source={{ uri: finalUri }}
+      // Already-decoded smaller derivative, painted on the first frame while the requested one loads.
+      // `undefined` when there is nothing better cached, which keeps every existing caller byte-for-byte
+      // unchanged — this only ever ADDS a first frame that would otherwise have been blank.
+      placeholder={placeholderUri ? { uri: placeholderUri } : undefined}
+      placeholderContentFit={resizeMode === 'contain' ? 'contain' : 'cover'}
       style={style}
       // Pass through animation control when the caller opts in; undefined
       // leaves expo-image at its default (autoplay on).

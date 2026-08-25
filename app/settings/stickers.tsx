@@ -22,8 +22,8 @@
  * rather than being sorted into 1970.
  */
 
-import React, { useMemo, useState, useCallback } from 'react';
-import { View, Pressable, StyleSheet, FlatList, Alert, Dimensions } from 'react-native';
+import React, { useMemo, useState, useCallback, useEffect } from 'react';
+import { View, Pressable, StyleSheet, FlatList, Alert, Dimensions, InteractionManager } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -43,6 +43,14 @@ const NUM_COLUMNS = 4;
 const H_PAD = 16;
 const CELL_GAP = 8;
 const CELL = Math.floor((SCREEN_WIDTH - H_PAD * 2 - CELL_GAP * (NUM_COLUMNS - 1)) / NUM_COLUMNS);
+
+// Header band height. Named because BOTH the chrome and the list's top padding derive from it -
+// they were two independent literals, so lowering the title used to leave the list scrolling under
+// the wrong offset.
+const HEADER_H = 64;
+
+/** Stable empty array so the pre-ready render cannot hand FlatList a fresh identity each pass. */
+const EMPTY_ROWS: Row[] = [];
 
 /**
  * One flattened list row. Interleaving group headers with rows of cells keeps this a single FlatList —
@@ -118,9 +126,27 @@ export default function ImportedStickersScreen() {
   const removeMany = useCustomGifs((s) => s.removeMany);
   const [selected, setSelected] = useState<string | null>(null);
 
+  // ── THE FIRST PAINT CARRIES THE CHROME, NOT THE LIBRARY ───────────────────
+  //
+  // The other half of the reported freeze. `buildRows` groups every stored sticker and formats one date
+  // per group through `toLocaleDateString` — and the FIRST `Intl` call on Hermes pays ICU
+  // initialisation, which is far more expensive than any of the grouping. All of that ran during the
+  // screen's first render, i.e. on the frame the navigator was trying to animate.
+  //
+  // `InteractionManager` is the pattern this codebase already uses for exactly this on the messages tab
+  // and the chat screen: the transition runs first, the list arrives a frame later. The header, the
+  // scrims and the intro text are all available immediately, so the screen is never blank — it simply
+  // fills in. `ready` also gives the empty state something honest to wait on, so an empty library does
+  // not flash "nothing imported" before the real rows appear.
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    const handle = InteractionManager.runAfterInteractions(() => setReady(true));
+    return () => handle.cancel();
+  }, []);
+
   const rows = useMemo(
-    () => buildRows(items, t('stickers.date_unknown'), t('locale.tag')),
-    [items, t],
+    () => (ready ? buildRows(items, t('stickers.date_unknown'), t('locale.tag')) : EMPTY_ROWS),
+    [ready, items, t],
   );
 
   // Deleting has to clear BOTH lists. `recent_gif` keeps a full copy of anything that has been sent, and
@@ -255,7 +281,7 @@ export default function ImportedStickersScreen() {
         keyExtractor={(r) => r.key}
         renderItem={renderRow}
         contentContainerStyle={{
-          paddingTop: insets.top + 58,
+          paddingTop: insets.top + HEADER_H + 10,
           paddingBottom: insets.bottom + 96,
           paddingHorizontal: H_PAD,
         }}
@@ -277,6 +303,7 @@ export default function ImportedStickersScreen() {
           </View>
         }
         ListEmptyComponent={
+          !ready ? null : (
           <View style={styles.empty}>
             <Feather name="image" size={30} color={theme.colors.text.tertiary} />
             <Text variant="body" color={theme.colors.text.secondary} align="center" style={styles.emptyTitle}>
@@ -286,27 +313,61 @@ export default function ImportedStickersScreen() {
               {t('stickers.empty_msg')}
             </Text>
           </View>
+          )
         }
       />
 
-      {/* ── DIMMING TOP AND BOTTOM ────────────────────────────────────────────
+      {/* ── THE SCRIMS DISSOLVE; THEY DO NOT END ─────────────────────────────────
    
-          Asked for by name. Both are the same three-stop ramp the chat screen uses for its header and
-          footer, so content scrolling under the chrome reads as fading out rather than being cut off by
-          a hard edge. `pointerEvents="none"` on the gradients themselves — only the buttons on top of
-          them are meant to catch touches. */}
-      <View style={[styles.topChrome, { height: insets.top + 58 }]} pointerEvents="box-none">
+          Reported: the dimming stops at a visible line instead of melting into the content.
+   
+          Three stops were the cause. `[0, 0.6, 1]` from opaque to 87% to transparent means the last 40%
+          of the band carries the entire remaining fade, so alpha falls off steeply and the eye reads the
+          steep part as an edge. A gradient looks soft when the fade is SLOW where it meets the content,
+          which needs stops concentrated near the tail rather than spread evenly.
+   
+          Five stops now, with the alpha curve front-loaded: fully opaque for the first third (where the
+          buttons sit and content must be hidden outright), then 0.85 → 0.55 → 0.22 → 0 across the rest.
+          The last two stops are close together in alpha and far apart in position, which is what
+          produces a tail that approaches zero gently. Same shape mirrored on the bottom.
+   
+          Still one `LinearGradient` per edge and NO blur. Asked for explicitly, and it is the right call:
+          a blur over this band would have to re-composite the scrolling grid underneath it every frame,
+          which costs far more than the hard edge did. `pointerEvents="none"` on the gradients themselves
+          so only the buttons above them catch touches. */}
+      <View style={[styles.topChrome, { height: insets.top + HEADER_H + 28 }]} pointerEvents="box-none">
         <LinearGradient
           colors={[
             theme.colors.background.primary,
-            theme.colors.background.primary + (theme.isDark ? 'D9' : 'E6'),
+            theme.colors.background.primary,
+            theme.colors.background.primary + 'D9',
+            theme.colors.background.primary + '8C',
+            theme.colors.background.primary + '38',
             theme.colors.background.primary + '00',
           ]}
-          locations={[0, 0.6, 1]}
+          locations={[0, 0.34, 0.56, 0.74, 0.89, 1]}
           style={StyleSheet.absoluteFill}
           pointerEvents="none"
         />
-        <View style={[styles.headerRow, { paddingTop: insets.top }]}>
+        {/* ── LOWER, AND THE COUNT IS NO LONGER CLIPPED ─────────────────────────
+   
+            Two reports, two different causes.
+   
+            Sitting too high: the row was `paddingTop: insets.top` with a fixed `height: 58`, so the title
+            began at the very first pixel below the safe area and the whole block was pinned against the
+            notch. There is a breathing gap under the inset now, and the row's height comes from its
+            content instead of a constant that the content had to fit inside.
+   
+            The count clipping: the row is `height: 58` and the block inside it is two stacked lines of
+            text. Two lines of body + caption plus their line-height does not fit in 58 at the default
+            font scale, let alone an enlarged one, so the second line was cut off by the row — this was a
+            HEIGHT clip, not the width problem it looks like. Removing the fixed height fixes it at every
+            font size, which is why no width was touched and no `numberOfLines` was raised.
+   
+            `flexShrink: 1` on the text block rather than a width: the block yields to the back button
+            instead of both fighting over a hard-coded split, so a long translated title ellipsizes and a
+            short one takes only what it needs. */}
+        <View style={[styles.headerRow, { paddingTop: insets.top + 10 }]}>
           <Pressable
             onPress={() => { triggerHaptic('light'); router.back(); }}
             hitSlop={10}
@@ -318,7 +379,9 @@ export default function ImportedStickersScreen() {
           </Pressable>
           <View style={styles.titleWrap}>
             <Text variant="body" weight="bold" numberOfLines={1}>{t('stickers.title')}</Text>
-            <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1}>
+            {/* No `numberOfLines` at all. It is a short count string that must never be truncated, and
+                capping it at one line is what turns a tight box into a clipped one. */}
+            <Text variant="caption" color={theme.colors.text.tertiary}>
               {t('stickers.subtitle', undefined, { count: String(items.length) })}
             </Text>
           </View>
@@ -331,10 +394,13 @@ export default function ImportedStickersScreen() {
         <LinearGradient
           colors={[
             theme.colors.background.primary + '00',
-            theme.colors.background.primary + (theme.isDark ? 'D9' : 'E6'),
+            theme.colors.background.primary + '38',
+            theme.colors.background.primary + '8C',
+            theme.colors.background.primary + 'D9',
+            theme.colors.background.primary,
             theme.colors.background.primary,
           ]}
-          locations={[0, 0.4, 1]}
+          locations={[0, 0.11, 0.26, 0.44, 0.66, 1]}
           style={StyleSheet.absoluteFill}
           pointerEvents="none"
         />
@@ -364,9 +430,15 @@ const styles = StyleSheet.create({
   root: { flex: 1 },
   topChrome: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10 },
   bottomChrome: { position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 10, justifyContent: 'flex-end' },
-  headerRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, height: 58 },
+  // No `height`. It was 58, and two stacked lines of text plus their line-height do not fit inside that
+  // at the default font scale — which is what clipped the count. Height comes from the content now, so
+  // it is correct at every accessibility text size. `alignItems: flex-start` keeps the chevron level with
+  // the title rather than centred against a two-line block.
+  headerRow: { flexDirection: 'row', alignItems: 'flex-start', paddingHorizontal: 8, paddingBottom: 6 },
   backBtn: { width: 38, height: 38, alignItems: 'center', justifyContent: 'center' },
-  titleWrap: { flex: 1, marginLeft: 2 },
+  // `flexShrink` rather than `flex: 1`: the block takes what it needs and yields to the button, instead
+  // of claiming all remaining width and forcing its children to ellipsize inside it.
+  titleWrap: { flexShrink: 1, marginLeft: 2, paddingTop: 6 },
   intro: { paddingBottom: 14 },
   introText: { lineHeight: 18 },
   groupHeader: { flexDirection: 'row', alignItems: 'center', paddingTop: 14, paddingBottom: 8 },

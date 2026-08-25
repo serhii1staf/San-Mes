@@ -648,7 +648,25 @@ function ImageViewerModalComponent({
 const ViewerPage = memo(function ViewerPage({ uri, proxyWidth }: { uri: string; proxyWidth: number }) {
   return (
     <View style={styles.page}>
-      <CachedImage uri={uri} style={styles.image} resizeMode="contain" proxyWidth={proxyWidth} />
+      {/* ── `progressive`: THE VIEWER PAINTS WHAT IS ALREADY DECODED ──────────────
+   
+          Reported for comments: the GIF is on screen, you tap it, and it loads again before appearing.
+   
+          The cause is not in this component, it is in what the cache key contains. `CachedImage` gives
+          expo-image the asset routed through the proxy at the requested width, so the WIDTH IS PART OF
+          THE KEY — and a viewer asking for more resolution than the inline thumbnail used can only ever
+          miss. Measured: a comment GIF inline is `width: 160` with no `proxyWidth`, so `w=320`, while
+          this viewer is handed `proxyWidth = SCREEN_WIDTH`, so `w=780`. Two keys, one asset.
+   
+          Matching the widths would fix the miss and ruin the viewer — a 320 px derivative stretched
+          across the display. So the derivative already in memory is painted on the FIRST frame via
+          expo-image's own `placeholder`, and the sharper one replaces it when it arrives. Same picture,
+          more pixels, so the swap is invisible; the perceived open cost becomes one frame.
+   
+          Nothing here needs to know which derivative that is: every surface records its completed loads
+          through `CachedImage`, so this works for chat, comments and both profile screens at once. See
+          `src/services/mediaVariants.ts`. */}
+      <CachedImage uri={uri} style={styles.image} resizeMode="contain" proxyWidth={proxyWidth} progressive />
     </View>
   );
 });
