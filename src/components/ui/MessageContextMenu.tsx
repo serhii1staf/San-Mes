@@ -13,6 +13,8 @@ import { extractFirstUrl } from '../../services/linkPreview';
 import { openUrl } from '../../utils/openUrl';
 import { ChatMessage } from '../../types';
 import { useT } from '../../i18n/store';
+import { isCutoutOnlyMessage } from '../../utils/mediaKind';
+import { useLiquidGlassActive, GlassBg } from './LiquidGlass';
 
 const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = Dimensions.get('window');
 // Same proportion as CommentContextMenu — works well in practice and keeps the
@@ -144,8 +146,24 @@ export const MessageContextMenu = forwardRef<MessageContextMenuHandle, MessageCo
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
+  // iOS-26 liquid glass when available and enabled; false on Android by construction, which lands every
+  // surface below on its opaque elevated branch. See the note at the preview card.
+  const glassActive = useLiquidGlassActive();
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
   const backdropAnim = useRef(new Animated.Value(0)).current;
+  // ── THE HELD CONTENT GROWS; IT DOES NOT ARRIVE ────────────────────────────
+  //
+  // Asked for as Telegram's behaviour: hold something and the thing you are holding gets bigger and is
+  // singled out — it is not replaced by a new panel that slides in from somewhere else.
+  //
+  // Previously the preview travelled on `slideAnim` together with the action sheet, so both entered as
+  // one object from off-screen. That reads as "a sheet appeared", not as "this message lifted". The
+  // preview now has its own value and scales from 0.88 in place while the action sheet keeps sliding
+  // up, which is the split Telegram uses and the reason its long-press feels attached to the content.
+  //
+  // Same value drives both platforms — the motion IS the shared logic. Only the SURFACE branches
+  // (liquid glass on iOS, an elevated Material surface on Android), further down.
+  const liftAnim = useRef(new Animated.Value(0)).current;
   const isClosing = useRef(false);
   // Host-view refs for each action row, keyed by index, used to measure their
   // absolute window rects once the slide-up settles.
@@ -169,9 +187,13 @@ export const MessageContextMenu = forwardRef<MessageContextMenuHandle, MessageCo
       isClosing.current = false;
       slideAnim.setValue(SCREEN_HEIGHT);
       backdropAnim.setValue(0);
+      liftAnim.setValue(0);
       Animated.parallel([
         Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 50, friction: 9 }),
         Animated.timing(backdropAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
+        // Slightly springier than the sheet so the content settles first — the eye follows what it was
+        // already looking at, then the actions arrive under it.
+        Animated.spring(liftAnim, { toValue: 1, useNativeDriver: true, tension: 70, friction: 10 }),
       ]).start(() => {
         // Publish the action rows' absolute hit-zones for the drag gesture only
         // AFTER the slide settles — measureInWindow includes the (now-zero)
@@ -209,6 +231,8 @@ export const MessageContextMenu = forwardRef<MessageContextMenuHandle, MessageCo
     Animated.parallel([
       Animated.timing(slideAnim, { toValue: SCREEN_HEIGHT, duration: 220, useNativeDriver: true }),
       Animated.timing(backdropAnim, { toValue: 0, duration: 220, useNativeDriver: true }),
+      // Shrinks back into the thread rather than riding away with the sheet, mirroring the open.
+      Animated.timing(liftAnim, { toValue: 0, duration: 180, useNativeDriver: true }),
     ]).start(() => {
       onClose();
       if (cb) setTimeout(cb, 20);
@@ -282,6 +306,10 @@ export const MessageContextMenu = forwardRef<MessageContextMenuHandle, MessageCo
   const hasImages = !!message.imageUrls && message.imageUrls.length > 0;
   const imageCount = hasImages ? message.imageUrls!.length : 0;
   const link = (!hasImages && !hasCodeBlock(message.text)) ? extractFirstUrl(message.text) : null;
+  // A sticker held on its own gets NO card. Same rule the bubble uses, from the same function, for the
+  // same reason: this menu was painting `#FFFFFF` behind a cut-out, so holding a sticker put it on a
+  // white rectangle — the exact defect that was just removed from the thread, reappearing on long-press.
+  const cutoutOnly = isCutoutOnlyMessage(message);
 
   // Tapping a link in the held-message preview must dismiss this overlay
   // first. Even though we render as an absolute View (not a Modal), the
@@ -297,12 +325,34 @@ export const MessageContextMenu = forwardRef<MessageContextMenuHandle, MessageCo
   const renderImages = () => {
     if (!hasImages) return null;
     if (imageCount === 1) {
+      // ── ENLARGED, NOT RE-FETCHED ──────────────────────────────────────────
+      //
+      // `proxyWidth={imageProxyWidth}` is the load-bearing part: the chat screen passes the SAME width
+      // the bubble already requested, so this resolves to a byte-identical proxied URL and comes out of
+      // expo-image's memory cache. Ask for a menu-specific size and it is a different cache key, which
+      // is a fresh download — that is what "long-press re-downloads the picture" was.
+      //
+      // A cut-out gets `contain` and no radius: `cover` CROPS to fill, so a 512-square sticker whose
+      // subject stops short of the edges loses its transparent margin and has its artwork pushed to the
+      // bleed. It also gets a larger box, because it has no card around it to give it presence — this is
+      // the "enlarge the content you are already showing" half of the request.
+      const box = cutoutOnly ? 260 : 220;
       return (
-        <View style={{ marginBottom: message.text ? 6 : 0 }}>
+        <View style={{ marginBottom: message.text ? 6 : 0, alignItems: cutoutOnly ? 'center' : 'flex-start' }}>
           {contentReady ? (
-            <CachedImage uri={message.imageUrls![0]} style={{ width: 220, height: 220, borderRadius: 12 }} resizeMode="cover" proxyWidth={imageProxyWidth} />
+            <CachedImage
+              uri={message.imageUrls![0]}
+              style={{ width: box, height: box, borderRadius: cutoutOnly ? 0 : 12 }}
+              resizeMode={cutoutOnly ? 'contain' : 'cover'}
+              proxyWidth={imageProxyWidth}
+            />
+          ) : cutoutOnly ? (
+            // Reserve the space with nothing in it. The shimmer is an opaque slab, so on a cut-out it
+            // paints the very rectangle this branch exists to avoid, one frame before the sticker
+            // arrives without one.
+            <View style={{ width: box, height: box }} />
           ) : (
-            <Skeleton width={220} height={220} radius={12} />
+            <Skeleton width={box} height={box} radius={12} />
           )}
         </View>
       );
@@ -372,8 +422,48 @@ export const MessageContextMenu = forwardRef<MessageContextMenuHandle, MessageCo
           {/* Held message preview — neutral elevated card (same pattern as
               CommentContextMenu). Wide enough to fit rich previews; scrolls
               internally only for long-text cases. */}
-          <View style={{ marginHorizontal: 12, marginBottom: 8, alignItems: 'stretch' }} pointerEvents="box-none">
-            <View style={{ borderRadius: 18, backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF', overflow: 'hidden' }}>
+          <Animated.View
+            style={{
+              marginHorizontal: 12,
+              marginBottom: 8,
+              alignItems: 'stretch',
+              // Grows in place. See the note on `liftAnim`: this is what makes the gesture read as
+              // lifting the message rather than summoning a panel.
+              opacity: liftAnim,
+              transform: [{ scale: liftAnim.interpolate({ inputRange: [0, 1], outputRange: [0.88, 1] }) }],
+            }}
+            pointerEvents="box-none"
+          >
+            {/* ── THE SURFACE IS THE ONLY THING THAT BRANCHES BY PLATFORM ──────────
+   
+                The behaviour above — what is held, how it scales, which actions appear, how they are
+                measured and dragged over — is identical on both platforms, which is what was asked for.
+                What differs is the material the card is made of:
+   
+                  iOS   liquid glass, matching every other floating surface in the app.
+                  Android  an opaque elevated surface, which is what Material specifies and what the
+                           BlurView fallback already gives every other sheet here.
+   
+                And a cut-out gets NO surface at all on either platform. Holding a sticker used to put it
+                on `#FFFFFF`; a sticker has no background in the thread and must not acquire one here. */}
+            <View style={{
+              borderRadius: 18,
+              overflow: 'hidden',
+              backgroundColor: cutoutOnly
+                ? 'transparent'
+                : glassActive
+                  ? 'transparent'
+                  : theme.isDark ? theme.colors.background.elevated : '#FFFFFF',
+            }}>
+              {!cutoutOnly && glassActive ? (
+                <GlassBg
+                  borderRadius={18}
+                  glassStyle="regular"
+                  interactive={false}
+                  colorScheme={theme.isDark ? 'dark' : 'light'}
+                  tintColor={theme.isDark ? 'rgba(28,28,32,0.72)' : 'rgba(255,255,255,0.72)'}
+                />
+              ) : null}
               {/* ALWAYS a ScrollView — the `isLong` branch is gone here too.
    
                   Same latent bug the comments menu had: `isLong` only measures `message.text`, but a
@@ -387,22 +477,46 @@ export const MessageContextMenu = forwardRef<MessageContextMenuHandle, MessageCo
               <ScrollView
                 style={{ maxHeight: PREVIEW_MAX_HEIGHT }}
                 showsVerticalScrollIndicator={false}
-                contentContainerStyle={{ paddingHorizontal: 14, paddingVertical: 12 }}
+                // No inset for a cut-out: the padding exists to keep text and quotes off the card edge,
+                // and there is no card here to be off the edge of. Left in place it just shrank the
+                // sticker for no reason.
+                contentContainerStyle={cutoutOnly ? undefined : { paddingHorizontal: 14, paddingVertical: 12 }}
                 bounces={false}
                 nestedScrollEnabled
               >
                 {previewInner}
               </ScrollView>
             </View>
-          </View>
+          </Animated.View>
 
           {/* Action sheet */}
           <View
-            style={{ marginHorizontal: 8, backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF', borderRadius: 28, overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.12, shadowRadius: 16, elevation: 10 }}
+            style={{
+              marginHorizontal: 8,
+              backgroundColor: glassActive ? 'transparent' : theme.isDark ? theme.colors.background.elevated : '#FFFFFF',
+              borderRadius: 28,
+              overflow: 'hidden',
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: -4 },
+              shadowOpacity: 0.12,
+              shadowRadius: 16,
+              elevation: 10,
+            }}
             // Re-measure hit-zones whenever the sheet's layout changes (content
             // height differs per message). Cheap and keeps zones accurate.
             onLayout={() => { requestAnimationFrame(() => measureZonesRef.current()); }}
           >
+            {/* Glass on iOS, the opaque elevated surface above on Android. `elevation` stays set either
+                way — it is inert on iOS and is what gives the Android sheet its Material lift. */}
+            {glassActive ? (
+              <GlassBg
+                borderRadius={28}
+                glassStyle="regular"
+                interactive={false}
+                colorScheme={theme.isDark ? 'dark' : 'light'}
+                tintColor={theme.isDark ? 'rgba(28,28,32,0.78)' : 'rgba(255,255,255,0.78)'}
+              />
+            ) : null}
             <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 6 }}>
               <View style={{ width: 40, height: 5, borderRadius: 3, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)' }} />
             </View>

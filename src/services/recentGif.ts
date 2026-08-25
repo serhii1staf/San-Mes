@@ -29,3 +29,32 @@ export function pushRecentGif(item: GiphyItem): GiphyItem[] {
   kvSetJSON(KEY, next);
   return next;
 }
+
+/**
+ * Forget a GIF entirely — the other half of a delete.
+ *
+ * ── WHY DELETING A STICKER LOOKED LIKE IT "MOVED TO ANOTHER SLOT" ───────────
+ *
+ * Reported exactly that way, and it was literally true. A custom sticker lives in TWO lists once it
+ * has been sent: `customGifsStore` (the user's imports) and this one (recently used). `pushRecentGif`
+ * stores the WHOLE `GiphyItem`, `custom:` id and all, so the two copies are indistinguishable.
+ *
+ * The GIF grid concatenates them — own first, then recent, then trending, deduped by id. So deleting
+ * removed the entry from `own`, at the FRONT of the grid, while the identical copy survived in
+ * `recent`, immediately after it. The cell vanished from where it was and reappeared a few positions
+ * later: one sticker, two homes, one of them cleaned.
+ *
+ * And it got worse on the second attempt. The surviving copy still carries the `custom:` prefix, which
+ * is what the long-press menu tests to decide whether to offer Delete — so Delete appeared again and
+ * filtered an id that was no longer in `customGifsStore` at all. A no-op. That is the "it just stays"
+ * half of the report.
+ *
+ * There was no remover here at all; this list only ever grew. Returns the updated list so the caller
+ * can push it into React state in one hop, mirroring `pushRecentGif`.
+ */
+export function removeRecentGif(id: string): GiphyItem[] {
+  if (!id) return getRecentGif();
+  const next = getRecentGif().filter((x) => x.id !== id);
+  kvSetJSON(KEY, next);
+  return next;
+}

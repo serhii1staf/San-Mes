@@ -1021,6 +1021,27 @@ const en: Record<string, string> = {
   'mini_app_preview.none': 'No background',
   'mini_app_preview.demo_name': 'Demo',
   'mini_app_preview.demo_desc': 'Cover preview',
+
+  // ─── Imported stickers screen ──────────────────────────────────────────
+  // BCP-47 tag for Intl / toLocaleDateString. A separate key rather than deriving
+  // it from the locale code: bare 'en' formats dates differently from 'en-US'.
+  'locale.tag': 'en-US',
+  'stickers.title': 'My stickers',
+  'stickers.subtitle': '{count} items',
+  'stickers.intro':
+    'You can import a Telegram sticker set (a t.me/addstickers/… link) or a direct link to an image. ' +
+    'From a web page, copy the address of the image itself first.',
+  'stickers.empty_title': 'Nothing imported yet',
+  'stickers.empty_msg': 'Open the GIF panel, tap the plus and paste a link.',
+  'stickers.date_unknown': 'Date unknown',
+  'stickers.group_meta': '{count} items',
+  'stickers.group_meta_pack': '{count} items · {packs}',
+  'stickers.deleted': 'Deleted',
+  'stickers.delete_one_title': 'Delete this sticker?',
+  'stickers.delete_one_msg': 'It will disappear from the GIF panel. Messages already sent are unchanged.',
+  'stickers.delete_group_title': 'Delete this whole import?',
+  'stickers.delete_group_msg': '{count} items from {date} will be removed. Messages already sent are unchanged.',
+  'stickers.view_pack': 'Open “{pack}”',
 };
 
 export default en;

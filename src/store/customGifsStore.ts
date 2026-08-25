@@ -54,8 +54,22 @@ const MAX_CUSTOM = 240;
  */
 const SQUARE_DIMS = { previewWidth: 512, previewHeight: 512, width: 512, height: 512 } as const;
 
+/**
+ * A stored sticker, with the two facts a `GiphyItem` has no room for.
+ *
+ * `packName` was already being written and read through `as any` casts, which meant the one field the
+ * long-press menu depends on for "View pack" was invisible to the type checker. `addedAt` is new — the
+ * manager screen groups imports by day, and without a timestamp there is nothing to group by and no way
+ * to tell a pack imported this morning from one imported months ago.
+ *
+ * Both optional, because entries written by earlier builds have neither and must keep working. The
+ * manager treats a missing `addedAt` as "date unknown" rather than as epoch zero, which would sort a
+ * legacy sticker into 1970.
+ */
+export type CustomGif = GiphyItem & { packName?: string; addedAt?: number };
+
 interface CustomGifsState {
-  items: GiphyItem[];
+  items: CustomGif[];
   /** Add a validated GIF. Newest first; re-adding an existing URL moves it to the front. */
   add: (url: string) => void;
   /**
@@ -69,6 +83,8 @@ interface CustomGifsState {
    */
   addMany: (urls: string[], packName?: string) => void;
   remove: (id: string) => void;
+  /** Remove several at once - the manager screen deletes a whole day's import in one action. */
+  removeMany: (ids: string[]) => void;
   /** Re-read from disk — used when the active account changes. */
   hydrate: () => void;
 }
@@ -82,8 +98,8 @@ function idForUrl(url: string): string {
   return 'custom:' + url;
 }
 
-function load(): GiphyItem[] {
-  const rows = kvGetJSONSync<GiphyItem[]>(KEY, []);
+function load(): CustomGif[] {
+  const rows = kvGetJSONSync<CustomGif[]>(KEY, []);
   return Array.isArray(rows) ? rows : [];
 }
 
@@ -95,8 +111,9 @@ export const useCustomGifs = create<CustomGifsState>((set, get) => ({
     if (!clean) return;
     const id = idForUrl(clean);
     const existing = get().items.filter((g) => g.id !== id);
-    const item: GiphyItem = {
+    const item: CustomGif = {
       id,
+      addedAt: Date.now(),
       // One URL for all three roles. A user-supplied GIF has no separate still frame or preview
       // rendition to point at, and inventing one would mean re-hosting or proxying their file.
       previewUrl: clean,
@@ -114,8 +131,13 @@ export const useCustomGifs = create<CustomGifsState>((set, get) => ({
     if (clean.length === 0) return;
     const incomingIds = new Set(clean.map(idForUrl));
     const kept = get().items.filter((g) => !incomingIds.has(g.id));
-    const fresh: GiphyItem[] = clean.map((u) => ({
+    const stamp = Date.now();
+    const fresh: CustomGif[] = clean.map((u) => ({
       id: idForUrl(u),
+      // ONE timestamp for the whole batch, taken before the map rather than inside it. A pack is a
+      // single user action, and Date.now() per item would spread sixty stickers across a few
+      // milliseconds - enough for the manager to occasionally split one import into two groups.
+      addedAt: stamp,
       previewUrl: u,
       sendUrl: u,
       stillUrl: u,
@@ -131,6 +153,14 @@ export const useCustomGifs = create<CustomGifsState>((set, get) => ({
 
   remove: (id) => {
     const next = get().items.filter((g) => g.id !== id);
+    set({ items: next });
+    kvSetJSON(KEY, next);
+  },
+
+  removeMany: (ids) => {
+    if (!ids || ids.length === 0) return;
+    const drop = new Set(ids);
+    const next = get().items.filter((g) => !drop.has(g.id));
     set({ items: next });
     kvSetJSON(KEY, next);
   },

@@ -34,7 +34,7 @@ import { AnimatedGifIcon } from '../../src/components/chat/AnimatedGifIcon';
 import { AnimatedKeyboardIcon } from '../../src/components/chat/AnimatedKeyboardIcon';
 import { parseGif, GiphyItem } from '../../src/services/giphy';
 import { getRecentEmoji, pushRecentEmoji } from '../../src/services/recentEmoji';
-import { getRecentGif, pushRecentGif } from '../../src/services/recentGif';
+import { getRecentGif, pushRecentGif, removeRecentGif } from '../../src/services/recentGif';
 import { kvGetJSONSync, kvSetJSON } from '../../src/services/kvStore';
 import { useAuthStore, useConnectivityStore } from '../../src/store';
 import { getRealtime, postChannelName } from '../../src/services/realtime/ably';
@@ -1596,6 +1596,12 @@ export default function CommentsScreen() {
 
   // Tap (or long-press → Send) a GIF → send as a comment, close the panel.
   // Plain functions so they always see the latest replyTo / user / postId.
+  // Same reason as the chat screen: recents keeps a full copy of any sticker that has been sent, so a
+  // delete that only cleans the store leaves the twin behind. See the note on `removeRecentGif`.
+  const onForgetGif = (id: string) => {
+    setRecentGif(removeRecentGif(id));
+  };
+
   const onPickGif = (item: GiphyItem) => {
     setRecentGif(pushRecentGif(item));
     setPanelTab(null);
@@ -2042,6 +2048,7 @@ export default function CommentsScreen() {
                 onCopyEmoji={onCopyEmoji}
                 onSendGif={onPickGif}
                 onCopyGif={onCopyGif}
+                onForgetGif={onForgetGif}
               />
             </View>
           </Reanimated.View>
