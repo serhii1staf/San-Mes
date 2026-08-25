@@ -44,6 +44,16 @@ const KEY = '@san:custom_gifs';
  */
 const MAX_CUSTOM = 240;
 
+/**
+ * Dimensions for a user-added sticker.
+ *
+ * GiphyItem requires them, and they were previously supplied by an s GiphyItem cast - which
+ * silently produced items with undefined width and height. Real numbers instead: 512 is the size
+ * every Telegram sticker is authored at, and square is the least-wrong default for a pasted GIF of
+ * unknown size, since the cell that renders it is itself square.
+ */
+const SQUARE_DIMS = { previewWidth: 512, previewHeight: 512, width: 512, height: 512 } as const;
+
 interface CustomGifsState {
   items: GiphyItem[];
   /** Add a validated GIF. Newest first; re-adding an existing URL moves it to the front. */
@@ -57,7 +67,7 @@ interface CustomGifsState {
    *
    * Order within the batch is preserved, and the batch lands in front of everything already there.
    */
-  addMany: (urls: string[]) => void;
+  addMany: (urls: string[], packName?: string) => void;
   remove: (id: string) => void;
   /** Re-read from disk — used when the active account changes. */
   hydrate: () => void;
@@ -92,13 +102,14 @@ export const useCustomGifs = create<CustomGifsState>((set, get) => ({
       previewUrl: clean,
       sendUrl: clean,
       stillUrl: clean,
-    } as GiphyItem;
+      ...SQUARE_DIMS,
+    };
     const next = [item, ...existing].slice(0, MAX_CUSTOM);
     set({ items: next });
     kvSetJSON(KEY, next);
   },
 
-  addMany: (urls) => {
+  addMany: (urls, packName) => {
     const clean = urls.map((u) => (u || '').trim()).filter(Boolean);
     if (clean.length === 0) return;
     const incomingIds = new Set(clean.map(idForUrl));
@@ -108,7 +119,11 @@ export const useCustomGifs = create<CustomGifsState>((set, get) => ({
       previewUrl: u,
       sendUrl: u,
       stillUrl: u,
-    }) as GiphyItem);
+      ...SQUARE_DIMS,
+      // Which pack this came from, so the long-press menu can offer "View pack". Without it the action
+      // would have nowhere to go, and a menu item that does nothing is worse than one that is absent.
+      packName,
+    }));
     const next = [...fresh, ...kept].slice(0, MAX_CUSTOM);
     set({ items: next });
     kvSetJSON(KEY, next);

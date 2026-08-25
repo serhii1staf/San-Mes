@@ -44,11 +44,9 @@ export interface GifPanelProps {
   onScrollTick?: () => void;
   /** GIFs the user added by pasting a link. Shown first - they asked for them, so they lead. */
   customGifs?: GiphyItem[];
-  /** Long-press a user-added GIF to drop it. Absent for Giphy items, which are not the user's. */
-  onRemoveCustomGif?: (id: string) => void;
 }
 
-function GifPanelComponent({ height, onSelect, onLongPress, theme, bottomInset = 0, bare = false, recentGifs, topInset = 0, onScrollTick, customGifs, onRemoveCustomGif }: GifPanelProps) {
+function GifPanelComponent({ height, onSelect, onLongPress, theme, bottomInset = 0, bare = false, recentGifs, topInset = 0, onScrollTick, customGifs }: GifPanelProps) {
   const t = useT();
   const glassActive = useLiquidGlassActive();
   const [gifs, setGifs] = useState<GiphyItem[]>(() => getCachedTrending() || []);
@@ -117,19 +115,17 @@ function GifPanelComponent({ height, onSelect, onLongPress, theme, bottomInset =
     ({ item }: { item: GiphyItem }) => (
       <Pressable
         onPress={() => onSelect(item)}
-        // A GIF the user added is the only one they can delete, so long-press means two different things
-        // depending on the cell — remove for their own, preview for Giphy's. Keyed off the `custom:` id
-        // prefix the store mints, which is the only marker that survives being persisted and reloaded.
+        // ONE meaning for long-press again: open the menu.
         //
-        // Without this there is no way to undo an add: the picker would accumulate every mistyped link
-        // for ever, which is the failure mode of every "add your own" feature that ships without a remove.
-        onLongPress={
-          onRemoveCustomGif && item.id.startsWith('custom:')
-            ? () => onRemoveCustomGif(item.id)
-            : onLongPress
-              ? () => onLongPress(item)
-              : undefined
-        }
+        // This used to branch — a long-press DELETED your own sticker outright and opened a preview for
+        // everything else. Two problems with that. Deleting on a long press with no confirmation is a
+        // destructive action on the same gesture that elsewhere means "look at this", so it fires by
+        // accident; and it meant your own stickers had no preview at all, which is the one place a
+        // just-imported sticker most wants inspecting.
+        //
+        // Delete now lives in the menu (see MediaPanel's long-press card), alongside Send and View pack,
+        // where it is a deliberate second tap and where the menu can tell whose sticker it is.
+        onLongPress={onLongPress ? () => onLongPress(item) : undefined}
         delayLongPress={280}
         style={{ width: CELL_W, height: CELL_W, borderRadius: 10, overflow: 'hidden', marginBottom: CELL_GAP, backgroundColor: theme.colors.background.secondary }}
       >
@@ -179,7 +175,7 @@ function GifPanelComponent({ height, onSelect, onLongPress, theme, bottomInset =
         ) : null}
       </Pressable>
     ),
-    [onSelect, onLongPress, onRemoveCustomGif, theme, decodeReady],
+    [onSelect, onLongPress, theme, decodeReady],
   );
 
   // Recently-used GIFs first, then trending (deduped by id).

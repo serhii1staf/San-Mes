@@ -235,6 +235,9 @@ const en: Record<string, string> = {
   'share.no_chats': 'No one to send to yet — start a conversation',
 
   // ─── Add your own GIF ──────────────────────────────────────────────────
+  'media.action.view_pack': 'View pack',
+  'media.action.remove': 'Remove',
+
   'gif.add.title': 'Add a GIF',
   'gif.add.hint': 'A whole Telegram sticker pack (t.me/addstickers/…) imports at once. "Copy Link" from Discord, Giphy or Tenor works as it is — the page is resolved to the GIF for you. So does any direct .gif, .webp or .png address.\n\nLong-press one of your own to remove it.',
   'gif.add.placeholder': 'https://…',
