@@ -342,9 +342,13 @@ export const MessageContextMenu = forwardRef<MessageContextMenuHandle, MessageCo
           {contentReady ? (
             <CachedImage
               uri={message.imageUrls![0]}
-              style={{ width: box, height: box, borderRadius: cutoutOnly ? 0 : 12 }}
+              // Radius unconditional, for the same reason as the bubble: a cut-out has no opaque pixels
+              // at its corners, so rounding costs it nothing, while squaring it off is what made media
+              // read as having no container. Only the SURFACE behind it branches.
+              style={{ width: box, height: box, borderRadius: 12 }}
               resizeMode={cutoutOnly ? 'contain' : 'cover'}
               proxyWidth={imageProxyWidth}
+              progressive
             />
           ) : cutoutOnly ? (
             // Reserve the space with nothing in it. The shimmer is an opaque slab, so on a cut-out it

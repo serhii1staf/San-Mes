@@ -11,6 +11,7 @@ import { Avatar } from './Avatar';
 import { FormattedText, hasCodeBlock } from './FormattedText';
 import { LinkPreview } from './LinkPreview';
 import { CachedImage } from './CachedImage';
+import { useLiquidGlassActive, GlassBg } from './LiquidGlass';
 import Skeleton from './Skeleton';
 import { VerifiedBadge } from './VerifiedBadge';
 import { UserBadge } from './UserBadge';
@@ -58,6 +59,12 @@ export function CommentContextMenu({ visible, comment, isOwn, displayBody, reply
   // imperceptible, and a 240 ms cubic over the full screen height feels mechanical. So the
   // start offset moves to SCREEN_HEIGHT and the curve to the same spring, and the backdrop to
   // the same 200 ms timing.
+  // Parity with MessageContextMenu, which this file already says it mirrors. Two things it did not
+  // mirror: the held content rode the same value as the action sheet, so both arrived together from
+  // off-screen (reads as  sheet appeared, not 	his comment lifted), and both surfaces were
+  // opaque cards while the rest of the app's floating chrome is glass. See the notes there.
+  const glassActive = useLiquidGlassActive();
+  const liftAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
   const fade = useRef(new Animated.Value(0)).current;
   const dismissing = useRef(false);
@@ -86,12 +93,16 @@ export function CommentContextMenu({ visible, comment, isOwn, displayBody, reply
       isTransitioningRef.current = true;
       dismissing.current = false;
       slideAnim.setValue(SCREEN_HEIGHT);
+      liftAnim.setValue(0);
       fade.setValue(0);
       // Identical to MessageContextMenu's open: spring on the sheet, 200 ms timing on the
       // backdrop. Both native-driver, so the whole thing runs off the JS thread.
       Animated.parallel([
         Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 50, friction: 9 }),
         Animated.timing(fade, { toValue: 1, duration: 200, useNativeDriver: true }),
+        // Springier than the sheet so the content settles first: the eye follows what it was already
+        // looking at, then the actions arrive under it.
+        Animated.spring(liftAnim, { toValue: 1, useNativeDriver: true, tension: 70, friction: 10 }),
       ]).start(() => { isTransitioningRef.current = false; });
       // Reveal the heavy preview leaves one paint after kicking off the open
       // animation, keeping the first (open) frame cheap.
@@ -130,6 +141,7 @@ export function CommentContextMenu({ visible, comment, isOwn, displayBody, reply
     Animated.parallel([
       Animated.timing(slideAnim, { toValue: SCREEN_HEIGHT, duration: 220, useNativeDriver: true }),
       Animated.timing(fade, { toValue: 0, duration: 220, useNativeDriver: true }),
+      Animated.timing(liftAnim, { toValue: 0, duration: 180, useNativeDriver: true }),
     ]).start(() => {
       isTransitioningRef.current = false;
       onClose();
@@ -176,7 +188,15 @@ export function CommentContextMenu({ visible, comment, isOwn, displayBody, reply
       ) : null}
       {gifUrl ? (
         contentReady
-          ? <CachedImage uri={gifUrl} style={{ width: 160, height: 160, borderRadius: 14, backgroundColor: theme.colors.background.secondary }} resizeMode="cover" />
+          // 220 rather than the inline 160, because a long press is meant to ENLARGE what is already
+          // shown. progressive is what keeps that free: the 160 derivative is already decoded from
+          // the comment row, so it paints on the first frame while the 220 one loads and replaces it.
+          // Without it, asking for a different width would be a different cache key and therefore a
+          // cold fetch - see the note in src/services/mediaVariants.ts.
+          //
+          // No ackgroundColor: it was an opaque slab behind media that may be a transparent
+          // cut-out, which is the same defect that was just removed from the chat bubble.
+          ? <CachedImage uri={gifUrl} style={{ width: 220, height: 220, borderRadius: 14 }} resizeMode="contain" progressive />
           : <Skeleton width={160} height={160} radius={14} />
       ) : body ? (
         <FormattedText color={theme.colors.text.primary} linkColor={theme.colors.accent.primary} style={{ fontSize: 15 }} onLinkPress={handleLinkPress}>{body}</FormattedText>
@@ -222,8 +242,29 @@ export function CommentContextMenu({ visible, comment, isOwn, displayBody, reply
           pointerEvents="box-none"
         >
           {/* Held comment preview — wide so rich previews fit */}
-          <View style={{ marginHorizontal: 12, marginBottom: 8, alignItems: 'stretch' }} pointerEvents="box-none">
-            <View style={{ borderRadius: 18, backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF', overflow: 'hidden' }}>
+          <Animated.View
+            style={{
+              marginHorizontal: 12,
+              marginBottom: 8,
+              alignItems: 'stretch',
+              transform: [{ scale: liftAnim.interpolate({ inputRange: [0, 1], outputRange: [0.88, 1] }) }],
+            }}
+            pointerEvents="box-none"
+          >
+            <View style={{
+              borderRadius: 18,
+              overflow: 'hidden',
+              backgroundColor: glassActive ? 'transparent' : theme.isDark ? theme.colors.background.elevated : '#FFFFFF',
+            }}>
+              {glassActive ? (
+                <GlassBg
+                  borderRadius={18}
+                  glassStyle="regular"
+                  interactive={false}
+                  colorScheme={theme.isDark ? 'dark' : 'light'}
+                  tintColor={theme.isDark ? 'rgba(28,28,32,0.72)' : 'rgba(255,255,255,0.72)'}
+                />
+              ) : null}
               {/* ALWAYS a ScrollView, no `isLong` branch.
    
                   The branch was the second half of the "cannot scroll" bug. `isLong` is measured on
@@ -246,10 +287,21 @@ export function CommentContextMenu({ visible, comment, isOwn, displayBody, reply
                 {previewInner}
               </ScrollView>
             </View>
-          </View>
+          </Animated.View>
 
           {/* Action sheet */}
-          <View style={{ marginHorizontal: 8, backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF', borderRadius: 28, overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.12, shadowRadius: 16, elevation: 10 }}>
+          <View style={{ marginHorizontal: 8, backgroundColor: glassActive ? 'transparent' : theme.isDark ? theme.colors.background.elevated : '#FFFFFF', borderRadius: 28, overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.12, shadowRadius: 16, elevation: 10 }}>
+            {/* Glass on iOS, the opaque elevated surface above on Android. elevation stays set
+                either way - inert on iOS, and what gives the Android sheet its Material lift. */}
+            {glassActive ? (
+              <GlassBg
+                borderRadius={28}
+                glassStyle="regular"
+                interactive={false}
+                colorScheme={theme.isDark ? 'dark' : 'light'}
+                tintColor={theme.isDark ? 'rgba(28,28,32,0.78)' : 'rgba(255,255,255,0.78)'}
+              />
+            ) : null}
             <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 6 }}>
               <View style={{ width: 40, height: 5, borderRadius: 3, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)' }} />
             </View>
@@ -260,7 +312,10 @@ export function CommentContextMenu({ visible, comment, isOwn, displayBody, reply
                   <View style={{ width: 34, height: 34, borderRadius: 10, backgroundColor: item.destructive ? '#FF3B3010' : (theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)'), alignItems: 'center', justifyContent: 'center' }}>
                     <Feather name={item.icon as any} size={17} color={color} />
                   </View>
-                  <Text variant="body" color={color} style={{ marginLeft: 14 }}>{item.label}</Text>
+                  {/* 16.5, matching the sticker menu and the chat menu. These are the only labels on
+                      an otherwise empty screen and carry none of the size pressure that justifies the
+                      default inside a dense list. */}
+                  <Text variant="body" color={color} style={{ marginLeft: 14, fontSize: 16.5 }}>{item.label}</Text>
                 </Pressable>
               );
             })}

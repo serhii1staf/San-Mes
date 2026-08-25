@@ -693,10 +693,25 @@ function SingleChatImage({ uri, isVisible, onPress, cutout }: { uri: string; isV
           the very slab this is removing, for as long as the load took.
    
           An ordinary photo is untouched: it keeps the tile, the 12-px radius, `cover` and the skeleton. */}
+      {/* ── THE RADIUS STAYS. ONLY THE FILL GOES. ────────────────────────────────
+   
+          I got this wrong last round and it produced the report "the imported GIF is sent without a
+          normal container". I set `borderRadius: 0` here along with the transparent background, which
+          conflated two separate things:
+   
+            the FILL   is what was showing through a cut-out's transparent pixels. It had to go.
+            the FRAME  is the media message's own presentation — rounded corners and a bounded box. It
+                       was never the problem, and removing it left media butted against the chat
+                       background with square corners, which reads as no container at all.
+   
+          A cut-out with rounded corners loses nothing: there are no opaque pixels at the corners to
+          clip. So the radius is unconditional now and only the fill branches. The box itself is still
+          sized by `fitChatImageBox`, so max width/height and aspect ratio are unchanged for both
+          kinds. */}
       <View style={{
         width: size.w,
         height: size.h,
-        borderRadius: cutout ? 0 : 12,
+        borderRadius: 12,
         overflow: 'hidden',
         backgroundColor: cutout ? 'transparent' : theme.colors.background.tertiary,
       }}>
@@ -1155,6 +1170,10 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
                         // slab, so on a sticker it painted the grey rectangle this change exists to
                         // remove — just before the sticker itself arrived without one, which reads as
                         // a flash of the old bug on every open.
+                        // A cut-out reserves its space with nothing in it. The shimmer is an opaque
+                        // slab, so on a sticker it painted the grey rectangle the fill change exists
+                        // to remove — right before the sticker arrived without one, which reads as a
+                        // flash of the old bug on every open. Same box, so no layout shift either way.
                         return isStickerLike ? (
                           <View style={{ width: box.w, height: box.h }} />
                         ) : (

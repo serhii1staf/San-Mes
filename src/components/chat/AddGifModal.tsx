@@ -205,18 +205,33 @@ export function AddGifModal({ visible, onClose, theme, labels }: AddGifModalProp
             <Pressable
               onPress={() => {
                 triggerHaptic('light');
-                exitUpRef.current = true;
-                close();
-                // After the sheet is gone. `SlideUpSheet` calls `onClose` once its exit animation has
-                // finished, so navigating from inside `close()` would push the route while the sheet was
-                // still mid-flight — and this sheet owns a Modal, which on iOS means the route would be
-                // presented behind it.
+                // ── PUSH FIRST, THEN LET THE SHEET LEAVE ──────────────────────────────
+                //
+                // Reported as a freeze: tap the three dots, the interface vanishes, a pause, and only
+                // then the screen appears. That was not a freeze at all — it was dead time I built in.
+                //
+                // The previous order was `close()` and then `router.push` on a timer. `SlideUpSheet`
+                // only calls `onClose` after its 250 ms exit animation finishes, and the timer added 30
+                // more, so the sheet was fully gone for the better part of a third of a second before
+                // anything was asked to replace it. The user is looking at nothing during that gap and
+                // reads it, correctly, as the app having stalled.
+                //
+                // Pushing first means the two transitions OVERLAP: the route starts mounting and
+                // animating in while the sheet is still on its way up, which is what the upward exit was
+                // for in the first place. Nothing is waiting on anything.
+                //
+                // Safe with respect to the nested-Modal problem this ordering used to avoid: the route
+                // is a screen in the navigator, not a Modal, so it is not competing with this sheet's
+                // Modal for presentation — that constraint applies to two Modals, which this is not.
+                //
                 // `as any` on the route, matching `settings/index.tsx`'s push to `/settings/pixel-icons`.
                 // expo-router GENERATES its route union into `.expo/types/router.d.ts`, which is
                 // gitignored and only rewritten when the dev server or a build runs — so a screen added
                 // in this commit is not in the union yet even though the file exists and the path is
                 // correct. The alternative is editing generated output, which the next build discards.
-                setTimeout(() => router.push('/settings/stickers' as any), 30);
+                router.push('/settings/stickers' as any);
+                exitUpRef.current = true;
+                close();
               }}
               hitSlop={10}
               accessibilityRole="button"
