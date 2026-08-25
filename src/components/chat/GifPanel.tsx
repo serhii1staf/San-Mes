@@ -2,7 +2,7 @@ import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from '
 import { View, Pressable, FlatList, ActivityIndicator, Text as RNText, StyleSheet, Dimensions, InteractionManager } from 'react-native';
 import { useLiquidGlassActive, GlassBg } from '../ui/LiquidGlass';
 import { CachedImage } from '../ui/CachedImage';
-import { useStaggeredReveal } from '../../hooks/useStaggeredReveal';
+
 import { getTrendingGifs, getCachedTrending, setCachedTrending, GiphyItem } from '../../services/giphy';
 import { useT } from '../../i18n/store';
 
@@ -317,9 +317,10 @@ const GifCell = memo(function GifCell({
   onSelect: (item: GiphyItem) => void;
   onLongPress?: (item: GiphyItem) => void;
 }) {
-  // `false → true` and then permanent, so a recycled cell keeps the slot it already earned instead of
-  // queueing again on every scroll.
-  const revealed = useStaggeredReveal(decodeReady);
+  // The queue membership that used to live here has moved INTO `CachedImage` as its `paced` prop, so
+  // there is one mechanism instead of two. This component stays because the memoised Pressable is still
+  // worth having, but it no longer owns a hook of its own — which is what made pacing unreachable from a
+  // plain `renderItem` and is why the stickers grid shipped without it. See the note on `paced`.
   return (
     <Pressable
       onPress={() => onSelect(item)}
@@ -346,13 +347,17 @@ const GifCell = memo(function GifCell({
           animation has finished, `revealed` then spaces the cells against one another. Until both pass
           the cell is just the Pressable's tinted background, so the layout is committed once in its
           final shape and thumbnails fade into cells that are already in place. */}
-      {decodeReady && revealed ? (
+      {decodeReady ? (
         <CachedImage
           uri={(item as any).stillUrl || item.previewUrl}
           style={styles.cellImg}
           resizeMode="cover"
           priority="low"
           autoplay={false}
+          // Frame-paced decode. `decodeReady` above holds the whole grid back until the open animation
+          // has finished; this spaces the cells against one another so twenty-six of them cannot start
+          // together. Two gates, two different jobs.
+          paced
           // ── noProxy: THE OTHER HALF OF THE THUMBNAIL STORM ────────────────────────
           //
           // `style.width` here is `'100%'`, which is not numeric, and no `proxyWidth` was

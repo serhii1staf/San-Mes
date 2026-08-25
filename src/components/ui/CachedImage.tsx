@@ -5,6 +5,7 @@ import { perfMonitor } from '../../services/perfMonitor';
 import { useSettingsStore } from '../../store/settingsStore';
 import Skeleton from './Skeleton';
 import { noteVariantLoaded, bestLoadedVariantUrl } from '../../services/mediaVariants';
+import { useStaggeredReveal } from '../../hooks/useStaggeredReveal';
 
 import { LottieSticker } from './LottieSticker';
 
@@ -188,6 +189,29 @@ interface CachedImageProps {
    * instead of a fresh download. Opt-in, because only surfaces that ENLARGE existing media benefit.
    */
   progressive?: boolean;
+  /**
+   * Join the app-wide frame-paced decode queue: this image waits its turn instead of starting its
+   * decode the moment it mounts. For any DENSE GRID of images this is the difference between a bounded
+   * one-or-two concurrent decodes and a storm.
+   *
+   * ── WHY THIS LIVES HERE AND NOT IN EACH GRID ──────────────────────────────
+   *
+   * Because putting it in each grid demonstrably does not stick. The GIF panel was given this pacing
+   * via `useStaggeredReveal` after a snapshot showed twenty-six loads starting together. The
+   * imported-stickers screen was written one round LATER, renders a four-column grid of the same kind
+   * of asset, and did not get it — because a hook cannot be called from a `renderItem` arrow, so pacing
+   * first required extracting the cell into its own component. The next snapshot showed exactly what
+   * that omission costs: `pendingDecodes` at 36, with durations climbing
+   * 290 → 331 → 442 → 448 → 533 → 542 → 599 ms. Same queue, new screen.
+   *
+   * A prop on the image has no such barrier: a grid opts in by adding one word, with no component
+   * extraction and no hook of its own. That is what makes it likely to be used by the next grid
+   * someone writes, which is the only property that actually prevents this recurring.
+   *
+   * Layout is preserved while waiting — the caller's `style` renders as an empty `View` of the same
+   * box, so nothing shifts when the image arrives.
+   */
+  paced?: boolean;
   [key: string]: any;
 }
 
@@ -200,8 +224,14 @@ export const CachedImage = memo(function CachedImage({
   autoplay,
   skeleton,
   progressive,
+  paced,
   ...props
 }: CachedImageProps) {
+  // Queue membership. `useStaggeredReveal` only ever goes false → true and stays there, so a recycled
+  // cell keeps the turn it already earned rather than queueing again on every scroll. Called
+  // unconditionally with `!!paced` to keep hook order identical for every caller; when `paced` is not
+  // set it never reveals, which is why the gate below reads `!paced || revealed` rather than `revealed`.
+  const pacedReady = useStaggeredReveal(!!paced);
   // Reset proxy-failure state when the source URL changes — otherwise a row
   // recycled in a list would keep falling back forever after a single bad URL.
   const [proxyFailed, setProxyFailed] = useState(false);
@@ -272,6 +302,14 @@ export const CachedImage = memo(function CachedImage({
   }, [uri]);
 
   if (!uri) return null;
+
+  // Waiting for a turn in the decode queue. The caller's own style is rendered as an empty box, so the
+  // grid's layout is committed once in its final shape and the thumbnail fades into a cell that is
+  // already in place — no reflow when it arrives. Placed after every hook, so this early return cannot
+  // change hook order.
+  if (paced && !pacedReady) {
+    return <View style={style as any} />;
+  }
 
   // ── ANIMATED TELEGRAM STICKERS ARE LOTTIE, NOT IMAGES ─────────────────────
   //

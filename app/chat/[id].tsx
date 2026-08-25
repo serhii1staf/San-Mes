@@ -901,6 +901,31 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
   const photoReveal = useStaggeredReveal(!!imagesReady && hasImages && !isGifBubble);
   const gifReveal = useStaggeredGifReveal(!!imagesReady && hasImages && isGifBubble);
   const imgReveal = isGifBubble ? gifReveal : photoReveal;
+
+  // ── THIS SCREEN HAD NO MOUNT INSTRUMENTATION AT ALL ───────────────────────
+  //
+  // `chat/[id]` is the worst route in the latest snapshot — twelve long tasks, worst 533 ms, average
+  // 272 ms, worst fps 38 — and it reports `mountCount: 0`. Not "cheap mounts": no mount marks exist
+  // here, so every one of those tasks is unattributed. The screen's only marks are its seed reads and
+  // the reverse/day-label passes, and all of them report 0-1 ms, which positively rules them out and
+  // leaves nothing named.
+  //
+  // The profile card is the precedent for both the fix and the trap. Naming it found the real cost
+  // (35-77 ms per body, against the 21 ms a broken mark had been reporting) — but the FIRST version of
+  // that mark measured the wrong commit, because its effect fired after the placeholder render rather
+  // than after the body. So this one keys on `imgReveal`: the clock starts on the render where the
+  // media gate is already open, which is the commit that actually mounts the images, the reply quote,
+  // the formatted text and the link preview.
+  //
+  // A text-only bubble has `hasImages === false` and so never satisfies the guard — deliberately. It
+  // would report the cheap path and dilute the average with rows that were never suspected.
+  const perfEnabled = useSettingsStore((s) => s.perfMonitorEnabled);
+  const bodyRenderStart = perfEnabled && hasImages && imgReveal ? Date.now() : 0;
+  useEffect(() => {
+    if (!perfEnabled || !hasImages || !imgReveal) return;
+    perfMonitor.markScreenMount('MessageBubble.media', Date.now() - bodyRenderStart);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [perfEnabled, hasImages, imgReveal]);
   // Photos we've already seen are on disk (their dimensions are remembered):
   // render them IMMEDIATELY instead of routing through the placeholder →
   // staggered-reveal path. That deferral exists ONLY to avoid a decode STORM

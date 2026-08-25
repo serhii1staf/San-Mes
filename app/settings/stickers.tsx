@@ -244,6 +244,18 @@ export default function ImportedStickersScreen() {
                   is the one that bites: a different URL is a different expo-image cache key, so asking
                   for a proxied variant here would re-download every sticker the picker had already
                   decoded. A still frame also means one decode per cell instead of an animating grid. */}
+              {/* `paced` is not optional here, it is the whole reason this grid does not stall.
+   
+                  A snapshot of this screen measured `pendingDecodes` at 36 with load durations climbing
+                  290 → 331 → 442 → 448 → 533 → 542 → 599 ms. A monotonic climb across concurrent
+                  requests is a QUEUE: every cell started its decode the moment it mounted, so the last
+                  one waited for all the others, and two long tasks of 291 ms and 121 ms landed on the
+                  frames the navigator was animating.
+   
+                  The GIF panel had already been fixed for exactly this. This screen was written after it
+                  and still stormed, because pacing used to require extracting the cell into a component
+                  to hold a hook. It is a prop on the image now precisely so that cannot happen again —
+                  see the note on `paced`. */}
               <CachedImage
                 uri={it.stillUrl || it.previewUrl}
                 style={styles.cellImg}
@@ -251,6 +263,7 @@ export default function ImportedStickersScreen() {
                 priority="low"
                 autoplay={false}
                 noProxy
+                paced
               />
               {isSel ? (
                 <View style={styles.cellActions}>
