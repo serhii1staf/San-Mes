@@ -639,16 +639,19 @@ const GlassBackdrop = React.memo(function GlassBackdrop({ isDark, interactive, r
       style={[StyleSheet.absoluteFill, roundStyle, radius != null ? { overflow: 'hidden' } : null]}
     />
   );
-  const androidFallback = (
-    <LinearGradient
-      colors={
-        isDark
-          ? ['rgba(20,20,25,0.75)', 'rgba(30,30,35,0.85)']
-          : ['rgba(255,255,255,0.6)', 'rgba(255,255,255,0.75)']
-      }
-      style={[StyleSheet.absoluteFill, roundStyle]}
-    />
-  );
+  // ── THE ANDROID GRADIENT IS GONE; `BlurView` HANDLES BOTH PLATFORMS NOW ────
+  //
+  // Reported: the blur reaches most surfaces on Android now, but the bottom navigation is still just
+  // transparent. This was why — the bar never used the `BlurView` path on Android at all. It had its own
+  // hand-written fallback: a two-stop gradient at `rgba(255,255,255,0.6)` in light mode, which over a
+  // light background is very nearly invisible, and which is a flat wash rather than any kind of blur.
+  //
+  // `BlurView` here is the app's own wrapper, which already branches per platform: a real
+  // `UIVisualEffectView` on iOS, and on Android the shared tonal surface (or genuine `dimezisBlurView`
+  // when the user opts in). So this component no longer needs to know what platform it is on, and the
+  // bar can no longer be the one surface that missed a platform fix.
+  //
+  // `Platform` is still imported for other uses in this file; only this branch is gone.
   return (
     <GlassSurface
       style={[StyleSheet.absoluteFill, roundStyle]}
@@ -659,7 +662,7 @@ const GlassBackdrop = React.memo(function GlassBackdrop({ isDark, interactive, r
       // GlassSurface renders the fallback and this flag is ignored.
       isInteractive={interactive}
       colorScheme={isDark ? 'dark' : 'light'}
-      fallback={Platform.OS === 'ios' ? iosFallback : androidFallback}
+      fallback={iosFallback}
     />
   );
 });

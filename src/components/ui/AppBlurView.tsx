@@ -80,6 +80,30 @@ function surfaceAlpha(intensity: number): number {
   return 0.72 + t * 0.22;
 }
 
+/**
+ * The Android surface fill, as a plain style object.
+ *
+ * Exported so the LIQUID-GLASS family can use the identical treatment. There are two separate families
+ * of surface in this app — `BlurView` call sites and the `GlassBg` / `NativeGlassView` components — and
+ * fixing only the first is what left the bottom navigation transparent after the previous round. One
+ * definition of "what a surface looks like on Android" is the only way both stay in step.
+ *
+ * `isDark` is passed in rather than read from the theme here, because the glass components are sometimes
+ * pinned to a fixed scheme (`colorScheme="dark"` over a photo, for instance) independently of the app's
+ * theme, and the surface has to follow the same choice.
+ */
+export function androidSurfaceStyle(intensity: number, isDark: boolean): ViewStyle {
+  const base = isDark ? '28,28,32' : '255,255,255';
+  return {
+    backgroundColor: `rgba(${base},${surfaceAlpha(intensity)})`,
+    borderWidth: StyleSheet.hairlineWidth,
+    // A hairline edge. On iOS the blur's own contrast against its surroundings defines the container's
+    // shape; a flat fill has no such edge, and without one a light surface on a light background loses
+    // its boundary entirely.
+    borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.07)',
+  };
+}
+
 function AppBlurViewComponent({ intensity = 50, tint = 'default', style, children, ...rest }: AppBlurViewProps) {
   const theme = useTheme();
   // Read the same flag the iOS glass path uses. On Android it has never had an effect, so opting real
@@ -119,12 +143,6 @@ function AppBlurViewComponent({ intensity = 50, tint = 'default', style, childre
   // `tint` decides which way the fill goes, falling back to the theme when a call site passes
   // `'default'` — which most do, because on iOS `default` means "system material" and adapts on its own.
   const dark = tint === 'dark' ? true : tint === 'light' ? false : theme.isDark;
-  const base = dark ? '28,28,32' : '255,255,255';
-  const fill = `rgba(${base},${surfaceAlpha(intensity)})`;
-  // A hairline edge. On iOS the blur's own contrast against its surroundings defines the container's
-  // shape; a flat fill has no such edge, and without one a light surface on a light background loses its
-  // boundary entirely. This is the cheapest way to keep the container legible as a container.
-  const hairline = dark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.07)';
   return (
     <View
       style={[
@@ -132,7 +150,7 @@ function AppBlurViewComponent({ intensity = 50, tint = 'default', style, childre
         // AFTER `style`, so the surface cannot be cancelled by a caller that sets its own transparent
         // background — which is how several of these are written, on the assumption that the blur
         // provides the fill.
-        { backgroundColor: fill, borderWidth: StyleSheet.hairlineWidth, borderColor: hairline },
+        androidSurfaceStyle(intensity, dark),
       ]}
       {...rest}
     >
