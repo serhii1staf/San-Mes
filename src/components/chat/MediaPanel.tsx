@@ -11,6 +11,7 @@ import { GiphyItem } from '../../services/giphy';
 import { useCustomGifs } from '../../store/customGifsStore';
 import { AddGifModal } from './AddGifModal';
 import { triggerHaptic } from '../../utils/haptics';
+import { openUrl } from '../../utils/openUrl';
 
 const PANEL_W = Dimensions.get('window').width;
 // Height of the recents strip. Shared by its own style, the grids' top content padding and the
@@ -44,7 +45,7 @@ export interface MediaPanelProps {
   theme: any;
   bottomInset?: number;
   /** Localized labels so we don't pull the i18n hook here. */
-  labels: { gif: string; emoji: string; copy: string; send: string; addGif: AddGifLabels };
+  labels: { gif: string; emoji: string; copy: string; send: string; viewPack: string; remove: string; addGif: AddGifLabels };
   /** Long-press popup → send a single emoji as its own chat message. */
   onSendEmoji?: (e: string) => void;
   /** Long-press popup → copy an emoji to the clipboard. */
@@ -348,7 +349,7 @@ function MediaPanelComponent({
           </View>
           <View style={styles.page}>
             {showGif ? (
-              <GifPanel bare height={height} onSelect={onSelectGif} onLongPress={onSendGif || onCopyGif ? onLongPressGif : undefined} recentGifs={recentGifs} theme={theme} bottomInset={56 + bottomInset} topInset={gridTopInset} onScrollTick={onScrollTick} customGifs={customGifs} onRemoveCustomGif={removeCustomGif} />
+              <GifPanel bare height={height} onSelect={onSelectGif} onLongPress={onSendGif || onCopyGif ? onLongPressGif : undefined} recentGifs={recentGifs} theme={theme} bottomInset={56 + bottomInset} topInset={gridTopInset} onScrollTick={onScrollTick} customGifs={customGifs} />
             ) : <View style={styles.bareFill} />}
           </View>
         </Reanimated.View>
@@ -422,30 +423,74 @@ function MediaPanelComponent({
                 <CachedImage uri={preview.item.previewUrl} style={styles.previewGif} resizeMode="contain" />
               )}
 
-              <View style={styles.previewActions}>
-                <Pressable
-                  style={[styles.previewBtn, { backgroundColor: theme.colors.background.secondary }]}
-                  onPress={() => {
-                    if (preview.kind === 'emoji') onCopyEmoji?.(preview.emoji);
-                    else onCopyGif?.(preview.item);
-                    tearDownPreview();
-                  }}
-                >
-                  <Feather name="copy" size={15} color={theme.colors.text.secondary} />
-                  <RNText style={[styles.previewBtnText, { color: theme.colors.text.primary }]}>{labels.copy}</RNText>
-                </Pressable>
-
-                <Pressable
-                  style={[styles.previewBtn, { backgroundColor: theme.colors.accent.primary }]}
+              {/* ── A MENU, NOT TWO BUTTONS ──────────────────────────────────────────
+   
+                  Asked for, with a Telegram screenshot: hold a sticker and get a list — Send, then Delete
+                  if it is one I imported, then View pack.
+   
+                  Rows rather than the previous side-by-side pair, for the reason the screenshot shows: the
+                  action count is now variable. A pack sticker has three actions and one of mine has four,
+                  and two buttons cannot grow without either shrinking each other or wrapping. Rows also
+                  put the labels in one reading column, which is why every OS context menu is built this
+                  way.
+   
+                  "Send", not "Send later" — the Telegram screenshot has scheduling and this app has no
+                  such concept, so copying the label would promise something that does not exist. */}
+              <View style={styles.menu}>
+                <StickerMenuRow
+                  icon="send"
+                  label={labels.send}
+                  theme={theme}
                   onPress={() => {
                     if (preview.kind === 'emoji') onSendEmoji?.(preview.emoji);
                     else onSendGif?.(preview.item);
                     tearDownPreview();
                   }}
-                >
-                  <Feather name="send" size={15} color="#FFFFFF" />
-                  <RNText style={[styles.previewBtnText, { color: '#FFFFFF' }]}>{labels.send}</RNText>
-                </Pressable>
+                />
+                <StickerMenuRow
+                  icon="copy"
+                  label={labels.copy}
+                  theme={theme}
+                  onPress={() => {
+                    if (preview.kind === 'emoji') onCopyEmoji?.(preview.emoji);
+                    else onCopyGif?.(preview.item);
+                    tearDownPreview();
+                  }}
+                />
+                {/* Only for a sticker that came from an imported pack — the row is absent rather than
+                    disabled, because there is nothing to view for a Giphy GIF or an emoji and a dead row
+                    reads as a broken one. */}
+                {preview.kind === 'gif' && (preview.item as any).packName ? (
+                  <StickerMenuRow
+                    icon="grid"
+                    label={labels.viewPack}
+                    theme={theme}
+                    onPress={() => {
+                      const name = (preview.item as any).packName as string;
+                      tearDownPreview();
+                      // Opens in Telegram itself when installed, in the browser otherwise — `openUrl`
+                      // already makes that choice for every external link in the app.
+                      void openUrl(`https://t.me/addstickers/${encodeURIComponent(name)}`);
+                    }}
+                  />
+                ) : null}
+                {/* Delete is offered ONLY for the user's own imports. A Giphy GIF is not theirs to remove,
+                    and the `custom:` id prefix is the only marker that survives being persisted. */}
+                {/* No `&& removeCustomGif` guard: it is a store action, so it is always defined, and tsc
+                    flags the check as always-true. The `custom:` prefix is the real condition. */}
+                {preview.kind === 'gif' && preview.item.id.startsWith('custom:') ? (
+                  <StickerMenuRow
+                    icon="trash-2"
+                    label={labels.remove}
+                    theme={theme}
+                    destructive
+                    onPress={() => {
+                      const id = preview.item.id;
+                      tearDownPreview();
+                      removeCustomGif(id);
+                    }}
+                  />
+                ) : null}
               </View>
             </Reanimated.View>
           </View>
@@ -462,12 +507,53 @@ function MediaPanelComponent({
   );
 }
 
+/**
+ * One row of the long-press sticker menu.
+ *
+ * Extracted rather than mapped over a config array, because the rows are conditional on different things
+ * (is it mine, did it come from a pack) and an array would need those conditions expressed as filters over
+ * data — more indirection than four call sites are worth.
+ */
+function StickerMenuRow({
+  icon,
+  label,
+  theme,
+  onPress,
+  destructive,
+}: {
+  icon: string;
+  label: string;
+  theme: any;
+  onPress: () => void;
+  destructive?: boolean;
+}) {
+  const color = destructive ? '#FF3B30' : theme.colors.text.primary;
+  return (
+    <Pressable
+      onPress={() => { triggerHaptic('light'); onPress(); }}
+      accessibilityRole="button"
+      style={({ pressed }) => [
+        styles.menuRow,
+        pressed ? { backgroundColor: theme.isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)' } : null,
+      ]}
+    >
+      <Feather name={icon as any} size={17} color={color} />
+      <RNText style={[styles.menuLabel, { color }]}>{label}</RNText>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
   container: {
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
     overflow: 'hidden',
   },
+  // Full-width rows inside the preview card. `alignSelf: stretch` so every row is the same width whatever
+  // the longest label turns out to be after translation.
+  menu: { alignSelf: 'stretch', marginTop: 6 },
+  menuRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, paddingHorizontal: 6, borderRadius: 10 },
+  menuLabel: { fontSize: 15, fontWeight: '500' },
   // ABSOLUTE, so hiding it on scroll is a transform and not a relayout. The grids pad their content
   // by RECENT_ROW_H to compensate, exactly as they already do for the bottom switcher.
   recentRow: { position: 'absolute', top: 0, left: 0, right: 0, height: RECENT_ROW_H, borderBottomWidth: 0.5, justifyContent: 'center', zIndex: 2 },

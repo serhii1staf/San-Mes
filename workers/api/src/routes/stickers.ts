@@ -256,7 +256,20 @@ register('GET', '/v1/stickers/telegram', async (req, env, _ctx, _params, authedU
     // .webm answer is VP9, which iOS cannot decode at all and would need transcoding. Without
     // this line the two are indistinguishable and the next step is a guess.
     const kinds = Array.from(new Set(paths.map((p) => p?.rejected).filter(Boolean))).join(', ');
-    return fail(req, 'pack has no usable stickers: ' + (kinds || 'unknown format'), 422);
+    // The pack's SHORT NAME goes in too. The formats alone say what kind of problem it is; the name is
+    // what makes it reproducible — with it, the pack can be queried directly through the Bot API instead
+    // of being guessed at from a description. Two rounds of guessing pack names is what this replaces.
+    //
+    // Also reported: how many stickers had no thumbnail at all. Per the Bot API a sticker's `thumbnail` is
+    // OPTIONAL and, when present, is `.webp` or `.jpg` — always static. So "video pack" alone does not
+    // explain a total failure; "video pack whose stickers carry no thumbnail" does, and these two numbers
+    // tell those apart.
+    const noThumb = wanted.filter((s) => !s.thumbnail?.file_id && !s.thumb?.file_id).length;
+    return fail(
+      req,
+      `pack has no usable stickers: ${kinds || 'unknown format'} [${set.name}, ${wanted.length} stickers, ${noThumb} without thumbnail]`,
+      422,
+    );
   }
 
   return jsonResponse(req, {

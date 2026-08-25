@@ -42,6 +42,8 @@ interface Resolved {
   urls: string[];
   /** Pack title, when a whole set was imported. */
   title?: string;
+  /** Pack SHORT name - the one that rebuilds a t.me link, for the "view pack" action later. */
+  packName?: string;
   /** A pack whose real format we cannot animate — imported as static thumbnails. */
   animated?: boolean;
 }
@@ -134,7 +136,7 @@ export function AddGifModal({ visible, onClose, theme, labels }: AddGifModalProp
           setDetail(res.detail || null);
           return;
         }
-        setResolved({ urls: res.pack.urls, title: res.pack.title, animated: res.pack.animated });
+        setResolved({ urls: res.pack.urls, title: res.pack.title, animated: res.pack.animated, packName: res.pack.name });
         return;
       }
 
@@ -169,7 +171,8 @@ export function AddGifModal({ visible, onClose, theme, labels }: AddGifModalProp
   const commit = useCallback(() => {
     if (!resolved || resolved.urls.length === 0) return;
     if (resolved.urls.length === 1) add(resolved.urls[0]);
-    else addMany(resolved.urls);
+    // The pack's short name travels with the stickers, so the long-press menu can offer "View pack".
+    else addMany(resolved.urls, resolved.packName);
     triggerHaptic('medium');
     showToast(labels.added, 'check');
     close();

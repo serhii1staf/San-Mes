@@ -24,6 +24,8 @@ export function useMediaPanelLabels(): MediaPanelProps['labels'] {
       emoji: t('media.tab.emoji'),
       copy: t('media.action.copy'),
       send: t('media.action.send'),
+      viewPack: t('media.action.view_pack'),
+      remove: t('media.action.remove'),
       addGif: {
         title: t('gif.add.title'),
         hint: t('gif.add.hint'),
