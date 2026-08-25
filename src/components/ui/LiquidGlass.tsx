@@ -9,6 +9,8 @@ import {
   type ViewStyle,
 } from 'react-native';
 import { useSettingsStore } from '../../store/settingsStore';
+import { useTheme } from '../../theme';
+import { androidSurfaceStyle } from './AppBlurView';
 
 // ── Native liquid glass (iOS 26+) — single integration point ───────────────
 //
@@ -310,7 +312,49 @@ interface GlassBgProps {
  */
 export function GlassBg({ borderRadius, glassStyle = 'clear', colorScheme, interactive = true, tintColor }: GlassBgProps) {
   const active = useLiquidGlassActive();
-  if (!active) return null;
+  // Called unconditionally, before the branch below — the Android surface needs to know which way to go
+  // when the caller has not pinned a `colorScheme`, and a hook cannot live inside a conditional.
+  const theme = useTheme();
+  // ── ON ANDROID THIS RENDERED NOTHING, AND THAT LEFT CHROME TRANSPARENT ────
+  //
+  // Reported after the previous round: the blur now shows up in most places, but the bottom navigation
+  // and some other containers are still just transparent.
+  //
+  // Correct, and this is why. There are TWO separate families of surface in the app — `BlurView` call
+  // sites, and these liquid-glass components — and only the first was fixed. `GlassBg` returns `null`
+  // when glass is off, on the documented assumption written just above that "the container simply falls
+  // back to its own backgroundColor/border". That assumption holds for the many call sites shaped as
+  //
+  //     <View style={{ backgroundColor: glassActive ? 'transparent' : theme.colors.background.elevated }}>
+  //       {glassActive ? <GlassBg /> : null}
+  //
+  // and fails completely for the ones that render `<GlassBg />` UNCONDITIONALLY inside a container with
+  // no fill of its own — those had nothing at all on Android.
+  //
+  // Rendering the shared Android surface instead of `null` fixes exactly that second group and cannot
+  // affect the first: a site that guards with `glassActive ?` never mounts this component when glass is
+  // off, so there is no possibility of a doubled fill. The surface itself is `androidSurfaceStyle` — the
+  // same definition `AppBlurView` uses, so the two families cannot drift apart again, which is the whole
+  // reason the navigation was still wrong after the last fix.
+  //
+  // iOS is untouched: when glass is unavailable there it is because the user turned it off or the OS is
+  // older, and those surfaces have always relied on their container's own fill, which exists.
+  if (!active) {
+    if (Platform.OS !== 'android') return null;
+    const dark = colorScheme === 'dark' ? true : colorScheme === 'light' ? false : undefined;
+    return (
+      <View
+        pointerEvents="none"
+        style={[
+          StyleSheet.absoluteFill,
+          borderRadius != null ? { borderRadius } : null,
+          // 60: a middling intensity. These are buttons, pills and fields rather than full-bleed
+          // chrome, so they want a clearly-present surface without going as opaque as a tab bar.
+          androidSurfaceStyle(60, dark ?? theme.isDark),
+        ]}
+      />
+    );
+  }
   return (
     <NativeGlassView
       pointerEvents="none"
