@@ -1,4 +1,5 @@
 import { apiGet } from './apiClient';
+import { perfMonitor } from './perfMonitor';
 
 /**
  * Import a Telegram sticker pack.
@@ -78,7 +79,18 @@ export async function importTelegramPack(link: string): Promise<ImportResult> {
     // only `{ data, error }`. That is the established pattern here — `apiClient`'s own notes point out
     // that callers branch on shapes like `'unauthorised'` — and the Worker's strings are fixed at the
     // route, so this is as stable as a status code would be.
+    // ---- THE DIAGNOSTIC GOES WHERE IT WILL ACTUALLY BE SEEN ------------------
+    //
+    // The pack name and the blocking format have been reported in the UI for three rounds now, first
+    // in grey micro-print and then in a bordered box, and not once has either come back to me. So the
+    // UI is the wrong channel: asking a user to transcribe a diagnostic is a request that keeps not
+    // being fulfilled, and every unfulfilled round costs another guess.
+    //
+    // The perf monitor IS the channel that works. Its snapshots get sent unprompted and in full, so a
+    // failure recorded here arrives on its own with no transcription and no asking. Same reason the
+    // long-task marks exist: the data has to travel by itself.
     if (error) {
+      try { perfMonitor.recordError('stickerImport ' + link + ' -> ' + error); } catch {}
       // Missing bot token. A deployment fact, not a bad link: conflating the two would send the user off
       // editing a link that was fine.
       if (error.includes('not configured')) return { ok: false, reason: 'not_configured' };
@@ -101,6 +113,7 @@ export async function importTelegramPack(link: string): Promise<ImportResult> {
       }
       return { ok: false, reason: 'failed', detail: error };
     }
+
     if (!data || !Array.isArray(data.stickers) || data.stickers.length === 0) {
       return { ok: false, reason: 'empty' };
     }
