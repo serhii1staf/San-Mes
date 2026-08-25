@@ -1,5 +1,5 @@
 import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { View, Pressable, ScrollView, Text as RNText, StyleSheet, Dimensions, InteractionManager } from 'react-native';
+import { View, Pressable, ScrollView, Modal, Text as RNText, StyleSheet, Dimensions, InteractionManager } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { Feather } from '@expo/vector-icons';
 import Reanimated, { useSharedValue, useAnimatedStyle, withTiming, Easing, runOnJS } from 'react-native-reanimated';
@@ -409,14 +409,36 @@ function MediaPanelComponent({
 
       {/* Long-press preview popup — additive absolute overlay. Sits ABOVE the
           slide track and switcher; never affects their layout/animation. */}
+      {/* ── THE PREVIEW IS A SCREEN, NOT A PANEL OVERLAY ─────────────────────────
+   
+          Reported bluntly, and correctly: it appeared inside the GIF panel and it should appear in the
+          middle of the SCREEN.
+   
+          It was `StyleSheet.absoluteFill` inside this component — and this component is the docked panel,
+          roughly a keyboard's height at the bottom of the display. So "fill" meant "fill the panel": the
+          sticker was squeezed into the same strip it was launched from, with the menu crammed under it.
+          No amount of styling fixes that from in here; the overlay has to leave this view's coordinate
+          space entirely, which is what a `Modal` does.
+   
+          Safe to use one here: `MediaPanel` is a docked View inside the chat screen, not itself a Modal, so
+          this is not the nested-Modal trap that `EditProfileTabModal` documents. `AddGifModal` is the other
+          branch and never open at the same time.
+   
+          Layout follows the screenshot: the sticker sits on its own, large, centred; the actions are a
+          separate card BELOW it, aligned to the right rather than stretched across — a column of short
+          labels reads better ragged-right under the image than centred beneath it. */}
       {preview ? (
-        <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+        <Modal visible transparent animationType="none" onRequestClose={closePreview} statusBarTranslucent>
+          <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
           <Reanimated.View style={[StyleSheet.absoluteFill, styles.previewBackdrop, backdropStyle]}>
             <Pressable style={StyleSheet.absoluteFill} onPress={closePreview} />
           </Reanimated.View>
 
           <View style={styles.previewCenter} pointerEvents="box-none">
-            <Reanimated.View style={[styles.previewCard, previewCardStyle, { backgroundColor: theme.colors.background.elevated }]}>
+            <Reanimated.View style={[styles.previewStack, previewCardStyle]}>
+              {/* The sticker itself, on nothing. No card behind it, so a cut-out sticker shows the dimmed
+                  screen through its transparent parts instead of a panel-coloured rectangle — the same
+                  reasoning as the chat bubble. */}
               {preview.kind === 'emoji' ? (
                 <RNText style={styles.previewEmoji} allowFontScaling={false}>{preview.emoji}</RNText>
               ) : (
@@ -436,7 +458,7 @@ function MediaPanelComponent({
    
                   "Send", not "Send later" — the Telegram screenshot has scheduling and this app has no
                   such concept, so copying the label would promise something that does not exist. */}
-              <View style={styles.menu}>
+              <View style={[styles.menu, { backgroundColor: theme.colors.background.elevated }]}>
                 <StickerMenuRow
                   icon="send"
                   label={labels.send}
@@ -494,7 +516,8 @@ function MediaPanelComponent({
               </View>
             </Reanimated.View>
           </View>
-        </View>
+          </View>
+        </Modal>
       ) : null}
 
       {/* Add-your-own-GIF dialog. Rendered last so it paints above the grids and the switcher, and
@@ -551,7 +574,9 @@ const styles = StyleSheet.create({
   },
   // Full-width rows inside the preview card. `alignSelf: stretch` so every row is the same width whatever
   // the longest label turns out to be after translation.
-  menu: { alignSelf: 'stretch', marginTop: 6 },
+  // Its own card, sized to its content and pinned to the right of the stack. minWidth keeps it from
+  // collapsing to the width of the shortest label when only two rows apply.
+  menu: { minWidth: 210, borderRadius: 16, paddingVertical: 6, paddingHorizontal: 6, shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.22, shadowRadius: 14, elevation: 12 },
   menuRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, paddingHorizontal: 6, borderRadius: 10 },
   menuLabel: { fontSize: 15, fontWeight: '500' },
   // ABSOLUTE, so hiding it on scroll is a transform and not a relayout. The grids pad their content
@@ -587,10 +612,15 @@ const styles = StyleSheet.create({
   backspaceFlat: { backgroundColor: 'rgba(127,127,127,0.16)' },
   // Long-press preview popup.
   previewBackdrop: { backgroundColor: 'rgba(0,0,0,0.5)' },
-  previewCenter: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
-  previewCard: { borderRadius: 22, paddingHorizontal: 18, paddingTop: 18, paddingBottom: 14, alignItems: 'center', minWidth: 180, shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.25, shadowRadius: 16, elevation: 12 },
-  previewEmoji: { fontSize: 96, lineHeight: 110, marginBottom: 8 },
-  previewGif: { width: 200, height: 200, borderRadius: 14, marginBottom: 10, backgroundColor: 'rgba(127,127,127,0.12)' },
+  previewCenter: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 28 },
+  // The sticker and the menu are stacked, NOT wrapped in a shared card. lignItems: flex-end is
+  // what puts the menu under the image on the right, as in the screenshot, while the image itself is
+  // centred by previewGif's own alignment.
+  previewStack: { alignItems: 'flex-end' },
+  previewEmoji: { fontSize: 120, lineHeight: 136, marginBottom: 14, alignSelf: 'center' },
+  // No background: a cut-out sticker must show the dimmed screen through its transparent parts, not
+  // a grey rectangle. Larger than before, because it now has a whole screen rather than a panel.
+  previewGif: { width: 220, height: 220, marginBottom: 14, alignSelf: 'center' },
   previewActions: { flexDirection: 'row', gap: 10, marginTop: 2 },
   previewBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingHorizontal: 18, paddingVertical: 10, borderRadius: 14 },
   previewBtnText: { fontSize: 14, fontWeight: '700' },

@@ -179,10 +179,28 @@ register('GET', '/v1/stickers/telegram', async (req, env, _ctx, _params, authedU
    */
   const LOTTIE_EXT = /\.tgs$/i;
 
-  // One `getFile` per sticker, in parallel: a 60-sticker pack would otherwise be 60 sequential round
-  // trips, and Telegram's limits are generous enough for a single import burst.
-  const paths = await Promise.all(
-    wanted.map(async (s) => {
+  // ── BOUNDED CONCURRENCY. NOT THE BUG — I CHECKED. ─────────────────────────
+  //
+  // This was `Promise.all(wanted.map(...))`: up to sixty `getFile` calls at once, under a comment claiming
+  // "Telegram's limits are generous enough for a single import burst". I suspected that claim was the
+  // whole failure — a rate-limited burst would make every `getFile` return empty, every sticker be
+  // rejected as unresolvable, and the route answer 422, which is exactly the reported symptom.
+  //
+  // SO I TESTED IT instead of shipping the theory: forty parallel `getFile` calls against a real
+  // forty-sticker pack, fired simultaneously with `curl --parallel`. All forty returned 200 with valid
+  // `file_path`s. No throttling, no 429. The hypothesis was wrong and the rate limit is not the cause.
+  //
+  // The bounding stays anyway, because it is correct on its own terms — an unbounded fan-out to a third
+  // party is a coin toss against limits that are not ours to guarantee, and eight in flight costs a
+  // sixty-sticker import a few extra seconds it can afford. But it is NOT a fix for the import failure,
+  // and it must not be recorded as one.
+  const CONCURRENCY = 8;
+  const paths: Array<{ path: string | null; emoji: string; rejected: string; lottie: boolean } | null> = [];
+  for (let i = 0; i < wanted.length; i += CONCURRENCY) {
+    const slice = wanted.slice(i, i + CONCURRENCY);
+    // eslint-disable-next-line no-await-in-loop
+    const settled = await Promise.all(
+      slice.map(async (s) => {
       // -- TRY BOTH CANDIDATES, IN THE ORDER THE FLAGS SUGGEST --------------------
       //
       // This used to give up after ONE attempt when the flags said video: it resolved the thumbnail,
@@ -228,8 +246,10 @@ register('GET', '/v1/stickers/telegram', async (req, env, _ctx, _params, authedU
         return { path: null as string | null, emoji: s.emoji || '', rejected: ext, lottie: false };
       }
       return { path: p as string | null, emoji: s.emoji || '', rejected: '', lottie: LOTTIE_EXT.test(p) };
-    }),
-  );
+      }),
+    );
+    paths.push(...settled);
+  }
 
   const origin = url.origin;
   const stickers = paths

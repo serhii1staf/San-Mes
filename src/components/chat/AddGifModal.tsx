@@ -224,7 +224,20 @@ export function AddGifModal({ visible, onClose, theme, labels }: AddGifModalProp
           </View>
 
           {error ? <RNText style={styles.error}>{error}</RNText> : null}
-          {detail ? <RNText style={[styles.detail, { color: theme.colors.text.tertiary }]}>{detail}</RNText> : null}
+          {/* Diagnostic, and NOT in small grey print any more.
+   
+              It was, and that was a mistake that cost several rounds: the pack name and the blocking format
+              were being reported all along, in a line the user never mentioned once — so each report came
+              back as "same error" and each reply from me was another guess. A detail nobody reads is the
+              same as a detail nobody collected.
+   
+              Same colour and weight as the error itself now, boxed so it reads as part of the failure
+              rather than as decoration. */}
+          {detail ? (
+            <View style={[styles.detailBox, { borderColor: theme.colors.border.light }]}>
+              <RNText selectable style={[styles.detail, { color: theme.colors.text.secondary }]}>{detail}</RNText>
+            </View>
+          ) : null}
 
           {busy ? (
             <View style={styles.busy}>
@@ -303,7 +316,10 @@ const styles = StyleSheet.create({
   input: { flex: 1, fontSize: 14, paddingVertical: 0 },
   pasteBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
   error: { color: '#FF3B30', fontSize: 12, lineHeight: 18, marginTop: 8 },
-  detail: { fontSize: 11, lineHeight: 16, marginTop: 3 },
+  // `selectable` on the text plus a visible box, so the diagnostic can be long-pressed and copied. The
+  // whole point of it is to be sent to someone who can act on it.
+  detailBox: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8, marginTop: 8 },
+  detail: { fontSize: 12, lineHeight: 17 },
   busy: { paddingVertical: 16, alignItems: 'center' },
   found: { marginTop: 12 },
   foundLine: { fontSize: 12, fontWeight: '600' },
