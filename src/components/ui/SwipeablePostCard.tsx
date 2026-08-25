@@ -1,5 +1,4 @@
-import React, { useRef, useCallback, useEffect, useMemo } from 'react';
-import { View, Pressable } from 'react-native';
+import React, { useRef, useCallback, useEffect, useMemo, memo } from 'react';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Reanimated, {
   useSharedValue,
@@ -14,20 +13,32 @@ import { Feather } from '@expo/vector-icons';
 import { captureRef } from 'react-native-view-shot';
 import * as MediaLibrary from 'expo-media-library';
 import * as Sharing from 'expo-sharing';
+import { View, Pressable, StyleSheet } from 'react-native';
 import { useTheme } from '../../theme';
 import { triggerHaptic } from '../../utils/haptics';
 import { showToast } from '../../store/toastStore';
-import { useT } from '../../i18n/store';
+import { t } from '../../i18n/store';
 
 const BUTTON_WIDTH = 65;
+
+// ── Hoisted out of render ───────────────────────────────────────────────────
+//
+// This component is mounted ONCE PER POST ROW by both profile cards, and every view in it was taking
+// an inline style object literal. A profile screen with forty rows minted four fresh objects per row
+// per commit for styles that never vary. The two theme-dependent values are the only ones that have
+// to stay dynamic, and they are the button's fill and nothing else.
+const swipeStyles = StyleSheet.create({
+  root: { position: 'relative' },
+  buttonWrap: { position: 'absolute', right: 0, top: 0, bottom: 12, width: BUTTON_WIDTH, justifyContent: 'center', alignItems: 'center' },
+  button: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
+});
 
 interface SwipeablePostCardProps {
   children: React.ReactNode;
 }
 
-export function SwipeablePostCard({ children }: SwipeablePostCardProps) {
+function SwipeablePostCardBase({ children }: SwipeablePostCardProps) {
   const theme = useTheme();
-  const t = useT();
   // ── The swipe runs entirely on the UI thread ────────────────────────────────
   //
   // It did not. `translateX` was a legacy `Animated.Value` and the pan's `onUpdate`
@@ -154,6 +165,13 @@ export function SwipeablePostCard({ children }: SwipeablePostCardProps) {
     [isOpenSV, ignoreGestureSV, translateX, clearAutoClose, armAutoClose],
   );
 
+  // The only style in here that depends on anything. Memoised so it is one object per theme flip
+  // rather than one per row per commit.
+  const buttonFill = useMemo(
+    () => ({ backgroundColor: theme.colors.accent.primary }),
+    [theme.colors.accent.primary],
+  );
+
   const cardStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: translateX.value }],
   }));
@@ -198,9 +216,9 @@ export function SwipeablePostCard({ children }: SwipeablePostCardProps) {
   };
 
   return (
-    <View style={{ position: 'relative' }}>
-      <Reanimated.View style={[{ position: 'absolute', right: 0, top: 0, bottom: 12, width: BUTTON_WIDTH, justifyContent: 'center', alignItems: 'center' }, buttonStyle]}>
-        <Pressable onPress={handleScreenshot} style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: theme.colors.accent.primary, alignItems: 'center', justifyContent: 'center' }}>
+    <View style={swipeStyles.root}>
+      <Reanimated.View style={[swipeStyles.buttonWrap, buttonStyle]}>
+        <Pressable onPress={handleScreenshot} style={[swipeStyles.button, buttonFill]}>
           <Feather name="camera" size={17} color="#FFFFFF" />
         </Pressable>
       </Reanimated.View>
@@ -215,3 +233,14 @@ export function SwipeablePostCard({ children }: SwipeablePostCardProps) {
     </View>
   );
 }
+
+// ── memo, BECAUSE THIS IS THE HEAVIEST THING ON A PROFILE ROW ───────────────
+//
+// It was a plain function component while both cards that use it are carefully memoised, so every
+// parent commit re-ran this entire hook stack per row: three shared values, an RNGH pan gesture with
+// four worklets, and two animated-style mappers. That is far more machinery than the card body it
+// wraps, and it was the one piece of the row nothing guarded.
+//
+// children is the only prop, and both call sites build it inside an already-memoised card, so a
+// plain shallow comparison is exactly right: identical children element means nothing here can differ.
+export const SwipeablePostCard = memo(SwipeablePostCardBase);

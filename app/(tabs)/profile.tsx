@@ -807,7 +807,6 @@ export default function ProfileScreen() {
         authorEmoji={cardAuthorEmoji}
         authorVerified={cardAuthorVerified}
         authorBadge={cardAuthorBadge}
-        shareText={`${cardAuthorName}: ${item.content || ''}\nhttps://san-m-app.com/post/${item.id}`}
         postEmoji={postEmoji}
         onLongPress={handlePostLongPress}
         onImagePress={handlePostImagePress}
@@ -1633,16 +1632,26 @@ export default function ProfileScreen() {
         // own default windowSize is 21, so 7 is still conservative.
         // ── 3 → 2, AND 50 → 80, BECAUSE THE BATCH SIZE IS THE MULTIPLIER ────────
         //
-        // A perf snapshot attributed this precisely. On one visit to this screen: 74 mounts, worst long
-        // task 520 ms, average 206 ms — and the long tasks land immediately after mount clusters, with
-        // `pendingDecodes: 0`, so this is JS, not image work:
+        // CORRECTION — THE NUMBERS THIS PARAGRAPH USED TO CITE DID NOT MEAN WHAT I SAID THEY MEANT.
         //
-        //   ts 230162  MOUNT ProfilePostCard 23, 22, 21, 21 ms   (same millisecond)
-        //   ts 230364  MOUNT ProfilePostCard 46, 44, 43 ms       (same millisecond)
-        //   ts 230566  LONG 135 ms, recentMarks: three ProfilePostCard mounts, 5 ms ago
+        // It read: "A perf snapshot attributed this precisely … MOUNT ProfilePostCard 23, 22, 21, 21 ms
+        // (same millisecond) … Three cards per batch at 20-46 ms each IS the 60-138 ms task."
         //
-        // Three cards per batch at 20–46 ms each IS the 60–138 ms task. The batch size multiplies the
-        // per-card cost directly, so halving it halves the worst frame.
+        // Those MOUNT marks were not measuring card bodies. The mark lived in a `useEffect` with deps
+        // `[perfEnabled]`, so it fired after each card's FIRST commit — the commit where `hydrated` is
+        // still false and the card renders one empty placeholder View. The span it reported was
+        // therefore dominated by whatever else React committed in the same batch, which is exactly why
+        // four cards reported near-identical values stamped in the same millisecond. That is one batch
+        // measured four times, not four expensive cards.
+        //
+        // The commit that actually mounts a card body was not instrumented at all. It is now, under the
+        // label `ProfilePostCard.body` — see the long note at the mark in
+        // src/components/profile/ProfilePostCard.tsx.
+        //
+        // The 3 → 2 change stays, because the reasoning below it stands on its own: batch size
+        // multiplies whatever a card really costs, and `windowSize: 7` removed the refill-rate problem
+        // that made a small batch harmful before. But it was not the measured attribution I claimed, and
+        // the next retune of these numbers should wait for `.body` figures rather than trusting this.
         //
         // The note below records why `maxToRenderPerBatch: 1` was bad before: with `windowSize: 3` the
         // list discarded cells the moment they left the screen, so a 1-card refill rate meant scrolling

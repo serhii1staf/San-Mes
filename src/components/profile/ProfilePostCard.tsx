@@ -38,7 +38,6 @@ interface ProfilePostCardProps {
   authorEmoji: string;
   authorVerified?: boolean;
   authorBadge?: string | null;
-  shareText: string;
   postEmoji?: string;
   onLongPress: (post: any) => void;
   onImagePress: (uri: string, postId: string, allImages: string[]) => void;
@@ -88,20 +87,6 @@ function ProfilePostCardBase({ post, authorName, authorEmoji, authorVerified, au
   const theme = useTheme();
   const t = useT();
 
-  // Mount-time diagnostic — only schedules a useEffect at all when the
-  // perf-monitor panel is enabled. Previously the effect fired on every
-  // card mount unconditionally, paying one Date.now() + microtask per
-  // card. With ~40 cards committing per profile-open that's 40 wasted
-  // microtasks for users who don't have the panel on (i.e. everyone in
-  // production).
-  const perfEnabled = useSettingsStore((s) => s.perfMonitorEnabled);
-  const renderStart = perfEnabled ? Date.now() : 0;
-  useEffect(() => {
-    if (!perfEnabled) return;
-    perfMonitor.markScreenMount('ProfilePostCard', Date.now() - renderStart);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [perfEnabled]);
-
   // Lazy-hydrate the WHOLE card body past the first paint via the SHARED
   // frame-paced reveal scheduler (module-level, top of file). On mount this
   // card joins the FIFO queue; the pump flips `hydrated` to true on the
@@ -119,6 +104,36 @@ function ProfilePostCardBase({ post, authorName, authorEmoji, authorVerified, au
     const cancel = enqueueReveal(() => setHydrated(true));
     return cancel;
   }, []);
+
+  // ── THIS MARK USED TO MEASURE THE WRONG COMMIT ────────────────────────────
+  //
+  // The effect's deps were [perfEnabled], so it fired after the FIRST commit. On that commit
+  // hydrated is false and this component returns a single empty placeholder View. So the number
+  // it reported was the span from this render function starting to React flushing effects for a
+  // commit that contained almost nothing of this card — which is dominated by whatever ELSE React
+  // committed in the same batch.
+  //
+  // That is why a snapshot showed four cards at 23/22/21/21 ms stamped in the SAME millisecond:
+  // they were one commit, and their start timestamps differed only by their own trivial render
+  // time. It reads as four expensive cards; it is one batch measured four times.
+  //
+  // I tuned maxToRenderPerBatch and updateCellsBatchingPeriod against those numbers, and the
+  // comment block in app/(tabs)/profile.tsx still cites them as the attribution. The batch size
+  // does multiply real per-card cost, so that change was not harmful, but it was not grounded in
+  // what I thought it was.
+  //
+  // Deps are [perfEnabled, hydrated] now and the clock starts on the render where hydrated is
+  // already true, so the span covers the commit that actually mounts the body: SwipeablePostCard,
+  // the decoration pattern, the thumbnails, FormattedText, LinkPreview, the avatar. That commit
+  // was never instrumented at all. The label carries .body so old and new numbers cannot be
+  // silently compared.
+  const perfEnabled = useSettingsStore((s) => s.perfMonitorEnabled);
+  const bodyRenderStart = perfEnabled && hydrated ? Date.now() : 0;
+  useEffect(() => {
+    if (!perfEnabled || !hydrated) return;
+    perfMonitor.markScreenMount('ProfilePostCard.body', Date.now() - bodyRenderStart);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [perfEnabled, hydrated]);
 
   // Pull derived data through `useMemo` so re-renders (theme flip,
   // sibling updates) don't re-walk the prop object or re-run regexes.

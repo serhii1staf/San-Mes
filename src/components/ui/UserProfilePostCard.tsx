@@ -122,18 +122,6 @@ function UserProfilePostCardBase({
   // on the false→true transition (the moment the user blocks someone).
   const isAuthorBlocked = useIsBlocked(authorId);
 
-  // Mount-time diagnostic — only schedules a useEffect when the perf
-  // monitor is on. With ~40 cards committing per profile-open the
-  // unconditional effect was paying 40 microtasks for users who don't
-  // have the panel enabled (i.e. nearly everyone in production).
-  const perfEnabled = useSettingsStore((s) => s.perfMonitorEnabled);
-  const renderStart = perfEnabled ? Date.now() : 0;
-  useEffect(() => {
-    if (!perfEnabled) return;
-    perfMonitor.markScreenMount('UserProfilePostCard', Date.now() - renderStart);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [perfEnabled]);
-
   // Lazy-hydrate the WHOLE card body past the first paint. Each card runs
   // its OWN RAF after mounting — see the header comment for the full
   // rationale. The placeholder fallback below collapses an initial-mount
@@ -162,6 +150,36 @@ function UserProfilePostCardBase({
     return cancel;
   }, []);
 
+  // ── THIS MARK USED TO MEASURE THE WRONG COMMIT ────────────────────────────
+  //
+  // The effect's deps were [perfEnabled], so it fired after the FIRST commit. On that commit
+  // hydrated is false and this component returns a single empty placeholder View. So the number
+  // it reported was the span from this render function starting to React flushing effects for a
+  // commit that contained almost nothing of this card — which is dominated by whatever ELSE React
+  // committed in the same batch.
+  //
+  // That is why a snapshot showed four cards at 23/22/21/21 ms stamped in the SAME millisecond:
+  // they were one commit, and their start timestamps differed only by their own trivial render
+  // time. It reads as four expensive cards; it is one batch measured four times.
+  //
+  // I tuned maxToRenderPerBatch and updateCellsBatchingPeriod against those numbers, and the
+  // comment block in app/(tabs)/profile.tsx still cites them as the attribution. The batch size
+  // does multiply real per-card cost, so that change was not harmful, but it was not grounded in
+  // what I thought it was.
+  //
+  // Deps are [perfEnabled, hydrated] now and the clock starts on the render where hydrated is
+  // already true, so the span covers the commit that actually mounts the body: SwipeablePostCard,
+  // the decoration pattern, the thumbnails, FormattedText, LinkPreview, the avatar. That commit
+  // was never instrumented at all. The label carries .body so old and new numbers cannot be
+  // silently compared.
+  const perfEnabled = useSettingsStore((s) => s.perfMonitorEnabled);
+  const bodyRenderStart = perfEnabled && hydrated ? Date.now() : 0;
+  useEffect(() => {
+    if (!perfEnabled || !hydrated) return;
+    perfMonitor.markScreenMount('UserProfilePostCard.body', Date.now() - bodyRenderStart);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [perfEnabled, hydrated]);
+
   const postImages: string[] = useMemo(() => {
     if (post.imageUrls && post.imageUrls.length > 0) return post.imageUrls;
     if (post.imageUrl) return [post.imageUrl];
@@ -178,6 +196,11 @@ function UserProfilePostCardBase({
     [hasImage, hydrated, content],
   );
   const timeAgo = useMemo(() => formatTimeAgo(post.createdAt), [post.createdAt]);
+
+  // Parsed once per emoji input. ProfilePostCard hoisted this into a memo a while ago; this card kept
+  // running `parseDecoration` inside an IIFE in its JSX, so the prefix logic re-walked on every commit
+  // of every row — including the rapid re-renders a scroll drives.
+  const decoration = useMemo(() => parseDecoration(postEmoji), [postEmoji]);
 
   // Theme-dependent style overrides, batched.
   const themedContainer = useMemo(
@@ -249,16 +272,11 @@ function UserProfilePostCardBase({
         {/* Decoration: viewer-side preference. Same prefix-aware
             parsing as ProfilePostCard so the same picker writes
             apply on both surfaces. */}
-        {(() => {
-          const dec = parseDecoration(postEmoji);
-          if (dec.kind === 'emoji') {
-            return <EmojiPattern emoji={dec.value} opacity={theme.isDark ? 0.12 : 0.10} />;
-          }
-          if (dec.kind === 'pixel') {
-            return <PixelIconPattern id={dec.id} opacity={theme.isDark ? 0.18 : 0.14} />;
-          }
-          return null;
-        })()}
+        {decoration.kind === 'emoji' ? (
+          <EmojiPattern emoji={decoration.value} opacity={theme.isDark ? 0.12 : 0.10} />
+        ) : decoration.kind === 'pixel' ? (
+          <PixelIconPattern id={decoration.id} opacity={theme.isDark ? 0.18 : 0.14} />
+        ) : null}
         {/* Left: Image grid thumbnail */}
         {hasImage ? (
           <Pressable onPress={() => onImagePress(postImages[0], post.id, postImages)}>

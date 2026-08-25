@@ -18,6 +18,7 @@ import { extractFirstUrl } from '../../services/linkPreview';
 import { Post } from '../../types';
 import { formatTimeAgo } from '../../utils/mockData';
 import { triggerHaptic } from '../../utils/haptics';
+import { enqueueReveal } from '../../utils/revealQueue';
 import { useT } from '../../i18n/store';
 import { useIsBlocked } from '../../store/blockedUsersStore';
 import { openPostShareSheet } from '../../store/shareSheetStore';
@@ -128,10 +129,25 @@ export const PostCard = memo(function PostCard({ post, currentUserId, onLike, on
   // commits only empty placeholders on that frame, with each card's
   // heavy subtree committing on the next frame. See the header comment
   // for the full rationale.
+  // ── SHARED FRAME-PACED QUEUE, NOT A BARE RAF ──────────────────────────────
+  //
+  // This was `requestAnimationFrame(() => setPrimed(true))`. Both profile cards were migrated to the
+  // shared queue after a snapshot showed what a bare rAF costs, and this card — the one on the busiest
+  // route in the app — was the one that never got it. `(tabs)` reports the worst long task of any
+  // route in the latest snapshot.
+  //
+  // The reason a per-card rAF does not work is written out in full in src/utils/revealQueue.ts: it
+  // delays each card by one frame but does NOT serialise cards against each other, so every card the
+  // list mounts in the same batch schedules for the SAME next frame and their bodies commit together.
+  // The delay relocates the storm instead of breaking it up.
+  //
+  // `enqueueReveal` releases at most two bodies per frame in mount order, and its canceller drops the
+  // slot if FlashList recycles this cell before its turn — so a fast flick never hydrates a card that
+  // has already scrolled away.
   const [primed, setPrimed] = useState(false);
   useEffect(() => {
-    const handle = requestAnimationFrame(() => setPrimed(true));
-    return () => cancelAnimationFrame(handle);
+    const cancel = enqueueReveal(() => setPrimed(true));
+    return cancel;
   }, []);
   // Hero image priority — always `low`. iOS schedules `low`-priority decodes
   // serially on its image-decode queue rather than fanning them out in
