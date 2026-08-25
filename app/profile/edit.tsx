@@ -43,6 +43,7 @@ import {
   stripBannerTransform,
 } from '../../src/utils/bannerTransform';
 import { useLiquidGlassActive, NativeGlassView } from '../../src/components/ui/LiquidGlass';
+import { emojiTextStyle } from '../../src/components/ui/emojiText';
 
 const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -1272,7 +1273,7 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     marginBottom: 12,
   },
-  emojiPreviewText: { fontSize: 36 },
+  emojiPreviewText: emojiTextStyle(36),
   emojiGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -1286,7 +1287,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  emojiCellText: { fontSize: 24 },
+  emojiCellText: emojiTextStyle(24),
   linkPickerBackdrop: {
     position: 'absolute',
     top: 0,

@@ -18,6 +18,7 @@ import { shouldSync } from '../../src/services/syncThrottle';
 import { useT } from '../../src/i18n/store';
 import { perfMonitor } from '../../src/services/perfMonitor';
 import { useSettingsStore } from '../../src/store/settingsStore';
+import { emojiTextStyle } from '../../src/components/ui/emojiText';
 
 
 const SEARCH_HISTORY_KEY = '@san:search_history';
@@ -508,7 +509,7 @@ export default function SearchScreen() {
         {matchedApps.slice(0, 5).map(app => (
           <Pressable key={app.id} onPress={() => openApp(app)} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8 }}>
             <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: theme.colors.accent.primary + '12', alignItems: 'center', justifyContent: 'center', overflow: 'visible' }}>
-              <RNText style={{ fontSize: 18 }} allowFontScaling={false}>{app.emoji}</RNText>
+              <RNText style={emojiTextStyle(18)} allowFontScaling={false}>{app.emoji}</RNText>
             </View>
             <Text variant="body" weight="medium" style={{ marginLeft: 10 }}>{app.name}</Text>
           </Pressable>

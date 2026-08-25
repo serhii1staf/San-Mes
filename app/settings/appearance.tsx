@@ -10,6 +10,7 @@ import { useThemeStore, ACCENT_COLORS, AccentColor } from '../../src/store/theme
 import { useAuthStore } from '../../src/store/authStore';
 import { useSettingsStore } from '../../src/store/settingsStore';
 import { useT } from '../../src/i18n/store';
+import { emojiTextStyle } from '../../src/components/ui/emojiText';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const CARD_WIDTH = SCREEN_WIDTH * 0.72;
@@ -49,7 +50,10 @@ function ThemePreviewCardBase({ accentConfig, isDark, isSelected, user, t, previ
       <View style={{ marginHorizontal: 10, marginVertical: 6, backgroundColor: bgElevated, borderRadius: 16, padding: 10, borderWidth: 0.5, borderColor: borderColor }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
           <View style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: accent + '20', alignItems: 'center', justifyContent: 'center' }}>
-            <Text style={{ fontSize: 12 }}>{user?.emoji || '😊'}</Text>
+            {/* The app's own `Text` wrapper, which does not forward `allowFontScaling` — so the box here can
+                    still grow with an accessibility text scale. Acceptable: this avatar is not in a
+                    fixed-size grid cell, so a larger glyph has room to sit in. */}
+              <Text style={emojiTextStyle(12)}>{user?.emoji || '😊'}</Text>
           </View>
           <View style={{ marginLeft: 8, flex: 1 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>

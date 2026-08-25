@@ -31,6 +31,7 @@ import {
 } from '../../src/constants/bubbleColors';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { useT } from '../../src/i18n/store';
+import { emojiTextStyle } from '../../src/components/ui/emojiText';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 const PREVIEW_HEIGHT = Math.round(SCREEN_HEIGHT * 0.34);
@@ -412,7 +413,7 @@ const styles = StyleSheet.create({
   },
   tileHairline: { borderRadius: 15, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(127,127,127,0.18)' },
   tilePress: { borderRadius: 15 },
-  tileEmoji: { fontSize: 18 },
+  tileEmoji: emojiTextStyle(18),
   tileLabel: { fontSize: 10.5, fontWeight: '500', letterSpacing: 0.1 },
 
   footerRow: { flexDirection: 'row', gap: 10, paddingTop: 12, borderTopWidth: StyleSheet.hairlineWidth },

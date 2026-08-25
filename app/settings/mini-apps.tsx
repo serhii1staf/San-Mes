@@ -18,6 +18,7 @@ import { MiniAppConsentDialog } from '../../src/components/mini-apps/MiniAppCons
 import { openLegalLink } from '../../src/components/mini-apps/openLegalLink';
 import { planSave, dispatchAccept } from '../../src/components/mini-apps/consentGate';
 import { headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
+import { emojiTextStyle } from '../../src/components/ui/emojiText';
 
 // HTTPS-only legal page literals (same destinations as the consent dialog).
 const TERMS_URL = 'https://legal.san-m-app.com/terms.html';
@@ -182,7 +183,7 @@ export default function MiniAppsScreen() {
         <View style={{ paddingHorizontal: 20, paddingTop: headerContentHeight + 16, paddingBottom: 16, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border.light }}>
           <View style={{ flexDirection: 'row', gap: 8, marginBottom: 10 }}>
             <Pressable onPress={() => { const emojis = ['🎮', '🛒', '📊', '🎵', '📝', '🔧', '🌐', '💬', '📸', '🎯', '🏠', '💰', '🎬', '📱', '🔍']; setEmoji(emojis[Math.floor(Math.random() * emojis.length)]); }} style={{ width: 48, height: 48, borderRadius: 14, backgroundColor: theme.colors.background.elevated, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: theme.colors.border.light, overflow: 'visible' }}>
-              <RNText style={{ fontSize: 24 }} allowFontScaling={false}>{emoji}</RNText>
+              <RNText style={emojiTextStyle(24)} allowFontScaling={false}>{emoji}</RNText>
             </Pressable>
             <TextInput value={name} onChangeText={setName} placeholder={t('mini_apps.name_placeholder')} placeholderTextColor={theme.colors.text.tertiary} style={{ flex: 1, backgroundColor: theme.colors.background.elevated, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: theme.colors.text.primary, borderWidth: 1, borderColor: theme.colors.border.light }} />
           </View>
@@ -230,7 +231,7 @@ export default function MiniAppsScreen() {
           renderItem={({ item }) => (
             <Pressable onPress={() => handleOpen(item)} onLongPress={() => handleLongPress(item)} delayLongPress={500} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 16, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: theme.colors.border.light }}>
               <View style={{ width: 48, height: 48, borderRadius: 14, backgroundColor: theme.colors.accent.primary + '15', alignItems: 'center', justifyContent: 'center', overflow: 'visible' }}>
-                <RNText style={{ fontSize: 24 }} allowFontScaling={false}>{item.emoji}</RNText>
+                <RNText style={emojiTextStyle(24)} allowFontScaling={false}>{item.emoji}</RNText>
               </View>
               <View style={{ marginLeft: 12, flex: 1 }}>
                 <Text variant="body" weight="semibold">{item.name}</Text>

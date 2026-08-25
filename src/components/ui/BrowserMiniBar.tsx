@@ -12,6 +12,7 @@ import { useMiniAppStore } from '../../store/miniAppStore';
 import { useEffectiveBrowserWidgetPosition } from '../../lib/browserWidget';
 import { useT } from '../../i18n/store';
 import { triggerHaptic } from '../../utils/haptics';
+import { emojiTextStyle } from '../../components/ui/emojiText';
 
 // Browser / mini-app "minimised session" pill.
 //
@@ -139,7 +140,7 @@ export function BrowserMiniBar() {
           }}
         >
           {isMiniApp && minimizedEmoji ? (
-            <RNText style={{ fontSize: 15 }} allowFontScaling={false}>{minimizedEmoji}</RNText>
+            <RNText style={emojiTextStyle(15)} allowFontScaling={false}>{minimizedEmoji}</RNText>
           ) : minimizedFavicon ? (
             <View style={{ width: 16, height: 16, borderRadius: 4, overflow: 'hidden', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}>
               <CachedImage uri={minimizedFavicon} style={{ width: 16, height: 16 }} proxyWidth={48} />
