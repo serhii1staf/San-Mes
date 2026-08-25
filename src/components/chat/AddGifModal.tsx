@@ -92,7 +92,7 @@ export function AddGifModal({ visible, onClose, theme, labels }: AddGifModalProp
   const [detail, setDetail] = useState<string | null>(null);
   const [resolved, setResolved] = useState<Resolved | null>(null);
   // Consumed by SlideUpSheet on the next close, then reset by it. See the three-dots handler.
-  const exitUpRef = useRef(false);
+  const exitInstantRef = useRef(false);
   const add = useCustomGifs((s) => s.add);
   const addMany = useCustomGifs((s) => s.addMany);
 
@@ -185,7 +185,7 @@ export function AddGifModal({ visible, onClose, theme, labels }: AddGifModalProp
   const onPrimary = resolved ? commit : () => void resolve(url);
 
   return (
-    <SlideUpSheet visible={visible} onClose={close} exitUpRef={exitUpRef}>
+    <SlideUpSheet visible={visible} onClose={close} exitInstantRef={exitInstantRef}>
       <View style={styles.card}>
           <View style={styles.header}>
             <RNText style={[styles.title, { color: theme.colors.text.primary }]}>{labels.title}</RNText>
@@ -205,33 +205,37 @@ export function AddGifModal({ visible, onClose, theme, labels }: AddGifModalProp
             <Pressable
               onPress={() => {
                 triggerHaptic('light');
-                // ── PUSH FIRST, THEN LET THE SHEET LEAVE ──────────────────────────────
+                // ── ONE TRANSITION, NOT TWO OVERLAPPING ONES ──────────────────────────
                 //
-                // Reported as a freeze: tap the three dots, the interface vanishes, a pause, and only
-                // then the screen appears. That was not a freeze at all — it was dead time I built in.
+                // This has now been wrong in both directions, so both are recorded.
                 //
-                // The previous order was `close()` and then `router.push` on a timer. `SlideUpSheet`
-                // only calls `onClose` after its 250 ms exit animation finishes, and the timer added 30
-                // more, so the sheet was fully gone for the better part of a third of a second before
-                // anything was asked to replace it. The user is looking at nothing during that gap and
-                // reads it, correctly, as the app having stalled.
+                // First it was `close()` then `router.push` on a timer. `SlideUpSheet` only calls
+                // `onClose` after its 250 ms exit, plus 30 ms of timer, so the sheet was gone for the
+                // better part of a third of a second before anything replaced it — dead time, reported
+                // as a freeze.
                 //
-                // Pushing first means the two transitions OVERLAP: the route starts mounting and
-                // animating in while the sheet is still on its way up, which is what the upward exit was
-                // for in the first place. Nothing is waiting on anything.
+                // So I reversed it: push first, let the sheet fly up over the incoming screen. That
+                // removed the gap and introduced something worse — "it disappears, hangs for a
+                // millisecond, hangs again, disappears again". Which is what running BOTH transitions at
+                // once actually looks like here: this sheet lives inside an RN `<Modal>`, and presenting
+                // a route while a Modal is up makes iOS re-composite the window — the new screen appears
+                // behind the Modal, the Modal then animates out on the JS-driven value, and
+                // `SlideUpSheet`'s own `visible || mounted` bookkeeping commits twice more on the way.
+                // Several visual events for one user action, which is exactly the stutter described.
                 //
-                // Safe with respect to the nested-Modal problem this ordering used to avoid: the route
-                // is a screen in the navigator, not a Modal, so it is not competing with this sheet's
-                // Modal for presentation — that constraint applies to two Modals, which this is not.
+                // A handoff does not need a farewell. `exitInstantRef` drops the sheet in a single
+                // commit and the route slides in over where it was: ONE animation, owned by the
+                // navigator, with nothing for it to fight. That is also what makes it predictable — the
+                // previous two versions were both timing-dependent, and this one has no timing at all.
                 //
                 // `as any` on the route, matching `settings/index.tsx`'s push to `/settings/pixel-icons`.
                 // expo-router GENERATES its route union into `.expo/types/router.d.ts`, which is
                 // gitignored and only rewritten when the dev server or a build runs — so a screen added
-                // in this commit is not in the union yet even though the file exists and the path is
-                // correct. The alternative is editing generated output, which the next build discards.
-                router.push('/settings/stickers' as any);
-                exitUpRef.current = true;
+                // recently is not in the union yet even though the file exists and the path is correct.
+                // The alternative is editing generated output, which the next build discards.
+                exitInstantRef.current = true;
                 close();
+                router.push('/settings/stickers' as any);
               }}
               hitSlop={10}
               accessibilityRole="button"
