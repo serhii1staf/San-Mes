@@ -47,6 +47,7 @@ import { showToast } from '../../src/store/toastStore';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { useT } from '../../src/i18n/store';
 import { headerScrimHeights } from '../../src/theme/scrim';
+import { emojiTextStyle } from '../../src/components/ui/emojiText';
 
 // Emoji choices for the "link preview emoji" row — same set as the legacy
 // chat-settings screen so users get exactly the visual options they had
@@ -536,7 +537,7 @@ const styles = StyleSheet.create({
     maxWidth: '60%',
   },
   rowMeta: { fontSize: 13, fontVariant: ['tabular-nums'] },
-  emojiChip: { fontSize: 20 },
+  emojiChip: emojiTextStyle(20),
   // Bottom sheet helpers
   sheetBtn: {
     flex: 1,
@@ -561,5 +562,5 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderWidth: 1,
   },
-  emojiCellText: { fontSize: 22 },
+  emojiCellText: emojiTextStyle(22),
 });

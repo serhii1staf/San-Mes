@@ -19,6 +19,7 @@ import { useMiniAppStore } from '../../store/miniAppStore';
 import { useEffectiveBrowserWidgetPosition } from '../../lib/browserWidget';
 import { useT } from '../../i18n/store';
 import { triggerHaptic } from '../../utils/haptics';
+import { emojiTextStyle } from '../../components/ui/emojiText';
 
 // Bottom-docked browser / mini-app session band.
 //
@@ -307,7 +308,7 @@ export function BrowserBottomBand() {
             }}
           >
             {isMiniApp && minimizedEmoji ? (
-              <RNText style={{ fontSize: 18 }} allowFontScaling={false}>{minimizedEmoji}</RNText>
+              <RNText style={emojiTextStyle(18)} allowFontScaling={false}>{minimizedEmoji}</RNText>
             ) : minimizedFavicon ? (
               <View
                 style={{

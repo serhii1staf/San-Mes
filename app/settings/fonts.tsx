@@ -19,6 +19,7 @@ import { useT } from '../../src/i18n/store';
 import { PixelIcon } from '../../src/components/pixel-icons/PixelIcon';
 import { parseDecoration, emojiToken } from '../../src/components/pixel-icons/decoration';
 import { headerScrimHeights } from '../../src/theme/scrim';
+import { emojiTextStyle } from '../../src/components/ui/emojiText';
 
 // Inline-preview font for each family option. Mirrors the regular weight
 // ThemeProvider builds, so the right-side font label renders in the family
@@ -351,7 +352,7 @@ const styles = StyleSheet.create({
     maxWidth: '60%',
   },
   rowMeta: { fontSize: 13, fontVariant: ['tabular-nums'] },
-  emojiChip: { fontSize: 20 },
+  emojiChip: emojiTextStyle(20),
   emojiGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -366,5 +367,5 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderWidth: 1,
   },
-  emojiCellText: { fontSize: 22 },
+  emojiCellText: emojiTextStyle(22),
 });

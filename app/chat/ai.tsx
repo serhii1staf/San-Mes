@@ -29,6 +29,7 @@ import { useSettingsStore } from '../../src/store/settingsStore';
 import { ThemeIconCarousel } from '../../src/components/pixel-icons/ThemeIconCarousel';
 import { buildMiniAppShareUrl } from '../../src/utils/miniAppShare';
 import { useChatKeyboardMode } from '../../src/hooks/useChatKeyboardMode';
+import { emojiTextStyle } from '../../src/components/ui/emojiText';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 
@@ -52,7 +53,7 @@ function MiniThemeCard({ themeKey }: { themeKey: string }) {
       <View style={{ marginHorizontal: 8, marginVertical: 4, backgroundColor: themeOpt.darkElevated, borderRadius: 12, padding: 8, borderWidth: 0.5, borderColor: themeOpt.darkBorder }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
           <View style={{ width: 18, height: 18, borderRadius: 9, backgroundColor: themeOpt.color + '20', alignItems: 'center', justifyContent: 'center' }}>
-            <RNText style={{ fontSize: 9 }} allowFontScaling={false}>{user?.emoji || '😊'}</RNText>
+            <RNText style={emojiTextStyle(9)} allowFontScaling={false}>{user?.emoji || '😊'}</RNText>
           </View>
           <Text style={{ fontSize: 8, fontWeight: '600', color: '#FFFFFF', marginLeft: 6, flexShrink: 1 }} numberOfLines={1}>{user?.displayName || t('ai_chat.user_fallback')}</Text>
         </View>
@@ -234,7 +235,7 @@ function ManageListBubble({ ownerId, onEdit, onDelete, onShare }: ManageListBubb
       {myApps.map((app, i) => (
         <View key={app.id} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 12, borderTopWidth: i === 0 ? 0 : 0.5, borderTopColor: theme.colors.border.light }}>
           <View style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: theme.colors.accent.primary + '12', alignItems: 'center', justifyContent: 'center', overflow: 'visible' }}>
-            <RNText style={{ fontSize: 18 }} allowFontScaling={false}>{app.emoji}</RNText>
+            <RNText style={emojiTextStyle(18)} allowFontScaling={false}>{app.emoji}</RNText>
           </View>
           <View style={{ flex: 1, marginLeft: 10 }}>
             <Text variant="caption" weight="semibold" numberOfLines={1} style={{ fontSize: 13 }}>{app.name}</Text>

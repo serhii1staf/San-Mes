@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
 import { View, Text as RNText, StyleSheet, Modal } from 'react-native';
 import { useT } from '../../i18n/store';
+import { emojiTextStyle } from '../../components/ui/emojiText';
 
 // Full-screen cover shown (iOS only) the moment a screenshot is detected on an
 // account that disabled screenshots. iOS can't block the still image itself, so
@@ -28,6 +29,6 @@ export function ScreenshotShield({ visible, onHide }: { visible: boolean; onHide
 
 const styles = StyleSheet.create({
   fill: { flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center', gap: 18 },
-  emoji: { fontSize: 76 },
+  emoji: emojiTextStyle(76),
   txt: { color: 'rgba(255,255,255,0.72)', fontSize: 14, paddingHorizontal: 48, textAlign: 'center', lineHeight: 20 },
 });

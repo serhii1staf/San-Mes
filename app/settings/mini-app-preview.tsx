@@ -31,6 +31,7 @@ import { ShrinkingModalTitle } from '../../src/components/ui';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { useSettingsStore } from '../../src/store/settingsStore';
 import { useT } from '../../src/i18n/store';
+import { emojiTextStyle } from '../../src/components/ui/emojiText';
 import {
   MINI_APP_PREVIEWS,
   getMiniAppPreviewSource,
@@ -352,7 +353,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  emoji: { fontSize: 26 },
+  emoji: emojiTextStyle(26),
   openWrap: { borderRadius: 14, overflow: 'hidden' },
   openBlur: {
     paddingHorizontal: 12,

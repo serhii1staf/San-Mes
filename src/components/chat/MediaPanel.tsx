@@ -12,6 +12,7 @@ import { useCustomGifs } from '../../store/customGifsStore';
 import { AddGifModal } from './AddGifModal';
 import { triggerHaptic } from '../../utils/haptics';
 import { openUrl } from '../../utils/openUrl';
+import { emojiTextStyle } from '../../components/ui/emojiText';
 
 const PANEL_W = Dimensions.get('window').width;
 // Height of the recents strip. Shared by its own style, the grids' top content padding and the
@@ -686,7 +687,7 @@ const styles = StyleSheet.create({
   recentFill: { ...StyleSheet.absoluteFillObject },
   recentContent: { paddingHorizontal: 10, alignItems: 'center', gap: 2 },
   recentCell: { width: 38, height: 38, alignItems: 'center', justifyContent: 'center' },
-  recentEmoji: { fontSize: 26 },
+  recentEmoji: emojiTextStyle(26),
   trackWrap: { flex: 1, overflow: 'hidden' },
   bareFill: { flex: 1 },
   track: { flex: 1, flexDirection: 'row', width: PANEL_W * 2 },
@@ -713,7 +714,8 @@ const styles = StyleSheet.create({
   // what puts the menu under the image on the right, as in the screenshot, while the image itself is
   // centred by previewGif's own alignment.
   previewStack: { alignItems: 'flex-end' },
-  previewEmoji: { fontSize: 120, lineHeight: 136, marginBottom: 14, alignSelf: 'center' },
+  // 1.133 was too tight: see emojiTextStyle. At 120 pt the shortfall is ~20 px of trimmed glyph.
+  previewEmoji: { ...emojiTextStyle(120), marginBottom: 14, alignSelf: 'center' },
   // No background: a cut-out sticker must show the dimmed screen through its transparent parts, not
   // a grey rectangle. Larger than before, because it now has a whole screen rather than a panel.
   previewGif: { width: 220, height: 220, marginBottom: 14, alignSelf: 'center' },

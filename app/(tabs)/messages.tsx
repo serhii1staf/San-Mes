@@ -42,6 +42,7 @@ import { useT, t as tStatic, useI18nStore } from '../../src/i18n/store';
 import { Conversation } from '../../src/types';
 import { perfMonitor } from '../../src/services/perfMonitor';
 import { useTabBarStore } from '../../src/store/tabBarStore';
+import { emojiTextStyle } from '../../src/components/ui/emojiText';
 import {
   useConversationPreviewStore,
   selectPreviews,
@@ -318,7 +319,7 @@ function MiniAppsRow({ editMode, selectedIds, editProgress, onToggleSelect }: Mi
           />
           <Reanimated.View style={[styles.rowContent, editShift]}>
           <View style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: theme.colors.accent.primary + '12', alignItems: 'center', justifyContent: 'center', overflow: 'visible' }}>
-            <RNText style={{ fontSize: 20 }} allowFontScaling={false}>{app.emoji}</RNText>
+            <RNText style={emojiTextStyle(20)} allowFontScaling={false}>{app.emoji}</RNText>
           </View>
           <View style={{ marginLeft: 12, flex: 1, paddingRight: editMode ? REORDER_TEXT_CLEARANCE : 0 }}>
             <Text variant="body" weight="medium" numberOfLines={1}>{app.name}</Text>
