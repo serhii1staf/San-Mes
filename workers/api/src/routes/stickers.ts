@@ -39,7 +39,7 @@
 // grid of broken cells. The response reports `animated` per pack so the client can say so plainly
 // instead of leaving the user to wonder why their dancing sticker sits still.
 
-import { jsonResponse, fail } from '../http';
+import { ok, fail } from '../http';
 import { register } from '../router';
 import { Env } from '../db';
 
@@ -292,7 +292,36 @@ register('GET', '/v1/stickers/telegram', async (req, env, _ctx, _params, authedU
     );
   }
 
-  return jsonResponse(req, {
+  // ── `ok()`, NOT `jsonResponse()`. THIS ONE WORD WAS THE ENTIRE BUG. ───────
+  //
+  // `jsonResponse` writes the body VERBATIM. `ok` wraps it in the `{ data, error }` envelope that every
+  // caller in this codebase destructures — see the header of `http.ts`, which states that both Supabase
+  // and Worker responses share that shape precisely so callers can keep one `if (error)` / `data?.thing`
+  // pattern.
+  //
+  // This route returned the payload bare. So `apiClient` did:
+  //
+  //     return { data: body.data ?? null, error: body.error ?? null };
+  //
+  // against a body of `{ name, title, animated, count, stickers }` — which has NEITHER key. Both
+  // collapsed to null, and the client's next line is:
+  //
+  //     if (!data || ...) return { ok: false, reason: 'empty' };
+  //
+  // So EVERY SUCCESSFUL IMPORT was reported as an empty pack. The user's message — "the set exists but
+  // none of its stickers can be shown as an image" — was produced by a response that had just
+  // successfully resolved every sticker in the set.
+  //
+  // Worth recording how long this hid, because the reason is instructive. The failure named a format
+  // problem, so I went after formats: I verified static (`.webp`), animated (`.tgs` → gunzip + Lottie)
+  // and video (`.webm` → static thumbnail) end to end against the live Bot API, tested and discarded a
+  // rate-limit theory, and made the candidate ordering symmetric. All of that was real work on a path
+  // that was already returning correct data. None of it could ever have changed the outcome.
+  //
+  // The 422 below uses `fail`, which DOES wrap. That asymmetry is what made the bug look like a format
+  // problem: genuine errors arrived intact and legible, while success arrived indistinguishable from the
+  // one error that has no detail to print.
+  return ok(req, {
     name: set.name,
     title: set.title,
     animated,

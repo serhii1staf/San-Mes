@@ -232,8 +232,12 @@ function MediaPanelComponent({
   const customGifs = useCustomGifs((s) => s.items);
   const removeCustomGif = useCustomGifs((s) => s.remove);
   const [addOpen, setAddOpen] = useState(false);
+  // Latches true on the first open and never goes back. See the long note at the render site: the sheet
+  // has to outlive `addOpen === false` for its own slide-down to run.
+  const [addMounted, setAddMounted] = useState(false);
   const openAddGif = useCallback(() => {
     triggerHaptic('light');
+    setAddMounted(true);
     // Switch to the GIF tab first: adding a GIF while looking at the emoji grid would put the new
     // sticker somewhere the user cannot see it, which reads as the button having done nothing.
     if (tab !== 'gif') onTabChange('gif');
@@ -551,7 +555,26 @@ function MediaPanelComponent({
       {/* Add-your-own-GIF dialog. Rendered last so it paints above the grids and the switcher, and
           mounted only while open - it owns a TextInput and a Modal, neither of which should exist
           in the tree of a picker that is usually just being scrolled. */}
-      {addOpen ? (
+      {/* ── LATCHED MOUNT, NOT `addOpen ? ... : null` ────────────────────────────
+   
+          Reported: tapping Cancel made this sheet vanish instantly instead of sliding down.
+   
+          The cause was one boolean doing two jobs. `addOpen` was BOTH the mount condition and the
+          `visible` prop, so `setAddOpen(false)` removed `AddGifModal` — and with it the `SlideUpSheet`
+          inside it — in the very same React commit that asked it to close. `SlideUpSheet` animates its
+          exit from an effect branch that runs when `visible` goes false while still mounted; with the
+          instance already gone there was nothing left to run it. The 250 ms slide-down existed the whole
+          time and never got a chance to play.
+   
+          The giveaway was that dismissing by tapping the backdrop looked CORRECT: that path starts inside
+          the sheet, so the animation finishes first and only then calls `onClose`. Only the in-sheet
+          buttons were instant, which is precisely the asymmetry an unmount-before-animate produces.
+   
+          `mounted` only ever latches true, exactly like `ShareSheetHost` does for the share sheet — the
+          one consumer in the app that already had to solve this. The original reason for the conditional
+          still holds (this sheet owns a TextInput and a Modal that should not sit in the tree of a picker
+          that is usually just being scrolled) and is preserved: nothing mounts until the first open. */}
+      {addMounted ? (
         <AddGifModal visible={addOpen} onClose={closeAddGif} theme={theme} labels={labels.addGif} />
       ) : null}
     </View>

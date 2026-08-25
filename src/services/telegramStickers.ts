@@ -114,7 +114,27 @@ export async function importTelegramPack(link: string): Promise<ImportResult> {
       return { ok: false, reason: 'failed', detail: error };
     }
 
-    if (!data || !Array.isArray(data.stickers) || data.stickers.length === 0) {
+    // ── THIS BRANCH TOLD THE SAME LIE FOR WEEKS. IT REPORTS ITSELF NOW. ──────
+    //
+    // `reason: 'empty'` with no `detail` reads in the UI as "the set exists but none of its stickers can
+    // be shown as an image" — a statement about FORMATS. But this branch is reached whenever the response
+    // simply did not carry stickers, which has nothing to do with formats at all.
+    //
+    // That is exactly what happened: the Worker returned its payload through `jsonResponse` instead of
+    // `ok`, so it arrived without the `{ data, error }` envelope, `apiClient` collapsed both to null, and
+    // this line fired on every SUCCESSFUL import. The route had resolved every sticker correctly. Because
+    // `error` was null, the branch above never ran, so the diagnostic I had put there could not fire
+    // either — the failure was structurally incapable of reporting itself, which is why it survived
+    // several rounds of me investigating formats.
+    //
+    // So the two causes are now separated and both are recorded. A null `data` with a null `error` is an
+    // envelope or transport problem and says so; a present-but-empty list is a genuine content problem.
+    if (!data) {
+      try { perfMonitor.recordError('stickerImport ' + link + ' -> no data and no error (envelope/transport)'); } catch {}
+      return { ok: false, reason: 'failed', detail: 'empty response' };
+    }
+    if (!Array.isArray(data.stickers) || data.stickers.length === 0) {
+      try { perfMonitor.recordError('stickerImport ' + link + ' -> response carried 0 stickers'); } catch {}
       return { ok: false, reason: 'empty' };
     }
 
