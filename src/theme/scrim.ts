@@ -390,3 +390,85 @@ export function composerScrimHeight(insetsBottom: number, minBottomPad = 12): nu
  * height instead of needing to borrow space from the transcript.
  */
 export const COMPOSER_SCRIM_OVERHANG = 0;
+
+// ─── SURFACE SCRIM: THE SAME CURVE, RAMPED TO THE BACKGROUND INSTEAD OF BLACK ──
+//
+// Asked for by comparison: the fade on the imported-stickers screen should be used in the chat
+// "exactly the same". Worth being precise about what the difference actually was, because it is not
+// the softness.
+//
+// The ramps above go to BLACK with rising alpha, so they DIM whatever is underneath. The stickers
+// screen was drawing something else — the BACKGROUND COLOUR with rising alpha — so content there does
+// not darken as it approaches the chrome, it dissolves into the page and vanishes. That is the effect
+// being asked for, and it reads as much softer even at identical geometry, because there is no colour
+// shift to notice: the content simply stops existing where the page begins.
+//
+// This is added as a shared builder rather than copied into the chat, for the reason this file already
+// states at length: the stickers screen had hand-rolled its own six inline stops, which is exactly the
+// per-screen drift that made the scrims inconsistent before. Six linear stops are also crude next to
+// the seventeen-stop `smoothstep × gamma` curve above, which was tuned specifically to have no slope
+// discontinuity anywhere — so reusing the curve makes the stickers screen SOFTER too, not just
+// consistent.
+//
+// Deliberately NOT applied to the tab bar or to other screen headers. Those were set to black on an
+// explicit, recorded instruction ("dark, like the one under the bottom navigation, everywhere"), and
+// quietly reversing that globally because a different surface was requested would be the same mistake
+// in the opposite direction. Chat and the sticker library share this; everything else keeps the black
+// ramp until asked.
+
+/**
+ * Alpha ramp over an arbitrary background colour, using the identical `smoothstep × SCRIM_GAMMA`
+ * curve and stop count as the black ramps, so softness can never drift between the two.
+ *
+ * `backgroundColor` must be a 6-digit `#RRGGBB` hex — every caller passes
+ * `theme.colors.background.primary`, which is that shape.
+ */
+function buildSurfaceRamp(backgroundColor: string): string[] {
+  const base = backgroundColor.length === 7 ? backgroundColor : '#000000';
+  const out: string[] = [];
+  for (let i = 0; i < SCRIM_STOP_COUNT; i++) {
+    const t = i / (SCRIM_STOP_COUNT - 1);
+    // Full opacity at the chrome end. A surface scrim has no reason to stop short the way a dimming
+    // one does: it IS the page, so anything less would let content ghost through the header.
+    const a = Math.pow(smoothstep(t), SCRIM_GAMMA);
+    const hex = Math.round(Math.min(1, Math.max(0, a)) * 255)
+      .toString(16)
+      .padStart(2, '0');
+    out.push(base + hex);
+  }
+  return out;
+}
+
+// Cached per background colour. Two themes means two entries in practice, and without this every
+// screen drawing a surface scrim would allocate seventeen strings on every render.
+const surfaceRampCache = new Map<string, string[]>();
+
+function surfaceRamp(backgroundColor: string): string[] {
+  let r = surfaceRampCache.get(backgroundColor);
+  if (!r) {
+    r = buildSurfaceRamp(backgroundColor);
+    surfaceRampCache.set(backgroundColor, r);
+  }
+  return r;
+}
+
+/**
+ * TOP surface scrim: solid background at the screen edge, dissolving into the content below.
+ *
+ * Pair with `SCRIM_LOCATIONS` exactly like the black ramps — the stop positions are evenly spaced, so
+ * the top variant is the bottom variant reversed and there is no second locations array to maintain.
+ */
+export function topSurfaceScrimColors(backgroundColor: string): ScrimColors {
+  const cacheKey = 'top:' + backgroundColor;
+  let r = surfaceRampCache.get(cacheKey);
+  if (!r) {
+    r = [...surfaceRamp(backgroundColor)].reverse();
+    surfaceRampCache.set(cacheKey, r);
+  }
+  return r as unknown as ScrimColors;
+}
+
+/** BOTTOM surface scrim: transparent at the top, solid background at the screen edge. */
+export function bottomSurfaceScrimColors(backgroundColor: string): ScrimColors {
+  return surfaceRamp(backgroundColor) as unknown as ScrimColors;
+}

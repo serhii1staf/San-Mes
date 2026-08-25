@@ -46,7 +46,7 @@ import { uploadChatImage } from '../../src/lib/supabase';
 import { getImageDims, setImageDims } from '../../src/services/imageDimsCache';
 import { useRenderBudget } from '../../src/hooks/useRenderBudget';
 import { useEffectiveBrowserWidgetPosition } from '../../src/lib/browserWidget';
-import { bottomScrimColorsStrong, composerScrimHeight, headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
+import { composerScrimHeight, headerScrimHeights, SCRIM_LOCATIONS, topSurfaceScrimColors, bottomSurfaceScrimColors } from '../../src/theme/scrim';
 import { kvGetJSONSync, kvSetJSON, kvWarm } from '../../src/services/kvStore';
 import { addTombstones, filterTombstoned } from '../../src/services/messageTombstones';
 import { TypingIndicator } from '../../src/components/ui/TypingIndicator';
@@ -5599,8 +5599,19 @@ export default function ChatScreen() {
             un-dimmed strip right above it. Only the composer's own footprint makes the ramp
             finish level with the top of the input, which is the property that makes the tab
             bar's scrim read the way it does. Same rule, different chrome. */}
+        {/* ── THE SURFACE RAMP, NOT THE BLACK ONE ──────────────────────────────────
+   
+            Asked for by comparison with the imported-stickers screen: the same fade, exactly, in the
+            chat. The difference was never the softness — both use the same seventeen-stop
+            `smoothstep × gamma` curve — it is WHAT the ramp goes to. The black ramp DIMS content as it
+            approaches the composer; the surface ramp IS the page, so content dissolves into the
+            background and vanishes with no colour shift to notice.
+   
+            Still the shared builder rather than local stops, and the geometry is untouched: this scrim
+            is exactly as tall as THIS composer's footprint (`composerScrimHeight`), which is a
+            different measurement from the tab bar's, deliberately — see the note above. */}
         <LinearGradient
-          colors={bottomScrimColorsStrong(theme.isDark, bgColor)}
+          colors={bottomSurfaceScrimColors(bgColor)}
           locations={SCRIM_LOCATIONS}
           style={StyleSheet.absoluteFill}
         />
@@ -5876,7 +5887,7 @@ export default function ChatScreen() {
       <View style={[styles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">
         {/* Shared scrim ramp — see the note on the footer gradient below. */}
         <LinearGradient
-          colors={topScrimColors(theme.isDark, bgColor)}
+          colors={topSurfaceScrimColors(bgColor)}
           locations={SCRIM_LOCATIONS}
           style={StyleSheet.absoluteFill}
         />

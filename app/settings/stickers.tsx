@@ -25,6 +25,7 @@
 import React, { useMemo, useState, useCallback, useEffect } from 'react';
 import { View, Pressable, StyleSheet, FlatList, Alert, Dimensions, InteractionManager } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { SCRIM_LOCATIONS, topSurfaceScrimColors, bottomSurfaceScrimColors } from '../../src/theme/scrim';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -330,35 +331,25 @@ export default function ImportedStickersScreen() {
         }
       />
 
-      {/* ── THE SCRIMS DISSOLVE; THEY DO NOT END ─────────────────────────────────
+      {/* ── THE SHARED CURVE, NOT SIX INLINE STOPS ───────────────────────────────
    
-          Reported: the dimming stops at a visible line instead of melting into the content.
+          These were hand-rolled here: first three linear stops, then six. `src/theme/scrim.ts` warns in
+          so many words that inline per-screen stops are what let the scrims drift apart, and this screen
+          was the drift.
    
-          Three stops were the cause. `[0, 0.6, 1]` from opaque to 87% to transparent means the last 40%
-          of the band carries the entire remaining fade, so alpha falls off steeply and the eye reads the
-          steep part as an edge. A gradient looks soft when the fade is SLOW where it meets the content,
-          which needs stops concentrated near the tail rather than spread evenly.
+          It now uses the shared surface ramp, which is a SEVENTEEN-stop `smoothstep × gamma` curve tuned
+          to have no slope discontinuity anywhere — the eye picks up a slope change in a smooth field
+          (Mach banding) and reads it as a line, which is what a small number of linear stops always
+          produces. So this is not only consistent with the chat now, it is softer here than what it
+          replaces.
    
-          Five stops now, with the alpha curve front-loaded: fully opaque for the first third (where the
-          buttons sit and content must be hidden outright), then 0.85 → 0.55 → 0.22 → 0 across the rest.
-          The last two stops are close together in alpha and far apart in position, which is what
-          produces a tail that approaches zero gently. Same shape mirrored on the bottom.
-   
-          Still one `LinearGradient` per edge and NO blur. Asked for explicitly, and it is the right call:
-          a blur over this band would have to re-composite the scrolling grid underneath it every frame,
-          which costs far more than the hard edge did. `pointerEvents="none"` on the gradients themselves
-          so only the buttons above them catch touches. */}
+          Still ONE `LinearGradient` per edge and no blur. A blur over this band would re-composite the
+          scrolling grid beneath it every frame, costing far more than the hard edge ever did.
+          `pointerEvents="none"` on the gradients so only the buttons above them catch touches. */}
       <View style={[styles.topChrome, { height: insets.top + HEADER_H + 28 }]} pointerEvents="box-none">
         <LinearGradient
-          colors={[
-            theme.colors.background.primary,
-            theme.colors.background.primary,
-            theme.colors.background.primary + 'D9',
-            theme.colors.background.primary + '8C',
-            theme.colors.background.primary + '38',
-            theme.colors.background.primary + '00',
-          ]}
-          locations={[0, 0.34, 0.56, 0.74, 0.89, 1]}
+          colors={topSurfaceScrimColors(theme.colors.background.primary)}
+          locations={SCRIM_LOCATIONS}
           style={StyleSheet.absoluteFill}
           pointerEvents="none"
         />
@@ -405,15 +396,8 @@ export default function ImportedStickersScreen() {
           `box-none` rather than `none`. */}
       <View style={[styles.bottomChrome, { height: insets.bottom + 84 }]} pointerEvents="box-none">
         <LinearGradient
-          colors={[
-            theme.colors.background.primary + '00',
-            theme.colors.background.primary + '38',
-            theme.colors.background.primary + '8C',
-            theme.colors.background.primary + 'D9',
-            theme.colors.background.primary,
-            theme.colors.background.primary,
-          ]}
-          locations={[0, 0.11, 0.26, 0.44, 0.66, 1]}
+          colors={bottomSurfaceScrimColors(theme.colors.background.primary)}
+          locations={SCRIM_LOCATIONS}
           style={StyleSheet.absoluteFill}
           pointerEvents="none"
         />
