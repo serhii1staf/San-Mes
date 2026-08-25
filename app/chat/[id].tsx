@@ -59,7 +59,8 @@ import { ChatMessage } from '../../src/types';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { sanitizeUserText } from '../../src/utils/sanitizeText';
 import { getRecentEmoji, pushRecentEmoji } from '../../src/services/recentEmoji';
-import { getRecentGif, pushRecentGif } from '../../src/services/recentGif';
+import { getRecentGif, pushRecentGif, removeRecentGif } from '../../src/services/recentGif';
+import { isCutoutCapableUrl } from '../../src/utils/mediaKind';
 import { playSendSound } from '../../src/utils/sounds';
 import { GiphyItem } from '../../src/services/giphy';
 import { useT, useI18nStore } from '../../src/i18n/store';
@@ -324,28 +325,9 @@ function scheduleFullPersist(conversationId: string, write: () => void): void {
 // to the open-the-chat decode burst.
 const WARM_RECENT = 6;
 
-/**
- * Can this URL plausibly carry transparency, i.e. is it a sticker or a GIF rather than a photograph?
- *
- * Used to decide whether a media-only message drops its bubble (see `isStickerLike`). Alpha itself cannot
- * be known without decoding, so this goes by SOURCE, which is reliable in both directions here:
- *
- *   • `.gif` / `.webp` / `.png`   the formats cut-outs actually come in. A camera photo is `.jpg`.
- *   • giphy / tenor hosts         the GIF picker's own sources, whatever the path looks like.
- *   • `/v1/stickers/`             our Telegram sticker proxy — always a `.webp` cut-out.
- *
- * `.jpg` is deliberately absent: JPEG has no alpha channel at all, so a JPEG can never be a cut-out, and
- * that is exactly the "my own photos from the phone" case that must keep its bubble.
- */
-function isCutoutCapableUrl(u: string): boolean {
-  if (!u || typeof u !== 'string') return false;
-  const low = u.toLowerCase();
-  if (low.indexOf('/v1/stickers/') !== -1) return true;
-  if (low.indexOf('giphy') !== -1 || low.indexOf('tenor') !== -1) return true;
-  const q = low.indexOf('?');
-  const path = q >= 0 ? low.slice(0, q) : low;
-  return path.endsWith('.gif') || path.endsWith('.webp') || path.endsWith('.png');
-}
+// `isCutoutCapableUrl` moved to `src/utils/mediaKind.ts` — the long-press menu needs the identical
+// answer (it was painting an opaque card behind a cut-out sticker), and two copies of a rule this
+// subtle would drift apart invisibly. Imported at the top of this file.
 
 // Detect an animated GIF by URL. Mirrors the `hasGif` test used by the
 // visibility tracker so the warm path and the off-screen-pause path agree on
@@ -643,7 +625,7 @@ function fitChatImageBox(natW: number, natH: number): { w: number; h: number } {
 // dimensions once expo-image reports the decoded source size (onLoad) — and
 // remember them so every future open of this chat is jump-free. Own tiny
 // state → the memoized MessageBubble around it is untouched.
-function SingleChatImage({ uri, isVisible, onPress }: { uri: string; isVisible?: boolean; onPress: () => void }) {
+function SingleChatImage({ uri, isVisible, onPress, cutout }: { uri: string; isVisible?: boolean; onPress: () => void; cutout?: boolean }) {
   const theme = useTheme();
   // Seed from the persisted dimension cache so a previously-seen photo mounts
   // at the correct aspect-ratio box on the very first frame — this removes the
@@ -688,18 +670,47 @@ function SingleChatImage({ uri, isVisible, onPress }: { uri: string; isVisible?:
           still snaps from the neutral square to the photo's real aspect ratio
           once dimensions are known — but the spinner makes that read as
           "loading", which is exactly the affordance requested. */}
-      <View style={{ width: size.w, height: size.h, borderRadius: 12, overflow: 'hidden', backgroundColor: theme.colors.background.tertiary }}>
+      {/* ── A CUT-OUT GETS NO TILE, NO RADIUS AND NO SKELETON ────────────────────
+   
+          Reported: imported stickers and GIFs arrive with no container and it looks wrong. The cause is
+          the mirror image of the delete bug — TWO layers paint a background here and only one of them
+          was ever cleaned.
+   
+          `isStickerLike` removes the BUBBLE's fill, and the comment on it says the goal is that a cut-out
+          shows the chat background through its transparent parts. But this view, one level further in,
+          unconditionally painted `background.tertiary` behind every image. So the bubble fill went away
+          and a grey rounded rectangle stayed exactly where it had been: the sticker still sat on a slab,
+          which is precisely "the container is strange". The `MediaPanel` preview already got this right
+          and says so — "no background: a cut-out sticker must show the dimmed screen through its
+          transparent parts, not a grey rectangle" — the chat bubble simply never matched it.
+   
+          `resizeMode` also has to change. `cover` CROPS to fill the box, which is right for a photo and
+          wrong for a sticker: a 512-square sticker whose subject does not reach the edges gets its
+          transparent margin trimmed away and the artwork pushed to the bleed. `contain` keeps the whole
+          sticker inside its box.
+   
+          The skeleton goes too. It is an opaque shimmer sized to the full box, so on a cut-out it painted
+          the very slab this is removing, for as long as the load took.
+   
+          An ordinary photo is untouched: it keeps the tile, the 12-px radius, `cover` and the skeleton. */}
+      <View style={{
+        width: size.w,
+        height: size.h,
+        borderRadius: cutout ? 0 : 12,
+        overflow: 'hidden',
+        backgroundColor: cutout ? 'transparent' : theme.colors.background.tertiary,
+      }}>
         <CachedImage
           uri={uri}
           style={{ width: '100%', height: '100%' }}
-          resizeMode="cover"
+          resizeMode={cutout ? 'contain' : 'cover'}
           proxyWidth={CHAT_IMG_MAX_W}
           priority="low"
           autoplay={isVisible}
           onLoad={handleLoad}
           onError={handleError}
         />
-        {loading ? (
+        {loading && !cutout ? (
           <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
             <Skeleton width={'100%'} height={'100%'} radius={0} />
           </View>
@@ -1129,6 +1140,7 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
                     <SingleChatImage
                       uri={message.imageUrls[0]}
                       isVisible={isVisible}
+                      cutout={isStickerLike}
                       onPress={() => onImagePress(message.imageUrls!, 0, message)}
                     />
                   ) : (
@@ -1139,7 +1151,13 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
                         // changes the bubble height (no layout jump on open).
                         const d = getImageDims(message.imageUrls![0]);
                         const box = d ? fitChatImageBox(d.w, d.h) : { w: 220, h: 220 };
-                        return (
+                        // A cut-out reserves its space with nothing in it. The shimmer is an opaque
+                        // slab, so on a sticker it painted the grey rectangle this change exists to
+                        // remove — just before the sticker itself arrived without one, which reads as
+                        // a flash of the old bug on every open.
+                        return isStickerLike ? (
+                          <View style={{ width: box.w, height: box.h }} />
+                        ) : (
                           <Skeleton width={box.w} height={box.h} radius={12} />
                         );
                       })()}
@@ -3797,6 +3815,13 @@ export default function ChatScreen() {
 
   // Pick a GIF from the inline panel: send it, then close the panel and let the
   // input bar settle back down (GIFs are one-and-done, not multi-pick).
+  // Deleting an imported sticker has to clear it from RECENTS as well as from the store, or the copy
+  // recents kept when it was sent survives and the grid re-shows it a few cells further down. See the
+  // long note on `removeRecentGif`.
+  const onForgetGif = useCallback((id: string) => {
+    setRecentGif(removeRecentGif(id));
+  }, []);
+
   const onPickGif = useCallback((item: GiphyItem) => {
     sendGif(item.sendUrl);
     setRecentGif(pushRecentGif(item));
@@ -5763,6 +5788,7 @@ export default function ChatScreen() {
               onCopyEmoji={onCopyEmoji}
               onSendGif={onPickGif}
               onCopyGif={onCopyGif}
+              onForgetGif={onForgetGif}
             />
           </View>
         </Reanimated.View>

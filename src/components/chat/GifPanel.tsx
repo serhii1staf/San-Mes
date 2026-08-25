@@ -186,10 +186,27 @@ function GifPanelComponent({ height, onSelect, onLongPress, theme, bottomInset =
     const own = customGifs && customGifs.length > 0 ? customGifs : [];
     const recent = recentGifs && recentGifs.length > 0 ? recentGifs : [];
     if (own.length === 0 && recent.length === 0) return gifs;
+    // ── A DELETED IMPORT MUST NOT SURVIVE IN RECENTS ─────────────────────────
+    //
+    // `customGifsStore` owns whether an imported sticker still exists. Recents is a usage log, and it
+    // stores whole `GiphyItem`s — so a sticker the user has sent has an identical twin in here, and
+    // deleting it from the store alone left that twin in the very next segment of this list. The cell
+    // moved down instead of going away, which is exactly what was reported.
+    //
+    // `removeRecentGif` purges the persisted copy at delete time; this is the guarantee that does not
+    // depend on it. It re-derives membership on every render, so it also heals lists that were already
+    // written before the purge existed, and it holds no matter which screen performed the delete —
+    // both the chat and the comments screen keep their own React copy of recents, and neither is
+    // notified by the other.
+    //
+    // Only `custom:` ids are checked against the store. A Giphy or Tenor GIF in recents was never
+    // owned by the store, so testing it there would wipe the entire recents list.
+    const ownIds = new Set(own.map((g) => g.id));
     const seen = new Set<string>();
     const out: GiphyItem[] = [];
     for (const g of [...own, ...recent, ...gifs]) {
       if (!g?.id || seen.has(g.id)) continue;
+      if (g.id.startsWith('custom:') && !ownIds.has(g.id)) continue;
       seen.add(g.id);
       out.push(g);
     }

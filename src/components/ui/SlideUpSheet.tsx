@@ -10,12 +10,25 @@ interface SlideUpSheetProps {
   visible: boolean;
   onClose: () => void;
   children: React.ReactNode;
+  /**
+   * Exit UPWARD instead of downward, for a handoff rather than a dismissal.
+   *
+   * Asked for by description: tapping the three-dots should send the sheet up and open a full screen
+   * from above. The direction is the whole message — down means "I am finished with this", up means
+   * "this is becoming something else". A sheet that slides down and is immediately followed by a screen
+   * pushing in reads as two unrelated events.
+   *
+   * A ref rather than a prop on purpose: the direction is decided by WHICH control was pressed, at the
+   * moment it is pressed, and a prop would have to be set in a prior render and would still be set on
+   * the next ordinary close. The parent points this at `true` just before triggering the handoff.
+   */
+  exitUpRef?: React.MutableRefObject<boolean>;
 }
 
 // Bottom sheet with the EXACT same open/close/dim animation as the feed's
 // three-dots menu (PostMenuModal): spring slide-up from the bottom, a 0.4 black
 // backdrop fading in over 200ms, and a 250ms slide-down + fade-out on close.
-export function SlideUpSheet({ visible, onClose, children }: SlideUpSheetProps) {
+export function SlideUpSheet({ visible, onClose, children, exitUpRef }: SlideUpSheetProps) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
@@ -49,8 +62,14 @@ export function SlideUpSheet({ visible, onClose, children }: SlideUpSheetProps) 
   const dismiss = () => {
     if (isClosing.current) return;
     isClosing.current = true;
+    // Up for a handoff, down for a dismissal — see `exitUpRef`. The ref is consumed here so it cannot
+    // leak into the next close: whoever set it gets exactly one upward exit out of it.
+    const up = !!exitUpRef?.current;
+    if (exitUpRef) exitUpRef.current = false;
     Animated.parallel([
-      Animated.timing(slideAnim, { toValue: SCREEN_HEIGHT, duration: 250, useNativeDriver: true }),
+      // Off the top edge needs the card's own height as well as the screen, since it starts at the
+      // bottom — `-SCREEN_HEIGHT` alone would leave a tall sheet's lower half still visible.
+      Animated.timing(slideAnim, { toValue: up ? -SCREEN_HEIGHT : SCREEN_HEIGHT, duration: 250, useNativeDriver: true }),
       Animated.timing(backdropAnim, { toValue: 0, duration: 250, useNativeDriver: true }),
     ]).start(() => {
       setTimeout(() => { setMounted(false); onClose(); }, 30);

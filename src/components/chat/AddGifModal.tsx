@@ -1,8 +1,9 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { View, Pressable, TextInput, ActivityIndicator, ScrollView, Text as RNText, StyleSheet } from 'react-native';
 import { SlideUpSheet } from '../ui/SlideUpSheet';
 import { Feather } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
+import { router } from 'expo-router';
 import { validateGifLink, useCustomGifs } from '../../store/customGifsStore';
 import { importTelegramPack, isTelegramPackLink } from '../../services/telegramStickers';
 import { CachedImage } from '../ui/CachedImage';
@@ -90,7 +91,8 @@ export function AddGifModal({ visible, onClose, theme, labels }: AddGifModalProp
   // printed the same sentence.
   const [detail, setDetail] = useState<string | null>(null);
   const [resolved, setResolved] = useState<Resolved | null>(null);
-  const [showHint, setShowHint] = useState(false);
+  // Consumed by SlideUpSheet on the next close, then reset by it. See the three-dots handler.
+  const exitUpRef = useRef(false);
   const add = useCustomGifs((s) => s.add);
   const addMany = useCustomGifs((s) => s.addMany);
 
@@ -100,7 +102,6 @@ export function AddGifModal({ visible, onClose, theme, labels }: AddGifModalProp
     setDetail(null);
     setResolved(null);
     setBusy(false);
-    setShowHint(false);
   }, []);
 
   const close = useCallback(() => {
@@ -184,25 +185,47 @@ export function AddGifModal({ visible, onClose, theme, labels }: AddGifModalProp
   const onPrimary = resolved ? commit : () => void resolve(url);
 
   return (
-    <SlideUpSheet visible={visible} onClose={close}>
+    <SlideUpSheet visible={visible} onClose={close} exitUpRef={exitUpRef}>
       <View style={styles.card}>
           <View style={styles.header}>
             <RNText style={[styles.title, { color: theme.colors.text.primary }]}>{labels.title}</RNText>
-            {/* The instructions live behind this. Closed by default so the sheet stays small; one tap
-                away so the Discord-link explanation is never more than that. */}
+            {/* ── THE THREE DOTS OPEN THE LIBRARY NOW, NOT A HINT PARAGRAPH ─────────
+   
+                Asked for: tapping the three-dots should send this sheet up and open a full window
+                showing the date and which GIFs were imported.
+   
+                It used to expand the instructions inline. Those have not been dropped — they moved onto
+                that screen, where they fit better anyway: someone typing into this field has already
+                worked out what to paste, while someone opening the library is the one asking what can be
+                imported. One button, and the thing behind it now answers both questions.
+   
+                `exitUpRef` before `close()` is what makes it read as a handoff rather than two unrelated
+                events: the sheet leaves upward and the screen arrives, instead of the sheet dropping away
+                and something unrelated pushing in from the side. */}
             <Pressable
-              onPress={() => { triggerHaptic('light'); setShowHint((v) => !v); }}
+              onPress={() => {
+                triggerHaptic('light');
+                exitUpRef.current = true;
+                close();
+                // After the sheet is gone. `SlideUpSheet` calls `onClose` once its exit animation has
+                // finished, so navigating from inside `close()` would push the route while the sheet was
+                // still mid-flight — and this sheet owns a Modal, which on iOS means the route would be
+                // presented behind it.
+                // `as any` on the route, matching `settings/index.tsx`'s push to `/settings/pixel-icons`.
+                // expo-router GENERATES its route union into `.expo/types/router.d.ts`, which is
+                // gitignored and only rewritten when the dev server or a build runs — so a screen added
+                // in this commit is not in the union yet even though the file exists and the path is
+                // correct. The alternative is editing generated output, which the next build discards.
+                setTimeout(() => router.push('/settings/stickers' as any), 30);
+              }}
               hitSlop={10}
               accessibilityRole="button"
+              accessibilityLabel={labels.title}
               style={styles.iconBtn}
             >
-              <Feather name={showHint ? 'chevron-up' : 'more-horizontal'} size={19} color={theme.colors.text.secondary} />
+              <Feather name="more-horizontal" size={19} color={theme.colors.text.secondary} />
             </Pressable>
           </View>
-
-          {showHint ? (
-            <RNText style={[styles.hint, { color: theme.colors.text.tertiary }]}>{labels.hint}</RNText>
-          ) : null}
 
           <View style={[styles.inputRow, { borderColor: error ? '#FF3B30' : theme.colors.border.light }]}>
             <TextInput

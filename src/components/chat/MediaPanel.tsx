@@ -54,6 +54,15 @@ export interface MediaPanelProps {
   onSendGif?: (item: GiphyItem) => void;
   /** Long-press popup → copy a GIF (its URL) to the clipboard. */
   onCopyGif?: (item: GiphyItem) => void;
+  /**
+   * Long-press popup → the sticker was deleted; drop it from the host screen's RECENTS state too.
+   *
+   * Deleting has to reach two lists. `customGifsStore` is global so this panel can clean it directly,
+   * but recents is React state owned by the host screen (the chat and the comments screen each keep
+   * their own copy, seeded from MMKV), so the panel cannot write it. Hence a callback rather than a
+   * direct call: the panel says what happened, the owner of the state applies it.
+   */
+  onForgetGif?: (id: string) => void;
 }
 
 // ── Unified chat media panel ───────────────────────────────────────────────
@@ -79,6 +88,7 @@ function MediaPanelComponent({
   onCopyEmoji,
   onSendGif,
   onCopyGif,
+  onForgetGif,
 }: MediaPanelProps) {
   const glassActive = useLiquidGlassActive();
 
@@ -456,7 +466,30 @@ function MediaPanelComponent({
               {preview.kind === 'emoji' ? (
                 <RNText style={styles.previewEmoji} allowFontScaling={false}>{preview.emoji}</RNText>
               ) : (
-                <CachedImage uri={preview.item.previewUrl} style={styles.previewGif} resizeMode="contain" />
+                /* ── THE SAME BYTES THE CELL IS ALREADY SHOWING ────────────────────
+   
+                    Asked for: hold a sticker and it should ENLARGE what is already on screen, not fetch
+                    it again.
+   
+                    It was fetching again, and the URL is why. The grid cell renders
+                    `stillUrl` with `noProxy`; this rendered `previewUrl` with the proxy left ON, so
+                    `CachedImage` rewrote it through weserv at the default width. Two different URLs mean
+                    two different expo-image cache keys, so holding a sticker started a cold network
+                    fetch and an animated decode for an image whose bytes were already decoded a few
+                    pixels away.
+   
+                    Matched to the cell exactly — same `stillUrl` fallback, same `noProxy` — so this is a
+                    memory-cache hit and the sticker appears in the same frame the menu does.
+   
+                    `autoplay` is deliberately left on. The cell is a still frame on purpose (a grid of
+                    animating GIFs saturates the UI thread); the preview is the one place motion is
+                    wanted, and starting animation on already-cached bytes costs nothing extra. */
+                <CachedImage
+                  uri={(preview.item as any).stillUrl || preview.item.previewUrl}
+                  style={styles.previewGif}
+                  resizeMode="contain"
+                  noProxy
+                />
               )}
 
               {/* ── A MENU, NOT TWO BUTTONS ──────────────────────────────────────────
@@ -541,7 +574,11 @@ function MediaPanelComponent({
                     onPress={() => {
                       const id = preview.item.id;
                       tearDownPreview();
+                      // BOTH lists. The store owns existence; recents keeps a full copy of anything the
+                      // user has sent, and cleaning only the store is what made a delete look like the
+                      // sticker had moved to another slot. See the long note on `removeRecentGif`.
                       removeCustomGif(id);
+                      onForgetGif?.(id);
                     }}
                   />
                 ) : null}

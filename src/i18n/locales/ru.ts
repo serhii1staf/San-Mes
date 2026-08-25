@@ -1032,6 +1032,27 @@ const ru: Record<string, string> = {
   'mini_app_preview.none': 'Без фона',
   'mini_app_preview.demo_name': 'Demo',
   'mini_app_preview.demo_desc': 'Превью обложки',
+
+  // ─── Экран «Мои стикеры» ───────────────────────────────────────────────
+  // BCP-47 тег для Intl/toLocaleDateString. Отдельный ключ, а не вывод из кода
+  // локали: 'ru' само по себе даёт другой формат даты, чем 'ru-RU'.
+  'locale.tag': 'ru-RU',
+  'stickers.title': 'Мои стикеры',
+  'stickers.subtitle': '{count} шт.',
+  'stickers.intro':
+    'Импортировать можно набор стикеров из Telegram (ссылка вида t.me/addstickers/…) или прямую ссылку на картинку. ' +
+    'Со страницы сайта — сначала скопируйте адрес самого изображения.',
+  'stickers.empty_title': 'Пока ничего не импортировано',
+  'stickers.empty_msg': 'Откройте панель GIF, нажмите «плюс» и вставьте ссылку.',
+  'stickers.date_unknown': 'Дата неизвестна',
+  'stickers.group_meta': '{count} шт.',
+  'stickers.group_meta_pack': '{count} шт. · {packs}',
+  'stickers.deleted': 'Удалено',
+  'stickers.delete_one_title': 'Удалить стикер?',
+  'stickers.delete_one_msg': 'Он исчезнет из панели GIF. Отправленные сообщения не изменятся.',
+  'stickers.delete_group_title': 'Удалить весь импорт?',
+  'stickers.delete_group_msg': 'Будет удалено {count} шт. от {date}. Отправленные сообщения не изменятся.',
+  'stickers.view_pack': 'Открыть набор «{pack}»',
 };
 
 export default ru;
