@@ -181,6 +181,9 @@ function ProfileMenuModalImpl({ visible, profile, onClose }: { visible: boolean;
   const t = useT();
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
   const dragY = useRef(new Animated.Value(0)).current;
+  // Driven dim, like PostMenuModal. This menu had a STATIC backdrop and let RN's `animationType="fade"`
+  // cross-fade the whole modal window instead — see the note on `handleClose`.
+  const backdropAnim = useRef(new Animated.Value(0)).current;
   const [showQR, setShowQR] = useState(false);
   const [mode, setMode] = useState<'menu' | 'report'>('menu');
   const isClosing = useRef(false);
@@ -203,23 +206,53 @@ function ProfileMenuModalImpl({ visible, profile, onClose }: { visible: boolean;
       setMode('menu');
       dragY.setValue(0);
       slideAnim.setValue(SCREEN_HEIGHT);
-      Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 50, friction: 10 }).start();
+      backdropAnim.setValue(0);
+      // Same curve as PostMenuModal and SlideUpSheet: spring 50/9 for the card, 200 ms linear for the dim.
+      // Was a lone spring at 50/10 with no dim animation at all.
+      Animated.parallel([
+        Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 50, friction: 9 }),
+        Animated.timing(backdropAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
+      ]).start();
     }
   }, [visible]);
 
   const handleClose = () => {
     if (isClosing.current) return;
     isClosing.current = true;
-    Animated.timing(slideAnim, { toValue: SCREEN_HEIGHT, duration: 180, useNativeDriver: true }).start(() => {
-      setShowQR(false);
-      setMode('menu');
-      onClose();
-      // Run whatever asked to happen once this menu is actually gone — the share action needs this,
-      // because this menu is an RN <Modal> and so is the share sheet, and two overlapping RN Modals
-      // on iOS end with the second one never appearing.
-      const next = afterCloseRef.current;
-      afterCloseRef.current = null;
-      if (next) { try { next(); } catch {} }
+    // ── 180 → 250 ms, PLUS THE DIM, PLUS A DEFERRED HANDOFF ───────────────────
+    //
+    // Reported: opening "Share profile" from here felt awkward, and it should behave like the feed's
+    // three-dots chain — first sheet slides down and out, second slides up in.
+    //
+    // Three things differed from `PostMenuModal`, and all three showed up in that one transition.
+    //
+    // The handoff was the visible one. `afterCloseRef` ran in the SAME tick as `onClose()`, so
+    // `openProfileShareSheet` fired before React had even committed `showMenu = false`, let alone before
+    // iOS had torn the modal window down. `SlideUpSheet` then started its spring while its own Modal was
+    // still being presented behind the outgoing one, so the first frames of the slide-up played
+    // off-screen and the sheet appeared already at rest. That is the "abrupt" arrival. `PostMenuModal`
+    // defers by 30 ms for exactly this reason and its comment says so; this copy of the pattern simply
+    // never got that line.
+    //
+    // The other two are why the EXIT felt different: 180 ms against the family's 250 ms, and no dim
+    // fade-out at all — the dim used to disappear with RN's `animationType="fade"` on the whole window
+    // rather than on its own curve. Both matched up now, and the modal is `animationType="none"` so RN
+    // stops cross-fading the window underneath the spring.
+    Animated.parallel([
+      Animated.timing(slideAnim, { toValue: SCREEN_HEIGHT, duration: 250, useNativeDriver: true }),
+      Animated.timing(backdropAnim, { toValue: 0, duration: 250, useNativeDriver: true }),
+    ]).start(() => {
+      setTimeout(() => {
+        setShowQR(false);
+        setMode('menu');
+        onClose();
+        // Run whatever asked to happen once this menu is actually gone — the share action needs this,
+        // because this menu is an RN <Modal> and so is the share sheet, and two overlapping RN Modals
+        // on iOS end with the second one never appearing.
+        const next = afterCloseRef.current;
+        afterCloseRef.current = null;
+        if (next) { try { next(); } catch {} }
+      }, 30);
     });
   };
 
@@ -324,10 +357,12 @@ function ProfileMenuModalImpl({ visible, profile, onClose }: { visible: boolean;
   }
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={handleClose} statusBarTranslucent>
+    <Modal visible={visible} transparent animationType="none" onRequestClose={handleClose} statusBarTranslucent>
       <ModalStatusBar />
       <View style={{ flex: 1 }}>
-        <Pressable style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)' }} onPress={handleClose} />
+        <Animated.View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)', opacity: backdropAnim }}>
+          <Pressable style={{ flex: 1 }} onPress={handleClose} />
+        </Animated.View>
         <View style={{ flex: 1, justifyContent: 'flex-end' }} pointerEvents="box-none">
           <Animated.View style={{ transform: [{ translateY }] }} {...panResponder.panHandlers}>
             <View style={{ marginHorizontal: 8, marginBottom: 16, backgroundColor: theme.isDark ? theme.colors.background.elevated : '#FFFFFF', borderRadius: 28, overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.15, shadowRadius: 20, elevation: 12 }}>
