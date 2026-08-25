@@ -482,6 +482,21 @@ function ConversationItemBase({
 }: ConversationItemProps) {
   const theme = useTheme();
   const t = useT();
+  // ── THE ROW'S MEMOS KEY ON locale, NOT ON 	 ───────────────────────────
+  //
+  // useT() allocates a NEW function on every render, so a memo listing 	 as a dependency is
+  // invalidated on every render by construction. Both memos below were keyed that way, which meant
+  // every row re-render re-ran eight 	() lookups and re-allocated two objects - and one of them
+  // feeds the native context menu, which re-registers its UIMenu when the array identity changes.
+  //
+  // This screen already made exactly this argument twice, for the iltered memo and for
+  // categoryTabsData, and fixed both by depending on the stable locale value instead. The row
+  // was left behind, and the row is the one that runs eight times on a cold mount - which a snapshot
+  // measured at 413 ms of synchronous work for this screen.
+  //
+  // 	 is still called inside the memo bodies: the row subscribes to locale here, so a locale
+  // change re-renders it and the memo recomputes with a current 	. Nothing goes stale.
+  const locale = useI18nStore((s) => s.locale);
   const store = useChatSettingsStore;
   const localName = useChatSettingsStore((s) => s.settings[item.id]?.localName);
   const displayName = localName || item.participantName;
@@ -500,7 +515,8 @@ function ConversationItemBase({
   // be a per-row allocation in a list.
   const previewLabels = useMemo(
     () => ({ photo: t('chat.photo'), gif: 'GIF', link: t('chat.link', 'Ссылка'), reply: t('chat.reply_label', 'Ответ') }),
-    [t],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [locale],
   );
   const previewText = toPreviewText(item.lastMessage, previewLabels) || (item.lastMessageAt ? t('chat.photo') : '');
 
@@ -574,7 +590,8 @@ function ConversationItemBase({
       { id: 'block', title: t('messages.action.block'), systemIcon: 'nosign' },
       { id: 'delete', title: t('messages.action.delete'), destructive: true, systemIcon: 'trash' },
     ];
-  }, [tab, t]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, locale]);
   // Bridge-friendly action descriptor for the native ContextMenu. Memoized
   // so the array reference is stable across re-renders — without this the
   // native side sees a "new" actions prop each render and re-creates its

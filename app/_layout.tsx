@@ -341,6 +341,14 @@ function RootLayout() {
       if (route === lastSegmentRef.current) return;
       lastSegmentRef.current = route;
       const startedAt = Date.now();
+      // ── STAMP THE ROUTE NOW, TIME THE TRANSITION LATER ────────────────────
+      //
+      // These were one call, and that made every screen-mount mark land on the wrong route. React
+      // flushes effects child-first, so a screen's mount effect runs before this one — and this one
+      // then waited two more frames before advancing the perf monitor's notion of "current route".
+      // So `MOUNT (tabs)/messages 413` was filed under `(tabs)/profile`, and the panel pointed at a
+      // screen that had done none of the work. See the note on `setRoute`.
+      perfMonitor.setRoute(route);
       // Two RAFs ≈ first paint after layout. We avoid heavier hooks like
       // setTimeout(0) because they add their own scheduling jitter.
       requestAnimationFrame(() => {

@@ -397,6 +397,32 @@ class PerfMonitor {
     this._notify();
   }
 
+  /**
+   * Set the current route WITHOUT recording an event.
+   *
+   * ── WHY THIS HAD TO BE SPLIT OUT OF `recordNavigation` ────────────────────
+   *
+   * `_currentRoute` is the route every other mark is filed under, and it used to advance only inside
+   * `recordNavigation` — which the root layout calls from inside TWO nested `requestAnimationFrame`s,
+   * because the NAV *duration* is meant to approximate "time until first paint after layout".
+   *
+   * React flushes passive effects child-first, so a screen's own mount effect runs BEFORE the root
+   * layout's `[segments]` effect, let alone two frames after it. The consequence: every
+   * `markScreenMount` was stamped with the PREVIOUS route, and so were the per-route mountCount /
+   * avgMountMs / worstMountMs aggregates.
+   *
+   * That is not a cosmetic mislabel. A snapshot showed `(tabs)/profile` with `worstMountMs: 413`, and
+   * the 413 ms was the MESSAGES screen mounting — profile's own worst mount was a post-card body at
+   * 77 ms. Reading that panel led straight to the wrong screen, which is the second time this file has
+   * produced a confidently wrong attribution.
+   *
+   * So the two jobs are separate now: the route is stamped synchronously the moment the segments
+   * change, and the timed NAV event still lands two frames later. Duration semantics are unchanged.
+   */
+  setRoute(routeLabel: string) {
+    this._currentRoute = routeLabel;
+  }
+
   /** Generic timing/event mark from anywhere in the app. */
   mark(label: string, durationMs?: number) {
     this._record({
