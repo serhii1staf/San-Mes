@@ -1883,7 +1883,26 @@ export default function ChatScreen() {
     }
     historyHydratedRef.current = conversationId;
     if (full.length === 0) return null;
-    let healed = full.map((m) => healLegacySender(m, currentUserId, participantId));
+    // ── NAMED, BECAUSE THIS IS THE LEADING SUSPECT AND IT WAS INVISIBLE ───────
+    //
+    // `chat/[id]` is the worst route in the latest snapshot by a wide margin — 55 long tasks, average
+    // 209 ms, worst 652 ms, worst fps 28 — and three of them land at 1.5 s, 3.3 s and 4.7 s after
+    // arriving, all with `pendingDecodes: 0`. So it is JS, it recurs after the screen has settled, and
+    // nothing named it.
+    //
+    // `hydrateFullHistory` is deferred to exactly that window by `runAfterInteractions`, and the note
+    // further up this file already records it being measured as expensive once before. Its MMKV READ was
+    // marked; everything after it was not — and the read is the cheap half. This pass walks the ENTIRE
+    // stored history (capped at a thousand messages) allocating a healed copy of every row, and the merge
+    // below then builds a Map over all of them.
+    //
+    // The count goes in the label deliberately. The seed marks report `(60)` because that is the seed
+    // window, and the open question is whether this pass is working over sixty rows or a thousand — which
+    // decides whether the answer is to make it cheaper or to stop doing it eagerly at all. One snapshot
+    // now settles that instead of another round of reasoning about it.
+    let healed = perfSpan(`chat.hydrateFull.heal(${full.length})`, () =>
+      full.map((m) => healLegacySender(m, currentUserId, participantId)),
+    );
     // Merge any in-store messages the cache doesn't have yet (optimistic
     // sends / realtime appends / edits that happened since open) so hydration
     // never DROPS them: existing ids are overwritten in place (keep the latest

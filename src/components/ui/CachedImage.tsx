@@ -283,10 +283,28 @@ export const CachedImage = memo(function CachedImage({
   // method-call and increment entirely. ~50 image loads/sec during a fast
   // scroll need to add 0 ms when the monitor is off, which this gate
   // guarantees.
+  // ── THE CLOCK STARTS WHEN THE LOAD STARTS, NOT WHEN THE COMPONENT MOUNTS ──
+  //
+  // `[uri]` alone was wrong the moment `paced` existed, and it made the next snapshot lie about my own
+  // fix. A paced image mounts immediately but does not begin loading until its turn in the frame queue,
+  // so a timer started at mount measured "queue wait plus load" and reported it as load time. On the
+  // stickers grid that produced durations climbing to 2367 ms — which reads as catastrophically slow
+  // images and is actually the deliberate stagger being counted as latency.
+  //
+  // The give-away that it was measurement and not regression: `pendingDecodes` on the same screen fell
+  // from 36 to 1 in that very snapshot, which is the pacing working exactly as intended. Two numbers
+  // from the same run disagreeing is how an instrumentation bug announces itself, and this is the third
+  // time in this effort a metric has had to be corrected before it could be trusted — so it is worth
+  // stating the rule plainly: a gauge must not include time that a deliberate scheduling decision added.
+  //
+  // `pacedReady` in the deps means the timer and the pending-decode gauge both begin at the instant the
+  // `<Image>` is actually handed its source. For an unpaced caller `pacedReady` is constant, so behaviour
+  // is byte-for-byte unchanged.
   const decodeStart = useRef(0);
   const pendingHere = useRef(false);
   useEffect(() => {
     if (!uri) return;
+    if (paced && !pacedReady) return;
     if (!useSettingsStore.getState().perfMonitorEnabled) return;
     decodeStart.current = Date.now();
     perfMonitor.incrementPendingDecodes();
@@ -299,7 +317,8 @@ export const CachedImage = memo(function CachedImage({
         pendingHere.current = false;
       }
     };
-  }, [uri]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uri, paced, pacedReady]);
 
   if (!uri) return null;
 
