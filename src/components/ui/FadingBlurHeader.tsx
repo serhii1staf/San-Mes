@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, StyleSheet, Platform } from 'react-native';
-import { BlurView } from 'expo-blur';
+import { BlurView } from '../../components/ui/AppBlurView';
 import { LinearGradient } from 'expo-linear-gradient';
 
 // ── Native fading blur strip ───────────────────────────────────────────────

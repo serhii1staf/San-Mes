@@ -33,7 +33,7 @@
 
 import React, { memo } from 'react';
 import { Platform, StyleSheet, View, ViewStyle } from 'react-native';
-import { BlurView } from 'expo-blur';
+import { BlurView } from '../../components/ui/AppBlurView';
 import { LinearGradient } from 'expo-linear-gradient';
 
 export interface GlassCapsuleProps {

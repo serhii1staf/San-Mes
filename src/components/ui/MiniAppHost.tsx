@@ -3,7 +3,7 @@ import { View, Pressable, ActivityIndicator, Share, Linking, BackHandler, Animat
 import { WebView } from 'react-native-webview';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { BlurView } from 'expo-blur';
+import { BlurView } from '../../components/ui/AppBlurView';
 import { Text } from './Text';
 import { useLiquidGlassActive, NativeGlassView } from './LiquidGlass';
 import { SlideUpSheet } from './SlideUpSheet';

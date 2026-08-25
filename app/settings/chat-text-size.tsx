@@ -22,7 +22,7 @@ import {
 import { Feather } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { BlurView } from 'expo-blur';
+import { BlurView } from '../../src/components/ui/AppBlurView';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,

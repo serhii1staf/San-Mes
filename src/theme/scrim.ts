@@ -430,7 +430,11 @@ function buildSurfaceRamp(backgroundColor: string): string[] {
     const t = i / (SCRIM_STOP_COUNT - 1);
     // Full opacity at the chrome end. A surface scrim has no reason to stop short the way a dimming
     // one does: it IS the page, so anything less would let content ghost through the header.
-    const a = Math.pow(smoothstep(t), SCRIM_GAMMA);
+    //
+    // `SURFACE_SCRIM_GAMMA`, not `SCRIM_GAMMA` — see the note on it. Asked for "a little darker", which
+    // for a ramp that ends at the page colour means reaching that opacity sooner rather than picking a
+    // darker colour.
+    const a = Math.pow(smoothstep(t), SURFACE_SCRIM_GAMMA);
     const hex = Math.round(Math.min(1, Math.max(0, a)) * 255)
       .toString(16)
       .padStart(2, '0');
@@ -471,4 +475,63 @@ export function topSurfaceScrimColors(backgroundColor: string): ScrimColors {
 /** BOTTOM surface scrim: transparent at the top, solid background at the screen edge. */
 export function bottomSurfaceScrimColors(backgroundColor: string): ScrimColors {
   return surfaceRamp(backgroundColor) as unknown as ScrimColors;
+}
+
+// ─── Surface scrim geometry, shared so "one to one" is literal ──────────────────
+//
+// Asked for twice: the chat's two fades should be the same as the imported-stickers screen's, one to one,
+// and a little darker.
+//
+// Colour was fixed first (both are on the surface ramp now). What remained was LENGTH, and it was not
+// small: the chat sizes its bands to its own chrome — `insets.top + HEADER_ROW_HEIGHT + 8` at the top and
+// the composer's footprint at the bottom — while the stickers screen had `insets.top + 92` and
+// `insets.bottom + 84` hand-written into it. Roughly 36-40 pt taller at both edges, which is exactly what
+// makes a fade read as longer, gentler and more present.
+//
+// ── WHY EXTRA LENGTH IS ALLOWED HERE, HAVING BEEN A BUG BEFORE ───────────────
+//
+// This file records, at length, that extending the chat's scrim past its own chrome was reported twice:
+// "it sticks out above the input field" and "the dimming sticks out over the messages". It concludes that
+// the lever for strength is alpha, never length, and sets `COMPOSER_SCRIM_OVERHANG = 0`.
+//
+// That conclusion was correct FOR A BLACK RAMP, and it does not transfer. A black ramp laid over the
+// transcript darkens the messages — the user sees content being dimmed, which is the complaint. A SURFACE
+// ramp laid over the transcript is the page colour: the messages fade into the background and stop
+// existing, with no colour shift to notice. That is not the same effect with a different length, it is a
+// different effect, and it is the one being asked for.
+//
+// So the black ramps keep their flush-with-own-chrome rule untouched — the tab bar and every other screen
+// are unaffected — and the surface ramp gets one shared overhang that both screens read from. Neither
+// screen does arithmetic at the call site any more, which is what let them drift apart in the first place.
+
+/**
+ * How far a SURFACE scrim reaches past its own chrome, into the content.
+ *
+ * 28, which is what the stickers screen had at its top edge and the value being matched. Applied at both
+ * edges of both screens so the two are identical by construction rather than by two numbers happening to
+ * agree.
+ */
+export const SURFACE_SCRIM_OVERHANG = 28;
+
+/**
+ * Shaping exponent for the surface ramp — LOWER than `SCRIM_GAMMA`, which makes it stronger.
+ *
+ * "A little darker" for a ramp that goes to the page colour does not mean a darker colour; the end of the
+ * ramp is already the background at full opacity and there is nothing beyond it. It means reaching that
+ * opacity SOONER, so more of the band is solid page and less of it is half-transparent.
+ *
+ * 0.55 against 0.7: at the band's midpoint the surface ramp now sits at 0.71 opacity where the black ramp
+ * sits at 0.62, and it crosses 0.3 about a fifth of the way in rather than a quarter. Same curve family,
+ * same absence of any slope discontinuity — this only moves where the weight sits.
+ */
+const SURFACE_SCRIM_GAMMA = 0.55;
+
+/**
+ * Total height of a surface scrim band, given the chrome it belongs to.
+ *
+ * `chromeHeight` is the surface's own furniture — a header row plus its safe-area inset, or a composer
+ * field plus its bottom inset. The overhang is added here, once, so no screen has to remember it.
+ */
+export function surfaceScrimHeight(chromeHeight: number): number {
+  return chromeHeight + SURFACE_SCRIM_OVERHANG;
 }

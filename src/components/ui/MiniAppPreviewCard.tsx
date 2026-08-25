@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { View, Pressable, Text as RNText, ActivityIndicator, Platform, StyleSheet } from 'react-native';
 import { Image } from 'expo-image';
-import { BlurView } from 'expo-blur';
+import { BlurView } from '../../components/ui/AppBlurView';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useTheme } from '../../theme';

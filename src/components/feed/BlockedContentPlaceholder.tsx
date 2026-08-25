@@ -1,7 +1,7 @@
 import React, { memo } from 'react';
 import { View, Pressable, Platform, Alert } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { BlurView } from 'expo-blur';
+import { BlurView } from '../../components/ui/AppBlurView';
 import { useTheme } from '../../theme';
 import { Text } from '../ui/Text';
 import { useT } from '../../i18n/store';

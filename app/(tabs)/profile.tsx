@@ -5,7 +5,7 @@ import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 
-import { BlurView } from 'expo-blur';
+import { BlurView } from '../../src/components/ui/AppBlurView';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../../src/theme';
 import { Text, Avatar } from '../../src/components/ui';
