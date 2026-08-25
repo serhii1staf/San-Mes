@@ -1,5 +1,5 @@
 import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { View, Pressable, ScrollView, Modal, Text as RNText, StyleSheet, Dimensions, InteractionManager } from 'react-native';
+import { View, Pressable, ScrollView, Modal, StatusBar, Text as RNText, StyleSheet, Dimensions, InteractionManager } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { Feather } from '@expo/vector-icons';
 import Reanimated, { useSharedValue, useAnimatedStyle, withTiming, Easing, runOnJS } from 'react-native-reanimated';
@@ -429,6 +429,16 @@ function MediaPanelComponent({
           labels reads better ragged-right under the image than centred beneath it. */}
       {preview ? (
         <Modal visible transparent animationType="none" onRequestClose={closePreview} statusBarTranslucent>
+          {/* The clock, the battery and the rest go away while this is up.
+   
+              Asked for by comparison with iOS itself: hold content in any Apple app and the status bar
+              leaves with everything else. This app already does it in its own long-press menus, and the
+              sticker preview was the one that did not — which is what made it feel like a panel with a dim
+              layer rather than a mode the phone had entered.
+   
+              `hidden` on the RN StatusBar rather than a themed style: there is nothing to theme against
+              once the whole screen is at 78% black, and dimming a white clock still leaves a clock. */}
+          <StatusBar hidden animated />
           <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
           <Reanimated.View style={[StyleSheet.absoluteFill, styles.previewBackdrop, backdropStyle]}>
             <Pressable style={StyleSheet.absoluteFill} onPress={closePreview} />
@@ -458,7 +468,25 @@ function MediaPanelComponent({
    
                   "Send", not "Send later" — the Telegram screenshot has scheduling and this app has no
                   such concept, so copying the label would promise something that does not exist. */}
-              <View style={[styles.menu, { backgroundColor: theme.colors.background.elevated }]}>
+              {/* ── COMPACT, AND GLASS WHEN GLASS IS ON ──────────────────────────────
+   
+                  Two things were wrong. It had `minWidth: 210`, so it stretched to a width nothing in it
+                  needed — the labels are two words each. Width comes from the content now, with only a
+                  floor low enough to keep a two-row menu from collapsing to the size of "Send".
+   
+                  And it was a flat elevated surface while the rest of the app's chrome is liquid glass. It
+                  sits over a dimmed screen with a sticker behind it, which is exactly the situation glass
+                  is for — the same treatment as the switcher pill below and the viewer buttons. */}
+              <View style={[styles.menu, glassActive ? null : { backgroundColor: theme.colors.background.elevated }]}>
+                {glassActive ? (
+                  <GlassBg
+                    borderRadius={16}
+                    glassStyle="regular"
+                    interactive={false}
+                    colorScheme={theme.isDark ? 'dark' : 'light'}
+                    tintColor={theme.isDark ? 'rgba(28,28,32,0.72)' : 'rgba(255,255,255,0.72)'}
+                  />
+                ) : null}
                 <StickerMenuRow
                   icon="send"
                   label={labels.send}
@@ -576,9 +604,14 @@ const styles = StyleSheet.create({
   // the longest label turns out to be after translation.
   // Its own card, sized to its content and pinned to the right of the stack. minWidth keeps it from
   // collapsing to the width of the shortest label when only two rows apply.
-  menu: { minWidth: 210, borderRadius: 16, paddingVertical: 6, paddingHorizontal: 6, shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.22, shadowRadius: 14, elevation: 12 },
-  menuRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, paddingHorizontal: 6, borderRadius: 10 },
-  menuLabel: { fontSize: 15, fontWeight: '500' },
+  // Width from the content, with a floor that only stops a two-row menu collapsing to the width of
+  // its shortest label. overflow: hidden is required, not cosmetic: the glass layer is an absolutely
+  // positioned child and would paint past the rounded corners without it.
+  menu: { minWidth: 168, borderRadius: 16, paddingVertical: 4, paddingHorizontal: 4, overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.22, shadowRadius: 14, elevation: 12 },
+  menuRow: { flexDirection: 'row', alignItems: 'center', gap: 11, paddingVertical: 11, paddingHorizontal: 10, borderRadius: 12 },
+  // 15 -> 16.5. Reported as too small, and it was: these are the only labels on an otherwise empty
+  // screen, so they carry none of the size pressure that justifies 15 inside a dense list.
+  menuLabel: { fontSize: 16.5, fontWeight: '500' },
   // ABSOLUTE, so hiding it on scroll is a transform and not a relayout. The grids pad their content
   // by RECENT_ROW_H to compensate, exactly as they already do for the bottom switcher.
   recentRow: { position: 'absolute', top: 0, left: 0, right: 0, height: RECENT_ROW_H, borderBottomWidth: 0.5, justifyContent: 'center', zIndex: 2 },
@@ -611,7 +644,10 @@ const styles = StyleSheet.create({
   backspaceFill: { width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center' },
   backspaceFlat: { backgroundColor: 'rgba(127,127,127,0.16)' },
   // Long-press preview popup.
-  previewBackdrop: { backgroundColor: 'rgba(0,0,0,0.5)' },
+  // 0.5 -> 0.78. Asked for directly, and it is what makes the preview read as a MODE rather than a
+  // dim layer: at half opacity the chat behind it stayed legible enough to keep competing for
+  // attention. iOS's own long-press context menus go considerably darker than half.
+  previewBackdrop: { backgroundColor: 'rgba(0,0,0,0.78)' },
   previewCenter: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 28 },
   // The sticker and the menu are stacked, NOT wrapped in a shared card. lignItems: flex-end is
   // what puts the menu under the image on the right, as in the screenshot, while the image itself is
