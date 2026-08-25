@@ -46,7 +46,7 @@ import { uploadChatImage } from '../../src/lib/supabase';
 import { getImageDims, setImageDims } from '../../src/services/imageDimsCache';
 import { useRenderBudget } from '../../src/hooks/useRenderBudget';
 import { useEffectiveBrowserWidgetPosition } from '../../src/lib/browserWidget';
-import { composerScrimHeight, headerScrimHeights, SCRIM_LOCATIONS, topSurfaceScrimColors, bottomSurfaceScrimColors } from '../../src/theme/scrim';
+import { composerScrimHeight, headerScrimHeights, surfaceScrimHeight, SCRIM_LOCATIONS, topSurfaceScrimColors, bottomSurfaceScrimColors } from '../../src/theme/scrim';
 import { kvGetJSONSync, kvSetJSON, kvWarm } from '../../src/services/kvStore';
 import { addTombstones, filterTombstoned } from '../../src/services/messageTombstones';
 import { TypingIndicator } from '../../src/components/ui/TypingIndicator';
@@ -5579,7 +5579,7 @@ export default function ChatScreen() {
           height, no animation — it simply sits there. */}
       <View
         pointerEvents="none"
-        style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: composerScrimHeight(insets.bottom, 12) }}
+        style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: surfaceScrimHeight(composerScrimHeight(insets.bottom, 12)) }}
       >
         {/* Shared scrim ramp (src/theme/scrim.ts). These stops used to be local
             (`[bgTransparent, bgColor + 'B3', bgColor]`, midpoint 0.45) — a
@@ -5884,7 +5884,7 @@ export default function ChatScreen() {
           (back / name / avatar) sits ON TOP of the gradient, so it stays
           fully readable; only the message list behind it fades through
           the dimming zone. */}
-      <View style={[styles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">
+      <View style={[styles.headerWrapper, { height: surfaceScrimHeight(headerGradientHeight) }]} pointerEvents="box-none">
         {/* Shared scrim ramp — see the note on the footer gradient below. */}
         <LinearGradient
           colors={topSurfaceScrimColors(bgColor)}

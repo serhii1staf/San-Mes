@@ -25,7 +25,7 @@
 import React, { useMemo, useState, useCallback, useEffect } from 'react';
 import { View, Pressable, StyleSheet, FlatList, Alert, Dimensions, InteractionManager } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { SCRIM_LOCATIONS, topSurfaceScrimColors, bottomSurfaceScrimColors } from '../../src/theme/scrim';
+import { SCRIM_LOCATIONS, surfaceScrimHeight, topSurfaceScrimColors, bottomSurfaceScrimColors } from '../../src/theme/scrim';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -346,7 +346,7 @@ export default function ImportedStickersScreen() {
           Still ONE `LinearGradient` per edge and no blur. A blur over this band would re-composite the
           scrolling grid beneath it every frame, costing far more than the hard edge ever did.
           `pointerEvents="none"` on the gradients so only the buttons above them catch touches. */}
-      <View style={[styles.topChrome, { height: insets.top + HEADER_H + 28 }]} pointerEvents="box-none">
+      <View style={[styles.topChrome, { height: surfaceScrimHeight(insets.top + HEADER_H) }]} pointerEvents="box-none">
         <LinearGradient
           colors={topSurfaceScrimColors(theme.colors.background.primary)}
           locations={SCRIM_LOCATIONS}
@@ -394,7 +394,7 @@ export default function ImportedStickersScreen() {
 
       {/* Bottom scrim, mirrored. Also hosts the pack action for the selected sticker, which is why it is
           `box-none` rather than `none`. */}
-      <View style={[styles.bottomChrome, { height: insets.bottom + 84 }]} pointerEvents="box-none">
+      <View style={[styles.bottomChrome, { height: surfaceScrimHeight(insets.bottom + 56) }]} pointerEvents="box-none">
         <LinearGradient
           colors={bottomSurfaceScrimColors(theme.colors.background.primary)}
           locations={SCRIM_LOCATIONS}

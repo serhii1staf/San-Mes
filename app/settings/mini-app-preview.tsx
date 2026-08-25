@@ -20,7 +20,7 @@
 import React, { useState, useCallback, useMemo } from 'react';
 import { View, Pressable, StyleSheet, ScrollView, Text as RNText, Platform, type ImageSourcePropType } from 'react-native';
 import { Image } from 'expo-image';
-import { BlurView } from 'expo-blur';
+import { BlurView } from '../../src/components/ui/AppBlurView';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';

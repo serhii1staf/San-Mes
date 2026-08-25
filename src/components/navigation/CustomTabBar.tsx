@@ -3,7 +3,7 @@ import { View, Pressable, StyleSheet, Platform, LayoutChangeEvent, Text as RNTex
 import { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { BlurView } from 'expo-blur';
+import { BlurView } from '../../components/ui/AppBlurView';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
 import {

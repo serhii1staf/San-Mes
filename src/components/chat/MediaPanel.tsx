@@ -1,6 +1,6 @@
 import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { View, Pressable, ScrollView, Modal, StatusBar, Text as RNText, StyleSheet, Dimensions, InteractionManager } from 'react-native';
-import { BlurView } from 'expo-blur';
+import { BlurView } from '../../components/ui/AppBlurView';
 import { Feather } from '@expo/vector-icons';
 import Reanimated, { useSharedValue, useAnimatedStyle, withTiming, Easing, runOnJS } from 'react-native-reanimated';
 import { useLiquidGlassActive, GlassBg, NativeGlassView } from '../ui/LiquidGlass';
