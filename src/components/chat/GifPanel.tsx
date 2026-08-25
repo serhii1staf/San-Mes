@@ -2,6 +2,7 @@ import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from '
 import { View, Pressable, FlatList, ActivityIndicator, Text as RNText, StyleSheet, Dimensions, InteractionManager } from 'react-native';
 import { useLiquidGlassActive, GlassBg } from '../ui/LiquidGlass';
 import { CachedImage } from '../ui/CachedImage';
+import { useStaggeredReveal } from '../../hooks/useStaggeredReveal';
 import { getTrendingGifs, getCachedTrending, setCachedTrending, GiphyItem } from '../../services/giphy';
 import { useT } from '../../i18n/store';
 
@@ -111,71 +112,18 @@ function GifPanelComponent({ height, onSelect, onLongPress, theme, bottomInset =
     [bottomInset, topInset],
   );
 
+
   const renderItem = useCallback(
     ({ item }: { item: GiphyItem }) => (
-      <Pressable
-        onPress={() => onSelect(item)}
-        // ONE meaning for long-press again: open the menu.
-        //
-        // This used to branch — a long-press DELETED your own sticker outright and opened a preview for
-        // everything else. Two problems with that. Deleting on a long press with no confirmation is a
-        // destructive action on the same gesture that elsewhere means "look at this", so it fires by
-        // accident; and it meant your own stickers had no preview at all, which is the one place a
-        // just-imported sticker most wants inspecting.
-        //
-        // Delete now lives in the menu (see MediaPanel's long-press card), alongside Send and View pack,
-        // where it is a deliberate second tap and where the menu can tell whose sticker it is.
-        onLongPress={onLongPress ? () => onLongPress(item) : undefined}
-        delayLongPress={280}
-        style={{ width: CELL_W, height: CELL_W, borderRadius: 10, overflow: 'hidden', marginBottom: CELL_GAP, backgroundColor: theme.colors.background.secondary }}
-      >
-        {/* STATIC frame in the dense grid — `autoplay={false}` + the still
-            rendition means each cell costs ONE decode instead of animating
-            every frame (a 16-cell grid of animated GIFs was saturating the UI
-            thread on weak devices). Motion is shown on long-press + in the
-            sent message. `(item as any).stillUrl` falls back to previewUrl for
-            GIFs persisted in `recent_gif` before stillUrl existed.
-
-            Until `decodeReady` the cell stays a bare tinted View (the
-            `backgroundColor` on the Pressable already provides it) so the
-            open animation never competes with bitmap decode — see the decode
-            gate above. */}
-        {decodeReady ? (
-          <CachedImage
-            uri={(item as any).stillUrl || item.previewUrl}
-            style={{ width: '100%', height: '100%' }}
-            resizeMode="cover"
-            priority="low"
-            autoplay={false}
-            // ── noProxy: THE FIX FOR THE THUMBNAIL STORM ──────────────────────────────
-            //
-            // A perf snapshot of opening this panel showed ~26 image loads starting together
-            // and completing at 117, 355, 503, 650, 737, 894, 971, 1070, 1183, 1351, 1419,
-            // 1634, 1677 ms — a monotonic climb, which is the signature of a QUEUE, not of
-            // slow images.
-            //
-            // The queue was one host. `style.width` here is `'100%'`, which is not numeric,
-            // and no `proxyWidth` was passed, so `CachedImage` fell through to
-            // `DEFAULT_PROXY_WIDTH` and routed every cell to images.weserv.nl as
-            // `?w=800&output=gif&n=-1`. So all 26 requests went to a single shared free proxy,
-            // each asking it to cold-fetch from Giphy and RE-ENCODE a GIF at 800 px wide —
-            // for a cell that is 88 px on screen.
-            //
-            // Giphy is already a CDN and `stillUrl` is already the right size: the mapping in
-            // giphy.ts prefers `fixed_width_small_still`, a single frame around 100 px. There
-            // is nothing for the proxy to save here, and three things for it to cost — a
-            // bigger payload, an extra network hop, and the loss of Giphy's own sharding
-            // across media0-4.giphy.com, which is exactly the parallelism the climb was
-            // missing.
-            //
-            // Passing a numeric `proxyWidth={CELL_W}` would fix the 800 px part but keep the
-            // single-host funnel. Bypassing the proxy fixes both.
-            noProxy
-          />
-        ) : null}
-      </Pressable>
+      <GifCell
+        item={item}
+        decodeReady={decodeReady}
+        cellBg={theme.colors.background.secondary}
+        onSelect={onSelect}
+        onLongPress={onLongPress}
+      />
     ),
-    [onSelect, onLongPress, theme, decodeReady],
+    [onSelect, onLongPress, theme.colors.background.secondary, decodeReady],
   );
 
   // Recently-used GIFs first, then trending (deduped by id).
@@ -311,6 +259,11 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   bareContainer: { flex: 1 },
+  // Hoisted out of the cell: these were inline object literals, so a scrolling grid minted two
+  // fresh objects per cell per render. Only the background tint varies (it is themed), and that
+  // is passed in as a primitive and composed as a second style entry.
+  cell: { width: CELL_W, height: CELL_W, borderRadius: 10, overflow: 'hidden', marginBottom: CELL_GAP },
+  cellImg: { width: '100%', height: '100%' },
   list: { flex: 1 },
   listContent: { paddingTop: 10, paddingHorizontal: H_PAD },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 40 },
@@ -318,3 +271,107 @@ const styles = StyleSheet.create({
 });
 
 export const GifPanel = memo(GifPanelComponent);
+
+/**
+ * One cell of the GIF grid.
+ *
+ * ── WHY THIS IS A COMPONENT AND NOT JSX INSIDE `renderItem` ─────────────────
+ *
+ * Because it needs a hook. A device snapshot of opening this panel is unambiguous about what was
+ * wrong — twenty-six image loads starting inside ~155 ms, `pendingDecodes` peaking at 24, and
+ * durations climbing 447 → 456 → 600 → 693 → 698 → 700 → 702 → 704 → 707 → 709 → 715 ms.
+ *
+ * A monotonic climb across concurrent requests is the signature of a QUEUE, not of slow images: every
+ * cell started at once and they finished in the order the device got round to them, so the last one
+ * waited for all the others. The panel opens on the same gesture the user described as laggy.
+ *
+ * `noProxy` (see below) already fixed the *other* half of this — the single-host funnel through weserv.
+ * What it could not fix is that all twenty-six decode STARTS still happen together, because each cell
+ * begins loading the moment it mounts and FlatList mounts a batch per period.
+ *
+ * The chat bubbles solved exactly this with `useStaggeredReveal`, a shared frame-paced queue that
+ * grants one decode per frame. This grid never got it: `decodeReady` is a single global latch, so it
+ * gates the whole grid against the OPEN ANIMATION and does nothing to space the cells against each
+ * other. Joining the shared queue bounds concurrency to ~1-2 decodes regardless of how many cells the
+ * list mounts, and because the queue is app-wide the panel also cannot storm against a chat that is
+ * still revealing its own images behind it.
+ *
+ * The photo pump is used rather than the GIF pump on purpose: these are STILL frames
+ * (`autoplay={false}`), so they cost one cheap decode each, and the GIF pump's 90 ms spacing would
+ * turn a screenful into a two-second cascade for no benefit.
+ *
+ * `memo` because a grid cell must not re-render when a sibling reveals. The comparator is shallow and
+ * every prop is either a primitive or a stable callback, which is why `cellBg` is passed instead of the
+ * whole `theme` object.
+ */
+const GifCell = memo(function GifCell({
+  item,
+  decodeReady,
+  cellBg,
+  onSelect,
+  onLongPress,
+}: {
+  item: GiphyItem;
+  decodeReady: boolean;
+  cellBg: string;
+  onSelect: (item: GiphyItem) => void;
+  onLongPress?: (item: GiphyItem) => void;
+}) {
+  // `false → true` and then permanent, so a recycled cell keeps the slot it already earned instead of
+  // queueing again on every scroll.
+  const revealed = useStaggeredReveal(decodeReady);
+  return (
+    <Pressable
+      onPress={() => onSelect(item)}
+      // ONE meaning for long-press: open the menu.
+      //
+      // This used to branch — a long-press DELETED your own sticker outright and opened a preview for
+      // everything else. Two problems with that. Deleting on a long press with no confirmation is a
+      // destructive action on the same gesture that elsewhere means "look at this", so it fires by
+      // accident; and it meant your own stickers had no preview at all, which is the one place a
+      // just-imported sticker most wants inspecting.
+      //
+      // Delete now lives in the menu (see MediaPanel's long-press card), alongside Send and View pack,
+      // where it is a deliberate second tap and where the menu can tell whose sticker it is.
+      onLongPress={onLongPress ? () => onLongPress(item) : undefined}
+      delayLongPress={280}
+      style={[styles.cell, { backgroundColor: cellBg }]}
+    >
+      {/* STATIC frame in the dense grid — `autoplay={false}` + the still rendition means each cell
+          costs ONE decode instead of animating every frame (a 16-cell grid of animated GIFs was
+          saturating the UI thread on weak devices). Motion is shown on long-press and in the sent
+          message. `stillUrl` falls back to `previewUrl` for GIFs persisted before `stillUrl` existed.
+
+          Two gates, and they do different jobs: `decodeReady` holds the whole grid back until the open
+          animation has finished, `revealed` then spaces the cells against one another. Until both pass
+          the cell is just the Pressable's tinted background, so the layout is committed once in its
+          final shape and thumbnails fade into cells that are already in place. */}
+      {decodeReady && revealed ? (
+        <CachedImage
+          uri={(item as any).stillUrl || item.previewUrl}
+          style={styles.cellImg}
+          resizeMode="cover"
+          priority="low"
+          autoplay={false}
+          // ── noProxy: THE OTHER HALF OF THE THUMBNAIL STORM ────────────────────────
+          //
+          // `style.width` here is `'100%'`, which is not numeric, and no `proxyWidth` was
+          // passed — so `CachedImage` fell through to `DEFAULT_PROXY_WIDTH` and routed every
+          // cell to images.weserv.nl as `?w=800&output=gif&n=-1`. Every request went to a
+          // single shared free proxy, each asking it to cold-fetch from Giphy and RE-ENCODE a
+          // GIF at 800 px wide, for a cell that is 88 px on screen.
+          //
+          // Giphy is already a CDN and `stillUrl` is already the right size (the mapping in
+          // giphy.ts prefers `fixed_width_small_still`, one frame around 100 px). There is
+          // nothing for the proxy to save here and three things for it to cost: a bigger
+          // payload, an extra hop, and the loss of Giphy's own sharding across
+          // media0-4.giphy.com — which is exactly the parallelism the climb was missing.
+          //
+          // A numeric `proxyWidth={CELL_W}` would fix the 800 px part and keep the single-host
+          // funnel. Bypassing the proxy fixes both.
+          noProxy
+        />
+      ) : null}
+    </Pressable>
+  );
+});
