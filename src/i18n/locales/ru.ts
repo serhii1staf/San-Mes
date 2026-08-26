@@ -825,6 +825,18 @@ const ru: Record<string, string> = {
   // ─── Mini-app screen (extra) ───────────────────────────────────────────
   'mini_app.collapse': 'Свернуть',
   'mini_app.load_failed': 'Не удалось загрузить',
+  // ── Карточки контента внутри приложения ─────────────────────────────────────
+  // Пост или профиль, отправленный в чат, показывается как сам объект (автор, текст, превью, кнопка
+  // «Открыть»), а не как ссылка на наш сайт. См. src/components/ui/PostPreviewCard.tsx.
+  'post.preview.open': 'Открыть',
+  'post.preview.open_a11y': 'Открыть публикацию',
+  'post.preview.unavailable': 'Публикация недоступна',
+  'post.preview.repost': 'Репост',
+  'post.preview.photo': 'Фото',
+  'post.preview.empty': 'Публикация',
+  'profile.preview.open': 'Открыть',
+  'profile.preview.open_a11y': 'Открыть профиль',
+  'profile.preview.unavailable': 'Профиль недоступен',
   'mini_app.preview.open': 'Открыть',
   'mini_app.preview.loading': 'Загружается…',
   'mini_app.preview.unavailable': 'Мини-приложение недоступно',

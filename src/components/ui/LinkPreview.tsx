@@ -10,8 +10,11 @@ import Skeleton from './Skeleton';
 import { EmojiPattern } from './EmojiPattern';
 import { MediaViewerModal, MediaViewerSource, InlineVideoPlayer } from './MediaViewerModal';
 import { MiniAppPreviewCard } from './MiniAppPreviewCard';
+import { PostPreviewCard } from './PostPreviewCard';
+import { ProfilePreviewCard } from './ProfilePreviewCard';
 import { getLinkPreview, getCachedPreviewSync, LinkPreviewData } from '../../services/linkPreview';
 import { extractMiniAppShareId } from '../../utils/miniAppShare';
+import { extractPostShareId, extractProfileShareId } from '../../utils/appLinks';
 import { perfMonitor } from '../../services/perfMonitor';
 import { useSettingsStore } from '../../store/settingsStore';
 
@@ -92,13 +95,31 @@ function ytThumb(uri: string | undefined | null): string | undefined {
 }
 
 export const LinkPreview = React.memo(function LinkPreview(props: LinkPreviewProps) {
-  // Mini-app share links (new short `/m/<8>` and legacy `/mini/<uuid>`)
-  // get a custom in-app card instead of the generic OG unfurl. We dispatch
-  // to a sibling component so the rest of LinkPreviewInner keeps its hook
-  // order intact regardless of whether the URL is a mini-app share.
+  // ── OUR OWN LINKS NEVER GET THE GENERIC OG TREATMENT ────────────────────────
+  //
+  // Everything below is a link to content that lives INSIDE this app, and unfurling it would show the
+  // reader a scraped copy of our own marketing page for something they can open natively one tap away —
+  // and worse, tapping that card pushed `/browser`, a WebView. So each shape dispatches to a card that
+  // renders the real entity and navigates in-app.
+  //
+  // Order matters only in that the shapes are mutually exclusive; each regex is anchored to a distinct
+  // path segment (`/m|mini/`, `/post/`, `/profile/`, `/u/`).
+  //
+  // Dispatching to SIBLING components rather than branching inside `LinkPreviewInner` keeps that
+  // component's hook order intact no matter which shape arrives — it has ten hooks including three
+  // `useRecyclingState`, and a conditional return placed above them inside it would be a hooks-order
+  // violation the moment a recycled cell changed shape.
   const miniAppShareId = extractMiniAppShareId(props.url);
   if (miniAppShareId) {
     return <MiniAppPreviewCard shortOrFullId={miniAppShareId} textColor={props.textColor} />;
+  }
+  const postShareId = extractPostShareId(props.url);
+  if (postShareId) {
+    return <PostPreviewCard postId={postShareId} textColor={props.textColor} static={props.static} />;
+  }
+  const profileShareId = extractProfileShareId(props.url);
+  if (profileShareId) {
+    return <ProfilePreviewCard profileId={profileShareId} textColor={props.textColor} static={props.static} />;
   }
   return <LinkPreviewInner {...props} />;
 });
