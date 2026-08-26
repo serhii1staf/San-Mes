@@ -238,7 +238,22 @@ export function CommentContextMenu({ visible, comment, isOwn, displayBody, reply
 
       <View style={{ flex: 1 }} pointerEvents="box-none">
         <Animated.View
-          style={{ flex: 1, justifyContent: 'flex-end', paddingBottom: 16, opacity: fade, transform: [{ translateY: slideAnim }] }}
+          // ── NO OPACITY HERE EITHER. SAME GLASS DEFECT AS THE CHAT MENU. ────────────
+          //
+          // This wrapper carried `opacity: fade` and it is a parent of BOTH `GlassBg` surfaces
+          // below — the held-comment card and the action sheet. A glass surface with `opacity: 0`
+          // anywhere in its parent chain loses its glass entirely (expo/expo#41024), which is the
+          // rule this codebase states in PhotoPickerPanel and on the chat's day-separator chip, and
+          // the reason every show/hide here is a translate rather than a fade.
+          //
+          // Reported as glass being present on one long-press and absent on the next: whether it
+          // survived depended on where the animation stood when the native view was first
+          // composited, so the same gesture gave different results run to run.
+          //
+          // `translateY` alone already carries the sheet on and off screen — it travels the full
+          // SCREEN_HEIGHT, so the fade was never doing any work the slide was not. The backdrop
+          // still fades, and it is a SIBLING (line above), so it is free to animate opacity.
+          style={{ flex: 1, justifyContent: 'flex-end', paddingBottom: 16, transform: [{ translateY: slideAnim }] }}
           pointerEvents="box-none"
         >
           {/* Held comment preview — wide so rich previews fit */}
