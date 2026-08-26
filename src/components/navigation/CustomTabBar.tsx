@@ -450,7 +450,6 @@ const SlidingLens = React.memo(function SlidingLens({
   pillScale,
   pillStretchW,
   baseWidth,
-  visible,
   isDark,
   glassActive,
 }: {
@@ -459,7 +458,6 @@ const SlidingLens = React.memo(function SlidingLens({
   pillScale: SharedValue<number>;
   pillStretchW: SharedValue<number>;
   baseWidth: number;
-  visible: boolean;
   isDark: boolean;
   glassActive: boolean;
 }) {
@@ -499,9 +497,27 @@ const SlidingLens = React.memo(function SlidingLens({
         { scaleX: stretchScaleX },
       ],
       width: baseWidth,
-      opacity: visible ? 1 : 0,
     };
   });
+
+  // ── NO `opacity` IN THIS STYLE. EVER. ───────────────────────────────────────
+  //
+  // This used to end with `opacity: visible ? 1 : 0`, and the `NativeGlassView` below is a DIRECT
+  // child of the view it was applied to. `expo-glass-effect` documents that a GlassView loses its
+  // glass entirely when it or any parent has an opacity applied, because the alpha forces an
+  // offscreen composition pass the native effect cannot survive (expo/expo#41024).
+  //
+  // The symptom was exactly what was reported about this bar: real liquid glass one moment, a flat
+  // pill the next, seemingly at random. It was not random — the capsule spent every visit to the
+  // Create and Profile tabs sitting at alpha 0, and coming back set the alpha to 1 on a view whose
+  // native effect had already been discarded.
+  //
+  // `visible` was never an animation in the first place: it flips on tab change, in JS, in one
+  // commit. So the honest expression of "not visible" is not to render it, which is now done at the
+  // call site (`slotWidth > 0 && pillVisible`). A remount is also precisely what gives the glass a
+  // clean composition pass to initialise into.
+  //
+  // Nothing visual is lost: a hard 0↔1 alpha flip looked identical to appearing.
 
   // Tint values picked so the lens stays clearly visible against the bar's
   // own blurred tint without going opaque. iOS dark mode is darker than
@@ -1214,14 +1230,17 @@ export const CustomTabBar = React.memo(function CustomTabBar({
               BlurView — the bar's GlassBackdrop already blurs the content
               behind, and the lens is a brighter translucent fill that
               reads as glass over that blurred backdrop. */}
-          {slotWidth > 0 && (
+          {/* MOUNTED ONLY WHEN IT SHOULD BE SEEN — `pillVisible` used to be an `opacity: 0` inside
+              the lens's animated style, which killed the native glass. See the long note in
+              `SlidingLens`. `pillVisible` changes once per tab switch, so this costs one mount, not
+              per-frame work. */}
+          {slotWidth > 0 && pillVisible && (
             <SlidingLens
               pillX={pillX}
               pillY={pillY}
               pillScale={pillScale}
               pillStretchW={pillStretchW}
               baseWidth={pillBaseWidth}
-              visible={pillVisible}
               isDark={isDark}
               glassActive={glassActive}
             />

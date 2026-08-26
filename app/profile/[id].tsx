@@ -631,20 +631,26 @@ export default function UserProfileScreen() {
       setTabsOffsetY(y);
     }
   }, []);
-  // Native-driven reveal: opacity + a small downward slide. Recomputed only
-  // when the measured offset changes (rare), so per-frame scrolling never
-  // touches the JS thread — the interpolation runs entirely on the native side.
-  // Until the row is measured (`tabsOffsetY` still <= the pin position) we push
-  // the reveal point out of reach so the bar stays hidden on first paint.
-  const pinnedTabsOpacity = useMemo(() => {
-    const end = tabsOffsetY > pinnedBarTop ? tabsOffsetY - pinnedBarTop : Number.MAX_SAFE_INTEGER;
-    const start = Math.max(0, end - 24);
-    return scrollY.interpolate({ inputRange: [start, end], outputRange: [0, 1], extrapolate: 'clamp' });
-  }, [scrollY, tabsOffsetY, pinnedBarTop]);
+  // Native-driven reveal: a downward SLIDE, no opacity. Recomputed only when the measured offset
+  // changes (rare), so per-frame scrolling never touches the JS thread — the interpolation runs
+  // entirely on the native side. Until the row is measured (`tabsOffsetY` still <= the pin position)
+  // we push the reveal point out of reach so the bar stays hidden on first paint.
+  //
+  // ── WHY THERE IS NO `opacity` HERE ANY MORE ────────────────────────────────
+  //
+  // The overlay contains the ACTIVE TAB PILL, which is a `NativeGlassView` when liquid glass is on, and
+  // `expo-glass-effect` discards the glass whenever the view or any ancestor carries an opacity
+  // (expo/expo#41024). The bar sits at alpha 0 for the whole time the reader is at the top of the
+  // profile — i.e. always, on arrival — so the pill's glass was destroyed before it was ever seen and
+  // scrolling down revealed a flat pill instead. Identical change to `app/(tabs)/profile.tsx`, which is
+  // this screen's own-profile twin; see the longer note there.
+  //
+  // `pinnedBarTop + 64` over-covers the bar's real height. Over-travelling is free (it is off-screen
+  // either way); under-travelling would leave a visible sliver pinned at the top.
   const pinnedTabsTranslateY = useMemo(() => {
     const end = tabsOffsetY > pinnedBarTop ? tabsOffsetY - pinnedBarTop : Number.MAX_SAFE_INTEGER;
     const start = Math.max(0, end - 24);
-    return scrollY.interpolate({ inputRange: [start, end], outputRange: [-8, 0], extrapolate: 'clamp' });
+    return scrollY.interpolate({ inputRange: [start, end], outputRange: [-(pinnedBarTop + 64), 0], extrapolate: 'clamp' });
   }, [scrollY, tabsOffsetY, pinnedBarTop]);
   // Gate tappability to when the bar is actually visible. A single listener
   // flips a boolean ONLY when scrollY crosses the threshold (compared against a
@@ -1923,7 +1929,9 @@ export default function UserProfileScreen() {
         // The reveal threshold math still anchors off `pinnedBarTop`
         // (= chromeHeight) via the opacity/translateY interpolations above, so
         // the inline tabs hand off pixel-aligned — only the visual top changed.
-        style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 110, opacity: pinnedTabsOpacity, transform: [{ translateY: pinnedTabsTranslateY }] }}
+        // NO `opacity` HERE. The active tab pill below is a NativeGlassView and an alpha on any
+        // ancestor discards its glass (expo/expo#41024) — see the note on `pinnedTabsTranslateY`.
+        style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 110, transform: [{ translateY: pinnedTabsTranslateY }] }}
       >
         <View style={{ overflow: 'hidden', borderBottomLeftRadius: 18, borderBottomRightRadius: 18 }}>
           {/* Solid + frosted backing so scrolling content never shows through —
