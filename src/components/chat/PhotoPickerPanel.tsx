@@ -87,8 +87,33 @@ const CLOSE_DRAG = 90;
  *   the `bottom` offset itself. That IS a layout property, which is why it moves only when the
  *   detent snaps, never per frame of the drag.
  *
- * `floatSnap` is what keeps that promise: it is 0 or 1 and only ever animates on release, so the
- * finger drives `height` (a transform, free) and the inset changes once per detent change.
+ * ── CORRECTION: THE BOTTOM GAP WAS STRUCTURALLY IMPOSSIBLE, AND SNAPPING WAS WRONG ─────
+ *
+ * Two things were reported about the first attempt, and both were right.
+ *
+ * 1. THERE WAS NO BOTTOM GAP. The sides floated, the bottom did not. Animating the `bottom` offset
+ *    could never have produced one, and the reason is worth stating precisely: the container was
+ *    `expanded` tall, anchored at `bottom: 0`, and DELIBERATELY hung off the bottom of the screen so
+ *    that a downward translate could hide the unwanted part of it. Its own bottom edge therefore sat
+ *    hundreds of points below the display. Raising it by 12 pt did not lift that edge into view, it
+ *    just revealed 12 pt more of the panel. The visible bottom of the panel was the SCREEN edge, and
+ *    no offset applied to an off-screen edge can change that.
+ *
+ *    So the height mechanism itself had to change. The container is now exactly as tall as the
+ *    visible panel and the content lives in a fixed-height wrapper inside it — the same
+ *    constant-layout-inside, clip-outside trick this file already relied on, moved one level in. The
+ *    grid is still laid out once at full height and never re-measures; the container's height change
+ *    only moves its clip rect. That keeps the guarantee that matters (no layout work proportional to
+ *    the number of cells) while making the panel's bottom edge a real edge that can be offset.
+ *
+ * 2. THE EXPANSION ONLY HAPPENED ON RELEASE. `floatSnap` animated in `onEnd`, so the panel widened
+ *    after the finger lifted rather than under it. Requested: it should expand while being dragged,
+ *    "not only when I let go".
+ *
+ *    Everything is now derived CONTINUOUSLY from `height`, which already tracks the finger. The
+ *    scale, the bottom gap and the corner radii all interpolate from the same progress, so the panel
+ *    grows toward the edges as it is dragged and arrives at the edges exactly when it is fully open.
+ *    No second state to keep in sync, and no discontinuity at the moment of release.
  */
 const FLOAT_SCALE = 0.94;
 const FLOAT_GAP_BOTTOM = 12;
@@ -160,41 +185,38 @@ function PhotoPickerPanelComponent({
   const height = useSharedValue(collapsed);
   // Height at the moment the drag started, so the gesture is a pure delta.
   const dragStart = useSharedValue(collapsed);
-  /** 0 = floating clear of the edges, 1 = flush with them. Snaps on release only — see the note above. */
-  const floatSnap = useSharedValue(0);
 
   useEffect(() => {
     // Re-snap when the collapsed target changes (keyboard height learned late)
     // and the user has not expanded the panel.
     if (height.value < (collapsed + expanded) / 2) {
       height.value = withTiming(collapsed, { duration: 180, easing: Easing.out(Easing.cubic) });
-      floatSnap.value = withTiming(0, { duration: 180, easing: Easing.out(Easing.cubic) });
     }
-  }, [collapsed, expanded, height, floatSnap]);
+  }, [collapsed, expanded, height]);
 
   const panelStyle = useAnimatedStyle(() => {
-    const s = interpolate(floatSnap.value, [0, 1], [FLOAT_SCALE, 1], Extrapolation.CLAMP);
+    // ONE progress value, read straight off the finger. Everything below interpolates from it, which
+    // is what makes the float track the drag instead of appearing after it.
+    const p = interpolate(height.value, [collapsed, expanded], [0, 1], Extrapolation.CLAMP);
+    const s = interpolate(p, [0, 1], [FLOAT_SCALE, 1], Extrapolation.CLAMP);
     return {
-      // `bottom`, not a translate: see the note on FLOAT_SCALE for why a translate cannot lift this
-      // container's bottom edge off the screen edge.
-      bottom: interpolate(floatSnap.value, [0, 1], [FLOAT_GAP_BOTTOM, 0], Extrapolation.CLAMP),
-      // Bottom corners round off while floating and square up once the panel reaches the edges. The
-      // top pair is constant in `styles.container` — it is rounded in both states.
-      borderBottomLeftRadius: interpolate(floatSnap.value, [0, 1], [28, 0], Extrapolation.CLAMP),
-      borderBottomRightRadius: interpolate(floatSnap.value, [0, 1], [28, 0], Extrapolation.CLAMP),
-      // Scale FIRST, then translate, and divide the translate by the scale. Transforms compose, so a
-      // translate listed after a scale moves in the scaled coordinate space — visually `s * d`.
-      // Dividing by `s` cancels that exactly, so the visible height stays `height.value` at both
-      // detents instead of drifting by 6 % of the offset (~25 pt) at the floating one.
-      transform: [{ scale: s }, { translateY: (expanded - height.value) / s }],
+      // The container is now exactly the visible panel. Its child is a fixed-height stack, so this
+      // moves the clip rect and nothing re-measures. Divided by `s` because the scale below is about
+      // `bottom center`, which draws the box at `s * height` — dividing cancels it so the panel is
+      // exactly `height.value` tall on screen at every point of the drag.
+      height: height.value / s,
+      // A real edge now, so an offset on it actually shows. Closes to 0 as the panel opens.
+      bottom: interpolate(p, [0, 1], [FLOAT_GAP_BOTTOM, 0], Extrapolation.CLAMP),
+      // Bottom corners round off while floating and square up as it reaches the edges. The top pair
+      // is constant in `styles.container` — rounded throughout.
+      borderBottomLeftRadius: interpolate(p, [0, 1], [28, 0], Extrapolation.CLAMP),
+      borderBottomRightRadius: interpolate(p, [0, 1], [28, 0], Extrapolation.CLAMP),
+      // The horizontal inset. Still a scale rather than a width, for the grid reason above, and now
+      // continuous. `transformOrigin: 'bottom center'` lives in `styles.container` so the box grows
+      // upward from its own bottom edge rather than about its middle.
+      transform: [{ scale: s }],
     };
   });
-
-  // The send button has to stay at the VISIBLE bottom edge, so it cancels the
-  // panel's own offset. Also a transform — still no layout.
-  const sendCounterStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: -(expanded - height.value) }],
-  }));
 
   const drag = useMemo(
     () =>
@@ -223,10 +245,10 @@ function PhotoPickerPanelComponent({
           // overshot its stop and settled back — the same "moves up a bit then a bit down" that was
           // reported on the share sheet, from the same cause. 26 puts it just past critical.
           height.value = withSpring(target, { damping: 26, stiffness: 220, mass: 0.7 });
-          // The inset follows the stop, and only here — never during the drag.
-          floatSnap.value = withTiming(target === expanded ? 1 : 0, { duration: 240, easing: Easing.out(Easing.cubic) });
+          // Nothing else to animate here any more: the inset, the radii and the gap all derive from
+          // `height`, so settling it settles them.
         }),
-    [collapsed, expanded, height, dragStart, onClose, floatSnap],
+    [collapsed, expanded, height, dragStart, onClose],
   );
 
   // ── Assets ─────────────────────────────────────────────────────────────────
@@ -359,23 +381,33 @@ function PhotoPickerPanelComponent({
       style={[
         styles.container,
         {
-          // CONSTANT height — see the note on `panelStyle`. The visible portion is
-          // controlled by a transform, never by this value.
-          height: expanded,
+          // Height is ANIMATED now, in `panelStyle`. It is not set here.
           backgroundColor: glassActive ? 'transparent' : theme.colors.background.elevated,
         },
         panelStyle,
       ]}
     >
-      {glassActive ? (
-        <GlassBg
-          borderRadius={28}
-          glassStyle="regular"
-          interactive={false}
-          colorScheme={theme.isDark ? 'dark' : 'light'}
-          tintColor={theme.isDark ? 'rgba(26,26,31,0.55)' : 'rgba(255,255,255,0.55)'}
-        />
-      ) : null}
+      {/* ── THE INSULATING WRAPPER ────────────────────────────────────────────────
+   
+          Constant `expanded` height, so everything inside is laid out ONCE at full size and never
+          re-measures while the container's height animates around it. The container clips it
+          (`overflow: hidden`), which is the whole mechanism: growing the panel reveals rows that are
+          already rendered rather than mounting them mid-drag.
+   
+          This is the same guarantee the panel had before, just relocated. Previously the container
+          was the constant one and was pushed off-screen by a transform; that could not produce a
+          bottom gap, because its bottom edge was never on screen to be offset. Now the container is
+          the visible panel and this wrapper holds the constant layout. */}
+      <View style={{ height: expanded }}>
+        {glassActive ? (
+          <GlassBg
+            borderRadius={28}
+            glassStyle="regular"
+            interactive={false}
+            colorScheme={theme.isDark ? 'dark' : 'light'}
+            tintColor={theme.isDark ? 'rgba(26,26,31,0.55)' : 'rgba(255,255,255,0.55)'}
+          />
+        ) : null}
 
       {/* Grabber + header. The whole strip is the drag target — a 20 pt handle
           alone is under Apple's 44 pt minimum and easy to miss. */}
@@ -429,12 +461,15 @@ function PhotoPickerPanelComponent({
           keyboardShouldPersistTaps="always"
         />
       )}
+      </View>
 
-      {/* Send button — appears only with a selection, and rides in on translateY
-          so no glass ancestor ever gets an opacity of 0. */}
+      {/* Send button — appears only with a selection. A direct child of the CONTAINER, deliberately
+          outside the fixed-height wrapper: the container is exactly the visible panel now, so
+          anchoring to its bottom keeps the button at the visible bottom edge on its own. It used to
+          need a counter-transform cancelling the panel's offset, and that offset no longer exists. */}
       {canSend ? (
-        <Reanimated.View
-          style={[styles.sendWrap, { bottom: 12 + bottomInset }, sendCounterStyle]}
+        <View
+          style={[styles.sendWrap, { bottom: 12 + bottomInset }]}
           pointerEvents="box-none"
         >
           {glassActive ? (
@@ -458,7 +493,7 @@ function PhotoPickerPanelComponent({
               </RNText>
             </Pressable>
           )}
-        </Reanimated.View>
+        </View>
       ) : null}
     </Reanimated.View>
   );
@@ -522,6 +557,9 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
     overflow: 'hidden',
+    // Grow upward from the panel's own bottom edge. With the default centre origin the scale would
+    // move the box vertically as it changed, fighting the height that is driving it.
+    transformOrigin: 'bottom center',
     zIndex: 220,
   },
   header: { paddingTop: 8, paddingBottom: 4 },
