@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { buildPostShareUrl, buildProfileShareUrl } from '../utils/appLinks';
 
 /**
  * One share sheet for the whole app, opened from anywhere by a module function.
@@ -52,10 +53,10 @@ export function openShareSheet(url: string, caption?: string) {
  * already unfurls links into preview cards showing the author, text and image.
  */
 export function openPostShareSheet(postId: string, caption?: string) {
-  openShareSheet(`https://san-m-app.com/post/${postId}`, caption);
+  openShareSheet(buildPostShareUrl(postId), caption);
 }
 
 /** Share a profile. Same reasoning: the link resolves to whatever the profile is when it is opened. */
 export function openProfileShareSheet(profileId: string, displayName?: string) {
-  openShareSheet(`https://san-m-app.com/profile/${profileId}`, displayName);
+  openShareSheet(buildProfileShareUrl(profileId), displayName);
 }

@@ -814,6 +814,18 @@ const en: Record<string, string> = {
   // ─── Mini-app screen (extra) ───────────────────────────────────────────
   'mini_app.collapse': 'Collapse',
   'mini_app.load_failed': 'Failed to load',
+  // ── In-app content cards ────────────────────────────────────────────────────
+  // A post or profile shared into a chat renders as the entity itself (author, text, thumbnail, an
+  // Open button) rather than as a link to our own website. See src/components/ui/PostPreviewCard.tsx.
+  'post.preview.open': 'Open',
+  'post.preview.open_a11y': 'Open post',
+  'post.preview.unavailable': 'Post unavailable',
+  'post.preview.repost': 'Repost',
+  'post.preview.photo': 'Photo',
+  'post.preview.empty': 'Post',
+  'profile.preview.open': 'Open',
+  'profile.preview.open_a11y': 'Open profile',
+  'profile.preview.unavailable': 'Profile unavailable',
   'mini_app.preview.open': 'Open',
   'mini_app.preview.loading': 'Loading…',
   'mini_app.preview.unavailable': 'Mini app unavailable',

@@ -1,6 +1,7 @@
 import { Linking } from 'react-native';
 import { router } from 'expo-router';
 import { useSettingsStore } from '../store/settingsStore';
+import { resolveInAppHref } from './appLinks';
 
 /**
  * Normalize a URL to https.
@@ -21,6 +22,28 @@ function normalizeToHttps(url: string): string {
 
 export function openUrl(url: string) {
   const fullUrl = normalizeToHttps(url);
+
+  // ── OUR OWN CONTENT OPENS IN OUR OWN APP ───────────────────────────────────
+  //
+  // This is the single choke point every tapped link in the app goes through — `FormattedText` links,
+  // both context menus, profile bio links, link previews. Before this check, a link to our own content
+  // was treated exactly like a link to a stranger's website: `/browser` (a WebView) or Safari. Tapping
+  // a shared post therefore showed the reader our marketing page for a post they have an account for.
+  //
+  // Expo Router documents WHY this happens, and it is not accidental — a fully-qualified http/https
+  // href is deliberately routed to the browser, because that is the documented way to force a web link.
+  // Staying in-app means resolving the URL to a relative route first, which is what `resolveInAppHref`
+  // does. https://docs.expo.dev/router/advanced/native-intent/ (§ Forcing web links)
+  //
+  // Placed BEFORE the settings lookup on purpose: "open links in the in-app browser" is a preference
+  // about OTHER PEOPLE'S websites. It should not be able to send our own post to a WebView, in either
+  // position.
+  const inApp = resolveInAppHref(fullUrl);
+  if (inApp) {
+    router.push(inApp);
+    return;
+  }
+
   const { useInAppBrowser } = useSettingsStore.getState();
 
   // Defensive guard: never hand a non-https value to Linking.openURL directly.
