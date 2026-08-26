@@ -217,6 +217,13 @@ function PhotoPickerPanelComponent({
   // Height at the moment the drag started, so the gesture is a pure delta.
   const dragStart = useSharedValue(collapsed);
 
+  /**
+   * 0 = floating detent, 1 = flush with the edges. Carries the LAYOUT-bearing parts of the float —
+   * the bottom gap and the bottom corner radii — and animates only on release, so a drag never pays
+   * for them. See the note in `panelStyle`.
+   */
+  const snap = useSharedValue(0);
+
   /** First run is the ENTER; later runs are the keyboard-height re-snap. Different durations. */
   const didEnter = useRef(false);
   const closing = useRef(false);
@@ -246,10 +253,13 @@ function PhotoPickerPanelComponent({
   const requestClose = useCallback(() => {
     if (closing.current) return;
     closing.current = true;
+    // Back to the floating detent on the way out, so a panel that was expanded does not shrink away
+    // flush against the edges — it leaves looking like the card it arrived as.
+    snap.value = withTiming(0, { duration: 200, easing: Easing.out(Easing.cubic) });
     height.value = withTiming(0, { duration: 260, easing: Easing.in(Easing.cubic) }, (done) => {
       if (done) runOnJS(onClose)();
     });
-  }, [height, onClose]);
+  }, [height, onClose, snap]);
 
   const panelStyle = useAnimatedStyle(() => {
     // ONE progress value, read straight off the finger. Everything below interpolates from it, which
@@ -262,12 +272,26 @@ function PhotoPickerPanelComponent({
       // `bottom center`, which draws the box at `s * height` — dividing cancels it so the panel is
       // exactly `height.value` tall on screen at every point of the drag.
       height: height.value / s,
-      // A real edge now, so an offset on it actually shows. Closes to 0 as the panel opens.
-      bottom: interpolate(p, [0, 1], [FLOAT_GAP_BOTTOM, 0], Extrapolation.CLAMP),
-      // Bottom corners round off while floating and square up as it reaches the edges. The top pair
-      // is constant in `styles.container` — rounded throughout.
-      borderBottomLeftRadius: interpolate(p, [0, 1], [28, 0], Extrapolation.CLAMP),
-      borderBottomRightRadius: interpolate(p, [0, 1], [28, 0], Extrapolation.CLAMP),
+      // ── THESE THREE SNAP. ONLY `height` TRACKS THE FINGER. ────────────────────
+      //
+      // Reported: the panel stutters when dismissed by SWIPE, while the chevron dismiss is smooth.
+      //
+      // That asymmetry is the whole clue, and it points at my own change rather than at anything
+      // pre-existing. The button path animates one value and never drags; the swipe path drives the
+      // gesture frame by frame. When the bottom gap was added, `height` stopped being a transform and
+      // became a real LAYOUT property — and `bottom` and the two radii were put on the same per-frame
+      // interpolation. So a drag was performing a measure/layout pass plus a border-geometry
+      // recalculation on every single frame, and only the dragging path paid for it.
+      //
+      // `height` has to stay continuous: it is what reveals more of the grid, and there is no
+      // transform that can grow a clip. The other three do not — the gap and the corner rounding are
+      // end states, not something the eye follows mid-drag. They now ride `snap`, which only animates
+      // on release.
+      //
+      // The drag still reads as continuous because `scale` below is continuous and free.
+      bottom: interpolate(snap.value, [0, 1], [FLOAT_GAP_BOTTOM, 0], Extrapolation.CLAMP),
+      borderBottomLeftRadius: interpolate(snap.value, [0, 1], [28, 0], Extrapolation.CLAMP),
+      borderBottomRightRadius: interpolate(snap.value, [0, 1], [28, 0], Extrapolation.CLAMP),
       // The horizontal inset. Still a scale rather than a width, for the grid reason above, and now
       // continuous. `transformOrigin: 'bottom center'` lives in `styles.container` so the box grows
       // upward from its own bottom edge rather than about its middle.
@@ -309,10 +333,11 @@ function PhotoPickerPanelComponent({
           // overshot its stop and settled back — the same "moves up a bit then a bit down" that was
           // reported on the share sheet, from the same cause. 26 puts it just past critical.
           height.value = withSpring(target, { damping: 26, stiffness: 220, mass: 0.7 });
-          // Nothing else to animate here any more: the inset, the radii and the gap all derive from
-          // `height`, so settling it settles them.
+          // The layout-bearing half of the float settles here, once, rather than being recomputed on
+          // every frame of the drag that just ended.
+          snap.value = withTiming(target === expanded ? 1 : 0, { duration: 240, easing: Easing.out(Easing.cubic) });
         }),
-    [collapsed, expanded, height, dragStart, onClose],
+    [collapsed, expanded, height, dragStart, onClose, snap],
   );
 
   // ── Assets ─────────────────────────────────────────────────────────────────
