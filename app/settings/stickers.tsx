@@ -257,13 +257,34 @@ export default function ImportedStickersScreen() {
                   and still stormed, because pacing used to require extracting the cell into a component
                   to hold a hook. It is a prop on the image now precisely so that cannot happen again —
                   see the note on `paced`. */}
+              {/* ── A THUMBNAIL, NOT THE WHOLE STICKER ────────────────────────────────────
+   
+                  Measured: this screen mounted 156 images, with a long task of 198 ms and individual
+                  IMG marks at 178 / 126 / 76 ms.
+   
+                  `noProxy` was the cause, and the note above it argued for it on cache-key grounds: a
+                  proxied url is a different expo-image key, so it would re-fetch stickers the picker
+                  had already decoded. True, but it bought that by decoding every cell at FULL
+                  resolution. A cell is `CELL` = 83 pt, about 250 px at DPR 3, while a sticker is
+                  typically 512 px square — 4.2x the pixels actually needed, on every one of 156 cells.
+                  Pacing spread that cost over time, which is why the queue stopped stalling, but it
+                  never reduced it.
+   
+                  `progressive` is what makes the trade safe, and it is why this can change now. It
+                  paints whatever variant of this asset has ALREADY been decoded as the placeholder
+                  (`src/services/mediaVariants.ts`), so the copy the picker loaded appears on the first
+                  frame and the thumbnail replaces it silently. The re-fetch happens once, in the
+                  background, behind a picture that is already on screen.
+   
+                  `CELL * 3` covers the densest screens exactly rather than guessing high. */}
               <CachedImage
                 uri={it.stillUrl || it.previewUrl}
                 style={styles.cellImg}
                 resizeMode="contain"
                 priority="low"
                 autoplay={false}
-                noProxy
+                proxyWidth={CELL * 3}
+                progressive
                 paced
               />
               {isSel ? (
@@ -300,11 +321,24 @@ export default function ImportedStickersScreen() {
           paddingHorizontal: H_PAD,
         }}
         showsVerticalScrollIndicator={false}
-        // A sticker library is dense but every cell is a tiny cached still, so the window can be
-        // generous without the mount cost that made the post lists need tight numbers.
-        initialNumToRender={6}
-        maxToRenderPerBatch={4}
-        windowSize={7}
+        // ── THE WINDOW WAS THE OTHER HALF OF THE 156 IMAGES ────────────────────────
+        //
+        // The previous comment here read: "a sticker library is dense but every cell is a tiny cached
+        // still, so the window can be generous without the mount cost that made the post lists need
+        // tight numbers." The premise was false. The cells were NOT tiny — `noProxy` above meant each
+        // one decoded a full 512 px sticker — so a generous window multiplied the most expensive thing
+        // on the screen.
+        //
+        // `windowSize` is measured in viewport heights, so 7 kept roughly seven screens of rows
+        // mounted. At 4 columns and ~6 rows per screen that is about 168 cells, which is where the
+        // measured 156 came from — the number was a direct consequence of this line.
+        //
+        // 3 is one screen above, the visible one, and one below: enough that scrolling never reaches
+        // unmounted rows at normal speed, and roughly a 60 % cut in mounted images. Combined with the
+        // thumbnails above, each of the remaining ones also costs a fraction of what it did.
+        initialNumToRender={4}
+        maxToRenderPerBatch={3}
+        windowSize={3}
         removeClippedSubviews
         ListHeaderComponent={
           <View style={styles.intro}>
