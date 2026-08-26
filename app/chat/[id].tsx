@@ -6066,42 +6066,56 @@ export default function ChatScreen() {
                 </Pressable>
               )}
             </View>
-            {/* ── EMOJI + NAME, BARE, DIRECTLY AFTER THE BACK BUTTON ───────────────────
+            {/* ── RESTORED. THE BARE VERSION WAS WORSE. ────────────────────────────────
    
-                Requested: "there is the back button, then the emoji and the name, without any
-                container".
+                I removed the name's pill and moved the avatar to sit directly after the back button,
+                on the request "back button, then the emoji and the name, without any container". The
+                result was rejected: it "looks terrible", and the earlier arrangement — name centred,
+                avatar separate on the right — was the one that read properly.
    
-                Both containers are gone and the two pieces are now one group:
+                So this is back verbatim: the name keeps its pill (glass when active, elevated fill
+                with a hairline border otherwise), centred by `headerTitleWrap` between two
+                non-shrinking side columns, and the avatar is its own circular control at the right
+                edge. Both still open the profile; the name still opens search on long-press.
    
-                  the NAME lost its pill. It was `styles.headerPill` (elevated fill + 1 pt border) on
-                  the flat path and an interactive `NativeGlassView` on the glass one. Both were a
-                  surface drawn behind the text purely to make it look tappable; the text is still
-                  tappable without one.
-   
-                  the AVATAR lost its circle and its position. It was a bordered, filled
-                  `styles.headerCircle` pinned to the far RIGHT of the header, which is what made the
-                  emoji read as a separate control from the name it belongs to. It is now the first
-                  thing in this group, immediately after the back button.
-   
-                No longer centred either: `headerTitleWrap` centred the title between two side
-                columns, which cannot hold once the group is meant to sit AGAINST the back button.
-                `headerLead` is left-aligned and takes the flex, so a long name truncates here rather
-                than pushing anything around.
-   
-                The Avatar keeps its own emoji rendering (it owns the Android emoji-clipping recipe),
-                so this does not hand-roll a Text for the emoji. Both press targets keep the same
-                destinations: tap opens the profile, long-press opens search. */}
-            <Pressable
-              onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId, fromChat: '1' } })}
-              onLongPress={openSearch}
-              delayLongPress={300}
-              style={styles.headerLead}
-            >
-              <Avatar emoji={displayEmoji} name={displayName} size="xs" />
-              <Text variant="caption" weight="semibold" numberOfLines={1} style={{ flexShrink: 1 }}>{displayName}</Text>
-              {displayVerified && <VerifiedBadge size={12} />}
-              {displayBadge && <UserBadge badge={displayBadge} size="sm" />}
-            </Pressable>
+                Worth keeping in mind for the next attempt: what was asked for after this was
+                something DISTINCTIVE, not the removal of containers. Stripping chrome makes a header
+                plainer, which is the opposite direction. */}
+            <View style={styles.headerTitleWrap}>
+              {glassActive ? (
+                <Pressable
+                  onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId, fromChat: '1' } })}
+                  onLongPress={openSearch}
+                  delayLongPress={300}
+                  style={{ borderRadius: 18, maxWidth: '100%' }}
+                >
+                  {/* The name Text + badges are CHILDREN of the interactive
+                      glass; with no fixed width the children drive the pill's
+                      width and the liquid surface morphs outward on touch. */}
+                  <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.headerPillGlass}>
+                    <Text variant="caption" weight="semibold" numberOfLines={1} style={{ flexShrink: 1 }}>{displayName}</Text>
+                    {displayVerified && <VerifiedBadge size={12} />}
+                    {displayBadge && <UserBadge badge={displayBadge} size="sm" />}
+                  </NativeGlassView>
+                </Pressable>
+              ) : (
+                <Pressable
+                  onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId, fromChat: '1' } })}
+                  onLongPress={openSearch}
+                  delayLongPress={300}
+                  style={[styles.headerPill, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}
+                >
+                  <Text variant="caption" weight="semibold" numberOfLines={1} style={{ flexShrink: 1 }}>{displayName}</Text>
+                  {displayVerified && <VerifiedBadge size={12} />}
+                  {displayBadge && <UserBadge badge={displayBadge} size="sm" />}
+                </Pressable>
+              )}
+            </View>
+            <View style={[styles.headerSide, { alignItems: 'flex-end' }]}>
+              <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId, fromChat: '1' } })} style={[styles.headerCircle, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light, overflow: 'hidden' }]}>
+                <Avatar emoji={displayEmoji} name={displayName} size="xs" />
+              </Pressable>
+            </View>
           </View>
         )}
       </View>
@@ -6505,10 +6519,7 @@ const styles = StyleSheet.create({
   // back pill and the avatar, not the full screen) is intentional + sufficient.
   headerSide: { flexShrink: 0, alignItems: 'flex-start', justifyContent: 'center' },
   headerTitleWrap: { flex: 1, minWidth: 0, alignItems: 'center', justifyContent: 'center' },
-  // Emoji + name as ONE left-aligned group butted against the back button, with no surface behind
-  // it. Takes the flex so a long name truncates here instead of pushing the back button around;
-  // `minWidth: 0` is what actually permits that truncation inside a row.
-  headerLead: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 8 },
+
   // iOS-style back pill: chevron + "Назад" label. Auto width (no fixed circle
   // size) so it grows to fit the localized label; keeps the 36pt height and
   // rounded geometry of the other header chrome. flexShrink:0 so it is never

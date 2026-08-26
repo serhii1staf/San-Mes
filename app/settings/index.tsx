@@ -16,18 +16,33 @@ import { bottomScrimColors, headerScrimHeights, SCRIM_LOCATIONS, topScrimColors 
 // Per-row tint pairs (icon color + soft tile bg) — picked to be readable in
 // both light and dark mode without being eye-piercing. Same hue family as
 // system iOS Settings but desaturated.
+/**
+ * ── SOLID TILES WITH A WHITE GLYPH, PER THE REFERENCE SCREENSHOT ──────────────
+ *
+ * Asked, with a Telegram settings screenshot attached: can the icons look like that.
+ *
+ * The shape was already right — a 32 pt rounded square, radius 12 — so the difference was entirely
+ * the FILL. Ours drew the tint at 16 % alpha behind a glyph in the same colour, which reads as a
+ * pale wash with a coloured symbol on it. The reference draws the tint at FULL saturation with the
+ * glyph knocked out in white, which is what gives those rows their weight and makes each icon read
+ * as an object rather than as tinted text.
+ *
+ * So `bg` is gone and `fg` is now the fill. `on` is the glyph colour, white everywhere except
+ * yellow: white on #FFD60A is roughly a 1.3:1 contrast ratio and effectively unreadable, so that one
+ * takes a near-black glyph. Same reason the reference has no white-on-yellow tile either.
+ */
 const ICON_TINTS = {
-  blue:    { fg: '#0A84FF', bg: 'rgba(10,132,255,0.16)'   },
-  red:     { fg: '#FF453A', bg: 'rgba(255,69,58,0.16)'    },
-  orange:  { fg: '#FF9F0A', bg: 'rgba(255,159,10,0.16)'   },
-  yellow:  { fg: '#FFD60A', bg: 'rgba(255,214,10,0.18)'   },
-  green:   { fg: '#30D158', bg: 'rgba(48,209,88,0.16)'    },
-  teal:    { fg: '#40C8E0', bg: 'rgba(64,200,224,0.16)'   },
-  cyan:    { fg: '#64D2FF', bg: 'rgba(100,210,255,0.16)'  },
-  indigo:  { fg: '#5E5CE6', bg: 'rgba(94,92,230,0.16)'    },
-  purple:  { fg: '#BF5AF2', bg: 'rgba(191,90,242,0.16)'   },
-  pink:    { fg: '#FF66D9', bg: 'rgba(255,102,217,0.16)'  },
-  gray:    { fg: '#8E8E93', bg: 'rgba(142,142,147,0.18)'  },
+  blue:    { fg: '#0A84FF', on: '#FFFFFF' },
+  red:     { fg: '#FF453A', on: '#FFFFFF' },
+  orange:  { fg: '#FF9F0A', on: '#FFFFFF' },
+  yellow:  { fg: '#FFD60A', on: '#1C1C1E' },
+  green:   { fg: '#30D158', on: '#FFFFFF' },
+  teal:    { fg: '#40C8E0', on: '#FFFFFF' },
+  cyan:    { fg: '#64D2FF', on: '#1C1C1E' },
+  indigo:  { fg: '#5E5CE6', on: '#FFFFFF' },
+  purple:  { fg: '#BF5AF2', on: '#FFFFFF' },
+  pink:    { fg: '#FF66D9', on: '#FFFFFF' },
+  gray:    { fg: '#8E8E93', on: '#FFFFFF' },
 } as const;
 type IconTint = keyof typeof ICON_TINTS;
 
@@ -74,13 +89,16 @@ function SettingsRow({
           // more (squircle-leaning) while keeping the silhouette square rather
           // than fully circular.
           borderRadius: 12,
-          backgroundColor: tint.bg,
+          // Full-saturation fill, not a 16 % wash — see the note on ICON_TINTS.
+          backgroundColor: tint.fg,
           alignItems: 'center',
           justifyContent: 'center',
           marginRight: 14,
         }}
       >
-        <Feather name={icon} size={17} color={tint.fg} />
+        {/* 16, down from 17: a knocked-out glyph needs a little more fill around it than a coloured
+            one did, or the symbol crowds the tile's corners once the tile is solid. */}
+        <Feather name={icon} size={16} color={tint.on} />
       </View>
       <Text variant="body" style={{ flex: 1 }}>{label}</Text>
       {value && (
