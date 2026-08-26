@@ -3748,6 +3748,27 @@ export default function ChatScreen() {
         if (isGif) return u;
         try {
           const r = await manipulateAsync(u, [{ resize: { width: 1280 } }], { compress: 0.8, format: SaveFormat.JPEG });
+          // ── THE BUBBLE THAT RESIZES ITSELF AFTER SEND ─────────────────────────────
+          //
+          // Reported: send a photo and the bubble is first one size, then another — "sometimes
+          // smaller, sometimes bigger", and it looks wrong.
+          //
+          // This line was missing, and only here. `pickImages` (the OS-sheet path) has always
+          // recorded the processed dimensions, and its comment says exactly why: so the optimistic
+          // bubble mounts at the correct aspect-ratio box with no size jump. `addPastedImages` did
+          // the same resize and threw the dimensions away.
+          //
+          // That matters because this is now the MAIN path. The in-app `PhotoPickerPanel` confirms
+          // through `onConfirm={addPastedImages}`, so every photo attached from the app's own gallery
+          // arrived with no cached size. `SingleChatImage` seeds its box from `getImageDims(uri)` and
+          // falls back to a 220x220 square when there is nothing cached — so the bubble mounted as a
+          // square, the image then loaded, `handleLoad` measured it and set the real aspect ratio, and
+          // the bubble jumped. Two layouts for one send, on the frame the message lands, which is also
+          // part of why sending felt heavy.
+          //
+          // Recorded against `r.uri` — the PROCESSED file — because that is the uri that goes into the
+          // message and therefore the one the bubble will look up.
+          if (r.width && r.height) setImageDims(r.uri, r.width, r.height);
           return r.uri;
         } catch { return u; }
       }));
