@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { View, FlatList, Pressable, ViewStyle, TextInput, StyleSheet, Text as RNText, Alert, Animated, Easing, InteractionManager } from 'react-native';
 import { FlashList } from '@shopify/flash-list';
-import { Feather } from '@expo/vector-icons';
+import { MaterialIcons } from '@expo/vector-icons';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Reanimated, {
   runOnJS,
@@ -305,7 +305,7 @@ function MiniAppsRow({ editMode, selectedIds, editProgress, onToggleSelect }: Mi
   if (myApps.length === 0) {
     return (
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingBottom: 100 }}>
-        <Feather name="grid" size={48} color={theme.colors.text.tertiary} />
+        <MaterialIcons name="grid-view" size={48} color={theme.colors.text.tertiary} />
         <Text variant="body" color={theme.colors.text.tertiary} style={{ marginTop: theme.spacing.base, textAlign: 'center' }}>
           {t('messages.empty.apps')}
         </Text>
@@ -976,7 +976,7 @@ const ReorderHandle = React.memo(function ReorderHandle({
         // land somewhere forgiving.
         hitSlop={8}
       >
-        <Feather name="menu" size={18} color={color} />
+        <MaterialIcons name="menu" size={18} color={color} />
       </Reanimated.View>
     </GestureDetector>
   );
@@ -986,7 +986,7 @@ const ReorderHandle = React.memo(function ReorderHandle({
  * The bookmark that marks a pinned chat.
  *
  * Mounted whenever the chat is pinned; FADED in selection mode rather than unmounted. It
- * used to be `{isPinned && !editMode ? <Feather .../> : null}`, so a 19 pt element (the
+ * used to be `{isPinned && !editMode ? <MaterialIcons .../> : null}`, so a 19 pt element (the
  * icon plus its 6 pt margin) entered and left the row's FLOW on every toggle. That
  * reflowed the preview text on the same frames as the row was sliding sideways, and only
  * on pinned rows, which is a good recipe for motion that looks random.
@@ -1003,7 +1003,7 @@ const PinMarker = React.memo(function PinMarker({
   const style = useAnimatedStyle(() => ({ opacity: 1 - editProgress.value }));
   return (
     <Reanimated.View style={style}>
-      <Feather name="anchor" size={13} color={color} />
+      <MaterialIcons name="push-pin" size={13} color={color} />
     </Reanimated.View>
   );
 });
@@ -1164,7 +1164,7 @@ const HeaderIconButton = React.memo(function HeaderIconButton({
       {glassActive ? (
         <GlassBg borderRadius={17} glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} />
       ) : null}
-      <Feather name={icon as any} size={17} color={theme.colors.text.primary} />
+      <MaterialIcons name={icon as any} size={17} color={theme.colors.text.primary} />
     </Pressable>
   );
 });
@@ -1234,7 +1234,7 @@ const SelectionCheckbox = React.memo(function SelectionCheckbox({
             : { backgroundColor: 'transparent', borderColor },
         ]}
       >
-        {selected ? <Feather name="check" size={13} color="#FFFFFF" /> : null}
+        {selected ? <MaterialIcons name="check" size={13} color="#FFFFFF" /> : null}
       </View>
     </Reanimated.View>
   );
@@ -2412,7 +2412,7 @@ export default function MessagesScreen() {
           ) : filtered.length === 0 ? (
             (activeTab === 'chats' && specialChats && !searchQuery) ? null : (
             <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingBottom: 100 }}>
-              <Feather name={activeTab === 'blocked' ? 'slash' : activeTab === 'deleted' ? 'trash-2' : activeTab === 'archive' ? 'archive' : 'message-circle'} size={48} color={theme.colors.text.tertiary} />
+              <MaterialIcons name={activeTab === 'blocked' ? 'block' : activeTab === 'deleted' ? 'delete' : activeTab === 'archive' ? 'archive' : 'chat-bubble'} size={48} color={theme.colors.text.tertiary} />
               <Text
                 variant="body"
                 color={theme.colors.text.tertiary}
@@ -2614,11 +2614,11 @@ function ComposeMenu({
         {/* Glass surface behind the menu rows (static, non-interactive so it
             doesn't morph as the finger moves between items). */}
         {glassActive ? <GlassBg borderRadius={18} glassStyle="regular" interactive={false} colorScheme={theme.isDark ? 'dark' : 'light'} /> : null}
-        <FabMenuItem icon="grid" label={t('messages.fab.mini_apps')} tint={accent} onPress={() => navigate(() => router.push('/settings/mini-apps' as any))} />
+        <FabMenuItem icon="grid-view" label={t('messages.fab.mini_apps')} tint={accent} onPress={() => navigate(() => router.push('/settings/mini-apps' as any))} />
         <FabSeparator color={borderColor} />
-        <FabMenuItem icon="cpu" label={t('messages.fab.ai')} tint={accent} onPress={() => navigate(() => router.push('/chat/ai' as any))} />
+        <FabMenuItem icon="memory" label={t('messages.fab.ai')} tint={accent} onPress={() => navigate(() => router.push('/chat/ai' as any))} />
         <FabSeparator color={borderColor} />
-        <FabMenuItem icon="music" label={t('messages.fab.music')} tint={accent} onPress={() => navigate(() => router.push('/chat/music' as any))} />
+        <FabMenuItem icon="music-note" label={t('messages.fab.music')} tint={accent} onPress={() => navigate(() => router.push('/chat/music' as any))} />
         <FabSeparator color={borderColor} />
         <FabMenuItem icon="settings" label={t('messages.fab.chat_settings')} tint={secondary} onPress={() => navigate(() => router.push({ pathname: '/settings/chat-settings', params: { id: GLOBAL_CHAT_SETTINGS_KEY } } as any))} />
       </Animated.View>
@@ -2684,7 +2684,7 @@ const ActionBarButton = React.memo(function ActionBarButton({
       accessibilityLabel={label}
       accessibilityState={{ disabled: !!disabled }}
     >
-      <Feather name={icon as any} size={18} color={color} />
+      <MaterialIcons name={icon as any} size={18} color={color} />
       <Text variant="caption" style={{ fontSize: 10.5 }} color={color} numberOfLines={1}>
         {label}
       </Text>
@@ -2776,7 +2776,7 @@ const SelectionActionBar = React.memo(function SelectionActionBar({
       ) : null}
 
       <ActionBarButton
-        icon="check-square"
+        icon="check-box"
         label={t('messages.bulk.select_all', 'Все')}
         color={selectAllColor}
         onPress={onSelectAll}
@@ -2800,7 +2800,7 @@ const SelectionActionBar = React.memo(function SelectionActionBar({
           Delete only, and the bar shrink-wraps to two controls. */}
       {tab === 'apps' ? null : (
         <ActionBarButton
-          icon={tab === 'archive' ? 'corner-up-left' : 'archive'}
+          icon={tab === 'archive' ? 'reply' : 'archive'}
           label={
             tab === 'archive'
               ? t('messages.action.unarchive', 'Из архива')
@@ -2812,7 +2812,7 @@ const SelectionActionBar = React.memo(function SelectionActionBar({
         />
       )}
       <ActionBarButton
-        icon="trash-2"
+        icon="delete"
         label={
           count > 0
             ? `${t('messages.action.delete', 'Удалить')} (${count})`
@@ -2829,7 +2829,7 @@ const SelectionActionBar = React.memo(function SelectionActionBar({
 const FabMenuItem = React.memo(function FabMenuItem({ icon, label, tint, onPress }: { icon: string; label: string; tint: string; onPress: () => void }) {
   return (
     <Pressable onPress={onPress} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 13, gap: 12 }}>
-      <Feather name={icon as any} size={16} color={tint} />
+      <MaterialIcons name={icon as any} size={16} color={tint} />
       <Text variant="caption" weight="medium" style={{ fontSize: 13 }}>{label}</Text>
     </Pressable>
   );

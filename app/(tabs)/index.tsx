@@ -7,7 +7,7 @@ import { useRenderBudget } from '../../src/hooks/useRenderBudget';
 import { currentRenderBudget } from '../../src/utils/renderBudget';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Feather } from '@expo/vector-icons';
+import { MaterialIcons } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../../src/theme';
@@ -1039,7 +1039,7 @@ export default function FeedScreen() {
               <Text variant="subheading" weight="bold">San</Text>
             </Pressable>
             <Pressable onPress={() => router.push('/notifications')} style={{ position: 'relative' }}>
-              <Feather name="bell" size={22} color={theme.colors.text.primary} />
+              <MaterialIcons name="notifications" size={22} color={theme.colors.text.primary} />
               <NotificationBellBadge accent={theme.colors.accent.primary} bg={theme.colors.background.primary} />
             </Pressable>
           </View>
@@ -1109,13 +1109,13 @@ export default function FeedScreen() {
             )}
             {(updateStatus === 'checking' || updateStatus === 'downloading' || updateStatus === 'ready') && (
               <Pressable onPress={() => setShowUpdateModal(true)} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: theme.colors.accent.primary + '15', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 }}>
-                {updateStatus !== 'ready' ? <ActivityIndicator size={11} color={theme.colors.accent.primary} /> : <Feather name="check-circle" size={12} color={theme.colors.accent.primary} />}
+                {updateStatus !== 'ready' ? <ActivityIndicator size={11} color={theme.colors.accent.primary} /> : <MaterialIcons name="check-circle" size={12} color={theme.colors.accent.primary} />}
                 <Text variant="caption" color={theme.colors.accent.primary} style={{ fontSize: 11 }}>{updateStatus === 'ready' ? t('feed.update_ready') : `${Math.round(updateProgress)}%`}</Text>
               </Pressable>
             )}
           </View>
           <Pressable onPress={() => router.push('/notifications')} style={{ position: 'relative' }}>
-            <Feather name="bell" size={22} color={theme.colors.text.primary} />
+            <MaterialIcons name="notifications" size={22} color={theme.colors.text.primary} />
             <NotificationBellBadge accent={theme.colors.accent.primary} bg={theme.colors.background.primary} />
           </Pressable>
         </View>

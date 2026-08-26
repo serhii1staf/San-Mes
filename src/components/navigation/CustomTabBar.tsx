@@ -5,7 +5,7 @@ import { useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BlurView } from '../../components/ui/AppBlurView';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Feather } from '@expo/vector-icons';
+import { MaterialIcons } from '@expo/vector-icons';
 import {
   Gesture,
   GestureDetector,
@@ -144,15 +144,15 @@ const PRESS_SPRING = { damping: 20, stiffness: 350, mass: 0.6 };
 // starts with a valid width, so the lens renders immediately and never blanks.
 let lastSlotWidth = 0;
 
-const ICON_NAMES: Record<string, keyof typeof Feather.glyphMap> = {
+const ICON_NAMES: Record<string, keyof typeof MaterialIcons.glyphMap> = {
   index: 'home',
   search: 'search',
-  create: 'plus-circle',
+  create: 'add-circle',
   // `message-circle`, not `send`. Reported as "the icon still is not a chats icon" — `send` is a
   // paper plane, which means "compose/send", not "conversations". Every messenger uses a speech
   // bubble for the list of chats, and the paper plane for the send action inside one.
-  messages: 'message-circle',
-  profile: 'user',
+  messages: 'chat-bubble',
+  profile: 'person',
 };
 
 // ── THIS FILE IS WHERE TAB ICONS ACTUALLY COME FROM — TWO TRAPS ─────────────
@@ -161,7 +161,7 @@ const ICON_NAMES: Record<string, keyof typeof Feather.glyphMap> = {
 // device while looking correct in the diff.
 //
 // TRAP 1 — `options.tabBarIcon` IS NEVER READ.
-//   `CustomTabBar` renders `<Feather name={ICON_NAMES[routeName]} />` from the map above. The
+//   `CustomTabBar` renders `<MaterialIcons name={ICON_NAMES[routeName]} />` from the map above. The
 //   `tabBarIcon` entries in app/(tabs)/_layout.tsx are inert. Anything that must appear in the tab
 //   bar has to be built HERE. Those entries are kept only because React Navigation's types want
 //   them; removing them is a separate change.
@@ -282,7 +282,7 @@ const TabBarButton = React.memo(function TabBarButton({
       >
         <Animated.View style={iconAnimStyle}>
           <View style={[styles.createCircle, { backgroundColor: accentSecondary }]}>
-            <Feather name="plus" size={22} color="#FFFFFF" />
+            <MaterialIcons name="add" size={22} color="#FFFFFF" />
           </View>
         </Animated.View>
       </Pressable>
@@ -308,7 +308,7 @@ const TabBarButton = React.memo(function TabBarButton({
              thing that renders the tab bar — see the note on ICON_NAMES. */
           <MessagesTabIconWithBadge color={color} iconName={iconName} />
         ) : (
-          <Feather name={iconName} size={22} color={color} />
+          <MaterialIcons name={iconName} size={22} color={color} />
         )}
       </Animated.View>
     </Pressable>
@@ -330,7 +330,7 @@ const MessagesTabIconWithBadge = memo(function MessagesTabIconWithBadge({
   iconName,
 }: {
   color: string;
-  iconName: keyof typeof Feather.glyphMap;
+  iconName: keyof typeof MaterialIcons.glyphMap;
 }) {
   // Unread MESSAGES, not unread notifications.
   //
@@ -346,7 +346,7 @@ const MessagesTabIconWithBadge = memo(function MessagesTabIconWithBadge({
   const unread = totalChatUnread(counts);
   return (
     <View style={tabIconStyles.iconBox}>
-      <Feather name={iconName} size={22} color={color} />
+      <MaterialIcons name={iconName} size={22} color={color} />
       {unread > 0 ? (
         // `pointerEvents: none` because the whole button is the touch target — a badge that
         // intercepted taps would put a dead spot in the middle of it.
@@ -789,7 +789,7 @@ const ProfileCapsule = React.memo(function ProfileCapsule({
    
             An avatar here rather than a person glyph: the account's emoji inside `Avatar`'s tinted
             circle, hue hashed from the name, so the same identity is the same colour here, in the
-            chat list and in the feed. Falls back to the Feather glyph when the account has no emoji
+            chat list and in the feed. Falls back to the MaterialIcons glyph when the account has no emoji
             so a profile that never picked one still looks deliberate. */}
         <ProfileCapsuleAvatar fallbackColor={color} />
       </Pressable>
@@ -808,7 +808,7 @@ const ProfileCapsule = React.memo(function ProfileCapsule({
  */
 const ProfileCapsuleAvatar = memo(function ProfileCapsuleAvatar({ fallbackColor }: { fallbackColor: string }) {
   const emoji = useAuthStore((s) => s.user?.emoji);
-  if (!emoji) return <Feather name="user" size={22} color={fallbackColor} />;
+  if (!emoji) return <MaterialIcons name="person" size={22} color={fallbackColor} />;
   return (
     <RNText
       style={tabIconStyles.profileEmoji}

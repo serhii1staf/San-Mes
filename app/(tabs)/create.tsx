@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { View, TextInput, Pressable, ViewStyle, ScrollView, Alert, ActivityIndicator, StyleSheet } from 'react-native';
-import { Feather } from '@expo/vector-icons';
+import { MaterialIcons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -588,7 +588,7 @@ export default function CreateScreen() {
               <ActivityIndicator size="small" color={theme.colors.accent.primary} />
             ) : (
               <>
-                <Feather name="send" size={16} color={theme.colors.accent.primary} />
+                <MaterialIcons name="send" size={16} color={theme.colors.accent.primary} />
                 <Text variant="caption" weight="semibold" color={theme.colors.accent.primary}>
                   {t('create.send')}
                 </Text>
@@ -608,7 +608,7 @@ export default function CreateScreen() {
               <Text variant="caption" weight="semibold" style={{ marginLeft: 8 }}>{repostData.authorName}</Text>
               <View style={{ flex: 1 }} />
               <Pressable onPress={() => setRepostData(null)}>
-                <Feather name="x" size={16} color={theme.colors.text.tertiary} />
+                <MaterialIcons name="close" size={16} color={theme.colors.text.tertiary} />
               </Pressable>
             </View>
             {repostData.content && <Text variant="body" numberOfLines={3} style={{ paddingHorizontal: 12, paddingBottom: 12 }}>{repostData.content}</Text>}
@@ -680,7 +680,7 @@ export default function CreateScreen() {
                         justifyContent: 'center',
                       }}
                     >
-                      <Feather name="x" size={14} color="#fff" />
+                      <MaterialIcons name="close" size={14} color="#fff" />
                     </Pressable>
                   </View>
                 ))}
@@ -695,7 +695,7 @@ export default function CreateScreen() {
                 </Text>
                 {isSpoilerPhoto && (
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: theme.colors.accent.primary + '15', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>
-                    <Feather name="eye-off" size={10} color={theme.colors.accent.primary} />
+                    <MaterialIcons name="visibility-off" size={10} color={theme.colors.accent.primary} />
                     <Text variant="caption" color={theme.colors.accent.primary} style={{ fontSize: 10 }}>{t('create.spoiler_hidden')}</Text>
                   </View>
                 )}
@@ -706,13 +706,13 @@ export default function CreateScreen() {
               {/* Media buttons */}
               <View style={{ flexDirection: 'row', gap: 16 }}>
                 <Pressable onPress={pickImages} style={{ padding: 4 }}>
-                  <Feather name="image" size={22} color={imageUris.length >= MAX_IMAGES ? theme.colors.text.tertiary : theme.colors.accent.primary} />
+                  <MaterialIcons name="image" size={22} color={imageUris.length >= MAX_IMAGES ? theme.colors.text.tertiary : theme.colors.accent.primary} />
                 </Pressable>
                 <Pressable onPress={takePhoto} style={{ padding: 4 }}>
-                  <Feather name="camera" size={22} color={imageUris.length >= MAX_IMAGES ? theme.colors.text.tertiary : theme.colors.accent.primary} />
+                  <MaterialIcons name="photo-camera" size={22} color={imageUris.length >= MAX_IMAGES ? theme.colors.text.tertiary : theme.colors.accent.primary} />
                 </Pressable>
                 <Pressable onPress={() => setShowFormatHelp(true)} style={{ padding: 4 }}>
-                  <Feather name="type" size={22} color={theme.colors.accent.primary} />
+                  <MaterialIcons name="text-fields" size={22} color={theme.colors.accent.primary} />
                 </Pressable>
               </View>
               {/* Char counter */}
@@ -748,8 +748,8 @@ export default function CreateScreen() {
                   : theme.colors.border.light,
               }}
             >
-              <Feather
-                name="globe"
+              <MaterialIcons
+                name="public"
                 size={16}
                 color={audience === 'public' ? theme.colors.accent.primary : theme.colors.text.tertiary}
               />
@@ -781,8 +781,8 @@ export default function CreateScreen() {
                   : theme.colors.border.light,
               }}
             >
-              <Feather
-                name="users"
+              <MaterialIcons
+                name="people"
                 size={16}
                 color={audience === 'friends' ? theme.colors.accent.primary : theme.colors.text.tertiary}
               />
