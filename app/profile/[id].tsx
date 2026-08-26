@@ -68,6 +68,61 @@ const USER_REPLIES_CACHE_PREFIX = '@san:user_replies:';
 // `contentContainerStyle` / `data` reference makes FlatList do extra work).
 const LIST_CONTENT_CONTAINER_STYLE = { paddingBottom: 100, paddingHorizontal: 16, paddingTop: 12 } as const;
 const EMPTY_LIST: any[] = [];
+
+/**
+ * ── PROFILES ALREADY RENDERED ONCE THIS SESSION ───────────────────────────────
+ *
+ * Reported, twice: open a profile through an @mention, go back, tap the mention again, and the profile
+ * "reloads" — the content visibly jumps in rather than being there.
+ *
+ * It is not a reload. React Navigation's docs are unambiguous that going back UNMOUNTS the screen, and
+ * there is no API in v7 or expo-router that preserves a popped screen's state — I checked the whole
+ * surface (`unmountOnBlur` is gone, `freezeOnBlur` and `react-freeze` only help screens that are
+ * mounted-but-blurred, `getId` and `dismissTo` only avoid duplicates).
+ * https://reactnavigation.org/docs/navigation-lifecycle/
+ *
+ * So the second tap is a FRESH MOUNT, and `postsReady` starts at `false` again, and the list renders
+ * `EMPTY_LIST` for at least one frame before the cards commit. On a busy JS thread mid-push-transition
+ * that "one frame" is long enough to see, and what you see is an empty profile filling in — which
+ * reads exactly like a reload.
+ *
+ * The documented remedy, once you accept the remount, is to hold the state OUTSIDE the screen. That is
+ * all this is: a session-scoped record of which profiles have already paid for their first paint. A
+ * revisit seeds `postsReady` to `true` and the cards are on screen in the first committed frame.
+ *
+ * WHY THIS IS SAFE, AND WHY ONLY `postsReady`
+ *
+ * The gate exists to keep 18+ heavy cards from mounting during the open animation. On a REVISIT the
+ * expensive halves of that work are already done: the posts are in `entityStore` (no fetch) and their
+ * images are in expo-image's memory cache (no download, no decode). What remains is cheap.
+ *
+ * `chromeReady` is deliberately NOT seeded. iOS rebuilds a BlurView's backdrop-filter CALayer on every
+ * mount with nothing cached to help it, so that one is still worth a frame of stagger — and it is the
+ * banner and the blur buttons, not the post list, that the "it jumps" report is about.
+ *
+ * A plain module-level Set, not MMKV: the point is to skip work whose cost is already paid IN THIS
+ * PROCESS. Persisting it across launches would seed `true` on a cold start where nothing is warm, which
+ * is precisely the case the gate was written for.
+ *
+ * Unbounded is fine here — it holds profile id strings for one session, and the entity store's own
+ * memory cap (1200 profiles) is the real bound on how many can be visited.
+ */
+const paintedProfileIds = new Set<string>();
+
+/**
+ * Repost originals already requested THIS SESSION, across mounts.
+ *
+ * Was a `useRef` inside the component, which resets on mount — and going back unmounts this screen, so
+ * every re-entry re-fetched the original post behind every repost on the profile. Session-scoped here,
+ * so a revisit issues no requests at all.
+ *
+ * A REQUEST ledger, not a cache: the posts themselves live in `entityStore`, which owns their eviction.
+ *
+ * Kept in `{ current }` shape so the four call sites below read exactly as they did when this was a
+ * `useRef`. The change being made is WHERE the ledger lives, not how it is used, and a diff that also
+ * rewrites four unrelated expressions makes that harder to see.
+ */
+const requestedRepostOriginalIds: { current: Set<string> } = { current: new Set<string>() };
 type TabName = 'posts' | 'replies' | 'media' | 'likes';
 
 // Report category KEYS — labels come from the dictionary at render time
@@ -505,7 +560,11 @@ export default function UserProfileScreen() {
   // transition completes via InteractionManager. That breathing room kept
   // the JS thread clear and eliminated the `SLOW ui<30 @ profile/[id]`
   // burst we saw when 18+ cards mounted in 300 ms during the open animation.
-  const [postsReady, setPostsReady] = useState(false);
+  //
+  // ...EXCEPT ON A REVISIT, where starting at `false` is what produces the reported "the profile
+  // reloads and the content jumps in". See `paintedProfileIds` at the top of this file for the full
+  // reasoning. `useState` takes an initialiser so this is read once per mount, not on every render.
+  const [postsReady, setPostsReady] = useState(() => paintedProfileIds.has(String(id || '')));
   // Heavy iOS chrome — `expo-blur` BlurView (×2 here) and the banner
   // CachedImage — must NOT mount during the navigation transition into
   // this screen. BlurView spins up a CALayer with a backdrop filter and
@@ -761,6 +820,10 @@ export default function UserProfileScreen() {
     let chromeRaf = 0;
     const raf = requestAnimationFrame(() => {
       setPostsReady(true);
+      // Remember that this profile has paid for its first paint, so the NEXT visit (a fresh mount —
+      // going back unmounts the screen) starts with its cards already on screen instead of showing an
+      // empty list for a frame. See `paintedProfileIds` at the top of the file.
+      if (id) paintedProfileIds.add(String(id));
       chromeRaf = requestAnimationFrame(() => setChromeReady(true));
     });
 
@@ -839,7 +902,19 @@ export default function UserProfileScreen() {
   // fetched so we never re-issue the same `.in()` query when `userPosts`
   // updates from background sync. Without this, every store mutation that
   // reorders/refreshes userPosts would re-fetch the same originals.
-  const requestedOriginalIds = useRef<Set<string>>(new Set());
+  //
+  // ── AND IT SURVIVES LEAVING THE SCREEN ──────────────────────────────────────
+  //
+  // This was a `useRef`, which resets on mount — and since going back UNMOUNTS this screen, every
+  // re-entry re-fetched the original post behind every repost on the profile, one request each, on the
+  // frames right after the push transition. That is a straightforward contributor to the reported FPS
+  // dip on a second visit, and it is fetching answers we already have.
+  //
+  // A module-level Set (see `requestedRepostOriginalIds` at the top of the file) is session-scoped
+  // instead of mount-scoped, so a revisit issues nothing. It is only a REQUEST ledger — the posts
+  // themselves live in `entityStore`, which owns their eviction — so the worst case if the store drops
+  // an original is a missing preview until the next cold start, not stale content.
+  const requestedOriginalIds = requestedRepostOriginalIds;
 
   // Fetch original posts for reposts in this profile
   useEffect(() => {
