@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, useSyncExternalStore } from 'react';
-import { View, FlatList, ScrollView, TextInput, Pressable, Platform, StyleSheet, Alert, Animated, Dimensions, Keyboard, InteractionManager, AppState, type ViewToken } from 'react-native';
+import { View, FlatList, ScrollView, TextInput, Pressable, Platform, StyleSheet, Alert, Animated, ActivityIndicator, Dimensions, Keyboard, InteractionManager, AppState, type ViewToken } from 'react-native';
 import { useReanimatedKeyboardAnimation, useKeyboardHandler } from 'react-native-keyboard-controller';
 import { FlashList, useRecyclingState, type FlashListRef } from '@shopify/flash-list';
 import Reanimated, { useAnimatedStyle, interpolate, Extrapolation, useSharedValue, withSpring, withTiming, withSequence, withDelay, runOnJS, useAnimatedRef, measure, Easing, type SharedValue } from 'react-native-reanimated';
@@ -625,7 +625,7 @@ function fitChatImageBox(natW: number, natH: number): { w: number; h: number } {
 // dimensions once expo-image reports the decoded source size (onLoad) — and
 // remember them so every future open of this chat is jump-free. Own tiny
 // state → the memoized MessageBubble around it is untouched.
-function SingleChatImage({ uri, isVisible, onPress, cutout }: { uri: string; isVisible?: boolean; onPress: () => void; cutout?: boolean }) {
+function SingleChatImage({ uri, isVisible, onPress, cutout, uploading }: { uri: string; isVisible?: boolean; onPress: () => void; cutout?: boolean; uploading?: boolean }) {
   const theme = useTheme();
   // Seed from the persisted dimension cache so a previously-seen photo mounts
   // at the correct aspect-ratio box on the very first frame — this removes the
@@ -728,6 +728,26 @@ function SingleChatImage({ uri, isVisible, onPress, cutout }: { uri: string; isV
         {loading && !cutout ? (
           <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
             <Skeleton width={'100%'} height={'100%'} radius={0} />
+          </View>
+        ) : null}
+        {/* ── UPLOAD IN PROGRESS: A SPINNER, OVER THE VISIBLE PHOTO ────────────────
+   
+            Reported: after sending, there should be a circle showing that it is loading — instead it
+            was "blind", something blurred filling in from the bottom.
+   
+            That description is the `Skeleton` above. It is an opaque shimmer covering the whole box,
+            and it is the RIGHT thing while nothing can be drawn yet, but the wrong thing here: a just
+            sent photo is already on disk, so the picture is available immediately and what is actually
+            pending is the UPLOAD. Covering it with a sweeping shimmer hides a photo we can show and
+            says nothing about the upload.
+   
+            `uploading` is derived from the uri, which is the same signal `healPhotos` uses: a local
+            reference means the file has not been swapped for its remote url yet. So the photo shows at
+            full size straight away with a small spinner over it, and the spinner disappears when the
+            heal swaps the uri — which is the moment the upload actually completed, not a guess. */}
+        {uploading ? (
+          <View style={{ position: 'absolute', right: 8, bottom: 8, width: 28, height: 28, borderRadius: 14, backgroundColor: 'rgba(0,0,0,0.45)', alignItems: 'center', justifyContent: 'center' }}>
+            <ActivityIndicator size="small" color="#FFFFFF" />
           </View>
         ) : null}
       </View>
@@ -1181,6 +1201,9 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
                       uri={message.imageUrls[0]}
                       isVisible={isVisible}
                       cutout={isStickerLike}
+                      // A local reference means the upload has not completed — the same signal
+                      // `healPhotos` keys on. Drives the spinner, nothing else.
+                      uploading={!message.imageUrls[0].startsWith('http')}
                       onPress={() => onImagePress(message.imageUrls!, 0, message)}
                     />
                   ) : (
