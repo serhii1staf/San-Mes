@@ -130,7 +130,36 @@ export const FormattedText = memo(function FormattedText({ children, style, colo
 
         case 'mention':
           return (
-            <RNText key={i} onPress={() => { /* search user by username and navigate */ }} style={{ color: theme.colors.accent.primary, fontWeight: '600' }}>
+            // ── THE MENTION IS ACTUALLY TAPPABLE NOW ────────────────────────────
+            //
+            // This handler was `onPress={() => { /* search user by username and navigate */ }}` — an
+            // empty body with a comment describing the work. The span was already painted accent
+            // coloured and semibold, so a mention LOOKED interactive everywhere it appeared and did
+            // nothing. Reported as exactly that.
+            //
+            // Fixing it here fixes it everywhere by construction: this component renders the text of
+            // chat messages, comments and profile bios, which is the whole of "everywhere I can write
+            // a username".
+            //
+            // The navigation target is a resolver route rather than a profile, because a username is
+            // not an id — see `app/u/[username].tsx`. That keeps the async lookup, the spinner and the
+            // "no such user" screen out of a text press handler, and makes `/u/<name>` addressable.
+            //
+            // `onPressIn` is deliberately NOT used: on a long message the user may be starting a
+            // long-press for the context menu, and reacting on touch-down would steal that gesture.
+            <RNText
+              key={i}
+              onPress={() => {
+                const name = part.content.trim();
+                if (!name) return;
+                // NOT routed through `onLinkPress`, deliberately. That prop is typed and documented
+                // as taking a URL, and it defaults to `openUrl` — so handing it an in-app path like
+                // `/u/name` would ask the OS to open a URL that does not exist. Links and mentions
+                // look similar in this component and are not the same kind of destination.
+                router.push(`/u/${encodeURIComponent(name)}` as any);
+              }}
+              style={{ color: theme.colors.accent.primary, fontWeight: '600' }}
+            >
               @{part.content}
             </RNText>
           );
