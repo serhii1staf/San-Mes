@@ -497,18 +497,31 @@ function ImageViewerModalComponent({
           if (far || fast) {
             // Continue in the direction of travel, then hand back to the parent.
             //
-            // HANDOVER, not a second offset: the finger's accumulated `dragY` moves onto `slide`
-            // and `dragY` resets in the same frame, so the photo does not jump. Animating `slide`
-            // to the target while `dragY` still held the translation would have travelled the sum
-            // of the two and overshot by however far the finger went.
+            // ── THE FLICK STAYS ON `dragY`. MY HANDOVER CAUSED A REGRESSION. ──────────
             //
-            // `Easing.out` is correct HERE and only here: the finger already supplied the
+            // Reported: swiping the photo up or down made the chrome (save, edit, avatar, X)
+            // REAPPEAR for an instant and only then vanish.
+            //
+            // I had written a handover here — move the accumulated `dragY` onto `slide`, then zero
+            // `dragY` in the same frame — out of a worry about double-counting the two offsets. The
+            // worry was unfounded: on this path `slide` is already at rest (0), so animating `dragY`
+            // straight to the target never summed anything.
+            //
+            // What the handover DID do was break the chrome. Chrome opacity is
+            // `enter * interpolate(|dragY|, [0, 80], [1, 0])` — it fades as the finger pulls the
+            // photo away, which is the fix for the "solid pill floating over the chat" report. So
+            // `dragY.value = 0` drove that interpolation from ~0 back to 1: the chrome jumped to FULL
+            // opacity at the moment of release, then faded out again on `enter` over 180 ms. One
+            // assignment, two visible events, exactly the flash described.
+            //
+            // Lesson worth keeping: `dragY` is not just a position, it is the input to two other
+            // styles. Resetting it is never free.
+            //
+            // `Easing.out` is correct here and only here: the finger already supplied the
             // acceleration, so the throw should decay rather than accelerate a second time. That is
             // why the button close uses the opposite curve — it has no gesture to inherit speed from.
             const target = e.translationY >= 0 ? SCREEN_H : -SCREEN_H;
-            slide.value = dragY.value;
-            dragY.value = 0;
-            slide.value = withTiming(target, { duration: 180, easing: Easing.out(Easing.cubic) });
+            dragY.value = withTiming(target, { duration: 180, easing: Easing.out(Easing.cubic) });
             enter.value = withTiming(0, { duration: 180 }, (finished) => {
               if (finished) {
                 runOnJS(setMounted)(false);
