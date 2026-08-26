@@ -660,6 +660,9 @@ function AppStack() {
       <Stack.Screen name="chat/fullscreen" />
       <Stack.Screen name="profile/edit" options={{ presentation: 'modal', animation: 'slide_from_bottom', headerShown: false }} />
       <Stack.Screen name="profile/[id]" />
+      {/* @mention resolver. A username is not an id, so tapping a mention lands here, the lookup
+          runs, and it either `replace`s itself with the profile or shows "no such user". */}
+      <Stack.Screen name="u/[username]" />
       <Stack.Screen name="comments/[id]" />
       <Stack.Screen name="browser" options={{ presentation: 'modal', headerShown: false, animation: 'slide_from_bottom' }} />
       <Stack.Screen name="mini-app" options={{ headerShown: false, animation: 'none' }} />
