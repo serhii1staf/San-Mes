@@ -137,6 +137,47 @@ const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 const DISMISS_DISTANCE = 120;
 const DISMISS_VELOCITY = 900;
 
+/**
+ * ── TWO DETENTS: FLOATING CARD, THEN FULL BLEED ────────────────────────────────
+ *
+ * Requested, three times, always described from the same flow — tap a photo in a chat: it should
+ * come up from the bottom NOT touching any screen edge, and dragging it up should expand it until
+ * it does. Dragging back down returns it to the floating size, and further down dismisses.
+ *
+ * ── WHY THE COLLAPSED DETENT IS A SCALE AND NOT A HEIGHT ──────────────────────
+ *
+ * The obvious implementation is to inset the container — animate its width, its bottom offset and
+ * its corner radius. That cannot work HERE, and the reason is the pager: the photos live in a
+ * horizontal `FlatList` with `pagingEnabled` and a `getItemLayout` that reports a fixed
+ * `SCREEN_W` per page. Page width is baked into both the layout callback and the paging maths, so
+ * an animated container width desynchronises the snap offsets from the pages and paging lands
+ * between two photos.
+ *
+ * A uniform `scale` gets the same picture with none of that. Layout is untouched — every page is
+ * still exactly `SCREEN_W`, `getItemLayout` still true, paging still exact — and the whole viewer
+ * is simply drawn smaller. At 0.92 that leaves a gap on all four sides at once, which is the
+ * "doesn't touch the edges, not at the bottom and not at the sides" part, and it is a transform, so
+ * it is free and runs on the UI thread with the drag.
+ *
+ * It also means there is no separate "half height" state to maintain: one number moves the viewer
+ * between floating and full bleed.
+ *
+ * ── WHY THE BACKDROP HAS TO LIGHTEN WITH IT ───────────────────────────────────
+ *
+ * The backdrop is 95 % black across the whole screen. Scaling the content down inside that would
+ * put black gaps around a black-framed photo — the card would be invisible as a card. So the
+ * backdrop dims LESS at the collapsed detent, and the content view paints its own opaque surface
+ * with the rounded corners on it. That is what makes the gap read as a gap.
+ */
+const COLLAPSED_SCALE = 0.92;
+const COLLAPSED_CORNER = 28;
+/** Vertical clearance the collapsed scale produces, used to keep the chrome inside the card. */
+const CARD_GAP_Y = (SCREEN_H * (1 - COLLAPSED_SCALE)) / 2;
+/** Upward travel that expands the floating card to full bleed. */
+const EXPAND_DISTANCE = 56;
+/** Downward travel that collapses a full-bleed viewer back to the floating card. */
+const COLLAPSE_DISTANCE = 56;
+
 export interface ImageViewerModalProps {
   /** Non-null opens the viewer. */
   payload: { images: string[]; index: number } | null;
@@ -221,6 +262,11 @@ function ImageViewerModalComponent({
    * overshooting by however far the finger had travelled.
    */
   const slide = useSharedValue(SCREEN_H);
+  /**
+   * 0 = floating card clear of every edge, 1 = full bleed. Snapped, never left in between, so the
+   * viewer always rests at one of the two detents. See the constants above for why this is a scale.
+   */
+  const detent = useSharedValue(0);
   // ── ZOOM ──────────────────────────────────────────────────────────────────
   //
   // The profile viewers this component replaces had `maximumZoomScale={3}` on a native
@@ -255,10 +301,15 @@ function ImageViewerModalComponent({
       // old 220 ms fade read as a pop.
       slide.value = SCREEN_H;
       slide.value = withTiming(0, { duration: 300, easing: Easing.out(Easing.cubic) });
-      // Opacity leads the travel slightly so the photo is solid for most of the rise instead of
-      // fading in over it. A slide that also fades looks like two effects; a slide that is opaque
-      // by a third of the way up looks like one object moving.
-      enter.value = withTiming(1, { duration: 200, easing: Easing.out(Easing.cubic) });
+      // Always open at the floating detent, so a photo left expanded does not reopen expanded.
+      detent.value = 0;
+      // Opacity finishes well BEFORE the travel does, and that gap is the point.
+      //
+      // At 200 ms against a 300 ms rise the photo was still fading through two thirds of its own
+      // movement, so the rise was there but invisible — reported as "it opens abruptly", because a
+      // fade is all that could be seen of it. At 160 ms the card is solid for roughly half the
+      // travel, so what the eye follows is an object moving rather than an image appearing.
+      enter.value = withTiming(1, { duration: 160, easing: Easing.out(Easing.cubic) });
     } else if (mounted) {
       // Parent-driven close (e.g. the edit action navigating away) gets the SAME downward exit as
       // the X and the flick, so there is no third way for a photo to leave the screen.
@@ -270,7 +321,7 @@ function ImageViewerModalComponent({
     // `mounted` is read, not depended on: adding it would re-run the exit on the
     // state change the exit itself causes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [payload, enter, dragY, slide]);
+  }, [payload, enter, dragY, slide, detent]);
 
   /**
    * Close by flying the photo DOWNWARD while it shrinks, then hand back to the parent.
@@ -364,7 +415,11 @@ function ImageViewerModalComponent({
   // behind it, rather than dimming at full strength until the very last frame.
   const backdropStyle = useAnimatedStyle(() => {
     const dragFade = interpolate(Math.abs(dragY.value), [0, SCREEN_H * 0.5], [1, 0], Extrapolation.CLAMP);
-    return { opacity: enter.value * dragFade };
+    // Lighter at the floating detent. At full strength the 95 % black would fill the gap the
+    // collapsed scale opens up, and a black card on a black field is not a card — the chat has to
+    // stay faintly visible around it for the float to read at all.
+    const detentDim = interpolate(detent.value, [0, 1], [0.62, 1], Extrapolation.CLAMP);
+    return { opacity: enter.value * dragFade * detentDim };
   });
 
   const contentStyle = useAnimatedStyle(() => ({
@@ -395,9 +450,16 @@ function ImageViewerModalComponent({
         scale:
           interpolate(enter.value, [0, 1], [0.92, 1], Extrapolation.CLAMP) *
           interpolate(Math.abs(dragY.value), [0, SCREEN_H * 0.6], [1, 0.85], Extrapolation.CLAMP) *
+          // The detent, multiplied in with the rest. A uniform scale rather than an inset container
+          // because the pager's `getItemLayout` reports a fixed SCREEN_W per page — see the note on
+          // COLLAPSED_SCALE. Layout stays exact, only the drawing shrinks.
+          interpolate(detent.value, [0, 1], [COLLAPSED_SCALE, 1], Extrapolation.CLAMP) *
           zoom.value,
       },
     ],
+    // Rounded while floating, square once it reaches the edges. A radius against the bezel is what
+    // makes a full-bleed surface look like it is still a card, so it has to go at the far detent.
+    borderRadius: interpolate(detent.value, [0, 1], [COLLAPSED_CORNER, 0], Extrapolation.CLAMP),
   }));
 
   // ── CHROME FADE — THE FIX FOR THE "X DISSOLVES WITH AN ARTIFACT" REPORT ────
@@ -438,7 +500,16 @@ function ImageViewerModalComponent({
     opacity:
       enter.value *
       interpolate(Math.abs(dragY.value), [0, 80], [1, 0], Extrapolation.CLAMP),
-    transform: [{ translateY: interpolate(enter.value, [0, 1], [-22, 0], Extrapolation.CLAMP) }],
+    transform: [
+      {
+        translateY:
+          interpolate(enter.value, [0, 1], [-22, 0], Extrapolation.CLAMP) +
+          // Follow the card's top edge inward while floating. The chrome is positioned against the
+          // SCREEN, not against the scaled content, so without this the author row and the X would
+          // sit out in the dimmed margin above the card and look detached from it.
+          interpolate(detent.value, [0, 1], [CARD_GAP_Y, 0], Extrapolation.CLAMP),
+      },
+    ],
   }));
 
   // Bottom chrome (action row) slides UP into place — from +22 pt to 0.
@@ -446,7 +517,14 @@ function ImageViewerModalComponent({
     opacity:
       enter.value *
       interpolate(Math.abs(dragY.value), [0, 80], [1, 0], Extrapolation.CLAMP),
-    transform: [{ translateY: interpolate(enter.value, [0, 1], [22, 0], Extrapolation.CLAMP) }],
+    transform: [
+      {
+        translateY:
+          interpolate(enter.value, [0, 1], [22, 0], Extrapolation.CLAMP) -
+          // Mirror of the top chrome: up, to stay inside the floating card's bottom edge.
+          interpolate(detent.value, [0, 1], [CARD_GAP_Y, 0], Extrapolation.CLAMP),
+      },
+    ],
   }));
 
   // Read from `shown` rather than the `images` local further down: this memo runs during render at
@@ -492,6 +570,32 @@ function ImageViewerModalComponent({
         })
         .onEnd((e) => {
           if (zoom.value > 1.01) return;
+
+          // ── THE DETENT GETS FIRST REFUSAL ON THE GESTURE ────────────────────────────
+          //
+          // Order matters here. The dismiss test used to be the only test, so ANY sufficient drag
+          // ended the viewer. With two detents there is a nearer meaning for the same movement:
+          // pulling a floating card UP expands it, and pulling a full-bleed one DOWN shrinks it
+          // back. Only a drag that has nowhere left to go dismisses.
+          //
+          // Both branches spring `dragY` back to 0 so the card returns to rest under the finger's
+          // release rather than staying wherever it was let go.
+          const d = e.translationY;
+          if (detent.value < 0.5) {
+            // Floating → expand on a pull upward. Down still dismisses, below.
+            if (d < -EXPAND_DISTANCE || e.velocityY < -700) {
+              detent.value = withTiming(1, { duration: 260, easing: Easing.out(Easing.cubic) });
+              dragY.value = withSpring(0, { damping: 22, stiffness: 240, mass: 0.7 });
+              return;
+            }
+          } else if (d > COLLAPSE_DISTANCE && d < DISMISS_DISTANCE * 2) {
+            // Full bleed → collapse on a moderate pull downward. A long pull falls through to the
+            // dismiss, so the gesture stays continuous: a little down shrinks, a lot down closes.
+            detent.value = withTiming(0, { duration: 260, easing: Easing.out(Easing.cubic) });
+            dragY.value = withSpring(0, { damping: 22, stiffness: 240, mass: 0.7 });
+            return;
+          }
+
           const far = Math.abs(e.translationY) > DISMISS_DISTANCE;
           const fast = Math.abs(e.velocityY) > DISMISS_VELOCITY;
           if (far || fast) {
@@ -538,7 +642,7 @@ function ImageViewerModalComponent({
       if (isPager) g.failOffsetX([-40, 40]);
       return g;
     },
-    [dragY, enter, notifyClosed, zoom, zoomPanX, zoomPanY, isPager],
+    [dragY, enter, notifyClosed, zoom, zoomPanX, zoomPanY, isPager, detent],
   );
 
   /**
@@ -641,7 +745,11 @@ function ImageViewerModalComponent({
       <Reanimated.View style={[StyleSheet.absoluteFill, styles.backdrop, backdropStyle]} />
 
       <GestureDetector gesture={composedGesture}>
-        <Reanimated.View style={[StyleSheet.absoluteFill, contentStyle]}>
+        {/* `contentSurface` is what turns the scaled-down content into a CARD: an opaque fill so the
+            floating detent has a surface of its own, and `overflow: hidden` so the animated
+            `borderRadius` in `contentStyle` actually clips the pager at the corners instead of the
+            radius being drawn under a square photo. */}
+        <Reanimated.View style={[StyleSheet.absoluteFill, styles.contentSurface, contentStyle]}>
           <FlatList
             data={images}
             horizontal
@@ -738,6 +846,7 @@ const ViewerPage = memo(function ViewerPage({ uri, proxyWidth }: { uri: string; 
 const styles = StyleSheet.create({
   host: { ...StyleSheet.absoluteFillObject, zIndex: 3000 },
   backdrop: { backgroundColor: 'rgba(0,0,0,0.95)' },
+  contentSurface: { backgroundColor: '#000000', overflow: 'hidden' },
   pager: { flex: 1 },
   page: { width: SCREEN_W, height: '100%', justifyContent: 'center', alignItems: 'center' },
   image: { width: SCREEN_W, height: '100%' },
