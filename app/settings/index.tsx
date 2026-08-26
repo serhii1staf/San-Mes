@@ -1,6 +1,37 @@
 import React, { useState, useEffect } from 'react';
 import { View, ScrollView, Pressable, Switch, ViewStyle, Alert, StyleSheet, Linking, InteractionManager } from 'react-native';
-import { Feather } from '@expo/vector-icons';
+/**
+ * ── WHY MaterialIcons AND NOT Feather FOR THE SETTINGS TILES ───────────────────
+ *
+ * Asked, twice, with a Telegram screenshot: the icons look thin, and Telegram's look "professional"
+ * and somehow bigger without actually being bigger.
+ *
+ * That is a stroke-vs-fill difference, not a size one. Feather is an OUTLINE set drawn with a uniform
+ * 2 px stroke and no fill — every glyph is a hollow line drawing, which is exactly what "thin" means
+ * here. Telegram's settings icons are not from a public icon font at all; they are drawn, solid
+ * shapes. The closest thing available without adding a dependency is MaterialIcons, which is filled
+ * by default and ships inside `@expo/vector-icons` alongside Feather.
+ *
+ * A previous round declined to import it, on the grounds that a second icon FONT was a bad trade for
+ * four glyphs. That reasoning was right for four glyphs and wrong for nineteen: the whole tile set
+ * moves here, so Feather is no longer paying for itself on this screen at all.
+ *
+ * The mapping also gets more literal in the places Feather had no honest glyph, which was the earlier
+ * complaint about meaning rather than weight:
+ *
+ *   haptics       activity   -> vibration      a phone emitting vibration, not a pulse standing in
+ *   appearance    sun        -> palette        a theme is a palette; `sun` meant brightness
+ *   liquid glass  droplet    -> blur-on        the effect itself, rather than a pun on "liquid"
+ *   storage       hard-drive -> storage        MaterialIcons names the concept directly
+ *   perf monitor  bar-chart-2-> insights
+ *   fonts         type       -> text-fields
+ *   widget        layout     -> widgets
+ *   devices       smartphone -> devices        plural, which is what the row lists
+ *
+ * `Feather` is still imported: the chevron, the back arrow and the rest of this screen's chrome use
+ * it, and those ARE line icons by design. Only the tiles changed.
+ */
+import { Feather, MaterialIcons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -82,7 +113,7 @@ function SettingsRow({
   rightElement,
   isLast,
 }: {
-  icon: keyof typeof Feather.glyphMap;
+  icon: keyof typeof MaterialIcons.glyphMap;
   iconTint: IconTint;
   label: string;
   value?: string;
@@ -122,9 +153,11 @@ function SettingsRow({
           marginRight: 14,
         }}
       >
-        {/* 16, down from 17: a knocked-out glyph needs a little more fill around it than a coloured
-            one did, or the symbol crowds the tile's corners once the tile is solid. */}
-        <Feather name={icon} size={16} color={tint.on} />
+        {/* 19, up from 16. A FILLED glyph reads smaller than an outline of the same nominal size,
+            because an outline's stroke sits on the outside of its silhouette while a filled shape is
+            the silhouette. Keeping 16 here is what would make these look like small icons on big
+            tiles — which is the opposite of the "they look bigger" quality being asked for. */}
+        <MaterialIcons name={icon} size={19} color={tint.on} />
       </View>
       <Text variant="body" style={{ flex: 1 }}>{label}</Text>
       {value && (
@@ -335,7 +368,7 @@ export default function SettingsScreen() {
         </View>
         <View style={sectionCardStyle}>
           <SettingsRow
-            icon="user"
+            icon="person"
             iconTint="blue"
             label={t('settings.profile')}
             onPress={() => router.push('/profile/edit')}
@@ -348,7 +381,7 @@ export default function SettingsScreen() {
             onPress={() => router.push('/notifications')}
           />
           <SettingsRow
-            icon="bell"
+            icon="notifications-active"
             iconTint="pink"
             label={t('settings.push_notifications', 'Push-уведомления')}
             showChevron={false}
@@ -362,13 +395,13 @@ export default function SettingsScreen() {
             }
           />
           <SettingsRow
-            icon="hard-drive"
+            icon="storage"
             iconTint="green"
             label={t('settings.data_storage')}
             onPress={() => router.push('/settings/storage')}
           />
           <SettingsRow
-            icon="activity"
+            icon="vibration"
             iconTint="orange"
             label={t('settings.haptic')}
             showChevron={false}
@@ -382,7 +415,7 @@ export default function SettingsScreen() {
             }
           />
           <SettingsRow
-            icon="globe"
+            icon="public"
             iconTint="cyan"
             label={t('settings.browser')}
             value={useInAppBrowser ? t('settings.browser.in_app') : t('settings.browser.external')}
@@ -399,7 +432,7 @@ export default function SettingsScreen() {
         </View>
         <View style={sectionCardStyle}>
           <SettingsRow
-            icon="bar-chart-2"
+            icon="insights"
             iconTint="green"
             label={t('settings.perf_monitor', 'Монитор производительности')}
             showChevron={false}
@@ -424,7 +457,7 @@ export default function SettingsScreen() {
         </View>
         <View style={sectionCardStyle}>
           <SettingsRow
-            icon="sun"
+            icon="palette"
             iconTint="purple"
             label={t('settings.appearance')}
             onPress={() => router.push('/settings/appearance')}
@@ -432,44 +465,44 @@ export default function SettingsScreen() {
           />
           {PROFILE_THEMES_ENABLED && (
             <SettingsRow
-              icon="image"
+              icon="wallpaper"
               iconTint="pink"
               label={t('settings.profile_theme', 'Тема профиля')}
               onPress={() => router.push('/settings/profile-theme' as any)}
             />
           )}
           <SettingsRow
-            icon="type"
+            icon="text-fields"
             iconTint="indigo"
             label={t('settings.fonts')}
             onPress={() => router.push('/settings/fonts' as any)}
           />
           <SettingsRow
-            icon="globe"
+            icon="language"
             iconTint="teal"
             label={t('settings.language')}
             onPress={() => router.push('/settings/language' as any)}
           />
           <SettingsRow
-            icon="grid"
+            icon="apps"
             iconTint="pink"
             label={t('settings.app_icon')}
             onPress={() => setIconModalVisible(true)}
           />
           <SettingsRow
-            icon="image"
+            icon="grid-view"
             iconTint="orange"
             label="Pixel icons"
             onPress={() => router.push('/settings/pixel-icons' as any)}
           />
           <SettingsRow
-            icon="image"
+            icon="web-asset"
             iconTint="pink"
             label={t('settings.mini_app_preview')}
             onPress={() => router.push('/settings/mini-app-preview' as any)}
           />
           <SettingsRow
-            icon="layout"
+            icon="widgets"
             iconTint="teal"
             label={t('settings.widget')}
             onPress={() => router.push('/settings/widget' as any)}
@@ -477,7 +510,7 @@ export default function SettingsScreen() {
           />
           {glassCapable && (
             <SettingsRow
-              icon="droplet"
+              icon="blur-on"
               iconTint="cyan"
               label={t('settings.liquid_glass', 'Жидкое стекло')}
               showChevron={false}
@@ -502,7 +535,7 @@ export default function SettingsScreen() {
         </Pressable>
         <View style={sectionCardStyle}>
           <SettingsRow
-            icon="smartphone"
+            icon="devices"
             iconTint="blue"
             label={t('settings.devices')}
             value="2"
@@ -510,13 +543,13 @@ export default function SettingsScreen() {
             isFirst
           />
           <SettingsRow
-            icon="shield"
+            icon="lock"
             iconTint="gray"
             label={t('settings.privacy_policy')}
             onPress={() => Linking.openURL('https://legal.san-m-app.com/privacy.html').catch(() => {})}
           />
           <SettingsRow
-            icon="file-text"
+            icon="description"
             iconTint="gray"
             label={t('settings.terms')}
             onPress={() => Linking.openURL('https://legal.san-m-app.com/terms.html').catch(() => {})}
