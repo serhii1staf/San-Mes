@@ -3747,7 +3747,22 @@ export default function ChatScreen() {
         const isGif = (u.split('?')[0].split('.').pop() || '').toLowerCase() === 'gif';
         if (isGif) return u;
         try {
-          const r = await manipulateAsync(u, [{ resize: { width: 1280 } }], { compress: 0.8, format: SaveFormat.JPEG });
+          // ── 1280 → 1080, TO MATCH `pickImages` ────────────────────────────────────
+          //
+          // Measured, from the perf snapshot taken while sending: two IMG marks labelled `file`, at
+          // 284 ms and 286 ms, landing on the same millisecond, with `pendingDecodes: 0` on the long
+          // tasks around them — so these are local decodes of the just-sent photos, not network.
+          //
+          // `pickImages` has resized to 1080 for a long time and its comment records why: "visually
+          // identical while cutting the local decode cost ~55% (pixel area (1080/1600)² ≈ 0.46) — a
+          // big chunk of the rapid-send decode storm". This function was left at 1280, and it is now
+          // the path that carries EVERY photo picked in the app's own panel, so the tuning applied to
+          // the path that is barely used any more.
+          //
+          // 1280² / 1080² = 1.40, so this removes about 29 % of the pixels each of those decodes has
+          // to chew through, and there are two of them on the same frame. Upload quality is unchanged
+          // in any way the user can see at chat-bubble or fullscreen size.
+          const r = await manipulateAsync(u, [{ resize: { width: 1080 } }], { compress: 0.8, format: SaveFormat.JPEG });
           // ── THE BUBBLE THAT RESIZES ITSELF AFTER SEND ─────────────────────────────
           //
           // Reported: send a photo and the bubble is first one size, then another — "sometimes
