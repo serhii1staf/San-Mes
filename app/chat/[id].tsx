@@ -612,6 +612,14 @@ const CHAT_IMG_MAX_H = 340;
 // aspect ratio (no crop). Shared by the live onLoad handler and the
 // remembered-dimensions path so both compute the SAME box.
 function fitChatImageBox(natW: number, natH: number): { w: number; h: number } {
+  // Degenerate input guard. A zero or non-finite dimension makes `ar` 0, Infinity or NaN, and the
+  // arithmetic below then produces a zero-width, Infinity-tall or NaN box which React Native lays out
+  // as an unconstrained view — a plausible route to "it jerked to the whole screen". Nothing upstream
+  // guaranteed these were sane: they arrive from MediaLibrary, from expo-image-manipulator and from
+  // `onLoad`, and any of the three can report 0 for a file it failed to read.
+  if (!Number.isFinite(natW) || !Number.isFinite(natH) || natW <= 0 || natH <= 0) {
+    return { w: CHAT_IMG_MAX_W, h: Math.min(CHAT_IMG_MAX_W, CHAT_IMG_MAX_H) };
+  }
   const ar = natW / natH;
   let w = CHAT_IMG_MAX_W;
   let h = Math.round(w / ar);
@@ -653,13 +661,50 @@ function SingleChatImage({ uri, isVisible, onPress, cutout, uploading }: { uri: 
   // `setSize` / `setLoading` come from `useRecyclingState` and are stable
   // (useCallback'd on a stable counter setter inside the hook), so listing them
   // does not widen the callback's identity churn.
+  // ── WAS THE BOX SEEDED FROM THE CACHE? ──────────────────────────────────────
+  //
+  // `useRecyclingState`, for the same reason `size` uses it: it must be re-evaluated when this row is
+  // recycled onto a different photo, and a `useRef` would keep the previous message's answer.
+  const [seeded] = useRecyclingState(() => !!getImageDims(uri), [uri]);
+  /**
+   * ── A PHOTO ALREADY ON SCREEN NEVER CHANGES SIZE ──────────────────────────
+   *
+   * Reported three times: after sending, the bubble grows, shrinks, and sometimes jerks to nearly
+   * the whole screen before settling.
+   *
+   * I twice went after the wrong half of this. Both previous attempts made the FIRST box correct — by
+   * caching the processed dimensions, then by taking them from MediaLibrary — on the assumption that
+   * the jump was a wrong initial size correcting itself. That assumption was wrong, and the snapshots
+   * said so: the box was right on the first frame, and it moved anyway.
+   *
+   * The cause is here. `handleLoad` re-sized UNCONDITIONALLY on every load, including when the box had
+   * already been seeded from trusted cached dimensions. So a second sizing event always fired, and it
+   * only had to disagree slightly to be visible. It has several ways to disagree:
+   *
+   *   EXIF ORIENTATION. A rotated photo's stored pixel dimensions are the raw ones, while
+   *   MediaLibrary reports the DISPLAY ones. Those are transposed, so the aspect ratio flips — a
+   *   portrait 1179x2556 read as 2556x1179 turns a 156x340 box into 270x124. That is a dramatic jerk,
+   *   and it happens per-photo, which is exactly why this was intermittent ("sometimes").
+   *
+   *   THE PROXY. The remote copy is served through weserv at `CHAT_IMG_MAX_W`, so `e.source` reports
+   *   the derivative's size, not the original's.
+   *
+   *   THE HEAL. `healPhotos` swaps file:// for https://, so this fires a second time for the same
+   *   photo under a different uri.
+   *
+   * So: if the box was seeded, it is already correct and `onLoad` has nothing to teach. It only
+   * measures when nothing was cached, which is the case the measurement exists for. That makes the
+   * box a decision taken once per photo rather than a value that can be revised while the user is
+   * looking at it.
+   */
   const handleLoad = useCallback((e: any) => {
     setLoading(false);
+    if (seeded) return;
     const s = e?.source;
     if (!s?.width || !s?.height) return;
     setImageDims(uri, s.width, s.height);
     setSize(fitChatImageBox(s.width, s.height));
-  }, [uri, setLoading, setSize]);
+  }, [uri, seeded, setLoading, setSize]);
   const handleError = useCallback(() => setLoading(false), [setLoading]);
   return (
     <Pressable onPress={onPress}>
