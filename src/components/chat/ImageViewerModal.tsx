@@ -489,20 +489,59 @@ function ImageViewerModalComponent({
   //
   // Neither is folded into `contentStyle`: chrome must not inherit the photo's translate, scale or
   // zoom. It arrives, sits still, and fades.
+  // ── NO OPACITY ON THE CHROME. IT WAS KILLING THE GLASS. ────────────────────
+  //
+  // Reported: with liquid glass on, open a photo or GIF and the buttons — the author row, the X, save,
+  // delete, edit — have glass. Close it, open it again, and the glass is gone.
+  //
+  // Both of these styles animated `opacity` on a `Reanimated.View` that WRAPS `ViewerActionButton`,
+  // and that button renders `GlassBg`. A glass surface with `opacity: 0` anywhere in its PARENT chain
+  // loses its glass entirely (expo/expo#41024).
+  //
+  // This is the THIRD site of the same defect. I found the rule, fixed `MessageContextMenu` and
+  // `CommentContextMenu`, and missed this one — even though the rule is written down in THIS FILE's
+  // own neighbour, `SearchActionBar` in the chat screen: "Slides in on translateY, never opacity: a
+  // GlassView with `opacity: 0` anywhere in its parent chain loses its glass entirely". Finding a rule
+  // is not the same as applying it everywhere it holds, and an audit of every animated ancestor of a
+  // glass view is what should have followed the first fix.
+  //
+  // It also explains the intermittency, which a styling mistake would not: whether the glass survived
+  // depended on where the animation stood when the native view was first composited. `enter` starts at
+  // 0 on every open, so the wrapper is at `opacity: 0` on the first frame of every single open — the
+  // glass either attached before that frame or it did not, and the answer varied run to run.
+  //
+  // TRANSLATE INSTEAD OF FADE, which is what the rest of the app already does.
+  //
+  // The chrome still has to get out of the way during a drag — that is the "solid pill floating over
+  // the chat" fix and it stays. It now does it by sliding off its own edge rather than dissolving:
+  // the top chrome exits upward, the bottom chrome downward, both far enough to clear their content.
+  // Absolutely positioned, so travel costs nothing and affects no layout.
+  //
+  // The drag fade shared the same 80 pt window as before, so the timing of the disappearance is
+  // unchanged — only its mechanism.
+  const CHROME_EXIT_UP = -160;
+  const CHROME_EXIT_DOWN = 220;
+
   // Top chrome (close button, author row) slides DOWN into place — from -22 pt to 0.
   const topChromeStyle = useAnimatedStyle(() => ({
-    opacity:
-      enter.value *
-      interpolate(Math.abs(dragY.value), [0, 80], [1, 0], Extrapolation.CLAMP),
-    transform: [{ translateY: interpolate(enter.value, [0, 1], [-22, 0], Extrapolation.CLAMP) }],
+    transform: [
+      {
+        translateY:
+          interpolate(enter.value, [0, 1], [-22, 0], Extrapolation.CLAMP) +
+          interpolate(Math.abs(dragY.value), [0, 80], [0, CHROME_EXIT_UP], Extrapolation.CLAMP),
+      },
+    ],
   }));
 
   // Bottom chrome (action row) slides UP into place — from +22 pt to 0.
   const bottomChromeStyle = useAnimatedStyle(() => ({
-    opacity:
-      enter.value *
-      interpolate(Math.abs(dragY.value), [0, 80], [1, 0], Extrapolation.CLAMP),
-    transform: [{ translateY: interpolate(enter.value, [0, 1], [22, 0], Extrapolation.CLAMP) }],
+    transform: [
+      {
+        translateY:
+          interpolate(enter.value, [0, 1], [22, 0], Extrapolation.CLAMP) +
+          interpolate(Math.abs(dragY.value), [0, 80], [0, CHROME_EXIT_DOWN], Extrapolation.CLAMP),
+      },
+    ],
   }));
 
   // Read from `shown` rather than the `images` local further down: this memo runs during render at
