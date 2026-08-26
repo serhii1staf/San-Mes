@@ -16,6 +16,7 @@ import { CachedImage } from '../ui/CachedImage';
 import { ModalStatusBar } from '../ui/ModalStatusBar';
 import { useTabBarStore } from '../../store/tabBarStore';
 import { GlassBg, useLiquidGlassActive } from '../ui/LiquidGlass';
+import { AppBlurView } from '../ui/AppBlurView';
 
 /**
  * One round control in the viewer's chrome — the close X, and every action the callers put in the
@@ -64,16 +65,43 @@ export function ViewerActionButton({
       accessibilityLabel={accessibilityLabel}
       style={[
         actionBtnStyles.base,
-        glassActive
-          ? null
-          : {
-              // The flat fallback. A destructive action keeps a red-tinted fill so it is
-              // distinguishable at a glance without relying on the glyph colour alone.
-              backgroundColor: destructive ? 'rgba(255,60,50,0.24)' : 'rgba(255,255,255,0.16)',
-              overflow: 'hidden',
-            },
+        // `overflow: hidden` on BOTH paths now, not just the flat one.
+        //
+        // Reported: these buttons "don't support the rounded glass container". The clip was the
+        // missing half. It used to be applied only on the flat path, on the reasoning that clipping a
+        // native glass view kills the outward liquid morph on touch — which is true of
+        // `NativeGlassView` used as a PARENT, and irrelevant here, because `GlassBg` is a sibling
+        // painted BEHIND the icon. Unclipped, its material rendered square inside a 21 pt-radius
+        // button, so the corners showed straight edges and the control did not read as a glass pill
+        // at all.
+        actionBtnStyles.clip,
       ]}
     >
+      {/* ── THE NON-GLASS PATH IS A BLUR NOW, NOT A FLAT WASH ─────────────────────
+   
+          Reported: with liquid glass switched OFF these should still be blurred.
+   
+          They were a single `rgba(255,255,255,0.16)` fill — 16 % white over a photo, which on a light
+          image is nearly invisible and on a dark one is a grey smudge. Nothing about the button read
+          as a surface.
+   
+          `AppBlurView` is the app-wide answer to exactly this and already handles the platform split:
+          a real blur on iOS, and on Android a tonal surface with an alpha FLOOR, because
+          `experimentalBlurMethod` defaults to `'none'` there and an unblurred BlurView is a
+          transparent view. Using it here means these buttons follow the same surface rules as every
+          other piece of chrome in the app instead of owning a private fill.
+   
+          The destructive tint rides on top of the blur rather than replacing it, so delete stays
+          recognisable at a glance without the glyph colour being the only signal. */}
+      {glassActive ? null : (
+        <AppBlurView
+          intensity={36}
+          tint="dark"
+          style={StyleSheet.absoluteFill}
+        >
+          {destructive ? <View style={[StyleSheet.absoluteFill, actionBtnStyles.destructiveWash]} /> : null}
+        </AppBlurView>
+      )}
       {glassActive ? (
         <GlassBg
           borderRadius={21}
@@ -98,6 +126,10 @@ const actionBtnStyles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  // Separate from `base` so the reason it exists is not lost in a list of geometry: without it the
+  // surface behind the icon — blur or glass — paints square inside a round button.
+  clip: { overflow: 'hidden' },
+  destructiveWash: { backgroundColor: 'rgba(255,60,50,0.30)' },
 });
 
 /**

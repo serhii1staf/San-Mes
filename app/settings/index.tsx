@@ -31,6 +31,32 @@ import { bottomScrimColors, headerScrimHeights, SCRIM_LOCATIONS, topScrimColors 
  * yellow: white on #FFD60A is roughly a 1.3:1 contrast ratio and effectively unreadable, so that one
  * takes a near-black glyph. Same reason the reference has no white-on-yellow tile either.
  */
+/**
+ * ── WHY THESE GLYPHS, AND WHY NO SECOND ICON FONT ─────────────────────────────
+ *
+ * Reported: several icons did not mean anything close to their row — a paper plane for push
+ * notifications, a lightning bolt for haptics, a droplet for Appearance.
+ *
+ * All true. The temptation was to pull in MaterialIcons (which has literal `vibration`, `palette`,
+ * `blur_on`) — it ships inside `@expo/vector-icons`, so it costs no new dependency. It does cost a
+ * second icon FONT in the bundle, and for four glyphs that is a bad trade.
+ *
+ * All four turned out to be solvable inside Feather, once two rows that were HOARDING the right
+ * glyph gave it up:
+ *
+ *   Push notifications   send -> bell           a bell is the notification icon; `send` meant "send
+ *                                               a message", which is a different feature entirely.
+ *   Notifications feed   bell -> inbox          this row opens a LIST of received notifications, so
+ *                                               it is an inbox. Giving up `bell` is what freed it.
+ *   Haptics              zap -> activity        a pulse waveform. `zap` is energy/power, not touch.
+ *   Perf monitor         activity -> bar-chart-2  it renders FPS charts, so this is more literal than
+ *                                               the pulse was — and it released `activity`.
+ *   Appearance           droplet -> sun         the conventional light/dark theme glyph.
+ *   Liquid glass         aperture -> droplet    liquid, literally. Freed by Appearance above.
+ *
+ * The pattern worth keeping: two of these were not missing glyphs, they were glyphs assigned to the
+ * wrong row. Reassigning beat importing.
+ */
 const ICON_TINTS = {
   blue:    { fg: '#0A84FF', on: '#FFFFFF' },
   red:     { fg: '#FF453A', on: '#FFFFFF' },
@@ -316,13 +342,13 @@ export default function SettingsScreen() {
             isFirst
           />
           <SettingsRow
-            icon="bell"
+            icon="inbox"
             iconTint="red"
             label={t('settings.notifications')}
             onPress={() => router.push('/notifications')}
           />
           <SettingsRow
-            icon="send"
+            icon="bell"
             iconTint="pink"
             label={t('settings.push_notifications', 'Push-уведомления')}
             showChevron={false}
@@ -342,7 +368,7 @@ export default function SettingsScreen() {
             onPress={() => router.push('/settings/storage')}
           />
           <SettingsRow
-            icon="zap"
+            icon="activity"
             iconTint="orange"
             label={t('settings.haptic')}
             showChevron={false}
@@ -373,7 +399,7 @@ export default function SettingsScreen() {
         </View>
         <View style={sectionCardStyle}>
           <SettingsRow
-            icon="activity"
+            icon="bar-chart-2"
             iconTint="green"
             label={t('settings.perf_monitor', 'Монитор производительности')}
             showChevron={false}
@@ -398,7 +424,7 @@ export default function SettingsScreen() {
         </View>
         <View style={sectionCardStyle}>
           <SettingsRow
-            icon="droplet"
+            icon="sun"
             iconTint="purple"
             label={t('settings.appearance')}
             onPress={() => router.push('/settings/appearance')}
@@ -451,7 +477,7 @@ export default function SettingsScreen() {
           />
           {glassCapable && (
             <SettingsRow
-              icon="aperture"
+              icon="droplet"
               iconTint="cyan"
               label={t('settings.liquid_glass', 'Жидкое стекло')}
               showChevron={false}
