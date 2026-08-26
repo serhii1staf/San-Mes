@@ -9,7 +9,7 @@ import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { bottomScrimColorsStrong, composerScrimHeight, headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
-import { Feather } from '@expo/vector-icons';
+import { MaterialIcons } from '@expo/vector-icons';
 import { useSwipeToReply } from '../../src/hooks/useMessageGestures';
 import { useTheme } from '../../src/theme';
 import { useLiquidGlassActive, NativeGlassView, GlassBg } from '../../src/components/ui/LiquidGlass';
@@ -329,7 +329,7 @@ const CommentRow = React.memo(function CommentRow({ item, onLongPress, onReply, 
               swipe icon documents: a UIVisualEffectView per row is one of the most expensive
               native views to instantiate, and this icon exists on every comment. */}
           <View style={[commentSwipeStyles.replyIconCircle, { backgroundColor: theme.colors.accent.primary + '20' }]}>
-            <Feather name="corner-up-left" size={15} color={theme.colors.accent.primary} />
+            <MaterialIcons name="reply" size={15} color={theme.colors.accent.primary} />
           </View>
         </Reanimated.View>
         <Reanimated.View style={rowAnimStyle}>
@@ -1699,7 +1699,7 @@ export default function CommentsScreen() {
       <View style={{ marginBottom: 16, paddingBottom: 16, borderBottomWidth: 0.5, borderBottomColor: theme.colors.border.light }}>
         {repostInfo.isRepost && (
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 8 }}>
-            <Feather name="repeat" size={12} color={theme.colors.text.tertiary} />
+            <MaterialIcons name="repeat" size={12} color={theme.colors.text.tertiary} />
             <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ flexShrink: 1 }}>{postData.profiles?.display_name || 'User'} {t('comments.repost_label')}</Text>
           </View>
         )}
@@ -1819,7 +1819,7 @@ export default function CommentsScreen() {
           {glassActive ? (
             <Pressable onPress={() => router.back()} hitSlop={8} style={styles.backPillPress}>
               <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.backPillGlass}>
-                <Feather name="chevron-left" size={22} color={theme.colors.text.primary} />
+                <MaterialIcons name="chevron-left" size={22} color={theme.colors.text.primary} />
                 <Text variant="caption" weight="semibold" numberOfLines={1} color={theme.colors.text.primary} style={styles.backLabel}>
                   {t('common.back')}
                 </Text>
@@ -1831,7 +1831,7 @@ export default function CommentsScreen() {
               hitSlop={8}
               style={[styles.backPill, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}
             >
-              <Feather name="chevron-left" size={22} color={theme.colors.text.primary} />
+              <MaterialIcons name="chevron-left" size={22} color={theme.colors.text.primary} />
               <Text variant="caption" weight="semibold" numberOfLines={1} color={theme.colors.text.primary} style={styles.backLabel}>
                 {t('common.back')}
               </Text>
@@ -1933,7 +1933,7 @@ export default function CommentsScreen() {
                 <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 11 }}>{parseReply(editing.content || '').body}</Text>
               </View>
               <Pressable onPress={() => { setEditing(null); inputRef.current?.clear(); }} hitSlop={8} style={{ padding: 4 }}>
-                <Feather name="x" size={18} color={theme.colors.text.tertiary} />
+                <MaterialIcons name="close" size={18} color={theme.colors.text.tertiary} />
               </Pressable>
             </View>
           ) : replyTo ? (
@@ -1950,7 +1950,7 @@ export default function CommentsScreen() {
                 <Text variant="caption" color={theme.colors.text.tertiary} numberOfLines={1} style={{ fontSize: 11 }}>{parseGif(parseReply(replyTo.content || '').body) ? 'GIF' : parseReply(replyTo.content || '').body}</Text>
               </View>
               <Pressable onPress={() => setReplyTo(null)} hitSlop={8} style={{ padding: 4 }}>
-                <Feather name="x" size={18} color={theme.colors.text.tertiary} />
+                <MaterialIcons name="close" size={18} color={theme.colors.text.tertiary} />
               </Pressable>
             </View>
           ) : null}
@@ -2010,12 +2010,12 @@ export default function CommentsScreen() {
             {glassActive && !hasText ? (
               <Pressable onPress={handleSend} disabled={isSending} style={{ marginLeft: 10, borderRadius: 20 }}>
                 <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={{ width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' }}>
-                  <Feather name={editing ? 'check' : 'send'} size={16} color={theme.colors.text.tertiary} />
+                  <MaterialIcons name={editing ? 'check' : 'send'} size={16} color={theme.colors.text.tertiary} />
                 </NativeGlassView>
               </Pressable>
             ) : (
               <Pressable onPress={handleSend} disabled={!hasText || isSending} style={{ marginLeft: 10, width: 40, height: 40, borderRadius: 20, backgroundColor: hasText ? theme.colors.accent.primary : theme.colors.background.elevated, alignItems: 'center', justifyContent: 'center' }}>
-                <Feather name={editing ? 'check' : 'send'} size={16} color={hasText ? '#FFFFFF' : theme.colors.text.tertiary} />
+                <MaterialIcons name={editing ? 'check' : 'send'} size={16} color={hasText ? '#FFFFFF' : theme.colors.text.tertiary} />
               </Pressable>
             )}
           </Reanimated.View>

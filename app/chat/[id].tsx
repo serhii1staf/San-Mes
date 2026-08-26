@@ -6,7 +6,7 @@ import Reanimated, { useAnimatedStyle, interpolate, Extrapolation, useSharedValu
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
-import { Feather } from '@expo/vector-icons';
+import { MaterialIcons } from '@expo/vector-icons';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -1068,7 +1068,7 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
             shown only mid-swipe, so a flat tinted circle is visually
             indistinguishable and costs ~nothing to mount. */}
         <View style={[bubbleStyles.swipeIconCircle, { backgroundColor: theme.colors.accent.primary + '20' }]}>
-          <Feather name="corner-up-left" size={16} color={theme.colors.accent.primary} />
+          <MaterialIcons name="reply" size={16} color={theme.colors.accent.primary} />
         </View>
       </Reanimated.View>
 
@@ -1343,7 +1343,7 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
             accessibilityLabel={t('chat.open_fullscreen', 'Открыть на весь экран')}
             style={bubbleStyles.expandInline}
           >
-            <Feather name="maximize-2" size={10} color={theme.colors.text.tertiary} />
+            <MaterialIcons name="open-in-full" size={10} color={theme.colors.text.tertiary} />
           </Pressable>
           <Text variant="caption" color={theme.colors.text.tertiary} style={bubbleStyles.timestampOutside}>
             {timeLabel}
@@ -5819,7 +5819,7 @@ export default function ChatScreen() {
                   colorScheme={theme.isDark ? 'dark' : 'light'}
                   style={styles.headerCircleGlass}
                 >
-                  <Feather name="chevron-down" size={20} color={theme.colors.text.primary} />
+                  <MaterialIcons name="keyboard-arrow-down" size={20} color={theme.colors.text.primary} />
                 </NativeGlassView>
               </Pressable>
             ) : (
@@ -5845,7 +5845,7 @@ export default function ChatScreen() {
                   elevation: 3,
                 }}
               >
-                <Feather name="chevron-down" size={20} color={theme.colors.text.primary} />
+                <MaterialIcons name="keyboard-arrow-down" size={20} color={theme.colors.text.primary} />
               </Pressable>
             )}
           </Animated.View>
@@ -5868,7 +5868,7 @@ export default function ChatScreen() {
           <View style={[{ marginHorizontal: 12, marginTop: 6, flexDirection: 'row', alignItems: 'center', gap: 10, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 6, overflow: 'hidden' }, glassActive ? null : { backgroundColor: theme.colors.background.elevated, borderWidth: 1, borderColor: theme.colors.border.light }]}>
             {glassActive ? <GlassBg borderRadius={12} glassStyle="regular" interactive={false} colorScheme={theme.isDark ? 'dark' : 'light'} tintColor={theme.isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.5)'} /> : null}
             <View style={{ width: 3, alignSelf: 'stretch', borderRadius: 2, backgroundColor: theme.colors.accent.primary }} />
-            <Feather name={editing ? 'edit-2' : 'corner-up-left'} size={15} color={theme.colors.accent.primary} />
+            <MaterialIcons name={editing ? 'edit' : 'reply'} size={15} color={theme.colors.accent.primary} />
             {banner.imageUrls && banner.imageUrls.length > 0 ? (
               <CachedImage uri={banner.imageUrls[0]} style={{ width: 32, height: 32, borderRadius: 6 }} resizeMode="cover" />
             ) : null}
@@ -5893,12 +5893,12 @@ export default function ChatScreen() {
                 {chatSettings.replyPixelIcon ? (
                   <PixelIcon id={chatSettings.replyPixelIcon} size={22} />
                 ) : (
-                  <Feather name="image" size={18} color={theme.colors.text.tertiary} />
+                  <MaterialIcons name="image" size={18} color={theme.colors.text.tertiary} />
                 )}
               </Pressable>
             ) : null}
             <Pressable onPress={() => { setReplyTo(null); setEditing(null); inputRef.current?.clear(); }} hitSlop={8}>
-              <Feather name="x" size={18} color={theme.colors.text.tertiary} />
+              <MaterialIcons name="close" size={18} color={theme.colors.text.tertiary} />
             </Pressable>
           </View>
         )}
@@ -5910,7 +5910,7 @@ export default function ChatScreen() {
               <View key={idx} style={{ position: 'relative' }}>
                 <CachedImage uri={uri} style={{ width: 60, height: 60, borderRadius: 10 }} resizeMode="cover" />
                 <Pressable onPress={() => setPendingImages((prev) => prev.filter((_, i) => i !== idx))} style={{ position: 'absolute', top: -6, right: -6, width: 22, height: 22, borderRadius: 11, backgroundColor: 'rgba(0,0,0,0.7)', alignItems: 'center', justifyContent: 'center' }}>
-                  <Feather name="x" size={13} color="#FFFFFF" />
+                  <MaterialIcons name="close" size={13} color="#FFFFFF" />
                 </Pressable>
               </View>
             ))}
@@ -6042,7 +6042,7 @@ export default function ChatScreen() {
           <View style={[styles.headerContent, { paddingTop: insets.top }]} pointerEvents="auto">
             {glassActive ? (
               <NativeGlassView glassStyle="regular" colorScheme={theme.isDark ? 'dark' : 'light'} style={{ flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 20, paddingHorizontal: 14, height: 40 }}>
-                <Feather name="search" size={16} color={theme.colors.text.tertiary} />
+                <MaterialIcons name="search" size={16} color={theme.colors.text.tertiary} />
                 <TextInput
                   autoFocus
                   value={searchQuery}
@@ -6059,7 +6059,7 @@ export default function ChatScreen() {
               </NativeGlassView>
             ) : (
               <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.background.elevated, borderRadius: 20, borderWidth: 1, borderColor: theme.colors.border.light, paddingHorizontal: 14, height: 40 }}>
-                <Feather name="search" size={16} color={theme.colors.text.tertiary} />
+                <MaterialIcons name="search" size={16} color={theme.colors.text.tertiary} />
                 <TextInput
                   autoFocus
                   value={searchQuery}
@@ -6080,23 +6080,23 @@ export default function ChatScreen() {
                 {glassActive ? (
                   <Pressable onPress={goToPrevMatch} style={{ borderRadius: 18 }}>
                     <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.headerCircleGlass}>
-                      <Feather name="chevron-up" size={18} color={theme.colors.text.primary} />
+                      <MaterialIcons name="keyboard-arrow-up" size={18} color={theme.colors.text.primary} />
                     </NativeGlassView>
                   </Pressable>
                 ) : (
                   <Pressable onPress={goToPrevMatch} style={[styles.headerCircle, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
-                    <Feather name="chevron-up" size={18} color={theme.colors.text.primary} />
+                    <MaterialIcons name="keyboard-arrow-up" size={18} color={theme.colors.text.primary} />
                   </Pressable>
                 )}
                 {glassActive ? (
                   <Pressable onPress={goToNextMatch} style={{ borderRadius: 18, marginLeft: 6 }}>
                     <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.headerCircleGlass}>
-                      <Feather name="chevron-down" size={18} color={theme.colors.text.primary} />
+                      <MaterialIcons name="keyboard-arrow-down" size={18} color={theme.colors.text.primary} />
                     </NativeGlassView>
                   </Pressable>
                 ) : (
                   <Pressable onPress={goToNextMatch} style={[styles.headerCircle, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light, marginLeft: 6 }]}>
-                    <Feather name="chevron-down" size={18} color={theme.colors.text.primary} />
+                    <MaterialIcons name="keyboard-arrow-down" size={18} color={theme.colors.text.primary} />
                   </Pressable>
                 )}
               </View>
@@ -6104,12 +6104,12 @@ export default function ChatScreen() {
             {glassActive ? (
               <Pressable onPress={closeSearch} style={{ borderRadius: 18, marginLeft: 6 }}>
                 <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.headerCircleGlass}>
-                  <Feather name="x" size={20} color={theme.colors.text.primary} />
+                  <MaterialIcons name="close" size={20} color={theme.colors.text.primary} />
                 </NativeGlassView>
               </Pressable>
             ) : (
               <Pressable onPress={closeSearch} style={[styles.headerCircle, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light, marginLeft: 6 }]}>
-                <Feather name="x" size={20} color={theme.colors.text.primary} />
+                <MaterialIcons name="close" size={20} color={theme.colors.text.primary} />
               </Pressable>
             )}
           </View>
@@ -6123,13 +6123,13 @@ export default function ChatScreen() {
               {glassActive ? (
                 <Pressable onPress={() => router.back()} style={{ borderRadius: 18 }}>
                   <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.backPillGlass}>
-                    <Feather name="chevron-left" size={22} color={theme.colors.text.primary} />
+                    <MaterialIcons name="chevron-left" size={22} color={theme.colors.text.primary} />
                     <Text variant="caption" weight="semibold" numberOfLines={1} color={theme.colors.text.primary} style={styles.backLabel}>{t('common.back')}</Text>
                   </NativeGlassView>
                 </Pressable>
               ) : (
                 <Pressable onPress={() => router.back()} style={[styles.backPill, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
-                  <Feather name="chevron-left" size={22} color={theme.colors.text.primary} />
+                  <MaterialIcons name="chevron-left" size={22} color={theme.colors.text.primary} />
                   <Text variant="caption" weight="semibold" numberOfLines={1} color={theme.colors.text.primary} style={styles.backLabel}>{t('common.back')}</Text>
                 </Pressable>
               )}
@@ -6364,7 +6364,7 @@ const SearchActionButton = React.memo(function SearchActionButton({
 }) {
   return (
     <Pressable onPress={onPress} style={styles.searchActionBtn} accessibilityRole="button" accessibilityLabel={label}>
-      <Feather name={icon as any} size={19} color={color} />
+      <MaterialIcons name={icon as any} size={19} color={color} />
       <Text variant="caption" weight="medium" color={color} style={{ fontSize: 10.5 }} numberOfLines={1}>
         {label}
       </Text>
@@ -6453,7 +6453,7 @@ const SearchActionBar = React.memo(function SearchActionBar({
         <GlassBg borderRadius={22} glassStyle="regular" interactive={false} colorScheme={theme.isDark ? 'dark' : 'light'} />
       ) : null}
       <SearchActionButton
-        icon={isPinned ? 'x-circle' : 'bookmark'}
+        icon={isPinned ? 'cancel' : 'bookmark'}
         label={isPinned ? unpinLabel : pinLabel}
         color={theme.colors.accent.primary}
         onPress={onPin}
@@ -6510,7 +6510,7 @@ const PinnedMessageBar = React.memo(function PinnedMessageBar({
           <GlassBg borderRadius={14} glassStyle="regular" interactive={false} colorScheme={theme.isDark ? 'dark' : 'light'} />
         ) : null}
         <View style={[styles.pinnedAccent, { backgroundColor: theme.colors.accent.primary }]} />
-        <Feather name="bookmark" size={14} color={theme.colors.accent.primary} />
+        <MaterialIcons name="bookmark" size={14} color={theme.colors.accent.primary} />
         <View style={{ flex: 1 }}>
           <Text variant="caption" weight="semibold" color={theme.colors.accent.primary} style={{ fontSize: 11 }} numberOfLines={1}>
             {title}
@@ -6520,7 +6520,7 @@ const PinnedMessageBar = React.memo(function PinnedMessageBar({
           </Text>
         </View>
         <Pressable onPress={onUnpin} hitSlop={10} accessibilityRole="button" accessibilityLabel={closeLabel}>
-          <Feather name="x" size={16} color={theme.colors.text.tertiary} />
+          <MaterialIcons name="close" size={16} color={theme.colors.text.tertiary} />
         </Pressable>
       </Pressable>
     </View>

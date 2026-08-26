@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { View, Pressable, ViewStyle, FlatList, ActivityIndicator, Text as RNText, InteractionManager } from 'react-native';
 import Reanimated, { useSharedValue, useAnimatedStyle, useAnimatedScrollHandler } from 'react-native-reanimated';
 import { CollapsingSearchField, SEARCH_ZONE_HEIGHT } from '../../src/components/ui/CollapsingSearchField';
-import { Feather } from '@expo/vector-icons';
+import { MaterialIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -158,7 +158,7 @@ const SearchResultRow = React.memo(function SearchResultRow({
         </View>
         <Text variant="caption" color={theme.colors.text.secondary} numberOfLines={1}>@{item.username}</Text>
       </View>
-      <Feather name="chevron-right" size={18} color={theme.colors.text.tertiary} />
+      <MaterialIcons name="chevron-right" size={18} color={theme.colors.text.tertiary} />
     </Pressable>
   );
 });
@@ -458,11 +458,11 @@ export default function SearchScreen() {
                 <Text variant="caption" numberOfLines={3}>{p.content || '—'}</Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 6 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                    <Feather name="heart" size={11} color={theme.colors.text.tertiary} />
+                    <MaterialIcons name="favorite" size={11} color={theme.colors.text.tertiary} />
                     <Text variant="caption" color={theme.colors.text.tertiary}>{p.likes}</Text>
                   </View>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                    <Feather name="message-circle" size={11} color={theme.colors.text.tertiary} />
+                    <MaterialIcons name="chat-bubble" size={11} color={theme.colors.text.tertiary} />
                     <Text variant="caption" color={theme.colors.text.tertiary}>{p.comments}</Text>
                   </View>
                 </View>
