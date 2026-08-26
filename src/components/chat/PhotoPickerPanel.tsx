@@ -15,6 +15,7 @@ import Reanimated, {
 } from 'react-native-reanimated';
 import { Image } from 'expo-image';
 import { useLiquidGlassActive, GlassBg, NativeGlassView } from '../ui/LiquidGlass';
+import { setImageDims } from '../../services/imageDimsCache';
 
 /**
  * PhotoPickerPanel — the app's own gallery picker, docked in the keyboard's space.
@@ -121,8 +122,25 @@ const FLOAT_GAP_BOTTOM = 12;
 const COLUMNS = 3;
 const CELL_GAP = 2;
 const CELL_SIZE = Math.floor((SCREEN_W - CELL_GAP * (COLUMNS - 1)) / COLUMNS);
-/** First page of assets. Enough to fill several screens without a long initial read. */
-const PAGE_SIZE = 90;
+/**
+ * First page of assets.
+ *
+ * Was 90, on the reasoning quoted below it ("enough to fill several screens without a long initial
+ * read"). Reported: opening the panel lags while the photos inside load, and they should arrive
+ * progressively as you scroll rather than all at once.
+ *
+ * 90 assets is thirty rows of a three-column grid — around ten screens deep. The library read itself
+ * is one call either way, but every one of those 90 rows becomes a cell the grid can decide to
+ * measure, and the first batch of thumbnails starts decoding immediately on the frame the panel
+ * appears, which is the same frame the enter animation is trying to run.
+ *
+ * 30 is ten rows, roughly three screens: enough that the grid has somewhere to scroll before
+ * `onEndReached` fires at its 0.6 threshold, and small enough that opening the panel is not
+ * competing with a decode queue built from photos nobody has scrolled to yet. Paging is unchanged
+ * and already incremental, so the deeper library still arrives — just on demand, which is what was
+ * asked for.
+ */
+const PAGE_SIZE = 30;
 
 export interface PhotoAsset {
   id: string;
@@ -388,7 +406,23 @@ function PhotoPickerPanelComponent({
         selected.map(async (id) => {
           try {
             const info = await MediaLibrary.getAssetInfoAsync(id);
-            return info?.localUri || info?.uri || byId.get(id)?.uri || null;
+            const uri = info?.localUri || info?.uri || byId.get(id)?.uri || null;
+            // ── RECORD THE SIZE FROM THE ASSET ITSELF ──────────────────────────────
+            //
+            // Reported repeatedly: a sent photo's bubble is one size, then jerks to another.
+            //
+            // The chat caches dimensions after its resize step, but that is a second chance, not a
+            // first one: if `manipulateAsync` throws, that path returns the original uri with nothing
+            // recorded, and the bubble falls back to `SingleChatImage`'s 220x220 square and then
+            // corrects itself once the image has loaded. That is the jump.
+            //
+            // MediaLibrary already knows the real dimensions and hands them over here for free — no
+            // decode, no guess, and available BEFORE the photo is processed or sent. Recording them
+            // against the resolved uri means the bubble mounts at the right aspect ratio even when the
+            // resize fails, because a resize preserves aspect ratio and the uri returned in that case
+            // is exactly this one.
+            if (uri && info?.width && info?.height) setImageDims(uri, info.width, info.height);
+            return uri;
           } catch {
             return byId.get(id)?.uri || null;
           }
