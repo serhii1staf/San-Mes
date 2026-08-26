@@ -6,6 +6,7 @@ import { useTheme } from '../../theme';
 import { Text } from './Text';
 import { Avatar } from './Avatar';
 import { CachedImage } from './CachedImage';
+import { useMappingHelper } from '@shopify/flash-list';
 import { enqueueReveal } from '../../utils/revealQueue';
 import { VerifiedBadge } from './VerifiedBadge';
 import { UserBadge } from './UserBadge';
@@ -202,6 +203,13 @@ function UserProfilePostCardBase({
   // of every row — including the rapid re-renders a scroll drives.
   const decoration = useMemo(() => parseDecoration(postEmoji), [postEmoji]);
 
+  // Keys for the 4-up thumbnail grid, via FlashList v2's documented helper. Same reasoning as the
+  // note in src/components/profile/ProfilePostCard.tsx: `getMappingKey` yields the index inside a
+  // FlashList cell (so a recycled cell updates its four CachedImages in place rather than remounting
+  // them) and the item key outside one. This card renders on the own-profile Likes tab, on
+  // app/profile/[id].tsx and in the feed, so it needs to behave in both contexts.
+  const { getMappingKey } = useMappingHelper();
+
   // Theme-dependent style overrides, batched.
   const themedContainer = useMemo(
     () => ({
@@ -302,7 +310,7 @@ function UserProfilePostCardBase({
               ) : (
                 <View style={styles.thumbGrid4}>
                   {postImages.slice(0, 4).map((imgUri: string, idx: number) => (
-                    <CachedImage key={idx} uri={imgUri} style={{ width: 49, height: 49, marginRight: idx % 2 === 0 ? 2 : 0, marginBottom: idx < 2 ? 2 : 0 }} resizeMode="cover" priority="low" skeleton />
+                    <CachedImage key={getMappingKey(imgUri, idx)} uri={imgUri} style={{ width: 49, height: 49, marginRight: idx % 2 === 0 ? 2 : 0, marginBottom: idx < 2 ? 2 : 0 }} resizeMode="cover" priority="low" skeleton />
                   ))}
                 </View>
               )}

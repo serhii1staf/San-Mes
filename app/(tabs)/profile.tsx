@@ -1,5 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { View, Pressable, ActivityIndicator, Dimensions, Image, Animated, Modal, Share, Alert, ScrollView, InteractionManager, Text as RNText } from 'react-native';
+import { AnimatedFlashList } from '@shopify/flash-list';
 import { Feather, FontAwesome5 } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -64,11 +65,19 @@ const LIKED_POSTS_CACHE_PREFIX = '@san:liked_posts:';
 const USER_REPLIES_CACHE_PREFIX = '@san:user_replies:';
 // Truly-constant, theme-independent list values hoisted to module scope so
 // they are allocated ONCE instead of re-created on every screen render. A
-// fresh `contentContainerStyle` / `data` reference makes the Animated.FlatList
-// re-run extra reconciliation/virtualization work on each parent re-render
-// (tab switch, follow-count update, refreshing flag, viewingImage toggle…),
-// even when the underlying rows are unchanged. Mirrors the same constants
-// already used by app/profile/[id].tsx.
+// fresh `contentContainerStyle` / `data` reference makes the list re-run extra
+// reconciliation work on each parent re-render (tab switch, follow-count
+// update, refreshing flag, viewingImage toggle…), even when the underlying
+// rows are unchanged. Mirrors the same constants already used by
+// app/profile/[id].tsx.
+//
+// This matters MORE now that the list is a FlashList: v2's docs are explicit that memoizing props
+// passed to the list is more important than it was in v1, because v1 was internally more selective
+// about when it re-rendered items and v2 hands that responsibility to the caller.
+//
+// Padding lives here, in `contentContainerStyle`, and NOT in `style` — also a documented v2
+// requirement: FlashList assumes the parent and the internal ScrollView are the same size, so
+// padding on `style` breaks its layout math.
 const LIST_CONTENT_CONTAINER_STYLE = { paddingBottom: 100, paddingHorizontal: 16, paddingTop: 12 } as const;
 const EMPTY_LIST: any[] = [];
 type TabName = 'posts' | 'replies' | 'media' | 'likes';
@@ -201,8 +210,8 @@ export default function ProfileScreen() {
   const profileScrollOffset = useFeedStore((s) => s.profileScrollOffset);
   const setProfileScrollOffset = useFeedStore((s) => s.setProfileScrollOffset);
   const postEmoji = useProfileAppearanceStore((s) => s.postEmoji);
-  // Virtualization is now handled by Animated.FlatList — no manual windowing
-  // needed. Tab tap stays snappy via the `postsReady` gating below.
+  // Cell recycling is handled by FlashList v2 — no manual windowing needed.
+  // Tab tap stays snappy via the `postsReady` gating below.
   // Posts cards are heavier (gesture handlers + images), so their mount is held
   // back by ONE FRAME: the first paint of the profile carries only the header,
   // and the cards commit on the next frame. That is enough to keep the JS thread
@@ -751,7 +760,11 @@ export default function ProfileScreen() {
       if (profileScrollOffset > 0 && scrollViewRef.current && !hasRestoredScroll.current) {
         // Small delay to ensure layout is ready
         const timer = setTimeout(() => {
-          (scrollViewRef.current as any)?.scrollTo({ y: profileScrollOffset, animated: false });
+          // `scrollToOffset`, not `scrollTo`: the list is a FlashList now and its ref exposes
+          // FlashListRef, which has no `scrollTo`. `skipFirstItemOffset: false` keeps the argument
+          // meaning what it meant under the ScrollView API — an absolute content offset, including
+          // the header and the content padding — rather than an offset measured from the first item.
+          (scrollViewRef.current as any)?.scrollToOffset?.({ offset: profileScrollOffset, animated: false, skipFirstItemOffset: false });
         }, 50);
         hasRestoredScroll.current = true;
         // Throttled background sync — only fires if `shouldSync('my_posts')`
@@ -782,14 +795,19 @@ export default function ProfileScreen() {
     setViewingImage({ uri, postId, allImages });
   }, []);
 
-  // Stable FlatList accessors. Inline lambdas for `renderItem` and
+  // Stable list accessors. Inline lambdas for `renderItem` and
   // `keyExtractor` made FlatList rebuild its internal cell-renderer
   // wrapper on every parent re-render — so a single setProfilePosts
   // (which fires after the Supabase response) was enough to ripple a
   // re-evaluation through every visible cell, even though
   // ProfilePostCard's memo would later short-circuit. Hoisting them
-  // keeps the FlatList virtualization path stable and confines the
-  // setProfilePosts work to the items whose props actually changed.
+  // confines the setProfilePosts work to the items whose props
+  // actually changed.
+  //
+  // These carry MORE weight now that the list is a FlashList. v2's migration notes state that
+  // memoizing props passed to the list matters more than it did in v1, because v1 was internally
+  // more selective about re-rendering items and v2 hands that judgement to the caller. A fresh
+  // `renderItem` identity would defeat the recycling this migration is for.
   const keyExtractorPost = useCallback((item: any) => item.id, []);
   // The card needs author identity values, but those are stable across
   // the life of this screen for the user's OWN profile (only their auth
@@ -843,6 +861,22 @@ export default function ProfileScreen() {
   );
 
   const keyExtractorReply = useCallback((item: ProfileReply) => item.id, []);
+
+  // ── RECYCLE POOLS, ONE PER ROW SHAPE ──────────────────────────────────────
+  //
+  // FlashList v2 recycles a cell by reusing the mounted component tree of a cell that scrolled off.
+  // Without `getItemType` every row shares a single pool, so switching from Posts to Replies would
+  // hand a mounted `ProfilePostCard` tree to a `ProfileReplyCard` — a different component, so React
+  // throws the tree away and mounts a new one. That is not incorrect, just the exact mount cost the
+  // migration is here to remove.
+  //
+  // The four tabs use three components: `ProfilePostCard` (Posts, Media), `UserProfilePostCard`
+  // (Likes — heterogenous authors) and `ProfileReplyCard` (Replies). The active tab fully determines
+  // the shape, so the type is derived from it rather than from the item.
+  //
+  // Called on every layout pass, per the docs, so it stays a constant return keyed on the tab.
+  const listItemType = activeTab === 'replies' ? 'reply' : activeTab === 'likes' ? 'liked-post' : 'own-post';
+  const getItemType = useCallback(() => listItemType, [listItemType]);
 
   // Pull-to-refresh handler
   const onRefresh = useCallback(async () => {
@@ -945,7 +979,7 @@ export default function ProfileScreen() {
   const [pinnedTabsVisible, setPinnedTabsVisible] = useState(false);
   const pinnedTabsVisibleRef = useRef(false);
   const onTabsRowLayout = useCallback((e: any) => {
-    // onLayout `y` is relative to the FlatList header container, which sits
+    // onLayout `y` is relative to the list's header container, which sits
     // below the content paddingTop (12). Add it back to recover the absolute
     // scroll-content offset at which the tabs row begins.
     const y = 12 + (e?.nativeEvent?.layout?.y ?? 0);
@@ -1573,7 +1607,40 @@ export default function ProfileScreen() {
         <View pointerEvents="none" />
         <Animated.View style={{ transform: [{ translateX: settingsTranslateX }] }}><Pressable onPress={() => { triggerHaptic('light'); router.push('/settings'); }} style={{ borderRadius: 17 }}>{glassActive ? (<NativeGlassView glassStyle="regular" isInteractive colorScheme="dark" style={{ width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' }}><Feather name="settings" size={16} color="#FFFFFF" /></NativeGlassView>) : chromeReady ? (<BlurView intensity={80} tint="dark" style={{ width: 34, height: 34, borderRadius: 17, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' }}><Feather name="settings" size={16} color="#FFFFFF" /></BlurView>) : (<View style={{ width: 34, height: 34, borderRadius: 17, overflow: 'hidden', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.4)' }}><Feather name="settings" size={16} color="#FFFFFF" /></View>)}</Pressable></Animated.View>
       </View>
-      <Animated.FlatList
+      {/* ── FLASHLIST v2, NOT Animated.FlatList ──────────────────────────────────
+          The perf audit put this route at 66 mounts averaging 51 ms, worstFps 19, six long tasks,
+          with `js: 47` against `ui: 60` — the composer was keeping up and the JS thread was not. All
+          six long tasks had consecutive `ProfilePostCard.body` marks in them, so the cost was card
+          MOUNTING, and 66 mounts × 51 ms is about 3.4 s of work.
+
+          The root cause was the absence of a height the list could trust. FlatList had no
+          `getItemLayout` here because card heights vary with text length, image count and an optional
+          link preview, and nothing measured them. Two workarounds paid for that, and BOTH of them
+          increased the number of mounted cells: `removeClippedSubviews={false}` (on, it produced a
+          detach → re-attach → re-measure oscillation when scrolling back up) and `windowSize={7}`
+          (raised from 3 so scrolling up found cards already mounted, at the price of ~3.5 screens of
+          cards retained — that is where 66 came from).
+
+          FlashList v2 RECYCLES cells instead of mounting and unmounting them, which is the direct
+          answer to a mount-count problem, and it asks for no size estimates at all — v2 deprecated
+          `estimatedItemSize` and friends as "no longer used". So the height infrastructure those two
+          workarounds were substituting for is not needed either, and neither are the workarounds.
+
+          A NOTE ON THE ANIMATED CHANNEL, because the brief in
+          .kiro/specs/profile-list-flashlist/design.md prescribes something else here. It states that
+          FlashList v2 is not an `Animated` component and that the seven `scrollY` interpolations below
+          therefore have to be rewritten onto Reanimated shared values. That premise is wrong for the
+          installed package: `@shopify/flash-list@2.3.2` exports `AnimatedFlashList`
+          (`Animated.createAnimatedComponent(FlashList)`), and `FlashListRef` implements
+          `getScrollableNode`, which is exactly what RN's `useAnimatedProps` looks for when attaching a
+          native-driver `Animated.event`. app/(tabs)/index.tsx already runs this combination in
+          production on the feed.
+
+          So the scroll channel, the seven interpolations and the threshold listener are UNCHANGED. The
+          Reanimated rewrite would have been a large edit to working native-driver animations for no
+          effect on the metric the migration exists to move, on a screen where `ui: 60` says those
+          animations were never the constraint. */}
+      <AnimatedFlashList
         ref={scrollViewRef}
         // Tab-driven data swap. `postsReady` only gates the heavy
         // post-card mount path (initial open); the lighter likes /
@@ -1601,95 +1668,24 @@ export default function ProfileScreen() {
                 ? (renderReplyItem as any)
                 : renderPostItem
         }
-        // Virtualization tuned for weak Android / iPhone 12. The earlier
-        // 6/4/7 numbers still let an 18-card profile mount the whole first
-        // window inside ~300 ms, which slammed the JS thread into a SLOW
-        // ui<30 every time. Tightened further to 3/1/4 so at most ONE card
-        // mounts per frame off-screen — even when the perf monitor sees
-        // an 18 ms peak card mount, that single mount can fit inside a
-        // RAF without stealing time from a swipe gesture. The user can
-        // briefly see empty space at the bottom while flicking fast,
-        // but no stutter — a strict win on weak devices.
-        // ── Virtualisation, retuned for scrolling UP ────────────────────────────
+        // Recycle pool per row shape — see the note where `getItemType` is defined.
+        getItemType={getItemType}
+        // ── THE FLATLIST VIRTUALISATION KNOBS ARE GONE ──────────────────────────
         //
-        // Was 2 / 1 / 3 with a 100 ms batching period, tightened over several passes to keep
-        // the mount cost off the open frame. That works going down and is the direct cause of
-        // the judder going UP.
+        // Removed: `initialNumToRender={2}`, `maxToRenderPerBatch={2}`, `windowSize={7}`,
+        // `updateCellsBatchingPeriod={80}`, `removeClippedSubviews={false}`. FlashList v2 has no
+        // equivalents — sizing is automatic and recycling replaces the mount/unmount window these were
+        // rationing. They are not merely unused here; every one of them existed to compensate for the
+        // missing trusted height, and three of them worked by keeping MORE cells mounted.
         //
-        // maxToRenderPerBatch: 1 with updateCellsBatchingPeriod: 100 means ONE card is
-        // rendered per 100 ms. Scrolling up past cards that have been unmounted, the list can
-        // only refill at 10 cards/second, so it hands back blank space and then pops a card
-        // in. Every pop-in is a card of unknown height replacing a placeholder, so the content
-        // height changes, the list corrects the scroll offset, and the correction moves more
-        // cells across the boundary. That is the up/down oscillation.
-        //
-        // windowSize: 3 keeps only ~1.5 viewports mounted, so cards are discarded almost as
-        // soon as they leave the screen and the refill above is needed constantly.
-        //
-        // 2 / 3 / 7 keeps first paint identical (initialNumToRender is unchanged, so the open
-        // frame carries the same two cards) while giving the list enough retained cells and
-        // enough refill rate that scrolling back up finds them already mounted. FlatList's
-        // own default windowSize is 21, so 7 is still conservative.
-        // ── 3 → 2, AND 50 → 80, BECAUSE THE BATCH SIZE IS THE MULTIPLIER ────────
-        //
-        // CORRECTION — THE NUMBERS THIS PARAGRAPH USED TO CITE DID NOT MEAN WHAT I SAID THEY MEANT.
-        //
-        // It read: "A perf snapshot attributed this precisely … MOUNT ProfilePostCard 23, 22, 21, 21 ms
-        // (same millisecond) … Three cards per batch at 20-46 ms each IS the 60-138 ms task."
-        //
-        // Those MOUNT marks were not measuring card bodies. The mark lived in a `useEffect` with deps
-        // `[perfEnabled]`, so it fired after each card's FIRST commit — the commit where `hydrated` is
-        // still false and the card renders one empty placeholder View. The span it reported was
-        // therefore dominated by whatever else React committed in the same batch, which is exactly why
-        // four cards reported near-identical values stamped in the same millisecond. That is one batch
-        // measured four times, not four expensive cards.
-        //
-        // The commit that actually mounts a card body was not instrumented at all. It is now, under the
-        // label `ProfilePostCard.body` — see the long note at the mark in
-        // src/components/profile/ProfilePostCard.tsx.
-        //
-        // The 3 → 2 change stays, because the reasoning below it stands on its own: batch size
-        // multiplies whatever a card really costs, and `windowSize: 7` removed the refill-rate problem
-        // that made a small batch harmful before. But it was not the measured attribution I claimed, and
-        // the next retune of these numbers should wait for `.body` figures rather than trusting this.
-        //
-        // The note below records why `maxToRenderPerBatch: 1` was bad before: with `windowSize: 3` the
-        // list discarded cells the moment they left the screen, so a 1-card refill rate meant scrolling
-        // up hit blank space. That condition is gone — `windowSize` is 7 now, so ~1.5 viewports above and
-        // below stay mounted and the refill rate barely matters. 2 is the conservative middle: it keeps
-        // a real refill rate while never committing three expensive cards to one frame.
-        //
-        // `updateCellsBatchingPeriod` 50 → 80 spaces the batches further apart, so two batches cannot
-        // coalesce into one frame's work — which is what produced the four-mounts-in-one-millisecond
-        // clusters above.
-        initialNumToRender={2}
-        maxToRenderPerBatch={2}
-        windowSize={7}
-        updateCellsBatchingPeriod={80}
-        // ── removeClippedSubviews is OFF, deliberately ──────────────────────────
-        //
-        // Scrolling DOWN was fine; scrolling back UP juddered, jumping up and down
-        // repeatedly. That asymmetry is the signature of this prop combined with
-        // variable-height rows and no getItemLayout.
-        //
-        // With it on, iOS DETACHES cells that leave the clipping rect. Post cards have no
-        // fixed height (text length, image aspect ratio, optional link preview), so a
-        // detached cell scrolled back into view re-attaches and re-measures. Its real height
-        // rarely equals the height the list assumed while it was gone, so the total content
-        // height changes, the list corrects the scroll offset to compensate, and that
-        // correction moves more cells across the boundary — which is the oscillation.
-        //
-        // Scrolling down never hits it: those cells are being measured for the first time, so
-        // there is no earlier assumption for the measurement to contradict.
-        //
-        // This is NOT a memory regression. windowSize still bounds how many cells exist at
-        // all; this prop only controls whether cells INSIDE that window stay attached to the
-        // native view tree. Turning it off removes the detach/re-attach/re-measure cycle and
-        // leaves the virtualisation window exactly as tight as it was.
-        //
-        // The proper long-term fix is a height the list can trust up front, which for these
-        // cards means measuring and caching per-post heights. Much larger than this.
-        removeClippedSubviews={false}
+        // What replaced them, and what to reach for if this ever needs tuning again:
+        //   • `drawDistance` (default 250 px) is the one remaining pre-render knob. Deliberately left
+        //     at its default. The brief says to measure before touching anything else, and the default
+        //     is already far tighter than `windowSize: 7` was (~3.5 screens).
+        //   • `maintainVisibleContentPosition` is ON BY DEFAULT in v2 and is the documented answer to
+        //     the "a row above the viewport changes height and the content jumps" problem that
+        //     `removeClippedSubviews={false}` was working around. If rows ever start being PREPENDED
+        //     here, the docs say to raise `drawDistance`.
         showsVerticalScrollIndicator={false}
         bounces={false}
         // Memoized, not inline. Built in JSX this allocated a fresh `AnimatedEvent` on every

@@ -1,4 +1,5 @@
-import React, { memo, useState } from 'react';
+import React, { memo } from 'react';
+import { useRecyclingState } from '@shopify/flash-list';
 import { View, Text as RNText, Pressable, TextStyle, Platform, ScrollView, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -48,7 +49,22 @@ interface FormattedTextProps {
  */
 export const FormattedText = memo(function FormattedText({ children, style, color, linkColor, numberOfLines, onLinkPress }: FormattedTextProps) {
   const theme = useTheme();
-  const [revealedSpoilers, setRevealedSpoilers] = useState<Set<number>>(new Set());
+  // Revealed spoilers are keyed by their ORDINAL position in this text, so the set is only meaningful
+  // for the exact string it was built against. A plain `useState` initialised once per mount was fine
+  // while every list in the app that renders this either unmounted its rows (FlatList) or never
+  // contained spoilers. It is not fine in a recycled cell: FlashList hands the same instance a new
+  // `children` string, the set survives, and spoiler #0 of the new post renders already revealed
+  // because spoiler #0 of the previous post had been tapped.
+  //
+  // `useRecyclingState` re-runs the initialiser whenever `children` changes, which clears the set.
+  // `children` is typed `string`, so it is a stable dependency — no risk of resetting every render
+  // the way an array or element dependency would. Outside a FlashList the hook behaves like
+  // `useState` with the same reset, which is the correct behaviour there too: a revealed spoiler
+  // should not survive the text being replaced.
+  //
+  // `skipParentLayout` is passed on reveal because unhiding a spoiler only swaps colours — the text
+  // metrics are identical either way — so there is nothing for the list to re-lay-out.
+  const [revealedSpoilers, setRevealedSpoilers] = useRecyclingState<Set<number>>(() => new Set(), [children]);
   const textColor = color || theme.colors.text.primary;
   const resolvedLinkColor = linkColor || theme.colors.accent.primary;
   // Resolve the link tap handler once per render — cheap, and avoids
@@ -56,7 +72,7 @@ export const FormattedText = memo(function FormattedText({ children, style, colo
   const handleLinkTap = onLinkPress || openUrl;
 
   const revealSpoiler = (index: number) => {
-    setRevealedSpoilers(prev => new Set(prev).add(index));
+    setRevealedSpoilers(prev => new Set(prev).add(index), true);
   };
 
   // Parsing runs a regex over the text; memoize per-string so re-renders (theme,

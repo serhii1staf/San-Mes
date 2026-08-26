@@ -1,6 +1,7 @@
 import React, { memo, useEffect, useMemo, useState } from 'react';
 import { View, Pressable, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import { useMappingHelper } from '@shopify/flash-list';
 import { enqueueReveal } from '../../utils/revealQueue';
 import { router } from 'expo-router';
 import { useTheme } from '../../theme';
@@ -179,6 +180,21 @@ function ProfilePostCardBase({ post, authorName, authorEmoji, authorVerified, au
   // the raw `postEmoji` string so it only recomputes when the emoji changes.
   const decoration = useMemo(() => parseDecoration(postEmoji), [postEmoji]);
 
+  // ── KEYS FOR THE 4-UP THUMBNAIL GRID ──────────────────────────────────────
+  //
+  // The grid below used `key={idx}`. FlashList v2 ships `useMappingHelper` for exactly this
+  // situation, and it is what the list is now driven by, so the card uses it.
+  //
+  // Worth being precise about what it does, because the migration brief claimed the old `key={idx}`
+  // was silently killing recycling and that is not what the helper's source says. `getMappingKey`
+  // returns the INDEX when the component renders inside a FlashList cell, and the item key only
+  // outside one. Inside the list, index keys are the desired behaviour: a recycled cell keeps the
+  // same four child slots and React updates their props in place instead of unmounting four
+  // CachedImages and mounting four more. So the old code was already producing the right key inside
+  // the list — this change makes the intent explicit and keeps the card correct if it is ever
+  // rendered outside a FlashList (where keying by URI is what React wants).
+  const { getMappingKey } = useMappingHelper();
+
   // Theme-dependent style overrides, batched into a single memoed
   // object so each card commits only ONE composite style array per
   // outer Pressable instead of inlining several object literals.
@@ -258,7 +274,7 @@ function ProfilePostCardBase({ post, authorName, authorEmoji, authorVerified, au
               ) : (
                 <View style={styles.thumbGrid4}>
                   {imgs.slice(0, 4).map((imgUri, idx) => (
-                    <CachedImage key={idx} uri={imgUri} style={{ width: 49, height: 49, marginRight: idx % 2 === 0 ? 2 : 0, marginBottom: idx < 2 ? 2 : 0 }} resizeMode="cover" proxyWidth={49} priority="low" skeleton />
+                    <CachedImage key={getMappingKey(imgUri, idx)} uri={imgUri} style={{ width: 49, height: 49, marginRight: idx % 2 === 0 ? 2 : 0, marginBottom: idx < 2 ? 2 : 0 }} resizeMode="cover" proxyWidth={49} priority="low" skeleton />
                   ))}
                 </View>
               )}
