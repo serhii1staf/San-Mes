@@ -431,9 +431,27 @@ export const MessageContextMenu = forwardRef<MessageContextMenuHandle, MessageCo
               marginHorizontal: 12,
               marginBottom: 8,
               alignItems: 'stretch',
-              // Grows in place. See the note on `liftAnim`: this is what makes the gesture read as
-              // lifting the message rather than summoning a panel.
-              opacity: liftAnim,
+              // ── NO OPACITY HERE. IT WAS KILLING THE GLASS. ──────────────────────
+              //
+              // Reported: with liquid glass on, holding a message shows the glass "there, gone,
+              // there, gone" — inconsistent between one long-press and the next.
+              //
+              // This line was `opacity: liftAnim`, and it is a parent of the `GlassBg` below. The
+              // rule is already written down twice in this codebase, in PhotoPickerPanel and on the
+              // chat's day-separator chip: a glass surface with `opacity: 0` anywhere in its PARENT
+              // chain loses its glass entirely (expo/expo#41024), which is why every show/hide in
+              // this app is a translate or a size change and never a fade. This surface was the one
+              // place that broke its own rule.
+              //
+              // It also explains the intermittency exactly. Whether the glass survived depended on
+              // where the animation happened to be when the native view was first composited, so the
+              // same gesture produced a different result run to run — which is what "sometimes it is
+              // there" means.
+              //
+              // The scale alone still reads as a lift, which was the point of the animation: the
+              // message grows in place rather than a panel being summoned. The backdrop fade
+              // underneath supplies the sense of arrival, and it is a sibling, so it is free to
+              // animate opacity.
               transform: [{ scale: liftAnim.interpolate({ inputRange: [0, 1], outputRange: [0.88, 1] }) }],
             }}
             pointerEvents="box-none"
