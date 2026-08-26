@@ -159,9 +159,23 @@ export function SlideUpSheet({ visible, onClose, children, exitInstantRef, expan
       backdrop.value = 0;
       // Always open at the floating detent, so a sheet left expanded does not reopen expanded.
       expand.value = 0;
-      // Same numbers as PostMenuModal's `tension: 50, friction: 9`, which RN maps to stiffness and
-      // damping at mass 1. Kept identical so this reads as the same sheet family it always did.
-      translateY.value = withSpring(0, { stiffness: 50, damping: 9, mass: 1 });
+      // ── NO OVERSHOOT ON OPEN ──────────────────────────────────────────────
+      //
+      // Reported: the sheet "moves up a bit, then a bit back down" on open, and it should just
+      // open normally.
+      //
+      // That is the spring, and it is not a tuning accident — it is arithmetic. The numbers were
+      // `stiffness: 50, damping: 9, mass: 1`, carried over from PostMenuModal's RN `Animated`
+      // `tension: 50, friction: 9`. Damping ratio is `damping / (2 * sqrt(stiffness * mass))`
+      // = 9 / 14.1 = 0.64. Anything below 1 is under-damped and MUST overshoot and settle back;
+      // the bounce was guaranteed by the constants, on both the old API and the new one, and no
+      // amount of adjusting the duration would have removed it.
+      //
+      // A timing curve instead of a stiffer spring, because the requirement is "just opens" and a
+      // decelerating ease is exactly that with nothing to reason about: monotonic, arrives once,
+      // never passes its target. 300 ms matches the media viewer's rise so the two read as the
+      // same system.
+      translateY.value = withTiming(0, { duration: 300, easing: Easing.out(Easing.cubic) });
       backdrop.value = withTiming(1, { duration: 200 });
     } else if (mounted && !isClosing.current) {
       // External close (parent set visible=false without going through the backdrop press /
@@ -216,7 +230,10 @@ export function SlideUpSheet({ visible, onClose, children, exitInstantRef, expan
             if (d > COLLAPSE_TRAVEL) {
               expand.value = withTiming(0, { duration: 220, easing: Easing.out(Easing.cubic) });
             }
-            translateY.value = withSpring(0, { damping: 20, stiffness: 260, mass: 0.7 });
+            // Damping raised 20 -> 26 here and below. At 20 the ratio was 0.74, so releasing a drag
+            // bounced too — the same under-damped settle as the open, just smaller. 26 puts the ratio
+            // at ~0.96: it still decelerates like a spring, it just never passes the target.
+            translateY.value = withSpring(0, { damping: 26, stiffness: 260, mass: 0.7 });
             return;
           }
 
@@ -227,7 +244,7 @@ export function SlideUpSheet({ visible, onClose, children, exitInstantRef, expan
           if (expandable && (d < -EXPAND_LIFT || e.velocityY < -500)) {
             expand.value = withTiming(1, { duration: 220, easing: Easing.out(Easing.cubic) });
           }
-          translateY.value = withSpring(0, { damping: 20, stiffness: 260, mass: 0.7 });
+          translateY.value = withSpring(0, { damping: 26, stiffness: 260, mass: 0.7 });
         }),
     [dismissFromGesture, expand, expandable, startExpand, translateY],
   );

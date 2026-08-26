@@ -9,6 +9,8 @@ import Reanimated, {
   withTiming,
   withSpring,
   runOnJS,
+  interpolate,
+  Extrapolation,
   Easing,
 } from 'react-native-reanimated';
 import { Image } from 'expo-image';
@@ -58,6 +60,38 @@ const SCREEN_W = Dimensions.get('window').width;
 const EXPANDED_RATIO = 0.86;
 /** Drag past the collapsed height by this much (downward) and the panel closes. */
 const CLOSE_DRAG = 90;
+/**
+ * ── FLOATING AT THE COLLAPSED STOP ────────────────────────────────────────────
+ *
+ * Requested: the attach panel should come up from the bottom NOT touching any screen edge, and
+ * dragging it up should expand it until it does.
+ *
+ * The panel already had the drag and the two stops. What it did not have is the float — it was
+ * docked, full width, flush against the bottom and both sides, so it read as part of the screen
+ * rather than as a sheet lifted onto it.
+ *
+ * ── WHY THE SIDES ARE A SCALE AND THE BOTTOM IS AN OFFSET ─────────────────────
+ *
+ * These have to be done by different means, and the asymmetry is forced by the grid.
+ *
+ *   SIDES. `CELL_SIZE` is a module constant, `floor((SCREEN_W - gaps) / COLUMNS)`. Narrowing the
+ *   container therefore does NOT re-flow the grid to fit — the cells keep their computed width and
+ *   the third column is simply clipped by `overflow: hidden`. So the horizontal inset cannot be a
+ *   width change. A uniform `scale` about `bottom center` produces the same gap with layout
+ *   untouched, which is also the only option consistent with this file's whole design (see the note
+ *   on `panelStyle`: nothing here animates layout, because the subtree is a FlashList of images).
+ *
+ *   BOTTOM. A translate cannot make a bottom gap here. The container is `expanded` tall, anchored
+ *   at `bottom: 0`, and deliberately hangs off the bottom of the screen — translating it up only
+ *   reveals more of it, it never lifts its bottom edge above the screen edge. So the bottom gap is
+ *   the `bottom` offset itself. That IS a layout property, which is why it moves only when the
+ *   detent snaps, never per frame of the drag.
+ *
+ * `floatSnap` is what keeps that promise: it is 0 or 1 and only ever animates on release, so the
+ * finger drives `height` (a transform, free) and the inset changes once per detent change.
+ */
+const FLOAT_SCALE = 0.94;
+const FLOAT_GAP_BOTTOM = 12;
 /** Grid geometry. Three columns matches the system picker's density. */
 const COLUMNS = 3;
 const CELL_GAP = 2;
@@ -126,18 +160,35 @@ function PhotoPickerPanelComponent({
   const height = useSharedValue(collapsed);
   // Height at the moment the drag started, so the gesture is a pure delta.
   const dragStart = useSharedValue(collapsed);
+  /** 0 = floating clear of the edges, 1 = flush with them. Snaps on release only — see the note above. */
+  const floatSnap = useSharedValue(0);
 
   useEffect(() => {
     // Re-snap when the collapsed target changes (keyboard height learned late)
     // and the user has not expanded the panel.
     if (height.value < (collapsed + expanded) / 2) {
       height.value = withTiming(collapsed, { duration: 180, easing: Easing.out(Easing.cubic) });
+      floatSnap.value = withTiming(0, { duration: 180, easing: Easing.out(Easing.cubic) });
     }
-  }, [collapsed, expanded, height]);
+  }, [collapsed, expanded, height, floatSnap]);
 
-  const panelStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: expanded - height.value }],
-  }));
+  const panelStyle = useAnimatedStyle(() => {
+    const s = interpolate(floatSnap.value, [0, 1], [FLOAT_SCALE, 1], Extrapolation.CLAMP);
+    return {
+      // `bottom`, not a translate: see the note on FLOAT_SCALE for why a translate cannot lift this
+      // container's bottom edge off the screen edge.
+      bottom: interpolate(floatSnap.value, [0, 1], [FLOAT_GAP_BOTTOM, 0], Extrapolation.CLAMP),
+      // Bottom corners round off while floating and square up once the panel reaches the edges. The
+      // top pair is constant in `styles.container` — it is rounded in both states.
+      borderBottomLeftRadius: interpolate(floatSnap.value, [0, 1], [28, 0], Extrapolation.CLAMP),
+      borderBottomRightRadius: interpolate(floatSnap.value, [0, 1], [28, 0], Extrapolation.CLAMP),
+      // Scale FIRST, then translate, and divide the translate by the scale. Transforms compose, so a
+      // translate listed after a scale moves in the scaled coordinate space — visually `s * d`.
+      // Dividing by `s` cancels that exactly, so the visible height stays `height.value` at both
+      // detents instead of drifting by 6 % of the offset (~25 pt) at the floating one.
+      transform: [{ scale: s }, { translateY: (expanded - height.value) / s }],
+    };
+  });
 
   // The send button has to stay at the VISIBLE bottom edge, so it cancels the
   // panel's own offset. Also a transform — still no layout.
@@ -168,9 +219,14 @@ function PhotoPickerPanelComponent({
           // Otherwise snap to whichever stop the velocity/position points at.
           const midpoint = (collapsed + expanded) / 2;
           const target = e.velocityY < -400 ? expanded : e.velocityY > 400 ? collapsed : h > midpoint ? expanded : collapsed;
-          height.value = withSpring(target, { damping: 22, stiffness: 220, mass: 0.7 });
+          // Damping 22 -> 26. At 22 the ratio was 22 / (2 * sqrt(220 * 0.7)) = 0.89, so the panel
+          // overshot its stop and settled back — the same "moves up a bit then a bit down" that was
+          // reported on the share sheet, from the same cause. 26 puts it just past critical.
+          height.value = withSpring(target, { damping: 26, stiffness: 220, mass: 0.7 });
+          // The inset follows the stop, and only here — never during the drag.
+          floatSnap.value = withTiming(target === expanded ? 1 : 0, { duration: 240, easing: Easing.out(Easing.cubic) });
         }),
-    [collapsed, expanded, height, dragStart, onClose],
+    [collapsed, expanded, height, dragStart, onClose, floatSnap],
   );
 
   // ── Assets ─────────────────────────────────────────────────────────────────
