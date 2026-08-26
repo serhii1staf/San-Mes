@@ -159,6 +159,36 @@ const HISTORY_WINDOW_MS = 5_000; // sliding minimum window
 // thumbs decoding while the user scrolls a profile).
 const IMG_THROTTLE_WINDOW_MS = 1_000;
 const IMG_THROTTLE_MAX_PER_WINDOW = 2;
+// Sweep the per-host throttle map once it holds more distinct hosts than this.
+// See `markImageDecode` for why the sweep lives here rather than inline on the
+// hot path.
+const IMG_HOST_SWEEP_AT = 32;
+
+/**
+ * ── SLOW EVENTS GET THEIR OWN RETENTION ─────────────────────────────────────
+ *
+ * The 64-entry ring holds every event: NAV, MOUNT, IMG, MARK, INPUT — and the
+ * `slow` events (long tasks, sub-30fps samples) that are the only ones anybody
+ * ever needs to diagnose a freeze.
+ *
+ * On a media-heavy route those two populations are not remotely comparable in
+ * frequency. A device snapshot made the consequence explicit: `chat/[id]` had
+ * accumulated 31 long tasks (worst 396 ms, average 209 ms) and 323 image marks,
+ * and exactly ONE long task still had its `context` in the ring. The other
+ * thirty had been overwritten by the routine marks of the very screen they were
+ * recorded on — so the worst route in the app reported six and a half seconds of
+ * blocked JS thread with no attribution for any of it, while every named span in
+ * the buffer (`chat.reverse`, `chat.dayLabels`, `chat.persist.tail`) truthfully
+ * reported 0-1 ms.
+ *
+ * That is a measurement defect, not a mystery: the evidence existed and the
+ * buffer threw it away. Long tasks are rare by construction (a few dozen per
+ * session at worst), so a small dedicated ring keeps every one of them together
+ * with its smoking-gun context, no matter how much routine traffic the route
+ * generates. Entries are the SAME objects as the ones in the main ring, so
+ * `_readEvents` can de-duplicate by reference and nothing is double-counted.
+ */
+const SLOW_RING_CAPACITY = 24;
 
 class PerfMonitor {
   // Live FPS values
@@ -210,6 +240,12 @@ class PerfMonitor {
   private _events: (PerfEvent | undefined)[] = new Array(RING_CAPACITY);
   private _eventHead = 0; // next write index
   private _eventCount = 0;
+
+  // Dedicated ring for `slow` / `error` events so a flood of routine marks can
+  // never evict a long task's diagnostic context. See SLOW_RING_CAPACITY.
+  private _slowEvents: (PerfEvent | undefined)[] = new Array(SLOW_RING_CAPACITY);
+  private _slowHead = 0;
+  private _slowCount = 0;
 
   // RAF-based JS FPS sampler.
   private _frameCount = 0;
@@ -522,15 +558,40 @@ class PerfMonitor {
     }
     // Drop entries outside the throttle window in place — array stays tiny.
     while (seen.length && now - seen[0] > IMG_THROTTLE_WINDOW_MS) seen.shift();
-    // Memory hygiene: if trimming drained the bucket, drop the host key
-    // instead of leaving an empty array behind. Otherwise every distinct
-    // image host seen during the session lingers as a dead entry, a slow
-    // monotonic growth of the Map. The next decode from this host just
-    // re-creates the entry via the get/`!seen` branch above, so the throttle
-    // behavior is unchanged.
-    if (seen.length === 0) this._imgHostThrottle.delete(host);
     if (seen.length >= IMG_THROTTLE_MAX_PER_WINDOW) return;
     seen.push(now);
+    // ── THE HYGIENE DELETE THAT USED TO BE HERE DISABLED THE THROTTLE ────────
+    //
+    // It read:
+    //
+    //   if (seen.length === 0) this._imgHostThrottle.delete(host);
+    //   if (seen.length >= IMG_THROTTLE_MAX_PER_WINDOW) return;
+    //   seen.push(now);
+    //
+    // and its comment claimed "the throttle behavior is unchanged". It was not.
+    // The delete ran while `seen` was still the array this call was ABOUT to push
+    // into, so the push landed in an array no longer reachable from the Map. The
+    // next decode from the same host missed, allocated a fresh empty bucket, and
+    // deleted the key again. The counter therefore never reached 2 and NOTHING was
+    // ever throttled.
+    //
+    // Measured, not deduced: a snapshot recorded sixteen `pub-….r2.dev` marks
+    // inside 1.01 s against a documented ceiling of two per host per second. At
+    // that rate the 64-entry ring turns over in about four seconds, which is what
+    // erased thirty of `chat/[id]`'s thirty-one long-task contexts.
+    //
+    // The delete could not have achieved its stated goal either. A bucket is only
+    // ever found empty on a call for that same host — i.e. the moment before it is
+    // repopulated — so a host that is seen once and never again keeps its single
+    // stale timestamp regardless. Bounding the map needs a sweep across ALL hosts,
+    // which is what happens below, off the per-decode path.
+    if (this._imgHostThrottle.size > IMG_HOST_SWEEP_AT) {
+      this._imgHostThrottle.forEach((stamps, key) => {
+        if (key === host) return;
+        const last = stamps.length ? stamps[stamps.length - 1] : 0;
+        if (now - last > IMG_THROTTLE_WINDOW_MS) this._imgHostThrottle.delete(key);
+      });
+    }
     this._routeStat(this._currentRoute).imgCount += 1;
     this._record({
       ts: now,
@@ -644,7 +705,15 @@ class PerfMonitor {
     this._events = new Array(RING_CAPACITY);
     this._eventHead = 0;
     this._eventCount = 0;
+    this._slowEvents = new Array(SLOW_RING_CAPACITY);
+    this._slowHead = 0;
+    this._slowCount = 0;
     this._routeStats.clear();
+    // Reset the image throttle buckets too. "Clear" means the panel starts from
+    // nothing; leaving populated buckets behind silently suppressed the first
+    // couple of decodes per host after a clear, which is the one moment the user
+    // is deliberately watching for them.
+    this._imgHostThrottle.clear();
     this._notify();
   }
 
@@ -725,18 +794,45 @@ class PerfMonitor {
     this._events[this._eventHead] = ev;
     this._eventHead = (this._eventHead + 1) % RING_CAPACITY;
     if (this._eventCount < RING_CAPACITY) this._eventCount += 1;
+    // Mirror diagnostics into their own ring. Same object, so `_readEvents`
+    // de-duplicates by reference while both copies are live.
+    if (ev.type === 'slow' || ev.type === 'error') {
+      this._slowEvents[this._slowHead] = ev;
+      this._slowHead = (this._slowHead + 1) % SLOW_RING_CAPACITY;
+      if (this._slowCount < SLOW_RING_CAPACITY) this._slowCount += 1;
+    }
   }
 
-  private _readEvents(): PerfEvent[] {
+  /** Oldest-first read of a ring buffer. */
+  private _readRing(
+    ring: (PerfEvent | undefined)[],
+    head: number,
+    count: number,
+    capacity: number,
+  ): PerfEvent[] {
     const out: PerfEvent[] = [];
-    if (this._eventCount === 0) return out;
+    if (count === 0) return out;
     // Walk backwards from head so the oldest entry comes first.
-    const start = (this._eventHead - this._eventCount + RING_CAPACITY) % RING_CAPACITY;
-    for (let i = 0; i < this._eventCount; i++) {
-      const ev = this._events[(start + i) % RING_CAPACITY];
+    const start = (head - count + capacity) % capacity;
+    for (let i = 0; i < count; i++) {
+      const ev = ring[(start + i) % capacity];
       if (ev) out.push(ev);
     }
     return out;
+  }
+
+  private _readEvents(): PerfEvent[] {
+    const main = this._readRing(this._events, this._eventHead, this._eventCount, RING_CAPACITY);
+    if (this._slowCount === 0) return main;
+    // Re-admit any long task / sub-30fps sample that the main ring has already
+    // forgotten. On a quiet route every slow event is still present here and this
+    // adds nothing; on a media-heavy route it is the difference between "31 long
+    // tasks, one of them explained" and all of them keeping their context.
+    const slow = this._readRing(this._slowEvents, this._slowHead, this._slowCount, SLOW_RING_CAPACITY);
+    const present = new Set<PerfEvent>(main);
+    const evicted = slow.filter((ev) => !present.has(ev));
+    if (evicted.length === 0) return main;
+    return main.concat(evicted).sort((a, b) => a.ts - b.ts);
   }
 
   private _pushHistory(arr: { ts: number; fps: number }[], ts: number, fps: number) {

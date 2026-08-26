@@ -190,19 +190,62 @@ function PerfMonitorBubbleInner() {
   // dereferences — only SharedValue reads/writes and a single runOnJS hop.
   const uiFrameCount = useSharedValue(0);
   const uiLastSampleAt = useSharedValue(0);
+  // ── A WINDOW THAT SPANS A PAUSE IS NOT A MEASUREMENT ──────────────────────
+  //
+  // The JS sampler in perfMonitor has two guards against exactly this — a
+  // post-stall suppression window and a "drop the sample if any single frame in
+  // it took over 50 ms" test — and both exist because catch-up bursts were
+  // producing readings of 120 and 150 fps. This worklet had neither, and it
+  // feeds the SAME per-route `worstFps` accumulator and the SAME sub-30fps
+  // `jankCount` that the hotspot score is built from.
+  //
+  // The failure is structural, not marginal. `useFrameCallback` is armed on
+  // `enabled && isForeground`, and `uiLastSampleAt` is a SharedValue that
+  // survives the disarm — so the first window published after any pause (app
+  // inactive, a screen transition starving the UI thread, the monitor being
+  // toggled) measures a handful of frames against a wall-clock interval that
+  // includes the whole pause. What comes out is arithmetically impossible as a
+  // frame rate, and it is attributed to whatever route happens to be current
+  // when the callback resumes rather than to the pause.
+  //
+  // A device snapshot shows both halves of the damage. `settings` — zero long
+  // tasks, zero mounts, zero images, an idle form — reported `worstFps: 3` and
+  // two jank samples, which was 9.5 of its 13.5 score and ranked a static
+  // screen second-worst in the app. `chat/[id]` reported `worstFps: 1`, worth
+  // another 9.8 points on a route whose real problem is 31 long tasks. Neither
+  // number can be produced by rendering: 3 fps means ~333 ms between frames,
+  // and no gap that size was ever recorded as a stall.
+  //
+  // So: track the largest gap between consecutive frames within the window and
+  // discard the whole window if it exceeds 120 ms — the same bar the long-task
+  // detector uses to say "that was a stall, not a frame". This is deliberately a
+  // PAUSE filter and not a jank filter. A window of steady 40 ms frames still
+  // publishes 25 fps and still raises `jankCount`, because that is real jank the
+  // user felt; a window containing one 1000 ms void publishes nothing, because
+  // averaging across a void describes neither the void nor the frames.
+  const uiPrevFrameAt = useSharedValue(0);
+  const uiMaxGap = useSharedValue(0);
   useFrameCallback((frame) => {
     'worklet';
     if (uiLastSampleAt.value === 0) {
       uiLastSampleAt.value = frame.timestamp;
+      uiPrevFrameAt.value = frame.timestamp;
       return;
     }
+    const gap = frame.timestamp - uiPrevFrameAt.value;
+    uiPrevFrameAt.value = frame.timestamp;
+    if (gap > uiMaxGap.value) uiMaxGap.value = gap;
     uiFrameCount.value += 1;
     const elapsed = frame.timestamp - uiLastSampleAt.value;
     if (elapsed >= 500) {
+      const spansPause = uiMaxGap.value > 120;
       const fps = Math.round((uiFrameCount.value * 1000) / elapsed);
+      // Reset the accumulators either way, so the NEXT window starts clean from
+      // this frame rather than inheriting the discarded one's span.
       uiFrameCount.value = 0;
       uiLastSampleAt.value = frame.timestamp;
-      runOnJS(reportUiFps)(fps);
+      uiMaxGap.value = 0;
+      if (!spansPause) runOnJS(reportUiFps)(fps);
     }
   }, enabled && isForeground);
 
