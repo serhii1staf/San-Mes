@@ -238,7 +238,16 @@ function ShareToChatSheetComponent({ visible, onClose, shareUrl, caption, exclud
           style={[
             styles.btn,
             glassActive ? null : { backgroundColor: selected ? theme.colors.accent.primary : theme.colors.background.tertiary },
-            { opacity: selected && !sending ? 1 : 0.5 },
+            // `selected ? 1 : 0.5`, NOT `selected && !sending`.
+            //
+            // The `GlassBg` below only mounts once somebody is selected, so the disabled-state alpha is
+            // harmless — but dropping to 0.5 for the duration of `sending` put an alpha on a live
+            // GlassView's parent, and `expo-glass-effect` discards the glass entirely when that happens
+            // (expo/expo#41024). The button came back flat for the rest of the sheet's life.
+            //
+            // Nothing is lost by removing it: the spinner that replaces the label below already says
+            // "sending", which is a clearer signal than a dimmed button anyway.
+            { opacity: selected ? 1 : 0.5 },
           ]}
         >
           {glassActive && selected ? (

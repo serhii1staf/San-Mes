@@ -279,7 +279,23 @@ function MiniAppsRow({ editMode, selectedIds, editProgress, onToggleSelect }: Mi
   // report. Now the column takes no space (negative margin) and the content slides on a
   // transform, so both lists move identically and neither one changes layout.
   const editShift = useEditShift(editProgress);
-  const editFade = useAnimatedStyle(() => ({ opacity: 1 - editProgress.value }));
+  // SLIDES OUT, DOES NOT FADE.
+  //
+  // This was `opacity: 1 - editProgress.value`, and the "Open" chip it wraps is a `NativeGlassView`.
+  // An alpha on any ancestor of a GlassView discards its glass (expo/expo#41024), and since
+  // selection mode leaves this at alpha 0, the chip's glass was gone for good after the first time
+  // the user entered and left selection mode on the Apps tab.
+  //
+  // The original reason for a fade still holds and is respected: unmounting the chip changed the
+  // row's layout on the same frames the content was sliding. A transform does not. The chip keeps
+  // its layout box and travels off the right edge, where the row's own `overflow: hidden` clips it.
+  // Layout-free, exactly like the fade was, and the glass survives.
+  //
+  // 120 is comfortably wider than the chip (~74 pt), so it is fully clipped at editProgress === 1.
+  // Over-translating costs nothing; under-translating would leave a visible sliver.
+  const editFade = useAnimatedStyle(() => ({
+    transform: [{ translateX: editProgress.value * 120 }],
+  }));
 
   // Genuine empty state lives HERE so the Apps tab has a single source of
   // truth. The screen's generic empty-state block skips the Apps tab, which
@@ -2490,16 +2506,40 @@ function ComposeMenu({
   const setOpen = useCallback((next: boolean) => { if (!next) onClose(); }, [onClose]);
   const anim = useRef(new Animated.Value(0)).current; // 0 = closed, 1 = open
 
+  // ON THE GLASS PATH THE CARD IS UNMOUNTED WHEN CLOSED.
+  //
+  // The note above says the menu is always mounted and hidden with `opacity`, and that was a sound
+  // trade, right up until this card grew a `GlassBg`. `expo-glass-effect` loses the glass whenever
+  // the view or ANY ancestor carries an opacity (expo/expo#41024), so an always-mounted card sitting
+  // at alpha 0 between uses means the native effect is discarded before the user ever opens the menu,
+  // and setting the alpha back to 1 does not bring it back. That is the "glass is there once, gone
+  // the next time" report, for this surface.
+  //
+  // So the two paths now hide differently, because they have different constraints:
+  //   NO GLASS -> unchanged. Always mounted, `opacity` fade, exactly as documented above.
+  //   GLASS    -> unmounted when closed, so each open composites a fresh glass view.
+  //
+  // `glassMounted` has to OUTLIVE the close animation (otherwise the card vanishes instantly instead
+  // of animating out), which is why it is cleared from the completion callback and not from `open`.
+  const [glassMounted, setGlassMounted] = useState(false);
+
   useEffect(() => {
-    // Plain appear/disappear — a simple opacity (+ subtle scale) fade, per the
-    // user's request to drop the rubbery "grow out of the FAB" spring. Quick
-    // timing, native-driven so it stays smooth even while navigating away.
-    Animated.timing(anim, {
+    if (open) setGlassMounted(true);
+    // Plain appear/disappear: a simple opacity (+ subtle scale) fade, per the user's request to drop
+    // the rubbery "grow out of the FAB" spring. Quick timing, native-driven so it stays smooth even
+    // while navigating away.
+    const animation = Animated.timing(anim, {
       toValue: open ? 1 : 0,
       duration: open ? 160 : 130,
       useNativeDriver: true,
-    }).start();
-  }, [open]);
+    });
+    animation.start(({ finished }) => {
+      // `finished` is false when a newer toggle superseded this one, in which case that newer run
+      // owns the mount state and this callback must not touch it.
+      if (finished && !open) setGlassMounted(false);
+    });
+    return () => animation.stop();
+  }, [open, anim]);
 
   const navigate = useCallback((action: () => void) => {
     setOpen(false);
@@ -2532,10 +2572,13 @@ function ComposeMenu({
         <Pressable style={{ flex: 1 }} onPress={() => setOpen(false)} />
       </Animated.View>
 
-      {/* Menu — always mounted; opacity + a subtle scale/translate fade it
-          in/out. When glass is on, the solid card background is replaced by a
-          GlassBg layer (content renders on top); border/solid fill drop so the
-          glass supplies the surface. */}
+      {/* Menu. Hidden two different ways, because the two paths have different constraints: faded
+          with `opacity` when there is no glass (always mounted, as before), unmounted when there is.
+          When glass is on the solid card background is replaced by a GlassBg layer (content renders
+          on top) and the border/solid fill drop so the glass supplies the surface. */}
+      {/* On the GLASS path this card is mounted only while open (plus the close animation) and is
+          NEVER faded. See the note on `glassMounted` above. */}
+      {(glassActive ? glassMounted : true) && (
       <Animated.View
         pointerEvents={open ? 'auto' : 'none'}
         style={{
@@ -2546,7 +2589,10 @@ function ComposeMenu({
           // notched iPhone, a Dynamic Island one, and a flat-top Android alike.
           top: topOffset,
           right: theme.spacing.base,
-          opacity: menuOpacity,
+          // PINNED TO 1 WHEN GLASS IS ON. An alpha anywhere above a GlassView discards its glass
+          // (expo/expo#41024); the card is unmounted instead of faded on that path. Same shape as
+          // `app/profile/customize-header.tsx`, which guards its glass branch the same way.
+          opacity: glassActive ? 1 : menuOpacity,
           transform: [
             { translateY: menuTranslateY },
             { scale: menuScale },
@@ -2576,6 +2622,7 @@ function ComposeMenu({
         <FabSeparator color={borderColor} />
         <FabMenuItem icon="settings" label={t('messages.fab.chat_settings')} tint={secondary} onPress={() => navigate(() => router.push({ pathname: '/settings/chat-settings', params: { id: GLOBAL_CHAT_SETTINGS_KEY } } as any))} />
       </Animated.View>
+      )}
 
       {/* NOTE: the floating action button that used to live at bottom-right and
           own this menu is gone — its trigger is now the compose button in the

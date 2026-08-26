@@ -171,10 +171,22 @@ function MediaPanelComponent({
   const onLongPressEmoji = useCallback((e: string) => openPreview({ kind: 'emoji', emoji: e }), [openPreview]);
   const onLongPressGif = useCallback((item: GiphyItem) => openPreview({ kind: 'gif', item }), [openPreview]);
 
+  // ── NO `opacity` ON THE STACK ──────────────────────────────────────────────
+  //
+  // This style used to carry `opacity: previewSV.value`, and the action menu inside the stack is a
+  // `GlassBg` when liquid glass is on. `expo-glass-effect` discards the glass when the view or any
+  // ancestor has an opacity applied (expo/expo#41024), so holding a sticker showed real glass the first
+  // time and a flat card after that — which is one of the specific surfaces reported as "the glass is
+  // there, then it disappears".
+  //
+  // The fade is not lost, only moved: it now lives on the STICKER, which has no glass under it (see
+  // `previewStickerStyle`). The stack keeps the scale, the backdrop keeps its own fade, and the menu
+  // arrives on a pure transform.
   const previewCardStyle = useAnimatedStyle(() => ({
-    opacity: previewSV.value,
     transform: [{ scale: 0.86 + previewSV.value * 0.14 }],
   }));
+  // The sticker's own fade. Safe here — nothing below this node is a glass view.
+  const previewStickerStyle = useAnimatedStyle(() => ({ opacity: previewSV.value }));
   const backdropStyle = useAnimatedStyle(() => ({ opacity: previewSV.value }));
 
   const hasRecents = recentEmoji.length > 0;
@@ -464,6 +476,11 @@ function MediaPanelComponent({
               {/* The sticker itself, on nothing. No card behind it, so a cut-out sticker shows the dimmed
                   screen through its transparent parts instead of a panel-coloured rectangle — the same
                   reasoning as the chat bubble. */}
+              {/* Wrapper exists ONLY to own the fade, which cannot live on the stack any more — the
+                  stack contains a GlassBg and an alpha above one destroys it. It shrink-wraps the
+                  sticker and repeats its `alignSelf: 'center'`, so the stack's `alignItems: flex-end`
+                  still puts the menu on the right and the sticker in the middle, exactly as before. */}
+              <Reanimated.View style={[styles.previewSticker, previewStickerStyle]}>
               {preview.kind === 'emoji' ? (
                 <RNText style={styles.previewEmoji} allowFontScaling={false}>{preview.emoji}</RNText>
               ) : (
@@ -492,6 +509,7 @@ function MediaPanelComponent({
                   noProxy
                 />
               )}
+              </Reanimated.View>
 
               {/* ── A MENU, NOT TWO BUTTONS ──────────────────────────────────────────
    
@@ -714,6 +732,9 @@ const styles = StyleSheet.create({
   // what puts the menu under the image on the right, as in the screenshot, while the image itself is
   // centred by previewGif's own alignment.
   previewStack: { alignItems: 'flex-end' },
+  // Holds the sticker's fade (see previewStickerStyle). Carries the centring the two sticker children
+  // used to declare themselves, so the stack's `alignItems: 'flex-end'` still only affects the menu.
+  previewSticker: { alignSelf: 'center' },
   // 1.133 was too tight: see emojiTextStyle. At 120 pt the shortfall is ~20 px of trimmed glyph.
   previewEmoji: { ...emojiTextStyle(120), marginBottom: 14, alignSelf: 'center' },
   // No background: a cut-out sticker must show the dimmed screen through its transparent parts, not
