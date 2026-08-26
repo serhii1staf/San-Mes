@@ -196,6 +196,31 @@ function ImageViewerModalComponent({
 
   const enter = useSharedValue(0);
   const dragY = useSharedValue(0);
+  /**
+   * ── PRESENTATION TRAVEL, SEPARATE FROM THE DRAG ───────────────────────────
+   *
+   * Reported: the viewer "closes too abruptly"; it should rise smoothly from the bottom and go
+   * back down the same way.
+   *
+   * Two things were wrong, and only one of them was the duration.
+   *
+   * 1. THE OPEN NEVER ROSE. `enter` drove scale + opacity only, so the photo materialised in
+   *    place. There was no upward motion to be smooth about.
+   *
+   * 2. THE EASING PAIR WAS INVERTED ON EXIT. Travel used `Easing.out(cubic)` — fastest on the
+   *    very first frames, then decelerating — while opacity used `Easing.in(cubic)`, which
+   *    barely moves at first. So on close the photo LURCHED away at full opacity and then
+   *    blinked out at the end. That reads as a snap, which is exactly the complaint. Departures
+   *    want an accelerating curve (`Easing.in`): start gently, gather speed, leave. Arrivals want
+   *    the decelerating one (`Easing.out`): arrive fast, settle soft.
+   *
+   * `slide` is the presentation offset and is the ONLY channel that carries the viewer on and off
+   * screen. `dragY` stays what it was — the live finger offset — so the two never have to encode
+   * each other. The flick hands its accumulated `dragY` over to `slide` and zeroes itself, which
+   * keeps the motion continuous across the handover instead of adding two offsets together and
+   * overshooting by however far the finger had travelled.
+   */
+  const slide = useSharedValue(SCREEN_H);
   // ── ZOOM ──────────────────────────────────────────────────────────────────
   //
   // The profile viewers this component replaces had `maximumZoomScale={3}` on a native
@@ -225,19 +250,27 @@ function ImageViewerModalComponent({
       zoom.value = 1;
       zoomPanX.value = 0;
       zoomPanY.value = 0;
-      enter.value = withTiming(1, { duration: 220, easing: Easing.out(Easing.cubic) });
+      // Rise from the bottom edge. `Easing.out` for an arrival, and a touch longer than the exit
+      // because coming in is the moment the user is looking at — 300 ms reads as a glide, while the
+      // old 220 ms fade read as a pop.
+      slide.value = SCREEN_H;
+      slide.value = withTiming(0, { duration: 300, easing: Easing.out(Easing.cubic) });
+      // Opacity leads the travel slightly so the photo is solid for most of the rise instead of
+      // fading in over it. A slide that also fades looks like two effects; a slide that is opaque
+      // by a third of the way up looks like one object moving.
+      enter.value = withTiming(1, { duration: 200, easing: Easing.out(Easing.cubic) });
     } else if (mounted) {
       // Parent-driven close (e.g. the edit action navigating away) gets the SAME downward exit as
       // the X and the flick, so there is no third way for a photo to leave the screen.
-      dragY.value = withTiming(SCREEN_H * 0.6, { duration: 200, easing: Easing.out(Easing.cubic) });
-      enter.value = withTiming(0, { duration: 200, easing: Easing.in(Easing.cubic) }, (finished) => {
+      slide.value = withTiming(SCREEN_H, { duration: 260, easing: Easing.in(Easing.cubic) });
+      enter.value = withTiming(0, { duration: 260, easing: Easing.in(Easing.cubic) }, (finished) => {
         if (finished) runOnJS(setMounted)(false);
       });
     }
     // `mounted` is read, not depended on: adding it would re-run the exit on the
     // state change the exit itself causes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [payload, enter, dragY]);
+  }, [payload, enter, dragY, slide]);
 
   /**
    * Close by flying the photo DOWNWARD while it shrinks, then hand back to the parent.
@@ -266,14 +299,18 @@ function ImageViewerModalComponent({
     // Full screen height, not 60 %. At 60 % the photo came to rest still partly on screen, so it
     // depended on the unmount to finish disappearing. Travelling the whole way means the exit is
     // complete on its own.
-    dragY.value = withTiming(SCREEN_H, { duration: 200, easing: Easing.out(Easing.cubic) });
-    enter.value = withTiming(0, { duration: 200, easing: Easing.in(Easing.cubic) }, (finished) => {
+    //
+    // Now on `slide` with an ACCELERATING curve, and 260 ms rather than 200. The old pairing
+    // (`dragY` + `Easing.out`) put peak speed on frame one, which is what made this feel like a
+    // snap regardless of how long the animation nominally lasted.
+    slide.value = withTiming(SCREEN_H, { duration: 260, easing: Easing.in(Easing.cubic) });
+    enter.value = withTiming(0, { duration: 260, easing: Easing.in(Easing.cubic) }, (finished) => {
       if (finished) {
         runOnJS(setMounted)(false);
         runOnJS(onClose)();
       }
     });
-  }, [dragY, enter, onClose]);
+  }, [slide, enter, onClose]);
 
   /**
    * Hand the close back to the parent WITHOUT animating anything.
@@ -347,7 +384,10 @@ function ImageViewerModalComponent({
     // thing the user waits for.
     opacity: interpolate(enter.value, [0, 1], [0, 1], Extrapolation.CLAMP),
     transform: [
-      { translateY: dragY.value + zoomPanY.value },
+      // Three independent vertical offsets, summed: the presentation slide (on/off screen), the
+      // live finger drag, and the pan of an enlarged photo. Keeping them separate is what lets the
+      // flick hand off to the slide without the two double-counting.
+      { translateY: slide.value + dragY.value + zoomPanY.value },
       { translateX: zoomPanX.value },
       // A small scale-in on open, and a slight shrink while dragging away, which is
       // what makes the dismiss read as "throwing it back into the chat".
@@ -456,8 +496,19 @@ function ImageViewerModalComponent({
           const fast = Math.abs(e.velocityY) > DISMISS_VELOCITY;
           if (far || fast) {
             // Continue in the direction of travel, then hand back to the parent.
+            //
+            // HANDOVER, not a second offset: the finger's accumulated `dragY` moves onto `slide`
+            // and `dragY` resets in the same frame, so the photo does not jump. Animating `slide`
+            // to the target while `dragY` still held the translation would have travelled the sum
+            // of the two and overshot by however far the finger went.
+            //
+            // `Easing.out` is correct HERE and only here: the finger already supplied the
+            // acceleration, so the throw should decay rather than accelerate a second time. That is
+            // why the button close uses the opposite curve — it has no gesture to inherit speed from.
             const target = e.translationY >= 0 ? SCREEN_H : -SCREEN_H;
-            dragY.value = withTiming(target, { duration: 180, easing: Easing.out(Easing.cubic) });
+            slide.value = dragY.value;
+            dragY.value = 0;
+            slide.value = withTiming(target, { duration: 180, easing: Easing.out(Easing.cubic) });
             enter.value = withTiming(0, { duration: 180 }, (finished) => {
               if (finished) {
                 runOnJS(setMounted)(false);

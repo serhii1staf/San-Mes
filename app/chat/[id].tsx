@@ -46,7 +46,7 @@ import { uploadChatImage } from '../../src/lib/supabase';
 import { getImageDims, setImageDims } from '../../src/services/imageDimsCache';
 import { useRenderBudget } from '../../src/hooks/useRenderBudget';
 import { useEffectiveBrowserWidgetPosition } from '../../src/lib/browserWidget';
-import { composerScrimHeight, headerScrimHeights, surfaceScrimHeight, SCRIM_LOCATIONS, topSurfaceScrimColors, bottomSurfaceScrimColors } from '../../src/theme/scrim';
+import { composerScrimHeight, headerScrimHeights, SCRIM_LOCATIONS, topSurfaceScrimColors, bottomSurfaceScrimColors } from '../../src/theme/scrim';
 import { kvGetJSONSync, kvSetJSON, kvWarm } from '../../src/services/kvStore';
 import { addTombstones, filterTombstoned } from '../../src/services/messageTombstones';
 import { TypingIndicator } from '../../src/components/ui/TypingIndicator';
@@ -5596,9 +5596,26 @@ export default function ChatScreen() {
           mirrors the top-header gradient so messages scrolling past
           ghost into the chrome rather than being hard-clipped. Static
           height, no animation — it simply sits there. */}
+      {/* ── BACK TO FLUSH WITH THE COMPOSER. THE OVERHANG WAS MY MISTAKE. ────────
+   
+            Reported: the darkening must not sit ABOVE the input field.
+   
+            Last round I wrapped this in `surfaceScrimHeight`, which adds 28 pt so the chat would match
+            the sticker library "one to one". I argued that the recorded objection to overhang — "it
+            sticks out above the input field", "the dimming sticks out over the messages" — applied only
+            to the BLACK ramp, because a surface ramp dissolves content instead of darkening it.
+   
+            That argument was wrong, and the distinction I drew does not survive contact with the screen.
+            A surface ramp above the field still ERASES the messages behind it: the fact that they fade
+            into the page rather than going grey does not make covering them acceptable. The transcript's
+            bottom rows simply vanish early. `scrim.ts` had the rule right the first time, twice, and I
+            talked myself past it on a colour-theory technicality.
+   
+            Flush again: exactly this composer's footprint, `COMPOSER_SCRIM_OVERHANG` at 0. The sticker
+            library keeps its overhang, where there is no field for the ramp to climb over. */}
       <View
         pointerEvents="none"
-        style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: surfaceScrimHeight(composerScrimHeight(insets.bottom, 12)) }}
+        style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: composerScrimHeight(insets.bottom, 12) }}
       >
         {/* Shared scrim ramp (src/theme/scrim.ts). These stops used to be local
             (`[bgTransparent, bgColor + 'B3', bgColor]`, midpoint 0.45) — a
@@ -5902,8 +5919,15 @@ export default function ChatScreen() {
           than being abruptly clipped by a solid bg slab. The chrome
           (back / name / avatar) sits ON TOP of the gradient, so it stays
           fully readable; only the message list behind it fades through
-          the dimming zone. */}
-      <View style={[styles.headerWrapper, { height: surfaceScrimHeight(headerGradientHeight) }]} pointerEvents="box-none">
+          the dimming zone.
+
+          FLUSH WITH THE HEADER, for the same reason as the composer scrim below.
+          Reported: the dimming must not reach BELOW the back button / name / avatar.
+          `surfaceScrimHeight` added 28 pt of overhang here to match the sticker library;
+          downward overhang on a TOP scrim lands squarely on the first message rows, which
+          is exactly the complaint. The wrapper is the chrome's own footprint again, so the
+          ramp finishes where the header finishes. */}
+      <View style={[styles.headerWrapper, { height: headerGradientHeight }]} pointerEvents="box-none">
         {/* Shared scrim ramp — see the note on the footer gradient below. */}
         <LinearGradient
           colors={topSurfaceScrimColors(bgColor)}
