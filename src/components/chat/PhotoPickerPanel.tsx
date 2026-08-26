@@ -182,17 +182,56 @@ function PhotoPickerPanelComponent({
   //
   // Side benefit: the grid is always laid out at full height, so expanding reveals
   // rows that are already rendered instead of mounting them mid-animation.
-  const height = useSharedValue(collapsed);
+  // ── STARTS AT ZERO SO THERE IS SOMETHING TO ANIMATE ───────────────────────
+  //
+  // Reported: the gallery panel "opens too abruptly and closes too abruptly".
+  //
+  // It had no open or close animation at all, and this initial value is why. The panel is mounted by
+  // a boolean in the chat screen (`photoPanelOpen && <PhotoPickerPanel/>`) and `height` started
+  // already AT `collapsed`, so the first committed frame was the panel at full size — it appeared.
+  // The close was the mirror: `onClose` cleared the boolean and React unmounted the subtree in that
+  // same commit, so it vanished. Nothing was ever wrong with the animation code, because there was
+  // none; the value simply had no distance to cover.
+  //
+  // Starting at 0 gives the rise somewhere to come from, and `requestClose` below gives the exit
+  // somewhere to go before the parent is told.
+  const height = useSharedValue(0);
   // Height at the moment the drag started, so the gesture is a pure delta.
   const dragStart = useSharedValue(collapsed);
 
+  /** First run is the ENTER; later runs are the keyboard-height re-snap. Different durations. */
+  const didEnter = useRef(false);
+  const closing = useRef(false);
+
   useEffect(() => {
+    if (!didEnter.current) {
+      didEnter.current = true;
+      // Rise from the bottom edge. Longer than the re-snap because this is the one the user watches.
+      height.value = withTiming(collapsed, { duration: 320, easing: Easing.out(Easing.cubic) });
+      return;
+    }
     // Re-snap when the collapsed target changes (keyboard height learned late)
-    // and the user has not expanded the panel.
+    // and the user has not expanded the panel. Never while closing — that would
+    // pull the panel back up mid-exit.
+    if (closing.current) return;
     if (height.value < (collapsed + expanded) / 2) {
       height.value = withTiming(collapsed, { duration: 180, easing: Easing.out(Easing.cubic) });
     }
   }, [collapsed, expanded, height]);
+
+  /**
+   * Fall back down, THEN tell the parent.
+   *
+   * The parent's `onClose` unmounts this component, so calling it first means the exit never gets a
+   * frame. Everything that dismisses the panel goes through here: the chevron, and the drag.
+   */
+  const requestClose = useCallback(() => {
+    if (closing.current) return;
+    closing.current = true;
+    height.value = withTiming(0, { duration: 260, easing: Easing.in(Easing.cubic) }, (done) => {
+      if (done) runOnJS(onClose)();
+    });
+  }, [height, onClose]);
 
   const panelStyle = useAnimatedStyle(() => {
     // ONE progress value, read straight off the finger. Everything below interpolates from it, which
@@ -234,8 +273,15 @@ function PhotoPickerPanelComponent({
         .onEnd((e) => {
           const h = height.value;
           // Flung or dragged far enough below the collapsed stop → dismiss.
+          //
+          // Continues the drag down to 0 and only then hands over, instead of calling `onClose`
+          // straight from the gesture. Calling it here used to unmount the panel from wherever the
+          // finger happened to leave it, which is a cut, not a dismissal. Animated on the UI thread
+          // so there is no JS hop between the release and the movement.
           if (h < collapsed - CLOSE_DRAG || (e.velocityY > 900 && h <= collapsed + 8)) {
-            runOnJS(onClose)();
+            height.value = withTiming(0, { duration: 220, easing: Easing.in(Easing.cubic) }, (done) => {
+              if (done) runOnJS(onClose)();
+            });
             return;
           }
           // Otherwise snap to whichever stop the velocity/position points at.
@@ -350,11 +396,13 @@ function PhotoPickerPanelComponent({
       );
       const resolved = uris.filter((u): u is string => !!u);
       if (resolved.length > 0) onConfirm(resolved);
-      onClose();
+      // Through `requestClose`, not `onClose`: send is the most common way this panel leaves the
+      // screen, so it is the one that most needed the exit it did not have.
+      requestClose();
     } finally {
       if (mountedRef.current) setConfirming(false);
     }
-  }, [selected, confirming, assets, onConfirm, onClose]);
+  }, [selected, confirming, assets, onConfirm, requestClose]);
 
   const renderCell = useCallback(
     ({ item }: { item: PhotoAsset }) => (
@@ -415,7 +463,7 @@ function PhotoPickerPanelComponent({
         <View style={styles.header}>
           <View style={[styles.grabber, { backgroundColor: theme.colors.text.tertiary }]} />
           <View style={styles.headerRow}>
-            <Pressable onPress={onClose} hitSlop={8} style={styles.headerBtn} accessibilityRole="button">
+            <Pressable onPress={requestClose} hitSlop={8} style={styles.headerBtn} accessibilityRole="button">
               <Feather name="chevron-down" size={20} color={theme.colors.text.secondary} />
             </Pressable>
             <RNText style={[styles.title, { color: theme.colors.text.primary }]} numberOfLines={1}>
