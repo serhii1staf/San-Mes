@@ -182,6 +182,50 @@ export const useChatStore = create<ChatStoreState>()((set) => ({
     set((state) => ({ conversations: [conversation, ...state.conversations] })),
   setMessages: (conversationId, messages) =>
     set((state) => {
+      // ── A WRITE THAT CHANGES NOTHING MUST NOT CHANGE IDENTITY ────────────────
+      //
+      // Measured in `chat/[id]`, from one snapshot, inside 430 ms:
+      //
+      //   chat.reverse(120) @265879
+      //   chat.reverse(120) @265994   <- same count, 115 ms later
+      //   chat.reverse(180) @266152   <- +60, the full-history hydration
+      //   chat.reverse(179) @266309   <- -1, the optimistic row deduped
+      //   -> long task 386 ms, pendingDecodes 0
+      //
+      // Four full re-derivations for one user action, each followed by a long task on a
+      // pure-JS frame. The derivations themselves cost 0-1 ms; what costs is what happens
+      // downstream of a new array identity — the screen re-renders and FlashList reconciles
+      // a 179-row list.
+      //
+      // The `120 -> 120` pair is the provable waste: identical length, so at least one of
+      // those writes moved no data. It still allocated a fresh array, which is all a
+      // subscriber needs to see in order to re-render everything.
+      //
+      // WHY REFERENCE EQUALITY AND NOT A FIELD COMPARISON
+      //
+      // Comparing chosen fields (id, text, imageUrls...) would catch more cases, and it
+      // would also be a silent-staleness hazard: any field left out of the comparison
+      // becomes a change the UI refuses to show. Element-wise reference equality cannot
+      // have that failure mode. Every mutation path here builds new message objects rather
+      // than mutating them, so different content ALWAYS means a different reference — this
+      // can only ever skip writes that were genuinely redundant.
+      //
+      // It therefore may not catch a redundant write whose objects were rebuilt (e.g. a
+      // re-heal that `.map()`s over the same data). That is deliberate: if the next
+      // snapshot still shows a duplicate pair, the answer is to stop that path rebuilding
+      // identical objects, not to loosen this comparison.
+      const prev = state.messages[conversationId];
+      if (prev && prev.length === messages.length) {
+        let identical = true;
+        for (let i = 0; i < prev.length; i++) {
+          if (prev[i] !== messages[i]) { identical = false; break; }
+        }
+        // `messages` untouched, so every selector reading this slice keeps its reference and
+        // nothing re-renders. The preview bump and MRU touch below are skipped too: with no
+        // data change the preview would be recomputed to the value it already holds, and the
+        // MRU order cannot be affected by a write that did not happen.
+        if (identical) return state;
+      }
       // Persist the newest message as the conversation's durable preview. This is
       // the cache re-seed path (opening a chat hydrates its tail from MMKV), so
       // doing it here is what BACKFILLS previews for conversations that predate the
