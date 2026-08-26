@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { InteractionManager } from 'react-native';
-import { conversationsEqual } from '../utils/listEquality';
+import { conversationsEqual, rowEqualIgnoring, POST_VOLATILE_FIELDS } from '../utils/listEquality';
 
 import {
   cacheFeed,
@@ -98,6 +98,15 @@ function schedulePostsFlush(getPosts: () => LocalPost[]) {
 // authors of kept posts and ids in `follows` are protected.
 const MAX_MEMORY_POSTS = 1000;
 const MAX_MEMORY_PROFILES = 1200;
+
+/**
+ * "Compare every field." Used by the profile write guard below.
+ *
+ * A named module constant rather than an inline `new Set()` at the call site, because the call site is
+ * a setter that can fire hundreds of times during a sync batch and allocating an empty Set per call to
+ * express "nothing is excluded" would be silly.
+ */
+const EMPTY_VOLATILE_FIELDS: ReadonlySet<string> = new Set<string>();
 
 // Pure helper: trim the posts map back to MAX_MEMORY_POSTS by evicting the
 // OLDEST (by `created_at`) posts that are NOT protected. Protected = any id in
@@ -310,6 +319,48 @@ export const useEntityStore = create<EntityState>()((set, get) => ({
     const validPosts = posts.filter(isValidPost);
     if (validPosts.length === 0) return;
 
+    // ── BAIL OUT WHEN NOTHING ACTUALLY CHANGED ─────────────────────────────────
+    //
+    // Reported: open a profile, go back, open it again, and the content visibly reloads and jumps,
+    // with the frame rate dipping.
+    //
+    // The NETWORK side was already handled — `syncUserPosts` / `syncProfile` sit behind
+    // `syncWithThrottle` (5 and 10 minutes), so a rapid revisit does not re-fetch. The WRITE side was
+    // not: whenever the throttle did let a fetch through, or a realtime tick or a feed refresh landed,
+    // this setter allocated a brand-new `posts` object even when every incoming row was byte-identical
+    // to the one already stored.
+    //
+    // A new object here is a new reference for every `s => s.posts` subscriber, which includes both
+    // profile screens (they scan the map for one author's posts) and the feed. So an identical payload
+    // re-ran those memos and re-rendered the banner, the blur chrome and the visible cards — the exact
+    // "it reloads and jumps" the user is describing, produced by data that did not change.
+    //
+    // `setConversations` below already had this guard, for the same symptom in the chat list, using
+    // `conversationsEqual`. This is the same idea applied per row, since posts arrive as a partial
+    // batch rather than as the whole list.
+    //
+    // `rowEqualIgnoring` with `POST_VOLATILE_FIELDS` rather than a plain deep compare: `isLiked` and
+    // `isBookmarked` are optimistic LOCAL state that the server keeps returning as `false`, so
+    // counting them would make every refresh look like a change and the guard would never fire — which
+    // is documented at length on `POST_VOLATILE_FIELDS` itself.
+    //
+    // Note this is a WRITE-side guard, which Zustand's own docs do not prescribe (they address
+    // re-render suppression at the selector boundary, via `useShallow`). It is used here because the
+    // repo already established it and because the problem is one setter fanning out to many
+    // subscribers, not one component reading too widely.
+    {
+      const current = get().posts;
+      let changed = false;
+      for (const post of validPosts) {
+        const prev = current[post.id];
+        if (!prev || !rowEqualIgnoring(prev, post, POST_VOLATILE_FIELDS)) {
+          changed = true;
+          break;
+        }
+      }
+      if (!changed) return;
+    }
+
     set((state) => {
       const newPosts = { ...state.posts };
       for (const post of validPosts) {
@@ -328,6 +379,19 @@ export const useEntityStore = create<EntityState>()((set, get) => ({
 
   upsertProfile: (profile: LocalProfile) => {
     if (!isValidProfile(profile)) return;
+
+    // Same guard, same reason as `upsertPosts` above. This one fires constantly: `syncProfiles()` and
+    // the messages-tab mount push whole batches of unchanged profiles through here, and each write
+    // minted a new `profiles` object plus scheduled a coalesced MMKV flush of the ENTIRE map — a
+    // ~150 KB `JSON.stringify` that the file's own comment measures at 100-170 ms on weak iPhones.
+    // Skipping identical writes removes both the re-render and that flush.
+    //
+    // No volatile-field exclusions: `LocalProfile` carries no optimistic local state, so every field
+    // counts (the same reasoning as `CONVERSATION_VOLATILE_FIELDS` being empty).
+    {
+      const prev = get().profiles[profile.id];
+      if (prev && rowEqualIgnoring(prev, profile, EMPTY_VOLATILE_FIELDS)) return;
+    }
 
     set((state) => ({
       profiles: evictProfiles(
