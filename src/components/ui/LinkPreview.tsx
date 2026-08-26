@@ -1,4 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { useRecyclingState } from '@shopify/flash-list';
 import { View, Pressable, Linking } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -105,12 +106,29 @@ export const LinkPreview = React.memo(function LinkPreview(props: LinkPreviewPro
 const LinkPreviewInner = React.memo(function LinkPreviewInner({ url, onError, textColor, emoji, static: isStatic, onLongPress, delayLongPress, active }: LinkPreviewProps) {
   const theme = useTheme();
   const cached = getCachedPreviewSync(url);
-  const [data, setData] = useState<LinkPreviewData | null>(cached === undefined ? null : cached);
-  const [resolved, setResolved] = useState<boolean>(cached !== undefined);
-  const [playing, setPlaying] = useState(false);
+  // ── THESE THREE MUST RESET WHEN `url` CHANGES, NOT JUST ON MOUNT ───────────
+  //
+  // They were plain `useState`, so their initialisers ran once per mount and never again. Under
+  // FlatList that was sufficient, because a row leaving the window UNMOUNTED and a row coming back
+  // mounted fresh. Under FlashList the cell is RECYCLED: the same component instance is handed a new
+  // `url`, and `useState` keeps the old value. The effect below does re-fetch (its deps include
+  // `url`), but a fetch resolves a tick later at best, so in between the recycled cell renders the
+  // PREVIOUS post's title, description and thumbnail. On a fast scroll that is visible.
+  //
+  // `useRecyclingState` is FlashList v2's answer to exactly this: same contract as `useState`, plus
+  // it re-runs the initialiser when the dependency array changes — during render, so there is no
+  // extra commit. It degrades to plain `useState` semantics outside a FlashList (its internal
+  // `recyclerViewContext` access is optional-chained), so the many non-list callers of this
+  // component are unaffected apart from correctly dropping stale data if their `url` prop changes.
+  //
+  // `cardWidth` is deliberately NOT in this group: it is re-measured by `onLayout` on the next frame
+  // and a stale width is a size, not another post's content. `imageReady` likewise — it is a
+  // one-RAF paint gate where a leaked `true` is the desirable outcome.
+  const [data, setData] = useRecyclingState<LinkPreviewData | null>(cached === undefined ? null : cached, [url]);
+  const [resolved, setResolved] = useRecyclingState<boolean>(cached !== undefined, [url]);
+  const [playing, setPlaying] = useRecyclingState(false, [url]);
   const [cardWidth, setCardWidth] = useState(0);
   const [fullscreen, setFullscreen] = useState<MediaViewerSource | null>(null);
-  const mounted = useRef(true);
 
   // Defer the actual <CachedImage /> mount by one RAF after this preview
   // first commits. The thumbnail decode (especially i.ytimg.com hqdefault
@@ -130,7 +148,19 @@ const LinkPreviewInner = React.memo(function LinkPreviewInner({ url, onError, te
   }, []);
 
   useEffect(() => {
-    mounted.current = true;
+    // ── PER-RUN CANCELLATION, NOT A SHARED `mounted` REF ────────────────────
+    //
+    // This used a component-level `mounted` ref set to `true` here and `false` in the cleanup. That
+    // guards against writing state after UNMOUNT, which is the only thing that could happen while
+    // this component lived in a FlatList row. In a recycled FlashList cell the component is not
+    // unmounted — `url` changes and this effect simply re-runs — and the ref cannot distinguish the
+    // two cases: cleanup sets it to `false`, the next run immediately sets it back to `true`, so a
+    // still-in-flight fetch for the PREVIOUS url passes the guard and calls `setData` with the
+    // previous post's metadata. The recycling reset added above would then be silently undone.
+    //
+    // A flag captured per effect run cannot be revived by a later run, so a superseded fetch is
+    // permanently inert whether the cause was an unmount, a url change or an `active` flip.
+    let cancelled = false;
     // Warm the image cache for the preview thumbnail as soon as metadata is
     // available, regardless of whether it came from cache or a fresh fetch.
     // Without this, scrolling past + back to a preview would re-decode the
@@ -143,7 +173,7 @@ const LinkPreviewInner = React.memo(function LinkPreviewInner({ url, onError, te
     if (cached !== undefined) {
       if (!cached) onError?.();
       return () => {
-        mounted.current = false;
+        cancelled = true;
       };
     }
     // Nothing cached AND this row is not on screen yet → do not spend a request on it. The effect
@@ -151,7 +181,7 @@ const LinkPreviewInner = React.memo(function LinkPreviewInner({ url, onError, te
     // row actually becomes visible. See the note on the `active` prop for the measurements.
     if (active === false) {
       return () => {
-        mounted.current = false;
+        cancelled = true;
       };
     }
     // Time the very first network resolve for this URL so the perf monitor
@@ -166,7 +196,7 @@ const LinkPreviewInner = React.memo(function LinkPreviewInner({ url, onError, te
     };
     getLinkPreview(url)
       .then((d) => {
-        if (!mounted.current) return;
+        if (cancelled) return;
         recordFetch();
         setData(d);
         setResolved(true);
@@ -179,13 +209,13 @@ const LinkPreviewInner = React.memo(function LinkPreviewInner({ url, onError, te
         if (!d) onError?.();
       })
       .catch(() => {
-        if (!mounted.current) return;
+        if (cancelled) return;
         recordFetch();
         setResolved(true);
         onError?.();
       });
     return () => {
-      mounted.current = false;
+      cancelled = true;
     };
     // `active` belongs here: a row that mounts off-screen skips the fetch above, and this effect
     // re-running when it scrolls into view is what starts it. Without the dependency the preview
