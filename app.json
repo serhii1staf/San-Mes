@@ -125,6 +125,9 @@
       }
     },
     "owner": "odserser",
+    "experiments": {
+      "reactCompiler": true
+    },
     "runtimeVersion": {
       "policy": "appVersion"
     },
