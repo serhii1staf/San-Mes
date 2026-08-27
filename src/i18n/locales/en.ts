@@ -274,6 +274,7 @@ const en: Record<string, string> = {
   'edit_profile.title': 'Edit',
   'edit_profile.add_banner': 'Add a banner',
   'edit_profile.change_emoji': 'Change emoji',
+  'edit_profile.enable_editing': 'Edit',
   'edit_profile.name_label': 'Name',
   'edit_profile.name_placeholder': 'Your name',
   'edit_profile.username_label': 'Username',

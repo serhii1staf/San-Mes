@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { View, ScrollView, Pressable, StyleSheet, Platform, Modal, KeyboardAvoidingView, Text as RNText, Dimensions, Switch } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -159,12 +159,32 @@ export default function EditProfileScreen() {
   const [bio, setBio] = useState(displayUser.bio || '');
   const [selectedEmoji, setSelectedEmoji] = useState(displayUser.emoji || '😊');
   const [links, setLinks] = useState<UserLink[]>((user as any)?.links || []);
+  // ── VIEW MODE FIRST, EDIT MODE ON REQUEST ──────────────────────────────────
+  //
+  // The header's right-hand pill used to be "Сохранить" permanently. It is now "Изменить" until the
+  // user asks to edit, and only then becomes "Сохранить".
+  //
+  // The reason this needs care: the text fields are not the only things on this screen that mutate
+  // state. The emoji picker, the banner, the links and the screenshot toggle all do. If `isEditing`
+  // gated ONLY the pill's label, a user who changed their banner without first tapping "Изменить"
+  // would have no Save button and no way to persist it — the change would look accepted and then be
+  // silently discarded on back.
+  //
+  // So every mutating control also arms edit mode through `beginEditing()`. The pill is therefore
+  // "Изменить" exactly while there is nothing to save, and "Сохранить" the moment there is.
+  const [isEditing, setIsEditing] = useState(false);
+  const beginEditing = useCallback(() => setIsEditing(true), []);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [showLinkPicker, setShowLinkPicker] = useState(false);
   const [editingLinkIndex, setEditingLinkIndex] = useState<number | null>(null);
   const [linkUrl, setLinkUrl] = useState('');
   const [linkType, setLinkType] = useState('website');
   const [isSaving, setIsSaving] = useState(false);
+  // Resolved once so both the glass and the BlurView branch of the header pill render the same string
+  // — they are two copies of the same pill and previously each inlined the label expression.
+  const headerActionLabel = isEditing
+    ? (isSaving ? '...' : t('common.save'))
+    : t('edit_profile.enable_editing');
   // Owner-controlled screenshot lock — travels with the account. When ON,
   // anyone VIEWING this profile / chatting with this user gets capture
   // protection (Android: blocked outright; iOS: recording blocked + the
@@ -217,6 +237,7 @@ export default function EditProfileScreen() {
     });
     if (!result.canceled && result.assets[0]) {
       setBannerUri(result.assets[0].uri);
+      beginEditing();
       // New picks reset the transform to identity — the previous
       // position only made sense for the previous image. The editor
       // pops up immediately so the user can frame the new image
@@ -236,6 +257,7 @@ export default function EditProfileScreen() {
   // Persist a transform from the editor back into the screen state. The
   // actual upload + URL serialization happens in handleSave.
   const handleBannerEditorSave = (next: BannerTransform) => {
+    beginEditing();
     setBannerTransform(next);
     setShowBannerEditor(false);
   };
@@ -359,6 +381,7 @@ export default function EditProfileScreen() {
   };
 
   const handleSaveLink = () => {
+    beginEditing();
     if (!linkUrl.trim()) {
       setShowLinkPicker(false);
       return;
@@ -377,6 +400,7 @@ export default function EditProfileScreen() {
   };
 
   const handleRemoveLink = (index: number) => {
+    beginEditing();
     setLinks(links.filter((_, i) => i !== index));
   };
 
@@ -449,17 +473,26 @@ export default function EditProfileScreen() {
             </View>
           </ShrinkingModalTitle>
         </View>
-        <Pressable onPress={handleSave} disabled={isSaving} hitSlop={10} style={[styles.headerPill, glassActive ? { overflow: 'visible' } : null]}>
+        {/* ── "Изменить" UNTIL THERE IS SOMETHING TO SAVE, THEN "Сохранить" ─────
+            One pill, two jobs, so the header layout is unchanged in both states. `handleSave` is only
+            reachable in edit mode; tapping the pill in view mode arms editing instead. See the note on
+            `isEditing` for why every other mutating control also arms it. */}
+        <Pressable
+          onPress={isEditing ? handleSave : beginEditing}
+          disabled={isEditing && isSaving}
+          hitSlop={10}
+          style={[styles.headerPill, glassActive ? { overflow: 'visible' } : null]}
+        >
           {glassActive ? (
             <NativeGlassView glassStyle="regular" isInteractive colorScheme="dark" style={[styles.headerPillInner, { paddingHorizontal: 14, borderRadius: 18 }]}>
               <RNText style={styles.headerSaveText} allowFontScaling={false}>
-                {isSaving ? '...' : t('common.save')}
+                {headerActionLabel}
               </RNText>
             </NativeGlassView>
           ) : (
             <BlurView intensity={80} tint="dark" style={[styles.headerPillInner, { paddingHorizontal: 14 }]}>
               <RNText style={styles.headerSaveText} allowFontScaling={false}>
-                {isSaving ? '...' : t('common.save')}
+                {headerActionLabel}
               </RNText>
             </BlurView>
           )}
@@ -555,13 +588,26 @@ export default function EditProfileScreen() {
           </Pressable>
         </View>
 
-        {/* Fields — each in a tinted card so the form reads like one cohesive group */}
-        <View style={[styles.cardSection, { backgroundColor: bgElevated, borderColor }]}>
+        {/* ── FIELDS: NO OUTER CARD, LABELS INSIDE, WIDER ───────────────────────
+            Asked for: drop the container around the fields, put each label inside its own rounded
+            input, and let the inputs run slightly wider left and right.
+
+            The width change falls out of removing the card rather than being a new number. The card
+            was `marginHorizontal: 16` plus `padding: 16`, so the inputs started 32 pt from each edge.
+            They now sit at `marginHorizontal: 16` themselves, which is exactly the 16 pt per side the
+            card's padding was consuming. `styles.fieldsGroup` is that margin and nothing else.
+
+            The fields are read-only until the header's "Изменить" is tapped — see `isEditing`. They
+            stay `TextInput`s in both states rather than switching to `Text`, so nothing on the screen
+            can move when the mode flips. */}
+        <View style={styles.fieldsGroup}>
           <Input
             label={t('edit_profile.name_label')}
             value={name}
             onChangeText={setName}
             placeholder={t('edit_profile.name_placeholder')}
+            labelInside
+            editable={isEditing}
             style={{ marginBottom: 12 }}
           />
           <Input
@@ -569,6 +615,8 @@ export default function EditProfileScreen() {
             value={username}
             onChangeText={setUsername}
             placeholder="username"
+            labelInside
+            editable={isEditing}
             style={{ marginBottom: 12 }}
           />
           <Input
@@ -577,11 +625,16 @@ export default function EditProfileScreen() {
             onChangeText={(text) => setBio(text.slice(0, 150))}
             placeholder={t('edit_profile.bio_placeholder')}
             multiline
+            labelInside
+            editable={isEditing}
             style={{ marginBottom: 4 }}
           />
-          <Text variant="caption" color={theme.colors.text.tertiary} align="right">
-            {t('edit_profile.chars_left', undefined, { count: 150 - bio.length })}
-          </Text>
+          {/* Only meaningful while typing; in read-only mode it is noise. */}
+          {isEditing ? (
+            <Text variant="caption" color={theme.colors.text.tertiary} align="right">
+              {t('edit_profile.chars_left', undefined, { count: 150 - bio.length })}
+            </Text>
+          ) : null}
         </View>
 
         {/* Links section — card-style, matches Fields visually */}
@@ -681,6 +734,7 @@ export default function EditProfileScreen() {
                       key={e}
                       onPress={() => {
                         setSelectedEmoji(e);
+                        beginEditing();
                         setShowEmojiPicker(false);
                       }}
                       style={[
@@ -704,30 +758,26 @@ export default function EditProfileScreen() {
         </ScrollView>
       </SlideUpSheet>
 
-      {/* Link picker — small card-style modal with the URL input + type picker.
-          Stays a regular Modal because it needs the keyboard to push its
-          content up; SlideUpSheet's static-bottom anchoring would let the
-          keyboard cover the input. */}
-      <Modal
-        visible={showLinkPicker}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowLinkPicker(false)}
-        statusBarTranslucent
-      >
-        <Pressable
-          style={styles.linkPickerBackdrop}
-          onPress={() => setShowLinkPicker(false)}
-        />
-        <KeyboardAvoidingView
-          style={styles.linkPickerWrap}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          pointerEvents="box-none"
-        >
-          <View style={[styles.linkPickerCard, { backgroundColor: bgElevated }]}>
-            <View style={styles.linkPickerHandle}>
-              <View style={[styles.linkPickerHandleBar, { backgroundColor: borderColor }]} />
-            </View>
+      {/* ── NOW THE STANDARD SHEET, AND THE OLD REASON NOT TO IS STALE ────────
+          Asked for: this should be the same modal the rest of the app uses.
+
+          It was a bespoke `Modal` + `Pressable` backdrop + `KeyboardAvoidingView` + hand-rolled card
+          and grabber, and the comment justifying that said: "Stays a regular Modal because it needs
+          the keyboard to push its content up; SlideUpSheet's static-bottom anchoring would let the
+          keyboard cover the input."
+
+          That was true when it was written and is not true now. `SlideUpSheet` wraps its content in a
+          `KeyboardAvoidingView` — and the comment beside it there reads "requirement is recorded at
+          length in app/profile/edit.tsx, which hit it first", i.e. the sheet was taught to handle the
+          keyboard BECAUSE of this screen. The capability landed; this call site was never migrated,
+          and its comment kept asserting the old limitation.
+
+          What the sheet now provides that this code was duplicating: the grabber, the backdrop and its
+          fade, drag-to-dismiss, the bottom safe-area spacer, and `ModalStatusBar`. So the local
+          `linkPickerBackdrop` / `linkPickerWrap` / `linkPickerCard` / `linkPickerHandle` /
+          `linkPickerHandleBar` styles are gone with it. */}
+      <SlideUpSheet visible={showLinkPicker} onClose={() => setShowLinkPicker(false)}>
+        <View style={{ paddingHorizontal: 16 }}>
             <Text variant="body" weight="semibold" align="center" style={{ marginBottom: 16 }}>
               {editingLinkIndex !== null
                 ? t('edit_profile.link_edit_title')
@@ -794,9 +844,8 @@ export default function EditProfileScreen() {
                   : t('edit_profile.link_add')}
               </Text>
             </Pressable>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
+        </View>
+      </SlideUpSheet>
 
       {/* Banner position editor — drag + pinch the picked image inside
           a 300-tall banner-shaped frame, then save. Reanimated drives
@@ -1221,6 +1270,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  // The fields used to live in `cardSection` (marginHorizontal 16 + padding 16). Dropping the card
+  // and keeping only its outer margin is what makes the inputs 16 pt wider on each side.
+  fieldsGroup: {
+    marginHorizontal: 16,
+  },
   cardSection: {
     marginHorizontal: 16,
     padding: 16,
@@ -1288,32 +1342,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   emojiCellText: emojiTextStyle(24),
-  linkPickerBackdrop: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-  },
-  linkPickerWrap: {
-    flex: 1,
-    justifyContent: 'center',
-  },
-  linkPickerCard: {
-    marginHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 24,
-    paddingHorizontal: 20,
-    borderRadius: 24,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.3,
-    shadowRadius: 32,
-    elevation: 20,
-  },
-  linkPickerHandle: { alignItems: 'center', marginBottom: 12 },
-  linkPickerHandleBar: { width: 36, height: 5, borderRadius: 3 },
+  // `linkPickerBackdrop`, `linkPickerWrap`, `linkPickerCard`, `linkPickerHandle` and
+  // `linkPickerHandleBar` were removed with the bespoke link modal — `SlideUpSheet` supplies the
+  // backdrop, the card, the grabber and the bottom inset itself.
   linkTypeRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
