@@ -88,11 +88,34 @@ export const useSettingsStore = create<SettingsState>()(
       hapticEnabled: true,
       useInAppBrowser: true,
       browserWidgetPosition: 'top',
-      // Perf monitor defaults: visible, sitting near the bottom-right safe
-      // area so it doesn't overlap the floating tab bar. Negative numbers
-      // act as "unset"; the bubble computes the initial position on mount
-      // when it sees -1.
-      perfMonitorEnabled: true,
+      // ── PERF MONITOR DEFAULTS OFF ─────────────────────────────────────────
+      //
+      // This used to default ON, with the reasoning "so QA / the dev can spot
+      // jank in the wild without a separate debug build". The instrument turned
+      // out to be a measurable part of the jank it was reporting, on every
+      // screen, for every user:
+      //   - `PerfMonitorBubble` arms a `useFrameCallback` worklet, which is an
+      //     unconditional per-frame callback on the UI thread. It is mounted
+      //     globally from `app/_layout.tsx`, so no screen escapes it.
+      //   - `ProfilePostCard` and `UserProfilePostCard` each take a Zustand
+      //     SUBSCRIPTION to this very flag — per list row — and call `Date.now()`
+      //     in the render body when it is on.
+      //   - `CachedImage` does a store read on every image load and decode.
+      //   - `chat/[id]` wraps real work in `perfSpan()`.
+      // Device measurement (adb gfxinfo, which is outside the app and therefore
+      // unaffected by this flag) put switch-tab at 60% of frames over budget and
+      // caught single frames spending 270 ms inside animation callbacks.
+      //
+      // A profiler that is on by default is not a free safety net; it is a tax
+      // on the exact code path it claims to measure. It stays one tap away in
+      // Settings → Monitor производительности for whenever it is actually
+      // wanted, and `perfMonitor` is local-only (nothing is transmitted), so
+      // this changes no data flow and no privacy disclosure.
+      //
+      // Position/filters below are untouched — they only matter once enabled.
+      // Negative positions act as "unset"; the bubble computes its initial
+      // position on mount when it sees -1.
+      perfMonitorEnabled: false,
       perfMonitorPosX: -1,
       perfMonitorPosY: -1,
       // Default: every chip on, so first-time openers see all events.
@@ -170,6 +193,40 @@ export const useSettingsStore = create<SettingsState>()(
     {
       name: 'app-settings',
       storage: createJSONStorage(() => appStorage),
+      // ── WHY A VERSION BUMP IS REQUIRED, NOT JUST A NEW DEFAULT ──────────────
+      //
+      // Flipping `perfMonitorEnabled` to `false` above only affects FRESH
+      // installs. Zustand's persist middleware merges with a shallow spread in
+      // which the persisted value wins (`{ ...currentState, ...persistedState }`
+      // is the documented default `merge`), so every device that has already run
+      // the app — which is every existing user, and the dev's own phone — would
+      // read its stored `true` straight back over the new default and keep the
+      // per-frame worklet forever.
+      //
+      // Per the persist docs, `version` defaults to 0 and `migrate` runs when the
+      // version stored alongside the data does not match the version in code.
+      // There was no `version` before, so all existing data reads as 0 and this
+      // migration runs exactly once per install.
+      //
+      // The migration is deliberately narrow: it forces this ONE field and
+      // passes everything else through untouched. It is not a reset — haptics,
+      // theme, bubble styles, tab customizations, browser prefs and push opt-in
+      // all survive. Returning `migrate`'s result unmerged for unknown future
+      // versions is fine because `merge` still layers it over the current
+      // defaults, so a field added later simply takes its default.
+      version: 1,
+      migrate: (persistedState, version) => {
+        if (!persistedState || typeof persistedState !== 'object') {
+          return persistedState as SettingsState;
+        }
+        if (version < 1) {
+          return {
+            ...(persistedState as Partial<SettingsState>),
+            perfMonitorEnabled: false,
+          } as SettingsState;
+        }
+        return persistedState as SettingsState;
+      },
     }
   )
 );

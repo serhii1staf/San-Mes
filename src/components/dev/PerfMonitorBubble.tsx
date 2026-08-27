@@ -225,29 +225,51 @@ function PerfMonitorBubbleInner() {
   // averaging across a void describes neither the void nor the frames.
   const uiPrevFrameAt = useSharedValue(0);
   const uiMaxGap = useSharedValue(0);
-  useFrameCallback((frame) => {
-    'worklet';
-    if (uiLastSampleAt.value === 0) {
-      uiLastSampleAt.value = frame.timestamp;
+  // ── THE WORKLET IS MEMOIZED ─────────────────────────────────────────────────
+  //
+  // Reanimated's performance guide states this directly: a `useFrameCallback`
+  // worklet should be wrapped in `useCallback`, otherwise it is re-created and
+  // therefore re-REGISTERED on every render of the host component.
+  //
+  // That mattered here more than it would in most places. This component
+  // re-renders on its own FPS label (twice a second, by design), on every
+  // `perfMonitorEnabled` / position / filter change, and on foreground
+  // transitions — and each of those renders was tearing down and re-installing
+  // a callback on the UI thread's frame loop. The bubble that exists to measure
+  // frame cost was paying a re-registration out of the frame budget it reports.
+  //
+  // Every value the worklet closes over is already reference-stable: the six
+  // `uiX` shared values are `useSharedValue` handles, and `reportUiFps` is a
+  // `useCallback` with an empty dep list (see the note on it above, which was
+  // written for exactly this reason). So the dep list below is honest AND the
+  // callback is created once for the lifetime of the component.
+  const sampleUiFps = useCallback(
+    (frame: { timestamp: number }) => {
+      'worklet';
+      if (uiLastSampleAt.value === 0) {
+        uiLastSampleAt.value = frame.timestamp;
+        uiPrevFrameAt.value = frame.timestamp;
+        return;
+      }
+      const gap = frame.timestamp - uiPrevFrameAt.value;
       uiPrevFrameAt.value = frame.timestamp;
-      return;
-    }
-    const gap = frame.timestamp - uiPrevFrameAt.value;
-    uiPrevFrameAt.value = frame.timestamp;
-    if (gap > uiMaxGap.value) uiMaxGap.value = gap;
-    uiFrameCount.value += 1;
-    const elapsed = frame.timestamp - uiLastSampleAt.value;
-    if (elapsed >= 500) {
-      const spansPause = uiMaxGap.value > 120;
-      const fps = Math.round((uiFrameCount.value * 1000) / elapsed);
-      // Reset the accumulators either way, so the NEXT window starts clean from
-      // this frame rather than inheriting the discarded one's span.
-      uiFrameCount.value = 0;
-      uiLastSampleAt.value = frame.timestamp;
-      uiMaxGap.value = 0;
-      if (!spansPause) runOnJS(reportUiFps)(fps);
-    }
-  }, enabled && isForeground);
+      if (gap > uiMaxGap.value) uiMaxGap.value = gap;
+      uiFrameCount.value += 1;
+      const elapsed = frame.timestamp - uiLastSampleAt.value;
+      if (elapsed >= 500) {
+        const spansPause = uiMaxGap.value > 120;
+        const fps = Math.round((uiFrameCount.value * 1000) / elapsed);
+        // Reset the accumulators either way, so the NEXT window starts clean from
+        // this frame rather than inheriting the discarded one's span.
+        uiFrameCount.value = 0;
+        uiLastSampleAt.value = frame.timestamp;
+        uiMaxGap.value = 0;
+        if (!spansPause) runOnJS(reportUiFps)(fps);
+      }
+    },
+    [reportUiFps, uiFrameCount, uiLastSampleAt, uiMaxGap, uiPrevFrameAt],
+  );
+  useFrameCallback(sampleUiFps, enabled && isForeground);
 
   // Drag gesture moves the bubble; tap gesture opens the panel. They live in
   // a Race composition so a quick press resolves cleanly to "tap" without
