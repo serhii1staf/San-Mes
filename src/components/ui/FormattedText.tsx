@@ -106,6 +106,39 @@ export const FormattedText = memo(function FormattedText({ children, style, colo
   // mutable object so a single component-level spoiler index is shared across
   // all segments — keeping `revealedSpoilers`/`revealSpoiler` working even
   // when text is split around fenced code blocks.
+  // ── ONE STYLE OBJECT PER SEGMENT PER RENDER WAS THE COST HERE ─────────────
+  //
+  // Every branch below used to build its style inline, so a post body that parsed into, say, twelve
+  // segments minted twelve fresh style objects on every render of every card that showed it — and this
+  // component renders the text of feed posts, profile posts, comments, chat bubbles and bios, i.e.
+  // most of the text in the app.
+  //
+  // The four purely-decorative ones depend on nothing at all and are now module constants (see
+  // INLINE_STYLES at the bottom of this file). The rest depend only on the theme, so they are built
+  // once per theme change here instead of once per segment per render.
+  const themedInline = React.useMemo(() => ({
+    code: {
+      fontFamily: 'Courier' as const,
+      backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
+      paddingHorizontal: 3,
+      borderRadius: 3,
+      fontSize: 13 * (theme.fontScale || 1),
+    },
+    spoilerRevealed: {
+      backgroundColor: theme.isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)',
+      borderRadius: 3,
+    },
+    spoilerHidden: {
+      backgroundColor: theme.isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.2)',
+      color: 'transparent',
+      borderRadius: 3,
+      overflow: 'hidden' as const,
+    },
+    mention: { color: theme.colors.accent.primary, fontWeight: '600' as const },
+    hashtag: { color: theme.colors.accent.primary, fontWeight: '500' as const },
+    link: { color: resolvedLinkColor, textDecorationLine: 'underline' as const },
+  }), [theme.isDark, theme.fontScale, theme.colors.accent.primary, resolvedLinkColor]);
+
   const renderInline = (inlineParts: TextPart[], spoilerCounter: { value: number }): React.ReactNode => {
     return inlineParts.map((part, i) => {
       switch (part.type) {
@@ -113,20 +146,20 @@ export const FormattedText = memo(function FormattedText({ children, style, colo
           return <RNText key={i}>{part.content}</RNText>;
 
         case 'bold':
-          return <RNText key={i} style={{ fontWeight: '700' }}>{part.content}</RNText>;
+          return <RNText key={i} style={INLINE_STYLES.bold}>{part.content}</RNText>;
 
         case 'italic':
-          return <RNText key={i} style={{ fontStyle: 'italic' }}>{part.content}</RNText>;
+          return <RNText key={i} style={INLINE_STYLES.italic}>{part.content}</RNText>;
 
         case 'strike':
-          return <RNText key={i} style={{ textDecorationLine: 'line-through' }}>{part.content}</RNText>;
+          return <RNText key={i} style={INLINE_STYLES.strike}>{part.content}</RNText>;
 
         case 'underline':
-          return <RNText key={i} style={{ textDecorationLine: 'underline' }}>{part.content}</RNText>;
+          return <RNText key={i} style={INLINE_STYLES.underline}>{part.content}</RNText>;
 
         case 'code':
           return (
-            <RNText key={i} style={{ fontFamily: 'Courier', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)', paddingHorizontal: 3, borderRadius: 3, fontSize: 13 * (theme.fontScale || 1) }}>
+            <RNText key={i} style={themedInline.code}>
               {part.content}
             </RNText>
           );
@@ -135,10 +168,10 @@ export const FormattedText = memo(function FormattedText({ children, style, colo
           const idx = spoilerCounter.value++;
           const revealed = revealedSpoilers.has(idx);
           if (revealed) {
-            return <RNText key={i} style={{ backgroundColor: theme.isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)', borderRadius: 3 }}>{part.content}</RNText>;
+            return <RNText key={i} style={themedInline.spoilerRevealed}>{part.content}</RNText>;
           }
           return (
-            <RNText key={i} onPress={() => revealSpoiler(idx)} style={{ backgroundColor: theme.isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.2)', color: 'transparent', borderRadius: 3, overflow: 'hidden' }}>
+            <RNText key={i} onPress={() => revealSpoiler(idx)} style={themedInline.spoilerHidden}>
               {part.content}
             </RNText>
           );
@@ -174,7 +207,7 @@ export const FormattedText = memo(function FormattedText({ children, style, colo
                 // look similar in this component and are not the same kind of destination.
                 router.push(`/u/${encodeURIComponent(name)}` as any);
               }}
-              style={{ color: theme.colors.accent.primary, fontWeight: '600' }}
+              style={themedInline.mention}
             >
               @{part.content}
             </RNText>
@@ -182,14 +215,14 @@ export const FormattedText = memo(function FormattedText({ children, style, colo
 
         case 'hashtag':
           return (
-            <RNText key={i} style={{ color: theme.colors.accent.primary, fontWeight: '500' }}>
+            <RNText key={i} style={themedInline.hashtag}>
               #{part.content}
             </RNText>
           );
 
         case 'link':
           return (
-            <RNText key={i} onPress={() => handleLinkTap(part.content)} style={{ color: resolvedLinkColor, textDecorationLine: 'underline' }}>
+            <RNText key={i} onPress={() => handleLinkTap(part.content)} style={themedInline.link}>
               {shortenUrl(part.content)}
             </RNText>
           );
@@ -608,3 +641,16 @@ function looksLikeCode(text: string): boolean {
 
   return codeishCount >= 2 && codeishCount / nonEmpty.length >= 0.6;
 }
+
+// ── Theme-independent inline spans ──────────────────────────────────────────
+//
+// These four depend on nothing, so there is no reason for them to be built per segment per render.
+// Deliberately NOT a `StyleSheet.create`: these are handed to nested `<Text>` children, and plain
+// frozen objects are what the RN text layer wants there — a registered stylesheet ID buys nothing for
+// a leaf span and makes the values harder to read at the call site.
+const INLINE_STYLES = {
+  bold: { fontWeight: '700' } as const,
+  italic: { fontStyle: 'italic' } as const,
+  strike: { textDecorationLine: 'line-through' } as const,
+  underline: { textDecorationLine: 'underline' } as const,
+};

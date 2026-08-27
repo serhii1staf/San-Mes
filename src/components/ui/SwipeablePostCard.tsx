@@ -1,4 +1,4 @@
-import React, { useRef, useCallback, useEffect, useMemo, memo } from 'react';
+import React, { useRef, useState, useCallback, useEffect, useMemo, memo } from 'react';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Reanimated, {
   useSharedValue,
@@ -71,6 +71,28 @@ function SwipeablePostCardBase({ children }: SwipeablePostCardProps) {
   const timer = useRef<any>(null);
   const cardRef = useRef<View>(null);
 
+  // ── THE CAMERA BUTTON IS NOT MOUNTED UNTIL A SWIPE STARTS ─────────────────
+  //
+  // It used to be mounted unconditionally on every row, sitting at `opacity: 0` because `buttonStyle`
+  // interpolates to zero at rest. That is three native views (Reanimated.View, Pressable, the Feather
+  // glyph) plus an animated-props node, per row, for something the user cannot see and on most rows
+  // never will. On a forty-row profile that is a hundred and twenty native views of pure overhead.
+  //
+  // `false → true` and it stays true for the row's lifetime, so the button never disappears mid-swipe
+  // and a second swipe pays nothing.
+  //
+  // Where it is armed matters. `onStart` is the right place because the pan only activates after 12 pt
+  // of deliberate LEFT movement (`activeOffsetX([-12, 9999])`), and `buttonStyle` keeps the opacity at
+  // zero until the row has travelled 55 pt (`[-BUTTON_WIDTH, -BUTTON_WIDTH + 10, 0] -> [1, 0, 0]`). So
+  // there are ~43 pt of finger travel between mounting it and the first frame it is visible on — the
+  // commit lands well before anything needs to be on screen.
+  //
+  // It does cost one re-render of this row at the instant a swipe begins. That is the correct side of
+  // the trade: mount cost is paid on every row on every open and scroll, which is what the user feels
+  // as the screen assembling itself, whereas this is one commit on a deliberate and rare gesture.
+  const [buttonArmed, setButtonArmed] = useState(false);
+  const armButton = useCallback(() => setButtonArmed(true), []);
+
   const clearAutoClose = useCallback(() => {
     isOpen.current = false;
     if (timer.current) { clearTimeout(timer.current); timer.current = null; }
@@ -127,6 +149,9 @@ function SwipeablePostCardBase({ children }: SwipeablePostCardProps) {
         .failOffsetY([-10, 10])
         .onStart(() => {
           'worklet';
+          // Mount the affordance now — see the note on `buttonArmed`. Unconditional, because both
+          // branches below can leave the row in a state where the button needs to be on screen.
+          runOnJS(armButton)();
           if (isOpenSV.value) {
             // Swiping a row that is already open just closes it, and the rest of this
             // gesture is swallowed — same behaviour as before.
@@ -162,7 +187,7 @@ function SwipeablePostCardBase({ children }: SwipeablePostCardProps) {
             runOnJS(clearAutoClose)();
           }
         }),
-    [isOpenSV, ignoreGestureSV, translateX, clearAutoClose, armAutoClose],
+    [isOpenSV, ignoreGestureSV, translateX, clearAutoClose, armAutoClose, armButton],
   );
 
   // The only style in here that depends on anything. Memoised so it is one object per theme flip
@@ -185,7 +210,10 @@ function SwipeablePostCardBase({ children }: SwipeablePostCardProps) {
     ),
   }));
 
-  const handleScreenshot = async () => {
+  // Memoised so the Pressable below gets a stable `onPress` identity. It was a fresh async closure per
+  // render, capturing the whole MediaLibrary / Sharing capture chain, allocated for every row on every
+  // commit — including all the rows whose button is now never mounted at all.
+  const handleScreenshot = useCallback(async () => {
     triggerHaptic('medium');
 
     // First reset position so screenshot shows full card
@@ -213,15 +241,17 @@ function SwipeablePostCardBase({ children }: SwipeablePostCardProps) {
     } catch (e) {
       showToast(t('swipeable.save_failed'), 'x');
     }
-  };
+  }, [isOpenSV, translateX, t]);
 
   return (
     <View style={swipeStyles.root}>
-      <Reanimated.View style={[swipeStyles.buttonWrap, buttonStyle]}>
-        <Pressable onPress={handleScreenshot} style={[swipeStyles.button, buttonFill]}>
-          <Feather name="camera" size={17} color="#FFFFFF" />
-        </Pressable>
-      </Reanimated.View>
+      {buttonArmed ? (
+        <Reanimated.View style={[swipeStyles.buttonWrap, buttonStyle]}>
+          <Pressable onPress={handleScreenshot} style={[swipeStyles.button, buttonFill]}>
+            <Feather name="camera" size={17} color="#FFFFFF" />
+          </Pressable>
+        </Reanimated.View>
+      ) : null}
 
       <GestureDetector gesture={panGesture}>
         <Reanimated.View style={cardStyle}>

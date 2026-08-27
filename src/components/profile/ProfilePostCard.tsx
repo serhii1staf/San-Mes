@@ -80,6 +80,17 @@ const styles = StyleSheet.create({
   metaText: { fontSize: 11 },
 });
 
+// The four tiles of the 2x2 grid differ only by their gutter margins, and which margins they get is a
+// pure function of the index. This was an inline `{ width, height, marginRight: idx % 2 === 0 ? 2 : 0,
+// marginBottom: idx < 2 ? 2 : 0 }` built inside a `.map()`, so a four-image row minted four style
+// objects on every commit. There are exactly four possible values; here they are.
+const GRID4_TILE_STYLES = [
+  { width: 49, height: 49, marginRight: 2, marginBottom: 2 },
+  { width: 49, height: 49, marginRight: 0, marginBottom: 2 },
+  { width: 49, height: 49, marginRight: 2, marginBottom: 0 },
+  { width: 49, height: 49, marginRight: 0, marginBottom: 0 },
+] as const;
+
 // Memoized profile post card. Extracted + memoized so switching profile tabs (or
 // re-rendering the screen) does NOT rebuild every card — only cards whose data
 // actually changed re-render. This removes the freeze on the "Posts" tab.
@@ -212,6 +223,29 @@ function ProfilePostCardBase({ post, authorName, authorEmoji, authorVerified, au
     () => ({ backgroundColor: theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)' }),
     [theme.isDark],
   );
+  // ── ONE FLAT FILL INSTEAD OF UP TO FOUR SHIMMERS ──────────────────────────
+  //
+  // Every thumbnail in the grid below used to pass `skeleton`, which mounts a `Skeleton`: a container
+  // View, a Reanimated.View, a `LinearGradient` with a five-stop shader, a shared value, a worklet and
+  // a `useSyncExternalStore` subscription — per thumbnail. A four-image row therefore carried twelve
+  // extra native views, four gradient shaders and four animated-style mappers, all to decorate boxes
+  // that are 49 x 49 points. At that size the sweep is not a loading affordance, it is noise.
+  //
+  // Worse, the shimmer does not stop when the row leaves the viewport. Skeleton's clock is shared and
+  // reference-counted so there is only ONE animation driver, but each instance still keeps its own
+  // `useAnimatedStyle` mapper, and FlashList holds recycled cells mounted within `drawDistance`. So
+  // off-screen thumbnails were still having their sweep transform recomputed on the UI thread every
+  // frame, during the scroll.
+  //
+  // The feed already reached this conclusion for its hero image and wrote it down: a flat theme-aware
+  // fill is "far cheaper than the old `skeleton` shimmer (LinearGradient + Reanimated loop) that
+  // FlashList had to mount/unmount for every recycled cell during scroll". This applies the same
+  // treatment here, and does it ONCE on the 100 x 100 wrapper rather than per thumbnail — the images
+  // sit on top of it, so a not-yet-loaded tile shows the fill and nothing shifts when it arrives.
+  const themedThumbWrap = useMemo(
+    () => ({ backgroundColor: theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)' }),
+    [theme.isDark],
+  );
 
   // First-paint placeholder — outer dimensions match the real card so the
   // layout doesn't jump when the body commits one RAF later. No children,
@@ -252,29 +286,29 @@ function ProfilePostCardBase({ post, authorName, authorEmoji, authorVerified, au
 
         {hasImage ? (
           <Pressable onPress={() => onImagePress(imgs[0], post.id, imgs)}>
-            <View style={styles.thumbWrap}>
+            <View style={[styles.thumbWrap, themedThumbWrap]}>
               {imgs.length === 1 ? (
-                <CachedImage uri={imgs[0]} style={styles.thumbSingle} resizeMode="cover" proxyWidth={singleProxyWidth} priority="low" skeleton />
+                <CachedImage uri={imgs[0]} style={styles.thumbSingle} resizeMode="cover" proxyWidth={singleProxyWidth} priority="low" />
               ) : imgs.length === 2 ? (
                 <View style={styles.thumbRow}>
-                  <CachedImage uri={imgs[0]} style={styles.thumbHalf} resizeMode="cover" proxyWidth={49} priority="low" skeleton />
+                  <CachedImage uri={imgs[0]} style={styles.thumbHalf} resizeMode="cover" proxyWidth={49} priority="low" />
                   <View style={styles.spacerH} />
-                  <CachedImage uri={imgs[1]} style={styles.thumbHalf} resizeMode="cover" proxyWidth={49} priority="low" skeleton />
+                  <CachedImage uri={imgs[1]} style={styles.thumbHalf} resizeMode="cover" proxyWidth={49} priority="low" />
                 </View>
               ) : imgs.length === 3 ? (
                 <View style={styles.thumbRow}>
-                  <CachedImage uri={imgs[0]} style={styles.thumbHalf} resizeMode="cover" proxyWidth={49} priority="low" skeleton />
+                  <CachedImage uri={imgs[0]} style={styles.thumbHalf} resizeMode="cover" proxyWidth={49} priority="low" />
                   <View style={styles.spacerH} />
                   <View style={styles.thumbHalfCol}>
-                    <CachedImage uri={imgs[1]} style={styles.thumbQuarter} resizeMode="cover" proxyWidth={49} priority="low" skeleton />
+                    <CachedImage uri={imgs[1]} style={styles.thumbQuarter} resizeMode="cover" proxyWidth={49} priority="low" />
                     <View style={styles.spacerV} />
-                    <CachedImage uri={imgs[2]} style={styles.thumbQuarter} resizeMode="cover" proxyWidth={49} priority="low" skeleton />
+                    <CachedImage uri={imgs[2]} style={styles.thumbQuarter} resizeMode="cover" proxyWidth={49} priority="low" />
                   </View>
                 </View>
               ) : (
                 <View style={styles.thumbGrid4}>
                   {imgs.slice(0, 4).map((imgUri, idx) => (
-                    <CachedImage key={getMappingKey(imgUri, idx)} uri={imgUri} style={{ width: 49, height: 49, marginRight: idx % 2 === 0 ? 2 : 0, marginBottom: idx < 2 ? 2 : 0 }} resizeMode="cover" proxyWidth={49} priority="low" skeleton />
+                    <CachedImage key={getMappingKey(imgUri, idx)} uri={imgUri} style={GRID4_TILE_STYLES[idx]} resizeMode="cover" proxyWidth={49} priority="low" />
                   ))}
                 </View>
               )}

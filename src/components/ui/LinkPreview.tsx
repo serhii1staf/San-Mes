@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useRecyclingState } from '@shopify/flash-list';
 import { View, Pressable, Linking } from 'react-native';
 import { Feather } from '@expo/vector-icons';
@@ -150,6 +150,9 @@ const LinkPreviewInner = React.memo(function LinkPreviewInner({ url, onError, te
   const [playing, setPlaying] = useRecyclingState(false, [url]);
   const [cardWidth, setCardWidth] = useState(0);
   const [fullscreen, setFullscreen] = useState<MediaViewerSource | null>(null);
+  // Latches true the first time the fullscreen viewer is opened; see `fullscreenEl` below.
+  const [viewerMounted, setViewerMounted] = useState(false);
+  const closeFullscreen = useCallback(() => setFullscreen(null), []);
 
   // Defer the actual <CachedImage /> mount by one RAF after this preview
   // first commits. The thumbnail decode (especially i.ytimg.com hqdefault
@@ -243,18 +246,10 @@ const LinkPreviewInner = React.memo(function LinkPreviewInner({ url, onError, te
     // would stay empty for the rest of that row's mounted life.
   }, [url, active]);
 
-  // Rewrite YouTube `hqdefault.jpg` (480×360) to `mqdefault.jpg` (320×180)
-  // even when the cached metadata still holds the old URL. Same byte/decode
-  // saving as the server-side switch in `api/unfurl.ts` — half the bytes,
-  // ~⅓ the decode time on weak devices — but applied transparently to all
-  // pre-existing cache entries on the user's device, so OTA delivery
-  // benefits immediately instead of waiting for the SWR refresh.
-  const ytThumb = (uri: string | undefined): string | undefined => {
-    if (!uri) return uri;
-    if (uri.indexOf('i.ytimg.com/vi/') === -1) return uri;
-    if (uri.indexOf('/hqdefault.') === -1) return uri;
-    return uri.replace('/hqdefault.', '/mqdefault.');
-  };
+  // The local re-declaration of `ytThumb` that used to sit here has been removed. It shadowed the
+  // module-level function of the same name a few dozen lines above, was byte-for-byte equivalent, and
+  // being declared in the render body meant one more closure allocated per card per render for no
+  // behavioural difference. The module-level one is used now.
 
   const accent = theme.colors.accent.primary;
   const subColor = textColor ? textColor : theme.colors.text.tertiary;
@@ -281,13 +276,24 @@ const LinkPreviewInner = React.memo(function LinkPreviewInner({ url, onError, te
 
   const handlePress = () => {
     if (data?.type === 'image' && data.image) {
+      setViewerMounted(true);
       setFullscreen({ kind: 'image', uri: data.image });
       return;
     }
     openLink();
   };
 
-  const fullscreenEl = isStatic ? null : <MediaViewerModal visible={!!fullscreen} source={fullscreen} onClose={() => setFullscreen(null)} />;
+  // ── THE VIEWER IS NOT MOUNTED UNTIL IT IS OPENED ONCE ─────────────────────
+  //
+  // This was `isStatic ? null : <MediaViewerModal visible={!!fullscreen} … />`, i.e. every link card on
+  // the FEED mounted a media viewer — a component that carries a WebView-bearing YouTube/Vimeo path —
+  // permanently, at `visible={false}`, on the chance that the user might tap an image link. The profile
+  // card escaped it only because it happens to pass `static`.
+  //
+  // `viewerMounted` latches on first open and stays true, which is the same keep-alive pattern
+  // `SlideUpSheet` and `ImageViewerModal` use: unmounting the moment `fullscreen` goes back to null
+  // would cut the close animation off, so the flag must not track `fullscreen`.
+  const fullscreenEl = isStatic || !viewerMounted ? null : <MediaViewerModal visible={!!fullscreen} source={fullscreen} onClose={closeFullscreen} />;
 
   // Skeleton (thin) during the first fetch.
   if (!resolved && !data) {
