@@ -401,8 +401,13 @@ export default function ProfileScreen() {
         }
       }
 
-      // Fetch original posts for reposts (with author profiles)
+      // Fetch original posts for reposts (with author profiles).
+      //
+      // DEFERRED behind the first paint — see the long note at the call site below.
+      // This used to run inline here, which put two more round trips between the
+      // posts arriving and anything reaching the screen.
       let originalsMap: Record<string, any> = {};
+      const fetchRepostOriginals = async () => {
       if (originalPostIds.length > 0) {
         const fetched = await Promise.all(
           originalPostIds.map((oid) => apiGet<any>(`/v1/posts/${encodeURIComponent(oid)}`).then((r) => r.data).catch(() => null)),
@@ -428,6 +433,7 @@ export default function ProfileScreen() {
           }
         }
       }
+      };
 
       // Map posts in two halves with a microtask yield in between. The
       // previous 100-item single-pass map ran ~120–250 ms of synchronous
@@ -482,31 +488,75 @@ export default function ProfileScreen() {
       // ~25-30ms — comfortably below the threshold even with
       // repost-chain walking on top.
       const CHUNK_SIZE = 5;
-      const mapped: Post[] = [];
-      for (let i = 0; i < data.length; i += CHUNK_SIZE) {
-        const chunk = data.slice(i, i + CHUNK_SIZE).map(buildPost);
-        mapped.push(...chunk);
-        // Yield to the macrotask queue so any queued input/animation
-        // frame can run between chunks. A microtask
-        // (await Promise.resolve()) does NOT split the task boundary —
-        // microtasks drain inside the current macrotask. setTimeout(0)
-        // hands back to the event loop, breaking the synchronous burst
-        // that previously landed as a 123ms+ long task while the user
-        // was scrolling through profile.
-        if (i + CHUNK_SIZE < data.length) {
-          await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      const buildAll = async (): Promise<Post[]> => {
+        const acc: Post[] = [];
+        for (let i = 0; i < data.length; i += CHUNK_SIZE) {
+          const chunk = data.slice(i, i + CHUNK_SIZE).map(buildPost);
+          acc.push(...chunk);
+          // Yield to the macrotask queue so any queued input/animation
+          // frame can run between chunks. A microtask
+          // (await Promise.resolve()) does NOT split the task boundary —
+          // microtasks drain inside the current macrotask. setTimeout(0)
+          // hands back to the event loop, breaking the synchronous burst
+          // that previously landed as a 123ms+ long task while the user
+          // was scrolling through profile.
+          if (i + CHUNK_SIZE < data.length) {
+            await new Promise<void>((resolve) => setTimeout(resolve, 0));
+          }
         }
-      }
-      setProfilePosts(mapped);
+        return acc;
+      };
+
       // Persist the snapshot AFTER the next interaction window so the
       // JSON.stringify of ~100 posts (15–40 KB) doesn't pile up on the same
       // RAF as `setProfilePosts` reconciliation. That stringify on the
       // synchronous path was the residual ~130 ms long task users saw a
       // few seconds after re-entering the profile tab. The cache stays
       // correct because nothing else reads it before the next paint.
-      InteractionManager.runAfterInteractions(() => {
-        kvSetJSON(MY_POSTS_CACHE_KEY, mapped);
-      });
+      const commit = (posts: Post[]) => {
+        setProfilePosts(posts);
+        InteractionManager.runAfterInteractions(() => {
+          kvSetJSON(MY_POSTS_CACHE_KEY, posts);
+        });
+      };
+
+      // ── PAINT AFTER ONE ROUND TRIP, NOT THREE ─────────────────────────────
+      //
+      // This function used to be strictly sequential: fetch the posts, then
+      // await the originals behind every repost, then await any originals those
+      // were themselves reposts of, THEN map everything and call
+      // `setProfilePosts` exactly once at the very end. Three chained round
+      // trips before a single pixel of post content, and on a cold cache that is
+      // the entire delay the user sees on the profile tab. At 150ms each that is
+      // ~450ms of network latency where ~150ms of it was all that was needed to
+      // draw the posts.
+      //
+      // The chained requests only enrich REPOSTS — they attach the quoted post's
+      // author, body and images. Every non-repost card, which is the majority,
+      // was waiting on data it never uses.
+      //
+      // So: commit what one round trip already bought, then enrich. The repost
+      // cards gain their quoted content on the second commit.
+      //
+      // This is not a new pattern in this codebase — `app/profile/[id].tsx`
+      // already works exactly this way (its posts render from the entity store
+      // and a separate effect resolves `resolvedOriginals` afterwards). The
+      // own-profile tab was the odd one out, and making it match means both
+      // profile screens now have the same first-paint behaviour.
+      //
+      // The second commit is nearly free when it changes nothing: `feedStore`'s
+      // `setProfilePosts` bails out on `postsEqual`, so a profile with no
+      // reposts pays for one commit exactly as before.
+      const firstPaint = await buildAll();
+      commit(firstPaint);
+
+      if (originalPostIds.length > 0) {
+        await fetchRepostOriginals();
+        // `buildPost` closes over `originalsMap`, which `fetchRepostOriginals`
+        // has now populated, so re-running the same build attaches the quoted
+        // posts. Same input rows, richer output.
+        commit(await buildAll());
+      }
     } catch {}
   }, [user?.id]);
 
