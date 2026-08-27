@@ -993,6 +993,10 @@ const ReorderHandle = React.memo(function ReorderHandle({
  *
  * Opacity is compositor-only, so the row's layout is now identical in both modes.
  */
+// Module-level so the style object is created once for the whole list rather than per row per
+// render. `rotate` is a transform, so it never triggers layout.
+const PIN_TILT = { transform: [{ rotate: '45deg' }] } as const;
+
 const PinMarker = React.memo(function PinMarker({
   editProgress,
   color,
@@ -1003,7 +1007,16 @@ const PinMarker = React.memo(function PinMarker({
   const style = useAnimatedStyle(() => ({ opacity: 1 - editProgress.value }));
   return (
     <Reanimated.View style={style}>
-      <MaterialIcons name="push-pin" size={13} color={color} />
+      {/* TILTED, as asked. MaterialIcons ships exactly one pushpin (`push-pin`) and it is
+          upright — there is no pre-angled variant in that font to switch to, so the angle is a
+          transform. 45deg clockwise leaves the head high on the right and the needle pointing
+          down-left, which is how a pin actually sits in a board.
+
+          Size drops 13 -> 12 to pay for it: the glyph is 0.58 x 0.83 em, so rotating it 45deg
+          grows its diagonal footprint to about a full em. At 13 the tilted ink would be wider
+          than the upright glyph was and would crowd the unread pill next to it in the row's
+          status rail. A transform costs no layout, so the rail itself does not move. */}
+      <MaterialIcons name="push-pin" size={12} color={color} style={PIN_TILT} />
     </Reanimated.View>
   );
 });
