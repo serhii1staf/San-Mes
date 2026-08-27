@@ -546,20 +546,27 @@ export default function EditProfileScreen() {
             )}
             {/* Re-open the position editor without re-uploading. Only
                 shown when there's something to position. */}
-            {bannerUri && (
+            {/* ── EDITING AFFORDANCES ARE HIDDEN IN VIEW MODE ────────────────────
+                Asked for: "Расположить" and "Добавить баннер" should not be there until "Изменить" is
+                tapped. Gating the pills is the honest version of the toggle — a control that is
+                visible but does nothing is worse than one that is absent, and previously the whole
+                banner area stayed tappable in view mode. */}
+            {isEditing && bannerUri ? (
               <Pressable onPress={adjustBanner} hitSlop={8} style={styles.bannerAdjustPill}>
                 <Feather name="move" size={12} color="#FFFFFF" />
                 <RNText style={styles.bannerEditText} allowFontScaling={false}>
                   {t('edit_profile.banner.adjust')}
                 </RNText>
               </Pressable>
-            )}
-            <View style={styles.bannerEditPill}>
-              <Feather name="edit-2" size={12} color="#FFFFFF" />
-              <RNText style={styles.bannerEditText} allowFontScaling={false}>
-                {t('edit_profile.add_banner')}
-              </RNText>
-            </View>
+            ) : null}
+            {isEditing ? (
+              <View style={styles.bannerEditPill}>
+                <Feather name="edit-2" size={12} color="#FFFFFF" />
+                <RNText style={styles.bannerEditText} allowFontScaling={false}>
+                  {t('edit_profile.add_banner')}
+                </RNText>
+              </View>
+            ) : null}
           </View>
         </Pressable>
 
@@ -574,18 +581,23 @@ export default function EditProfileScreen() {
             >
               <Avatar emoji={selectedEmoji} size="xl" />
             </View>
-            <View style={[styles.avatarBadge, { backgroundColor: accent }]}>
-              <Feather name="edit-2" size={11} color="#FFFFFF" />
-            </View>
+            {/* The little pencil badge on the avatar is an affordance too — gone in view mode. */}
+            {isEditing ? (
+              <View style={[styles.avatarBadge, { backgroundColor: accent }]}>
+                <Feather name="edit-2" size={11} color="#FFFFFF" />
+              </View>
+            ) : null}
           </Pressable>
-          <Pressable
-            onPress={() => setShowEmojiPicker(true)}
-            style={{ marginTop: 10, alignSelf: 'center' }}
-          >
-            <Text variant="caption" weight="semibold" color={accent}>
-              {t('edit_profile.change_emoji')}
-            </Text>
-          </Pressable>
+          {isEditing ? (
+            <Pressable
+              onPress={() => setShowEmojiPicker(true)}
+              style={{ marginTop: 10, alignSelf: 'center' }}
+            >
+              <Text variant="caption" weight="semibold" color={accent}>
+                {t('edit_profile.change_emoji')}
+              </Text>
+            </Pressable>
+          ) : null}
         </View>
 
         {/* ── FIELDS: NO OUTER CARD, LABELS INSIDE, WIDER ───────────────────────
@@ -662,19 +674,23 @@ export default function EditProfileScreen() {
                   {link.url}
                 </Text>
               </Pressable>
-              <Pressable onPress={() => handleRemoveLink(index)} hitSlop={6}>
-                <Feather name="x-circle" size={18} color={theme.colors.text.tertiary} />
-              </Pressable>
+              {/* Remove-link "x" is an editing control; existing links stay readable in view mode. */}
+              {isEditing ? (
+                <Pressable onPress={() => handleRemoveLink(index)} hitSlop={6}>
+                  <Feather name="x-circle" size={18} color={theme.colors.text.tertiary} />
+                </Pressable>
+              ) : null}
             </View>
           ))}
-          {links.length < 3 && (
+          {/* "Добавить ссылку" only in edit mode — asked for explicitly. */}
+          {isEditing && links.length < 3 ? (
             <Pressable onPress={handleAddLink} style={styles.addLinkRow}>
               <Feather name="plus-circle" size={18} color={accent} />
               <Text variant="caption" weight="medium" color={accent}>
                 {t('edit_profile.add_link')}
               </Text>
             </Pressable>
-          )}
+          ) : null}
         </View>
 
         {/* Privacy — owner-controlled screenshot lock. Per-account: the flag

@@ -246,6 +246,10 @@ function ImageViewerModalComponent({
 
   const enter = useSharedValue(0);
   const dragY = useSharedValue(0);
+  // 0 = chrome in place, 1 = chrome fully off its own edge. Driven only by the close paths that do NOT
+  // involve the finger; a drag already carries the chrome away through `dragY`. See the long note
+  // beside `CHROME_EXIT_MS`.
+  const chromeExit = useSharedValue(0);
   /**
    * ── PRESENTATION TRAVEL, SEPARATE FROM THE DRAG ───────────────────────────
    *
@@ -296,6 +300,10 @@ function ImageViewerModalComponent({
       setShown(payload);
       setMounted(true);
       dragY.value = 0;
+      // Chrome starts in place on every open. Without this reset a viewer closed by the X would
+      // reopen with its buttons already parked off-screen, since `chromeExit` is a shared value that
+      // survives the unmount.
+      chromeExit.value = 0;
       // Reset zoom on every open, so a photo closed while enlarged does not reopen enlarged.
       zoom.value = 1;
       zoomPanX.value = 0;
@@ -318,6 +326,8 @@ function ImageViewerModalComponent({
     } else if (mounted) {
       // Parent-driven close (e.g. the edit action navigating away) gets the SAME downward exit as
       // the X and the flick, so there is no third way for a photo to leave the screen.
+      // Chrome leaves first, on its own faster curve — see `CHROME_EXIT_MS`.
+      chromeExit.value = withTiming(1, { duration: CHROME_EXIT_MS, easing: Easing.in(Easing.cubic) });
       slide.value = withTiming(SCREEN_H, { duration: 320, easing: Easing.in(Easing.cubic) });
       enter.value = withTiming(0, { duration: 320, easing: Easing.in(Easing.cubic) }, (finished) => {
         if (finished) runOnJS(setMounted)(false);
@@ -359,6 +369,13 @@ function ImageViewerModalComponent({
     // Now on `slide` with an ACCELERATING curve, and 260 ms rather than 200. The old pairing
     // (`dragY` + `Easing.out`) put peak speed on frame one, which is what made this feel like a
     // snap regardless of how long the animation nominally lasted.
+    //
+    // Chrome leaves on its own, faster curve so the buttons are clear of the screen before the photo
+    // is — matching what a drag already does, and fixing the "tapping the X makes the buttons
+    // disappear with an artifact" report. Without this the only thing moving them was `enter`
+    // returning to its 22 pt entry offset, which is not far enough to leave, so they hard-cut when
+    // `mounted` flipped. See the note beside `CHROME_EXIT_MS`.
+    chromeExit.value = withTiming(1, { duration: CHROME_EXIT_MS, easing: Easing.in(Easing.cubic) });
     slide.value = withTiming(SCREEN_H, { duration: 320, easing: Easing.in(Easing.cubic) });
     enter.value = withTiming(0, { duration: 320, easing: Easing.in(Easing.cubic) }, (finished) => {
       if (finished) {
@@ -366,7 +383,7 @@ function ImageViewerModalComponent({
         runOnJS(onClose)();
       }
     });
-  }, [slide, enter, onClose]);
+  }, [slide, enter, onClose, chromeExit]);
 
   /**
    * Hand the close back to the parent WITHOUT animating anything.
@@ -522,13 +539,42 @@ function ImageViewerModalComponent({
   const CHROME_EXIT_UP = -160;
   const CHROME_EXIT_DOWN = 220;
 
+  // ── ...AND THE BUTTON-DRIVEN CLOSE NEVER USED THAT EXIT DISTANCE ───────────
+  //
+  // Reported: dismissing by DRAG makes the buttons disappear correctly, but tapping the X leaves them
+  // "disappearing with an artifact, not smoothly, as if they linger".
+  //
+  // Correct, and the two styles below show why. The travel is the sum of two terms:
+  //
+  //     interpolate(enter,     [0, 1],  [-22, 0])            <- entry offset
+  //     interpolate(|dragY|,   [0, 80], [0, CHROME_EXIT_UP]) <- exit travel
+  //
+  // Only the SECOND term moves the chrome far enough to leave the screen, and it is driven by the
+  // finger. On a drag, `dragY` grows and the chrome slides 160 pt off its edge — which is the path
+  // that works. On the X, `dragY` stays 0 forever: the only thing that changes is `enter` going 1 -> 0,
+  // which walks the chrome back to its 22 pt ENTRY offset. Twenty-two points. So the buttons sit
+  // essentially still for the whole 320 ms photo exit and then vanish in one frame when `mounted`
+  // flips — a hard cut at the end of an animation, over a backdrop that has already gone.
+  //
+  // The previous round of this fix replaced the chrome's opacity with translation, for a real reason
+  // (a glass surface with `opacity: 0` anywhere in its parent chain loses its glass — see the long
+  // note above). But it wired the full exit distance to the drag term only and left the button path
+  // with nothing but the entry offset. The fade used to cover that case; nothing replaced it.
+  //
+  // `chromeExit` is a third term that the close paths drive directly, so leaving by button travels the
+  // same distance as leaving by finger. It is deliberately faster than the photo's 320 ms exit: the
+  // drag behaviour the user calls correct has the controls gone "well before the photo is", and this
+  // matches that rather than inventing a different rhythm.
+  const CHROME_EXIT_MS = 160;
+
   // Top chrome (close button, author row) slides DOWN into place — from -22 pt to 0.
   const topChromeStyle = useAnimatedStyle(() => ({
     transform: [
       {
         translateY:
           interpolate(enter.value, [0, 1], [-22, 0], Extrapolation.CLAMP) +
-          interpolate(Math.abs(dragY.value), [0, 80], [0, CHROME_EXIT_UP], Extrapolation.CLAMP),
+          interpolate(Math.abs(dragY.value), [0, 80], [0, CHROME_EXIT_UP], Extrapolation.CLAMP) +
+          chromeExit.value * CHROME_EXIT_UP,
       },
     ],
   }));
@@ -539,7 +585,8 @@ function ImageViewerModalComponent({
       {
         translateY:
           interpolate(enter.value, [0, 1], [22, 0], Extrapolation.CLAMP) +
-          interpolate(Math.abs(dragY.value), [0, 80], [0, CHROME_EXIT_DOWN], Extrapolation.CLAMP),
+          interpolate(Math.abs(dragY.value), [0, 80], [0, CHROME_EXIT_DOWN], Extrapolation.CLAMP) +
+          chromeExit.value * CHROME_EXIT_DOWN,
       },
     ],
   }));
