@@ -9,6 +9,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from '../../src/components/ui/AppBlurView';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../../src/theme';
+import { pinnedTabsRevealConfig } from '../../src/theme/motion';
 import { Text, Avatar } from '../../src/components/ui';
 import { LinkedText } from '../../src/components/ui/LinkedText';
 import { CachedImage, prefetchImages } from '../../src/components/ui/CachedImage';
@@ -1053,17 +1054,24 @@ export default function ProfileScreen() {
   // back a flat pill. That is the "glass is there sometimes and gone other times" report.
   //
   // The slide now carries the entire hide: the bar is anchored `top: 0`, so translating it up by more
-  // than its own height parks it completely above the viewport, and the same 24 pt of scroll brings it
-  // down into place. That is also what a sticky bar is supposed to look like, and it is what the
-  // selection action bar and the tab bar in this app already do for exactly this reason.
+  // than its own height parks it completely above the viewport, and scrolling brings it down into
+  // place. That is also what a sticky bar is supposed to look like, and it is what the selection
+  // action bar and the tab bar in this app already do for exactly this reason.
   //
   // `pinnedBarTop + 64` over-covers the bar's real height (`insets.top + 6` padding + a ~36 pt pill row
   // + 10 pt padding ≈ `insets.top + 52`, and `pinnedBarTop` is `insets.top + 8`). Over-travelling is
   // free — it is off-screen either way; under-travelling would leave a visible sliver pinned at the top.
+  //
+  // The ramp itself (how long a scroll distance the reveal takes, and its easing) now comes from
+  // `pinnedTabsRevealConfig` in src/theme/motion.ts, shared with `app/profile/[id].tsx`. It used to be
+  // a 24 pt LINEAR window written out here and duplicated there — 24 pt of finger driving ~115 pt of
+  // bar, with a velocity corner at each end, which is the "it appears too abruptly" report. See that
+  // file for the full reasoning; the reveal still ends exactly at `end` so the inline-to-pinned handoff
+  // stays pixel-aligned.
   const pinnedTabsTranslateY = useMemo(() => {
     const end = tabsOffsetY > pinnedBarTop ? tabsOffsetY - pinnedBarTop : Number.MAX_SAFE_INTEGER;
-    const start = Math.max(0, end - 24);
-    return scrollY.interpolate({ inputRange: [start, end], outputRange: [-(pinnedBarTop + 64), 0], extrapolate: 'clamp' });
+    const { inputRange, outputRange } = pinnedTabsRevealConfig(end, -(pinnedBarTop + 64));
+    return scrollY.interpolate({ inputRange, outputRange, extrapolate: 'clamp' });
   }, [scrollY, tabsOffsetY, pinnedBarTop]);
   // Gate tappability to when the bar is actually visible. A single listener
   // flips a boolean ONLY when scrollY crosses the threshold (compared against

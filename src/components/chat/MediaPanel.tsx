@@ -148,13 +148,60 @@ function MediaPanelComponent({
   const [preview, setPreview] = useState<Preview | null>(null);
   const previewSV = useSharedValue(0);
 
+  // ── THE MENU WAITS FOR THE DIM ──────────────────────────────────────────────
+  //
+  // Reported, with liquid glass on: hold a GIF and the action menu "renders
+  // incompletely and disappears with an artifact".
+  //
+  // `previewSV` drives three things at once — the backdrop's opacity, the
+  // sticker's opacity, and (previously) the stack's scale. The MENU was given
+  // none of them. It had no opacity of its own by design, because an alpha on or
+  // above a `GlassBg` destroys the native glass (expo/expo#41024), and the fade
+  // had already been moved off the stack onto the sticker for that reason.
+  //
+  // The consequence was not a fade problem, it was a SAMPLING problem. With no
+  // opacity of its own the menu was fully visible from frame one — while the
+  // backdrop behind it was still transparent. So for the first 160 ms a glass
+  // panel sat refracting the undimmed chat: a bright, busy, high-contrast scene.
+  // Then the backdrop darkened underneath it and the glass re-sampled to
+  // something completely different. On dismiss the same thing ran backwards: the
+  // dim left first and the glass was briefly refracting the bright chat again
+  // before the modal was torn down. Glass that changes what it is refracting
+  // mid-animation is exactly what "renders incompletely, then disappears with an
+  // artifact" describes, and it can only happen on the glass path — which is what
+  // the report says.
+  //
+  // So the menu is now MOUNTED ONLY WHILE THE DIM IS ESTABLISHED:
+  //   open  — the backdrop and sticker animate in, and the menu mounts when that
+  //           animation COMPLETES, so the glass's first composite already has a
+  //           settled 78%-black backdrop to refract.
+  //   close — the menu unmounts FIRST, synchronously, and only then does the dim
+  //           animate away. The glass is gone before the scene behind it changes.
+  //
+  // Mount/unmount rather than an alpha or a transform, because that is the one
+  // remedy this codebase has repeatedly found to be reliable for glass — the tab
+  // bar's selection pill, the compose menu and the image viewer's chrome all hide
+  // by not existing. A remount is also what gives a glass view a clean
+  // composition pass to initialise into.
+  //
+  // Visually this reads as a short stagger: the sticker enlarges, then the menu
+  // arrives on top of it. That is what iOS's own long-press menus do.
+  const [menuMounted, setMenuMounted] = useState(false);
+
   const openPreview = useCallback((p: Preview) => {
     setPreview(p);
-    previewSV.value = withTiming(1, { duration: 160, easing: Easing.out(Easing.cubic) });
+    setMenuMounted(false);
+    previewSV.value = withTiming(1, { duration: 160, easing: Easing.out(Easing.cubic) }, (finished) => {
+      // `finished` is false when a newer preview superseded this one; that run
+      // owns the mount state.
+      if (finished) runOnJS(setMenuMounted)(true);
+    });
   }, [previewSV]);
 
   // Animated dismiss for the backdrop tap (panel stays open).
   const closePreview = useCallback(() => {
+    // Menu first, in this commit, before the dim starts to lift.
+    setMenuMounted(false);
     previewSV.value = withTiming(0, { duration: 130 }, (finished) => {
       if (finished) runOnJS(setPreview)(null);
     });
@@ -165,6 +212,7 @@ function MediaPanelComponent({
   // callback firing into an unmounted tree.
   const tearDownPreview = useCallback(() => {
     previewSV.value = 0;
+    setMenuMounted(false);
     setPreview(null);
   }, [previewSV]);
 
@@ -180,14 +228,43 @@ function MediaPanelComponent({
   // there, then it disappears".
   //
   // The fade is not lost, only moved: it now lives on the STICKER, which has no glass under it (see
-  // `previewStickerStyle`). The stack keeps the scale, the backdrop keeps its own fade, and the menu
-  // arrives on a pure transform.
-  const previewCardStyle = useAnimatedStyle(() => ({
+  // `previewStickerStyle`). The backdrop keeps its own fade.
+  //
+  // ── AND NOW THE SCALE HAS MOVED OFF THE STACK TOO ───────────────────────────
+  //
+  // The stack kept the scale after the fade was taken off it, which still left an animated
+  // TRANSFORM on a node containing a `GlassBg`. Removing the alpha stopped the glass being
+  // discarded outright, but the menu was still being geometrically animated while the native
+  // effect composited. Combined with the sampling problem described on `menuMounted`, that is
+  // the reported artifact.
+  //
+  // The scale is now on the sticker, alongside the fade it already had. To the eye the
+  // enter/exit motion is unchanged — the sticker is the thing that visibly grows — while no
+  // glass node is transformed at any point. The stack is a plain `View` again and animates
+  // nothing.
+  const previewStickerStyle = useAnimatedStyle(() => ({
+    opacity: previewSV.value,
     transform: [{ scale: 0.86 + previewSV.value * 0.14 }],
   }));
-  // The sticker's own fade. Safe here — nothing below this node is a glass view.
-  const previewStickerStyle = useAnimatedStyle(() => ({ opacity: previewSV.value }));
   const backdropStyle = useAnimatedStyle(() => ({ opacity: previewSV.value }));
+
+  // The menu's own presentation. Two branches, because the two paths have genuinely different
+  // constraints — the same split, for the same reason, as `ComposeMenu` in app/(tabs)/messages.tsx.
+  //
+  //   GLASS OFF — a plain fade in step with the backdrop, plus the scale the stack used to
+  //               supply. Entirely safe: there is no glass under this node. This is also a small
+  //               improvement on the old behaviour, where the menu had no opacity of its own and
+  //               so appeared at full strength over a not-yet-dimmed screen.
+  //   GLASS ON  — NO animated props whatsoever. An alpha destroys the glass and a transform
+  //               moves it while it composites, so it is mount-gated instead (`menuMounted`).
+  const previewMenuStyle = useAnimatedStyle(() => {
+    'worklet';
+    if (glassActive) return {};
+    return {
+      opacity: previewSV.value,
+      transform: [{ scale: 0.86 + previewSV.value * 0.14 }],
+    };
+  }, [glassActive]);
 
   const hasRecents = recentEmoji.length > 0;
 
@@ -472,7 +549,9 @@ function MediaPanelComponent({
           </Reanimated.View>
 
           <View style={styles.previewCenter} pointerEvents="box-none">
-            <Reanimated.View style={[styles.previewStack, previewCardStyle]}>
+            {/* A plain View: the scale that used to live here moved to the sticker so no
+                animated transform sits above the menu's GlassBg. See `previewStickerStyle`. */}
+            <View style={styles.previewStack}>
               {/* The sticker itself, on nothing. No card behind it, so a cut-out sticker shows the dimmed
                   screen through its transparent parts instead of a panel-coloured rectangle — the same
                   reasoning as the chat bubble. */}
@@ -533,7 +612,13 @@ function MediaPanelComponent({
                   And it was a flat elevated surface while the rest of the app's chrome is liquid glass. It
                   sits over a dimmed screen with a sticker behind it, which is exactly the situation glass
                   is for — the same treatment as the switcher pill below and the viewer buttons. */}
-              <View style={[styles.menu, glassActive ? null : { backgroundColor: theme.colors.background.elevated }]}>
+              {/* MOUNTED ONLY ONCE THE DIM IS ESTABLISHED, on the glass path. The glass composites
+                  against whatever is behind it, so mounting it before the 78%-black backdrop has
+                  arrived — or leaving it up after the backdrop has gone — makes it refract the
+                  bright chat instead. Same `(glassActive ? mounted : true)` shape as `ComposeMenu`.
+                  See the long note on `menuMounted`. */}
+              {(glassActive ? menuMounted : true) ? (
+              <Reanimated.View style={[styles.menu, glassActive ? null : { backgroundColor: theme.colors.background.elevated }, previewMenuStyle]}>
                 {glassActive ? (
                   <GlassBg
                     borderRadius={16}
@@ -601,8 +686,9 @@ function MediaPanelComponent({
                     }}
                   />
                 ) : null}
-              </View>
-            </Reanimated.View>
+              </Reanimated.View>
+              ) : null}
+            </View>
           </View>
           </View>
         </Modal>

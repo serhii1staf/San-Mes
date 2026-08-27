@@ -7,6 +7,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from '../../src/components/ui/AppBlurView';
 import * as Clipboard from 'expo-clipboard';
 import { useTheme } from '../../src/theme';
+import { pinnedTabsRevealConfig } from '../../src/theme/motion';
 import { Text, Avatar } from '../../src/components/ui';
 import { LinkedText } from '../../src/components/ui/LinkedText';
 import { ModalStatusBar } from '../../src/components/ui/ModalStatusBar';
@@ -706,10 +707,16 @@ export default function UserProfileScreen() {
   //
   // `pinnedBarTop + 64` over-covers the bar's real height. Over-travelling is free (it is off-screen
   // either way); under-travelling would leave a visible sliver pinned at the top.
+  //
+  // The ramp — how much scroll the reveal spans, and its easing — comes from
+  // `pinnedTabsRevealConfig` in src/theme/motion.ts, shared with `app/(tabs)/profile.tsx`. Both screens
+  // used to write out a 24 pt LINEAR window here, which drove ~115 pt of bar from 24 pt of finger and
+  // started and stopped instantly: the "the header appears too abruptly" report. The reveal still ends
+  // exactly at `end`, so the inline-to-pinned handoff stays pixel-aligned.
   const pinnedTabsTranslateY = useMemo(() => {
     const end = tabsOffsetY > pinnedBarTop ? tabsOffsetY - pinnedBarTop : Number.MAX_SAFE_INTEGER;
-    const start = Math.max(0, end - 24);
-    return scrollY.interpolate({ inputRange: [start, end], outputRange: [-(pinnedBarTop + 64), 0], extrapolate: 'clamp' });
+    const { inputRange, outputRange } = pinnedTabsRevealConfig(end, -(pinnedBarTop + 64));
+    return scrollY.interpolate({ inputRange, outputRange, extrapolate: 'clamp' });
   }, [scrollY, tabsOffsetY, pinnedBarTop]);
   // Gate tappability to when the bar is actually visible. A single listener
   // flips a boolean ONLY when scrollY crosses the threshold (compared against a

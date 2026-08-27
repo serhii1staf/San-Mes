@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, useSyncExternalStore, useImperativeHandle } from 'react';
-import { View, FlatList, TextInput, Pressable, Platform, ActivityIndicator, StyleSheet, Text as RNText, Modal, Alert, InteractionManager, ScrollView, Dimensions, Keyboard, AppState } from 'react-native';
+import { View, FlatList, TextInput, Pressable, Platform, ActivityIndicator, StyleSheet, Text as RNText, Modal, Alert, InteractionManager, ScrollView, Dimensions, Keyboard, AppState, type LayoutChangeEvent } from 'react-native';
 import { useReanimatedKeyboardAnimation, useKeyboardHandler } from 'react-native-keyboard-controller';
 import { FlashList, type FlashListRef } from '@shopify/flash-list';
 import Reanimated, { useAnimatedStyle, useSharedValue, withTiming, runOnJS, Easing } from 'react-native-reanimated';
@@ -966,6 +966,44 @@ export default function CommentsScreen() {
   const bgTransparent = bgColor + '00';
   const { content: headerContentHeight, gradient: headerGradientHeight } = headerScrimHeights(insets.top);
 
+  // ── THE TITLE HAS TO BE CENTRED ON THE SCREEN, NOT IN THE LEFTOVER GAP ─────
+  //
+  // Reported: the comments title should be centred, i.e. it should sit a little
+  // further left than it does.
+  //
+  // Correct, and the header explains why in its own comment: it is a three-column
+  // row where the side columns hug their content, so a `flex: 1` title centres
+  // itself in the space BETWEEN them. That is only the same as screen-centre when
+  // the two side columns are equally wide, and here they were not — the back pill
+  // carries a chevron plus the word "Назад" (~100 pt) while the right-hand spacer
+  // was a hardcoded `width: 24`. The title was therefore pushed right by about
+  // half the difference, ~38 pt.
+  //
+  // The existing comment claimed iOS does this deliberately and that fixing it
+  // would need absolute positioning, which would let a long title run under the
+  // label. The first half is true of a bare chevron; it is not true once the
+  // affordance grew a text label. The second half is avoidable: matching the
+  // spacer to the MEASURED pill width keeps all three columns in flow, so the
+  // title is centred on the screen AND still truncates inside its own column
+  // instead of sliding under the pill.
+  //
+  // Measured rather than hardcoded because the label is localised ("Назад" /
+  // "Back"), the pill has two branches with different paddings (glass 8/16 vs
+  // bordered 6/14), and the font scales with the user's text-size setting. Any
+  // constant here would be wrong on some combination of those.
+  //
+  // `chat/[id]` has the same three-column header and the same asymmetry; left
+  // alone for now because the user asked about comments and the chat title is a
+  // participant name whose column also hosts an avatar, so it is not the same
+  // change.
+  const [backPillWidth, setBackPillWidth] = useState(0);
+  const handleBackPillLayout = useCallback((e: LayoutChangeEvent) => {
+    const w = Math.round(e.nativeEvent.layout.width);
+    // Guard the set: `onLayout` fires on every layout pass, and an unconditional
+    // setState here would re-render the whole comments screen each time.
+    setBackPillWidth((prev) => (prev === w ? prev : w));
+  }, []);
+
   // Defer all non-critical mount work past the navigation transition so the
   // first paint carries only the cached header + cached comments. The
   // network fetches (`loadComments`, `loadPost`, repost-original lookup)
@@ -1798,10 +1836,17 @@ export default function CommentsScreen() {
               The three-column shape is copied from the chat header rather than invented:
               the side columns hug their content and never shrink (`flexShrink: 0`) so the
               label is always shown in full, and the title takes the remaining space
-              (`flex: 1`) and truncates within it. That means the title is centred in the
-              gap between the two columns rather than on the screen — iOS does the same,
-              and the chat header documents it as deliberate. Perfectly centring it would
-              need absolute positioning, which lets a long title run under the label. */}
+              (`flex: 1`) and truncates within it.
+
+              This used to read "the title is centred in the gap between the two columns
+              rather than on the screen — iOS does the same, and perfectly centring it
+              would need absolute positioning". Both halves were wrong once the back
+              affordance grew a text label: a gap-centred title is only screen-centred
+              when the side columns match, and the right column was a hardcoded 24 pt
+              against a ~100 pt pill, so the title sat ~38 pt right of centre. The right
+              column now mirrors the pill's MEASURED width, which centres the title on the
+              screen with all three columns still in flow — so no absolute positioning and
+              no risk of a long title sliding under the label. See `backPillWidth`. */}
           {/* ── SAME BACK AFFORDANCE AS THE CHAT HEADER ───────────────────────────
               Asked for as "put an outline around the back button in comments, like in chat".
 
@@ -1817,7 +1862,7 @@ export default function CommentsScreen() {
               squeeze the affordance or truncate its text — the chat header documents the same
               constraint for the same reason. */}
           {glassActive ? (
-            <Pressable onPress={() => router.back()} hitSlop={8} style={styles.backPillPress}>
+            <Pressable onPress={() => router.back()} hitSlop={8} style={styles.backPillPress} onLayout={handleBackPillLayout}>
               <NativeGlassView glassStyle="regular" isInteractive colorScheme={theme.isDark ? 'dark' : 'light'} style={styles.backPillGlass}>
                 <MaterialIcons name="chevron-left" size={22} color={theme.colors.text.primary} />
                 <Text variant="caption" weight="semibold" numberOfLines={1} color={theme.colors.text.primary} style={styles.backLabel}>
@@ -1829,6 +1874,7 @@ export default function CommentsScreen() {
             <Pressable
               onPress={() => router.back()}
               hitSlop={8}
+              onLayout={handleBackPillLayout}
               style={[styles.backPill, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}
             >
               <MaterialIcons name="chevron-left" size={22} color={theme.colors.text.primary} />
@@ -1840,7 +1886,11 @@ export default function CommentsScreen() {
           <View style={styles.headerTitleWrap}>
             <Text variant="body" weight="bold" numberOfLines={1}>{t('comments.title')}</Text>
           </View>
-          <View style={styles.headerSpacer} />
+          {/* Mirrors the back pill's measured width so the title's column is centred on
+              the SCREEN rather than in the leftover gap — see the note on
+              `backPillWidth`. Falls back to the original 24 for the single frame before
+              the pill has been measured. */}
+          <View style={[styles.headerSpacer, backPillWidth > 0 ? { width: backPillWidth } : null]} />
         </View>
       </View>
 
