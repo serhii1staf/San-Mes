@@ -1499,6 +1499,48 @@ export default function ChatScreen() {
   // persistence, realtime channel + publishes), while `participantId` (the
   // OTHER user's id) stays separate for display + notification routing.
   const [conversationId, setConversationId] = useState<string>(() => id || '');
+
+  // ── DO NOT DO EVERYTHING TWICE ON A PROFILE-INITIATED OPEN ────────────────
+  //
+  // Reported as the chat "loading something incomprehensible, or reloading". It was doing exactly
+  // that, and this is the mechanism.
+  //
+  // `conversationId` above starts as the raw route `id`. When the chat was opened from a profile that
+  // id is the peer's USER id, not a conversation id — the canonical id only arrives later, from the
+  // `POST /v1/conversations` in the reconciliation effect further down. Every effect keyed on
+  // `conversationId` therefore ran once against an id that cannot work, and then a second time after
+  // `setConversationId` re-keyed them:
+  //
+  //   • a `GET /v1/conversations/<peer user id>/messages?limit=200` that is GUARANTEED to fail — the
+  //     poll's own catch says so: "403 (opened under a peer user id before the conversation row
+  //     exists)" — followed by a second, real 200-row GET under the canonical id;
+  //   • two `seedMessages` MMKV reads (its deps include ids that change on the migration);
+  //   • two `kvWarm` + tail parses from the AsyncStorage fallback;
+  //   • two image-warm batches;
+  //   • two `markChatOpened` writes, each re-sorting and re-rendering the STILL-MOUNTED messages tab;
+  //   • two Ably channel attaches.
+  //
+  // So: gate the network work on the id being SETTLED. `routeIdIsCanonical` answers that
+  // synchronously for the two cases where it can be answered synchronously — which are the common
+  // ones, so nothing gets slower for them:
+  //
+  //   (a) the messages list passes an explicit `participantId` distinct from the route id, so the
+  //       route id is already a conversation id;
+  //   (b) the route id matches a conversation row we already hold.
+  //
+  // Only the profile-entry case starts `false`, and it flips once the POST resolves. It also flips on
+  // every OTHER exit of that effect — offline, and a failed POST — because a chat that never settles
+  // would never poll at all, and "best-effort with the raw id" is the documented offline behaviour.
+  const routeIdIsCanonical = useMemo(() => {
+    if (!id) return false;
+    if (paramParticipantId && paramParticipantId !== id) return true;
+    try {
+      return useEntityStore.getState().conversations.some((c) => c.id === id);
+    } catch {
+      return false;
+    }
+  }, [id, paramParticipantId]);
+  const [convIdSettled, setConvIdSettled] = useState(routeIdIsCanonical);
   // Float this chat to the top of the messages list when opened. We stamp the
   // open time in the persisted chat-settings store (kept separate from the
   // conversation's lastMessageAt so a sync can't clobber it); the messages
@@ -2580,6 +2622,17 @@ export default function ChatScreen() {
   // if the synchronous seed above found nothing.
   useEffect(() => {
     if (!conversationId) return;
+    // ── SKIP ENTIRELY WHEN THE SYNCHRONOUS SEED ALREADY WORKED ────────────────
+    //
+    // This effect exists for devices without MMKV, where `seedMessages` finds nothing and the data has
+    // to come through the AsyncStorage mirror. Its store guard was evaluated BEFORE the deferred seed
+    // push had a chance to run, so on every ordinary (MMKV) open it scheduled anyway and then did a
+    // `kvWarm` plus another tail parse before discovering the store was no longer empty and discarding
+    // the result. Redundant disk work on every single chat open.
+    //
+    // `seedMessages.length > 0` is the precise test: if the synchronous read found rows, the mirror has
+    // nothing to add by definition, whatever the store looks like at this instant.
+    if (seedMessages.length > 0) return;
     if ((useChatStore.getState().messages[conversationId] || []).length > 0) return;
     // Deferred past the open-chat transition because `kvWarm` (which
     // touches the AsyncStorage MMKV mirror) plus the subsequent
@@ -2613,7 +2666,10 @@ export default function ChatScreen() {
       }).catch(() => {});
     });
     return () => handle.cancel();
-  }, [conversationId]);
+    // `seedMessages` is a dependency because the guard above reads it. Its identity only changes with
+    // the conversation / account / participant, and the guard short-circuits when it is non-empty, so
+    // this cannot turn into a per-render re-run.
+  }, [conversationId, seedMessages]);
 
   // ── SERVER HISTORY. THIS IS THE DM READ PATH, AND IT DID NOT EXIST. ─────────
   //
@@ -2728,6 +2784,11 @@ export default function ChatScreen() {
   const POLL_PAGE_LIMIT = 200;
   useEffect(() => {
     if (!conversationId) return;
+    // Wait for the id to be settled — see `convIdSettled`. Without this the first tick fires under the
+    // peer's USER id on a profile-initiated open, which the catch below is documented as swallowing as
+    // a 403, and then the whole effect runs AGAIN under the canonical id. One open, two 200-row pages,
+    // one of them guaranteed useless.
+    if (!convIdSettled) return;
     if (!useConnectivityStore.getState().isOnline) return;
     let cancelled = false;
     let timer: ReturnType<typeof setInterval> | null = null;
@@ -2914,7 +2975,7 @@ export default function ChatScreen() {
       handle.cancel();
       if (timer) clearInterval(timer);
     };
-  }, [conversationId, setMessages]);
+  }, [conversationId, convIdSettled, setMessages]);
 
   // Persist messages to KV cache whenever THIS chat's messages change.
   // `myStoreMessages` (above) already narrows the subscription to this chat,
@@ -2939,10 +3000,25 @@ export default function ChatScreen() {
   //   • Warm policy is `'disk'` (network round-trip only, NO decode) so the
   //     warm never kicks off an off-screen decode storm — the decode happens
   //     lazily when a visible bubble mounts the real `CachedImage`.
+  // ── AND IT WAS WARMING THE WRONG SET, OR NOTHING AT ALL ───────────────────
+  //
+  // The dependency list was `[conversationId]` while the body read `myMessages` from the closure. That
+  // is a stale closure: the effect sees whatever the array held at the commit where `conversationId`
+  // changed. On a cold open that is the commit BEFORE the seed lands in the store, so `myMessages` was
+  // empty, the guard returned early, and the warm never happened at all — the first screen's photos
+  // then cold-fetched on mount, which is the opposite of this effect's purpose. On a profile-initiated
+  // open it ran twice, once per id.
+  //
+  // Reading the store inside the deferred callback fixes both: the value is whatever is actually
+  // loaded by the time the warm runs, and the effect still fires once per settled conversation rather
+  // than on every store write (which is why `myMessages` is deliberately NOT a dependency).
   useEffect(() => {
-    if (!myMessages || myMessages.length === 0) return;
+    if (!conversationId) return;
+    if (!convIdSettled) return;
     const handle = InteractionManager.runAfterInteractions(() => {
-      const recent = myMessages.slice(-WARM_RECENT);
+      const current = (useChatStore.getState().messages[conversationId] || []) as ChatMessage[];
+      if (current.length === 0) return;
+      const recent = current.slice(-WARM_RECENT);
       const uris: string[] = [];
       for (const m of recent) {
         if ((m as any).imageUrls) for (const u of (m as any).imageUrls) {
@@ -2957,7 +3033,7 @@ export default function ChatScreen() {
       }
     });
     return () => handle.cancel();
-  }, [conversationId]);
+  }, [conversationId, convIdSettled]);
 
   // Persist messages to KV cache whenever THIS chat's messages change.
   // CRITICAL: the store now holds only the bounded SEED on open (full history
@@ -3384,17 +3460,22 @@ export default function ChatScreen() {
     //     differs from the route id → the route id is already canonical.
     if (paramParticipantId && paramParticipantId !== id) {
       setConversationId((prev) => (prev === id ? prev : id));
+      setConvIdSettled(true);
       return;
     }
     // (b) The route id matches a known conversation row → already canonical.
     if (useEntityStore.getState().conversations.some((c) => c.id === id)) {
       setConversationId((prev) => (prev === id ? prev : id));
+      setConvIdSettled(true);
       return;
     }
     // (c) Otherwise the route id is a peer USER id (opened from a profile).
     //     Resolve the canonical 1:1 conversation. Offline → keep the raw id
     //     as a best-effort local fallback.
-    if (!useConnectivityStore.getState().isOnline) return;
+    //     Settling on the offline branch is required, not cosmetic: the network effects are gated on
+    //     `convIdSettled`, so leaving it false offline would mean a chat that never polls even after
+    //     connectivity returns.
+    if (!useConnectivityStore.getState().isOnline) { setConvIdSettled(true); return; }
 
     let cancelled = false;
     import('../../src/services/apiClient')
@@ -3403,7 +3484,10 @@ export default function ChatScreen() {
       )
       .then(({ data }) => {
         const convId = data?.conversation_id;
-        if (cancelled || !convId || convId === id) return;
+        // Settle even when the answer is "the route id was already right" (`convId === id`) or the
+        // response was unusable — otherwise the gated effects stay parked forever.
+        if (cancelled) return;
+        if (!convId || convId === id) { setConvIdSettled(true); return; }
         // Deferred past the open-chat transition because the migration
         // here writes through `cs.setMessages(convId, ...)` and
         // `setConversationId(convId)`, both of which cascade re-renders
@@ -3434,9 +3518,16 @@ export default function ChatScreen() {
           // user's first send.
           migratedFromRef.current = { from: id, to: convId };
           setConversationId(convId);
+          // Now — and only now — is the id trustworthy. The gated effects run for the first time here,
+          // against the canonical id, instead of running twice.
+          setConvIdSettled(true);
         });
       })
-      .catch(() => {});
+      .catch(() => {
+        // A failed resolve must not leave the chat permanently un-polled. Fall back to the raw id,
+        // which is the same best-effort posture as the offline branch.
+        if (!cancelled) setConvIdSettled(true);
+      });
     return () => { cancelled = true; };
   }, [id, paramParticipantId]);
 
