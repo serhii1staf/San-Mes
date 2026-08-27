@@ -11,7 +11,7 @@ import Animated, {
   Easing,
 } from 'react-native-reanimated';
 import { useTheme } from '../../theme';
-import { SCRIM_LOCATIONS, scrimStops } from '../../theme/scrim';
+import { scrimStops } from '../../theme/scrim';
 import { Text } from './Text';
 import { CachedImage } from './CachedImage';
 import { useBrowserStore } from '../../store/browserStore';
@@ -20,6 +20,39 @@ import { useEffectiveBrowserWidgetPosition } from '../../lib/browserWidget';
 import { useT } from '../../i18n/store';
 import { triggerHaptic } from '../../utils/haptics';
 import { emojiTextStyle } from '../../components/ui/emojiText';
+
+/**
+ * Stop positions for this band's two fades.
+ *
+ * ── WHY THIS IS NOT `SCRIM_LOCATIONS` ───────────────────────────────────────
+ *
+ * The backing fade below used `locations={SCRIM_LOCATIONS}` against a THREE-colour
+ * array. `SCRIM_LOCATIONS` has had seventeen entries since the scrim ramp was
+ * resampled onto a `smoothstep` curve (`SCRIM_STOP_COUNT = 17` in theme/scrim), so
+ * that pairing was 3 colours against 17 positions and `expo-linear-gradient` logged
+ *
+ *     LinearGradient colors and locations props should be arrays of the same length
+ *
+ * on every render of every screen the band appears on. It was the single noisiest
+ * line in the device logcat.
+ *
+ * Nothing rendered wrong, which is why it survived: on a length mismatch the library
+ * warns and falls back to evenly spaced stops, and three evenly spaced stops ARE
+ * [0, 0.5, 1] — exactly what the inner fade already hardcoded. So this change makes
+ * the declaration honest and the output is unchanged, byte for byte.
+ *
+ * Both fades now read this one constant so they cannot drift apart again; the inner
+ * one had the correct literal and the outer one did not, which is precisely how the
+ * mismatch went unnoticed.
+ *
+ * NOTE for later: this band still uses the legacy three-stop model (`scrimStops`
+ * top/mid/end) while every other scrim in the app is on the seventeen-stop ramp, so
+ * the band's fade is very slightly harder than the one behind the tab bar despite the
+ * comments here claiming they match. Unifying them is a real visual change, and this
+ * file's own history records several rounds of unrequested visual churn, so it is
+ * deliberately NOT bundled into a warning fix.
+ */
+const BAND_FADE_LOCATIONS = [0, 0.5, 1] as const;
 
 // Bottom-docked browser / mini-app session band.
 //
@@ -231,7 +264,7 @@ export function BrowserBottomBand() {
           artefact. */}
       <LinearGradient
         colors={[bandFadeTop, bandFadeMid, bandFadeBottom]}
-        locations={SCRIM_LOCATIONS}
+        locations={BAND_FADE_LOCATIONS}
         style={StyleSheet.absoluteFill}
         pointerEvents="none"
       />
@@ -269,7 +302,7 @@ export function BrowserBottomBand() {
             introducing a surface. */}
         <LinearGradient
           colors={[bandFadeTop, bandFadeMid, bandFadeBottom]}
-          locations={[0, 0.5, 1]}
+          locations={BAND_FADE_LOCATIONS}
           style={StyleSheet.absoluteFill}
           pointerEvents="none"
         />
