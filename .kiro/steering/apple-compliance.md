@@ -37,27 +37,50 @@ and the message sounds now run on `expo-audio` (`src/store/musicStore.ts`, `src/
 
 Two compliance consequences, both handled in `app.json`:
 
-1. **The background-audio justification changed shape, not substance.** It used to be `expo-av`'s
-   `staysActiveInBackground: true`; it is now `expo-audio`'s `setAudioModeAsync({ shouldPlayInBackground:
-   true })` plus the plugin's `enableBackgroundPlayback: true`. The plugin adds the iOS audio background
-   mode itself, and we ALSO declare `UIBackgroundModes: ["audio"]` explicitly. Both agree and the merge
-   is idempotent — the explicit declaration is kept because a reviewer-facing entitlement should not be
-   an invisible side effect of a plugin default.
+1. **`UIBackgroundModes: ["audio"]` in `app.json` is the ONLY thing enabling background audio. Do not
+   remove it.** I first wrote here that the plugin adds it via an `enableBackgroundPlayback` option.
+   That is wrong for the version we ship. Read the installed plugin — `node_modules/expo-audio/plugin/
+   build/withAudio.js` at **expo-audio 1.1.1**, the version `npx expo install` pins for SDK 54:
+
+   ```js
+   const withAudio = (config, { microphonePermission,
+                                recordAudioAndroid = true,
+                                enableBackgroundRecording = false } = {}) => {
+   ```
+
+   There is no `enableBackgroundPlayback` option at all — it was added in a later release, and the
+   published docs describe `~57.0.4`. Passing it here was silently ignored. The only thing that adds the
+   iOS audio background mode in 1.1.1 is `enableBackgroundRecording`, which we deliberately keep `false`
+   because we do not record.
+
+   So the runtime half is `setAudioModeAsync({ shouldPlayInBackground: true })` in
+   `src/store/musicStore.ts`, and the entitlement half is our own explicit `infoPlist` declaration.
+   **Lesson worth keeping: check the plugin source in `node_modules` for the version actually installed,
+   not the docs for `latest`.**
 
 2. **The plugin would have requested the microphone, and we must not let it.** `expo-audio`'s config
-   plugin defaults to `microphonePermission` set (which writes `NSMicrophoneUsageDescription`) and
-   `recordAudioAndroid: true`. We do not record audio anywhere. Shipping an unused microphone permission
-   is exactly the failure that made build 82 an App Review 5.1.1 risk with the unwanted Motion & Fitness
-   prompt. So the plugin is configured explicitly:
+   plugin defaults `NSMicrophoneUsageDescription` to a real string and `recordAudioAndroid` to `true`.
+   We do not record audio anywhere. Shipping an unused microphone permission is exactly the failure that
+   made build 82 an App Review 5.1.1 risk with the unwanted Motion & Fitness prompt. So the plugin is
+   configured explicitly:
 
    ```json
    ["expo-audio", {
-     "enableBackgroundPlayback": true,
      "microphonePermission": false,
      "recordAudioAndroid": false,
      "enableBackgroundRecording": false
    }]
    ```
+
+   Verified with `npx expo config --type introspect`: `NSMicrophoneUsageDescription` is absent from the
+   generated iOS config, and the plugin's `recordAudioAndroid !== false && 'android.permission.RECORD_AUDIO'`
+   line means our `false` does drop it.
+
+   **Separate pre-existing finding, not caused by this change:** `android.permission.RECORD_AUDIO` still
+   appears in the introspected Android permission list, positioned among `WRITE_SETTINGS` /
+   `READ_EXTERNAL_STORAGE`, i.e. contributed by a DIFFERENT module (most likely `expo-image-picker`,
+   which requests it for video capture we never use). Worth trimming for Play Store hygiene, but it is
+   not `expo-audio` and predates this migration.
 
    `microphonePermission: false` is the documented way to disable the key entirely. **Do not remove
    these three `false` values.** If recording is ever actually implemented, add

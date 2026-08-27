@@ -52,7 +52,6 @@
       [
         "expo-audio",
         {
-          "enableBackgroundPlayback": true,
           "microphonePermission": false,
           "recordAudioAndroid": false,
           "enableBackgroundRecording": false
