@@ -5,6 +5,7 @@ import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
 import * as Sentry from '@sentry/react-native';
 import { ThemeProvider, useTheme } from '../src/theme';
+import { QueryProvider } from '../src/lib/queryClient';
 import { fontAssets } from '../src/theme/fonts';
 import { useAuthStore } from '../src/store';
 import { BrowserMiniBar } from '../src/components/ui/BrowserMiniBar';
@@ -574,6 +575,13 @@ function RootLayout() {
 
   return (
     <GestureHandlerRootView style={styles.gestureRoot}>
+    {/* Server-state layer. OUTSIDE ThemeProvider on purpose: queries are data, not
+        presentation, and a theme flip must never be able to remount the cache
+        provider — `PersistQueryClientProvider` re-reads persisted state when its
+        options identity changes, and remounting it mid-session would re-hydrate
+        the whole cache. Inert until screens are migrated (nothing calls useQuery
+        yet); see the long note in src/lib/queryClient.tsx. */}
+    <QueryProvider>
     <KeyboardProvider>
     <ThemeProvider>
       <NavigationBarController />
@@ -631,6 +639,7 @@ function RootLayout() {
       </ErrorBoundary>
     </ThemeProvider>
     </KeyboardProvider>
+    </QueryProvider>
     </GestureHandlerRootView>
   );
 }
