@@ -497,6 +497,7 @@ const SlidingLens = React.memo(function SlidingLens({
   //   `pillScale` (the press squish) still scales about the centre, unchanged — and when
   //   `pillStretchW` is 0, which is every state except an active drag, `scaleX` is exactly
   //   1 and this style is mathematically identical to the previous one.
+  //   `width` IS NOT IN THIS STYLE — see the note below.
   const animStyle = useAnimatedStyle(() => {
     const stretch = pillStretchW.value;
     // Guard the divide: `baseWidth` is 0 until the bar has been measured, and the pill is
@@ -509,9 +510,34 @@ const SlidingLens = React.memo(function SlidingLens({
         { scale: pillScale.value },
         { scaleX: stretchScaleX },
       ],
-      width: baseWidth,
     };
   });
+
+  // ── `width` IS STATIC, SO IT MUST NOT LIVE IN THE WORKLET ────────────────────
+  //
+  // The refactor above moved the stretch from `width` onto `scaleX` precisely so this style
+  // would stop touching layout every frame — and then left `width: baseWidth` behind in the
+  // returned object. `baseWidth` is a plain prop captured by the closure; it cannot change
+  // between frames. But Reanimated does not diff the returned object against the previous
+  // one before handing it to `updateProps`, so a `width` was re-applied on every single
+  // frame of every tab switch, which is exactly the layout pass the rewrite was meant to
+  // eliminate. The comment above described the intended behaviour, not the actual behaviour.
+  //
+  // Reanimated's own performance guide is explicit on both halves of this:
+  //   - keep only the styles that actually CHANGE inside `useAnimatedStyle`, and put the
+  //     rest in a StyleSheet or an inline object;
+  //   - non-layout props (transform/opacity) can take a fast update path, while
+  //     layout-affecting props (width/height/top/left) require a layout recalculation on
+  //     each frame.
+  // A static `width` in an animated style is the worst of both: it pays the layout cost and
+  // buys nothing, because the value is identical every time.
+  //
+  // Passing it as an inline object in the style array keeps the geometry byte-identical —
+  // same value, same cascade position (before `animStyle`, which contributes only
+  // `transform`, so there is nothing for the order to change) — while taking `width` out of
+  // the per-frame path entirely. `baseWidth` changes only when the bar is re-measured, so
+  // this is one commit per layout instead of one per frame.
+  const staticWidthStyle = useMemo(() => ({ width: baseWidth }), [baseWidth]);
 
   // ── NO `opacity` IN THIS STYLE. EVER. ───────────────────────────────────────
   //
@@ -557,10 +583,10 @@ const SlidingLens = React.memo(function SlidingLens({
         : 'rgba(255,255,255,0.85)';
 
   return (
-    <Animated.View style={[styles.pill, animStyle]} pointerEvents="none">
+    <Animated.View style={[styles.pill, staticWidthStyle, animStyle]} pointerEvents="none">
       {glassActive ? (
         // Real native liquid-glass selection capsule. It rides the SAME
-        // animStyle transform (translateX/Y, scale, width) as the fake-glass
+        // animStyle transform (translateX/Y, scale, scaleX) as the fake-glass
         // path, so the existing pill-stretch animation drives a genuine glass
         // blob that stretches when switching tabs. `clear` keeps it light over
         // the glass backdrop. NOT interactive — `isInteractive` lensed/warped
