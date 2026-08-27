@@ -176,11 +176,15 @@ export const MessageContextMenu = forwardRef<MessageContextMenuHandle, MessageCo
   // LinkPreview) by one paint after open. They mount behind same-size
   // Skeleton placeholders so the slide-up frame stays light and the
   // open animation never janks (mirrors the CommentContextMenu fix).
-  const [contentReady, setContentReady] = useState(false);
-  // RAF handles for the two-frame defer, tracked so they can be cancelled
-  // on unmount / re-close and never fire after the component is gone.
-  const rafOuter = useRef<number | null>(null);
-  const rafInner = useRef<number | null>(null);
+  // ── GONE ──────────────────────────────────────────────────────────────────
+  //
+  // Every animation in the open sequence below is `useNativeDriver: true`, which means it runs on the
+  // UI thread and a busy JS thread cannot make it jank. The frame this gate was keeping "light" was
+  // never at risk. What it did produce was visible on every long-press: the menu slides up showing
+  // Skeleton rectangles where the photo and the link preview belong, then swaps them for the real
+  // thing two frames later. The user is looking directly at that area — it is the thing they
+  // long-pressed — so it is the most-noticed placeholder in the app.
+  const contentReady = true;
 
   useEffect(() => {
     if (visible) {
@@ -200,24 +204,13 @@ export const MessageContextMenu = forwardRef<MessageContextMenuHandle, MessageCo
         // translateY transform, so measuring mid-animation would be wrong.
         measureZonesRef.current();
       });
-      // Mount the heavy preview leaves one paint AFTER kicking off the
-      // animation (two RAFs = after the first slide frame has painted), so
-      // the expensive image/link work never lands on the slide-up frame.
-      rafOuter.current = requestAnimationFrame(() => {
-        rafInner.current = requestAnimationFrame(() => setContentReady(true));
-      });
-    } else {
-      setContentReady(false);
     }
   }, [visible]);
 
   // Reset shared coordination state when the menu unmounts so a stale hover /
-  // active flag / zone list can never leak into the next open. Also cancel any
-  // pending defer RAFs so setContentReady can never fire after unmount.
+  // active flag / zone list can never leak into the next open.
   useEffect(() => {
     return () => {
-      if (rafOuter.current != null) cancelAnimationFrame(rafOuter.current);
-      if (rafInner.current != null) cancelAnimationFrame(rafInner.current);
       if (actionZones) actionZones.value = [];
       if (hoveredAction) hoveredAction.value = '';
       if (dragActive) dragActive.value = false;

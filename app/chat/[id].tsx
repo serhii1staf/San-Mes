@@ -1660,11 +1660,13 @@ export default function ChatScreen() {
   // ~120 ms long task users were seeing the moment they tapped a conversation.
   // Showing a flat bgColor for the first ~300 ms is identical to what users
   // see with no wallpaper set, so the visual delta is imperceptible.
-  const [chromeReady, setChromeReady] = useState(false);
-  useEffect(() => {
-    const handle = InteractionManager.runAfterInteractions(() => setChromeReady(true));
-    return () => handle.cancel();
-  }, []);
+  //
+  // GONE. The wallpaper is a single full-bleed image and it is the BACKDROP — withholding it means the
+  // chat opens on a flat colour and then gets its wallpaper, which is a visible swap on every open of
+  // every chat that has one. The argument above ("identical to what users see with no wallpaper set,
+  // so the visual delta is imperceptible") holds only for a user who has not set one, i.e. exactly the
+  // users for whom this gate does nothing.
+  const chromeReady = true;
   // Defer the message-list mount by exactly ONE FRAME.
   //
   // Mounting the list plus its first batch of heavy bubbles (each carries
@@ -1714,14 +1716,28 @@ export default function ChatScreen() {
   // off the critical frame. The extra RAF after `runAfterInteractions`
   // guarantees the first text-only layout has committed before we mount the
   // decode-heavy images, so the work can never share the transition frame.
-  const [imagesReady, setImagesReady] = useState(false);
-  useEffect(() => {
-    let raf = 0;
-    const handle = InteractionManager.runAfterInteractions(() => {
-      raf = requestAnimationFrame(() => setImagesReady(true));
-    });
-    return () => { handle.cancel(); if (raf) cancelAnimationFrame(raf); };
-  }, []);
+  //
+  // ── GONE, AND THIS ONE WAS THE WORST OF THEM ──────────────────────────────
+  //
+  // `imagesReady` withheld the real image in EVERY bubble in the transcript until
+  // `runAfterInteractions` plus a further frame. `runAfterInteractions` does not mean "next frame" —
+  // it waits for every registered interaction handle to clear — and this screen always has Reanimated
+  // keyboard work and a scroll-to-end in flight on open, so the wait was routinely hundreds of
+  // milliseconds. Then the mounted bubbles all swapped their placeholders at once, and each swap was
+  // additionally metered by the 45 ms / 90 ms reveal pumps that used to live in
+  // src/hooks/useStaggeredReveal.ts.
+  //
+  // Stack those together and opening a chat with a screenful of photos was: sized grey boxes, an
+  // indeterminate wait, then images arriving one at a time over half a second, and no images at all
+  // while the finger was on the glass because the pumps also honoured a global scroll pause. This is
+  // the "I feel like the chat is loading everything, every time" report almost verbatim, and it is
+  // three separate deferrals compounding — which is why fixing any one of them changed nothing
+  // perceptible and why the user kept saying nothing had changed.
+  //
+  // The bubbles now mount their images on the same commit as their text. `expo-image` bounds decode
+  // concurrency itself, on its own threads (SDWebImage / Glide), which is what the pumps were
+  // duplicating in JS.
+  const imagesReady = true;
   const [viewerImages, setViewerImages] = useState<{ images: string[]; index: number } | null>(null);
   // The message the open viewer belongs to — see openImageViewer.
   const [viewerMsg, setViewerMsg] = useState<ChatMessage | null>(null);

@@ -38,11 +38,10 @@ export function EmojiPickerModal({ visible, onClose, onSelect }: EmojiPickerModa
   // the cheap handle + title. The ScrollView itself still mounts immediately
   // to keep layout/height stable; only its heavy children appear one frame
   // later — invisible since the slide-in runs 300ms. (Mirrors PostMenuModal.)
-  const [contentReady, setContentReady] = useState(false);
-  // RAF handles for the deferred content reveal — tracked so they can be
-  // cancelled on cleanup / when `visible` flips before they fire.
-  const rafA = useRef<number | null>(null);
-  const rafB = useRef<number | null>(null);
+  // GONE — see MessageContextMenu. All three open animations below are native-driver, so the "cheap
+  // open frame" was protecting something JS work cannot reach, while the emoji grid appearing two
+  // frames into a 300 ms slide is plainly visible.
+  const contentReady = true;
 
   useEffect(() => {
     if (visible) {
@@ -54,18 +53,8 @@ export function EmojiPickerModal({ visible, onClose, onSelect }: EmojiPickerModa
         Animated.timing(scaleAnim, { toValue: 1, duration: 300, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
         Animated.timing(backdropAnim, { toValue: 1, duration: 260, easing: Easing.out(Easing.quad), useNativeDriver: true }),
       ]).start();
-      // Reveal the heavy emoji grid one paint after the open animation has
-      // been kicked off, keeping the first (open) frame cheap.
-      rafA.current = requestAnimationFrame(() => {
-        rafB.current = requestAnimationFrame(() => setContentReady(true));
-      });
-    } else {
-      setContentReady(false);
     }
-    return () => {
-      if (rafA.current != null) { cancelAnimationFrame(rafA.current); rafA.current = null; }
-      if (rafB.current != null) { cancelAnimationFrame(rafB.current); rafB.current = null; }
-    };
+    return () => {};
   }, [visible]);
 
   const dismiss = () => {

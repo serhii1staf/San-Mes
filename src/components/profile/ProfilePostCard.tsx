@@ -2,7 +2,6 @@ import React, { memo, useEffect, useMemo, useState } from 'react';
 import { View, Pressable, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useMappingHelper } from '@shopify/flash-list';
-import { enqueueReveal } from '../../utils/revealQueue';
 import { router } from 'expo-router';
 import { useTheme } from '../../theme';
 import { Text, Avatar } from '../ui';
@@ -100,11 +99,12 @@ function ProfilePostCardBase({ post, authorName, authorEmoji, authorVerified, au
   // Cancel-on-unmount: if this card recycles (fast scroll) before its turn,
   // the canceller drops its queue slot so it never hydrates offscreen and
   // never leaks. Empty deps → enqueue exactly once per mount.
-  const [hydrated, setHydrated] = useState(false);
-  useEffect(() => {
-    const cancel = enqueueReveal(() => setHydrated(true));
-    return cancel;
-  }, []);
+  // ── THE GATE IS GONE ──────────────────────────────────────────────────────
+  //
+  // See the long note in src/components/feed/PostCard.tsx for the full argument. Short version: the
+  // queue fragmented one commit into four, which is more total work and reads as the screen assembling
+  // itself in front of the user. The `listReady` deletion in app/chat/[id].tsx is the precedent.
+  const hydrated = true;
 
   // ── THIS MARK USED TO MEASURE THE WRONG COMMIT ────────────────────────────
   //

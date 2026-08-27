@@ -78,10 +78,11 @@ export function CommentContextMenu({ visible, comment, isOwn, displayBody, reply
   // Defer the heavy preview leaves (GIF decode via CachedImage, LinkPreview
   // unfurl) by one paint after open so the open-animation frame stays cheap.
   // Same-size Skeletons hold their boxes meanwhile (no layout jump).
-  const [contentReady, setContentReady] = useState(false);
-  // RAF handles for the deferred reveal — cancelled on cleanup / re-close.
-  const rafA = useRef<number | null>(null);
-  const rafB = useRef<number | null>(null);
+  // GONE — see the note in MessageContextMenu. The open animations here are native-driver too (the
+  // comment three lines down says so explicitly), so the cheap first frame this bought was protecting
+  // an animation that JS cannot disturb, at the cost of a Skeleton flash exactly where the user is
+  // looking.
+  const contentReady = true;
 
   useEffect(() => {
     if (visible) {
@@ -104,29 +105,16 @@ export function CommentContextMenu({ visible, comment, isOwn, displayBody, reply
         // looking at, then the actions arrive under it.
         Animated.spring(liftAnim, { toValue: 1, useNativeDriver: true, tension: 70, friction: 10 }),
       ]).start(() => { isTransitioningRef.current = false; });
-      // Reveal the heavy preview leaves one paint after kicking off the open
-      // animation, keeping the first (open) frame cheap.
-      rafA.current = requestAnimationFrame(() => {
-        rafB.current = requestAnimationFrame(() => setContentReady(true));
-      });
     } else {
       // Already closed and idle → no-op (avoid re-entering on redundant flips).
       if (!isOpenRef.current && !isTransitioningRef.current) return;
       isOpenRef.current = false;
-      setContentReady(false);
       // Close animation runs via internal dismiss(); when `visible` flips false
       // externally (parent cleared it) the modal simply unmounts on the next
       // render and the transition flag is cleared by either dismiss() or the
       // open-animation completion callback above.
     }
   }, [visible]);
-
-  // Cancel any pending deferred-reveal RAFs on unmount so they don't fire
-  // against an unmounted component.
-  useEffect(() => () => {
-    if (rafA.current != null) { cancelAnimationFrame(rafA.current); rafA.current = null; }
-    if (rafB.current != null) { cancelAnimationFrame(rafB.current); rafB.current = null; }
-  }, []);
 
   const dismiss = (cb?: () => void) => {
     if (dismissing.current) return;

@@ -66,14 +66,11 @@ function GifPanelComponent({ height, onSelect, onLongPress, theme, bottomInset =
   // eye (no perceptible blank). Earlier this was a fixed 320 ms timeout, which
   // made the thumbnails visibly pop in late; runAfterInteractions + a single
   // RAF protects the same hot frame without the noticeable delay.
-  const [decodeReady, setDecodeReady] = useState(false);
-  useEffect(() => {
-    let raf = 0;
-    const handle = InteractionManager.runAfterInteractions(() => {
-      raf = requestAnimationFrame(() => setDecodeReady(true));
-    });
-    return () => { handle.cancel(); if (raf) cancelAnimationFrame(raf); };
-  }, []);
+  // GONE. The panel rise it was protecting is a Reanimated shared value, i.e. it runs on the UI thread
+  // and a busy JS thread cannot stutter it. So the gate bought nothing and cost a panel that slides up
+  // empty and then fills — the history here (a fixed 320 ms timeout first, then runAfterInteractions +
+  // rAF) is a record of shrinking the delay without questioning whether a delay was needed at all.
+  const decodeReady = true;
 
   const load = useCallback(async (offset: number) => {
     const reqId = ++reqIdRef.current;

@@ -228,11 +228,26 @@ export default function ProfileScreen() {
   // time later. A `requestAnimationFrame` keeps the staggering — the whole point,
   // so no single frame carries both the card mount and the blur/decode storm —
   // while bounding each step to one frame.
-  const [postsReady, setPostsReady] = useState(false);
-  useEffect(() => {
-    const raf = requestAnimationFrame(() => setPostsReady(true));
-    return () => cancelAnimationFrame(raf);
-  }, []);
+  //
+  // ── BOTH GATES ARE GONE ───────────────────────────────────────────────────
+  //
+  // The note above is an accurate account of a real problem and of a fix that did work on its own
+  // terms. What it does not weigh is what the cure looks like from the outside, and the note directly
+  // below `chromeReady` spells that out itself: the banner "does not even START its network request
+  // until two render+commit cycles of this screen have completed", and because those are rAF callbacks
+  // they queue behind whatever long task is already running, so the wait is "two frames plus however
+  // busy the app is". That is the reported flash on the "open the app, go straight to profile" path.
+  //
+  // A previous round tried to keep the stagger and fix only the symptom, by starting the banner FETCH
+  // early while leaving the RENDER gated. That was the right instinct applied to the wrong half — it
+  // removed the network wait but kept the two-stage assembly, so the screen still visibly builds
+  // itself, which is the complaint.
+  //
+  // Both flags are now constants. The screen commits once, with everything on it. The long task this
+  // trades back is real, is bounded, and lands on a tab swap or a native-stack push — neither of which
+  // animates in JS, so it does not stutter the transition. Lowering per-card mount cost is the actual
+  // remedy for it and is tracked separately; fragmenting the cost across frames never reduced it.
+  const postsReady = true;
   // Heavy iOS chrome — `expo-blur` BlurView (×3 on this screen) and the
   // banner CachedImage — must NOT mount on the same commit as the post
   // cards. BlurView spins up a CALayer with a backdrop filter and the
@@ -242,12 +257,7 @@ export default function ProfileScreen() {
   // saw it as "~1 second hang"). Stagger chromeReady ONE RAF AFTER
   // postsReady so the post cards commit on one frame and the heavy
   // chrome commits on the next — no single frame carries both storms.
-  const [chromeReady, setChromeReady] = useState(false);
-  useEffect(() => {
-    if (!postsReady) return;
-    const handle = requestAnimationFrame(() => setChromeReady(true));
-    return () => cancelAnimationFrame(handle);
-  }, [postsReady]);
+  const chromeReady = true;
 
   // ── START THE BANNER DOWNLOAD IMMEDIATELY, RENDER IT LATER ────────────────
   //

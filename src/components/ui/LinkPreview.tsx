@@ -162,11 +162,11 @@ const LinkPreviewInner = React.memo(function LinkPreviewInner({ url, onError, te
   // prefetch (`cachePolicy="memory-disk"`), so the visible paint is
   // virtually unchanged but the decode no longer competes with the
   // navigation frame.
-  const [imageReady, setImageReady] = useState(false);
-  useEffect(() => {
-    const handle = requestAnimationFrame(() => setImageReady(true));
-    return () => cancelAnimationFrame(handle);
-  }, []);
+  // GONE. One rAF per preview, and there is one preview per link-bearing card, so in a feed this is a
+  // per-row empty box followed by a per-row image swap. The claim above that "the visible paint is
+  // virtually unchanged" is what a one-frame gate looks like in isolation; multiplied across a list it
+  // is the thing the user describes as content arriving in pieces.
+  const imageReady = true;
 
   useEffect(() => {
     // ── PER-RUN CANCELLATION, NOT A SHARED `mounted` REF ────────────────────

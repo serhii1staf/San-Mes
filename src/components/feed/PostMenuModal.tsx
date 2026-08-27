@@ -50,16 +50,15 @@ export function PostMenuModal({ visible, post, onClose }: PostMenuModalProps) {
   // Defer the heavy preview thumbnail (CachedImage decode) by one paint after
   // the open animation starts, so the open-animation frame carries only cheap
   // views. A same-size Skeleton holds the box meanwhile (no layout jump).
-  const [contentReady, setContentReady] = useState(false);
+  // GONE — see the note in src/components/ui/MessageContextMenu.tsx. Both open animations below are
+  // native-driver and cannot be janked by JS, so deferring the one thumbnail bought nothing and showed
+  // a Skeleton in its place on every open of the post menu.
+  const contentReady = true;
 
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
   const backdropAnim = useRef(new Animated.Value(0)).current;
   const dragY = useRef(new Animated.Value(0)).current;
   const isClosing = useRef(false);
-  // RAF handles for the deferred content reveal — tracked so they can be
-  // cancelled on cleanup / when `visible` flips before they fire.
-  const rafA = useRef<number | null>(null);
-  const rafB = useRef<number | null>(null);
   // Action to run after this menu has fully closed. See `dismiss`.
   const afterCloseRef = useRef<(() => void) | null>(null);
 
@@ -79,7 +78,6 @@ export function PostMenuModal({ visible, post, onClose }: PostMenuModalProps) {
     if (visible) {
       isClosing.current = false;
       setMode('menu');
-      setContentReady(false);
       dragY.setValue(0);
       slideAnim.setValue(SCREEN_HEIGHT);
       backdropAnim.setValue(0);
@@ -87,17 +85,8 @@ export function PostMenuModal({ visible, post, onClose }: PostMenuModalProps) {
         Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 50, friction: 9 }),
         Animated.timing(backdropAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
       ]).start();
-      // Reveal the heavy preview thumbnail one paint after the open animation
-      // has been kicked off, keeping the first (open) frame cheap.
-      rafA.current = requestAnimationFrame(() => {
-        rafB.current = requestAnimationFrame(() => setContentReady(true));
-      });
-    } else {
-      setContentReady(false);
     }
     return () => {
-      if (rafA.current != null) { cancelAnimationFrame(rafA.current); rafA.current = null; }
-      if (rafB.current != null) { cancelAnimationFrame(rafB.current); rafB.current = null; }
     };
   }, [visible]);
 
