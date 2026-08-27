@@ -69,7 +69,29 @@ worker/
 *.zip
 logoappekpan/
 vrii/
-targets/
+
+# ── `targets/` MUST NOT BE LISTED HERE. IT WAS, AND IT BROKE THE BUILD ──────────
+#
+# It sat in this section, grouped with the packed source art, which is a reasonable thing to assume
+# from the name. It is not art: `targets/widget/` is the SOURCE of the iOS widget —
+# `expo-target.config.js` plus `index.swift` — and it is read at build time by the
+# `@bacons/apple-targets` plugin listed in app.json.
+#
+# Excluding it produced exactly this failure, on iOS build 95:
+#
+#     Assigning provisioning profile '*[expo] com.sanmes.app.widget AppStore ...' to target 'SanWidget'
+#     Failed to find target 'SanWidget' in project.pbxproj
+#
+# The chain: the archive uploaded to EAS had no `targets/`, so the plugin found no target to add, so
+# prebuild generated a project with only the app target — and EAS then tried to attach the widget's
+# provisioning profile (which DOES exist in the credentials service) to a target that was not there.
+# The error names the profile and the target, which makes it look like a credentials problem; it was an
+# upload-contents problem.
+#
+# This is the precise trap the header of this file warns about: "anything added here must be something
+# the BUILD does not read. If a file is imported by app code or referenced from app.json, it must NOT be
+# listed." `targets/` is referenced from app.json. It is a couple of kilobytes, so there was never a
+# size argument for excluding it either.
 
 # ── Docs, notes, dumps ──────────────────────────────────────────────────────────
 docs/
