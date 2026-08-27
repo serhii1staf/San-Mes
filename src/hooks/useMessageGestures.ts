@@ -16,15 +16,13 @@
 // values/worklets); `runOnJS` is used at most once per gesture phase (never per
 // frame) for haptics, the parent scroll-lock, and the reply/menu callbacks.
 
-import { useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 import { Gesture } from 'react-native-gesture-handler';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
   useAnimatedRef,
-  withTiming,
-  withSequence,
-  withDelay,
+
   withSpring,
   measure,
   runOnJS,
@@ -42,8 +40,6 @@ export const REPLY_THRESHOLD = 60;
 export interface MessageGestureParams<T extends { id: string }> {
   /** The message this bubble renders — passed back to the reply/menu callbacks. */
   message: T;
-  /** Reply-jump highlight flag (drives the glow pulse). */
-  highlighted?: boolean;
   /** Fired (once, on release past threshold) to start a reply to this message. */
   onReply: (m: T) => void;
   /** Fired (once on activate / once on end) so the parent can lock FlatList scroll. */
@@ -64,7 +60,6 @@ export interface MessageGestureParams<T extends { id: string }> {
 
 export function useMessageGestures<T extends { id: string }>({
   message,
-  highlighted,
   onReply,
   onSwipeActive,
   onLongPress,
@@ -80,23 +75,19 @@ export function useMessageGestures<T extends { id: string }>({
   // spot when the message is deleted.
   const bubbleRef = useAnimatedRef<Animated.View>();
 
-  // ── Reply-jump highlight: GLOW, not a border ───────────────────────────
-  // An absolutely-positioned sibling halo fades in/out behind the bubble
-  // (negative inset → ZERO layout impact: the bubble never moves/resizes).
-  // Opacity is driven entirely on the UI thread over the parent's ~1600 ms
-  // highlight window.
-  const glowSV = useSharedValue(0);
-  useEffect(() => {
-    if (highlighted) {
-      glowSV.value = withSequence(
-        withTiming(1, { duration: 240 }),
-        withDelay(900, withTiming(0, { duration: 440 })),
-      );
-    } else {
-      glowSV.value = withTiming(0, { duration: 200 });
-    }
-  }, [highlighted, glowSV]);
-  const glowStyle = useAnimatedStyle(() => ({ opacity: glowSV.value }));
+  // ── THE REPLY-JUMP GLOW HAS MOVED OUT OF THIS HOOK ─────────────────────────
+  //
+  // It was a `useSharedValue`, a `useEffect` and a `useAnimatedStyle` right here — paid by EVERY
+  // mounted bubble, for an animation that fires on at most ONE bubble in the whole lifetime of the
+  // screen. FlashList keeps roughly two dozen bubbles in its recycle pool, so that was two dozen
+  // shared values and two dozen animated-style mappers standing by to do nothing, allocated on the
+  // chat-open commit.
+  //
+  // It now lives in `src/components/chat/ReplyJumpGlow.tsx`, which the bubble mounts only while
+  // `highlighted` is true — the same gate the halo VIEW already had. Gating the view but not the hooks
+  // driving it had left most of the cost in place.
+  //
+  // `highlighted` is consequently no longer a parameter of this hook.
 
   // ── Swipe-to-reply: UI-thread Pan ──────────────────────────────────────
   const translateXSV = useSharedValue(0);
@@ -220,7 +211,7 @@ export function useMessageGestures<T extends { id: string }>({
     ),
   }));
 
-  return { bubbleRef, composedGesture, glowStyle, bubbleAnimStyle, replyIconAnimStyle };
+  return { bubbleRef, composedGesture, bubbleAnimStyle, replyIconAnimStyle };
 }
 
 /**

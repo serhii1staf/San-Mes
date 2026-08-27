@@ -42,6 +42,7 @@ import { useChatKeyboardMode } from '../../src/hooks/useChatKeyboardMode';
 import { useStaggeredReveal, useStaggeredGifReveal, setRevealScrollPaused } from '../../src/hooks/useStaggeredReveal';
 import { useBrowserStore } from '../../src/store/browserStore';
 import { ChatBackgroundLayer } from '../../src/components/ui/ChatBackgroundLayer';
+import { ReplyJumpGlow } from '../../src/components/chat/ReplyJumpGlow';
 import { PixelIcon } from '../../src/components/pixel-icons/PixelIcon';
 import { uploadChatImage } from '../../src/lib/supabase';
 import { getImageDims, setImageDims } from '../../src/services/imageDimsCache';
@@ -931,12 +932,11 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
   const glassActive = useLiquidGlassActive();
   const fontFamilyStyle = fontFamily === 'mono' ? 'monospace' : fontFamily === 'serif' ? 'serif' : undefined;
 
-  // Swipe-to-reply + press-drag-select gestures and the reply-jump glow are
-  // wired by useMessageGestures (extracted for maintainability + testing).
-  // Behaviour is identical to the previous inline implementation.
-  const { bubbleRef, composedGesture, glowStyle, bubbleAnimStyle, replyIconAnimStyle } = useMessageGestures({
+  // Swipe-to-reply + press-drag-select gestures are wired by useMessageGestures (extracted for
+  // maintainability + testing). The reply-jump glow used to be in there too and is now
+  // `ReplyJumpGlow`, mounted below only while `highlighted` — see that file for why.
+  const { bubbleRef, composedGesture, bubbleAnimStyle, replyIconAnimStyle } = useMessageGestures({
     message,
-    highlighted,
     onReply,
     onSwipeActive,
     onLongPress,
@@ -1149,27 +1149,16 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
               (see `scrollToMessageId`). So opacity is already 0 by the time `highlighted`
               flips false and this unmounts — there is no fade-out to lose. Keep those two
               numbers in that order if either is ever changed. */}
+          {/* The shared value, the effect and the animated style that drive this are INSIDE the
+              component now, so an ordinary bubble no longer allocates any of them. That was the
+              remaining half of the cost this gate was written to remove. */}
           {highlighted ? (
-          <Reanimated.View
-            pointerEvents="none"
-            style={[
-              glowStyle,
-              {
-                position: 'absolute',
-                top: -3, left: -3, right: -3, bottom: -3,
-                borderRadius: bubbleRadius + 3,
-                borderBottomRightRadius: (isOwn ? 4 : bubbleRadius) + 3,
-                borderBottomLeftRadius: (isOwn ? bubbleRadius : 4) + 3,
-                backgroundColor: theme.colors.accent.primary + (theme.isDark ? '40' : '33'),
-                // iOS soft colored glow (Android ignores colored shadows; the
-                // tinted halo above carries the effect there instead).
-                shadowColor: theme.colors.accent.primary,
-                shadowOffset: { width: 0, height: 0 },
-                shadowOpacity: 0.9,
-                shadowRadius: 10,
-              },
-            ]}
-          />
+            <ReplyJumpGlow
+              bubbleRadius={bubbleRadius}
+              isOwn={isOwn}
+              accentColor={theme.colors.accent.primary}
+              isDark={theme.isDark}
+            />
           ) : null}
           {/* The expand-to-fullscreen affordance now lives inline next to the
               timestamp, further down — see `bubbleStyles.metaRow`. */}
@@ -4654,6 +4643,45 @@ export default function ChatScreen() {
       setUploading(true);
       try {
         const results = await Promise.all(localImages.map((uri) => uploadChatImage(uri)));
+        // ── CARRY THE DIMENSIONS ONTO THE REMOTE KEY BEFORE THE SWAP ──────────
+        //
+        // Reported: send a photo, the bubble appears at the right size, then about a second later it
+        // suddenly expands / jumps.
+        //
+        // That second is this upload. `imageDimsCache` is keyed by the RAW URI STRING, and the swap
+        // below replaces a local `file:///…/ImageManipulator/x.jpg` with an `https://…r2.dev/chat/…jpg`.
+        // Those are two unrelated cache entries. `SingleChatImage` holds its box, its loading flag and
+        // its `seeded` flag in `useRecyclingState(..., [uri])`, whose initialisers re-run DURING the
+        // render where `uri` changes — so on the swap all three re-seed from `getImageDims(remoteUrl)`,
+        // which is empty, and the box collapses to the hard-coded 220x220 square. A portrait photo goes
+        // from something like 156x340 to 220x220: it visibly widens and shortens, the skeleton comes
+        // back over it, and then `handleLoad` — now running with `seeded === false` — measures the
+        // weserv derivative and lays the bubble out a THIRD time.
+        //
+        // Three layouts for one send, and the first one was already correct.
+        //
+        // `healPhotos` has had exactly this carry-over for a while, with a comment saying it exists so
+        // "the photo keeps its correct box (no jump) after the heal swaps file:// → https://". But that
+        // effect only runs for messages found still holding a local uri on a LATER chat open, so the
+        // normal send path — every send — never got it.
+        //
+        // Paired by index against `localImages`, deliberately NOT against `uploadedUrls`: that array is
+        // filtered, so a single failed upload would shift every subsequent index and attach one photo's
+        // dimensions to a different photo's url.
+        //
+        // Carrying the LOCAL dimensions is correct even though `uploadChatImage` re-resizes to 1280:
+        // `fitChatImageBox` only reads `natW / natH`, and a resize preserves aspect ratio. It is also
+        // strictly better than what `handleLoad` would have measured, because the remote copy is served
+        // through the weserv proxy and reports the DERIVATIVE's size, not the original's.
+        //
+        // Written before `setMessages` because `setImageDims` updates its in-memory map synchronously
+        // (only the MMKV flush is debounced), so by the time the bubble re-renders with the new uri the
+        // lookup already hits and `seeded` stays true.
+        results.forEach((r, i) => {
+          if (!r.url) return;
+          const d = getImageDims(localImages[i]);
+          if (d) setImageDims(r.url, d.w, d.h);
+        });
         uploadedUrls = results.map((r) => r.url).filter(Boolean) as string[];
         if (uploadedUrls.length > 0) {
           setMessages(conversationId, (useChatStore.getState().messages[conversationId] || []).map((m) =>
