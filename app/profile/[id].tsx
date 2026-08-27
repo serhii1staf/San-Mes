@@ -22,7 +22,7 @@ import { openUrl } from '../../src/utils/openUrl';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { showToast } from '../../src/store/toastStore';
 import { formatTimeAgo } from '../../src/utils/mockData';
-import { CachedImage } from '../../src/components/ui/CachedImage';
+import { CachedImage, prefetchImages } from '../../src/components/ui/CachedImage';
 import { ImageViewerModal, ViewerActionButton } from '../../src/components/chat/ImageViewerModal';
 import { openPostShareSheet, openProfileShareSheet } from '../../src/store/shareSheetStore';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
@@ -769,11 +769,17 @@ export default function UserProfileScreen() {
   useEffect(() => {
     if (!id) return;
 
+    // Whether the blocking fallback below actually issued a `getProfile(id)`.
+    // Read by the deferred block further down to avoid firing a SECOND, identical
+    // request for the same profile — see the note there.
+    let didDirectFetch = false;
+
     // If we have cached profile, show it immediately (no loading)
     if (cachedProfile) {
       setIsLoading(false);
     } else {
       // No cached data — load from Supabase directly as fallback
+      didDirectFetch = true;
       setIsLoading(true);
       getProfile(id).then(({ profile: profileData }) => {
         if (profileData) {
@@ -828,15 +834,47 @@ export default function UserProfileScreen() {
     });
 
     const handle = InteractionManager.runAfterInteractions(() => {
-      // Trigger background sync for profile and user posts
-      syncProfile(id);
+      // Trigger background sync for profile and user posts.
+      //
+      // ── NOT WHEN THE BLOCKING FALLBACK IS ALREADY FETCHING IT ───────────────
+      //
+      // `syncProfile(id)` resolves to `getProfile(id)` behind a 10-minute
+      // `syncWithThrottle`. On an UNCACHED profile — an @mention, a search hit, a
+      // comment author, i.e. every case where this screen shows its spinner — the
+      // fallback above has that exact request in flight already, and it does not
+      // stamp the throttle, so nothing deduplicated them. The screen issued two
+      // identical round trips for the same row, doubling the work on the one path
+      // that was already the slowest.
+      //
+      // When the profile IS cached the fallback does not run, and this is the only
+      // fetch — which is the case the throttle was written for, so it keeps
+      // running exactly as before. The uncached path loses nothing: the direct
+      // fetch upserts into the entity store itself.
+      if (!didDirectFetch) syncProfile(id);
       syncUserPosts(id);
 
-      // Warm the image cache for this profile's banner so it appears instantly.
-      import('../../src/components/ui/CachedImage').then(({ prefetchImages }) => {
-        const p: any = useEntityStore.getState().profiles[id];
-        if (p?.banner_url) prefetchImages([p.banner_url]);
-      }).catch(() => {});
+      // Banner warming moved OUT of this block — see `bannerUrlForWarm` below.
+      // It was here, and it could never hit the cache. Two reasons, both about
+      // the cache key, and one reason about timing:
+      //
+      //   1. `prefetchImages([p.banner_url])` used the default width of 600
+      //      while the render below passes `proxyWidth={SCREEN_WIDTH}` (~390).
+      //      The proxy width is part of the URL and the URL is expo-image's
+      //      cache key, so the warm and the render asked for two different
+      //      objects.
+      //   2. It warmed `p.banner_url` RAW, including the `#x=&y=&s=` transform
+      //      hash, while the render passes `stripBannerTransform(...)`. Again a
+      //      different key.
+      //   3. It sat inside `runAfterInteractions`, which waits for every
+      //      registered interaction handle rather than for the next frame, so
+      //      even a correct warm would have started late.
+      //
+      // Net effect: the prefetch spent egress downloading bytes under a key
+      // nothing ever reads, and the banner's real request did not begin until
+      // `chromeReady` mounted the image two rAFs later. That is the visible
+      // "banner pops in afterwards" on this screen. The own-profile tab already
+      // had the correct pattern and a comment explaining it; this screen never
+      // got it.
 
       // Load follow counts from Supabase (keep direct call for counts display).
       // Gated behind the per-profile sync throttle (5-min window) so rapid
@@ -1366,6 +1404,29 @@ export default function UserProfileScreen() {
   // hash must be stripped before the value goes through the image
   // proxy — `proxiedImageUrl` would otherwise percent-encode it.
   const bannerUrl = stripBannerTransform(bannerUrlRaw) || undefined;
+  // ── START THE BANNER DOWNLOAD NOW, RENDER IT LATER ────────────────────────
+  //
+  // Ported from `app/(tabs)/profile.tsx`, which already had it. The warm this
+  // replaces lived inside `runAfterInteractions` and used a cache key the
+  // renderer never asks for — see the note in the mount effect above.
+  //
+  // Three things have to line up for the warm to be a hit rather than wasted
+  // egress, and all three are the same values the `CachedImage` below uses:
+  //   • the STRIPPED url, because `proxiedImageUrl` would percent-encode the
+  //     `#x=&y=&s=` transform hash into a different key;
+  //   • `SCREEN_WIDTH`, because the proxy width is part of the URL;
+  //   • `'disk'`, which downloads WITHOUT decoding. The decode is the expensive
+  //     half and the whole reason `chromeReady` staggers the mount, so decoding
+  //     here would move the storm back onto the frames the stagger protects.
+  //     It happens lazily when the visible image mounts, by then a local read.
+  //
+  // A plain mount effect, not `runAfterInteractions`: this has no pixels
+  // attached, so it cannot compete with the transition, and starting the
+  // request a frame earlier is the entire point.
+  useEffect(() => {
+    if (!bannerUrl) return;
+    prefetchImages([bannerUrl], SCREEN_WIDTH, 'disk');
+  }, [bannerUrl]);
   // Memoize the parsed transform — needed for both the JSX banner image
   // and the listHeader useMemo's dep list. Without memoization, every
   // render returns a fresh {translateX, translateY, scale} object and
@@ -1459,6 +1520,12 @@ export default function UserProfileScreen() {
             }}
             resizeMode="cover"
             proxyWidth={SCREEN_WIDTH}
+            /* Shimmer while the bytes land, matching the own-profile banner. Without
+               it this card showed its flat `rgba(255,255,255,0.05)` fill until the
+               image decoded, so a slow banner read as a broken header rather than as
+               a loading one. Opt-in per caller in `CachedImage`; the own-profile twin
+               already passed it and this screen did not. */
+            skeleton
           />
           <LinearGradient
             colors={[theme.colors.background.primary + '00', theme.colors.background.primary + '55']}
@@ -1661,13 +1728,32 @@ export default function UserProfileScreen() {
   const handleScrollBeginDrag = useCallback(() => setScrollActive(true), []);
   const handleScrollSettle = useCallback(() => setScrollActive(false), []);
   // Was inline JSX on the list, so a new element every render.
-  const listEmpty = useMemo(() => (
-    <View style={{ alignItems: 'center', paddingVertical: 40 }}>
-      <Text variant="caption" color={theme.colors.text.tertiary}>
-        {activeTab === 'posts' ? t('profile.no_posts') : t('profile.empty_section')}
-      </Text>
-    </View>
-  ), [theme.colors.text.tertiary, activeTab, t]);
+  //
+  // ── AND IT MUST NOT CLAIM "NO POSTS" WHILE THE MOUNT GATE IS SHUT ──────────
+  //
+  // Same fix, same reason, as the own-profile tab — see the long note there. While
+  // `postsReady` is false the list is deliberately handed `EMPTY_LIST` so the heavy
+  // cards do not mount during the push transition, and FlashList responds to an
+  // empty dataset by rendering this component. The result was a frame of
+  // "Ещё нет публикаций" over posts that were already in the entity store.
+  //
+  // On THIS screen it was the more misleading of the two, because `postsReady` is
+  // seeded from `paintedProfileIds` on a revisit — so the false caption appeared on
+  // the FIRST visit only, which is precisely when the user has no way to know the
+  // profile is not simply empty.
+  //
+  // `likes` / `replies` are not gated and keep their immediate caption.
+  const listEmpty = useMemo(() => {
+    const gatedTab = activeTab === 'posts' || activeTab === 'media';
+    if (gatedTab && !postsReady) return null;
+    return (
+      <View style={{ alignItems: 'center', paddingVertical: 40 }}>
+        <Text variant="caption" color={theme.colors.text.tertiary}>
+          {activeTab === 'posts' ? t('profile.no_posts') : t('profile.empty_section')}
+        </Text>
+      </View>
+    );
+  }, [theme.colors.text.tertiary, activeTab, t, postsReady]);
 
   // ─── FULLSCREEN VIEWER ────────────────────────────────────────────────────
   //
