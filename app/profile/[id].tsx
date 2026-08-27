@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
-import { View, Pressable, ActivityIndicator, Image, Dimensions, Modal, Animated, Share, Alert, ScrollView, InteractionManager, Text as RNText } from 'react-native';
+import { View, Pressable, ActivityIndicator, Image, Dimensions, Modal, Animated, Platform, Share, Alert, ScrollView, InteractionManager, Text as RNText } from 'react-native';
 import { Feather, FontAwesome5 } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -23,6 +23,9 @@ import { openUrl } from '../../src/utils/openUrl';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { showToast } from '../../src/store/toastStore';
 import { formatTimeAgo } from '../../src/utils/mockData';
+import { AnimatedFlashList } from '@shopify/flash-list';
+import { bottomScrimColors, SCRIM_LOCATIONS } from '../../src/theme/scrim';
+import { BAR_FADE_HEIGHT } from '../../src/components/navigation/CustomTabBar';
 import { CachedImage, prefetchImages } from '../../src/components/ui/CachedImage';
 import { ImageViewerModal, ViewerActionButton } from '../../src/components/chat/ImageViewerModal';
 import { openPostShareSheet, openProfileShareSheet } from '../../src/store/shareSheetStore';
@@ -579,8 +582,9 @@ export default function UserProfileScreen() {
   // Followers / Following list modal opened from the header counters.
   const [followsModal, setFollowsModal] = useState<FollowsListMode | null>(null);
   const { target: contextPost, open: openContextMenu, close: closeContextMenu } = useContextMenuGuard<any>();
-  // Virtualization is handled by Animated.FlatList below — no manual windowing
-  // needed. Initial mount is gated by `postsReady` so the tab tap stays snappy.
+  // Virtualization is handled by the FlashList below — it RECYCLES cells rather than
+  // mounting and unmounting them, and needs no windowing knobs (see the long note at the
+  // list). Initial mount is gated by `postsReady` so the tab tap stays snappy.
   const scrollY = useRef(new Animated.Value(0)).current;
   // Floating follow widget visibility — spring-driven SLIDE (smooth), toggled
   // when the user scrolls past a threshold rather than mapped 1:1 to scroll
@@ -1110,6 +1114,23 @@ export default function UserProfileScreen() {
   // key extractor out of JSX collapses that work to "only when the
   // dependency actually changed".
   const keyExtractor = useCallback((item: any) => item.id, []);
+
+  // ── RECYCLE POOLS, ONE PER ROW SHAPE ──────────────────────────────────────
+  //
+  // Required by the FlashList migration below. FlashList v2 recycles a cell by reusing the mounted
+  // component tree of a cell that scrolled off. Without `getItemType` every row shares one pool, so
+  // switching from Posts to Replies would hand a mounted `UserProfilePostCard` tree to a
+  // `ProfileReplyCard` — a different component, so React throws the tree away and mounts a new one.
+  // That is exactly the mount cost this migration exists to remove.
+  //
+  // Three components across four tabs: `UserProfilePostCard` (Posts, Media and Likes — this screen
+  // shows another user, so even Posts are heterogenous-author cards) and `ProfileReplyCard`
+  // (Replies). The active tab fully determines the shape, so the type is derived from it rather than
+  // from the item. Called on every layout pass per the docs, so it stays a constant keyed on the tab.
+  //
+  // Identical shape to `app/(tabs)/profile.tsx`, which already does this.
+  const listItemType = activeTab === 'replies' ? 'reply' : 'user-post';
+  const getItemType = useCallback(() => listItemType, [listItemType]);
 
   const renderReplyItem = useCallback(
     ({ item }: { item: any }) => <ProfileReplyCard reply={item as ProfileReply} />,
@@ -1998,9 +2019,45 @@ export default function UserProfileScreen() {
         </Animated.View>
       </View>
 
-      <Animated.FlatList
+      {/* ── FLASHLIST v2, NOT Animated.FlatList ──────────────────────────────────
+          A device snapshot put this route at 29 mounts averaging 70 ms with 5 long tasks, worst
+          374 ms, and ~24 `UserProfilePostCard.body` marks inside one second for a screen showing
+          about three cards. Navigating away and back replayed the whole sequence, which is what the
+          user described as the profile "reloading" — visibly, right down to the avatar.
+
+          The cause was this list. `app/(tabs)/profile.tsx` was migrated to FlashList a while ago,
+          got `getItemType` recycle pools, and deliberately deleted its windowing knobs. THIS screen
+          — the other user's profile, the heavier of the two — never got that migration and was still
+          an `Animated.FlatList` with:
+
+              initialNumToRender={3}  maxToRenderPerBatch={2}  windowSize={7}
+              updateCellsBatchingPeriod={80}  removeClippedSubviews={false}
+
+          `windowSize: 7` is ~3.5 viewport heights in each direction, so VirtualizedList materialised
+          roughly two dozen rows for the three that were visible, two per 80 ms tick — precisely the
+          observed cadence. `removeClippedSubviews={false}` then kept every one of them attached to
+          the native view tree. Each row is a full card: `SwipeablePostCard` (three shared values, a
+          four-worklet pan gesture, two animated styles, a `collapsable={false}` view), 25-40 native
+          views, `FormattedText`, thumbnails with skeletons.
+
+          FlashList RECYCLES instead of mounting and unmounting, which is the direct answer to a
+          mount-count problem, and v2 asks for no size estimates at all. So the three knobs that were
+          compensating for a missing trusted height are not merely unused here — two of them worked by
+          keeping MORE cells alive, which was the problem.
+
+          `drawDistance` (default 250 px) is left at its default: far tighter than `windowSize: 7`
+          already, and the brief is to measure before tuning further.
+
+          `AnimatedFlashList` is `Animated.createAnimatedComponent(FlashList)`, exported by
+          @shopify/flash-list 2.3.2, so the existing native-driven `onScroll` Animated.event keeps
+          working unchanged. Same import the own-profile tab uses.
+
+          Honest note: this does NOT make a revisit free. React Navigation unmounts the popped screen
+          (documented, and there is no API to preserve it), so re-entering is a fresh mount either
+          way. What changes is that the fresh mount builds ~3 cards instead of ~24. */}
+      <AnimatedFlashList
         // Tab-driven data swap — memoized so consecutive renders within
-        // the same tab hand the FlatList an IDENTICAL reference. Without
+        // the same tab hand the list an IDENTICAL reference. Without
         // this the conditional was rebuilt on every parent re-render
         // (every haptic, scroll-driven state flip, follow-modal toggle),
         // which made the FlatList recompute virtualization windows even
@@ -2027,44 +2084,24 @@ export default function UserProfileScreen() {
               ? renderLikedItem
               : renderPostItem
         }
-        // Virtualization tuned for weak Android / iPhone 12. Keeps the
-        // mounted card count low so gesture handlers, FormattedText, and any
-        // LinkPreview unfurls don't all sit on the UI thread at once — the
-        // root cause of `SLOW ui<30 @ profile/[id]`.
-        // Same retune as app/(tabs)/profile.tsx — see the long note there. Was 3 / 2 / 5 with
-        // a 100 ms batching period; the refill rate while scrolling UP was the cause of the
-        // list oscillating. initialNumToRender is unchanged so the open frame is unaffected.
-        // Same change as the own-profile tab, for the same measured reason: three expensive cards
-        // committing to one frame IS the long task, and `windowSize: 7` already removes the blank-space
-        // problem that made a smaller batch bad when the window was 3. See the long note there.
-        initialNumToRender={3}
-        maxToRenderPerBatch={2}
-        windowSize={7}
-        updateCellsBatchingPeriod={80}
-        // ── removeClippedSubviews is OFF, deliberately ──────────────────────────
+        // Recycle pool per row shape — see the note where `getItemType` is defined.
+        getItemType={getItemType}
+        // ── THE FLATLIST VIRTUALISATION KNOBS ARE GONE ──────────────────────────
         //
-        // Scrolling DOWN was fine; scrolling back UP juddered, jumping up and down
-        // repeatedly. That asymmetry is the signature of this prop combined with
-        // variable-height rows and no getItemLayout.
+        // Removed: `initialNumToRender={3}`, `maxToRenderPerBatch={2}`, `windowSize={7}`,
+        // `updateCellsBatchingPeriod={80}`, `removeClippedSubviews={false}`. FlashList v2 has no
+        // equivalents — sizing is automatic and recycling replaces the mount/unmount window these
+        // were rationing.
         //
-        // With it on, iOS DETACHES cells that leave the clipping rect. Post cards have no
-        // fixed height (text length, image aspect ratio, optional link preview), so a
-        // detached cell scrolled back into view re-attaches and re-measures. Its real height
-        // rarely equals the height the list assumed while it was gone, so the total content
-        // height changes, the list corrects the scroll offset to compensate, and that
-        // correction moves more cells across the boundary — which is the oscillation.
+        // They are not merely unused. Every one of them existed to compensate for the missing trusted
+        // height, and TWO of them worked by keeping more cells mounted: `windowSize: 7` (raised so
+        // scrolling up found cards already built) and `removeClippedSubviews={false}` (off because
+        // detach → re-attach → re-measure made scrolling up oscillate against variable-height rows).
+        // Both of those are answers to a problem recycling does not have.
         //
-        // Scrolling down never hits it: those cells are being measured for the first time, so
-        // there is no earlier assumption for the measurement to contradict.
-        //
-        // This is NOT a memory regression. windowSize still bounds how many cells exist at
-        // all; this prop only controls whether cells INSIDE that window stay attached to the
-        // native view tree. Turning it off removes the detach/re-attach/re-measure cycle and
-        // leaves the virtualisation window exactly as tight as it was.
-        //
-        // The proper long-term fix is a height the list can trust up front, which for these
-        // cards means measuring and caching per-post heights. Much larger than this.
-        removeClippedSubviews={false}
+        // `maintainVisibleContentPosition` is ON BY DEFAULT in v2 and is the documented answer to the
+        // "a row above the viewport changes height and the content jumps" problem that
+        // `removeClippedSubviews={false}` was working around here.
         showsVerticalScrollIndicator={false}
         bounces={false}
         onScroll={onProfileScroll}
@@ -2081,6 +2118,39 @@ export default function UserProfileScreen() {
         contentContainerStyle={LIST_CONTENT_CONTAINER_STYLE}
         ListHeaderComponent={listHeader}
         ListEmptyComponent={listEmpty}
+      />
+
+      {/* ── BOTTOM SCRIM, THE SAME ONE THE HOME SCREEN HAS ────────────────────
+          Asked for directly: the darkening under the bottom navigation on the main screen should
+          also be there on another user's profile.
+
+          It was missing, and the reason is structural rather than an oversight in this file. On the
+          tab routes that scrim is drawn by `CustomTabBar` itself (`styles.bottomFade`), because it is
+          the tab bar's own fade — the scrim module is explicit that the rule which makes it look
+          right is "it ends exactly at the top of the chrome it belongs to". This screen is a PUSHED
+          route outside the `(tabs)` group, so it has no tab bar, and therefore had no scrim at all:
+          content simply ran into the bottom bezel.
+
+          So the fade is reproduced here with the SAME three shared pieces the tab bar uses — the
+          `bottomScrimColors` ramp, `SCRIM_LOCATIONS`, and `BAR_FADE_HEIGHT` (which is
+          `BOTTOM_CHROME_SCRIM_HEIGHT`, exported by the tab bar so the two cannot drift). Including
+          the `+ insets.bottom` on Android, exactly as the tab bar does, so a device with a gesture
+          bar gets the same coverage.
+
+          `pointerEvents="none"` so it never intercepts a tap on the list or on the floating follow
+          widget, which sits above it. Placed after the list and before the pinned tabs overlay, so
+          it paints over scrolling content and under the chrome. */}
+      <LinearGradient
+        colors={bottomScrimColors(theme.isDark, theme.colors.background.primary)}
+        locations={SCRIM_LOCATIONS}
+        style={{
+          position: 'absolute',
+          left: 0,
+          right: 0,
+          bottom: 0,
+          height: BAR_FADE_HEIGHT + (Platform.OS === 'android' ? insets.bottom : 0),
+        }}
+        pointerEvents="none"
       />
 
       {/* ── Pinned (sticky) category tabs overlay ──────────────────────────
