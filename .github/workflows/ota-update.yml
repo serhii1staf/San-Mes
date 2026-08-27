@@ -74,8 +74,21 @@ jobs:
         # So both shipped platforms are published explicitly, with the same message. Each
         # publish is its own update record; a client fetches the newest one matching its own
         # platform and runtime version, so the two are independent and cannot shadow each
-        # other. Both share `runtimeVersion.policy = "appVersion"` (1.2.0), so the same JS is
-        # valid for both.
+        # other. Both share `runtimeVersion.policy = "appVersion"` (currently 1.3.0), so the same
+        # JS is valid for both.
+        #
+        # ── WHY THE VERSION WAS BUMPED 1.2.0 -> 1.3.0 ─────────────────────────────────────────
+        #
+        # `expo-audio` replaced `expo-av`, which is a NEW NATIVE MODULE. Because the runtime policy
+        # is `appVersion`, leaving the version at 1.2.0 would have given the new native build the
+        # SAME runtime as every already-installed 1.2.0 binary — which does not contain the module —
+        # and both sit on the `production` channel. The next OTA from main would then have been
+        # delivered to those old binaries too, silently killing music playback for users who did
+        # nothing. Bumping the version isolates them: old binaries stay on runtime 1.2.0 and keep the
+        # last update valid for them; anything published from now on targets 1.3.0 only.
+        #
+        # RULE: any commit that adds, removes or upgrades a NATIVE module must bump
+        # `expo.version` in app.json in the same commit, for exactly this reason.
         run: |
           eas update --branch production --message "${MSG}" --platform ios
           eas update --branch production --message "${MSG}" --platform android
