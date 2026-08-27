@@ -153,7 +153,8 @@ const en: Record<string, string> = {
   'register.emoji_title': 'Pick an emoji!',
   'register.emoji_subtitle': "Finally, let's choose an emoji.",
   'register.emoji_pick': 'Pick emoji',
-  'register.emoji_immutable': "The chosen emoji can't be changed",
+  // Was "The chosen emoji can't be changed" — untrue; see the note in ru.ts.
+  'register.emoji_immutable': 'You can change your emoji later in your profile',
   'register.name_title': "Let's get to know you!",
   'register.name_subtitle': 'Enter your name and pick a unique username.',
   'register.name_placeholder': 'Your name',
