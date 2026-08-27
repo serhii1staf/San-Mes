@@ -16,61 +16,9 @@
 // DO NOT change app code in this task.
 
 // --- expo-av mock: per-sound play state + active-instance counter -----------
-jest.mock('expo-av', () => {
-  const state: any = { active: 0, maxActive: 0, created: 0 };
-  (globalThis as any).__audioMock = state;
-
-  const makeSound = () => {
-    let playing = true; // createAsync is called with shouldPlay:true
-    let position = 0;
-    return {
-      unloadAsync: jest.fn(async () => {
-        state.active = Math.max(0, state.active - 1);
-      }),
-      getStatusAsync: jest.fn(async () => ({
-        isLoaded: true,
-        isPlaying: playing,
-        positionMillis: position,
-        durationMillis: 1000,
-      })),
-      playAsync: jest.fn(async () => {
-        playing = true;
-      }),
-      pauseAsync: jest.fn(async () => {
-        playing = false;
-      }),
-      setPositionAsync: jest.fn(async (ms: number) => {
-        position = ms;
-      }),
-      // Mirrors the real expo-av `Audio.Sound#setStatusAsync` API used by
-      // musicStore.toggle() and musicStore.seek(): `shouldPlay` and
-      // `positionMillis` are independent — either, both, or neither may be
-      // present in a single call. Anything `undefined` leaves the field
-      // untouched (matches expo-av semantics).
-      setStatusAsync: jest.fn(async (opts: { shouldPlay?: boolean; positionMillis?: number } = {}) => {
-        if (typeof opts.shouldPlay === 'boolean') playing = opts.shouldPlay;
-        if (typeof opts.positionMillis === 'number') position = opts.positionMillis;
-      }),
-      stopAsync: jest.fn(async () => {
-        playing = false;
-      }),
-    };
-  };
-
-  return {
-    Audio: {
-      setAudioModeAsync: jest.fn(async () => {}),
-      Sound: {
-        createAsync: jest.fn(async (_source: any, _initial: any, _cb: any) => {
-          state.active += 1;
-          state.created += 1;
-          if (state.active > state.maxActive) state.maxActive = state.active;
-          return { sound: makeSound(), status: { isLoaded: true } };
-        }),
-      },
-    },
-  };
-});
+// expo-av is gone (removed in Expo SDK 55). The mock for its replacement lives in ONE place —
+// see src/test-utils/expoAudioMock.ts for why, and for the `__audioMock` contract this preserves.
+jest.mock('expo-audio', () => require('../../test-utils/expoAudioMock').createExpoAudioMock());
 
 import fc from 'fast-check';
 import { useMusicStore } from '../musicStore';

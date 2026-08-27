@@ -69,25 +69,9 @@ jest.mock('@expo/vector-icons', () => {
   };
 });
 
-jest.mock('expo-av', () => ({
-  Audio: {
-    setAudioModeAsync: jest.fn(async () => {}),
-    Sound: {
-      createAsync: jest.fn(async () => ({
-        sound: {
-          unloadAsync: jest.fn(async () => {}),
-          getStatusAsync: jest.fn(async () => ({ isLoaded: true, isPlaying: true, positionMillis: 0, durationMillis: 1000 })),
-          playAsync: jest.fn(async () => {}),
-          pauseAsync: jest.fn(async () => {}),
-          setPositionAsync: jest.fn(async () => {}),
-          setStatusAsync: jest.fn(async () => {}),
-          stopAsync: jest.fn(async () => {}),
-        },
-        status: { isLoaded: true },
-      })),
-    },
-  },
-}));
+// expo-av is gone (removed in Expo SDK 55). The mock for its replacement lives in ONE place —
+// see src/test-utils/expoAudioMock.ts for why, and for the `__audioMock` contract this preserves.
+jest.mock('expo-audio', () => require('../../../test-utils/expoAudioMock').createExpoAudioMock());
 
 import { MusicBottomIndicator } from '../MusicBottomIndicator';
 import { useMusicStore } from '../../../store/musicStore';

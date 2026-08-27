@@ -50,6 +50,15 @@
       "expo-router",
       "expo-font",
       [
+        "expo-audio",
+        {
+          "enableBackgroundPlayback": true,
+          "microphonePermission": false,
+          "recordAudioAndroid": false,
+          "enableBackgroundRecording": false
+        }
+      ],
+      [
         "expo-splash-screen",
         {
           "backgroundColor": "#141414",

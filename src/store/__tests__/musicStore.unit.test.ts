@@ -13,45 +13,12 @@
 // Mock pattern matches the existing exploratory test: a per-run state object
 // records active sound count and the captured status callbacks.
 
-jest.mock('expo-av', () => {
-  const state: any = { active: 0, maxActive: 0, created: 0, callbacks: [] };
-  (globalThis as any).__audioMock = state;
-
-  const makeSound = (cb: any) => ({
-    _cb: cb,
-    unloadAsync: jest.fn(async () => {
-      state.active = Math.max(0, state.active - 1);
-    }),
-    getStatusAsync: jest.fn(async () => ({
-      isLoaded: true,
-      isPlaying: true,
-      positionMillis: 0,
-      durationMillis: 1000,
-    })),
-    playAsync: jest.fn(async () => {}),
-    pauseAsync: jest.fn(async () => {}),
-    setPositionAsync: jest.fn(async () => {}),
-    setStatusAsync: jest.fn(async () => {}),
-    stopAsync: jest.fn(async () => {}),
-  });
-
-  return {
-    Audio: {
-      setAudioModeAsync: jest.fn(async () => {}),
-      Sound: {
-        createAsync: jest.fn(async (_source: any, _initial: any, cb: any) => {
-          state.active += 1;
-          state.created += 1;
-          if (state.active > state.maxActive) state.maxActive = state.active;
-          state.callbacks.push(cb);
-          return { sound: makeSound(cb), status: { isLoaded: true } };
-        }),
-      },
-    },
-  };
-});
+// expo-av is gone (removed in Expo SDK 55). The mock for its replacement lives in ONE place —
+// see src/test-utils/expoAudioMock.ts for why, and for the `__audioMock` contract this preserves.
+jest.mock('expo-audio', () => require('../../test-utils/expoAudioMock').createExpoAudioMock());
 
 import { useMusicStore } from '../musicStore';
+import { audioStatus } from '../../test-utils/expoAudioMock';
 import type { Track } from '../../services/musicService';
 
 const audioMock = () =>
@@ -104,13 +71,7 @@ describe('musicStore.play — generation-token + same-track toggle', () => {
     // Trigger the OLD (track A) status callback after current has moved on to B.
     const cbA = audioMock().callbacks[0];
     expect(typeof cbA).toBe('function');
-    cbA({
-      isLoaded: true,
-      isPlaying: false,
-      positionMillis: 99999,
-      durationMillis: 88888,
-      didJustFinish: true,
-    });
+    cbA(audioStatus({ positionMs: 99999, durationMs: 88888, didJustFinish: true }));
 
     // Stale callback must not leak into the current track's state.
     expect(useMusicStore.getState().current?.id).toBe('B');
@@ -122,7 +83,7 @@ describe('musicStore.play — generation-token + same-track toggle', () => {
   it('a fresh status callback for the CURRENT track still updates positionMs', async () => {
     await useMusicStore.getState().play(track('only'));
     const cb = audioMock().callbacks[audioMock().callbacks.length - 1];
-    cb({ isLoaded: true, isPlaying: true, positionMillis: 4242, durationMillis: 200000 });
+    cb(audioStatus({ positionMs: 4242, durationMs: 200000 }));
 
     expect(useMusicStore.getState().positionMs).toBe(4242);
     expect(useMusicStore.getState().current?.id).toBe('only');
@@ -155,7 +116,7 @@ describe('musicStore.play — generation-token + same-track toggle', () => {
     expect(useMusicStore.getState().current).toBeNull();
 
     // Orphan callback fires after stop().
-    cb({ isLoaded: true, isPlaying: true, positionMillis: 1234, durationMillis: 5000 });
+    cb(audioStatus({ positionMs: 1234, durationMs: 5000 }));
 
     // stop() bumped the generation token → callback no-ops.
     expect(useMusicStore.getState().current).toBeNull();
