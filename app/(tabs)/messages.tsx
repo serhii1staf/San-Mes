@@ -20,6 +20,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { headerScrimHeights, SCRIM_LOCATIONS, topScrimColors } from '../../src/theme/scrim';
 import { BOTTOM_CHROME_SPRING } from '../../src/theme/motion';
+import { SlideUpSheet } from '../../src/components/ui/SlideUpSheet';
 import ContextMenu from 'react-native-context-menu-view';
 import { toPreviewText } from '../../src/utils/previewText';
 import { useChatUnread } from '../../src/store/chatUnreadStore';
@@ -1669,7 +1670,10 @@ export default function MessagesScreen() {
   const [composeOpen, setComposeOpen] = useState(false);
   const openCompose = useCallback(() => {
     triggerHaptic('light');
-    setComposeOpen((v) => !v);
+    // Open, not toggle. A toggle is reasonable for a popover anchored to its own
+    // button; for a modal sheet the backdrop and the grabber are how it closes, and
+    // the trigger is behind that backdrop while it is up.
+    setComposeOpen(true);
   }, []);
   const closeCompose = useCallback(() => setComposeOpen(false), []);
   const archived = useChatSettingsStore((s) => s.archived);
@@ -2465,7 +2469,7 @@ export default function MessagesScreen() {
       </GestureDetector>
 
       {/* Compose menu overlay. Trigger is the header's compose button. */}
-      <ComposeMenu open={composeOpen} onClose={closeCompose} topOffset={headerContentHeight} />
+      <ComposeMenu open={composeOpen} onClose={closeCompose} />
 
       {/* Contextual action bar — replaces the tab bar while selecting. */}
       <SelectionActionBar
@@ -2486,167 +2490,102 @@ export default function MessagesScreen() {
   );
 }
 
-// Standalone subcomponent — keeps the screen's own re-renders independent of
-// FAB animation state, and isolates the Animated.Value lifecycle.
+// Compose menu — the app's standard bottom sheet.
 //
-// Implementation notes (perf-critical):
-//   - The menu and backdrop are ALWAYS in the tree (no mount/unmount). The
-//     previous version used `mounted` state to add/remove them, which paid a
-//     mount cost on every open and could starve the spring animation of its
-//     first 1–2 frames on weak Androids. Now both stay mounted and we only
-//     toggle opacity + pointerEvents.
-//   - All animated properties go through the native driver (transform +
-//     opacity), so the spring keeps running even when the JS thread is busy
-//     navigating to a new screen.
-//   - Navigation fires immediately on tap; the close animation rides on top
-//     of the navigation transition without competing for the JS thread.
-//   - Menu items are wrapped in React.memo so the list doesn't re-render
-//     when the parent's open state flips.
+// ── WHY THIS IS A SHEET AND NOT AN ANCHORED POPOVER ──────────────────────────
+//
+// Asked for: tapping the header's compose/edit button should open "the modal window we
+// mostly use" rather than the small card that used to drop out from under the button.
+//
+// What was here was a hand-rolled popover: absolutely positioned at
+// `top: topOffset, right: theme.spacing.base`, with its own always-mounted backdrop and
+// backdrop fade, its own `Animated.timing` open/close plus derived opacity/scale/translate
+// interpolations, its own shadow and hairline border, and — because the card had grown a
+// `GlassBg` — a `glassMounted` state to work around an alpha destroying the native glass
+// (expo/expo#41024). About a hundred lines of chrome reimplemented for one four-row menu.
+//
+// `SlideUpSheet` is what the rest of the app already uses for this: twelve call sites across
+// ten files, including the feed's three-dots menu, the share sheet, the profile-edit sheet,
+// the translation sheet and the mini-app report flow. It owns the `Modal`, the backdrop and
+// its fade, tap-to-dismiss, `onRequestClose`, the drag-to-dismiss grabber with its expand
+// detent, the `KeyboardAvoidingView` and the safe-area padding. So all of the above is
+// deleted rather than ported.
+//
+// The glass workaround goes with it, and that is the part worth noticing: `SlideUpSheet`'s
+// card is a solid surface, so there is no GlassView on this surface any anymore and therefore
+// nothing for an alpha to destroy. An entire class of bug — the one `glassMounted` existed
+// to dodge — stops applying to this menu rather than being managed.
+//
+// Kept exactly as it was: `navigate`, which closes first and pushes the route after
+// interactions so the incoming screen never mounts on top of the exit animation. That
+// composes cleanly with the sheet, which already waits 30 ms after its own exit before
+// calling `onClose`.
+//
+// The `Fab*` row components below keep their names. There has been no FAB here since the
+// trigger moved into the header, and the name is now doubly wrong — but renaming them is
+// churn unrelated to what was asked, and the note on them already records the history.
 function ComposeMenu({
   open,
   onClose,
-  topOffset,
 }: {
   open: boolean;
   onClose: () => void;
-  /** Y of the menu's top edge — just under the header's compose button. */
-  topOffset: number;
 }) {
   const theme = useTheme();
   const t = useT();
-  // Native iOS-26 liquid glass for the menu. iOS-only + opt-in.
-  const glassActive = useLiquidGlassActive();
-  const setOpen = useCallback((next: boolean) => { if (!next) onClose(); }, [onClose]);
-  const anim = useRef(new Animated.Value(0)).current; // 0 = closed, 1 = open
-
-  // ON THE GLASS PATH THE CARD IS UNMOUNTED WHEN CLOSED.
-  //
-  // The note above says the menu is always mounted and hidden with `opacity`, and that was a sound
-  // trade, right up until this card grew a `GlassBg`. `expo-glass-effect` loses the glass whenever
-  // the view or ANY ancestor carries an opacity (expo/expo#41024), so an always-mounted card sitting
-  // at alpha 0 between uses means the native effect is discarded before the user ever opens the menu,
-  // and setting the alpha back to 1 does not bring it back. That is the "glass is there once, gone
-  // the next time" report, for this surface.
-  //
-  // So the two paths now hide differently, because they have different constraints:
-  //   NO GLASS -> unchanged. Always mounted, `opacity` fade, exactly as documented above.
-  //   GLASS    -> unmounted when closed, so each open composites a fresh glass view.
-  //
-  // `glassMounted` has to OUTLIVE the close animation (otherwise the card vanishes instantly instead
-  // of animating out), which is why it is cleared from the completion callback and not from `open`.
-  const [glassMounted, setGlassMounted] = useState(false);
-
-  useEffect(() => {
-    if (open) setGlassMounted(true);
-    // Plain appear/disappear: a simple opacity (+ subtle scale) fade, per the user's request to drop
-    // the rubbery "grow out of the FAB" spring. Quick timing, native-driven so it stays smooth even
-    // while navigating away.
-    const animation = Animated.timing(anim, {
-      toValue: open ? 1 : 0,
-      duration: open ? 160 : 130,
-      useNativeDriver: true,
-    });
-    animation.start(({ finished }) => {
-      // `finished` is false when a newer toggle superseded this one, in which case that newer run
-      // owns the mount state and this callback must not touch it.
-      if (finished && !open) setGlassMounted(false);
-    });
-    return () => animation.stop();
-  }, [open, anim]);
-
-  const navigate = useCallback((action: () => void) => {
-    setOpen(false);
-    // Defer the route push until React commits the closed state and the fade
-    // has flushed its first native frame, so the new screen's mount work never
-    // blocks the JS thread mid-animation.
-    InteractionManager.runAfterInteractions(action);
-  }, []);
-
-  // Simple appear: fade + a barely-there scale/translate so it doesn't pop in
-  // harshly. No transform-origin gymnastics.
-  const menuOpacity = anim;
-  const menuScale = anim.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1] });
-  const menuTranslateY = anim.interpolate({ inputRange: [0, 1], outputRange: [8, 0] });
-  const backdropOpacity = anim.interpolate({ inputRange: [0, 1], outputRange: [0, 1] });
-
-  const menuBg = theme.isDark ? theme.colors.background.elevated : '#FFFFFF';
   const borderColor = theme.colors.border.light;
   const accent = theme.colors.accent.primary;
   const secondary = theme.colors.text.secondary;
 
+  const navigate = useCallback(
+    (action: () => void) => {
+      onClose();
+      // Defer the route push until React has committed the closed state, so the new
+      // screen's mount work never lands on the sheet's exit frames.
+      InteractionManager.runAfterInteractions(action);
+    },
+    [onClose],
+  );
+
   return (
-    <>
-      {/* Backdrop — always mounted, just opacity-driven. pointerEvents flips
-          off when closed so taps fall through to the chat list underneath. */}
-      <Animated.View
-        pointerEvents={open ? 'auto' : 'none'}
-        style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.18)', opacity: backdropOpacity, zIndex: 200 }}
-      >
-        <Pressable style={{ flex: 1 }} onPress={() => setOpen(false)} />
-      </Animated.View>
-
-      {/* Menu. Hidden two different ways, because the two paths have different constraints: faded
-          with `opacity` when there is no glass (always mounted, as before), unmounted when there is.
-          When glass is on the solid card background is replaced by a GlassBg layer (content renders
-          on top) and the border/solid fill drop so the glass supplies the surface. */}
-      {/* On the GLASS path this card is mounted only while open (plus the close animation) and is
-          NEVER faded. See the note on `glassMounted` above. */}
-      {(glassActive ? glassMounted : true) && (
-      <Animated.View
-        pointerEvents={open ? 'auto' : 'none'}
-        style={{
-          position: 'absolute',
-          // Anchored under the header's compose button (top-right) now that the
-          // trigger moved up there. `topOffset` is computed from the real safe
-          // area + header height by the screen, so it lands correctly on a
-          // notched iPhone, a Dynamic Island one, and a flat-top Android alike.
-          top: topOffset,
-          right: theme.spacing.base,
-          // PINNED TO 1 WHEN GLASS IS ON. An alpha anywhere above a GlassView discards its glass
-          // (expo/expo#41024); the card is unmounted instead of faded on that path. Same shape as
-          // `app/profile/customize-header.tsx`, which guards its glass branch the same way.
-          opacity: glassActive ? 1 : menuOpacity,
-          transform: [
-            { translateY: menuTranslateY },
-            { scale: menuScale },
-          ],
-          backgroundColor: glassActive ? 'transparent' : menuBg,
-          borderRadius: 18,
-          overflow: 'hidden',
-          shadowColor: '#000',
-          shadowOffset: { width: 0, height: 6 },
-          shadowOpacity: 0.18,
-          shadowRadius: 20,
-          elevation: 14,
-          borderWidth: glassActive ? 0 : 0.5,
-          borderColor,
-          zIndex: 201,
-          minWidth: 220,
-        }}
-      >
-        {/* Glass surface behind the menu rows (static, non-interactive so it
-            doesn't morph as the finger moves between items). */}
-        {glassActive ? <GlassBg borderRadius={18} glassStyle="regular" interactive={false} colorScheme={theme.isDark ? 'dark' : 'light'} /> : null}
-        <FabMenuItem icon="grid-view" label={t('messages.fab.mini_apps')} tint={accent} onPress={() => navigate(() => router.push('/settings/mini-apps' as any))} />
+    <SlideUpSheet visible={open} onClose={onClose}>
+      <View style={{ paddingBottom: 4 }}>
+        <FabMenuItem
+          icon="grid-view"
+          label={t('messages.fab.mini_apps')}
+          tint={accent}
+          onPress={() => navigate(() => router.push('/settings/mini-apps' as any))}
+        />
         <FabSeparator color={borderColor} />
-        <FabMenuItem icon="memory" label={t('messages.fab.ai')} tint={accent} onPress={() => navigate(() => router.push('/chat/ai' as any))} />
+        <FabMenuItem
+          icon="memory"
+          label={t('messages.fab.ai')}
+          tint={accent}
+          onPress={() => navigate(() => router.push('/chat/ai' as any))}
+        />
         <FabSeparator color={borderColor} />
-        <FabMenuItem icon="music-note" label={t('messages.fab.music')} tint={accent} onPress={() => navigate(() => router.push('/chat/music' as any))} />
+        <FabMenuItem
+          icon="music-note"
+          label={t('messages.fab.music')}
+          tint={accent}
+          onPress={() => navigate(() => router.push('/chat/music' as any))}
+        />
         <FabSeparator color={borderColor} />
-        <FabMenuItem icon="settings" label={t('messages.fab.chat_settings')} tint={secondary} onPress={() => navigate(() => router.push({ pathname: '/settings/chat-settings', params: { id: GLOBAL_CHAT_SETTINGS_KEY } } as any))} />
-      </Animated.View>
-      )}
-
-      {/* NOTE: the floating action button that used to live at bottom-right and
-          own this menu is gone — its trigger is now the compose button in the
-          header (see `HeaderIconButton` on the screen). Reasons it moved:
-            - the bottom-right corner is where the tab bar's detached profile
-              capsule floats, so the FAB sat on top of it on shorter devices;
-            - selection mode needs the whole bottom edge for its action bar;
-            - a top-right compose button matches where iOS puts it in Messages.
-          The menu itself (mini-apps / AI / music / chat settings) is unchanged —
-          only its anchor and trigger moved. */}
-    </>
+        <FabMenuItem
+          icon="settings"
+          label={t('messages.fab.chat_settings')}
+          tint={secondary}
+          onPress={() =>
+            navigate(() =>
+              router.push({
+                pathname: '/settings/chat-settings',
+                params: { id: GLOBAL_CHAT_SETTINGS_KEY },
+              } as any),
+            )
+          }
+        />
+      </View>
+    </SlideUpSheet>
   );
 }
 
