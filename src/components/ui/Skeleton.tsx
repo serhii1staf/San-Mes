@@ -194,34 +194,45 @@ function getColors(isDark: boolean): {
    */
   gradient: readonly [string, string, ...string[]];
 } {
-  if (isDark) {
-    return {
-      // Clearly-visible tinted base box.
-      base: 'rgba(255,255,255,0.10)',
-      // Bright white sweep with feathered shoulders for a glowy band.
-      gradient: [
-        'rgba(255,255,255,0)',
-        'rgba(255,255,255,0.08)',
-        'rgba(255,255,255,0.28)',
-        'rgba(255,255,255,0.08)',
-        'rgba(255,255,255,0)',
-      ],
-    };
-  }
-  return {
-    // Darker gray base so the bright band reads as a glossy sweep.
-    base: 'rgba(0,0,0,0.09)',
-    // Bright white glossy band over the gray base — the classic,
-    // clearly-visible "content loading" shimmer.
-    gradient: [
-      'rgba(255,255,255,0)',
-      'rgba(255,255,255,0.18)',
-      'rgba(255,255,255,0.65)',
-      'rgba(255,255,255,0.18)',
-      'rgba(255,255,255,0)',
-    ],
-  };
+  // ── FROZEN, NOT REBUILT PER RENDER ────────────────────────────────────────
+  //
+  // This used to construct the wrapper object AND its five-element gradient array on every call, and
+  // it is called unconditionally in the render body. The array goes straight to `LinearGradient`'s
+  // native `colors` prop, so a fresh identity per render meant the native side re-diffed the gradient
+  // of every mounted skeleton on every commit — for values that depend on one boolean.
+  //
+  // There are exactly two possible results. Both are now module constants.
+  return isDark ? DARK_COLORS : LIGHT_COLORS;
 }
+
+type SkeletonColors = { base: string; gradient: readonly [string, string, ...string[]] };
+
+const DARK_COLORS: SkeletonColors = {
+  // Clearly-visible tinted base box.
+  base: 'rgba(255,255,255,0.10)',
+  // Bright white sweep with feathered shoulders for a glowy band.
+  gradient: [
+    'rgba(255,255,255,0)',
+    'rgba(255,255,255,0.08)',
+    'rgba(255,255,255,0.28)',
+    'rgba(255,255,255,0.08)',
+    'rgba(255,255,255,0)',
+  ],
+};
+
+const LIGHT_COLORS: SkeletonColors = {
+  // Darker gray base so the bright band reads as a glossy sweep.
+  base: 'rgba(0,0,0,0.09)',
+  // Bright white glossy band over the gray base — the classic,
+  // clearly-visible "content loading" shimmer.
+  gradient: [
+    'rgba(255,255,255,0)',
+    'rgba(255,255,255,0.18)',
+    'rgba(255,255,255,0.65)',
+    'rgba(255,255,255,0.18)',
+    'rgba(255,255,255,0)',
+  ],
+};
 
 function SkeletonBase({
   width = '100%',
