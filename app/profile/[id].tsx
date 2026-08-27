@@ -25,6 +25,7 @@ import { showToast } from '../../src/store/toastStore';
 import { formatTimeAgo } from '../../src/utils/mockData';
 import { AnimatedFlashList } from '@shopify/flash-list';
 import { bottomScrimColors, SCRIM_LOCATIONS } from '../../src/theme/scrim';
+import { BAR_FADE_HEIGHT } from '../../src/components/navigation/CustomTabBar';
 import { CachedImage, prefetchImages } from '../../src/components/ui/CachedImage';
 import { ImageViewerModal, ViewerActionButton } from '../../src/components/chat/ImageViewerModal';
 import { openPostShareSheet, openProfileShareSheet } from '../../src/store/shareSheetStore';
@@ -2162,27 +2163,31 @@ export default function UserProfileScreen() {
           height, with no capsule, reads as a dark slab the content falls into. Copying the ramp was
           right. Copying the height of absent chrome was not.
 
-          ── AND THE FIRST CORRECTION WAS ARITHMETICALLY A NO-OP. THIS IS THE SECOND. ──
-          I replaced `BAR_FADE_HEIGHT` with `insets.bottom + 48`, copied from `app/settings/index.tsx`
-          on the grounds that it is also a pushed route with no tab bar. The reasoning was right and
-          the number was not: `BAR_FADE_HEIGHT` is 84, and on an iPhone with a home indicator
-          `insets.bottom` is 34, so `insets.bottom + 48` is 82. I changed 84 to 82 and wrote a long
-          note about the governing rule. Reported, correctly, as still showing the old darkening —
-          because it was the old darkening. I validated the rule and never evaluated the expression.
+          ── THE HEIGHT WAS NEVER THE PROBLEM. TWO OF MY FIXES CHASED IT ANYWAY. ──
+          For the record, because the sequence is instructive. I changed this height twice and neither
+          change was visible, for the same reason both times: a SECOND, legacy gradient at `zIndex: 90`
+          was painting over this one (see the long note further down where it used to be). So:
 
-          So, applying the rule properly this time. The rule is "the scrim spans exactly the chrome it
-          belongs to, and stops". The chrome here is NOTHING — this route has no tab bar and no
-          composer. A scrim over absent chrome has exactly one remaining job: stop content
-          hard-clipping against the physical bezel. That is the safe-area inset and nothing more.
+            first attempt   `BAR_FADE_HEIGHT` -> `insets.bottom + 48`. Also arithmetically a no-op:
+                            BAR_FADE_HEIGHT is 84 and `insets.bottom` on an iPhone is 34, so I changed
+                            84 to 82 and wrote a long justification about the governing rule.
+            second attempt  -> `Math.max(insets.bottom, 16)`, reasoning that a scrim over absent chrome
+                            should only cover the bezel. Sound reasoning, wrong premise: the chrome was
+                            not absent, a legacy gradient was drawing it.
 
-          `Math.max(insets.bottom, 16)` rather than the bare inset because Android devices with
-          gesture navigation frequently report 0, and a zero-height ramp is not "no slab", it is no
-          fade at all — content would butt straight into the edge. 16 is the smallest value that still
-          reads as a softened edge.
+          Both attempts were me theorising about why the ramp "read wrong" while never checking whether
+          the ramp I was editing was the one on screen. It was not.
 
-          On an iPhone this is 34 against the previous 84: unmistakably different rather than two
-          points different. If it is STILL wrong, the remaining option is the one recorded below —
-          putting the real tab bar on this route — and that is a deliberate trade, not a tweak.
+          Back to the tab bar's own expression, which is the point: the user asks for the darkening here
+          to match the screens that have the bottom navigation, and matching means using the same ramp,
+          the same 17-stop curve and the same height those screens use. `CustomTabBar` draws
+          `BAR_FADE_HEIGHT + (Platform.OS === 'android' ? insets.bottom : 0)`; this is that expression,
+          so the two cannot drift.
+
+          The remaining difference from a tab screen is the glass capsule floating on the ramp, which
+          cannot be reproduced here without moving the route into the `(tabs)` group — and that breaks
+          `CustomTabBar`'s slot math (it pushes every route not named `profile` into the main bar) and
+          turns a native-stack push into a tab switch. That trade stays unmade.
 
           `pointerEvents="none"` so it never intercepts a tap on the list or on the floating follow
           widget, which sits above it. Placed after the list and before the pinned tabs overlay, so
@@ -2195,7 +2200,7 @@ export default function UserProfileScreen() {
           left: 0,
           right: 0,
           bottom: 0,
-          height: Math.max(insets.bottom, 16),
+          height: BAR_FADE_HEIGHT + (Platform.OS === 'android' ? insets.bottom : 0),
         }}
         pointerEvents="none"
       />
@@ -2264,10 +2269,38 @@ export default function UserProfileScreen() {
         </View>
       </Animated.View>
 
-      {/* Bottom gradient - always visible */}
-      <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 80, zIndex: 90 }} pointerEvents="none">
-        <LinearGradient colors={['transparent', theme.colors.background.primary]} locations={[0, 0.8]} style={{ flex: 1 }} />
-      </View>
+      {/* ── THE LEGACY BOTTOM GRADIENT LIVED HERE, AND IT WAS THE WHOLE BUG ──────
+          Removed. This is the "старое затемнение" reported six times, and it is why every previous
+          attempt of mine to fix it did nothing visible.
+
+          What was here:
+
+            <View style={{ position:'absolute', bottom:0, left:0, right:0, height:80, zIndex:90 }}>
+              <LinearGradient colors={['transparent', theme.colors.background.primary]}
+                              locations={[0, 0.8]} />
+            </View>
+
+          Three things wrong with it, and the third is what hid my edits:
+
+            1. WRONG EFFECT. It fades to `background.primary` — a background-COLOURED wash. Every
+               other surface in the app uses the shared BLACK ramp from `src/theme/scrim.ts`. That
+               file records this exact mistake being fixed in the chat once already: the chat's stops
+               "used to be local (`[bgTransparent, bgColor + 'B3', bgColor]`, midpoint 0.45) — a
+               background-coloured fade rather than the black ramp used behind the tab bar, which is
+               why the chat's scrim looked like a different effect from every other screen's."
+               Same defect, same screen-specific hardcode, never cleaned up here.
+
+            2. WRONG GEOMETRY. A hardcoded 80 with `locations={[0, 0.8]}`, against the shared ramp's
+               `BOTTOM_CHROME_SCRIM_HEIGHT` (84) and 17-stop smoothstep curve.
+
+            3. `zIndex: 90`. The shared scrim below has no zIndex, so it sits in document order and
+               this painted ON TOP OF IT. Which means the screen has had TWO bottom gradients stacked
+               all along, and the visible one was the legacy one. That is why changing the shared
+               scrim's height from 84 to 82, and then to the safe-area inset, changed nothing the user
+               could see — I was editing the gradient underneath.
+
+          With this gone, the shared ramp below is the only bottom gradient on the screen, and it is
+          the same ramp, stops and height the tab bar draws. */}
 
       {/* Floating follow widget — slides up on scroll. Glass when enabled,
           BlurView otherwise. Entrance is a translateY SLIDE (never an opacity
