@@ -984,7 +984,11 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
   //
   // A text-only bubble has `hasImages === false` and so never satisfies the guard — deliberately. It
   // would report the cheap path and dilute the average with rows that were never suspected.
-  const perfEnabled = useSettingsStore((s) => s.perfMonitorEnabled);
+  // NON-REACTIVE read, deliberately. As a subscription this was one live store listener per mounted
+  // bubble (24 of them, given `maxItemsInRecyclePool`) whose only purpose was measurement — the
+  // profiler billing itself to the thing it profiles. `perfMonitor.markScreenMount` re-checks the
+  // flag itself before recording, and a debug toggle has no business re-rendering the transcript.
+  const perfEnabled = useSettingsStore.getState().perfMonitorEnabled;
   const bodyRenderStart = perfEnabled && hasImages && imgReveal ? Date.now() : 0;
   useEffect(() => {
     if (!perfEnabled || !hasImages || !imgReveal) return;
@@ -1378,10 +1382,13 @@ const MemoMessageBubble = React.memo(MessageBubble, (prev, next) => {
     prev.bubbleRadius === next.bubbleRadius &&
     prev.fontFamily === next.fontFamily &&
     prev.linkEmoji === next.linkEmoji &&
-    prev.bubbleColors.join(',') === next.bubbleColors.join(',') &&
+    // Reference first: both arrays are useMemo'd in the screen, so this is the common path and it
+    // costs nothing. The join is kept as the fallback so a rebuilt-but-equal array still compares
+    // equal — dropping it would re-render every bubble whenever the theme object churned.
+    (prev.bubbleColors === next.bubbleColors || prev.bubbleColors.join(',') === next.bubbleColors.join(',')) &&
     prev.bubbleOpacity === next.bubbleOpacity &&
     prev.bubbleTextColor === next.bubbleTextColor &&
-    prev.inColors.join(',') === next.inColors.join(',') &&
+    (prev.inColors === next.inColors || prev.inColors.join(',') === next.inColors.join(',')) &&
     prev.inOpacity === next.inOpacity &&
     prev.inTextColor === next.inTextColor &&
     prev.highlighted === next.highlighted &&
@@ -1772,11 +1779,13 @@ export default function ChatScreen() {
   const conversation = useMemo(() => mockConversations.find((c) => c.id === id), [id]);
   const [profileData, setProfileData] = useState<any>(null);
 
-  const entityConversations = useEntityStore((s) => s.conversations);
-  const entityConv = useMemo(
-    () => entityConversations.find((c) => c.id === id),
-    [entityConversations, id],
-  );
+  // ONE ROW, NOT THE WHOLE LIST. This used to select `s.conversations` and `find` outside the
+  // selector, so every `setConversations` anywhere in the app re-rendered this chat — and
+  // `reconcileConversation` fires one on every single send. `find` returns the EXISTING element, so
+  // a new array holding an unchanged row yields the same reference and Zustand bails out on
+  // `Object.is`. Nothing is constructed in the selector, so this cannot trip React 19's
+  // "getSnapshot should be cached" rule either.
+  const entityConv = useEntityStore((s) => s.conversations.find((c) => c.id === id));
   const participantId = paramParticipantId || entityConv?.participantId || (conversation as any)?.participantId || id;
 
   // Synchronously read this chat's cached messages ONCE so the very first render
@@ -2021,7 +2030,22 @@ export default function ChatScreen() {
     } catch {
       full = [];
     }
-    const healed = full.map((m) => healLegacySender(m, currentUserId, participantId));
+    // HEAL LAZILY, PER ROW — see the note above. This used to be an eager `.map` over the whole
+    // blob (up to MAX_PERSISTED_MESSAGES = 1000) to serve a 60-row page, and it was outside any
+    // span, which is why the snapshot showed a 5 ms read inside a 190 ms task.
+    //
+    // `healLegacySender` returns the SAME object for a modern row, so the WeakMap only ever holds
+    // entries for rows that genuinely needed rewriting, and a repeat page pays nothing.
+    const healCache = new WeakMap<object, ChatMessage>();
+    const healRow = (m: ChatMessage): ChatMessage => {
+      if (typeof m !== 'object' || m === null) return m;
+      const hit = healCache.get(m);
+      if (hit) return hit;
+      const out = healLegacySender(m, currentUserId, participantId);
+      healCache.set(m, out);
+      return out;
+    };
+    const healed = perfSpan(`chat.cachedHistory.heal(${full.length})`, () => full.map(healRow));
     const rows = filterTombstoned(conversationId, healed) as ChatMessage[];
     cachedHistoryRef.current = { convId: conversationId, rows };
     return rows;
@@ -5592,6 +5616,122 @@ export default function ChatScreen() {
   const banner = editing || replyTo;
   const menuIsOwn = actionMessage ? (actionMessage.senderId === currentUserId || actionMessage.senderId === 'current') : false;
 
+  // ── THE TRANSCRIPT IS ITS OWN MEMO BOUNDARY ────────────────────────────────
+  //
+  // From the user's snapshot: chat/[id] shows 3 long tasks (worst 199 ms, avg 174 ms), 9 jank
+  // events and a worst FPS of 11 — while the MARKED work inside those tasks adds up to 6 ms
+  // (`chat.cachedHistory.read` 5, `chat.reverse(120)` 0, `chat.dayLabels(120)` 1). The derivations
+  // are not the cost. What costs is what a new array identity CAUSES: this component body re-runs
+  // and FlashList reconciles 120 rows.
+  //
+  // And the body re-runs constantly for reasons the transcript does not care about. It owns 26
+  // pieces of local state — search text, the scroll-to-bottom button, keyboard height, the emoji
+  // panel, replyTo, editing, pendingImages, uploading, pinCursor, jumpNonce, realtimeTick,
+  // profileData, viewerImages, translateText, photoPanelOpen — and until now the list element was
+  // built inline in that same body, so every one of them handed FlashList a fresh element.
+  // Typing one character into search reconciled the whole transcript.
+  //
+  // Hoisting the element into a memo is the documented remedy: React skips a subtree whose element
+  // identity is unchanged, and react.dev prescribes splitting at the state read so the expensive
+  // child only sees what it needs. https://react.dev/reference/react/memo
+  //
+  // This is deliberately NOT the full fix. The real one is to split this 4,835-line body into a data
+  // owner and a transcript child, which is a much larger change. This puts the memo boundary where
+  // that split would put it, so the win lands now and the split becomes a mechanical follow-up.
+  //
+  // WHY THE DEPENDENCY LIST IS SHORT, AND WHY THAT IS NOT AN OVERSIGHT
+  //   Every other prop in the block is already stable by construction: `chatKeyExtractor` and
+  //   `chatGetItemType` are useCallback([]), `viewabilityConfig` and `onViewableItemsChanged` are
+  //   useRef(...).current, `onStartReached` and `onChatScroll` are useCallback([]), the two spacer
+  //   elements are memoised, and MVCP_INVERTED / LIST_CONTENT_CONTAINER_STYLE are module constants.
+  //   They are listed anyway so a future change to any of them cannot silently stale the memo.
+  //
+  // The dead `listReady` ternary went with this. `listReady` is a hardcoded `true` (its rAF gate was
+  // removed earlier and the branch was left behind), so the `<View absoluteFill/>` fallback had been
+  // unreachable.
+  const transcriptEl = useMemo(
+    () => (
+        <FlashList
+          ref={flatListRef}
+          data={windowedMessages}
+          keyExtractor={chatKeyExtractor}
+          getItemType={chatGetItemType}
+          renderItem={renderItem}
+          // FlashList v2 (cell recycling). No `inverted` (removed in v2): instead
+          // maintainVisibleContentPosition.startRenderingFromBottom puts the
+          // NEWEST message at the bottom, and prepending OLDER messages at the top
+          // keeps the viewport pinned. Recycling replaces every FlatList
+          // virtualization knob — and it's exactly what removes the heavy
+          // per-bubble mount-on-scroll cost (gestures + Reanimated layers) that
+          // FlatList re-paid on every row scrolling into view.
+          // Newest at the bottom, and — the reason this exists — loading older history becomes an
+          // APPEND instead of a prepend, so there is no offset correction to fight. See the long
+          // note on `windowedMessages`. From the v2 prop docs: "Reverses the direction of the
+          // list... Useful for chat-like interfaces where the newest content appears at the bottom."
+          inverted
+          maintainVisibleContentPosition={MVCP_INVERTED}
+          // Bound how far ahead rows are built. Chat bubbles are expensive — each
+          // carries gesture handlers and Reanimated layers — so an unbounded
+          // pre-render window turns a fling through a media-heavy chat into a burst
+          // of row construction plus image decodes landing on the same frames.
+          // Halved again on weak hardware and in Low Power Mode.
+          drawDistance={chatBudget.drawDistance}
+          // ── BOUND THE RECYCLE POOL ────────────────────────────────────────────
+          //
+          // From the FlashList v2 prop docs: "Maximum number of items in the recycle pool. These
+          // are the items that are cached in the recycle pool when they are scrolled off the
+          // screen. [...] There's no limit by default."
+          //
+          // No limit is the wrong default for THIS list. A chat bubble is one of the most
+          // expensive rows in the app — a GestureDetector with a composed gesture, three
+          // Reanimated views with their own animated styles, and for gradient bubbles a
+          // LinearGradient. Scrolling a long conversation therefore accumulates retained native
+          // views for every distinct item type it has passed, and none are ever released.
+          //
+          // 24 is comfortably more than fits on screen plus overscan at `drawDistance` 250, so
+          // recycling still hits the pool on normal scrolling; it just stops the pool growing
+          // without bound over a long session. Deliberately not 0 — the docs note that disables
+          // the pool entirely and unmounts rows as they leave, which would re-pay the full mount
+          // cost for every row scrolled back into view.
+          maxItemsInRecyclePool={24}
+          contentContainerStyle={LIST_CONTENT_CONTAINER_STYLE}
+          // Non-inverted: ListHeaderComponent is the TOP (oldest) spacer under the
+          // header gradient; ListFooterComponent is the BOTTOM spacer above the
+          // input bar. (Swapped from the old inverted layout.)
+          // SWAPPED for the inversion. `inverted` flips the visual order of header and footer along
+          // with everything else, so the element that must appear at the TOP of the screen (the
+          // spacer under the header gradient, plus the loading-older affordance) is now the FOOTER,
+          // and the bottom spacer above the composer is the HEADER. The names refer to positions in
+          // the data, and in an inverted list the start of the data is the bottom of the screen.
+          ListHeaderComponent={listFooterEl}
+          ListFooterComponent={listHeaderEl}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="interactive"
+          viewabilityConfig={viewabilityConfig}
+          onViewableItemsChanged={onViewableItemsChanged}
+          // Load OLDER history when the user nears the TOP (oldest) of the list.
+          // `onEndReached`, not `onStartReached`. Older messages live at the END of an inverted
+          // list's data, so reaching the end is what "the user scrolled up to the oldest loaded
+          // message" now means. Wiring the start would fire when the user reached the NEWEST
+          // message, i.e. immediately and constantly, since that is where the list rests.
+          onEndReached={onStartReached}
+          // 0.05, not 0.15. The threshold is a FRACTION of the content length, so on a short
+          // window 0.15 is satisfied while the user is still nowhere near the top — the list
+          // asked for older history unprompted. Combined with the cooldown in `onStartReached`,
+          // loading now begins when the user is genuinely approaching the oldest loaded message.
+          onEndReachedThreshold={0.05}
+          // Scroll-to-bottom button visibility — onChatScroll computes distance
+          // from the bottom (newest) from the scroll event.
+          onScroll={onChatScroll}
+          scrollEventThrottle={32}
+        />
+    ),
+    [windowedMessages, renderItem, chatBudget.drawDistance, listHeaderEl, listFooterEl,
+     chatKeyExtractor, chatGetItemType, onStartReached, onChatScroll, viewabilityConfig,
+     onViewableItemsChanged],
+  );
+
   return (
     <View style={{ flex: 1, backgroundColor: bgColor }}>
       {chromeReady && chatSettings.backgroundImage && (
@@ -5607,85 +5747,7 @@ export default function ChatScreen() {
           above the input bar) without triggering FlatList layout. */}
       <Reanimated.View style={[StyleSheet.absoluteFill, listShiftStyle]} pointerEvents="box-none">
       <GestureDetector gesture={panelDismissTap}>
-      {listReady ? (
-      <FlashList
-        ref={flatListRef}
-        data={windowedMessages}
-        keyExtractor={chatKeyExtractor}
-        getItemType={chatGetItemType}
-        renderItem={renderItem}
-        // FlashList v2 (cell recycling). No `inverted` (removed in v2): instead
-        // maintainVisibleContentPosition.startRenderingFromBottom puts the
-        // NEWEST message at the bottom, and prepending OLDER messages at the top
-        // keeps the viewport pinned. Recycling replaces every FlatList
-        // virtualization knob — and it's exactly what removes the heavy
-        // per-bubble mount-on-scroll cost (gestures + Reanimated layers) that
-        // FlatList re-paid on every row scrolling into view.
-        // Newest at the bottom, and — the reason this exists — loading older history becomes an
-        // APPEND instead of a prepend, so there is no offset correction to fight. See the long
-        // note on `windowedMessages`. From the v2 prop docs: "Reverses the direction of the
-        // list... Useful for chat-like interfaces where the newest content appears at the bottom."
-        inverted
-        maintainVisibleContentPosition={MVCP_INVERTED}
-        // Bound how far ahead rows are built. Chat bubbles are expensive — each
-        // carries gesture handlers and Reanimated layers — so an unbounded
-        // pre-render window turns a fling through a media-heavy chat into a burst
-        // of row construction plus image decodes landing on the same frames.
-        // Halved again on weak hardware and in Low Power Mode.
-        drawDistance={chatBudget.drawDistance}
-        // ── BOUND THE RECYCLE POOL ────────────────────────────────────────────
-        //
-        // From the FlashList v2 prop docs: "Maximum number of items in the recycle pool. These
-        // are the items that are cached in the recycle pool when they are scrolled off the
-        // screen. [...] There's no limit by default."
-        //
-        // No limit is the wrong default for THIS list. A chat bubble is one of the most
-        // expensive rows in the app — a GestureDetector with a composed gesture, three
-        // Reanimated views with their own animated styles, and for gradient bubbles a
-        // LinearGradient. Scrolling a long conversation therefore accumulates retained native
-        // views for every distinct item type it has passed, and none are ever released.
-        //
-        // 24 is comfortably more than fits on screen plus overscan at `drawDistance` 250, so
-        // recycling still hits the pool on normal scrolling; it just stops the pool growing
-        // without bound over a long session. Deliberately not 0 — the docs note that disables
-        // the pool entirely and unmounts rows as they leave, which would re-pay the full mount
-        // cost for every row scrolled back into view.
-        maxItemsInRecyclePool={24}
-        contentContainerStyle={LIST_CONTENT_CONTAINER_STYLE}
-        // Non-inverted: ListHeaderComponent is the TOP (oldest) spacer under the
-        // header gradient; ListFooterComponent is the BOTTOM spacer above the
-        // input bar. (Swapped from the old inverted layout.)
-        // SWAPPED for the inversion. `inverted` flips the visual order of header and footer along
-        // with everything else, so the element that must appear at the TOP of the screen (the
-        // spacer under the header gradient, plus the loading-older affordance) is now the FOOTER,
-        // and the bottom spacer above the composer is the HEADER. The names refer to positions in
-        // the data, and in an inverted list the start of the data is the bottom of the screen.
-        ListHeaderComponent={listFooterEl}
-        ListFooterComponent={listHeaderEl}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="interactive"
-        viewabilityConfig={viewabilityConfig}
-        onViewableItemsChanged={onViewableItemsChanged}
-        // Load OLDER history when the user nears the TOP (oldest) of the list.
-        // `onEndReached`, not `onStartReached`. Older messages live at the END of an inverted
-        // list's data, so reaching the end is what "the user scrolled up to the oldest loaded
-        // message" now means. Wiring the start would fire when the user reached the NEWEST
-        // message, i.e. immediately and constantly, since that is where the list rests.
-        onEndReached={onStartReached}
-        // 0.05, not 0.15. The threshold is a FRACTION of the content length, so on a short
-        // window 0.15 is satisfied while the user is still nowhere near the top — the list
-        // asked for older history unprompted. Combined with the cooldown in `onStartReached`,
-        // loading now begins when the user is genuinely approaching the oldest loaded message.
-        onEndReachedThreshold={0.05}
-        // Scroll-to-bottom button visibility — onChatScroll computes distance
-        // from the bottom (newest) from the scroll event.
-        onScroll={onChatScroll}
-        scrollEventThrottle={32}
-      />
-      ) : (
-        <View style={StyleSheet.absoluteFill} />
-      )}
+      {transcriptEl}
       </GestureDetector>
       </Reanimated.View>
 
@@ -6460,7 +6522,7 @@ const SearchActionBar = React.memo(function SearchActionBar({
       />
       {/* Destructive red rather than the accent: colour is the only warning the
           delete gets before its confirmation dialog. */}
-      <SearchActionButton icon="trash-2" label={deleteLabel} color="#FF453A" onPress={onDelete} />
+      <SearchActionButton icon="delete" label={deleteLabel} color="#FF453A" onPress={onDelete} />
     </Reanimated.View>
   );
 });
