@@ -272,6 +272,7 @@ const ru: Record<string, string> = {
   'edit_profile.title': 'Редактировать',
   'edit_profile.add_banner': 'Добавить баннер',
   'edit_profile.change_emoji': 'Изменить эмодзи',
+  'edit_profile.enable_editing': 'Изменить',
   'edit_profile.name_label': 'Имя',
   'edit_profile.name_placeholder': 'Ваше имя',
   'edit_profile.username_label': 'Имя пользователя',
