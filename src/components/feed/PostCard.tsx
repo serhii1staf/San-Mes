@@ -15,6 +15,7 @@ import { FormattedText } from '../ui/FormattedText';
 import { SpoilerImage } from '../ui/SpoilerImage';
 import { LinkPreview } from '../ui/LinkPreview';
 import { extractFirstUrl } from '../../services/linkPreview';
+import { isInAppCardUrl, stripInAppCardUrl } from '../../utils/appLinks';
 import { Post } from '../../types';
 import { formatTimeAgo } from '../../utils/mockData';
 import { triggerHaptic } from '../../utils/haptics';
@@ -242,6 +243,14 @@ export const PostCard = memo(function PostCard({ post, currentUserId, onLike, on
     [post.isRepost, hasImages, hasSpoiler, post.content],
   );
 
+  // Body text with our own share URL removed when the preview below renders it as a full card.
+  // Memoised alongside `linkPreviewUrl` because it depends on the same two inputs and this runs for
+  // every card on the feed.
+  const bodyText = useMemo<string>(
+    () => (isInAppCardUrl(linkPreviewUrl) ? stripInAppCardUrl(post.content, linkPreviewUrl) : (post.content || '')),
+    [post.content, linkPreviewUrl],
+  );
+
   // Memoize the relative timestamp. `formatTimeAgo` allocates two Date objects
   // plus arithmetic; it previously ran on EVERY render of EVERY card, including
   // the rapid re-renders FlashList drives as it recycles cells during scroll.
@@ -334,9 +343,14 @@ export const PostCard = memo(function PostCard({ post, currentUserId, onLike, on
       </View>
 
       {/* Content text */}
-      {post.content ? (
+      {/* `bodyText`, not `post.content`. When the link below renders as one of our own in-app cards,
+          the bare URL is stripped out of the text — the card already shows the author, the text, the
+          thumbnail and the counts, so printing `san-m-app.com/post` above it is duplication, and the
+          elided label reads as a broken half-link. Third-party URLs keep their text. See
+          `isInAppCardUrl` in src/utils/appLinks.ts. */}
+      {bodyText ? (
         <View style={{ paddingHorizontal: 16, paddingBottom: hasImages || hasSpoiler ? 10 : 4 }}>
-          <FormattedText style={{ fontSize: 14, lineHeight: 20 }}>{post.content}</FormattedText>
+          <FormattedText style={{ fontSize: 14, lineHeight: 20 }}>{bodyText}</FormattedText>
         </View>
       ) : null}
 
