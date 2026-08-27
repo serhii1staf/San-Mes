@@ -156,7 +156,10 @@ const ru: Record<string, string> = {
   'register.emoji_title': 'Установите Эмодзи!',
   'register.emoji_subtitle': 'Наконец, давайте выберем эмодзи.',
   'register.emoji_pick': 'Выбрать эмодзи',
-  'register.emoji_immutable': 'Выбранный эмодзи нельзя изменить',
+  // Was 'Выбранный эмодзи нельзя изменить' — a false statement. The profile editor has an
+  // "Изменить эмодзи" control and the AI assistant advertises changing it too, so the app has never
+  // enforced immutability. Reported as confusing, correctly. Key name kept so no call site moves.
+  'register.emoji_immutable': 'Эмодзи можно будет изменить в профиле',
   'register.name_title': 'Давайте Знакомиться!',
   'register.name_subtitle': 'Введите своё имя и выберите уникальный юзернейм.',
   'register.name_placeholder': 'Ваше имя',
