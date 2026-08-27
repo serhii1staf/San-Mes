@@ -1,4 +1,5 @@
 import type { Href } from 'expo-router';
+import { extractMiniAppShareId } from './miniAppShare';
 
 /**
  * Our OWN links, and how to open them inside the app.
@@ -82,6 +83,53 @@ export function extractUsernameShareRef(url: string | null | undefined): string 
   if (!url) return null;
   const m = url.match(USERNAME_SHARE_REGEX);
   return m ? m[1] : null;
+}
+
+/**
+ * Does this URL render as a full in-app CARD that replaces the link entirely?
+ *
+ * ── WHY THIS EXISTS ──────────────────────────────────────────────────────────
+ *
+ * Found by driving the app on a device rather than by reading code: a shared post rendered the
+ * card correctly AND printed the bare `san-m-app.com/post` above it, in green underlined link
+ * style. The card already shows the author, the text, the thumbnail and the counts, so the URL
+ * line is pure noise — and because the label is elided it reads as a broken half-link.
+ *
+ * Deliberately scoped to OUR OWN links. A third-party URL keeps its text: for a YouTube or news
+ * link the address is genuinely informative, and hiding it would be a product change nobody asked
+ * for. For our own content the card IS the content.
+ *
+ * Mini-app links count too — `LinkPreview` dispatches those to `MiniAppPreviewCard`, which is the
+ * same kind of full replacement.
+ */
+export function isInAppCardUrl(url: string | null | undefined): boolean {
+  if (!url) return false;
+  return (
+    !!extractPostShareId(url) ||
+    !!extractProfileShareId(url) ||
+    !!extractUsernameShareRef(url) ||
+    !!extractMiniAppShareId(url)
+  );
+}
+
+/**
+ * Body text with a previewed in-app URL removed. Returns `''` when the URL was all there was, so
+ * callers can drop the text node entirely instead of rendering an empty line.
+ *
+ * Handles the captioned case as well as the bare one: the share sheet sends `caption + "\n" + url`,
+ * so removing just the URL leaves the caption intact and tidies the whitespace it left behind.
+ */
+export function stripInAppCardUrl(
+  text: string | null | undefined,
+  url: string | null | undefined,
+): string {
+  if (!text) return '';
+  if (!url) return text;
+  // `split`/`join` rather than a regex: the URL is data and may contain regex metacharacters.
+  const without = text.split(url).join('');
+  // Collapse the blank line the removal leaves behind, then trim. A caption survives; a bare link
+  // becomes empty.
+  return without.replace(/[ \t]*\r?\n[ \t]*$/, '').trim();
 }
 
 /** Canonical share URL for a post. The one place this string is built. */

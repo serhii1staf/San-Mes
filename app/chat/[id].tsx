@@ -18,6 +18,7 @@ import Skeleton from '../../src/components/ui/Skeleton';
 import { FormattedText, hasCodeBlock } from '../../src/components/ui/FormattedText';
 import { LinkPreview } from '../../src/components/ui/LinkPreview';
 import { extractFirstUrl } from '../../src/services/linkPreview';
+import { isInAppCardUrl, stripInAppCardUrl } from '../../src/utils/appLinks';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { UserBadge } from '../../src/components/ui/UserBadge';
 import { MessageContextMenu, MessageAction, type ActionZone, type MessageContextMenuHandle } from '../../src/components/ui/MessageContextMenu';
@@ -1060,6 +1061,14 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
     [hasImages, message.text],
   );
 
+  // Body text with our own share URL removed when the preview renders it as a full card. Declared
+  // AFTER `previewLink` because it reads it — putting it above was a `const` used before its
+  // declaration, which tsc rejects and which would have been a TDZ throw at runtime.
+  const bubbleBodyText = useMemo(
+    () => (isInAppCardUrl(previewLink) ? stripInAppCardUrl(message.text, previewLink) : (message.text || '')),
+    [message.text, previewLink],
+  );
+
   return (
     <View style={bubbleStyles.row}>
       <Reanimated.View style={[bubbleStyles.swipeIcon, replyIconAnimStyle]}>
@@ -1307,8 +1316,13 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
                 )}
               </View>
             ) : null}
-            {message.text ? (
-              <FormattedText color={bodyTextColor} linkColor={linkTextColor} style={{ fontSize, fontFamily: fontFamilyStyle }}>{message.text}</FormattedText>
+            {/* `bubbleBodyText`, not `message.text`. When the preview below renders as one of our own
+                in-app cards, the bare URL is stripped from the text — the card already shows the
+                author, text, thumbnail and counts, so printing `san-m-app.com/post` above it is
+                duplication, and the elided label reads as a broken half-link. Third-party URLs keep
+                their text. See `isInAppCardUrl` in src/utils/appLinks.ts. */}
+            {bubbleBodyText ? (
+              <FormattedText color={bodyTextColor} linkColor={linkTextColor} style={{ fontSize, fontFamily: fontFamilyStyle }}>{bubbleBodyText}</FormattedText>
             ) : null}
             {previewLink ? (
               <View style={bubbleStyles.linkPreviewWrap}>
