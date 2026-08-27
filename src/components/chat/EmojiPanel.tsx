@@ -194,14 +194,12 @@ function EmojiPanelComponent({ height, onSelect, onLongPress, theme, bottomInset
   // same runAfterInteractions + RAF mechanism GifPanel uses for its decode
   // gate): the container View/glass surface already covers the visible slide,
   // so a one-frame-empty container is invisible during the ~300ms reveal.
-  const [listReady, setListReady] = useState(false);
-  useEffect(() => {
-    let raf = 0;
-    const handle = InteractionManager.runAfterInteractions(() => {
-      raf = requestAnimationFrame(() => setListReady(true));
-    });
-    return () => { handle.cancel(); if (raf) cancelAnimationFrame(raf); };
-  }, []);
+  // GONE — same reasoning as GifPanel's decode gate. The lift is a Reanimated shared value on the UI
+  // thread; JS work cannot jank it. "A one-frame-empty container is invisible during the ~300ms reveal"
+  // is only true if the frame really is one, and `runAfterInteractions` is explicitly not one frame —
+  // it waits for every registered interaction handle, and an open panel always has animations in
+  // flight, which is exactly when that wait is longest.
+  const listReady = true;
 
   // ── Titles resolved ONCE, not inside renderItem ──────────────────────────
   //

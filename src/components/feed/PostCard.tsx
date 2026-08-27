@@ -19,7 +19,6 @@ import { isInAppCardUrl, stripInAppCardUrl } from '../../utils/appLinks';
 import { Post } from '../../types';
 import { formatTimeAgo } from '../../utils/mockData';
 import { triggerHaptic } from '../../utils/haptics';
-import { enqueueReveal } from '../../utils/revealQueue';
 import { useT } from '../../i18n/store';
 import { useIsBlocked } from '../../store/blockedUsersStore';
 import { openPostShareSheet } from '../../store/shareSheetStore';
@@ -145,19 +144,46 @@ export const PostCard = memo(function PostCard({ post, currentUserId, onLike, on
   // `enqueueReveal` releases at most two bodies per frame in mount order, and its canceller drops the
   // slot if FlashList recycles this cell before its turn — so a fast flick never hydrates a card that
   // has already scrolled away.
-  const [primed, setPrimed] = useState(false);
-  useEffect(() => {
-    const cancel = enqueueReveal(() => setPrimed(true));
-    return cancel;
-  }, []);
-  // Hero image priority — always `low`. iOS schedules `low`-priority decodes
-  // serially on its image-decode queue rather than fanning them out in
-  // parallel, which is what was causing the user-perceived ~1s scroll
-  // judder on cold-open of feed/profile (4 cards × parallel decodes
-  // saturated the native UI thread). The visible-paint delay is sub-frame
-  // — `expo-image`'s memory-disk cache plus the prefetch path mean cached
-  // bytes still appear within one frame; only NEW decodes get serialized.
-  const heroPriority: 'high' | 'low' = 'low';
+  //
+  // ── THE GATE IS GONE. IT WAS THE "EVERYTHING IS LOADING" FEELING ──────────
+  //
+  // Everything above is an accurate description of a real long task and of a real fix for it. It is
+  // kept because the reasoning is worth having on record. What it never accounted for is the cost of
+  // the cure, and this route is where that cost is largest.
+  //
+  // At two bodies per frame a screenful of eight cards assembles over four frames, each frame being a
+  // separate React render + commit + native shadow-tree diff. That is MORE total work than one commit
+  // carrying eight cards; the queue does not remove work, it fragments it and adds per-commit overhead.
+  // What the user sees is not one hitch followed by a complete screen, it is a screen that visibly
+  // builds itself. Reported, repeatedly, as "everything is loading" and "something is being redrawn
+  // every millisecond". That report is literally correct, and this queue is one of its sources.
+  //
+  // The precedent for removing it is in this codebase already: `listReady` in app/chat/[id].tsx was
+  // deleted with the note that blank-then-populated across consecutive frames "is exactly the 'content
+  // loads with some kind of flash' report, and it is worse than the thing the gate was protecting
+  // against". The same argument applies here with more force, because this is four frames rather than
+  // two and it happens on every scroll batch rather than once per open.
+  //
+  // On the long task the gate was preventing: it lands during a native-stack push or a tab swap. Both
+  // animate in UIKit / on the platform's own thread, not in JS, so a busy JS thread does not stutter
+  // them — the same fact the deleted `listReady` note relies on. The honest trade is one invisible
+  // JS-busy period against a visible multi-frame assembly, and the invisible one is better.
+  //
+  // Reducing what a single card costs to mount is the actual fix and is tracked separately. Fragmenting
+  // the cost was never a substitute for lowering it.
+  const primed = true;
+  // Hero image priority.
+  //
+  // This was `low`, to make iOS schedule the decodes serially instead of in parallel. Same reasoning as
+  // the reveal pumps, same objection: the hero photo IS the post. Marking the single most important
+  // pixel on the card as low priority puts it behind every avatar, icon and thumbnail in the request
+  // queue, so the feed fills in with its chrome first and its content last. That is the trickle, not a
+  // defence against it.
+  //
+  // `normal` rather than `high`: high would push heroes ahead of the avatars sitting right next to them
+  // and produce a different lopsided order. Normal simply stops singling the content out for last place
+  // and lets the fetcher's own ordering stand.
+  const heroPriority: 'high' | 'normal' | 'low' = 'normal';
 
   const handleLike = () => { triggerHaptic('light'); onLike(post.id); };
   const handleDoubleTap = () => { if (!post.isLiked) onLike(post.id); };
@@ -452,7 +478,7 @@ export const PostCard = memo(function PostCard({ post, currentUserId, onLike, on
 });
 
 // Image carousel for multiple images
-function ImageCarousel({ imageUrls, onDoubleTap, heroPriority, postId }: { imageUrls: string[]; onDoubleTap: () => void; heroPriority: 'high' | 'low'; postId: string }) {
+function ImageCarousel({ imageUrls, onDoubleTap, heroPriority, postId }: { imageUrls: string[]; onDoubleTap: () => void; heroPriority: 'high' | 'normal' | 'low'; postId: string }) {
   const theme = useTheme();
   // Recycled with the cell. Plain `useState` kept the previous post's page
   // index, so a recycled carousel showed dots pointing at page 3 of a photo set

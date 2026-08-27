@@ -7,7 +7,6 @@ import { Text } from './Text';
 import { Avatar } from './Avatar';
 import { CachedImage } from './CachedImage';
 import { useMappingHelper } from '@shopify/flash-list';
-import { enqueueReveal } from '../../utils/revealQueue';
 import { VerifiedBadge } from './VerifiedBadge';
 import { UserBadge } from './UserBadge';
 import { FormattedText } from './FormattedText';
@@ -145,11 +144,12 @@ function UserProfilePostCardBase({
   // a card recycled by a fast scroll before its turn never hydrates off-screen. The own-profile card
   // has used this scheduler for a while; it lived inside that file, which is why this one never got
   // it. It is a shared module now.
-  const [hydrated, setHydrated] = useState(false);
-  useEffect(() => {
-    const cancel = enqueueReveal(() => setHydrated(true));
-    return cancel;
-  }, []);
+  // ── THE GATE IS GONE ──────────────────────────────────────────────────────
+  //
+  // See the long note in src/components/feed/PostCard.tsx. The 208 ms long task described above was
+  // real; so is the cost of spreading it, which on this card is what the user sees when opening
+  // someone's profile — 29 mounts assembling two per frame instead of one populated screen.
+  const hydrated = true;
 
   // ── THIS MARK USED TO MEASURE THE WRONG COMMIT ────────────────────────────
   //

@@ -568,7 +568,24 @@ export default function UserProfileScreen() {
   // ...EXCEPT ON A REVISIT, where starting at `false` is what produces the reported "the profile
   // reloads and the content jumps in". See `paintedProfileIds` at the top of this file for the full
   // reasoning. `useState` takes an initialiser so this is read once per mount, not on every render.
-  const [postsReady, setPostsReady] = useState(() => paintedProfileIds.has(String(id || '')));
+  //
+  // ── BOTH GATES ARE GONE ───────────────────────────────────────────────────
+  //
+  // `postsReady` was a one-frame hold that handed the FlashList `EMPTY_LIST`, and `chromeReady` a
+  // second frame behind it that withheld the banner and the BlurViews. Together they are the reported
+  // "I open someone's profile and the banner goes off like a flash" — the banner did not merely paint
+  // late, it did not START its request until two render+commit cycles had passed, and rAF callbacks
+  // queue behind whatever long task the JS thread is already running, so on a cold open the wait is
+  // unbounded in practice. `paintedProfileIds` and the `listEmpty → null` suppression were both added
+  // to paper over the first frame this gate produces; with the gate gone neither is load-bearing.
+  //
+  // The long tasks the gates were splitting are real and are being attacked at the source instead
+  // (per-card mount cost). Splitting them was never the same as reducing them, and the split is what
+  // is visible: `SLOW ui<30` was traded for a screen that assembles itself over half a second.
+  //
+  // Native-stack pushes animate in UIKit, not in JS — a busy JS thread does not stutter the slide-in.
+  // That is the same fact the deleted `listReady` gate in app/chat/[id].tsx was retired on.
+  const postsReady = true;
   // Heavy iOS chrome — `expo-blur` BlurView (×2 here) and the banner
   // CachedImage — must NOT mount during the navigation transition into
   // this screen. BlurView spins up a CALayer with a backdrop filter and
@@ -576,7 +593,7 @@ export default function UserProfileScreen() {
   // frame as the open animation and were a major source of
   // `SLOW ui<30 @ profile/[id]`. Render flat-coloured fallbacks and
   // swap to the real components once interactions settle below.
-  const [chromeReady, setChromeReady] = useState(false);
+  const chromeReady = true;
   const [showMenu, setShowMenu] = useState(false);
   const [viewingImage, setViewingImage] = useState<{ uri: string; postId: string; allImages?: string[] } | null>(null);
   // Followers / Following list modal opened from the header counters.
@@ -834,16 +851,19 @@ export default function UserProfileScreen() {
     //
     // This screen (the OTHER user's profile) never got that fix, and it is the heavier of
     // the two: 16 blur/glass mount sites against 14, and 3 initial cards against 2.
-    let chromeRaf = 0;
-    const raf = requestAnimationFrame(() => {
-      setPostsReady(true);
-      // Remember that this profile has paid for its first paint, so the NEXT visit (a fresh mount —
-      // going back unmounts the screen) starts with its cards already on screen instead of showing an
-      // empty list for a frame. See `paintedProfileIds` at the top of the file.
-      if (id) paintedProfileIds.add(String(id));
-      chromeRaf = requestAnimationFrame(() => setChromeReady(true));
-    });
+    //
+    // ── THE TWO RENDER RAFs ARE GONE ──────────────────────────────────────────
+    //
+    // Everything above describes the gates that used to be released here; the flags are now constants
+    // (see their declarations). The bookkeeping that supported them goes with them: `paintedProfileIds`
+    // only existed so a REVISIT could skip the blank first frame, and there is no blank first frame to
+    // skip any more. It is still written below so the top-of-file cache stays coherent for anything
+    // that reads it, and costs a Set insert.
+    if (id) paintedProfileIds.add(String(id));
 
+    // The NETWORK work keeps its `runAfterInteractions` wrapper. Nothing visual hangs off it, so an
+    // unbounded wait here costs no pixels and still keeps the requests off the transition — the one
+    // half of the original design that was always sound.
     const handle = InteractionManager.runAfterInteractions(() => {
       // Trigger background sync for profile and user posts.
       //
@@ -920,7 +940,7 @@ export default function UserProfileScreen() {
         })();
       }
     });
-    return () => { cancelAnimationFrame(raf); if (chromeRaf) cancelAnimationFrame(chromeRaf); handle.cancel(); };
+    return () => { handle.cancel(); };
   }, [id]);
 
   // Display profile: prefer cached from store, fallback to direct fetch
