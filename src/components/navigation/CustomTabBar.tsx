@@ -228,6 +228,85 @@ interface TabBarButtonProps {
   slotWidth: number;
 }
 
+// ─── Two icon wrappers, so each subscribes to only what it needs ─────────────
+//
+// These exist because of how Reanimated decides what a worklet listens to.
+// From `hook/useAnimatedStyle.js` in the installed 4.1.7:
+//
+//     let inputs = Object.values(updater.__closure ?? {});
+//     ...
+//     const mapperId = startMapper(fun, inputs);
+//
+// The mapper's inputs are EVERY value captured in the worklet's closure — not
+// the subset a particular run happens to read. So the single shared style this
+// replaced, which opened with `if (isCreate) return { transform: [{ scale:
+// pressScale.value }] }` and only touched the lens values below that line, was
+// still registered as a listener on `pillX` and `pillStretchW` for the create
+// button too. The early return saved the arithmetic and none of the wakeups:
+// all four main buttons plus `SlidingLens` re-ran on every frame of a tab
+// switch, five mappers and five `updateProps` for a ~400-600ms spring, when
+// only four of them could possibly produce a different result.
+//
+// Splitting the wrapper is what actually unsubscribes it. `isCreate` is derived
+// from `routeName`, which is fixed for the lifetime of a given button (the key
+// is the route key), so the two branches are stable — this is not a conditional
+// hook.
+
+/** Press-squish only. One shared value, so one mapper input. */
+const PressScaleIcon = React.memo(function PressScaleIcon({
+  pressScale,
+  children,
+}: {
+  pressScale: SharedValue<number>;
+  children: React.ReactNode;
+}) {
+  const style = useAnimatedStyle(() => {
+    'worklet';
+    return { transform: [{ scale: pressScale.value }] };
+  });
+  return <Animated.View style={style}>{children}</Animated.View>;
+});
+
+/** Press-squish combined with the sliding-lens magnify. */
+const MagnifyIcon = React.memo(function MagnifyIcon({
+  pressScale,
+  pillX,
+  pillStretchW,
+  pillBaseWidth,
+  buttonCenterX,
+  slotWidth,
+  children,
+}: {
+  pressScale: SharedValue<number>;
+  pillX: SharedValue<number>;
+  pillStretchW: SharedValue<number>;
+  pillBaseWidth: number;
+  buttonCenterX: number;
+  slotWidth: number;
+  children: React.ReactNode;
+}) {
+  const style = useAnimatedStyle(() => {
+    'worklet';
+    // Effective lens center — accounts for stretch (the lens grows wider
+    // during a drag, so its center shifts).
+    const lensWidth = pillBaseWidth + pillStretchW.value;
+    const lensCenterX = pillX.value + lensWidth / 2;
+    const distance = Math.abs(buttonCenterX - lensCenterX);
+    // Magnification falls off with distance. Beyond ~0.55 of a slot width
+    // there's no magnification — keeps the effect localized to the lens.
+    const falloff = slotWidth > 0 ? slotWidth * 0.55 : 1;
+    const magnify = interpolate(
+      distance,
+      [0, falloff],
+      [ICON_MAGNIFY_MAX, 0],
+      Extrapolation.CLAMP,
+    );
+    // Combine magnify with the press-squish.
+    return { transform: [{ scale: (1 + magnify) * pressScale.value }] };
+  }, [buttonCenterX, pillBaseWidth, slotWidth]);
+  return <Animated.View style={style}>{children}</Animated.View>;
+});
+
 const TabBarButton = React.memo(function TabBarButton({
   index,
   isFocused,
@@ -260,26 +339,9 @@ const TabBarButton = React.memo(function TabBarButton({
   // (which is "x of the pill's left edge inside the bar container").
   const buttonCenterX = TAB_ROW_PADDING_H + (index + 0.5) * slotWidth;
 
-  const iconAnimStyle = useAnimatedStyle(() => {
-    'worklet';
-    if (isCreate) return { transform: [{ scale: pressScale.value }] };
-    // Effective lens center — accounts for stretch (the lens grows wider
-    // during a drag, so its center shifts).
-    const lensWidth = pillBaseWidth + pillStretchW.value;
-    const lensCenterX = pillX.value + lensWidth / 2;
-    const distance = Math.abs(buttonCenterX - lensCenterX);
-    // Magnification falls off with distance. Beyond ~0.55 of a slot width
-    // there's no magnification — keeps the effect localized to the lens.
-    const falloff = slotWidth > 0 ? slotWidth * 0.55 : 1;
-    const magnify = interpolate(
-      distance,
-      [0, falloff],
-      [ICON_MAGNIFY_MAX, 0],
-      Extrapolation.CLAMP,
-    );
-    // Combine magnify with the press-squish.
-    return { transform: [{ scale: (1 + magnify) * pressScale.value }] };
-  }, [buttonCenterX, pillBaseWidth, slotWidth, isCreate]);
+  // The magnify/press worklets live in `MagnifyIcon` / `PressScaleIcon` above —
+  // see the note there for why they had to be separate components rather than
+  // one style with an `if (isCreate)` early return.
 
   if (isCreate) {
     return (
@@ -293,11 +355,11 @@ const TabBarButton = React.memo(function TabBarButton({
         accessibilityLabel={label}
         accessibilityState={{ selected: isFocused }}
       >
-        <Animated.View style={iconAnimStyle}>
+        <PressScaleIcon pressScale={pressScale}>
           <View style={[styles.createCircle, { backgroundColor: accentSecondary }]}>
             <Ionicons name="add" size={24} color="#FFFFFF" />
           </View>
-        </Animated.View>
+        </PressScaleIcon>
       </Pressable>
     );
   }
@@ -315,7 +377,14 @@ const TabBarButton = React.memo(function TabBarButton({
       accessibilityLabel={label}
       accessibilityState={{ selected: isFocused }}
     >
-      <Animated.View style={iconAnimStyle}>
+      <MagnifyIcon
+        pressScale={pressScale}
+        pillX={pillX}
+        pillStretchW={pillStretchW}
+        pillBaseWidth={pillBaseWidth}
+        buttonCenterX={buttonCenterX}
+        slotWidth={slotWidth}
+      >
         {routeName === 'messages' ? (
           /* Chats icon plus an unread badge. Both live here because this component is the only
              thing that renders the tab bar — see the note on ICON_NAMES. */
@@ -323,7 +392,7 @@ const TabBarButton = React.memo(function TabBarButton({
         ) : (
           <Ionicons name={iconName} size={23} color={color} />
         )}
-      </Animated.View>
+      </MagnifyIcon>
     </Pressable>
   );
 });
