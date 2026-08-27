@@ -2162,12 +2162,27 @@ export default function UserProfileScreen() {
           height, with no capsule, reads as a dark slab the content falls into. Copying the ramp was
           right. Copying the height of absent chrome was not.
 
-          Corrected to the rule rather than to a guess: with no bottom chrome, the only thing the
-          scrim has to span is the physical bottom edge, so content does not hard-clip against the
-          bezel. `app/settings/index.tsx` is the existing precedent — also a pushed route, also no tab
-          bar, same ramp, `insets.bottom + 48` — so this follows a screen already in the app instead
-          of inventing a new number. Roughly half the previous height, which turns the slab back into
-          an edge fade.
+          ── AND THE FIRST CORRECTION WAS ARITHMETICALLY A NO-OP. THIS IS THE SECOND. ──
+          I replaced `BAR_FADE_HEIGHT` with `insets.bottom + 48`, copied from `app/settings/index.tsx`
+          on the grounds that it is also a pushed route with no tab bar. The reasoning was right and
+          the number was not: `BAR_FADE_HEIGHT` is 84, and on an iPhone with a home indicator
+          `insets.bottom` is 34, so `insets.bottom + 48` is 82. I changed 84 to 82 and wrote a long
+          note about the governing rule. Reported, correctly, as still showing the old darkening —
+          because it was the old darkening. I validated the rule and never evaluated the expression.
+
+          So, applying the rule properly this time. The rule is "the scrim spans exactly the chrome it
+          belongs to, and stops". The chrome here is NOTHING — this route has no tab bar and no
+          composer. A scrim over absent chrome has exactly one remaining job: stop content
+          hard-clipping against the physical bezel. That is the safe-area inset and nothing more.
+
+          `Math.max(insets.bottom, 16)` rather than the bare inset because Android devices with
+          gesture navigation frequently report 0, and a zero-height ramp is not "no slab", it is no
+          fade at all — content would butt straight into the edge. 16 is the smallest value that still
+          reads as a softened edge.
+
+          On an iPhone this is 34 against the previous 84: unmistakably different rather than two
+          points different. If it is STILL wrong, the remaining option is the one recorded below —
+          putting the real tab bar on this route — and that is a deliberate trade, not a tweak.
 
           `pointerEvents="none"` so it never intercepts a tap on the list or on the floating follow
           widget, which sits above it. Placed after the list and before the pinned tabs overlay, so
@@ -2180,7 +2195,7 @@ export default function UserProfileScreen() {
           left: 0,
           right: 0,
           bottom: 0,
-          height: insets.bottom + 48,
+          height: Math.max(insets.bottom, 16),
         }}
         pointerEvents="none"
       />

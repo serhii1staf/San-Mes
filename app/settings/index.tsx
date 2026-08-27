@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, ScrollView, Pressable, Switch, ViewStyle, Alert, StyleSheet, Linking, InteractionManager } from 'react-native';
+import { View, ScrollView, Pressable, Switch, ViewStyle, Alert, StyleSheet, Linking, InteractionManager, Platform } from 'react-native';
 /**
  * ── WHY MaterialIcons AND NOT Feather FOR THE SETTINGS TILES ───────────────────
  *
@@ -209,6 +209,9 @@ export default function SettingsScreen() {
   // the modal becomes visible once the component is loaded (effectively
   // one frame later on weak devices, instant on warm devices).
   const [appVersion, setAppVersion] = useState('1.0.0');
+  // Module-scope would be nicer, but this file's imports are already ordered around the lazy requires
+  // below; a const here is evaluated once per mount and `Platform.OS` is a static string.
+  const IS_IOS = Platform.OS === 'ios';
   const [AppIconModalLazy, setAppIconModalLazy] = useState<null | React.ComponentType<{ visible: boolean; onClose: () => void }>>(null);
   useEffect(() => {
     const handle = InteractionManager.runAfterInteractions(() => {
@@ -217,13 +220,21 @@ export default function SettingsScreen() {
         const ExpoConstants = require('expo-constants').default;
         setAppVersion(ExpoConstants?.expoConfig?.version || '1.0.0');
       } catch {}
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const mod = require('../../src/components/ui/AppIconModal');
-        // Pass the component via the function-form setter so React doesn't
-        // try to call it as a state updater.
-        setAppIconModalLazy(() => mod.AppIconModal);
-      } catch {}
+      // Skipped entirely on Android: the row that opens this modal is iOS-only now (see the note at
+      // the rows), and `AppIconModal` pulls in `expo-alternate-app-icons`, an iOS-only native module.
+      // Requiring it on Android resolved a module that can never do anything and mounted a component
+      // nothing could reach.
+      // Read `Platform.OS` directly rather than closing over `IS_IOS`, so the effect's empty dep list
+      // stays honest instead of depending on a value recomputed every render.
+      if (Platform.OS === 'ios') {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const mod = require('../../src/components/ui/AppIconModal');
+          // Pass the component via the function-form setter so React doesn't
+          // try to call it as a state updater.
+          setAppIconModalLazy(() => mod.AppIconModal);
+        } catch {}
+      }
     });
     return () => handle.cancel();
   }, []);
@@ -483,12 +494,29 @@ export default function SettingsScreen() {
             label={t('settings.language')}
             onPress={() => router.push('/settings/language' as any)}
           />
-          <SettingsRow
-            icon="apps"
-            iconTint="pink"
-            label={t('settings.app_icon')}
-            onPress={() => setIconModalVisible(true)}
-          />
+          {/* ── TWO iOS-ONLY ROWS, HIDDEN ON ANDROID ──────────────────────────────
+              Asked for directly: the app-icon section and the widget section are not needed on
+              Android. They were not merely unnecessary there, they were dead ends:
+
+                App icon  — `expo-alternate-app-icons`, which is iOS-only. Android has no
+                            equivalent runtime icon-switching API, so the row opened a modal that
+                            could not do anything.
+                Widget    — the widget is an `@bacons/apple-targets` WidgetKit extension. There is
+                            no Android counterpart in this project at all, so the row led to a
+                            settings screen for something that does not exist on the device.
+
+              `isLast` has to move with them: it marks the row that draws no bottom separator. It
+              used to sit on the widget row, so on Android — where both the widget row and the glass
+              row are absent — the list would have ended on a row still drawing a separator into
+              empty space. It is now computed from what is actually rendered. */}
+          {IS_IOS ? (
+            <SettingsRow
+              icon="apps"
+              iconTint="pink"
+              label={t('settings.app_icon')}
+              onPress={() => setIconModalVisible(true)}
+            />
+          ) : null}
           <SettingsRow
             icon="grid-view"
             iconTint="orange"
@@ -500,14 +528,17 @@ export default function SettingsScreen() {
             iconTint="pink"
             label={t('settings.mini_app_preview')}
             onPress={() => router.push('/settings/mini-app-preview' as any)}
+            isLast={!IS_IOS && !glassCapable}
           />
-          <SettingsRow
-            icon="widgets"
-            iconTint="teal"
-            label={t('settings.widget')}
-            onPress={() => router.push('/settings/widget' as any)}
-            isLast={!glassCapable}
-          />
+          {IS_IOS ? (
+            <SettingsRow
+              icon="widgets"
+              iconTint="teal"
+              label={t('settings.widget')}
+              onPress={() => router.push('/settings/widget' as any)}
+              isLast={!glassCapable}
+            />
+          ) : null}
           {glassCapable && (
             <SettingsRow
               icon="blur-on"
