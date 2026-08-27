@@ -25,7 +25,6 @@ import { showToast } from '../../src/store/toastStore';
 import { formatTimeAgo } from '../../src/utils/mockData';
 import { AnimatedFlashList } from '@shopify/flash-list';
 import { bottomScrimColors, SCRIM_LOCATIONS } from '../../src/theme/scrim';
-import { BAR_FADE_HEIGHT } from '../../src/components/navigation/CustomTabBar';
 import { CachedImage, prefetchImages } from '../../src/components/ui/CachedImage';
 import { ImageViewerModal, ViewerActionButton } from '../../src/components/chat/ImageViewerModal';
 import { openPostShareSheet, openProfileShareSheet } from '../../src/store/shareSheetStore';
@@ -2140,22 +2139,35 @@ export default function UserProfileScreen() {
         ListEmptyComponent={listEmpty}
       />
 
-      {/* ── BOTTOM SCRIM, THE SAME ONE THE HOME SCREEN HAS ────────────────────
-          Asked for directly: the darkening under the bottom navigation on the main screen should
-          also be there on another user's profile.
+      {/* ── BOTTOM SCRIM — AND WHY IT IS NOT `BAR_FADE_HEIGHT` ────────────────
+          Reported four times: "on someone's profile the darkening at the bottom is different,
+          completely different". It was, and the previous version of this block is why.
 
-          It was missing, and the reason is structural rather than an oversight in this file. On the
-          tab routes that scrim is drawn by `CustomTabBar` itself (`styles.bottomFade`), because it is
-          the tab bar's own fade — the scrim module is explicit that the rule which makes it look
-          right is "it ends exactly at the top of the chrome it belongs to". This screen is a PUSHED
-          route outside the `(tabs)` group, so it has no tab bar, and therefore had no scrim at all:
-          content simply ran into the bottom bezel.
+          It imported `BAR_FADE_HEIGHT` from `CustomTabBar`, on the reasoning that reusing the tab
+          bar's own three pieces would make the two identical by construction. The colours and stops
+          were indeed identical. The height was the mistake, and it is the height that was visible.
 
-          So the fade is reproduced here with the SAME three shared pieces the tab bar uses — the
-          `bottomScrimColors` ramp, `SCRIM_LOCATIONS`, and `BAR_FADE_HEIGHT` (which is
-          `BOTTOM_CHROME_SCRIM_HEIGHT`, exported by the tab bar so the two cannot drift). Including
-          the `+ insets.bottom` on Android, exactly as the tab bar does, so a device with a gesture
-          bar gets the same coverage.
+          `BAR_FADE_HEIGHT` is defined as the tab bar's FOOTPRINT — the 60 pt glass capsule plus its
+          24 pt bottom margin. `src/theme/scrim.ts` states the governing rule three separate times:
+          "the scrim spans exactly the chrome and stops", and specifically that `BAR_FADE_HEIGHT` is
+          "exactly the capsule's height plus its bottom margin, so the ramp finishes level with the
+          top of the navigation". So that number is not "the bottom scrim height", it is "the height
+          of the tab bar". This screen is a pushed route outside the `(tabs)` group and HAS NO TAB
+          BAR, so what got drawn was an 84 pt black ramp sized to a capsule that is not there — with
+          nothing sitting on it.
+
+          That is the whole difference the report describes, and it is not an alpha value. On the home
+          screen the ramp reads as a soft shadow because the glass capsule sits on its dark end and
+          gives it a reason to exist; the eye reads bar-plus-shadow. Here the same ramp, at the same
+          height, with no capsule, reads as a dark slab the content falls into. Copying the ramp was
+          right. Copying the height of absent chrome was not.
+
+          Corrected to the rule rather than to a guess: with no bottom chrome, the only thing the
+          scrim has to span is the physical bottom edge, so content does not hard-clip against the
+          bezel. `app/settings/index.tsx` is the existing precedent — also a pushed route, also no tab
+          bar, same ramp, `insets.bottom + 48` — so this follows a screen already in the app instead
+          of inventing a new number. Roughly half the previous height, which turns the slab back into
+          an edge fade.
 
           `pointerEvents="none"` so it never intercepts a tap on the list or on the floating follow
           widget, which sits above it. Placed after the list and before the pinned tabs overlay, so
@@ -2168,7 +2180,7 @@ export default function UserProfileScreen() {
           left: 0,
           right: 0,
           bottom: 0,
-          height: BAR_FADE_HEIGHT + (Platform.OS === 'android' ? insets.bottom : 0),
+          height: insets.bottom + 48,
         }}
         pointerEvents="none"
       />
