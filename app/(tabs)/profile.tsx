@@ -1398,13 +1398,46 @@ export default function ProfileScreen() {
   // shared value instead of React state.
   const handleScrollBeginDrag = useCallback(() => {}, []);
   const handleScrollSettle = useCallback(() => {}, []);
-  const listEmpty = useMemo(() => (
-    <View style={{ alignItems: 'center', paddingVertical: 40 }}>
-      <Text variant="caption" color={theme.colors.text.tertiary}>
-        {activeTab === 'posts' ? t('profile.no_posts') : t('profile.empty_section')}
-      </Text>
-    </View>
-  ), [theme.colors.text.tertiary, activeTab, t]);
+  // ── DO NOT CLAIM "NO POSTS" WHILE THE MOUNT GATE IS SHUT ──────────────────
+  //
+  // Reported as the profile "loading wrong / lagging" even though the device was
+  // holding 60fps. It is not a frame-rate problem, it is this component telling
+  // the user something false for a frame.
+  //
+  // `postsReady` starts `false` and flips in a `requestAnimationFrame`, and while
+  // it is false the list is handed `EMPTY_LIST` on purpose (see the `data` prop) so
+  // that 18+ heavy cards do not mount on the same commit as the screen. FlashList
+  // reacts to an empty dataset the only way it can: it renders
+  // `ListEmptyComponent`. So the first committed frame of the profile said
+  // "Ещё нет публикаций" — with 25 posts sitting in the store, already hydrated
+  // synchronously from MMKV a few lines above.
+  //
+  // The user then sees "no posts" replaced by a full list. That transition reads as
+  // a failed-then-recovered load, which is exactly the complaint, and it is
+  // unbounded rather than one frame: a rAF callback queues behind whatever long task
+  // the JS thread is running, so on a cold open it is visible.
+  //
+  // The stagger itself is worth keeping — the comments on `postsReady` and
+  // `chromeReady` record that collapsing it drove the UI thread to ~32fps. What is
+  // not worth keeping is the false caption. While the gate is shut we are
+  // deliberately rendering a placeholder dataset, so the honest empty state is
+  // NOTHING. Once the gate opens the list receives the real data and, if it really
+  // is empty, the caption appears then — which is the only moment it is true.
+  //
+  // Scoped to the tabs the gate actually applies to. `likes` / `replies` pass their
+  // own fetched arrays straight through and are not gated, so an empty result there
+  // is genuine and must still say so immediately.
+  const listEmpty = useMemo(() => {
+    const gatedTab = activeTab === 'posts' || activeTab === 'media';
+    if (gatedTab && !postsReady) return null;
+    return (
+      <View style={{ alignItems: 'center', paddingVertical: 40 }}>
+        <Text variant="caption" color={theme.colors.text.tertiary}>
+          {activeTab === 'posts' ? t('profile.no_posts') : t('profile.empty_section')}
+        </Text>
+      </View>
+    );
+  }, [theme.colors.text.tertiary, activeTab, t, postsReady]);
 
   // ─── FULLSCREEN VIEWER ────────────────────────────────────────────────────
   //
