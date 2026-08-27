@@ -21,7 +21,52 @@ Currently declared:
 - `NSPhotoLibraryUsageDescription` — gallery picker (posts, comments, chat, profile, banner, chat background)
 - `NSPhotoLibraryAddUsageDescription` — save post screenshots to library
 - `NSCameraUsageDescription` — camera capture for posts
-- `UIBackgroundModes: ["audio"]` — required because `expo-av` plays music with `staysActiveInBackground: true`
+- `UIBackgroundModes: ["audio"]` — required because the music player keeps playing in the background
+
+> **This key is guarded by a test.** `src/components/chat/__tests__/ChatInputBar.preservation.baseline.test.tsx`
+> asserts the EXACT set of keys under `app.json` → `ios.infoPlist`. Adding, renaming or removing any key
+> there fails the suite. That is deliberate: `infoPlist` is emitted verbatim into the real `Info.plist`
+> that App Review reads, so it is a declaration surface and nothing else — do not put explanatory
+> `_comment_*` keys in it. Explanations belong in this file. If a new permission is genuinely needed,
+> update the guard list in the same commit so the change is reviewed rather than absorbed.
+
+### Audio: `expo-av` → `expo-audio` (and the microphone permission we must NOT request)
+
+`expo-av` was removed in Expo SDK 55 and had stopped receiving patches before that, so the music player
+and the message sounds now run on `expo-audio` (`src/store/musicStore.ts`, `src/utils/sounds.ts`).
+
+Two compliance consequences, both handled in `app.json`:
+
+1. **The background-audio justification changed shape, not substance.** It used to be `expo-av`'s
+   `staysActiveInBackground: true`; it is now `expo-audio`'s `setAudioModeAsync({ shouldPlayInBackground:
+   true })` plus the plugin's `enableBackgroundPlayback: true`. The plugin adds the iOS audio background
+   mode itself, and we ALSO declare `UIBackgroundModes: ["audio"]` explicitly. Both agree and the merge
+   is idempotent — the explicit declaration is kept because a reviewer-facing entitlement should not be
+   an invisible side effect of a plugin default.
+
+2. **The plugin would have requested the microphone, and we must not let it.** `expo-audio`'s config
+   plugin defaults to `microphonePermission` set (which writes `NSMicrophoneUsageDescription`) and
+   `recordAudioAndroid: true`. We do not record audio anywhere. Shipping an unused microphone permission
+   is exactly the failure that made build 82 an App Review 5.1.1 risk with the unwanted Motion & Fitness
+   prompt. So the plugin is configured explicitly:
+
+   ```json
+   ["expo-audio", {
+     "enableBackgroundPlayback": true,
+     "microphonePermission": false,
+     "recordAudioAndroid": false,
+     "enableBackgroundRecording": false
+   }]
+   ```
+
+   `microphonePermission: false` is the documented way to disable the key entirely. **Do not remove
+   these three `false` values.** If recording is ever actually implemented, add
+   `NSMicrophoneUsageDescription` deliberately, with honest copy, and update the `infoPlist` guard test.
+
+Lock-screen media controls are now active while music plays (`player.setActiveForLockScreen(...)` with
+the track's title / artist / artwork). This is required on Android — without it the OS terminates
+background audio after roughly three minutes — and is a genuine improvement on iOS. The metadata shown
+is the track's own, from the licensed sources listed below; no user data is involved.
 
 > NOTE: `NSMotionUsageDescription` + the `expo-sensors` dependency were REMOVED (build 82 surfaced an unwanted "Motion & Fitness" prompt for a social app with no motion feature — App Review guideline 5.1.1 risk). Do NOT re-add `expo-sensors` / motion permissions unless an actual parallax/motion feature ships, and only via a NEW native build (never OTA).
 

@@ -16,47 +16,12 @@
 // DO NOT fix the store or these tests here.
 
 // --- expo-av mock: counts active instances + records status callbacks --------
-jest.mock('expo-av', () => {
-  const state: any = { active: 0, maxActive: 0, created: 0, callbacks: [] };
-  (globalThis as any).__audioMock = state;
-
-  const makeSound = (cb: any) => ({
-    _cb: cb,
-    unloadAsync: jest.fn(async () => {
-      state.active = Math.max(0, state.active - 1);
-    }),
-    getStatusAsync: jest.fn(async () => ({
-      isLoaded: true,
-      isPlaying: true,
-      positionMillis: 0,
-      durationMillis: 1000,
-    })),
-    playAsync: jest.fn(async () => {}),
-    pauseAsync: jest.fn(async () => {}),
-    setPositionAsync: jest.fn(async () => {}),
-    stopAsync: jest.fn(async () => {}),
-  });
-
-  return {
-    Audio: {
-      setAudioModeAsync: jest.fn(async () => {}),
-      Sound: {
-        createAsync: jest.fn(async (_source: any, _initial: any, cb: any) => {
-          // Artificial load delay so two overlapping play() calls interleave.
-          await new Promise((r) => setTimeout(r, 20));
-          state.active += 1;
-          state.created += 1;
-          if (state.active > state.maxActive) state.maxActive = state.active;
-          state.callbacks.push(cb);
-          const sound = makeSound(cb);
-          return { sound, status: { isLoaded: true } };
-        }),
-      },
-    },
-  };
-});
+// expo-av is gone (removed in Expo SDK 55). The mock for its replacement lives in ONE place —
+// see src/test-utils/expoAudioMock.ts for why, and for the `__audioMock` contract this preserves.
+jest.mock('expo-audio', () => require('../../test-utils/expoAudioMock').createExpoAudioMock());
 
 import { useMusicStore } from '../musicStore';
+import { audioStatus } from '../../test-utils/expoAudioMock';
 import type { Track } from '../../services/musicService';
 
 const audioMock = () => (globalThis as any).__audioMock as {
@@ -134,13 +99,7 @@ describe('EXPLORATORY: musicStore concurrency + orphan callback (Property 4 & 2)
     // Орфанный колбэк, созданный для трека A, срабатывает ПОСЛЕ смены current.
     const cbA = audioMock().callbacks[0];
     expect(typeof cbA).toBe('function');
-    cbA({
-      isLoaded: true,
-      isPlaying: false,
-      positionMillis: 99999,
-      durationMillis: 88888,
-      didJustFinish: false,
-    });
+    cbA(audioStatus({ positionMs: 99999, durationMs: 88888 }));
 
     // Корректное поведение: устаревший колбэк не меняет показатели текущего трека B.
     expect(useMusicStore.getState().current?.id).toBe('B');

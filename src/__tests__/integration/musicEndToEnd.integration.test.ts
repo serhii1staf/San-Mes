@@ -66,54 +66,9 @@ jest.mock('@expo/vector-icons', () => {
 
 // expo-av mock — counts active Sound instances and per-instance play state
 // so we can assert "always at most 1" across the full scenario.
-jest.mock('expo-av', () => {
-  const state: any = { active: 0, maxActive: 0, created: 0, callbacks: [] };
-  (globalThis as any).__audioMock = state;
-
-  const makeSound = (cb: any) => {
-    let playing = true;
-    let position = 0;
-    return {
-      _cb: cb,
-      unloadAsync: jest.fn(async () => {
-        state.active = Math.max(0, state.active - 1);
-      }),
-      getStatusAsync: jest.fn(async () => ({
-        isLoaded: true,
-        isPlaying: playing,
-        positionMillis: position,
-        durationMillis: 1000,
-      })),
-      playAsync: jest.fn(async () => { playing = true; }),
-      pauseAsync: jest.fn(async () => { playing = false; }),
-      setPositionAsync: jest.fn(async (ms: number) => { position = ms; }),
-      setStatusAsync: jest.fn(async (opts: { shouldPlay?: boolean; positionMillis?: number } = {}) => {
-        if (typeof opts.shouldPlay === 'boolean') playing = opts.shouldPlay;
-        if (typeof opts.positionMillis === 'number') position = opts.positionMillis;
-      }),
-      stopAsync: jest.fn(async () => { playing = false; }),
-    };
-  };
-
-  return {
-    Audio: {
-      setAudioModeAsync: jest.fn(async () => {}),
-      Sound: {
-        createAsync: jest.fn(async (_source: any, _initial: any, cb: any) => {
-          // Tiny artificial delay so consecutive play() calls actually exercise
-          // the serialization (without a delay everything would resolve in the
-          // same microtask and the race wouldn't appear).
-          await new Promise((r) => setTimeout(r, 5));
-          state.active += 1;
-          state.created += 1;
-          if (state.active > state.maxActive) state.maxActive = state.active;
-          state.callbacks.push(cb);
-          return { sound: makeSound(cb), status: { isLoaded: true } };
-        }),
-      },
-    },
-  };
-});
+// expo-av is gone (removed in Expo SDK 55). The mock for its replacement lives in ONE place —
+// see src/test-utils/expoAudioMock.ts for why, and for the `__audioMock` contract this preserves.
+jest.mock('expo-audio', () => require('../../test-utils/expoAudioMock').createExpoAudioMock());
 
 import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
