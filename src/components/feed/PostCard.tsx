@@ -558,8 +558,17 @@ function ImageCarousel({ imageUrls, onDoubleTap, heroPriority, postId }: { image
                 `heroPriority`; off-screen carousel pages are `low` so iOS
                 queues them behind the first page's decode. The first slide
                 also reports its dimensions so the shared carousel height
-                matches the set's orientation. */}
-            <CachedImage uri={url} style={{ width: slideImgWidth, height: carouselHeight, borderRadius: 18, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)' }} resizeMode="cover" priority={i === 0 ? heroPriority : 'low'} onLoad={i === 0 ? handleFirstLoad : undefined} />
+                matches the set's orientation.
+
+                `autoplay={i === activeIndex}` extends that same idea from the
+                one-off download to the ONGOING cost. Every page of this pager
+                is mounted at once, so an animated GIF on slide 3 of 5 was
+                decoding every frame while parked off-screen, forever. Only the
+                page actually on screen animates now; the others hold their
+                first frame and resume when paged to. `activeIndex` is already
+                state and already re-renders this card for the dots below, so
+                the gate rides an existing render rather than adding one. */}
+            <CachedImage uri={url} style={{ width: slideImgWidth, height: carouselHeight, borderRadius: 18, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)' }} resizeMode="cover" priority={i === 0 ? heroPriority : 'low'} onLoad={i === 0 ? handleFirstLoad : undefined} autoplay={i === activeIndex} />
           </Pressable>
         ))}
       </ScrollView>
