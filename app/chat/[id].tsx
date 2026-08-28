@@ -936,7 +936,7 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
   // Swipe-to-reply + press-drag-select gestures are wired by useMessageGestures (extracted for
   // maintainability + testing). The reply-jump glow used to be in there too and is now
   // `ReplyJumpGlow`, mounted below only while `highlighted` — see that file for why.
-  const { bubbleRef, composedGesture, bubbleAnimStyle, replyIconAnimStyle } = useMessageGestures({
+  const { bubbleRef, composedGesture, bubbleAnimStyle: swipeTranslateStyle, replyIconAnimStyle } = useMessageGestures({
     message,
     onReply,
     onSwipeActive,
@@ -948,6 +948,20 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
     hoveredAction,
     actionZones,
   });
+
+  // The swipe transform composed onto the meta ROW's own style — see the long note at the JSX site
+  // for why it belongs there and not on the bubble.
+  //
+  // Memoised rather than written inline as `[frozenStyle, swipeTranslateStyle]`. An inline array is a
+  // fresh identity per render PER ROW, which is exactly the allocation the note on
+  // `metaRowOwn`/`metaRowPeer` says those two frozen variants exist to avoid; handing it back here
+  // would undo that. Both inputs are stable — the styles are frozen module constants and
+  // `useAnimatedStyle` returns one stable object per hook instance — so this recomputes only when the
+  // row changes side.
+  const rowSwipeStyle = React.useMemo(
+    () => [isOwn ? bubbleStyles.metaRowOwn : bubbleStyles.metaRowPeer, swipeTranslateStyle],
+    [isOwn, swipeTranslateStyle],
+  );
 
   // Frame-paced reveal of this bubble's image(s): once the screen flips
   // `imagesReady`, image bubbles no longer all decode on the SAME frame —
@@ -1123,8 +1137,30 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
 
             `alignItems: flex-end` puts the meta level with the BOTTOM of the bubble, which is
             where a timestamp belongs on a multi-line message. */}
-        <View style={isOwn ? bubbleStyles.metaRowOwn : bubbleStyles.metaRowPeer}>
-        <Reanimated.View ref={bubbleRef} style={[bubbleAnimStyle, bubbleStyles.bubbleBox]}>
+        {/* ── THE SWIPE MOVES THE ROW, NOT JUST THE BUBBLE ──────────────────────
+            Reported as: swiping a message left or right slides the bubble, but the timestamp and
+            the full-screen button stay where they are.
+
+            They did, and it was deliberate. The note above says so in as many words — "What MOVES
+            is still only the bubble: `bubbleAnimStyle` stays on the inner view, so the visual is
+            unchanged" — written when the gesture TARGET was widened from the bubble to the row.
+            Keeping the movement on the bubble preserved the old visual exactly, which was the goal
+            at the time; what it also did was tear the row in half during every swipe, because the
+            meta column is a SIBLING of the animated view rather than a child of it.
+
+            `bubbleAnimStyle` is only `transform: [{ translateX }]`, so there is nothing
+            bubble-specific about it and nothing to reinterpret by moving it one level up.
+
+            The comments screen already does it this way: `useCommentGestures` in the same hook file
+            returns its animated style named `rowAnimStyle` and applies it to the whole row. The chat
+            was the one surface that disagreed.
+
+            It stays on the META ROW rather than on `gestureRow` above deliberately. `gestureRow` is
+            the full-width hit area and the reply icon is positioned against it, so both must stay
+            still: the icon is what the swipe reveals, and a reveal target that travels with the
+            thing revealing it would never appear to move. */}
+        <Reanimated.View style={rowSwipeStyle}>
+        <Reanimated.View ref={bubbleRef} style={bubbleStyles.bubbleBox}>
         {/* Long-press + drag-select is handled by `composedGesture` on the
             GestureDetector above (UI thread). This wrapper used to be a
             `Pressable onLongPress`; it's now a plain View so the gesture owns
@@ -1357,7 +1393,7 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
             {timeLabel}
           </Text>
         </View>
-        </View>
+        </Reanimated.View>
         </View>
       </GestureDetector>
     </View>

@@ -37,6 +37,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 // takes real work off the tree in exchange for nothing.
 import { PerfMonitorBubble } from '../src/components/dev/PerfMonitorBubble';
 import { perfMonitor, installPerfErrorHooks } from '../src/services/perfMonitor';
+import { installNotificationsBadgeForegroundRefresh } from '../src/store/notificationsBadgeStore';
 import { DynamicOverlayHost } from '../src/components/dynamic-overlay/DynamicOverlayHost';
 import { RealtimeAccountBridge } from '../src/components/realtime/RealtimeAccountBridge';
 import { NavigationBarController } from '../src/components/system/NavigationBarController';
@@ -46,6 +47,12 @@ import { NavigationBarController } from '../src/components/system/NavigationBarC
 // can then surface them with a copy button, which is what the user wants
 // when they don't have direct Sentry access).
 try { installPerfErrorHooks(); } catch {}
+
+// Refresh the notification badge whenever the app returns to the foreground. Bound to the app rather
+// than to a screen on purpose: the only caller used to be the bell's `useFocusEffect` on the HOME tab,
+// so resuming into the chat list or the profile never refreshed it. See the long note in
+// `notificationsBadgeStore.ts` for why the badge could be missing entirely after a push.
+try { installNotificationsBadgeForegroundRefresh(); } catch {}
 
 // ── `runAfterInteractions` CONCENTRATES WORK. IT DOES NOT SPREAD IT. ─────────
 //
