@@ -6,8 +6,6 @@ import {
   Dimensions,
   NativeSyntheticEvent,
   NativeScrollEvent,
-  InteractionManager,
-  ActivityIndicator,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -36,10 +34,10 @@ const CARD_GAP = 12;
  * Theme_Selection_Screen — `app/settings/profile-theme.tsx`.
  *
  * Mirrors `app/settings/appearance.tsx` precisely (Req 2, 9.4): a header with
- * back + Save, an `InteractionManager`-deferred `cardsReady` gate so the
- * carousel mounts after the navigation transition, and a tightly-virtualized
- * horizontal `FlatList` over the Built_In_Theme_Set so the open-screen frame
- * stays under the perf monitor's long-task threshold (Req 2.7).
+ * back + Save, and a tightly-virtualized horizontal `FlatList` over the
+ * Built_In_Theme_Set so the open-screen frame stays under the perf monitor's
+ * long-task threshold (Req 2.7) — virtualization, not deferral, is what keeps
+ * that frame cheap.
  *
  * On confirm it does an optimistic per-account `setThemeId`, then persists via
  * `PATCH /v1/profiles/me { theme_id }` raced against a 5 s timeout; on
@@ -73,15 +71,24 @@ export default function ProfileThemeScreen() {
   const scrollRef = useRef<FlatList<ProfileTheme>>(null);
   const [activeIndex, setActiveIndex] = useState(initialIndex);
 
-  // Defer the carousel past the navigation slide-in. Each preview card mounts a
-  // gradient + image + emoji glyphs; mounting all six synchronously on the open
-  // frame is exactly the long task `appearance.tsx` avoids the same way (Req
-  // 2.7, 9.4). A faint spinner reads as "cards about to slide in".
-  const [cardsReady, setCardsReady] = useState(false);
-  useEffect(() => {
-    const handle = InteractionManager.runAfterInteractions(() => setCardsReady(true));
-    return () => handle.cancel();
-  }, []);
+  // ── GATE REMOVED ──────────────────────────────────────────────────────────
+  //
+  // This used to hold a `cardsReady` state flipped by `InteractionManager.runAfterInteractions`, with
+  // a spinner standing in for the carousel until it flipped. Removed along with the same gate in
+  // `appearance.tsx`, `pixel-icons.tsx` and `stickers.tsx`; the full argument lives in
+  // `src/components/feed/PostCard.tsx`.
+  //
+  // Two things the old note got wrong. It said mounting the previews synchronously "is exactly the
+  // long task appearance.tsx avoids the same way" — but this is a pushed route on expo-router's
+  // native stack, so the slide-in is a UIKit/Android animation that a busy JS thread cannot stutter.
+  // And it is not six previews on the open frame: `initialNumToRender={2}` plus `getItemLayout` means
+  // the list builds two cards and skips measurement for the rest.
+  //
+  // It also claimed "a faint spinner reads as 'cards about to slide in'". It does not.
+  // `runAfterInteractions` waits for every registered interaction handle, not for one frame, so the
+  // spinner's lifetime was unbounded and what the user saw was a settings screen thinking about
+  // itself. The dead spinner branch is gone too rather than left unreachable, because its
+  // `height: CARD_WIDTH * 1.3` box existed only to reserve space for the carousel it replaced.
 
   const handleScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
     const x = e.nativeEvent.contentOffset.x;
@@ -162,16 +169,19 @@ export default function ProfileThemeScreen() {
     void settled;
   }, [activeIndex, accountId, selectedThemeId, setThemeId, revertThemeId, commitAuthProfile, t]);
 
-  // Auto-center on the persisted theme once the cards mount (O(1) via getItemLayout).
+  // Auto-center on the persisted theme (O(1) via getItemLayout). `initialScrollIndex`
+  // already positions the list at mount; this stays as a correctness belt for the
+  // horizontal-list-with-content-inset case where RN can land a pixel or two off.
+  // It is not a paint gate — the cards are already on screen when it fires.
   useEffect(() => {
-    if (!cardsReady || initialIndex <= 0) return;
+    if (initialIndex <= 0) return;
     const id = setTimeout(() => {
       try {
         scrollRef.current?.scrollToIndex({ index: initialIndex, animated: false });
       } catch {}
     }, 100);
     return () => clearTimeout(id);
-  }, [cardsReady, initialIndex]);
+  }, [initialIndex]);
 
   const currentTheme = BUILT_IN_THEME_LIST[activeIndex];
 
@@ -201,45 +211,33 @@ export default function ProfileThemeScreen() {
         </Pressable>
       </View>
 
-      {/* Cards carousel — deferred + virtualized exactly like appearance.tsx so
-          only ~3 of the six previews are mounted at once and the open frame
-          stays under the long-task threshold (Req 2.7, 9.4). */}
+      {/* Cards carousel — virtualized exactly like appearance.tsx so only ~3 of
+          the six previews are mounted at once (Req 2.7, 9.4). Mounted on the
+          first render: see the GATE REMOVED note above. */}
       <View style={{ flex: 1, justifyContent: 'center' }}>
-        {cardsReady ? (
-          <FlatList
-            ref={scrollRef}
-            data={BUILT_IN_THEME_LIST}
-            keyExtractor={(tm) => tm.id}
-            horizontal
-            pagingEnabled={false}
-            snapToInterval={CARD_WIDTH + CARD_GAP}
-            decelerationRate="fast"
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{
-              paddingHorizontal: (SCREEN_WIDTH - CARD_WIDTH) / 2,
-              alignItems: 'center',
-            }}
-            onScroll={handleScroll}
-            scrollEventThrottle={16}
-            renderItem={renderTheme}
-            getItemLayout={getItemLayout}
-            initialNumToRender={2}
-            maxToRenderPerBatch={1}
-            windowSize={3}
-            removeClippedSubviews
-            initialScrollIndex={initialIndex}
-          />
-        ) : (
-          <View
-            style={{
-              alignItems: 'center',
-              justifyContent: 'center',
-              height: CARD_WIDTH * 1.3,
-            }}
-          >
-            <ActivityIndicator size="small" color={theme.colors.text.tertiary} />
-          </View>
-        )}
+        <FlatList
+          ref={scrollRef}
+          data={BUILT_IN_THEME_LIST}
+          keyExtractor={(tm) => tm.id}
+          horizontal
+          pagingEnabled={false}
+          snapToInterval={CARD_WIDTH + CARD_GAP}
+          decelerationRate="fast"
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{
+            paddingHorizontal: (SCREEN_WIDTH - CARD_WIDTH) / 2,
+            alignItems: 'center',
+          }}
+          onScroll={handleScroll}
+          scrollEventThrottle={16}
+          renderItem={renderTheme}
+          getItemLayout={getItemLayout}
+          initialNumToRender={2}
+          maxToRenderPerBatch={1}
+          windowSize={3}
+          removeClippedSubviews
+          initialScrollIndex={initialIndex}
+        />
 
         {/* Dots indicator */}
         <View

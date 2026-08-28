@@ -22,8 +22,8 @@
  * rather than being sorted into 1970.
  */
 
-import React, { useMemo, useState, useCallback, useEffect } from 'react';
-import { View, Pressable, StyleSheet, FlatList, Alert, Dimensions, InteractionManager } from 'react-native';
+import React, { useMemo, useState, useCallback } from 'react';
+import { View, Pressable, StyleSheet, FlatList, Alert, Dimensions } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SCRIM_LOCATIONS, surfaceScrimHeight, topSurfaceScrimColors, bottomSurfaceScrimColors } from '../../src/theme/scrim';
 import { Feather } from '@expo/vector-icons';
@@ -50,8 +50,6 @@ const CELL = Math.floor((SCREEN_WIDTH - H_PAD * 2 - CELL_GAP * (NUM_COLUMNS - 1)
 // the wrong offset.
 const HEADER_H = 64;
 
-/** Stable empty array so the pre-ready render cannot hand FlatList a fresh identity each pass. */
-const EMPTY_ROWS: Row[] = [];
 
 /**
  * One flattened list row. Interleaving group headers with rows of cells keeps this a single FlatList —
@@ -127,27 +125,30 @@ export default function ImportedStickersScreen() {
   const removeMany = useCustomGifs((s) => s.removeMany);
   const [selected, setSelected] = useState<string | null>(null);
 
-  // ── THE FIRST PAINT CARRIES THE CHROME, NOT THE LIBRARY ───────────────────
+  // ── GATE REMOVED ──────────────────────────────────────────────────────────
   //
-  // The other half of the reported freeze. `buildRows` groups every stored sticker and formats one date
-  // per group through `toLocaleDateString` — and the FIRST `Intl` call on Hermes pays ICU
-  // initialisation, which is far more expensive than any of the grouping. All of that ran during the
-  // screen's first render, i.e. on the frame the navigator was trying to animate.
+  // A `ready` state flipped by `InteractionManager.runAfterInteractions` used to substitute EMPTY_ROWS
+  // for the real library until it flipped. Two reasons were given for it; one does not survive and one
+  // turns out not to need a gate.
   //
-  // `InteractionManager` is the pattern this codebase already uses for exactly this on the messages tab
-  // and the chat screen: the transition runs first, the list arrives a frame later. The header, the
-  // scrims and the intro text are all available immediately, so the screen is never blank — it simply
-  // fills in. `ready` also gives the empty state something honest to wait on, so an empty library does
-  // not flash "nothing imported" before the real rows appear.
-  const [ready, setReady] = useState(false);
-  useEffect(() => {
-    const handle = InteractionManager.runAfterInteractions(() => setReady(true));
-    return () => handle.cancel();
-  }, []);
-
+  // The first: "`buildRows` groups every stored sticker and formats one date per group through
+  // `toLocaleDateString` — and the FIRST `Intl` call on Hermes pays ICU initialisation... All of that
+  // ran during the screen's first render, i.e. on the frame the navigator was trying to animate." The
+  // ICU cost is real, but the conclusion is not: this is a pushed route on the native stack, so the
+  // transition is a Core Animation slide that a busy JS thread does not stutter. Deferring did not save
+  // the animation; it only moved when the list appeared. And it moved it by an unbounded amount, since
+  // `runAfterInteractions` resolves on the interaction-handle count reaching zero rather than after the
+  // slide.
+  //
+  // The second: "`ready` also gives the empty state something honest to wait on, so an empty library
+  // does not flash 'nothing imported' before the real rows appear." That concern was real and is now
+  // met without a gate — building the rows synchronously means there is no window in which the library
+  // looks empty while it is not. `items` is read from the store on the first render, so
+  // `ListEmptyComponent` only ever shows when the library really is empty. The gate was in fact the
+  // thing creating that window, and `!ready ? null : ...` was the patch over it.
   const rows = useMemo(
-    () => (ready ? buildRows(items, t('stickers.date_unknown'), t('locale.tag')) : EMPTY_ROWS),
-    [ready, items, t],
+    () => buildRows(items, t('stickers.date_unknown'), t('locale.tag')),
+    [items, t],
   );
 
   // Deleting has to clear BOTH lists. `recent_gif` keeps a full copy of anything that has been sent, and
@@ -351,7 +352,8 @@ export default function ImportedStickersScreen() {
           </View>
         }
         ListEmptyComponent={
-          !ready ? null : (
+          // No `!ready ? null :` guard any more — the rows are built on the first render, so reaching
+          // this component means the library really is empty. See the GATE REMOVED note above.
           <View style={styles.empty}>
             <Feather name="image" size={30} color={theme.colors.text.tertiary} />
             <Text variant="body" color={theme.colors.text.secondary} align="center" style={styles.emptyTitle}>
@@ -361,7 +363,6 @@ export default function ImportedStickersScreen() {
               {t('stickers.empty_msg')}
             </Text>
           </View>
-          )
         }
       />
 

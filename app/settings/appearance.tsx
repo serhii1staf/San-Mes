@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
-import { View, Pressable, FlatList, Dimensions, NativeSyntheticEvent, NativeScrollEvent, Alert, InteractionManager, ActivityIndicator } from 'react-native';
+import { View, Pressable, FlatList, Dimensions, NativeSyntheticEvent, NativeScrollEvent, Alert } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -136,18 +136,27 @@ export default function AppearanceScreen() {
   const scrollRef = useRef<FlatList<typeof allThemes[number]>>(null);
   const [activeIndex, setActiveIndex] = useState(Math.max(0, allThemes.findIndex(c => c.key === accent)));
 
-  // Defer the cards carousel past the navigation slide-in. Each ThemePreviewCard
-  // mounts ~10 Feather icons + several Views; for 6+ themes that's a 60-icon
-  // synchronous mount on the open-screen frame and was the dominant source of
-  // the `LONG [settings] long task @ settings ~130ms` markers users were
-  // seeing the moment they tapped "Appearance". Showing a flat placeholder
-  // for the first ~300 ms feels like a regular slide-in completion; cards
-  // pop in on the next frame.
-  const [cardsReady, setCardsReady] = useState(false);
-  useEffect(() => {
-    const handle = InteractionManager.runAfterInteractions(() => setCardsReady(true));
-    return () => handle.cancel();
-  }, []);
+  // ── GATE REMOVED ──────────────────────────────────────────────────────────
+  //
+  // A `cardsReady` state, flipped by `InteractionManager.runAfterInteractions`, used to hold the
+  // carousel back and show an ActivityIndicator in its place. Its note read: "Each ThemePreviewCard
+  // mounts ~10 Feather icons + several Views; for 6+ themes that's a 60-icon synchronous mount on the
+  // open-screen frame and was the dominant source of the `LONG [settings] long task @ settings ~130ms`
+  // markers... Showing a flat placeholder for the first ~300 ms feels like a regular slide-in
+  // completion; cards pop in on the next frame."
+  //
+  // Three things wrong with it. (1) It is not 60 icons on the open frame — the FlatList below carries
+  // `initialNumToRender={2}` and `getItemLayout`, so two cards get built and the rest are skipped
+  // entirely. The gate was defending against a cost the virtualization had already removed. (2) This is
+  // a pushed route on expo-router's native stack: the slide is a Core Animation transition on the
+  // render server, so JS work during it does not stutter the animation the placeholder was protecting.
+  // (3) `runAfterInteractions` does not mean "~300 ms" or "the next frame" — it resolves when the
+  // interaction-handle count reaches zero, so the placeholder's lifetime was set by whichever
+  // animations happened to be registered.
+  //
+  // Net effect of the gate: a spinner, for an unbounded interval, where two cheap cards belong. That is
+  // the "everything is loading" texture the user reports, not a defence against it. Full argument in
+  // src/components/feed/PostCard.tsx.
 
   const handleScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
     const x = e.nativeEvent.contentOffset.x;
@@ -225,46 +234,38 @@ export default function AppearanceScreen() {
           dominant cause of the 100-150 ms long task the perf monitor was
           flagging on every "Appearance" open. */}
       <View style={{ flex: 1, justifyContent: 'center' }}>
-        {cardsReady ? (
-          <FlatList
-            ref={scrollRef}
-            data={allThemes}
-            keyExtractor={(c) => c.key}
-            horizontal
-            pagingEnabled={false}
-            snapToInterval={CARD_WIDTH + CARD_GAP}
-            decelerationRate="fast"
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{
-              // Mirrors the previous paddingHorizontal: (SCREEN_WIDTH - CARD_WIDTH) / 2
-              // so the first/last cards still center to the viewport.
-              paddingHorizontal: (SCREEN_WIDTH - CARD_WIDTH) / 2,
-              alignItems: 'center',
-            }}
-            onScroll={handleScroll}
-            scrollEventThrottle={16}
-            renderItem={renderTheme}
-            getItemLayout={getItemLayout}
-            // Tight virtualization: 2 cards initial, 1 per batch, 3-card
-            // window. Keeps the open-screen frame light while still leaving
-            // a card or two pre-rendered ahead of the user's scroll position.
-            initialNumToRender={2}
-            maxToRenderPerBatch={1}
-            windowSize={3}
-            removeClippedSubviews
-            // The carousel almost always opens centered on the active card
-            // (see the scrollToIndex effect below), so initialScrollIndex
-            // skips an unnecessary scroll-then-snap on first render.
-            initialScrollIndex={Math.max(0, allThemes.findIndex(c => c.key === accent))}
-          />
-        ) : (
-          // Placeholder while we wait for the navigation transition to settle.
-          // A faint spinner reads the same as "the cards are about to slide in"
-          // and avoids a frozen blank gap.
-          <View style={{ alignItems: 'center', justifyContent: 'center', height: CARD_WIDTH * 1.1 }}>
-            <ActivityIndicator size="small" color={theme.colors.text.tertiary} />
-          </View>
-        )}
+        <FlatList
+          ref={scrollRef}
+          data={allThemes}
+          keyExtractor={(c) => c.key}
+          horizontal
+          pagingEnabled={false}
+          snapToInterval={CARD_WIDTH + CARD_GAP}
+          decelerationRate="fast"
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{
+            // Mirrors the previous paddingHorizontal: (SCREEN_WIDTH - CARD_WIDTH) / 2
+            // so the first/last cards still center to the viewport.
+            paddingHorizontal: (SCREEN_WIDTH - CARD_WIDTH) / 2,
+            alignItems: 'center',
+          }}
+          onScroll={handleScroll}
+          scrollEventThrottle={16}
+          renderItem={renderTheme}
+          getItemLayout={getItemLayout}
+          // Tight virtualization: 2 cards initial, 1 per batch, 3-card
+          // window. Keeps the open-screen frame light while still leaving
+          // a card or two pre-rendered ahead of the user's scroll position.
+          // This — not the deleted defer gate — is what keeps the open frame cheap.
+          initialNumToRender={2}
+          maxToRenderPerBatch={1}
+          windowSize={3}
+          removeClippedSubviews
+          // The carousel almost always opens centered on the active card
+          // (see the scrollToIndex effect below), so initialScrollIndex
+          // skips an unnecessary scroll-then-snap on first render.
+          initialScrollIndex={Math.max(0, allThemes.findIndex(c => c.key === accent))}
+        />
 
         {/* Dots indicator */}
         <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginTop: 20, gap: 6 }}>

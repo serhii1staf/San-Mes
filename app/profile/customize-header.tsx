@@ -9,7 +9,7 @@
 // drawing) so the same scene renders across device widths.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Pressable, ScrollView, FlatList, Text as RNText, StyleSheet, PanResponder, useWindowDimensions, ActivityIndicator, InteractionManager } from 'react-native';
+import { View, Pressable, ScrollView, FlatList, Text as RNText, StyleSheet, PanResponder, useWindowDimensions, ActivityIndicator } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import Svg, { Path } from 'react-native-svg';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -120,30 +120,35 @@ export default function CustomizeHeaderScreen() {
   const [brush, setBrush] = useState<HeaderBrush>('pen');
   const [hue, setHue] = useState(210);
 
-  // Defer the (heavy) library grid mount until the open transition fully
-  // finishes. runAfterInteractions can resolve a frame or two before the nav
-  // animation visually ends, so we add one rAF to push the mount past it —
-  // mounting 14 swatches mid-animation was the open/close FPS drop.
-  const [libReady, setLibReady] = useState(false);
-  // Second-stage gate: the background swatch grid (24 live HeaderLandscape SVG
-  // scenes) is the single most expensive subtree. Mounting it in the SAME frame
-  // as the big preview produced one giant synchronous render → the long task
-  // that showed up as the 60→40 dip right after the screen opened. Gating the
-  // grid one extra frame behind `libReady` splits that work across two frames,
-  // so neither frame blows the budget.
+  // ── PREVIEW GATE REMOVED, GRID GATE KEPT AND BOUNDED ──────────────────────
+  //
+  // This screen used to hold two chained gates: `libReady`, flipped by
+  // `InteractionManager.runAfterInteractions` + one rAF, and `gridReady`, flipped one further rAF
+  // behind it. `libReady` gated BOTH the swatch grid and the big header preview.
+  //
+  // Gating the preview was the mistake. It is a single `HeaderLandscape` — the one scene the user
+  // opened this screen to look at — and it sat blank behind an unbounded wait. `runAfterInteractions`
+  // resolves when the interaction-handle count reaches zero, so its lifetime is set by whatever
+  // animations happen to be registered, not by "the nav animation visually ends" as the old note
+  // claimed. It now renders on the first frame.
+  //
+  // The grid gate SURVIVES, unlike the ones removed from app/settings/*, because here the measured
+  // cost is real and I can name it: BG_ITEMS is 25 live scenes, and with numColumns={3} FlatList
+  // counts `initialNumToRender` in ROWS, so its first commit builds 9 HeaderLandscape scenes — each
+  // an <Svg> with a gradient def plus dozens of Path/Polygon/Rect/Circle children, i.e. hundreds of
+  // native views. That is genuine work being split, not pixels being withheld, and it is the same
+  // distinction that kept FEED_MAP_CHUNK alive in (tabs)/index.tsx.
+  //
+  // What changed is the wait: one rAF instead of runAfterInteractions + two rAFs. One frame is
+  // bounded and imperceptible; the old chain was neither. FlatList's own
+  // maxToRenderPerBatch/updateCellsBatchingPeriod is the load-adaptive splitter for the remaining 16
+  // scenes, and it cannot start until the list mounts — so delaying the mount was delaying the
+  // splitter, not splitting anything.
   const [gridReady, setGridReady] = useState(false);
   useEffect(() => {
-    let raf = 0;
-    const h = InteractionManager.runAfterInteractions(() => {
-      raf = requestAnimationFrame(() => setLibReady(true));
-    });
-    return () => { h.cancel(); if (raf) cancelAnimationFrame(raf); };
-  }, []);
-  useEffect(() => {
-    if (!libReady) return;
     const raf = requestAnimationFrame(() => setGridReady(true));
     return () => cancelAnimationFrame(raf);
-  }, [libReady]);
+  }, []);
 
   // Live drag bookkeeping (px), committed to normalized state on release.
   const dragRef = useRef<{ id: string; startX: number; startY: number } | null>(null);
@@ -299,10 +304,10 @@ export default function CustomizeHeaderScreen() {
       {/* Preview — shaped like the header card. Tap empty space to deselect. */}
       <Pressable onPress={() => !drawMode && setSelectedId(null)}>
         <View style={{ width: previewW, height: PREVIEW_H, overflow: 'hidden', backgroundColor: theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)', borderBottomLeftRadius: 30, borderBottomRightRadius: 30 }}>
-          {/* Background landscape + saved drawing. Deferred behind libReady so
-              NO SVG renders during the open transition (that was the 60→40
-              drop on open). The in-progress drawing still shows via DrawCanvas. */}
-          {libReady ? <HeaderLandscape backgroundId={background} drawing={strokes} /> : null}
+          {/* Background landscape + saved drawing — one scene, rendered on the first frame. This is
+              the subject of the screen; it used to be withheld behind `libReady` (see the note
+              above). The in-progress drawing still shows via DrawCanvas. */}
+          <HeaderLandscape backgroundId={background} drawing={strokes} />
 
           {/* Soft scrims for depth — top fade for the floating chrome, bottom
               fade to seat the card. Behind stickers, never capture touches. */}

@@ -30,14 +30,12 @@
  *   any screen with a lot of icons (see `settings/appearance.tsx`).
  */
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import {
   View,
   Pressable,
   StyleSheet,
   FlatList,
-  ActivityIndicator,
-  InteractionManager,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -138,16 +136,23 @@ export default function PixelIconsScreen() {
 
   const [selectedId, setSelectedId] = useState<string | null>(initialSelectedId);
 
-  // Defer the grid mount past the modal's slide-in transition. 70 native
-  // Image views landing on the same RAF as the slide animation drops the
-  // open-screen framerate below 60 on weak devices. Showing a spinner
-  // while the transition completes is invisible to the user (the modal
-  // is still visually empty during the slide anyway).
-  const [gridReady, setGridReady] = useState(false);
-  useEffect(() => {
-    const handle = InteractionManager.runAfterInteractions(() => setGridReady(true));
-    return () => handle.cancel();
-  }, []);
+  // ── GATE REMOVED ──────────────────────────────────────────────────────────
+  //
+  // A `gridReady` state flipped by `InteractionManager.runAfterInteractions` used to hold the grid back
+  // behind a spinner. Its note: "70 native Image views landing on the same RAF as the slide animation
+  // drops the open-screen framerate below 60 on weak devices. Showing a spinner while the transition
+  // completes is invisible to the user (the modal is still visually empty during the slide anyway)."
+  //
+  // It is not 70 views on the open frame. The FlatList below carries `initialNumToRender={5}` over rows
+  // of 4, so the first commit builds 20 icons and the remaining ~50 stream in at 4 rows per batch —
+  // FlatList was already doing the splitting the gate claimed credit for. The slide itself is a Core
+  // Animation transition on the native stack, which a busy JS thread does not stutter. And "invisible to
+  // the user" does not survive contact with what `runAfterInteractions` actually waits for: every
+  // registered interaction handle, not the slide, so the spinner routinely outlived the transition and
+  // what the user watched was a grid assembling itself.
+  //
+  // The images are all `require`d and bundled (see the header note), so there is no network fetch and no
+  // decode-from-bytes here — it is view construction, once, on a screen the user opened deliberately.
 
   const rows = useMemo(() => buildGridRows(isPicker), [isPicker]);
 
@@ -283,31 +288,26 @@ export default function PixelIconsScreen() {
       {/* Grid is the BASE layer — it fills the screen including under the
           gradient fade header, so content visibly slides up under the
           translucent shell when scrolled. */}
-      {gridReady ? (
-        <FlatList
-          data={rows}
-          renderItem={renderItem}
-          keyExtractor={keyExtractor}
-          contentContainerStyle={{
-            paddingHorizontal: 14,
-            // First row sits below the gradient header (82 px tall fixed).
-            paddingTop: 78,
-            paddingBottom: insets.bottom + 90,
-          }}
-          showsVerticalScrollIndicator={false}
-          // Tight virtualization — 4 rows of 4 icons fit on a typical screen,
-          // initial 5 rows covers the visible area + a buffer without paying
-          // for everything at once. Subsequent batches stream in cheaply.
-          initialNumToRender={5}
-          maxToRenderPerBatch={4}
-          windowSize={6}
-          removeClippedSubviews={true}
-        />
-      ) : (
-        <View style={[styles.loaderWrap, { paddingTop: 78 }]}>
-          <ActivityIndicator size="small" color={theme.colors.text.tertiary} />
-        </View>
-      )}
+      <FlatList
+        data={rows}
+        renderItem={renderItem}
+        keyExtractor={keyExtractor}
+        contentContainerStyle={{
+          paddingHorizontal: 14,
+          // First row sits below the gradient header (82 px tall fixed).
+          paddingTop: 78,
+          paddingBottom: insets.bottom + 90,
+        }}
+        showsVerticalScrollIndicator={false}
+        // Tight virtualization — 4 rows of 4 icons fit on a typical screen,
+        // initial 5 rows covers the visible area + a buffer without paying
+        // for everything at once. Subsequent batches stream in cheaply.
+        // This is the real cost control; see the GATE REMOVED note above.
+        initialNumToRender={5}
+        maxToRenderPerBatch={4}
+        windowSize={6}
+        removeClippedSubviews={true}
+      />
 
       {/* Floating gradient header. Padding settled at 28 px after a long
           oscillation cycle (14 too low, 6 too high, 22 still slightly
@@ -459,7 +459,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'flex-start',
   },
-  loaderWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   sectionHeader: { paddingTop: 14, paddingBottom: 6, paddingHorizontal: 4 },
   sectionLabel: { fontSize: 11, letterSpacing: 0.6 },
   iconRow: { flexDirection: 'row', marginBottom: 8 },
