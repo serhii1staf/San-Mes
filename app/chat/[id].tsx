@@ -39,7 +39,7 @@ import { useChatSettingsStore, GLOBAL_CHAT_SETTINGS_KEY, DEFAULT_CHAT_SETTINGS }
 import { readableTextOn, withOpacity } from '../../src/constants/bubbleColors';
 import { useMessageGestures } from '../../src/hooks/useMessageGestures';
 import { useChatKeyboardMode } from '../../src/hooks/useChatKeyboardMode';
-import { useStaggeredReveal, useStaggeredGifReveal, setRevealScrollPaused } from '../../src/hooks/useStaggeredReveal';
+import { setRevealScrollPaused } from '../../src/hooks/useStaggeredReveal';
 import { useBrowserStore } from '../../src/store/browserStore';
 import { ChatBackgroundLayer } from '../../src/components/ui/ChatBackgroundLayer';
 import { ReplyJumpGlow } from '../../src/components/chat/ReplyJumpGlow';
@@ -1018,9 +1018,39 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
   // takes the heavier-gated path. Both hooks are always called (rules of hooks).
   const hasImages = !!(message.imageUrls && message.imageUrls.length > 0);
   const isGifBubble = hasImages && message.imageUrls!.some(isAnimatedImageUrl);
-  const photoReveal = useStaggeredReveal(!!imagesReady && hasImages && !isGifBubble);
-  const gifReveal = useStaggeredGifReveal(!!imagesReady && hasImages && isGifBubble);
-  const imgReveal = isGifBubble ? gifReveal : photoReveal;
+  // ── FOUR HOOKS PER BUBBLE THAT COULD NOT AFFECT ANYTHING ──────────────────
+  //
+  // This was:
+  //
+  //   const photoReveal = useStaggeredReveal(!!imagesReady && hasImages && !isGifBubble);
+  //   const gifReveal   = useStaggeredGifReveal(!!imagesReady && hasImages && isGifBubble);
+  //   const imgReveal   = isGifBubble ? gifReveal : photoReveal;
+  //
+  // Work through it with the current state of the two things it depends on and
+  // it collapses completely.
+  //
+  // `imagesReady` is a hardcoded `true` a few hundred lines below — the deferral
+  // it used to gate was removed for cause, with a long note. And
+  // `useStaggeredReveal` is now `return active || latched` where `latched` is
+  // initialised to `active` (src/hooks/useStaggeredReveal.ts) — the frame pumps
+  // were deleted too. So it returns exactly `active` for any caller whose
+  // `active` is constant, and `hasImages` / `isGifBubble` are both constant for
+  // the lifetime of a message.
+  //
+  // Therefore `photoReveal === hasImages && !isGifBubble`,
+  // `gifReveal === hasImages && isGifBubble`, and the ternary picks whichever
+  // branch matches `isGifBubble` — which is `hasImages` either way.
+  //
+  // So the three lines computed `hasImages` using two `useState` and two
+  // `useEffect` per bubble. With ~24 bubbles retained (maxItemsInRecyclePool)
+  // that is ~48 state slots and ~48 effect registrations per chat open, buying a
+  // boolean already in scope. This is not a behaviour change; it is the same
+  // value with the ceremony removed.
+  //
+  // If frame-paced reveal is ever justified again by a measurement, it belongs
+  // back in `useStaggeredReveal` where the pumps used to be, not reconstructed
+  // here.
+  const imgReveal = hasImages;
 
   // ── THIS SCREEN HAD NO MOUNT INSTRUMENTATION AT ALL ───────────────────────
   //
@@ -5657,15 +5687,40 @@ export default function ChatScreen() {
           // Concurrency cap: only the first GIF_ANIM_CAP visible GIFs animate.
           // visibleSet preserves viewable order (onViewableItemsChanged inserts
           // top→bottom), so we count GIF rows until we hit this one.
+          //
+          // ── AND THE CAP DID NOT APPLY WHEN IT MATTERED MOST ─────────────────
+          //
+          // `visibleSet` is EMPTY until the first viewability report lands, which
+          // is one or two frames after the open commit. Walking an empty set left
+          // `rank` at 0, `rank >= GIF_ANIM_CAP` false, and execution fell through
+          // to `return true` — so on chat open EVERY mounted GIF animated at
+          // once, uncapped, during precisely the frames the user experiences as
+          // the chat struggling to open. GIF_ANIM_CAP = 2 exists because "5-6
+          // visible GIFs all decoding frames continuously -> fps 18"; a device
+          // trace showed ten giphy loads completing inside a 40 ms window with
+          // pendingDecodes reaching 24.
+          //
+          // The note further down about the deleted 250 ms viewability gate spells
+          // this failure out exactly, and removing that gate narrowed the window
+          // from 250 ms to a couple of frames without closing it. Nothing else
+          // caps load starts either: `imagesReady` is a hardcoded `true` and both
+          // reveal pumps are no-ops, so the mounted set decides everything.
+          //
+          // Rank against `gifIds` when there is no viewable set yet. Insertion
+          // order there is mount order, which is render order, so the cap is
+          // enforced from the very first commit. Deliberately NOT `if (!ready)
+          // return false`: that would leave GIFs frozen forever in a chat whose
+          // viewability callback never fires, which is the second failure the
+          // note below records.
+          const rankOrder = visibleSet.size > 0 ? visibleSet : gifIds;
           let rank = 0;
-          for (const vid of visibleSet) {
+          for (const vid of rankOrder) {
             if (!gifIds.has(vid)) continue;
             if (vid === itemId) return rank < GIF_ANIM_CAP;
             rank++;
             if (rank >= GIF_ANIM_CAP) break;
           }
-          // Not located within the cap window (or visibleSet not ready) → if we
-          // broke out past the cap, this GIF is beyond it → freeze.
+          // Not located within the cap window → beyond it → freeze.
           if (rank >= GIF_ANIM_CAP) return false;
         }
         return true;

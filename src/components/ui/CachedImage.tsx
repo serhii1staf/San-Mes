@@ -5,7 +5,6 @@ import { perfMonitor } from '../../services/perfMonitor';
 import { useSettingsStore } from '../../store/settingsStore';
 import Skeleton from './Skeleton';
 import { noteVariantLoaded, bestLoadedVariantUrl } from '../../services/mediaVariants';
-import { useStaggeredReveal } from '../../hooks/useStaggeredReveal';
 
 import { LottieSticker } from './LottieSticker';
 
@@ -189,29 +188,31 @@ interface CachedImageProps {
    * instead of a fresh download. Opt-in, because only surfaces that ENLARGE existing media benefit.
    */
   progressive?: boolean;
-  /**
-   * Join the app-wide frame-paced decode queue: this image waits its turn instead of starting its
-   * decode the moment it mounts. For any DENSE GRID of images this is the difference between a bounded
-   * one-or-two concurrent decodes and a storm.
-   *
-   * ── WHY THIS LIVES HERE AND NOT IN EACH GRID ──────────────────────────────
-   *
-   * Because putting it in each grid demonstrably does not stick. The GIF panel was given this pacing
-   * via `useStaggeredReveal` after a snapshot showed twenty-six loads starting together. The
-   * imported-stickers screen was written one round LATER, renders a four-column grid of the same kind
-   * of asset, and did not get it — because a hook cannot be called from a `renderItem` arrow, so pacing
-   * first required extracting the cell into its own component. The next snapshot showed exactly what
-   * that omission costs: `pendingDecodes` at 36, with durations climbing
-   * 290 → 331 → 442 → 448 → 533 → 542 → 599 ms. Same queue, new screen.
-   *
-   * A prop on the image has no such barrier: a grid opts in by adding one word, with no component
-   * extraction and no hook of its own. That is what makes it likely to be used by the next grid
-   * someone writes, which is the only property that actually prevents this recurring.
-   *
-   * Layout is preserved while waiting — the caller's `style` renders as an empty `View` of the same
-   * box, so nothing shifts when the image arrives.
-   */
-  paced?: boolean;
+  // ── THE `paced` PROP IS GONE, AND IT HAD STOPPED WORKING BEFORE IT WENT ────
+  //
+  // It documented an app-wide frame-paced decode queue: an image would wait its
+  // turn instead of loading on mount, so a dense grid kept one or two concurrent
+  // decodes instead of a storm. The argument for putting it on the image rather
+  // than in each grid was good and the measurements quoted were real.
+  //
+  // It does not work any more, for two independent reasons, and it was costing a
+  // `useState` plus a `useEffect` on EVERY image in the app to not work.
+  //
+  // First: the queue it joined no longer exists. `useStaggeredReveal` is now
+  // `return active || latched` with `latched` initialised to `active` — the frame
+  // pumps were deleted deliberately, with a note, because the climbing durations
+  // they were blamed for turned out to be queue wait being counted as load time.
+  // So `pacedReady` reduced to exactly `!!paced`, which makes the gate
+  // `paced && !pacedReady` equal to `paced && !paced`: unreachable. A caller
+  // passing `paced` got no pacing, silently.
+  //
+  // Second: no caller passes it. A repo-wide search for `paced=` returns nothing.
+  //
+  // So this was dead twice over. Removed rather than left as a prop that lies
+  // about what it does. If bounded decode concurrency is ever justified by a
+  // measurement again, it has to be rebuilt in `useStaggeredReveal` where the
+  // pumps were — a boolean here cannot pace anything on its own, which is the
+  // actual lesson from the first attempt.
   [key: string]: any;
 }
 
@@ -224,14 +225,13 @@ export const CachedImage = memo(function CachedImage({
   autoplay,
   skeleton,
   progressive,
+  // `paced` is still destructured, with nothing reading it, ON PURPOSE: it keeps
+  // the word out of `...props` and therefore off the underlying expo-image, so a
+  // stale call site that still passes it degrades to "no pacing" instead of
+  // forwarding an unknown prop to a native component. Interface note above.
   paced,
   ...props
 }: CachedImageProps) {
-  // Queue membership. `useStaggeredReveal` only ever goes false → true and stays there, so a recycled
-  // cell keeps the turn it already earned rather than queueing again on every scroll. Called
-  // unconditionally with `!!paced` to keep hook order identical for every caller; when `paced` is not
-  // set it never reveals, which is why the gate below reads `!paced || revealed` rather than `revealed`.
-  const pacedReady = useStaggeredReveal(!!paced);
   // Reset proxy-failure state when the source URL changes — otherwise a row
   // recycled in a list would keep falling back forever after a single bad URL.
   const [proxyFailed, setProxyFailed] = useState(false);
@@ -283,28 +283,22 @@ export const CachedImage = memo(function CachedImage({
   // method-call and increment entirely. ~50 image loads/sec during a fast
   // scroll need to add 0 ms when the monitor is off, which this gate
   // guarantees.
-  // ── THE CLOCK STARTS WHEN THE LOAD STARTS, NOT WHEN THE COMPONENT MOUNTS ──
+  // Back to `[uri]`, which is correct again now that nothing defers the load.
   //
-  // `[uri]` alone was wrong the moment `paced` existed, and it made the next snapshot lie about my own
-  // fix. A paced image mounts immediately but does not begin loading until its turn in the frame queue,
-  // so a timer started at mount measured "queue wait plus load" and reported it as load time. On the
-  // stickers grid that produced durations climbing to 2367 ms — which reads as catastrophically slow
-  // images and is actually the deliberate stagger being counted as latency.
+  // The deps used to be `[uri, paced, pacedReady]`, and the reason is worth keeping even though the
+  // code is gone: with pacing live, an image mounted immediately but did not start loading until its
+  // turn, so a timer started at mount measured "queue wait plus load" and reported it as load time —
+  // durations climbing to 2367 ms on the stickers grid, which read as catastrophically slow images and
+  // was actually the deliberate stagger being counted as latency. The give-away that it was
+  // measurement and not regression: `pendingDecodes` on the same screen fell from 36 to 1 in that very
+  // snapshot. Two numbers from one run disagreeing is how an instrumentation bug announces itself.
   //
-  // The give-away that it was measurement and not regression: `pendingDecodes` on the same screen fell
-  // from 36 to 1 in that very snapshot, which is the pacing working exactly as intended. Two numbers
-  // from the same run disagreeing is how an instrumentation bug announces itself, and this is the third
-  // time in this effort a metric has had to be corrected before it could be trusted — so it is worth
-  // stating the rule plainly: a gauge must not include time that a deliberate scheduling decision added.
-  //
-  // `pacedReady` in the deps means the timer and the pending-decode gauge both begin at the instant the
-  // `<Image>` is actually handed its source. For an unpaced caller `pacedReady` is constant, so behaviour
-  // is byte-for-byte unchanged.
+  // The rule that survives: a gauge must not include time that a deliberate scheduling decision added.
+  // If load deferral is ever reintroduced, this dep list has to grow back with it.
   const decodeStart = useRef(0);
   const pendingHere = useRef(false);
   useEffect(() => {
     if (!uri) return;
-    if (paced && !pacedReady) return;
     if (!useSettingsStore.getState().perfMonitorEnabled) return;
     decodeStart.current = Date.now();
     perfMonitor.incrementPendingDecodes();
@@ -318,17 +312,9 @@ export const CachedImage = memo(function CachedImage({
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [uri, paced, pacedReady]);
+  }, [uri]);
 
   if (!uri) return null;
-
-  // Waiting for a turn in the decode queue. The caller's own style is rendered as an empty box, so the
-  // grid's layout is committed once in its final shape and the thumbnail fades into a cell that is
-  // already in place — no reflow when it arrives. Placed after every hook, so this early return cannot
-  // change hook order.
-  if (paced && !pacedReady) {
-    return <View style={style as any} />;
-  }
 
   // ── ANIMATED TELEGRAM STICKERS ARE LOTTIE, NOT IMAGES ─────────────────────
   //

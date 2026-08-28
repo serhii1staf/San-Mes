@@ -45,7 +45,7 @@
  * on Android where it would be expensive.
  */
 import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, View } from 'react-native';
 import Animated, {
   Easing,
   runOnJS,
@@ -158,9 +158,13 @@ function useActionText(alert: InAppAlert | null): string {
  */
 const GlassShell = memo(function GlassShell({
   isDark,
+  surface,
+  border,
   children,
 }: {
   isDark: boolean;
+  surface: string;
+  border: string;
   children: React.ReactNode;
 }) {
   const liquidGlass = useLiquidGlassActive();
@@ -173,6 +177,51 @@ const GlassShell = memo(function GlassShell({
       >
         {children}
       </NativeGlassView>
+    );
+  }
+  // ── ANDROID GETS MATERIAL, NOT A WASHED-OUT IMITATION OF GLASS ─────────────
+  //
+  // Reported: on Android this pill "does not support the blur we use". That is
+  // accurate, and it is not an accident — `GlassCapsule` states plainly that
+  // Android NEVER renders a BlurView, and falls back to a flat rgba fill. What it
+  // then renders is a translucent slab with a white top-reflection gradient and a
+  // dark bottom fade, i.e. the SHAPE of a glass highlight with no glass under it.
+  // That reads as a faded rectangle, which is what was being described.
+  //
+  // Two reasons not to answer this by turning the blur on. The cheap one: the
+  // stated cost argument is about a keyboard-coupled surface — "the chat input bar
+  // sits just above the keyboard and the keyboard animation re-rasterizes any
+  // BlurView above it" — and this pill is a 3.4-second overlay at the top of the
+  // screen, so that specific reasoning does not transfer. The real one: on Android
+  // a blur is the wrong idea regardless. A floating Material surface is a toned
+  // container with a shadow, and faking a lens on a platform whose surfaces are
+  // paper is exactly the mistake the platform-design work exists to stop.
+  //
+  // So: a real elevated Material surface. Tone from the app's own theme (so it
+  // follows the in-app dark/light switch), plus a shadow, because M3 pairs
+  // container tone WITH shadow for elements that genuinely float — resting
+  // surfaces get tone alone. `elevation` is the Android channel for that; the
+  // iOS-style shadow* props are set alongside so the same style is harmless if
+  // this branch is ever reached on iOS with Reduce Transparency on, where a
+  // toned surface is also the correct fallback.
+  //
+  // No reflection gradient and no bottom dim: both are glass cues, and their
+  // absence is the point.
+  if (Platform.OS === 'android') {
+    return (
+      <View
+        style={[
+          styles.material,
+          {
+            borderRadius: CIRCLE / 2,
+            backgroundColor: surface,
+            borderColor: border,
+            shadowOpacity: isDark ? 0.38 : 0.2,
+          },
+        ]}
+      >
+        {children}
+      </View>
     );
   }
   return (
@@ -202,6 +251,13 @@ function InAppAlertHostInner() {
 
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const shownIdRef = useRef<string | null>(null);
+  // Watchdog for the case where phase two never starts. See the note on the
+  // measuring view's `key`: the auto-dismiss timer lives inside phase two, so if
+  // the measurement never arrives there is nothing left to take the pill down and
+  // it stays on screen forever, blocking every queued alert behind it. This is
+  // deliberately independent of the measurement.
+  const watchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const expandedRef = useRef(false);
 
   const clearTimer = () => {
     if (timerRef.current) {
@@ -210,8 +266,17 @@ function InAppAlertHostInner() {
     }
   };
 
+  const clearWatchdog = () => {
+    if (watchdogRef.current) {
+      clearTimeout(watchdogRef.current);
+      watchdogRef.current = null;
+    }
+  };
+
   const finish = useCallback(() => {
     clearTimer();
+    clearWatchdog();
+    expandedRef.current = false;
     setContentWidth(null);
     shownIdRef.current = null;
     advance();
@@ -229,6 +294,19 @@ function InAppAlertHostInner() {
     const isSwap = shownIdRef.current !== null;
     shownIdRef.current = current.id;
     setContentWidth(null);
+    expandedRef.current = false;
+
+    // Arm the watchdog for THIS alert. If phase two has not run by the time this
+    // fires, the pill is stuck (no expand, no text, and no dismiss timer because
+    // that timer is armed in phase two) — so retire the alert rather than leave it
+    // on screen holding the queue. Generous relative to a measurement pass, which
+    // lands on the next frame, so a healthy alert never reaches this.
+    clearWatchdog();
+    watchdogRef.current = setTimeout(() => {
+      watchdogRef.current = null;
+      if (expandedRef.current) return;
+      finish();
+    }, VISIBLE_MS);
 
     if (isSwap) {
       // Content swap during a burst: keep the capsule on screen, just re-fade the text and collapse
@@ -248,6 +326,9 @@ function InAppAlertHostInner() {
   // Phase two: once the row has been measured, expand outward and fade the text in behind it.
   useEffect(() => {
     if (!current || contentWidth == null || maxWidth <= 0) return;
+    // Phase two reached: the watchdog above has nothing left to rescue.
+    expandedRef.current = true;
+    clearWatchdog();
     // `PAD_H + AVATAR + GAP + text + PAD_H`. Written from the parts rather than from `CIRCLE` so it
     // cannot double-count the padding `CIRCLE` already includes — that was one of the two over-counts.
     const target = Math.min(
@@ -279,7 +360,7 @@ function InAppAlertHostInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current?.id, contentWidth, maxWidth, hasPending, finish]);
 
-  useEffect(() => clearTimer, []);
+  useEffect(() => () => { clearTimer(); clearWatchdog(); }, []);
 
   // ── TAPPING THE PILL GOES WHERE THE ALERT POINTS ────────────────────────────
   //
@@ -353,7 +434,32 @@ function InAppAlertHostInner() {
           is what made the capsule far too long. `alignSelf: 'flex-start'` keeps the column shrink-wrapped
           to its content instead of stretching to the full-width parent, which would measure the screen. */}
       <View style={styles.measure} pointerEvents="none" aria-hidden>
+        {/* ── `key` IS THE FIX FOR "THE PILL BREAKS AFTER THE FIRST MESSAGE" ────
+            Reported: the first alert or two look right, then the pill stops
+            working.
+
+            `onLayout` fires when a layout CHANGES. It is not a "measure me"
+            request. On the second alert the swap branch above sets
+            `contentWidth` back to null and collapses the capsule to a circle,
+            then waits for this view to report its new width — but if the new
+            alert renders to the SAME width, nothing changed, so React Native
+            fires nothing. Two messages from the same person are exactly that
+            case: same display name, same "sent you a message" line, identical
+            measured width.
+
+            `contentWidth` then stays null forever, and phase two bails on
+            `contentWidth == null`. Phase two is also where the auto-dismiss
+            timer is armed — so the pill does not merely fail to expand, it
+            sticks on screen as a bare circle with its text faded out and never
+            dismisses, and every later alert queues behind it. That is the
+            failure, and it is a hard stick rather than a glitch.
+
+            Keying by alert id remounts this subtree per alert, and a mount
+            always produces one initial `onLayout`. The watchdog in the effect
+            above is the second line of defence so no future change to this
+            measurement can strand the pill again. */}
         <View
+          key={current.id}
           onLayout={(e) => {
             const w = Math.ceil(e.nativeEvent.layout.width);
             if (w > 0) setContentWidth((prev) => (prev === w ? prev : w));
@@ -378,7 +484,11 @@ function InAppAlertHostInner() {
             design and the runtime API all agree, and it must not be used when Reduce Transparency is
             on. `GlassCapsule` stays as the fallback for every device that fails that gate, which is
             all of Android and any older iOS, so the pill looks right everywhere. */}
-        <GlassShell isDark={theme.isDark}>
+        <GlassShell
+          isDark={theme.isDark}
+          surface={theme.colors.background.elevated || theme.colors.background.secondary}
+          border={theme.colors.border.light}
+        >
           <Pressable
             onPress={onPress}
             style={styles.pressable}
@@ -453,6 +563,19 @@ const styles = StyleSheet.create({
   glass: {
     overflow: 'hidden',
     flex: 1,
+  },
+  // Android's floating Material surface. `flex: 1` matches the glass branch so
+  // both fill the animated capsule identically and the width morph looks the same
+  // on both platforms. Shadow geometry is shared; only its opacity varies by
+  // theme, set inline, because a cast shadow reads far weaker on a dark surface.
+  material: {
+    overflow: 'hidden',
+    flex: 1,
+    borderWidth: StyleSheet.hairlineWidth,
+    elevation: 6,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowRadius: 8,
   },
 });
 
