@@ -1561,13 +1561,31 @@ export default function ChatScreen() {
   // user, the chat still floats to the top exactly as before, and it matches
   // the deferral chat/ai.tsx + chat/music.tsx already apply to their
   // `markOpened` writes for the same reason.
+  // ── AND IT MUST NOT STAMP AN ID THAT CANNOT MATCH A ROW ────────────────────
+  //
+  // The note above says the stamp happens twice on purpose — "on mount (route id) and again once the
+  // canonical conversationId resolves (profile-entry path), so whichever id the list row uses gets
+  // bumped". The intent is right; the first of those two stamps cannot possibly serve it.
+  //
+  // On a profile-entry open the route id IS the peer's USER id. The messages list sorts by
+  // `max(lastMessageAt, openedAt[row.id])` over conversation rows, and no conversation row is keyed
+  // by a user id — so `openedAt[<peer user id>]` is a key nothing ever reads. What it does do is
+  // write the persisted chat-settings store, which the still-mounted (tabs)/messages tab subscribes
+  // to, so it re-filters and re-sorts the whole conversation list and re-runs its MMKV persist. For
+  // nothing.
+  //
+  // Gating on `convIdSettled` costs the common paths nothing: it starts `true` whenever the route id
+  // is already canonical (messages-list entry, or a route id matching a known conversation row), so
+  // those stamp on mount exactly as before. Only the profile-entry case waits, and it waits for the
+  // one id that can actually float the row.
   useEffect(() => {
     if (!conversationId) return;
+    if (!convIdSettled) return;
     const handle = InteractionManager.runAfterInteractions(() => {
       try { useChatSettingsStore.getState().markChatOpened(conversationId); } catch {}
     });
     return () => handle.cancel();
-  }, [conversationId]);
+  }, [conversationId, convIdSettled]);
 
   // ── Tell the push handler this chat is on screen ──────────────────────────
   //
@@ -2549,18 +2567,46 @@ export default function ChatScreen() {
   // never warmed into the in-memory mirror — `kvWarm` is called for
   // `chat_messages:*` but NOT for the recents — so that first sync read misses
   // persisted data and recents never reappear after an app restart. Warm the
-  // two keys once on mount, then re-read so the lists hydrate. (No-op when MMKV
-  // is available — the initializer read already had the data.)
+  // two keys once on mount, then re-read so the lists hydrate.
+  //
+  // ── IT WAS NOT THE NO-OP THE OLD NOTE CLAIMED ──────────────────────────────
+  //
+  // That note ended with "(No-op when MMKV is available — the initializer read already had the
+  // data.)" It was not. The `kvWarm` round trip ran unconditionally on EVERY chat open, and then
+  // both setters fired unconditionally — and `getRecentEmoji()`/`getRecentGif()` parse fresh arrays
+  // out of storage on each call, so the new state was never reference-equal to the old even when the
+  // contents were byte-identical. Two guaranteed state changes, a beat after first paint, on the
+  // largest component in the app. That is a full re-render of this screen for no change in what is
+  // displayed, and it lands at exactly the moment the user describes as the chat "reloading
+  // something".
+  //
+  // Two guards, both narrow:
+  //
+  //   • Skip the whole thing when the synchronous read already produced recents. It reads the
+  //     first-render values (the `useState` initializers above) because the dep list is empty —
+  //     deliberate, and the reason the exhaustive-deps rule is silenced below. If MMKV answered at
+  //     mount, there is nothing an AsyncStorage warm can add.
+  //   • Commit only a NON-EMPTY result. Reaching the commit means state is `[]`, so writing another
+  //     empty array would be pure identity churn.
+  //
+  // The fallback path this exists for is unaffected: no MMKV means the initializers returned empty,
+  // the guard passes, and the warm hydrates exactly as before.
   useEffect(() => {
+    if (recentEmoji.length > 0 || recentGif.length > 0) return;
     let cancelled = false;
     kvWarm(['recent_emoji', 'recent_gif'])
       .then(() => {
         if (cancelled) return;
-        setRecentEmoji(getRecentEmoji());
-        setRecentGif(getRecentGif());
+        const warmedEmoji = getRecentEmoji();
+        const warmedGifs = getRecentGif();
+        if (warmedEmoji.length > 0) setRecentEmoji(warmedEmoji);
+        if (warmedGifs.length > 0) setRecentGif(warmedGifs);
       })
       .catch(() => {});
     return () => { cancelled = true; };
+    // Mount-only ON PURPOSE — see the guard note above. Listing the two state values would re-run
+    // the warm every time a recent is pushed, which is the opposite of what this is for.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Whenever the media panel opens, refresh the recents from storage so the
@@ -5124,7 +5170,28 @@ export default function ChatScreen() {
   // Older messages exist above what is rendered until a chunk load comes back empty. The old
   // condition (`not hydrated && seed hit its cap`) could only ever be true once, because
   // hydration was all-or-nothing; with paged loading the answer changes per page.
-  const hasMoreOlder = moreOlderRef.current && chatMessages.length > 0;
+  // ── AND IT CLAIMED THERE WAS MORE IN EVERY CHAT EVER OPENED ────────────────
+  //
+  // `moreOlderRef` initialises `true` and is only ever set false by `loadOlderChunk` finding
+  // nothing — which cannot happen until the user has scrolled to the oldest loaded message. So the
+  // condition above was, on the first frame of every chat, `true && length > 0` = true. Every chat
+  // opened with `OlderMessagesLoader` visible and its `Animated.loop` shimmering, asserting that
+  // older history was on its way in, before anything had been requested. In a chat with nine
+  // messages total it shimmered for the entire life of the screen and there was never anything to
+  // load. That is not a symptom of the app loading too much; it is the app SAYING it is loading when
+  // it is not, which is the same thing to the person holding the phone.
+  //
+  // `chatMessages.length >= SEED_CAP` answers it correctly and for free, at render time. The tail
+  // cache is written as `full.slice(-SEED_CAP)`, so a seed shorter than the cap proves the on-disk
+  // history is shorter than the cap too — there is provably nothing older. At or above the cap the
+  // answer is genuinely unknown, and the ref latch then handles it the way it always did: show the
+  // affordance, and stop when a load comes back empty.
+  //
+  // Deliberately a render-time term rather than a better initial value for the ref. A ref write does
+  // not re-render, so the reset in the conversation-change cleanup below lands after the next
+  // conversation's first render has already read the old value — fixing the initial value alone
+  // would leave that hole open. The derived term cannot be stale.
+  const hasMoreOlder = moreOlderRef.current && chatMessages.length >= SEED_CAP;
 
   // Reaching the TOP hydrates the rest of the history from the local cache — once, ever.
   // Never the network, and no window to grow any more.
@@ -5180,6 +5247,17 @@ export default function ChatScreen() {
     // nothing older left.
     if (loadingOlderRef.current) return;
     if (!moreOlderRef.current) return;
+    // Same provable negative as `hasMoreOlder`: a loaded set shorter than the seed cap means the
+    // on-disk history is shorter than the cap, so there is nothing older to fetch. Worth guarding
+    // here and not only in the affordance, because the load path calls `ensureCachedHistory`, which
+    // reads and heals the FULL `chat_messages:<id>` blob — an expensive way to discover there was
+    // nothing to do.
+    //
+    // Read through `windowedMessagesRef`, not `chatMessages`. This callback has an EMPTY dep list on
+    // purpose (FlashList re-reads its props when a callback identity changes, so this must not be
+    // rebuilt per message), which means closing over `chatMessages` would pin the count from the
+    // first render forever. The ref is the same array, reversed, refreshed every render.
+    if (windowedMessagesRef.current.length < SEED_CAP) return;
 
     // ── ONE PAGE PER GESTURE, NOT A CASCADE ──────────────────────────────────
     //
@@ -5422,22 +5500,36 @@ export default function ChatScreen() {
     };
   }
   const visTracker = visTrackerRef.current;
-  // Deferred past the open-chat transition: FlatList fires its first
-  // viewability callback the instant the initial cells lay out, which
-  // landed on the same frame as the navigation slide-in and triggered an
-  // immediate re-render of all five mounted bubbles. The 250 ms gate skips
-  // that first burst — the list is already rendering everything visible
-  // (initialNumToRender=5), so nothing is paused incorrectly during the gate.
-  const viewabilityArmedRef = useRef(false);
-  useEffect(() => {
-    const handle = setTimeout(() => { viewabilityArmedRef.current = true; }, 250);
-    return () => clearTimeout(handle);
-  }, []);
+  // ── THE 250 ms VIEWABILITY GATE IS GONE, AND IT WAS THE WRONG WAY ROUND ────
+  //
+  // It was a `viewabilityArmedRef` latch plus a `setTimeout(…, 250)`, and `onViewableItemsChanged`
+  // discarded every report until it opened. Its justification: "FlatList fires its first viewability
+  // callback the instant the initial cells lay out, which landed on the same frame as the navigation
+  // slide-in and triggered an immediate re-render of all five mounted bubbles... nothing is paused
+  // incorrectly during the gate."
+  //
+  // Both halves stopped being true, and the second one inverted.
+  //
+  // The re-render claim belonged to the FlatList era, when `renderItem` listed the visible set in its
+  // deps so any viewability event re-ran every mounted cell. That is exactly what the tracker +
+  // `useSyncExternalStore` rewrite removed: each row now subscribes individually and returns a
+  // BOOLEAN snapshot, so the first real report re-renders only the rows whose on-screen state
+  // actually flips — the overscan rows going false. A handful, and the flip is the point.
+  //
+  // "Nothing is paused incorrectly during the gate" is the part that inverted. Read `isVisible`: with
+  // `ready` still false it returns `!ready || visibleSet.has(id)` = true for every row, and for a GIF
+  // row it then walks `visibleSet` to apply GIF_ANIM_CAP — but `visibleSet` is EMPTY until the first
+  // update lands, so `rank` never reaches the cap and every GIF returns true. The gate therefore
+  // guaranteed that every mounted GIF in the draw window animated at once, uncapped, for the first
+  // 250 ms of every chat open. GIF_ANIM_CAP = 2 exists because "5-6 visible GIFs all decoding frames
+  // continuously → fps 18"; the gate was holding that cap off during precisely the frames the user
+  // describes as the chat struggling to open.
+  //
+  // There was a second, quieter failure. `ready` only becomes true inside `update`, so in a chat the
+  // user opens and does not scroll, the discarded first report could be the ONLY one — leaving the
+  // screen permanently in "everything is visible, no GIF cap" mode for its whole lifetime.
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 35 }).current;
   const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ViewToken[] }) => {
-    // Skip viewability-driven updates until the open-chat transition has
-    // settled. See `viewabilityArmedRef` declaration above.
-    if (!viewabilityArmedRef.current) return;
     const next = new Set<string>();
     for (const v of viewableItems) {
       if (v.isViewable && v.item?.id) next.add(v.item.id as string);
