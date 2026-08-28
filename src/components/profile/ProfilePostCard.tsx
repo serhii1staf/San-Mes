@@ -1,4 +1,4 @@
-import React, { memo, useEffect, useMemo, useState } from 'react';
+import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Pressable, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useMappingHelper } from '@shopify/flash-list';
@@ -146,8 +146,15 @@ function ProfilePostCardBase({ post, authorName, authorEmoji, authorVerified, au
   // reading 120/109/102/85/75/63/50/25 were one interval measured eight times, and `avgMountMs` was
   // summing them. `noteBatchRender` + `markBatchCommit` measure the commit once and report the batch
   // size with it — see their note in perfMonitor.ts.
+  // The ref keeps `count` equal to "cards newly mounting in this commit". Noting on every render let a
+  // plain re-render stamp a start no effect would drain, which is how this route reported a
+  // `worstMountMs` of 3528 ms — a span across idle time, not a commit.
   const perfEnabled = useSettingsStore((s) => s.perfMonitorEnabled);
-  if (perfEnabled && hydrated) perfMonitor.noteBatchRender('ProfilePostCard.body');
+  const perfNotedRef = useRef(false);
+  if (perfEnabled && hydrated && !perfNotedRef.current) {
+    perfNotedRef.current = true;
+    perfMonitor.noteBatchRender('ProfilePostCard.body');
+  }
   useEffect(() => {
     if (!perfEnabled || !hydrated) return;
     perfMonitor.markBatchCommit('ProfilePostCard.body');

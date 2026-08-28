@@ -1017,8 +1017,15 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
   //
   // `noteBatchRender` + `markBatchCommit` measure the commit once and report the batch size with it.
   // See their note in perfMonitor.ts.
+  // The ref is what keeps `count` equal to "cells newly mounting in this commit". Noting on every
+  // render instead let a plain re-render stamp a start that no effect would ever drain, and the next
+  // mounting cell then printed the span since it — that is where `x8` at 980 ms came from.
   const perfEnabled = useSettingsStore.getState().perfMonitorEnabled;
-  if (perfEnabled && hasImages && imgReveal) perfMonitor.noteBatchRender('MessageBubble.media');
+  const perfNotedRef = useRef(false);
+  if (perfEnabled && hasImages && imgReveal && !perfNotedRef.current) {
+    perfNotedRef.current = true;
+    perfMonitor.noteBatchRender('MessageBubble.media');
+  }
   useEffect(() => {
     if (!perfEnabled || !hasImages || !imgReveal) return;
     perfMonitor.markBatchCommit('MessageBubble.media');

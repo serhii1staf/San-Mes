@@ -297,7 +297,7 @@ class PerfMonitor {
 
   // In-flight commit batches for `noteBatchRender` / `markBatchCommit`, keyed by mark label. See the
   // note on those methods for why per-component mount timing over-reports a co-mounted batch.
-  private _commitBatches = new Map<string, { start: number; count: number; scheduled: boolean }>();
+  private _commitBatches = new Map<string, { start: number; count: number }>();
 
   // After a long-task / stall, RAF (and the Reanimated frame callback) deliver
   // "catch-up" bursts where several queued frames fire back-to-back in <16 ms
@@ -607,22 +607,36 @@ class PerfMonitor {
   //   • `noteBatchRender` from render — keeps the EARLIEST start across the batch, counts participants.
   //   • `markBatchCommit`  from the effect — schedules ONE report, after which the accumulator resets.
   //
-  // `setTimeout(0)` rather than a microtask on purpose: passive effects are flushed inside a scheduler
-  // task, and a microtask queued from the first effect would run before the later effects in that same
-  // flush had incremented the count. A macrotask is after the whole flush.
-  //
   // The label carries the batch size (`MessageBubble.media x6`) because that is the number that tells
   // you whether to attack per-cell cost or how many cells commit together — which the old marks
   // actively obscured by looking like six separate expensive mounts.
+  //
+  // ── THE FIRST VERSION OF THIS PAIR WAS ALSO WRONG, AND MORE LOUDLY ──────────
+  //
+  // It noted on EVERY render and drained on a `setTimeout(0)`. The effect, though, only fires when its
+  // deps change — so a plain re-render set `start` and nothing ever flushed it. The accumulator then sat
+  // holding a timestamp from an arbitrarily earlier render until some later cell mounted and printed the
+  // span since it. That produced `MessageBubble.media x8` at 980 ms, `x12` at 804 ms, and a
+  // `(tabs)/profile worstMountMs` of 3528 ms. There is no 3.5-second commit; that number was the giveaway.
+  //
+  // Two changes make it sound:
+  //
+  //   • Callers note ONCE PER COMPONENT INSTANCE, on the render where the gate first opens, guarded by a
+  //     ref. So `count` is the number of cells newly mounting and re-renders cannot touch the batch.
+  //   • The drain is SYNCHRONOUS in the effect, and the accumulator is emptied there. React renders every
+  //     component in a commit before running any effect, so by the time the first effect fires `count` is
+  //     already complete — the `setTimeout` it was reaching for was never necessary. Later effects in the
+  //     same flush find an empty accumulator and no-op, which is the correct behaviour rather than a
+  //     missed contribution.
+  //
+  // Net effect: one mark per commit, spanning first-mount-render → first-effect, with an exact cell count.
   noteBatchRender(label: string) {
     if (!useSettingsStore.getState().perfMonitorEnabled) return;
     let b = this._commitBatches.get(label);
     if (!b) {
-      b = { start: 0, count: 0, scheduled: false };
+      b = { start: 0, count: 0 };
       this._commitBatches.set(label, b);
     }
-    // MIN, so a re-render of an already-counted cell cannot move the start later, and so this stays
-    // safe under a double-invoked render.
     if (b.start === 0) b.start = Date.now();
     b.count += 1;
   }
@@ -630,17 +644,14 @@ class PerfMonitor {
   markBatchCommit(label: string) {
     if (!useSettingsStore.getState().perfMonitorEnabled) return;
     const b = this._commitBatches.get(label);
-    if (!b || b.start === 0 || b.scheduled) return;
-    b.scheduled = true;
-    setTimeout(() => {
-      const durationMs = Date.now() - b.start;
-      const count = b.count;
-      b.start = 0;
-      b.count = 0;
-      b.scheduled = false;
-      if (count <= 0) return;
-      this.markScreenMount(count > 1 ? `${label} x${count}` : label, durationMs);
-    }, 0);
+    // An empty accumulator means an earlier effect in this same flush already reported the batch.
+    if (!b || b.start === 0) return;
+    const durationMs = Date.now() - b.start;
+    const count = b.count;
+    b.start = 0;
+    b.count = 0;
+    if (count <= 0) return;
+    this.markScreenMount(count > 1 ? `${label} x${count}` : label, durationMs);
   }
 
   /**
