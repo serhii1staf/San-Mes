@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { AppState } from 'react-native';
 import { kvGetJSONSync, kvSetJSON } from '../services/kvStore';
 
 // Tiny store that drives the unread badge on the home-tab bell icon.
@@ -38,7 +39,7 @@ interface NotificationsBadgeState {
   // notifications screen itself. Network-backed, so it's async, fire-and-
   // forget, and THROTTLED (see REFRESH_THROTTLE_MS) so rapid home-tab
   // focus events can't hammer the Worker. Does NOT mark anything seen.
-  refresh: () => Promise<void>;
+  refresh: (opts?: { force?: boolean }) => Promise<void>;
   // Optimistically bump the unread count by `by` (default 1). Used by the
   // realtime bridge when a live `notif.*` ping arrives before the
   // notifications cache (the source `recompute` reads from) has been
@@ -98,9 +99,11 @@ export const useNotificationsBadge = create<NotificationsBadgeState>((set) => ({
     set({ unread: computeUnread() });
   },
 
-  refresh: async () => {
+  refresh: async (opts) => {
     const now = Date.now();
-    if (now - lastRefreshAt < REFRESH_THROTTLE_MS) return;
+    // `force` bypasses the throttle. See `installNotificationsBadgeForegroundRefresh` for the one
+    // caller that needs it and why the throttle was silently eating the case it was reported for.
+    if (!opts?.force && now - lastRefreshAt < REFRESH_THROTTLE_MS) return;
     // Claim the window BEFORE awaiting so concurrent focus events can't
     // stampede a burst of parallel fetches.
     lastRefreshAt = now;
@@ -135,3 +138,52 @@ export const useNotificationsBadge = create<NotificationsBadgeState>((set) => ({
     set((s) => ({ unread: s.unread + by }));
   },
 }));
+
+// ── THE BADGE DID NOT COME BACK WITH THE APP ─────────────────────────────────
+//
+// Reported as: leave the app, someone writes, the push shows on the home screen, DISMISS the push,
+// open the app — and there is no notification indicator.
+//
+// The dismissal is a red herring, and it is worth saying so plainly because it is the part that looks
+// causal. Nothing in the push path touches the watermark: a repo-wide search finds `markAllSeen()`
+// called from exactly two places, both in `app/notifications.tsx`, i.e. only when the user actually
+// opens the notifications screen. Swiping a system notification away cannot clear this badge.
+//
+// What actually happens is that the badge never learns about the message at all:
+//
+//   1. `increment()` is driven by `RealtimeAccountBridge`, which needs the app running and subscribed.
+//      With the app away, the push comes from the Worker's server-side fan-out and nothing local runs.
+//   2. So the only path that can discover it is `refresh()`, which refetches the notifications cache
+//      that `recompute()` derives from.
+//   3. `refresh()` was throttled at REFRESH_THROTTLE_MS (45 s) against a MODULE-level `lastRefreshAt`.
+//      Module state survives backgrounding, so coming back within 45 s of the last refresh returned
+//      immediately without fetching. `recompute()` then read the unchanged cache and produced 0.
+//   4. And `refresh()` was only ever called from the bell's `useFocusEffect` on the HOME tab, so
+//      returning into the chat list or the profile did not call it even once.
+//
+// That combination is also why it is intermittent rather than constant: a true cold start resets
+// `lastRefreshAt` to 0 and the badge appears, while a backgrounded-then-resumed app inside the window
+// silently skips the fetch.
+//
+// Installed from `app/_layout.tsx` alongside the other `install*` hooks, so it is bound to the app
+// rather than to a screen, and a resume into ANY tab updates the badge.
+//
+// `recompute()` runs first because it is a synchronous MMKV read: if anything did manage to write the
+// cache (a still-alive bridge, a previous fetch) the badge is correct before the network is touched.
+// The forced `refresh` then reconciles against server truth, and `refresh` itself claims the throttle
+// window as it starts, so a rapid background/foreground flap cannot stampede parallel fetches.
+export function installNotificationsBadgeForegroundRefresh(): () => void {
+  const sub = AppState.addEventListener('change', (next) => {
+    if (next !== 'active') return;
+    try {
+      const s = useNotificationsBadge.getState();
+      s.recompute();
+      void s.refresh({ force: true });
+    } catch {
+      // A badge that fails to refresh must never be able to take the app down on resume.
+    }
+  });
+  return () => {
+    try { sub.remove(); } catch {}
+  };
+}

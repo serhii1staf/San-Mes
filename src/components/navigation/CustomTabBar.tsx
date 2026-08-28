@@ -1039,6 +1039,31 @@ export const CustomTabBar = React.memo(function CustomTabBar({
     releaseSlot.value = safeSlot;
     if (activeMainSlot < 0) {
       // Profile focused — pill is hidden; skip repositioning entirely.
+      //
+      // ── BUT DROP THE FIRST-POSITION LATCH ON THE WAY OUT ────────────────────
+      //
+      // Reported as: open the app, go to the profile, then tap the chat list — and the pill appears on
+      // the HOME icon and travels across the bar to the chat list.
+      //
+      // That is this branch. Leaving the pill's position alone is correct in itself, but the position it
+      // is left at is the last MAIN slot the user was on, and `pillX` is a shared value owned by this
+      // component, so it survives the lens being unmounted (`slotWidth > 0 && pillVisible && ...` at the
+      // render site) and comes back holding that stale slot. Choosing a main tab again then remounts the
+      // lens at the stale slot and springs it to the new one — the travel the user is describing. The
+      // note above assumed "it's hidden via `pillVisible` anyway" made the stale position harmless; it
+      // hides the pill, not where the pill will reappear.
+      //
+      // Clearing the latch makes the next positioning take the `!hasMounted` branch below, which SNAPS
+      // instead of springing. That is the same treatment the very first positioning gets, and for the
+      // same reason: there is no previous on-screen position to animate from, because the lens was not
+      // on screen.
+      //
+      // Honest about what this does not fix: the lens still mounts for a single frame at the stale slot
+      // before the effect snaps it, because effects run after the commit. One frame is not the reported
+      // symptom and removing it means gating the mount on the position being current, which adds a
+      // render per tab switch and can leave the pill unmounted if the ordering is ever wrong — not a
+      // trade worth making blind on a component whose drag choreography is this involved.
+      hasMounted.current = false;
       return;
     }
     const target = slotToX(activeMainSlot);
