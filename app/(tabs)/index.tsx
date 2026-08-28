@@ -1147,7 +1147,11 @@ export default function FeedScreen() {
             </Pressable>
             {!isOnline && (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(255,59,48,0.12)', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 }}>
-                <ActivityIndicator size={10} color="#FF3B30" />
+                {/* A static glyph, not an `ActivityIndicator`. A spinner means "working"; offline means
+                    nothing can work, and this chip is bound to `!isOnline` with no request behind it —
+                    so it span continuously for as long as the device had no connection. One more piece
+                    of the app looking permanently busy while doing nothing. */}
+                <MaterialIcons name="cloud-off" size={11} color="#FF3B30" />
                 <Text variant="caption" color="#FF3B30" style={{ fontSize: 10 }}>{t('feed.offline')}</Text>
               </View>
             )}
