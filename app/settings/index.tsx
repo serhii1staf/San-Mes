@@ -189,7 +189,7 @@ export default function SettingsScreen() {
   const setInAppBrowser = useSettingsStore((s) => s.setInAppBrowser);
   const setPerfMonitorEnabled = useSettingsStore((s) => s.setPerfMonitorEnabled);
   const pushNotificationsEnabled = useSettingsStore((s) => s.pushNotificationsEnabled);
-  const setPushNotificationsEnabled = useSettingsStore((s) => s.setPushNotificationsEnabled);
+
   const liquidGlassEnabled = useSettingsStore((s) => s.liquidGlassEnabled);
   const setLiquidGlassEnabled = useSettingsStore((s) => s.setLiquidGlassEnabled);
   // The liquid-glass toggle is only meaningful on iOS 26+ devices where the
@@ -253,16 +253,10 @@ export default function SettingsScreen() {
     }
   };
 
-  // Push master switch. Applies immediately: ON re-registers the Expo token
-  // (requests permission if needed), OFF drops the token server-side so the
-  // backend stops fanning pushes to this device. No-op on OTA builds that
-  // predate the native module (the service guards internally).
-  const handleTogglePush = (v: boolean) => {
-    setPushNotificationsEnabled(v);
-    import('../../src/services/pushNotifications')
-      .then((m) => { if (v) m.registerForPush(); else m.unregisterPush(); })
-      .catch(() => {});
-  };
+  // `handleTogglePush` lived here and now lives in `app/settings/notifications.tsx`, next to the
+  // switch it drives. Deliberately MOVED rather than copied: two places calling
+  // `registerForPush`/`unregisterPush` on the same flag is how they drift, and the flag is still read
+  // here only to show On/Off as the row's value.
 
   const handleLogout = () => {
     Alert.alert(t('settings.logout_title'), t('settings.logout_msg'), [
@@ -391,25 +385,71 @@ export default function SettingsScreen() {
             label={t('settings.notifications')}
             onPress={() => router.push('/notifications')}
           />
+          {/* ── PUSH IS A SUB-SCREEN NOW, NOT AN INLINE SWITCH ──────────────────
+              It grew a second dimension. There are per-category preferences (messages / comments /
+              follows / likes) alongside the master switch, and four more toggles inlined here would
+              have made this the longest card on the screen while burying the one switch that
+              actually stops delivery. The row shows the master state as its value so the
+              information is not lost by moving. */}
           <SettingsRow
             icon="notifications-active"
             iconTint="pink"
             label={t('settings.push_notifications', 'Push-уведомления')}
-            showChevron={false}
-            rightElement={
-              <Switch
-                value={pushNotificationsEnabled !== false}
-                onValueChange={handleTogglePush}
-                trackColor={{ true: '#4CD964', false: theme.colors.border.light }}
-                thumbColor="#FFFFFF"
-              />
-            }
+            value={pushNotificationsEnabled !== false ? t('common.on', 'Вкл.') : t('common.off', 'Выкл.')}
+            onPress={() => router.push('/settings/notifications' as any)}
+            isLast
           />
+        </View>
+
+        {/* ── Chats ────────────────────────────────────────────────────────────
+            NEW SECTION, and its absence was the clearest gap in this screen: this is a messenger
+            whose settings root had nothing about chats. Both destinations already existed and were
+            simply unreachable from here — `chat-settings.tsx` and `stickers.tsx` were only ever
+            opened from inside a conversation, so app-wide defaults could not be found at all. */}
+        <View style={sectionTitleStyle}>
+          <Text variant="body" weight="semibold" color={theme.colors.text.secondary}>
+            {t('settings.section.chats', 'Чаты')}
+          </Text>
+        </View>
+        <View style={sectionCardStyle}>
+          <SettingsRow
+            icon="chat-bubble"
+            iconTint="blue"
+            label={t('settings.chat_settings', 'Настройки чатов')}
+            onPress={() => router.push('/settings/chat-settings' as any)}
+            isFirst
+          />
+          <SettingsRow
+            icon="emoji-emotions"
+            iconTint="yellow"
+            label={t('settings.stickers', 'Стикеры')}
+            onPress={() => router.push('/settings/stickers' as any)}
+            isLast
+          />
+        </View>
+
+        {/* ── Data ─────────────────────────────────────────────────────────────
+            Storage, the browser choice and haptics were mixed into "General" alongside the profile
+            and notifications. They are all device-behaviour settings, so they group. */}
+        <View style={sectionTitleStyle}>
+          <Text variant="body" weight="semibold" color={theme.colors.text.secondary}>
+            {t('settings.section.data', 'Данные и устройство')}
+          </Text>
+        </View>
+        <View style={sectionCardStyle}>
           <SettingsRow
             icon="storage"
             iconTint="green"
             label={t('settings.data_storage')}
             onPress={() => router.push('/settings/storage')}
+            isFirst
+          />
+          <SettingsRow
+            icon="public"
+            iconTint="cyan"
+            label={t('settings.browser')}
+            value={useInAppBrowser ? t('settings.browser.in_app') : t('settings.browser.external')}
+            onPress={() => router.push('/settings/browser')}
           />
           <SettingsRow
             icon="vibration"
@@ -424,38 +464,6 @@ export default function SettingsScreen() {
                 thumbColor="#FFFFFF"
               />
             }
-          />
-          <SettingsRow
-            icon="public"
-            iconTint="cyan"
-            label={t('settings.browser')}
-            value={useInAppBrowser ? t('settings.browser.in_app') : t('settings.browser.external')}
-            isLast
-            onPress={() => router.push('/settings/browser')}
-          />
-        </View>
-
-        {/* Developer / diagnostics */}
-        <View style={sectionTitleStyle}>
-          <Text variant="body" weight="semibold" color={theme.colors.text.secondary}>
-            {t('settings.section.developer', 'Разработчик')}
-          </Text>
-        </View>
-        <View style={sectionCardStyle}>
-          <SettingsRow
-            icon="insights"
-            iconTint="green"
-            label={t('settings.perf_monitor', 'Монитор производительности')}
-            showChevron={false}
-            rightElement={
-              <Switch
-                value={perfMonitorEnabled}
-                onValueChange={setPerfMonitorEnabled}
-                trackColor={{ true: '#4CD964', false: theme.colors.border.light }}
-                thumbColor="#FFFFFF"
-              />
-            }
-            isFirst
             isLast
           />
         </View>
@@ -565,13 +573,21 @@ export default function SettingsScreen() {
           </Text>
         </Pressable>
         <View style={sectionCardStyle}>
+          {/* In-app privacy controls. `privacy.tsx` existed with NO entry point anywhere in the
+              settings root, while the root instead linked out to the hosted privacy POLICY — two
+              different things, and only the document was reachable. */}
+          <SettingsRow
+            icon="shield"
+            iconTint="indigo"
+            label={t('settings.privacy', 'Приватность')}
+            onPress={() => router.push('/settings/privacy' as any)}
+            isFirst
+          />
           <SettingsRow
             icon="devices"
             iconTint="blue"
             label={t('settings.devices')}
-            value="2"
             onPress={() => router.push('/settings/device-key')}
-            isFirst
           />
           <SettingsRow
             icon="lock"
@@ -584,6 +600,34 @@ export default function SettingsScreen() {
             iconTint="gray"
             label={t('settings.terms')}
             onPress={() => Linking.openURL('https://legal.san-m-app.com/terms.html').catch(() => {})}
+            isLast
+          />
+        </View>
+
+        {/* ── Developer / diagnostics — LAST ───────────────────────────────────
+            It was SECOND, above Appearance: a single debug toggle outranking every setting a user
+            actually came here for. Diagnostics belong at the bottom, which is also where every OS
+            settings app puts them. The rows above are unchanged; only the position moved. */}
+        <View style={sectionTitleStyle}>
+          <Text variant="body" weight="semibold" color={theme.colors.text.secondary}>
+            {t('settings.section.developer', 'Разработчик')}
+          </Text>
+        </View>
+        <View style={sectionCardStyle}>
+          <SettingsRow
+            icon="insights"
+            iconTint="green"
+            label={t('settings.perf_monitor', 'Монитор производительности')}
+            showChevron={false}
+            rightElement={
+              <Switch
+                value={perfMonitorEnabled}
+                onValueChange={setPerfMonitorEnabled}
+                trackColor={{ true: '#4CD964', false: theme.colors.border.light }}
+                thumbColor="#FFFFFF"
+              />
+            }
+            isFirst
             isLast
           />
         </View>

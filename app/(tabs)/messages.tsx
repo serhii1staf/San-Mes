@@ -2471,7 +2471,22 @@ export default function MessagesScreen() {
               removeClippedSubviews={true}
               initialNumToRender={8}
               maxToRenderPerBatch={6}
-              windowSize={9}
+              // 5, not 9. windowSize is measured in VIEWPORTS, so with 64 pt rows one viewport is
+              // roughly twelve rows and 9 meant a retained window of about a hundred. At
+              // maxToRenderPerBatch 6 every updateCellsBatchingPeriod 60 ms, that is ~100 row mounts
+              // spread over a full second AFTER the mount mark is taken, which is invisible to MOUNT
+              // and is the best available explanation for the measured NAV (tabs) of 824 ms.
+              //
+              // Each of those rows is not cheap: three zustand subscriptions, eight translator
+              // lookups, five or six useAnimatedStyle mappers, a Pan gesture with three worklets, and
+              // a menuReady flip that changes the element type at the row root and therefore rebuilds
+              // the whole row subtree, one row per frame.
+              //
+              // 5 keeps two viewports of overscan in each direction (~60 rows). Blank space on a fast
+              // fling is what windowSize guards against, and getItemLayout is provided just above, so
+              // the list can place rows without measuring them first. That is the condition which
+              // makes a smaller window safe here.
+              windowSize={5}
               updateCellsBatchingPeriod={60}
               getItemLayout={MESSAGES_ITEM_LAYOUT}
               // Suspended while a row is being dragged. Without this the list would scroll
