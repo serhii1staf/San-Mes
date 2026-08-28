@@ -83,6 +83,31 @@ function computeUnread(): number {
   return n;
 }
 
+// ── MIRROR THE COUNT ONTO THE APP ICON ───────────────────────────────────────
+//
+// Reported as: on iPhone an unread message normally leaves a number on the app icon even after the push
+// is dismissed, and this app shows nothing. It did show nothing — `setBadgeCountAsync` was never called
+// anywhere. See the long note on `setOsBadgeCount` in `src/services/pushNotifications.ts` for the full
+// account, including the half that needs a Worker deploy rather than an OTA.
+//
+// Routed through one helper called from every place that changes `unread`, so the icon cannot drift from
+// the in-app badge. Deliberately fire-and-forget: it is an async native call and nothing in the UI waits
+// on it, so awaiting it would only give a state setter a reason to be async.
+//
+// The `expo-notifications` access is lazily required and try/caught inside `setOsBadgeCount`, which is
+// what keeps this store importable from tests and from an OTA payload whose native build predates the
+// module.
+function syncOsBadge(count: number): void {
+  void (async () => {
+    try {
+      const { setOsBadgeCount } = await import('../services/pushNotifications');
+      await setOsBadgeCount(count);
+    } catch {
+      // Never let the icon badge break the in-app badge.
+    }
+  })();
+}
+
 // Throttle window for the background `refresh()`. Home-tab focus can fire
 // often (every tab switch back to home); we don't want a Worker round-trip
 // each time. ~45s keeps the badge fresh without hammering the server.
@@ -96,7 +121,9 @@ export const useNotificationsBadge = create<NotificationsBadgeState>((set) => ({
   unread: computeUnread(),
 
   recompute: () => {
-    set({ unread: computeUnread() });
+    const unread = computeUnread();
+    set({ unread });
+    syncOsBadge(unread);
   },
 
   refresh: async (opts) => {
@@ -114,7 +141,9 @@ export const useNotificationsBadge = create<NotificationsBadgeState>((set) => ({
         // Cache is now server-truth → recompute sets the ABSOLUTE unread
         // count, reconciling any transient `increment()` bumps from the
         // realtime bridge. Never additive.
-        set({ unread: computeUnread() });
+        const unread = computeUnread();
+        set({ unread });
+        syncOsBadge(unread);
       } else {
         // Network/offline failure wrote nothing — release the throttle so
         // the next home-tab focus can retry rather than waiting the full
@@ -131,11 +160,18 @@ export const useNotificationsBadge = create<NotificationsBadgeState>((set) => ({
     const ts = Date.now();
     try { kvSetJSON(LAST_SEEN_KEY, ts); } catch {}
     set({ unread: 0 });
+    // Clearing the icon is the half users notice most: opening the notifications screen must take the
+    // number off the launcher, not just off the bell.
+    syncOsBadge(0);
   },
 
   increment: (by = 1) => {
     if (!Number.isFinite(by) || by <= 0) return;
-    set((s) => ({ unread: s.unread + by }));
+    set((s) => {
+      const unread = s.unread + by;
+      syncOsBadge(unread);
+      return { unread };
+    });
   },
 }));
 
