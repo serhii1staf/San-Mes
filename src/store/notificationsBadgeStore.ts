@@ -208,6 +208,57 @@ export const useNotificationsBadge = create<NotificationsBadgeState>((set) => ({
 // cache (a still-alive bridge, a previous fetch) the badge is correct before the network is touched.
 // The forced `refresh` then reconciles against server truth, and `refresh` itself claims the throttle
 // window as it starts, so a rapid background/foreground flap cannot stampede parallel fetches.
+// ── AND THE CHAT-LIST COUNTER HAD THE SAME DISEASE, IN A SECOND STORE ────────
+//
+// Reported after the first fix shipped: still no indicator on resume, "neither in the chat list nor in
+// the bottom navigation". Those are a DIFFERENT counter. There are three:
+//
+//   1. `useChatUnread`         — per-conversation counts on the chat-list rows AND the total on the
+//                                bottom bar (`totalChatUnread` in CustomTabBar).
+//   2. `useNotificationsBadge` — the bell, and the messages tab glyph.
+//   3. the OS app-icon badge   — see `setOsBadgeCount` in services/pushNotifications.ts.
+//
+// Only (2) was fixed above. (1) is reconciled by exactly one call site — an effect in
+// `app/(tabs)/messages.tsx` keyed on `[conversations, user?.id, reconcileUnread]` — so it recomputes
+// only when the messages tab is MOUNTED and the conversation list changes IDENTITY. Both conditions
+// fail in the reported scenario:
+//
+//   * resume into any other tab and the effect does not exist to run;
+//   * resume into messages and `syncConversations` is throttled at 3 minutes against a persisted
+//     stamp, so it returns without fetching, `conversations` keeps its identity, and the effect does
+//     not re-fire. `reconcile` compares `lastMessageAt` against the read watermark, so with no fetch
+//     there is no newer timestamp to notice.
+//
+// Same shape as the bell, then: a throttle that survives backgrounding plus a screen-scoped trigger.
+// The fix is the same too — force the fetch on resume and reconcile from here, where it is bound to the
+// app rather than to a screen. `resetThrottle` is the mechanism pull-to-refresh already uses, so this
+// borrows an existing seam instead of adding a `force` flag to every sync function.
+//
+// Ordering matters: `syncConversations` must land BEFORE `reconcile`, because reconcile reads the rows.
+// It is awaited rather than fired alongside for exactly that reason.
+async function refreshChatUnreadOnResume(): Promise<void> {
+  try {
+    const { useAuthStore } = await import('./authStore');
+    const uid = useAuthStore.getState().user?.id;
+    if (!uid) return;
+    const [{ syncConversations }, { resetThrottle }, { useChatUnread }, { useEntityStore }] =
+      await Promise.all([
+        import('../services/syncService'),
+        import('../services/syncThrottle'),
+        import('./chatUnreadStore'),
+        import('../services/entityStore'),
+      ]);
+    // Resume is exactly the moment the 3-minute window is wrong: the app was away, so "recently
+    // synced" says nothing about whether anything arrived.
+    resetThrottle(`conversations:${uid}`);
+    await syncConversations(uid);
+    const rows = useEntityStore.getState().conversations || [];
+    if (rows.length > 0) useChatUnread.getState().reconcile(rows as any, uid);
+  } catch {
+    // Offline, signed out, or a transport failure. The counters simply stay as they were.
+  }
+}
+
 export function installNotificationsBadgeForegroundRefresh(): () => void {
   const sub = AppState.addEventListener('change', (next) => {
     if (next !== 'active') return;
@@ -215,6 +266,8 @@ export function installNotificationsBadgeForegroundRefresh(): () => void {
       const s = useNotificationsBadge.getState();
       s.recompute();
       void s.refresh({ force: true });
+      // The chat-list / bottom-bar counter is a separate store with the same resume hole — see above.
+      void refreshChatUnreadOnResume();
     } catch {
       // A badge that fails to refresh must never be able to take the app down on resume.
     }
