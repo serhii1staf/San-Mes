@@ -298,31 +298,45 @@ function ProfilePostCardBase({ post, authorName, authorEmoji, authorVerified, au
           <PixelIconPattern id={decoration.id} opacity={theme.isDark ? 0.18 : 0.14} />
         ) : null}
 
+        {/* ── ANIMATED THUMBNAILS ARE A CONTINUOUS UI-THREAD COST ──────────────
+            `autoplay={false}` on every tile below. An animated GIF/WebP in a
+            100x100 (or 49x49) thumbnail decodes EVERY FRAME for as long as the
+            list retains the cell, off-screen ones included. That is a permanent
+            drain, not a mount spike, which is why (tabs)/profile measured
+            SUSTAINED worstFps 25 / jankCount 3 / pendingDecodes 16 with giphy
+            hosts in the IMG log.
+
+            Same defect chat and comments already fixed; they use a visibility
+            tracker because a full-width GIF in a message should animate once the
+            list settles. A profile tile this small should never animate, so the
+            static first frame is the correct fix here, consistent with the dense
+            grids in GifPanel.tsx / settings/stickers.tsx / MediaPanel.tsx.
+            See the longer note in src/components/ui/UserProfilePostCard.tsx. */}
         {hasImage ? (
           <Pressable onPress={() => onImagePress(imgs[0], post.id, imgs)}>
             <View style={[styles.thumbWrap, themedThumbWrap]}>
               {imgs.length === 1 ? (
-                <CachedImage uri={imgs[0]} style={styles.thumbSingle} resizeMode="cover" proxyWidth={singleProxyWidth} priority="low" />
+                <CachedImage uri={imgs[0]} style={styles.thumbSingle} resizeMode="cover" proxyWidth={singleProxyWidth} priority="low" autoplay={false} />
               ) : imgs.length === 2 ? (
                 <View style={styles.thumbRow}>
-                  <CachedImage uri={imgs[0]} style={styles.thumbHalf} resizeMode="cover" proxyWidth={49} priority="low" />
+                  <CachedImage uri={imgs[0]} style={styles.thumbHalf} resizeMode="cover" proxyWidth={49} priority="low" autoplay={false} />
                   <View style={styles.spacerH} />
-                  <CachedImage uri={imgs[1]} style={styles.thumbHalf} resizeMode="cover" proxyWidth={49} priority="low" />
+                  <CachedImage uri={imgs[1]} style={styles.thumbHalf} resizeMode="cover" proxyWidth={49} priority="low" autoplay={false} />
                 </View>
               ) : imgs.length === 3 ? (
                 <View style={styles.thumbRow}>
-                  <CachedImage uri={imgs[0]} style={styles.thumbHalf} resizeMode="cover" proxyWidth={49} priority="low" />
+                  <CachedImage uri={imgs[0]} style={styles.thumbHalf} resizeMode="cover" proxyWidth={49} priority="low" autoplay={false} />
                   <View style={styles.spacerH} />
                   <View style={styles.thumbHalfCol}>
-                    <CachedImage uri={imgs[1]} style={styles.thumbQuarter} resizeMode="cover" proxyWidth={49} priority="low" />
+                    <CachedImage uri={imgs[1]} style={styles.thumbQuarter} resizeMode="cover" proxyWidth={49} priority="low" autoplay={false} />
                     <View style={styles.spacerV} />
-                    <CachedImage uri={imgs[2]} style={styles.thumbQuarter} resizeMode="cover" proxyWidth={49} priority="low" />
+                    <CachedImage uri={imgs[2]} style={styles.thumbQuarter} resizeMode="cover" proxyWidth={49} priority="low" autoplay={false} />
                   </View>
                 </View>
               ) : (
                 <View style={styles.thumbGrid4}>
                   {imgs.slice(0, 4).map((imgUri, idx) => (
-                    <CachedImage key={getMappingKey(imgUri, idx)} uri={imgUri} style={GRID4_TILE_STYLES[idx]} resizeMode="cover" proxyWidth={49} priority="low" />
+                    <CachedImage key={getMappingKey(imgUri, idx)} uri={imgUri} style={GRID4_TILE_STYLES[idx]} resizeMode="cover" proxyWidth={49} priority="low" autoplay={false} />
                   ))}
                 </View>
               )}
