@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, StyleSheet, Animated, Text as RNText, Image as RNImage, Dimensions, AppState, Pressable } from 'react-native';
+import { View, StyleSheet, Animated, Text as RNText, Image as RNImage, Dimensions, AppState, Pressable, InteractionManager } from 'react-native';
 import { Stack, useRouter, useSegments, useNavigationContainerRef } from 'expo-router';
 import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
@@ -46,6 +46,67 @@ import { NavigationBarController } from '../src/components/system/NavigationBarC
 // can then surface them with a copy button, which is what the user wants
 // when they don't have direct Sentry access).
 try { installPerfErrorHooks(); } catch {}
+
+// ── `runAfterInteractions` CONCENTRATES WORK. IT DOES NOT SPREAD IT. ─────────
+//
+// Fifteen call sites in this app defer work behind `InteractionManager.runAfterInteractions`, and every
+// note attached to them says the same thing: this keeps the work off the transition frame. Read the
+// RN 0.81 source and that is not what happens.
+//
+// `Libraries/Interaction/InteractionManager.js`:
+//
+//     let _deadline = -1;                                    // the default
+//     ...
+//     while (_taskQueue.hasTasksToProcess()) {
+//       _taskQueue.processNext();
+//       if (_deadline > 0 && BatchedBridge.getEventLoopRunningTime() >= _deadline) {
+//         _scheduleUpdate();
+//         break;                                             // <- unreachable by default
+//       }
+//     }
+//
+// `_deadline` is `-1`, so the guard is false, so the `break` is dead code and the whole queue drains in
+// one uninterrupted `while` loop inside a single `setImmediate`. RN's own doc in that file states it
+// plainly: "By default, queued tasks are executed together in a loop in one `setImmediate` batch. If
+// `setDeadline` is called with a positive number, then tasks will only be executed until the deadline
+// ... allowing events such as touches to start interactions and block queued tasks from executing,
+// making apps more responsive."
+//
+// So the deferral does not fragment the work across frames. It COLLECTS every deferred callback for a
+// screen open into one JS task that runs immediately after first paint. Measured on device: opening a
+// chat produced two contiguous long tasks, 150 ms then 146 ms. The first is the screen's own
+// render+commit; the second is this drain. Six callbacks arm on chat open — an MMKV write that re-sorts
+// the still-mounted messages tab, a store seed that re-renders the transcript, a profile fetch, the
+// history poll's first tick, an image warm and a stuck-photo scan — and they all ran in that one block,
+// with no yield for a touch or a frame. That is the window the user describes as the chat struggling to
+// open.
+//
+// WHY THE NUMBER BARELY MATTERS, AND WHY THIS IS SAFE
+//
+// `getEventLoopRunningTime()` is `Date.now() - _eventLoopStartTime`, and `_eventLoopStartTime` is only
+// refreshed inside `MessageQueue.__callFunction` / `__invokeCallback` — the legacy bridge's native→JS
+// entry points. This app runs `newArchEnabled: true`, i.e. bridgeless, where native calls JS over JSI
+// rather than through those methods, so that timestamp stays at the value the MessageQueue constructor
+// wrote at startup. Any positive deadline therefore trips after the FIRST task, and the queue becomes
+// one task per `setTimeout(0)`.
+//
+// That is not a degenerate case, it is the behaviour RN itself considers equivalent: `InteractionManager`
+// is marked `@deprecated` in 0.81, and `InteractionManagerStub` — the replacement behind
+// `ReactNativeFeatureFlags.disableInteractionManager()` — schedules each task in its OWN `setImmediate`
+// with no shared queue at all. If the bridge ever is driven, the deadline simply behaves as documented
+// instead. Both outcomes are bounded and both are strictly better than never yielding.
+//
+// Two things this does NOT do, stated so nobody expects them. The check runs AFTER `processNext`, so it
+// cannot bound a single expensive callback — it bounds how many stack up back to back. And it does not
+// change ordering or cancellation: `processNext` still shifts from the same queue, and `handle.cancel()`
+// still filters the same array.
+//
+// 16 rather than a larger figure because one frame is the unit that matters: the point is to let a frame
+// be drawn and a touch be seen between deferred callbacks, not to fill a budget.
+//
+// The real fix is to stop routing work through a deprecated scheduler at all, which is a per-site
+// decision and tracked separately. This is one line that helps every one of those fifteen sites today.
+try { InteractionManager.setDeadline(16); } catch {}
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
