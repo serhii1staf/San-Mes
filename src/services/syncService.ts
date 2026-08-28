@@ -251,6 +251,24 @@ export async function syncConversations(userId: string): Promise<void> {
           participantEmoji: profile?.emoji || '😀',
           participantVerified: profile?.is_verified || false,
           participantBadge: profile?.badge || null,
+          // ── CARRY THE LAST MESSAGE, WHICH THIS MAPPER USED TO DROP ────────────
+          //
+          // These three fields are why the unread counter could never work on a cold start. The
+          // client's `reconcile` skips any row without `lastMessageAt` on its very first line, and
+          // this mapper built every row without one — so the counter was unreachable regardless of
+          // when it ran. Two earlier fixes changed the timing of a call whose input was empty by
+          // construction.
+          //
+          // Second thing it fixes: `setConversations` REPLACES the whole array, so whatever
+          // `RealtimeAccountBridge` had written onto a row was wiped by every sync. Taking the values
+          // from the server means a sync now restores them instead of erasing them.
+          //
+          // `undefined` when the server has not been deployed with the matching query yet — which is
+          // exactly the current behaviour, so this is inert until the Worker ships and correct
+          // afterwards, with no version check.
+          lastMessageAt: typeof c.last_message_at === 'string' ? c.last_message_at : undefined,
+          lastSenderId: typeof c.last_sender_id === 'string' ? c.last_sender_id : undefined,
+          lastMessage: typeof c.last_message === 'string' ? c.last_message : undefined,
         };
       });
 

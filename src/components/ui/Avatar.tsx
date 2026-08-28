@@ -7,6 +7,13 @@ import { emojiTextStyle } from './emojiText';
 
 type AvatarSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
 
+/** Circle diameter per size. A literal table — hoisted so it is not rebuilt per render. */
+const AVATAR_SIZES: Record<AvatarSize, number> = { xs: 24, sm: 32, md: 44, lg: 64, xl: 96 };
+
+/** Emoji point size per avatar size. Conservative on purpose — `emojiTextStyle` derives the
+ *  1.3x line box from it, and every result still fits its circle (xs 17/24 … xl 65/96). */
+const AVATAR_EMOJI_SIZES: Record<AvatarSize, number> = { xs: 13, sm: 17, md: 24, lg: 34, xl: 50 };
+
 interface AvatarProps {
   source?: string;
   name?: string;
@@ -62,36 +69,28 @@ export const Avatar = memo(function Avatar({
 }: AvatarProps) {
   const theme = useTheme();
 
-  const sizeMap: Record<AvatarSize, number> = {
-    xs: 24,
-    sm: 32,
-    md: 44,
-    lg: 64,
-    xl: 96,
-  };
-
-  // Emoji fontSize — conservative to avoid clipping
-  const emojiSizeMap: Record<AvatarSize, number> = {
-    xs: 13,
-    sm: 17,
-    md: 24,
-    lg: 34,
-    xl: 50,
-  };
-
-  const fontSizeMap: Record<AvatarSize, number> = {
-    xs: 10,
-    sm: theme.typography.sizes.xs,
-    md: theme.typography.sizes.base,
-    lg: theme.typography.sizes.lg,
-    xl: theme.typography.sizes['2xl'],
-  };
-
-  const dimension = sizeMap[size];
+  // ── THE TWO SIZE MAPS ARE MODULE CONSTANTS ──────────────────────────────────
+  //
+  // They were built inside the component body, so this allocated two `Record<AvatarSize, number>`
+  // objects on every render to read ONE value out of each. Avatar's own note calls this "the
+  // most-mounted emoji surface in the app" — it is on every conversation row, every post card header,
+  // every comment and every profile — so the allocation count scales with everything.
+  //
+  // Neither depends on anything: they are literal tables. `fontSizeMap` DOES read the theme, so it
+  // stays in the body, keyed by `size` directly instead of building the whole table.
+  const dimension = AVATAR_SIZES[size];
+  // The one size that is theme-dependent, so it is read per size rather than as a whole table.
+  // Only used by the initials fallback below.
+  const initialsFontSize =
+    size === 'xs' ? 10
+    : size === 'sm' ? theme.typography.sizes.xs
+    : size === 'md' ? theme.typography.sizes.base
+    : size === 'lg' ? theme.typography.sizes.lg
+    : theme.typography.sizes['2xl'];
 
   // Emoji avatar — centered inside a soft, deterministic circular container
   if (emoji) {
-    const emojiSize = emojiSizeMap[size];
+    const emojiSize = AVATAR_EMOJI_SIZES[size];
     // ── THE EMOJI BOX COMES FROM `emojiTextStyle`, NOT FROM ARITHMETIC HERE ───
     //
     // This used to hand-roll the metrics:
@@ -218,7 +217,7 @@ export const Avatar = memo(function Avatar({
       <Text
         weight="semibold"
         color={theme.colors.text.inverse}
-        style={{ fontSize: fontSizeMap[size] } as TextStyle}
+        style={{ fontSize: initialsFontSize } as TextStyle}
       >
         {getInitials(name)}
       </Text>

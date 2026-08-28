@@ -73,6 +73,10 @@ const styles = StyleSheet.create({
   thumbHalfCol: { width: 49, height: 100 },
   thumbQuarter: { width: 49, height: 49 },
   thumbGrid4: { flexDirection: 'row', flexWrap: 'wrap', width: 100, height: 100 },
+  grid4Tile0: { width: 49, height: 49, marginRight: 2, marginBottom: 2 },
+  grid4Tile1: { width: 49, height: 49, marginRight: 0, marginBottom: 2 },
+  grid4Tile2: { width: 49, height: 49, marginRight: 2, marginBottom: 0 },
+  grid4Tile3: { width: 49, height: 49, marginRight: 0, marginBottom: 0 },
   spacerH: { width: 2 },
   spacerV: { height: 2 },
   repostBadge: { position: 'absolute', top: 4, left: 4, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 8, paddingHorizontal: 5, paddingVertical: 2, flexDirection: 'row', alignItems: 'center', gap: 2 },
@@ -238,6 +242,24 @@ function UserProfilePostCardBase({
     () => ({ backgroundColor: theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)' }),
     [theme.isDark],
   );
+  // ── ONE FLAT FILL INSTEAD OF UP TO FOUR SHIMMERS ──────────────────────────
+  //
+  // Every thumbnail here passed `skeleton`, which mounts a `Skeleton`: 5 hooks, an `Animated.View`, a
+  // `LinearGradient` with a five-stop shader, a shared value and a `useSyncExternalStore`
+  // subscription — PER THUMBNAIL. A four-image card therefore carried up to 20 extra hooks, four
+  // gradient shaders and four animated-style mappers to decorate boxes that are 49x49 points.
+  //
+  // `ProfilePostCard` removed exactly this and wrote down why, including the part that matters most:
+  // the shimmer does not stop when the row leaves the viewport, because FlashList keeps recycled cells
+  // mounted within `drawDistance`, so off-screen thumbnails keep having their sweep transform
+  // recomputed on the UI thread every frame during a scroll. This card was simply never updated.
+  //
+  // One fill on the 100x100 wrapper rather than per tile: the images sit on top of it, so a
+  // not-yet-loaded tile shows the fill and nothing shifts when it arrives.
+  const themedThumbWrap = useMemo(
+    () => ({ backgroundColor: theme.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)' }),
+    [theme.isDark],
+  );
 
   // Enrich the post with author info before bubbling up to the menu, matching
   // the prior inline behavior in app/profile/[id].tsx.
@@ -301,29 +323,29 @@ function UserProfilePostCardBase({
         {/* Left: Image grid thumbnail */}
         {hasImage ? (
           <Pressable onPress={() => onImagePress(postImages[0], post.id, postImages)}>
-            <View style={styles.thumbWrap}>
+            <View style={[styles.thumbWrap, themedThumbWrap]}>
               {postImages.length === 1 ? (
-                <CachedImage uri={postImages[0]} style={styles.thumbSingle} resizeMode="cover" priority="low" skeleton />
+                <CachedImage uri={postImages[0]} style={styles.thumbSingle} resizeMode="cover" priority="low" />
               ) : postImages.length === 2 ? (
                 <View style={styles.thumbRow}>
-                  <CachedImage uri={postImages[0]} style={styles.thumbHalf} resizeMode="cover" priority="low" skeleton />
+                  <CachedImage uri={postImages[0]} style={styles.thumbHalf} resizeMode="cover" priority="low" />
                   <View style={styles.spacerH} />
-                  <CachedImage uri={postImages[1]} style={styles.thumbHalf} resizeMode="cover" priority="low" skeleton />
+                  <CachedImage uri={postImages[1]} style={styles.thumbHalf} resizeMode="cover" priority="low" />
                 </View>
               ) : postImages.length === 3 ? (
                 <View style={styles.thumbRow}>
-                  <CachedImage uri={postImages[0]} style={styles.thumbHalf} resizeMode="cover" priority="low" skeleton />
+                  <CachedImage uri={postImages[0]} style={styles.thumbHalf} resizeMode="cover" priority="low" />
                   <View style={styles.spacerH} />
                   <View style={styles.thumbHalfCol}>
-                    <CachedImage uri={postImages[1]} style={styles.thumbQuarter} resizeMode="cover" priority="low" skeleton />
+                    <CachedImage uri={postImages[1]} style={styles.thumbQuarter} resizeMode="cover" priority="low" />
                     <View style={styles.spacerV} />
-                    <CachedImage uri={postImages[2]} style={styles.thumbQuarter} resizeMode="cover" priority="low" skeleton />
+                    <CachedImage uri={postImages[2]} style={styles.thumbQuarter} resizeMode="cover" priority="low" />
                   </View>
                 </View>
               ) : (
                 <View style={styles.thumbGrid4}>
                   {postImages.slice(0, 4).map((imgUri: string, idx: number) => (
-                    <CachedImage key={getMappingKey(imgUri, idx)} uri={imgUri} style={{ width: 49, height: 49, marginRight: idx % 2 === 0 ? 2 : 0, marginBottom: idx < 2 ? 2 : 0 }} resizeMode="cover" priority="low" skeleton />
+                    <CachedImage key={getMappingKey(imgUri, idx)} uri={imgUri} style={idx === 0 ? styles.grid4Tile0 : idx === 1 ? styles.grid4Tile1 : idx === 2 ? styles.grid4Tile2 : styles.grid4Tile3} resizeMode="cover" priority="low" />
                   ))}
                 </View>
               )}

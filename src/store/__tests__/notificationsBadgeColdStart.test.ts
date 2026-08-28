@@ -51,11 +51,50 @@ describe('installNotificationsBadgeForegroundRefresh', () => {
     return mod;
   }
 
-  it('runs a refresh pass at install when the app is already active (cold start)', () => {
+  // ── THE LAUNCH PASS MUST WAIT FOR AUTH ──────────────────────────────────────
+  //
+  // This test used to assert the pass runs unconditionally at install, and it passed while the feature
+  // was still broken on device. That is the useful lesson: `installNotificationsBadgeForegroundRefresh`
+  // is called at MODULE SCOPE from `app/_layout.tsx`, before `authStore` finishes rehydrating from
+  // AsyncStorage, so `refreshChatUnreadOnResume` hit `if (!uid) return;` and did nothing — every launch.
+  // "The pass ran" was true and worthless; what matters is whether it ran with a user id.
+
+  it('does NOT run the launch pass while auth is still unhydrated', () => {
+    const mod = loadWithStubbedStore();
+    mod.installNotificationsBadgeForegroundRefresh();
+    // No user id yet — running here is exactly the no-op that made two previous fixes ineffective.
+    expect(mockRecompute).not.toHaveBeenCalled();
+  });
+
+  it('runs the launch pass once auth hydrates with a user id', () => {
+    const mod = loadWithStubbedStore();
+    mod.installNotificationsBadgeForegroundRefresh();
+    expect(mockRecompute).not.toHaveBeenCalled();
+
+    // What zustand's persist rehydration does a native round trip later.
+    const auth = require('../authStore').useAuthStore;
+    auth.setState({ user: { id: 'u1' }, hasHydrated: true });
+
+    expect(mockRecompute).toHaveBeenCalled();
+    expect(mockRefresh).toHaveBeenCalledWith({ force: true });
+  });
+
+  it('runs immediately when a user id is already present at install', () => {
+    const auth = require('../authStore').useAuthStore;
+    auth.setState({ user: { id: 'u1' }, hasHydrated: true });
     const mod = loadWithStubbedStore();
     mod.installNotificationsBadgeForegroundRefresh();
     expect(mockRecompute).toHaveBeenCalled();
-    expect(mockRefresh).toHaveBeenCalledWith({ force: true });
+  });
+
+  it('fires the launch pass only ONCE even if auth changes again', () => {
+    const mod = loadWithStubbedStore();
+    mod.installNotificationsBadgeForegroundRefresh();
+    const auth = require('../authStore').useAuthStore;
+    auth.setState({ user: { id: 'u1' }, hasHydrated: true });
+    const callsAfterFirst = mockRecompute.mock.calls.length;
+    auth.setState({ user: { id: 'u2' }, hasHydrated: true });
+    expect(mockRecompute.mock.calls.length).toBe(callsAfterFirst);
   });
 
   it('still registers the resume listener', () => {
