@@ -283,6 +283,39 @@ export function installNotificationTapHandler(navigate: (path: string) => void):
 // field, which means the Worker's fan-out has to compute and send it. That is a Worker deploy, tracked
 // separately rather than pretended away here.
 //
+// ── TWO CLIENT-SIDE SHORTCUTS THAT DO NOT EXIST, CHECKED RATHER THAN ASSUMED ──
+//
+// Reported again as: the push sits on the home screen and the icon carries no number until I open the
+// app once. That is this gap exactly, and the honest answer to "how many minutes should it take" is
+// never — it is structural, not a delay. Before concluding that, two client-side escapes were checked
+// against the INSTALLED module rather than against documentation:
+//
+//   1. `showBadge: true` on the Android channel. Does nothing on the version we ship. Searching
+//      `node_modules/expo-notifications/android` for `setShowBadge` finds exactly ONE call —
+//      `channel.setShowBadge(true)` inside `BaseNotificationBuilder.createFallbackChannel()`, i.e. the
+//      channel used when no channelId is given. `showBadge` appears in
+//      `build/NotificationChannelManager.types.d.ts` only on the type describing a channel READ BACK;
+//      there is no Kotlin reading it from the JS input for `setNotificationChannelAsync`. So passing it
+//      to the explicit 'default' channel this file creates would be silently ignored.
+//
+//      This is the same trap as `enableBackgroundPlayback` on expo-audio 1.1.1, recorded in
+//      .kiro/steering/apple-compliance.md: an option that exists in the docs for a later release and is
+//      accepted-and-dropped by the version installed. Check the module source for the version we ship.
+//
+//      It is also unnecessary on Android: because nothing calls `setShowBadge` on our explicit channel,
+//      Android's own `NotificationChannel` default applies, and that default is already true. The
+//      launcher DOT works; what is missing is the NUMBER, and that comes from the payload.
+//
+//   2. Waking JS on delivery to compute the number locally. Needs `content-available` on iOS, which is
+//      again a payload field the Worker would have to send. Same blocker, one layer down.
+//
+// So there is no client-only fix on either platform, and the remaining work is server-side and larger
+// than a payload field: `workers/api/src/push.ts` builds `{ to, title, body, sound, priority, channelId,
+// data }` and the Worker has no read-state at all (`app/(tabs)/messages.tsx` says so outright, and the
+// watermark lives in per-install MMKV). A correct badge needs a read-state column plus an endpoint to
+// advance it — a schema AND data-flow change, which also brings the steering doc's privacy section into
+// scope because per-user read timestamps would become server-side data we do not currently hold.
+//
 // `shouldSetBadge` in the foreground handler stays FALSE on purpose. Letting the OS increment on delivery
 // would race this: a push for the chat the user is already reading is deliberately not presented, and it
 // must not silently bump the icon either. The count is derived from one place, and this is the writer.
