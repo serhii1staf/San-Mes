@@ -39,6 +39,7 @@ import { PerfMonitorBubble } from '../src/components/dev/PerfMonitorBubble';
 import { perfMonitor, installPerfErrorHooks } from '../src/services/perfMonitor';
 import { installNotificationsBadgeForegroundRefresh } from '../src/store/notificationsBadgeStore';
 import { DynamicOverlayHost } from '../src/components/dynamic-overlay/DynamicOverlayHost';
+import { InAppAlertHost } from '../src/components/ui/InAppAlertHost';
 import { RealtimeAccountBridge } from '../src/components/realtime/RealtimeAccountBridge';
 import { NavigationBarController } from '../src/components/system/NavigationBarController';
 
@@ -703,6 +704,13 @@ function RootLayout() {
             — no native modules, no new permissions, never draws above
             `insets.top`. */}
         <DynamicOverlayHost />
+        {/* In-app activity pill. Replaces the OS banner while the app is in the foreground: the
+            actor's emoji arrives as a circle, then the glass capsule expands outward with the
+            action text. Renders null when nothing is queued, so it costs nothing at idle, and the
+            whole morph runs on the UI thread via Reanimated shared values — which is what keeps it
+            smooth while a transcript is committing 4-12 bubbles at ~22 ms each. zIndex 900, below
+            `DynamicOverlayHost`, so the two can never contend for the notch region. */}
+        <InAppAlertHost />
       </AuthNavigationGuard>
       </ErrorBoundary>
     </ThemeProvider>
