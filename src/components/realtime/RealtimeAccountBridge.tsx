@@ -360,8 +360,15 @@ export function RealtimeAccountBridge(): null {
               useInAppAlert.getState().push(
                 {
                   kind,
+                  // Reported: a follow showed a different emoji than that person's own. The follow
+                  // payload carries no emoji, so the generic glyph below was all there was. The peer's
+                  // real emoji is usually already cached — `entityStore.profiles` is populated by any
+                  // screen that has rendered them — so look there first and keep the kind glyph as the
+                  // last resort. Local read only: no request, which the no-server-load requirement rules
+                  // out anyway.
                   emoji:
                     String(payload.actorEmoji || payload.actor_emoji || payload.followerEmoji || '').trim() ||
+                    (actorId ? String((useEntityStore.getState() as any).profiles?.[actorId]?.emoji || '').trim() : '') ||
                     (kind === 'follow' ? '👤' : kind === 'like' ? '❤️' : '💬'),
                   name:
                     String(

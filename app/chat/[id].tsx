@@ -3561,6 +3561,39 @@ export default function ChatScreen() {
   useEffect(() => {
     if (!id) return;
 
+    /**
+     * Adopt `convId` as the canonical conversation id.
+     *
+     * Factored out because there are now FOUR ways to learn the mapping — a local `participantId`
+     * match, the network resolve, an unusable response, and a rejected request — and every one of them
+     * has to do the same three things or the screen breaks in a different way each time:
+     *
+     *   1. migrate anything parked under the raw route-id bucket, so an optimistic send made before the
+     *      id settled is not orphaned when the message selector re-keys;
+     *   2. record the change as an ID MIGRATION rather than a chat switch (`migratedFromRef`), which is
+     *      what stops the window-reset effect collapsing the transcript and expanding it again;
+     *   3. set the id and only then settle, so the network-gated effects run once, against the
+     *      canonical id.
+     *
+     * Synchronous, unlike the network path's deferred version: the local branches run during mount
+     * before any transition is in flight, and there is nothing to keep off the open frame — the
+     * migration is a small array merge over a bucket that is usually empty.
+     */
+    const settleTo = (convId: string) => {
+      try {
+        const cs = useChatStore.getState();
+        const fromOld = cs.messages[id] || [];
+        if (fromOld.length > 0) {
+          const intoNew = cs.messages[convId] || [];
+          const seen = new Set(intoNew.map((m: any) => m.id));
+          cs.setMessages(convId, [...intoNew, ...fromOld.filter((m: any) => !seen.has(m.id))] as any);
+        }
+      } catch {}
+      migratedFromRef.current = { from: id, to: convId };
+      setConversationId(convId);
+      setConvIdSettled(true);
+    };
+
     // (a) Messages-list navigation passes an explicit `participantId` that
     //     differs from the route id → the route id is already canonical.
     if (paramParticipantId && paramParticipantId !== id) {
@@ -3572,6 +3605,37 @@ export default function ChatScreen() {
     if (useEntityStore.getState().conversations.some((c) => c.id === id)) {
       setConversationId((prev) => (prev === id ? prev : id));
       setConvIdSettled(true);
+      return;
+    }
+    // ── (b2) RESOLVE THE PEER ID LOCALLY BEFORE ASKING THE NETWORK ────────────
+    //
+    // Reported as: "we chatted, then that person unfollowed me, I open the chat and the whole
+    // conversation is gone."
+    //
+    // The follow graph is not involved — the Worker's conversation list and message queries never
+    // reference the `follows` table (authorisation is participant-based), unfollow is a single
+    // `DELETE FROM follows` with no cascade, and `entityStore.removeFollow` touches only
+    // `state.follows`. Nothing deletes a message. What actually happens is a READ from the wrong key.
+    //
+    // A chat opened from a profile carries the PEER'S USER ID in the route, and both the chat store and
+    // the MMKV history blob are keyed by conversation id. Branch (c) below converts one to the other
+    // over the network — but its three failure paths (offline, `.catch`, and a response of
+    // `convId === id`) all settle on the RAW route id, at which point every read hits a different,
+    // empty bucket. The transcript looks deleted while sitting intact under the canonical key.
+    //
+    // The unfollow correlation is real but coincidental: the profile screen is both where unfollowing
+    // happens and where the "message" affordance lives, so it is the entry path most likely to open a
+    // chat under a peer id.
+    //
+    // This resolves it from data already on the device. `conversations` rows carry `participantId` (the
+    // peer on a 1:1 row), which is exactly the mapping branch (c) goes to the server for. Doing it here
+    // means the common case needs no round trip at all — one fewer request on the chat-open path — and
+    // the offline and failure cases stop showing an empty transcript.
+    const localMatch = (useEntityStore.getState().conversations as any[]).find(
+      (c) => c && c.participantId === id && typeof c.id === 'string' && c.id !== id,
+    );
+    if (localMatch?.id) {
+      settleTo(localMatch.id);
       return;
     }
     // (c) Otherwise the route id is a peer USER id (opened from a profile).
@@ -3592,7 +3656,19 @@ export default function ChatScreen() {
         // Settle even when the answer is "the route id was already right" (`convId === id`) or the
         // response was unusable — otherwise the gated effects stay parked forever.
         if (cancelled) return;
-        if (!convId || convId === id) { setConvIdSettled(true); return; }
+        // `convId === id` means the route id was canonical after all. `!convId` means the response was
+        // unusable — and in that case a locally-known mapping is still better than the raw peer id, for
+        // the reason in (b2): the raw id reads an empty bucket.
+        if (!convId || convId === id) {
+          if (!convId) {
+            const late = (useEntityStore.getState().conversations as any[]).find(
+              (c) => c && c.participantId === id && typeof c.id === 'string' && c.id !== id,
+            );
+            if (late?.id) { settleTo(late.id); return; }
+          }
+          setConvIdSettled(true);
+          return;
+        }
         // Deferred past the open-chat transition because the migration
         // here writes through `cs.setMessages(convId, ...)` and
         // `setConversationId(convId)`, both of which cascade re-renders
@@ -3629,9 +3705,16 @@ export default function ChatScreen() {
         });
       })
       .catch(() => {
-        // A failed resolve must not leave the chat permanently un-polled. Fall back to the raw id,
-        // which is the same best-effort posture as the offline branch.
-        if (!cancelled) setConvIdSettled(true);
+        // A failed resolve must not leave the chat permanently un-polled. Prefer a locally-known
+        // mapping over the raw id — falling back to the raw peer id is what made the transcript look
+        // deleted (see (b2)). Only when there is no local mapping either do we settle on the raw id,
+        // which remains the best-effort posture the offline branch takes.
+        if (cancelled) return;
+        const late = (useEntityStore.getState().conversations as any[]).find(
+          (c) => c && c.participantId === id && typeof c.id === 'string' && c.id !== id,
+        );
+        if (late?.id) { settleTo(late.id); return; }
+        setConvIdSettled(true);
       });
     return () => { cancelled = true; };
   }, [id, paramParticipantId]);
