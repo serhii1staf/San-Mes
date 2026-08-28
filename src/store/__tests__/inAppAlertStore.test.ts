@@ -83,6 +83,46 @@ describe('inAppAlertStore', () => {
     expect(useInAppAlert.getState().current?.id).not.toBe(firstId);
   });
 
+  // ── PRODUCER PRECEDENCE ────────────────────────────────────────────────────
+  //
+  // The pill appeared on iPhone but not on Android because it was fed only from the OS push handler.
+  // `RealtimeAccountBridge` is now the primary producer (platform-independent, richer payload) and the
+  // push handler is a fallback. These pin that the fallback yields WITHOUT the guard also swallowing a
+  // genuine second message — the trap the first version of this fell into.
+
+  it('accepts a bridge alert and drops a push duplicate that follows it', () => {
+    const s = useInAppAlert.getState();
+    s.push(base, 'bridge');
+    s.push(base, 'push');
+    expect(useInAppAlert.getState().current?.repeat).toBe(1);
+    expect(useInAppAlert.getState().pending).toHaveLength(0);
+  });
+
+  it('still counts a genuine repeat from the bridge, which a naive dedupe window would have eaten', () => {
+    const s = useInAppAlert.getState();
+    s.push(base, 'bridge');
+    s.push(base, 'bridge');
+    expect(useInAppAlert.getState().current?.repeat).toBe(2);
+  });
+
+  it('accepts a push alert when the bridge has never delivered (realtime down)', () => {
+    useInAppAlert.getState().push(base, 'push');
+    expect(useInAppAlert.getState().current?.name).toBe('Anna');
+  });
+
+  it('defaults to the bridge when no source is given', () => {
+    const s = useInAppAlert.getState();
+    s.push(base);
+    s.push(base, 'push');
+    // The unsourced call counted as a bridge delivery, so the push that follows is suppressed.
+    expect(useInAppAlert.getState().current?.repeat).toBe(1);
+  });
+
+  it('carries the media kind so the pill can say photo or GIF rather than only message', () => {
+    useInAppAlert.getState().push({ ...base, media: 'gif' });
+    expect(useInAppAlert.getState().current?.media).toBe('gif');
+  });
+
   it('clear drops everything so nothing is mid-flight after a background trip', () => {
     const s = useInAppAlert.getState();
     s.push(base);

@@ -123,16 +123,24 @@ function enqueueInAppAlert(notification: any): void {
 
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { useInAppAlert } = require('../store/inAppAlertStore') as typeof import('../store/inAppAlertStore');
-  useInAppAlert.getState().push({
-    kind,
-    emoji,
-    name,
-    actorId,
-    targetId:
-      (typeof data?.conversation_id === 'string' && data.conversation_id) ||
-      (typeof data?.post_id === 'string' && data.post_id) ||
-      undefined,
-  });
+  // `'push'` marks this as the FALLBACK producer. `RealtimeAccountBridge` is primary — it is
+  // platform-independent (the reason the pill appeared on iPhone but not on Android when it was fed only
+  // from here) and carries the sender's emoji, name and preview text, none of which are in a push
+  // payload. The store drops a push-sourced alert while the bridge is delivering; see its
+  // producer-precedence note.
+  useInAppAlert.getState().push(
+    {
+      kind,
+      emoji,
+      name,
+      actorId,
+      targetId:
+        (typeof data?.conversation_id === 'string' && data.conversation_id) ||
+        (typeof data?.post_id === 'string' && data.post_id) ||
+        undefined,
+    },
+    'push',
+  );
 }
 
 /** Foreground presentation: show banner + play sound, don't touch the badge. */

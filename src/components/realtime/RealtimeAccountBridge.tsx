@@ -15,7 +15,27 @@ import {
   userProfileChannelName,
 } from '../../services/realtime/ably';
 import { isRepost, parseImageUrls, isImageSpoiler } from '../../lib/supabase';
+import { isActiveThread } from '../../services/activeThread';
+import { useInAppAlert } from '../../store/inAppAlertStore';
 import type { Post } from '../../types';
+
+/**
+ * Is this URL an animated image, so the alert can say "sent you a GIF" rather than "a photo"?
+ *
+ * Deliberately a local copy rather than an import. The equivalent helper lives inside
+ * `app/chat/[id].tsx` as a module-private function, and importing from a screen into a shared component
+ * would invert the dependency direction — components must not depend on routes. It is two host checks and
+ * an extension test; duplicating that is cheaper than the coupling, and this copy only has to be good
+ * enough to choose one word in an ambient alert.
+ */
+function looksAnimated(u: string): boolean {
+  try {
+    const s = u.toLowerCase();
+    return s.includes('.gif') || s.includes('giphy.com') || s.includes('tenor.com');
+  } catch {
+    return false;
+  }
+}
 
 // App-wide realtime bridge.
 //
@@ -182,6 +202,57 @@ export function RealtimeAccountBridge(): null {
             if (isFromOther) useChatUnread.getState().bump(conversationId);
           } catch {}
 
+          // ── THE IN-APP PILL IS PRODUCED HERE, NOT FROM THE PUSH HANDLER ──────
+          //
+          // Reported: a message from an Android device shows the pill on iPhone, but a message from an
+          // iPhone shows nothing on Android. The pill was fed only from `handleNotification` in
+          // pushNotifications.ts, so it inherited whatever the OS decides to do with a foreground push —
+          // and that is not symmetric between the platforms.
+          //
+          // This bridge is the right producer for three independent reasons, and none of them require
+          // diagnosing FCM:
+          //   • it is platform-independent — the same Ably event arrives on both;
+          //   • it carries RICHER data. The push payload has only `{ type, conversation_id, sender_id }`
+          //     plus a title, whereas this event has the sender's emoji, name AND the preview text — so
+          //     the pill can show the real avatar glyph and say "sent you a photo" rather than guessing;
+          //   • it fires even when a push was never delivered at all (permission denied, throttled,
+          //     token stale), which is precisely when an in-app alert matters most.
+          //
+          // `handleNotification` stays as a fallback and yields to this one — see the producer-precedence
+          // note in inAppAlertStore. `isFromOther` gates it for the same reason the unread bump does: an
+          // alert for your own outgoing message is never correct.
+          //
+          // No extra server or hosting cost, which was an explicit requirement: this is a message the
+          // client already receives and already parses for the two writes above.
+          try {
+            if (isFromOther && !isActiveThread('chat', conversationId)) {
+              const previewRaw = String(payload.lastMessage || payload.preview || '');
+              const imgs = Array.isArray(payload.imageUrls) ? payload.imageUrls : [];
+              const firstImg = typeof imgs[0] === 'string' ? imgs[0] : '';
+              const media: 'photo' | 'gif' | 'text' = firstImg
+                ? looksAnimated(firstImg)
+                  ? 'gif'
+                  : 'photo'
+                : 'text';
+              useInAppAlert.getState().push(
+                {
+                  kind: 'message',
+                  emoji: String(payload.senderEmoji || payload.sender_emoji || '😊'),
+                  name:
+                    String(payload.senderName || payload.sender_name || '').trim() ||
+                    String(payload.senderUsername || payload.sender_username || '').trim() ||
+                    'Someone',
+                  actorId: senderId || undefined,
+                  targetId: conversationId || undefined,
+                  media: previewRaw || firstImg ? media : undefined,
+                },
+                'bridge',
+              );
+            }
+          } catch {
+            // An ambient alert that cannot be queued must never break message delivery.
+          }
+
           // 2) Drop the previewed message into this conversation's chat
           //    store so it's already on screen when the user opens the
           //    chat — no spinner, no fetch round-trip.
@@ -273,6 +344,38 @@ export function RealtimeAccountBridge(): null {
         // updates live.
         if (name === 'notif.like' || name === 'notif.comment' || name === 'notif.follow') {
           try { useNotificationsBadge.getState().increment(1); } catch {}
+          // Same reasoning as the message branch above: produce the in-app pill from the
+          // platform-independent event rather than from the OS push handler, so a like, comment or
+          // follow announces itself identically on both platforms. The requested distinction between
+          // "followed you" / "commented" / "liked" comes straight from the event name.
+          try {
+            const kind = name === 'notif.like' ? 'like' : name === 'notif.comment' ? 'comment' : 'follow';
+            const actorId = String(
+              payload.actorId || payload.actor_id || payload.followerId || payload.follower_id || '',
+            );
+            const postId = String(payload.postId || payload.post_id || '');
+            // A comment on the post already open on screen is visible without an alert, exactly as with
+            // the chat check — the same judgement `shouldPresent` makes for the OS banner.
+            if (!(kind === 'comment' && postId && isActiveThread('post', postId))) {
+              useInAppAlert.getState().push(
+                {
+                  kind,
+                  emoji:
+                    String(payload.actorEmoji || payload.actor_emoji || payload.followerEmoji || '').trim() ||
+                    (kind === 'follow' ? '👤' : kind === 'like' ? '❤️' : '💬'),
+                  name:
+                    String(
+                      payload.actorName || payload.actor_name || payload.followerName || payload.follower_name || '',
+                    ).trim() || 'Someone',
+                  actorId: actorId || undefined,
+                  targetId: postId || undefined,
+                },
+                'bridge',
+              );
+            }
+          } catch {
+            // Never let an ambient alert break the badge increment above.
+          }
         }
       };
 
