@@ -244,6 +244,12 @@ function ProfileReplyCardBase({ reply }: ProfileReplyCardProps) {
               // image decoder doesn't queue these ahead of the user's
               // primary feed scroll work.
               priority="low"
+              // Same reasoning carried from the one-off download to the ONGOING
+              // cost: this is a 40x40 decorative thumbnail of the PARENT post,
+              // and an animated source here would decode every frame for as
+              // long as the list keeps the row. The reply's own GIF below is
+              // deliberately left animating — that one is the content.
+              autoplay={false}
             />
             {extraImages > 0 ? (
               <View

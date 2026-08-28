@@ -305,6 +305,12 @@ export const PostPreviewCard = React.memo(function PostPreviewCard({
             // thumbnail while this one loads.
             // https://docs.expo.dev/versions/v54.0.0/sdk/image/
             priority="low"
+            // "Must not compete for decode slots" applies even harder to the
+            // ONGOING cost than to the one-off one. At 56x56 this is chrome, and
+            // an animated source would decode every frame for as long as the
+            // chat keeps the bubble — competing with the bubble's real media for
+            // the entire time the conversation is open, not just at load.
+            autoplay={false}
           />
         ) : null}
         <View style={styles.textCol}>

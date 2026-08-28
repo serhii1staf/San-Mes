@@ -412,42 +412,19 @@ const SYNTHETIC_USER_BLOCK_PREFIX = '__user_block:';
 const isSyntheticUserBlockId = (id: string) => id.startsWith(SYNTHETIC_USER_BLOCK_PREFIX);
 const userIdFromSyntheticId = (id: string) => id.slice(SYNTHETIC_USER_BLOCK_PREFIX.length);
 
-// ─── Staggered ContextMenu arming scheduler ──────────────────────────────
-// iOS builds a `UIContextMenuInteraction` per ContextMenu view, so arming
-// every visible row in a single commit (the previous one-RAF-after-mount
-// strategy) produced the dominant ~182 ms long task on the cold open of
-// (tabs)/messages. This shared FIFO pump arms at most ONE row per animation
-// frame, so the per-view native setup is spread across frames and never
-// lands as a single long task on the navigation-transition frame. Rows
-// enqueue on mount (deferred past the transition via InteractionManager) and
-// cancel their slot on unmount/recycle. By the time the list settles and the
-// user can reach a row, it is already armed → long-press works on the first
-// try, identical to before — only the setup timing moved off the hot frame.
-const __armQueue: Array<() => void> = [];
-let __armPumpScheduled = false;
-function __pumpArmQueue() {
-  __armPumpScheduled = false;
-  const fn = __armQueue.shift();
-  if (fn) {
-    try { fn(); } catch { /* row unmounted between schedule + pump */ }
-  }
-  if (__armQueue.length > 0) {
-    __armPumpScheduled = true;
-    requestAnimationFrame(__pumpArmQueue);
-  }
-}
-function scheduleRowArm(fn: () => void): () => void {
-  __armQueue.push(fn);
-  if (!__armPumpScheduled) {
-    __armPumpScheduled = true;
-    requestAnimationFrame(__pumpArmQueue);
-  }
-  // Canceller — drop this row's slot if it unmounts before its turn.
-  return () => {
-    const i = __armQueue.indexOf(fn);
-    if (i >= 0) __armQueue.splice(i, 1);
-  };
-}
+// The staggered ContextMenu arming scheduler lived here and has been removed.
+//
+// It armed one row per animation frame so that per-view native setup would not land
+// as a single long task on the navigation frame. The premise was wrong: neither
+// platform does expensive work when a ContextMenu view is created. Android builds a
+// ReactViewGroup with one listener and one GestureDetector and stores the actions
+// array untouched, building the menu lazily in onCreateContextMenu; iOS adds a single
+// UIContextMenuInteraction and builds its UIMenu lazily in
+// configurationForMenuAtLocation. Both do their real work on long-press.
+//
+// What the stagger did cost was real: flipping menuReady changed the element type at
+// the row root, so React tore down and rebuilt every row subtree, one row per frame.
+// Removing it halves the row mounts on a cold open. See ConditionalContextMenuRow.
 
 interface ConversationItemProps {
   item: Conversation;
@@ -549,18 +526,6 @@ function ConversationItemBase({
   // byte-identical (the wrapper is transparent) and long-press still works
   // because arming finishes within a few frames of the list settling, well
   // before the user can physically reach + hold a row for >250 ms.
-  const [menuReady, setMenuReady] = useState(false);
-  useEffect(() => {
-    if (menuReady) return;
-    let cancelArm: (() => void) | undefined;
-    const handle = InteractionManager.runAfterInteractions(() => {
-      cancelArm = scheduleRowArm(() => setMenuReady(true));
-    });
-    return () => {
-      handle.cancel();
-      cancelArm?.();
-    };
-  }, [menuReady]);
 
   // Each action has a stable `id` we dispatch on, plus a localized `title`
   // shown by the native context menu. Matching by id (or index) keeps logic
@@ -823,7 +788,12 @@ function ConversationItemBase({
       //
       // `disabled` turns the menu off inside the same native view, so the tree shape is
       // identical in both modes and nothing is torn down mid-animation.
-      menuReady={menuReady}
+      //
+      // FOLLOW-UP: `menuReady` is gone entirely, for this same reason. Everything above
+      // diagnosed the element-type swap correctly and then fixed only the edit-mode
+      // trigger of it; the arming swap was left in place and did the identical damage
+      // once per row at mount, which is not a toggle the user has to perform to feel.
+      // The wrapper is now unconditional and only `disabled` ever changes.
       menuDisabled={editMode}
       actions={actions}
       onAction={handleAction}
@@ -1253,12 +1223,12 @@ const SelectionCheckbox = React.memo(function SelectionCheckbox({
   );
 });
 
-// Wraps a row's pressable content in a ContextMenu only once `menuReady`
-// flips true (one RAF after first mount). Hoisted out of ConversationItem
-// so the conditional wrapper logic doesn't re-allocate the Pressable JSX
+// Wraps a row's pressable content in a ContextMenu. UNCONDITIONALLY -- it used to
+// wait for a `menuReady` flip one RAF after mount, which changed the element type
+// at the row root and cost every row a second full subtree mount. Hoisted out of
+// ConversationItem so the wrapper logic doesn't re-allocate the Pressable JSX
 // twice — the children are passed through whichever wrapper is active.
 function ConditionalContextMenuRow({
-  menuReady,
   menuDisabled,
   actions,
   onAction,
@@ -1266,7 +1236,6 @@ function ConditionalContextMenuRow({
   onLongPress,
   children,
 }: {
-  menuReady: boolean;
   menuDisabled: boolean;
   actions: any[];
   onAction: (e: any) => void;
@@ -1297,7 +1266,28 @@ function ConditionalContextMenuRow({
       {children}
     </Pressable>
   );
-  if (!menuReady) return inner;
+  // ALWAYS the same element type. See the long note at the call site.
+  //
+  // This used to be `if (!menuReady) return inner;` -- a bare <Pressable> for the first
+  // frame, then <ContextMenu> wrapping it once armed. That is an ELEMENT TYPE change at
+  // the row root, which is the exact defect the call-site note describes for edit mode:
+  // React cannot reconcile a different type, so it unmounted the row's entire content
+  // subtree and mounted a fresh one. Every row therefore built its whole subtree TWICE --
+  // Avatar and its CachedImage, every Text, the badges, the animated views -- one row per
+  // animation frame, for as long as the retained window took to fill.
+  //
+  // The stagger it bought was not worth that, and reading the library settles it. On
+  // Android `createViewInstance` is `new ContextMenuView(context)`: one
+  // setOnCreateContextMenuListener plus one GestureDetector, and `setActions` merely stores
+  // the array -- the menu itself is built lazily in `onCreateContextMenu`, i.e. on
+  // long-press. On iOS `insertReactSubview` allocates one UIContextMenuInteraction and the
+  // UIMenu is built lazily in `configurationForMenuAtLocation`, which returns nil outright
+  // while `_disabled`. So there is no expensive mount-time native setup on either platform
+  // for the stagger to spread; the ~182 ms it was blamed for was the double subtree mount
+  // it caused, not interaction setup.
+  //
+  // Mounting unconditionally is also strictly better for the user: long-press works from
+  // the first frame instead of only after the row's turn in the arming queue came up.
   // `disabled`, not an unmount -- see the long note at the call site. Once this branch is
   // taken it must STAY taken for the lifetime of the row, or the row's content subtree is
   // rebuilt from scratch in the middle of the edit-mode slide.
@@ -2479,8 +2469,10 @@ export default function MessagesScreen() {
               //
               // Each of those rows is not cheap: three zustand subscriptions, eight translator
               // lookups, five or six useAnimatedStyle mappers, a Pan gesture with three worklets, and
-              // a menuReady flip that changes the element type at the row root and therefore rebuilds
-              // the whole row subtree, one row per frame.
+              // a Pan gesture with three worklets. The menuReady flip that used to change the element
+              // type at the row root -- rebuilding each row subtree a SECOND time, one row per frame
+              // -- has since been removed; the ContextMenu wrapper is unconditional now, so a row
+              // mounts once.
               //
               // 5 keeps two viewports of overscan in each direction (~60 rows). Blank space on a fast
               // fling is what windowSize guards against, and getItemLayout is provided just above, so
