@@ -15,7 +15,7 @@
  * theme colours rather than hardcoded greys.
  */
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View, Alert } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -81,26 +81,54 @@ export function PerfMonitorPanel({ onClose }: Props) {
   // Per-route collapse state. Keys are route strings; missing key = collapsed
   // for non-current routes. The current route is always expanded by default
   // (handled below).
+  // ── THESE THREE ARE `useCallback` SO THE ROW MEMOS CAN ACTUALLY BAIL ──────
+  //
+  // `EventRow` and `HotspotRow` are now `React.memo`, and the rows receive a
+  // TOGGLE ID rather than a pre-bound closure. That combination is the whole
+  // point: previously each row got `onToggleExpand={() => toggleLong(ev.ts)}`,
+  // a brand-new function identity on every render, so memoising the rows would
+  // have changed nothing — every one of up to RING_CAPACITY rows re-rendered on
+  // every snapshot. With a stable callback and a reference-stable `event` (the
+  // ring hands back the same PerfEvent objects), only rows whose event is new or
+  // whose expanded flag flipped do any work.
   const [expandedRoutes, setExpandedRoutes] = useState<Record<string, boolean>>({});
-  const toggleRoute = (route: string) =>
+  const toggleRoute = useCallback((route: string) => {
     setExpandedRoutes((prev) => ({ ...prev, [route]: !prev[route] }));
+  }, []);
 
   // Set of long-task event timestamps the user has tapped to expand. Keyed
   // by ts since events are otherwise unidentified.
   const [expandedLong, setExpandedLong] = useState<Record<number, boolean>>({});
-  const toggleLong = (ts: number) =>
+  const toggleLong = useCallback((ts: number) => {
     setExpandedLong((prev) => ({ ...prev, [ts]: !prev[ts] }));
+  }, []);
 
   // Hotspot rows the user expanded for a detailed per-route breakdown.
   const [expandedHotspots, setExpandedHotspots] = useState<Record<string, boolean>>({});
-  const toggleHotspot = (route: string) =>
+  const toggleHotspot = useCallback((route: string) => {
     setExpandedHotspots((prev) => ({ ...prev, [route]: !prev[route] }));
+  }, []);
 
+  // ── 480 MS AGAINST A 500 MS CADENCE IS NOT A THROTTLE ─────────────────────
+  //
+  // This panel is by far the most expensive consumer of a snapshot: it re-walks
+  // every event to group them by route, re-sorts the routes, and renders every
+  // row inside a plain non-virtualised ScrollView. It was doing all of that
+  // TWICE A SECOND, because 500 > 480 so the gate below never once dropped a
+  // timer publish.
+  //
+  // 900 ms is a deliberate choice, not a round number: it is comfortably above
+  // the monitor's 500 ms publish interval, so every second publish is dropped
+  // and the heavy work runs at about 1 Hz. The live FPS readout that needs to
+  // feel immediate is the BUBBLE, which is two Text nodes and keeps its own
+  // faster cadence. A diagnostic table updating once a second is not a
+  // regression; a diagnostic table that generates the freezes it is reporting
+  // is.
   useEffect(() => {
     let last = 0;
     const unsub = perfMonitor.subscribe((s) => {
       const now = Date.now();
-      if (now - last < 480) return;
+      if (now - last < 900) return;
       last = now;
       setSnap(s);
     });
@@ -308,7 +336,7 @@ export function PerfMonitorPanel({ onClose }: Props) {
                   rank={idx + 1}
                   isCurrent={h.route === snap.currentRoute}
                   isExpanded={!!expandedHotspots[h.route]}
-                  onToggle={() => toggleHotspot(h.route)}
+                  onToggle={toggleHotspot}
                 />
               ))
           )}
@@ -519,7 +547,7 @@ export function PerfMonitorPanel({ onClose }: Props) {
                             key={`${ev.ts}-${i}`}
                             event={ev}
                             isExpanded={!!expandedLong[ev.ts]}
-                            onToggleExpand={() => toggleLong(ev.ts)}
+                            onToggleExpand={toggleLong}
                           />
                         ))
                     : null}
@@ -543,7 +571,7 @@ function severityColor(score: number): string {
   return '#22c55e';
 }
 
-function HotspotRow({
+const HotspotRow = React.memo(function HotspotRow({
   hotspot,
   rank,
   isCurrent,
@@ -554,7 +582,8 @@ function HotspotRow({
   rank: number;
   isCurrent: boolean;
   isExpanded: boolean;
-  onToggle: () => void;
+  /** Takes the route so the parent can pass ONE stable callback for every row. */
+  onToggle: (route: string) => void;
 }) {
   const theme = useTheme();
   const t = useT();
@@ -571,7 +600,7 @@ function HotspotRow({
   const summary = bits.length ? bits.join(' · ') : t('perf.smooth', 'smooth');
   return (
     <View style={[styles.hotspotCard, { backgroundColor: theme.colors.background.secondary }]}>
-      <TouchableOpacity onPress={onToggle} style={styles.hotspotHeader} activeOpacity={0.7}>
+      <TouchableOpacity onPress={() => onToggle(hotspot.route)} style={styles.hotspotHeader} activeOpacity={0.7}>
         {/* Severity rail */}
         <View style={[styles.hotspotRail, { backgroundColor: color }]} />
         <View style={{ flex: 1 }}>
@@ -606,7 +635,7 @@ function HotspotRow({
       ) : null}
     </View>
   );
-}
+});
 
 function HotspotStat({ label, value, danger }: { label: string; value: string; danger?: boolean }) {
   const theme = useTheme();
@@ -627,14 +656,25 @@ function HotspotStat({ label, value, danger }: { label: string; value: string; d
   );
 }
 
-function EventRow({
+/**
+ * One event line.
+ *
+ * Memoised, and it is the memo that matters most in this file: the ring holds up
+ * to RING_CAPACITY events and they were ALL re-rendering on every published
+ * snapshot. `event` is reference-stable (the ring returns the same PerfEvent
+ * objects each read, only the containing array is new), `isExpanded` is a
+ * boolean, and `onToggleExpand` is a single stable callback shared by every row —
+ * so an unchanged row now does nothing at all.
+ */
+const EventRow = React.memo(function EventRow({
   event,
   isExpanded,
   onToggleExpand,
 }: {
   event: PerfEvent;
   isExpanded: boolean;
-  onToggleExpand: () => void;
+  /** Takes the event ts so the parent can pass ONE stable callback. */
+  onToggleExpand: (ts: number) => void;
 }) {
   const theme = useTheme();
   const t = useT();
@@ -646,7 +686,7 @@ function EventRow({
     <View>
       <TouchableOpacity
         disabled={!hasContext}
-        onPress={onToggleExpand}
+        onPress={() => onToggleExpand(event.ts)}
         activeOpacity={hasContext ? 0.7 : 1}
         style={[styles.eventRow, { backgroundColor: theme.colors.background.elevated || theme.colors.background.secondary }]}
       >
@@ -706,7 +746,7 @@ function EventRow({
       ) : null}
     </View>
   );
-}
+});
 
 function formatErrorForCopy(ev: PerfEvent): string {
   const time = new Date(ev.ts).toISOString();
