@@ -470,6 +470,13 @@ class PerfMonitor {
       cancelAnimationFrame(this._rafHandle as unknown as number);
       this._rafHandle = null;
     }
+    // A coalesced publish must not outlive the monitor: without this, toggling
+    // the monitor off inside the publish window still delivered one more full
+    // snapshot up to 500 ms later.
+    if (this._publishTimer != null) {
+      clearTimeout(this._publishTimer);
+      this._publishTimer = null;
+    }
     this._started = false;
   }
 
@@ -849,7 +856,10 @@ class PerfMonitor {
   subscribe(listener: Listener): () => void {
     this._listeners.add(listener);
     // Push current state immediately so the consumer doesn't render with
-    // empty values for the first sampling interval.
+    // empty values for the first sampling interval. This IS a full snapshot, so
+    // it counts as a publish — otherwise a subscribe immediately followed by a
+    // mark built two of them back to back.
+    this._lastPublishAt = Date.now();
     listener(this.snapshot());
     return () => {
       this._listeners.delete(listener);
@@ -1044,8 +1054,60 @@ class PerfMonitor {
     };
   }
 
+  // ── THE PROFILER WAS BILLING ITSELF TO THE THING IT PROFILES ──────────────
+  //
+  // `_notify` used to build a FULL snapshot on every single call, before any
+  // consumer had a chance to throttle. There are nine call sites and only one
+  // of them is the 500 ms publish — the others are `mark`, `markScreenMount`,
+  // `markInput`, `markImageDecode`, `recordNavigation` and `clearEvents`. So a
+  // burst of sixteen image decodes built sixteen full snapshots.
+  //
+  // "Full snapshot" is not cheap. `snapshot()` calls `_readEvents()`, which
+  // reads the main ring into a new array of up to RING_CAPACITY entries, reads
+  // the slow ring into a second array, builds a Set over the first, filters the
+  // second against it, concatenates, and SORTS the result by timestamp. Then
+  // `getHotspots()` allocates a fresh 12-field object per tracked route and
+  // sorts those too. Two sorts and four-plus allocations, per mark.
+  //
+  // Both consumers throttle at 480 ms (`PerfMonitorBubble`, `PerfMonitorPanel`)
+  // against a 500 ms publish cadence, so the throttle never fired for a timer
+  // publish and never protected anything from the mark-driven ones either — the
+  // snapshot was already built by the time the listener decided to drop it.
+  //
+  // This is now coalesced AT THE SOURCE. A notify inside the minimum interval
+  // does no work beyond a clock read and, at most, arming one trailing timer;
+  // the snapshot is built once per interval no matter how many marks land in
+  // it. The trailing publish matters: it guarantees the last mark of a burst is
+  // still delivered rather than silently dropped, which a bare rate limit would
+  // do.
+  private _lastPublishAt = 0;
+  private _publishTimer: ReturnType<typeof setTimeout> | null = null;
+  private static readonly _MIN_PUBLISH_MS = 500;
+
   private _notify() {
     if (!this._listeners.size) return;
+    const now = Date.now();
+    const since = now - this._lastPublishAt;
+    if (since < PerfMonitor._MIN_PUBLISH_MS) {
+      // Inside the window: arm ONE trailing publish and return. No snapshot.
+      if (this._publishTimer == null) {
+        this._publishTimer = setTimeout(() => {
+          this._publishTimer = null;
+          this._publish();
+        }, PerfMonitor._MIN_PUBLISH_MS - since);
+      }
+      return;
+    }
+    this._publish();
+  }
+
+  private _publish() {
+    if (!this._listeners.size) return;
+    if (this._publishTimer != null) {
+      clearTimeout(this._publishTimer);
+      this._publishTimer = null;
+    }
+    this._lastPublishAt = Date.now();
     const snap = this.snapshot();
     this._listeners.forEach((l) => {
       try {
