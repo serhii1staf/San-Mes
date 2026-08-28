@@ -256,3 +256,49 @@ export function installNotificationTapHandler(navigate: (path: string) => void):
     try { sub?.remove?.(); } catch {}
   };
 }
+
+// ── THE APP ICON NEVER CARRIED A NUMBER ──────────────────────────────────────
+//
+// Reported as: on iPhone, if you leave a message unread the count normally stays on the app icon even
+// after you swipe the push away — and this app shows nothing there.
+//
+// Correct, and it is not a subtle bug: `setBadgeCountAsync` was never called anywhere in the codebase,
+// and the foreground handler explicitly passes `shouldSetBadge: false` with the note "don't touch the
+// badge". So the only trace of an unread message was the push itself, and dismissing the push destroyed
+// the last thing that knew about it. That is exactly the symptom.
+//
+// This is a separate mechanism from the in-app badge. The in-app one is derived from the cached
+// notification feed against a last-seen watermark (`notificationsBadgeStore`); the OS badge is a single
+// integer owned by the system and painted on the launcher icon. Nothing was keeping them in step because
+// nothing was writing the second one at all.
+//
+// ── WHAT THIS FIXES AND WHAT IT CANNOT ───────────────────────────────────────
+//
+// It fixes every case where the app has run since the message arrived: the store now mirrors its unread
+// count onto the icon, so backgrounding the app leaves the number visible, and dismissing the push no
+// longer loses it.
+//
+// It does NOT fix a fully-terminated app, and that half is not an OTA. While the process is dead no JS
+// runs, so the number can only come from the push payload itself — the Expo push message needs a `badge`
+// field, which means the Worker's fan-out has to compute and send it. That is a Worker deploy, tracked
+// separately rather than pretended away here.
+//
+// `shouldSetBadge` in the foreground handler stays FALSE on purpose. Letting the OS increment on delivery
+// would race this: a push for the chat the user is already reading is deliberately not presented, and it
+// must not silently bump the icon either. The count is derived from one place, and this is the writer.
+//
+// No new permission. On iOS the badge authorisation is part of the alert/sound/badge set that
+// `requestPermissionsAsync` already asks for; Android draws the count as a launcher dot/number with no
+// separate grant. Nothing new is collected or transmitted — the number is computed locally from the
+// notification cache that is already on the device.
+export async function setOsBadgeCount(count: number): Promise<void> {
+  const mods = getModules();
+  if (!mods) return;
+  try {
+    const n = Number.isFinite(count) && count > 0 ? Math.floor(count) : 0;
+    await mods.Notifications.setBadgeCountAsync(n);
+  } catch {
+    // Unsupported launcher, permission not granted, or the native module absent on this build. A badge
+    // that cannot be written must never surface as an error to the user.
+  }
+}
