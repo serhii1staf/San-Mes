@@ -313,8 +313,47 @@ function runPendingFullPersist(): void {
   pendingFullConv = null;
   if (fn) { try { fn(); } catch {} }
 }
+/**
+ * Flush a full-blob write owed to a DIFFERENT conversation, one macrotask later.
+ *
+ * ── WHY THE CROSS-CONVERSATION FLUSH MUST NOT BE SYNCHRONOUS ────────────────
+ *
+ * Switching chats ran `runPendingFullPersist()` inline, twice: once from the guard at the top of the
+ * persist effect and again inside `scheduleFullPersist`. Both land inside the NEW screen's mount
+ * window — `useScreenMountMark` spans first hook to one frame after the first passive effect — so a
+ * `JSON.stringify` of up to `MAX_PERSISTED_MESSAGES` (1000) messages plus a synchronous MMKV write
+ * was being charged to the frames the user waits through while the next chat opens. This file already
+ * measures that write at ~285 ms average and 1318 ms worst.
+ *
+ * It also had no `perfSpan` around it at this call site, which is why it never appeared in a snapshot.
+ * That matches the reported shape exactly: `MOUNT chat/[id]` at 252 ms inside a 267 ms long task whose
+ * only named marks summed to 5 ms.
+ *
+ * Deferring is safe, and strictly safer than what it replaces:
+ *
+ *   • the write it is flushing was ALREADY sitting on a 120 s trailing debounce, so moving it by one
+ *     macrotask cannot widen the durability window in any meaningful way — it narrows it;
+ *   • `pendingFullWrite` / `pendingFullConv` are detached BEFORE the timeout, so the new
+ *     conversation's `scheduleFullPersist` cannot see a stale owner and cannot double-flush it;
+ *   • the synchronous paths that exist for durability are untouched. `runPendingFullPersist()` is
+ *     still called inline from the AppState `background` / `inactive` handler and from the teardown
+ *     flush, which are the two moments where blocking is the point — nobody is looking at that frame,
+ *     and backgrounding is the frame before an OS kill.
+ */
+function flushPendingFullPersistSoon(): void {
+  if (fullPersistTimer) { clearTimeout(fullPersistTimer); fullPersistTimer = null; }
+  const fn = pendingFullWrite;
+  pendingFullWrite = null;
+  pendingFullConv = null;
+  if (!fn) return;
+  // A real macrotask, not a microtask: `Promise.resolve()` drains off the SAME task and would leave
+  // the stringify on the mount frame after all. This file's sibling `messagesPrefetch` records the
+  // same distinction being the difference between a 145 ms long task and none.
+  setTimeout(() => { try { fn(); } catch {} }, 0);
+}
+
 function scheduleFullPersist(conversationId: string, write: () => void): void {
-  if (pendingFullConv && pendingFullConv !== conversationId) runPendingFullPersist();
+  if (pendingFullConv && pendingFullConv !== conversationId) flushPendingFullPersistSoon();
   pendingFullWrite = write;
   pendingFullConv = conversationId;
   if (fullPersistTimer) clearTimeout(fullPersistTimer);
@@ -1859,8 +1898,39 @@ export default function ChatScreen() {
   // Derived booleans so all existing references keep working unchanged.
   const emojiOpen = panelTab === 'emoji';
   const gifOpen = panelTab === 'gif';
-  const [recentEmoji, setRecentEmoji] = useState<string[]>(() => getRecentEmoji());
-  const [recentGif, setRecentGif] = useState<GiphyItem[]>(() => getRecentGif());
+  // ── TWO SYNCHRONOUS DISK READS DURING RENDER, FOR A PANEL THAT IS CLOSED ────
+  //
+  // These initialisers called `getRecentEmoji()` and `getRecentGif()`, which are each a
+  // `kvGetJSONSync` — an MMKV `getString` plus a `JSON.parse` — executed on the render path of every
+  // chat open. `recent_gif` holds up to 24 full `GiphyItem` objects (urls, dimensions, previews), so
+  // that is a real parse, not a token read.
+  //
+  // Neither value is looked at until the media panel is opened, and the panel starts closed
+  // (`panelTab === null`). So the cost was paid on every open of every chat for data most opens never
+  // display. It was also invisible: unlike the seed reads a few lines below, these had no `perfSpan`,
+  // which is exactly the shape of the unattributed time in the snapshots — a 267 ms long task on
+  // `chat/[id]` whose only named marks summed to 5 ms.
+  //
+  // Now empty until first needed. `ensureRecentsLoaded` is called from `openEmoji` / `openGif`, which
+  // is the moment the values become visible, and it is one-shot via a ref so re-opening the panel
+  // does not re-read. Everything downstream is unchanged: the pushers still return the updated list
+  // and still write through to MMKV.
+  const [recentEmoji, setRecentEmoji] = useState<string[]>([]);
+  const [recentGif, setRecentGif] = useState<GiphyItem[]>([]);
+  const recentsLoadedRef = useRef(false);
+  const ensureRecentsLoaded = useCallback(() => {
+    if (recentsLoadedRef.current) return;
+    recentsLoadedRef.current = true;
+    try {
+      const e = getRecentEmoji();
+      if (e.length > 0) setRecentEmoji(e);
+      const g = getRecentGif();
+      if (g.length > 0) setRecentGif(g);
+    } catch {
+      // A corrupt or unreadable cache means "no recents", which is what the empty initial state
+      // already shows — never a reason to fail opening the panel.
+    }
+  }, []);
   const [keepLifted, setKeepLifted] = useState(false);
   const [emojiPanelHeight, setEmojiPanelHeight] = useState(300);
   const [searchMode, setSearchMode] = useState(false);
@@ -2518,6 +2588,8 @@ export default function ChatScreen() {
   // height, lift the bar (via stickyOffset/liftSV), then dismiss the keyboard.
   // The keyboard slides down to REVEAL the panel already sitting beneath it.
   const openEmoji = useCallback(() => {
+    // First point at which the recents are visible — see `ensureRecentsLoaded`.
+    ensureRecentsLoaded();
     const h = lastKbHeightRef.current > 0 ? lastKbHeightRef.current : 300;
     emojiPanelSV.value = h;
     setEmojiPanelHeight(h);
@@ -2549,6 +2621,8 @@ export default function ChatScreen() {
 
   // Open the GIF panel — twin of openEmoji. Mutually exclusive with emoji.
   const openGif = useCallback(() => {
+    // Same as `openEmoji`: the recents become visible here, so this is where they load.
+    ensureRecentsLoaded();
     const h = lastKbHeightRef.current > 0 ? lastKbHeightRef.current : 300;
     emojiPanelSV.value = h;
     setEmojiPanelHeight(h);
@@ -3162,7 +3236,11 @@ export default function ChatScreen() {
     if (pendingPersistConv && pendingPersistConv !== conversationId) runPendingPersist();
     // Same rule for the slow channel: a full write still owed to the PREVIOUS conversation must
     // land before this one starts accumulating, or switching chats quickly would drop it.
-    if (pendingFullConv && pendingFullConv !== conversationId) runPendingFullPersist();
+    //
+    // Deferred by one macrotask rather than run inline. This effect body executes inside the NEW
+    // screen's measured mount window, and the full write is a `JSON.stringify` of up to 1000 messages
+    // — see `flushPendingFullPersistSoon` for why moving it off this frame does not weaken durability.
+    if (pendingFullConv && pendingFullConv !== conversationId) flushPendingFullPersistSoon();
     // This effect also tears down on a mere `myMessages` re-render; a re-run
     // for the (same) conversation cancels any deferred teardown flush so the
     // debounce keeps coalescing the burst.
