@@ -791,6 +791,22 @@ export default function UserProfileScreen() {
     return mine.sort((a, b) => (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0));
   }, [allPosts, id]);
 
+  // ── "НЕТ ПУБЛИКАЦИЙ" MUST NOT BE SAID BEFORE WE HAVE LOOKED ────────────────
+  //
+  // `listEmpty` below still reads `if (gatedTab && !postsReady) return null;`, and `postsReady` is a
+  // `true` constant since the mount gates were deleted — so that guard does nothing and the caption is
+  // once again bound to the array being empty.
+  //
+  // It matters more here than on the own-profile tab. `userPosts` is derived by scanning the entity
+  // store for `author_id === id`, so opening a profile the app has never seen starts with an empty
+  // array by construction, and `syncUserPosts(id)` does not even begin until `runAfterInteractions`
+  // fires. The first thing the user is told about a stranger's profile is that they have never posted.
+  //
+  // Same flag and argument as `feedSettled` in (tabs)/index.tsx: an empty array is not evidence of an
+  // empty profile until a fetch has finished saying so. Set by `syncUserPosts`'s settlement below, and
+  // short-circuited whenever posts are already on screen.
+  const [postsSettled, setPostsSettled] = useState(false);
+
   // Fallback profile state (for when no cached data exists)
   const [fallbackProfile, setFallbackProfile] = useState<any>(null);
 
@@ -882,7 +898,11 @@ export default function UserProfileScreen() {
       // running exactly as before. The uncached path loses nothing: the direct
       // fetch upserts into the entity store itself.
       if (!didDirectFetch) syncProfile(id);
-      syncUserPosts(id);
+      // `.finally`, not a bare call: this is the moment we are entitled to say the profile has no
+      // posts. `syncUserPosts` swallows its own errors and returns `Promise<void>`, and its
+      // `syncWithThrottle` short-circuit still counts as settled — a throttled skip means the store
+      // already holds the answer from within the last five minutes. See `postsSettled`.
+      void syncUserPosts(id).finally(() => setPostsSettled(true));
 
       // Banner warming moved OUT of this block — see `bannerUrlForWarm` below.
       // It was here, and it could never hit the cache. Two reasons, both about
@@ -1791,9 +1811,20 @@ export default function UserProfileScreen() {
   // profile is not simply empty.
   //
   // `likes` / `replies` are not gated and keep their immediate caption.
+  //
+  // ── AND `postsReady` NO LONGER ANSWERS ANYTHING ─────────────────────────────
+  //
+  // The guard was `!postsReady`, which is a `true` constant now, so it did nothing. `postsSettled` is
+  // both a working guard and a better question: `postsReady` meant "the mount gate has opened", which
+  // was only ever correlated with having looked; this means "the fetch has finished".
+  //
+  // Also note what this makes redundant. The note above says the false caption "appeared on the FIRST
+  // visit only" because `postsReady` was seeded from `paintedProfileIds` on a revisit — a per-session
+  // Set of profiles that had already painted. `postsSettled` needs no such bookkeeping: on a revisit
+  // the entity store already holds the posts, so the list is not empty and the caption cannot render.
   const listEmpty = useMemo(() => {
     const gatedTab = activeTab === 'posts' || activeTab === 'media';
-    if (gatedTab && !postsReady) return null;
+    if (gatedTab && !postsSettled) return null;
     return (
       <View style={{ alignItems: 'center', paddingVertical: 40 }}>
         <Text variant="caption" color={theme.colors.text.tertiary}>
@@ -1801,7 +1832,7 @@ export default function UserProfileScreen() {
         </Text>
       </View>
     );
-  }, [theme.colors.text.tertiary, activeTab, t, postsReady]);
+  }, [theme.colors.text.tertiary, activeTab, t, postsSettled]);
 
   // ─── FULLSCREEN VIEWER ────────────────────────────────────────────────────
   //

@@ -349,6 +349,24 @@ export default function ProfileScreen() {
     })().catch(() => {});
   }, [user?.id]);
   const [refreshing, setRefreshing] = useState(false);
+
+  // ── "НЕТ ПУБЛИКАЦИЙ" MUST NOT BE SAID BEFORE WE HAVE LOOKED ────────────────
+  //
+  // The guard that used to stop this caption appearing over posts the user has is now unreachable.
+  // `listEmpty` below reads `if (gatedTab && !postsReady) return null;` and `postsReady` is a `true`
+  // constant since the mount gates were deleted — so the caption is once again bound to
+  // `data.length === 0` alone.
+  //
+  // That was harmless while the gate existed for a different reason (an empty dataset was being handed
+  // to the list DELIBERATELY, so "nothing" was the honest empty state). It is not harmless now: the
+  // list receives the real array immediately, and on a cold start with no cached posts that array is
+  // empty while `loadMyPosts` is still running behind `runAfterInteractions`. The user opens their own
+  // profile and is told they have no publications, then the posts arrive.
+  //
+  // Same flag, same argument, same shape as `feedSettled` in (tabs)/index.tsx: an empty list is not
+  // evidence of an empty account until a fetch has finished saying so. Seeded from the store and the
+  // MMKV cache, then set by `loadMyPosts`'s `finally`.
+  const [postsSettled, setPostsSettled] = useState(false);
   const hasFetched = useRef(false);
   const scrollViewRef = useRef<any>(null);
   const hasRestoredScroll = useRef(false);
@@ -363,10 +381,10 @@ export default function ProfileScreen() {
   // Running the MMKV read on the same commit as mount means the FlatList
   // sees real posts on the very first render, with zero empty-tab gap.
   useEffect(() => {
-    if (userPosts.length > 0) return; // Store already has data — show instantly
+    if (userPosts.length > 0) { setPostsSettled(true); return; } // Store already has data — show instantly
     try {
       const parsed = kvGetJSONSync<any[]>(MY_POSTS_CACHE_KEY, []);
-      if (Array.isArray(parsed) && parsed.length > 0) setProfilePosts(parsed);
+      if (Array.isArray(parsed) && parsed.length > 0) { setProfilePosts(parsed); setPostsSettled(true); }
     } catch {}
   }, []);
 
@@ -569,6 +587,11 @@ export default function ProfileScreen() {
         commit(await buildAll());
       }
     } catch {}
+    finally {
+      // Every exit above is a completed look at this account's posts — the throttle short-circuit, a
+      // null response, a throw, or a real commit. See `postsSettled`.
+      setPostsSettled(true);
+    }
   }, [user?.id]);
 
   const loadFollows = useCallback(async () => {
@@ -1495,9 +1518,18 @@ export default function ProfileScreen() {
   // Scoped to the tabs the gate actually applies to. `likes` / `replies` pass their
   // own fetched arrays straight through and are not gated, so an empty result there
   // is genuine and must still say so immediately.
+  // ── AND THE GATE IT USED IS GONE, SO IT NOW ASKS THE RIGHT QUESTION ────────
+  //
+  // This read `if (gatedTab && !postsReady) return null;`. `postsReady` is a `true` constant now, so
+  // that line does nothing and the caption is back to trusting an empty array. `postsSettled` is the
+  // replacement and is a better test than `postsReady` ever was: `postsReady` meant "the mount gate has
+  // opened", which was only correlated with having looked; this means "the fetch has finished".
+  //
+  // `likes` / `replies` are still ungated — they pass their own fetched arrays straight through, so an
+  // empty result there is genuine and must say so immediately.
   const listEmpty = useMemo(() => {
     const gatedTab = activeTab === 'posts' || activeTab === 'media';
-    if (gatedTab && !postsReady) return null;
+    if (gatedTab && !postsSettled) return null;
     return (
       <View style={{ alignItems: 'center', paddingVertical: 40 }}>
         <Text variant="caption" color={theme.colors.text.tertiary}>
@@ -1505,7 +1537,7 @@ export default function ProfileScreen() {
         </Text>
       </View>
     );
-  }, [theme.colors.text.tertiary, activeTab, t, postsReady]);
+  }, [theme.colors.text.tertiary, activeTab, t, postsSettled]);
 
   // ─── FULLSCREEN VIEWER ────────────────────────────────────────────────────
   //
