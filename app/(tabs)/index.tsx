@@ -384,6 +384,9 @@ export default function FeedScreen() {
           // Always record the cache signature so the focus reload's
           // raw-equality check works even when this hydrate is a no-op.
           lastFocusCacheRawRef.current = raw;
+          // A populated cache is proof the feed is not empty, independently of the network — see
+          // `feedSettled`. Cheap and unconditional here: the flag only ever goes false→true.
+          setFeedSettled(true);
           // Only force a re-render when the parsed list actually adds
           // posts beyond the synchronous 8-post peek AND the content
           // differs. The shallow-equality check protects against the
@@ -475,6 +478,30 @@ export default function FeedScreen() {
   // returned posts we don't show the spinner; otherwise the network fetch
   // (or the full hydrate effect above) clears it.
   const [isLoading, setIsLoading] = useState(() => posts.length === 0);
+
+  // ── "NO POSTS YET" MUST NOT BE SAID BEFORE WE HAVE LOOKED ─────────────────
+  //
+  // The feed's empty state (`FeedHeader`: 📝 + `feed.empty` + `feed.empty_hint`) was rendered on
+  // `posts.length === 0` alone, and `isLoading` — the flag that keeps the skeletons up — is cleared by
+  // an unconditional `setTimeout(…, 1500)` further down that knows nothing about whether a request is
+  // still in flight. Put those two together and a cold start on a slow connection shows:
+  //
+  //     two skeleton cards  ->  "There are no posts yet"  ->  the feed
+  //
+  // which reads as a load that failed and then recovered. It is the same false caption that was
+  // already fixed on both profile screens, on the hottest screen in the app, and it is a large part of
+  // why the user reports the app looks like it is perpetually loading and redrawing.
+  //
+  // This flag answers the only question the empty state is allowed to depend on: have we finished
+  // looking? It is set by every real completion — the throttle short-circuit, a network error, a
+  // successful response, the catch, a pull-to-refresh, and any cache read that produced posts.
+  //
+  // Deliberately NOT backed by a timer, unlike the skeleton. A timer can make a spinner go away
+  // (worst case the user waits and then sees content), but it cannot establish that a feed is empty —
+  // and `apiClient` already bounds every request with an 8 s `AbortController` plus at most one host
+  // rotation, so every path here reaches a completion. If somehow none did, the list stays blank and
+  // says nothing, which is the honest state for "we do not know yet".
+  const [feedSettled, setFeedSettled] = useState(() => posts.length > 0);
   const hasFetched = useRef(false);
 
   // --- Incremental (infinite-scroll) pagination state (FIX 1) -------------
@@ -503,8 +530,15 @@ export default function FeedScreen() {
 
   // Subscribe to update store fields individually so the feed screen doesn't
   // re-render on every progress tick of an OTA download.
+  //
+  // ── AND `progress` IS NO LONGER SUBSCRIBED AT ALL ──────────────────────────
+  //
+  // The comment above was wrong in the only way that mattered: this screen DID subscribe to
+  // `s.progress`, so narrowing the selector bought nothing while `progress` was the field ticking. It
+  // was being rewritten every 500 ms by a random-walk simulator in updateStore, which meant a full
+  // re-render of the home feed twice a second for the duration of every update check. The simulator is
+  // gone (see that file) and nothing here renders a percentage any more, so the subscription goes too.
   const updateStatus = useUpdateStore((s) => s.status);
-  const updateProgress = useUpdateStore((s) => s.progress);
   const checkForUpdate = useUpdateStore((s) => s.checkForUpdate);
   const applyUpdate = useUpdateStore((s) => s.applyUpdate);
   const isOnline = useConnectivityStore((s) => s.isOnline);
@@ -620,6 +654,8 @@ export default function FeedScreen() {
           const parsed = JSON.parse(raw) as Post[];
           if (Array.isArray(parsed) && parsed.length > 0) {
             lastFocusCacheRawRef.current = raw;
+            // Posts on screen — whatever the network is doing, the feed is demonstrably not empty.
+            setFeedSettled(true);
             // Even when the raw cache string changed (e.g. another screen
             // re-serialised the same data), only force a re-render if the
             // content actually differs from what's already on screen.
@@ -639,7 +675,7 @@ export default function FeedScreen() {
   // there's nothing to load from cache here. Just make sure the spinner is hidden
   // when we already have data.
   useEffect(() => {
-    if (posts.length > 0) setIsLoading(false);
+    if (posts.length > 0) { setIsLoading(false); setFeedSettled(true); }
   }, []);
 
   // Fetch fresh data from Supabase (once, only if store was empty)
@@ -746,6 +782,12 @@ export default function FeedScreen() {
     } catch {
       // Network error: preserve existing store data, hide loading/refreshing
       setIsLoading(false);
+    } finally {
+      // Every exit above is a completion: the throttle short-circuit, an error response, a successful
+      // response, or a throw. A `finally` covers all four with one line and cannot be forgotten when a
+      // fifth early return is added later — which is precisely how the empty-state caption came to be
+      // bound to `posts.length === 0` alone. See `feedSettled`.
+      setFeedSettled(true);
     }
   }, []);
 
@@ -822,6 +864,8 @@ export default function FeedScreen() {
     } catch {
       // Network error: preserve existing data from store
     }
+    // A pull-to-refresh is also a completed look at the feed — see `feedSettled`.
+    setFeedSettled(true);
     setRefreshing(false);
   }, [setPosts, setRefreshing]);
 
@@ -1110,7 +1154,15 @@ export default function FeedScreen() {
             {(updateStatus === 'checking' || updateStatus === 'downloading' || updateStatus === 'ready') && (
               <Pressable onPress={() => setShowUpdateModal(true)} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: theme.colors.accent.primary + '15', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 }}>
                 {updateStatus !== 'ready' ? <ActivityIndicator size={11} color={theme.colors.accent.primary} /> : <MaterialIcons name="check-circle" size={12} color={theme.colors.accent.primary} />}
-                <Text variant="caption" color={theme.colors.accent.primary} style={{ fontSize: 11 }}>{updateStatus === 'ready' ? t('feed.update_ready') : `${Math.round(updateProgress)}%`}</Text>
+                {/* Bare spinner while it works, a label only once there is something to say. This used to
+                    render `${Math.round(updateProgress)}%`, a number invented by a 500 ms `setInterval` in
+                    updateStore (`progress + Math.random() * 8`) because expo-updates exposes no download
+                    progress — and since this screen subscribed to `progress`, every tick re-rendered the
+                    whole feed. See the note in src/store/updateStore.ts. The full phase text lives in the
+                    sheet behind a tap; a chip beside the wordmark has no room for a sentence. */}
+                {updateStatus === 'ready' ? (
+                  <Text variant="caption" color={theme.colors.accent.primary} style={{ fontSize: 11 }}>{t('feed.update_ready')}</Text>
+                ) : null}
               </Pressable>
             )}
           </View>
@@ -1126,7 +1178,11 @@ export default function FeedScreen() {
         keyExtractor={keyExtractor}
         getItemType={getItemType}
         renderItem={renderPost}
-        ListHeaderComponent={posts.length === 0 ? FeedHeader : undefined}
+        // `feedSettled`, not just `posts.length === 0` — see the long note on that flag. An empty list
+        // is not evidence of an empty feed until a fetch has finished saying so, and the skeleton
+        // above is dismissed on a 1500 ms timer that knows nothing about the request, so without this
+        // the cold-start sequence was skeletons -> "there are no posts yet" -> the feed.
+        ListHeaderComponent={posts.length === 0 && feedSettled ? FeedHeader : undefined}
         contentContainerStyle={listContentContainerStyle}
         showsVerticalScrollIndicator={false}
         // Native-driven scroll handler powering the pull-to-reveal spinner. It
@@ -1181,8 +1237,18 @@ export default function FeedScreen() {
               <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 6 }}><View style={{ width: 40, height: 5, borderRadius: 3, backgroundColor: theme.isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)' }} /></View>
               <View style={{ paddingHorizontal: 20, paddingBottom: 20 }}>
                 <Text variant="body" weight="bold" align="center" style={{ marginBottom: 16 }}>{t('feed.update_title')}</Text>
-                <View style={{ height: 6, backgroundColor: theme.colors.border.light, borderRadius: 3, marginBottom: 12, overflow: 'hidden' }}><View style={{ height: '100%', width: `${Math.min(updateProgress, 100)}%`, backgroundColor: theme.colors.accent.primary, borderRadius: 3 }} /></View>
-                <Text variant="caption" color={theme.colors.text.tertiary} align="center" style={{ marginBottom: 16 }}>{Math.round(updateProgress)}%</Text>
+                {/* No progress bar while the download runs, because there is no progress to report:
+                    expo-updates exposes no callback for it, and the percentage this used to draw came
+                    from a random-walk `setInterval` in updateStore. A spinner plus the phase is the
+                    honest version. The filled bar is kept for the one state that IS complete. */}
+                {updateStatus === 'ready' ? (
+                  <View style={{ height: 6, backgroundColor: theme.colors.border.light, borderRadius: 3, marginBottom: 12, overflow: 'hidden' }}><View style={{ height: '100%', width: '100%', backgroundColor: theme.colors.accent.primary, borderRadius: 3 }} /></View>
+                ) : (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 12 }}>
+                    <ActivityIndicator size="small" color={theme.colors.accent.primary} />
+                    <Text variant="caption" color={theme.colors.text.tertiary}>{updateStatus === 'downloading' ? t('update.downloading') : t('update.checking')}</Text>
+                  </View>
+                )}
                 {updateStatus === 'ready' && (<Pressable onPress={applyUpdate} style={{ backgroundColor: theme.colors.accent.primary, borderRadius: 14, paddingVertical: 14, alignItems: 'center' }}><Text variant="body" weight="semibold" color="#FFFFFF">{t('feed.update_restart')}</Text></Pressable>)}
               </View>
             </View>

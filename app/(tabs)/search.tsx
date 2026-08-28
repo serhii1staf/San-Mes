@@ -274,6 +274,20 @@ export default function SearchScreen() {
     }
   }, [debouncedQuery, searchIndex]);
 
+  // ── THE ONE SPINNER IN THE APP WITH NO WAY OUT ────────────────────────────
+  //
+  // `loadProfiles()` is called bare from the mount effect above — no `.catch` — and its body had no
+  // `try` around either `await`. So a rejection from `shouldSync` or `getProfiles` skipped the final
+  // `setIsLoading(false)` and left `isLoading` true for the life of the screen.
+  //
+  // What the user then sees is worse than a stuck spinner. The render condition is
+  // `isLoading && !showRecents`, and `showRecents` is `!query.trim() && recents.length > 0` — so as
+  // soon as they type, `showRecents` goes false and a full-screen ActivityIndicator covers the
+  // results area permanently, on top of filtered results that are already sitting in state.
+  //
+  // `finally` is the fix, and it belongs here rather than as a `.catch` at the call site: every exit
+  // from this function means "we are no longer loading", including the throttle short-circuit, and a
+  // `finally` cannot be forgotten when another early return is added.
   const loadProfiles = async () => {
     // Only gate the UI behind a spinner when we have nothing cached to show.
     // Cheap existence check (no JSON.parse) so a warm cache never flips the
@@ -284,19 +298,19 @@ export default function SearchScreen() {
       hasCache = !!(raw && raw.length > 2);
     } catch {}
     if (!hasCache) setIsLoading(true);
-    // Throttle gate: only hit the profile-directory network fetch if we
-    // haven't synced recently (~15 min). The cache-first display path above
-    // (cheap existence check) and the deferred InteractionManager hydrate of
-    // the cached directory still run, so the screen shows cached profiles
-    // instantly even when we skip the network. shouldSync records the
-    // timestamp when it returns true.
-    if (!(await shouldSync('search_all_profiles', 15 * 60 * 1000))) {
+    try {
+      // Throttle gate: only hit the profile-directory network fetch if we
+      // haven't synced recently (~15 min). The cache-first display path above
+      // (cheap existence check) and the deferred InteractionManager hydrate of
+      // the cached directory still run, so the screen shows cached profiles
+      // instantly even when we skip the network. shouldSync records the
+      // timestamp when it returns true.
+      if (!(await shouldSync('search_all_profiles', 15 * 60 * 1000))) return;
+      const { profiles: data } = await getProfiles();
+      if (Array.isArray(data) && data.length > 0) setAllProfiles(data as any[]);
+    } finally {
       setIsLoading(false);
-      return;
     }
-    const { profiles: data } = await getProfiles();
-    if (Array.isArray(data) && data.length > 0) setAllProfiles(data as any[]);
-    setIsLoading(false);
   };
 
   const loadHistory = async () => {

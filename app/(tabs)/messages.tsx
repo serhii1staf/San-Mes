@@ -1752,26 +1752,53 @@ export default function MessagesScreen() {
   // exclusively behind the FAB. The list shows only real conversations.
   const specialChats = null;
 
-  // Cache-first hydrate of the conversation list from MMKV. The synchronous
-  // JSON.parse of a large conversations blob on mount was the source of
-  // `SLOW long task @ (tabs)/messages` (~150 ms) — one big task held the JS
-  // thread across the navigation transition. Defer past the transition with
-  // InteractionManager so first paint carries only the already-in-store
-  // snapshot (or the empty state) and the parse runs one frame later, exactly
-  // like app/(tabs)/profile.tsx and app/chat/[id].tsx.
+  // ── THE CACHE IS READ ON MOUNT, NOT AFTER THE TRANSITION ──────────────────
+  //
+  // This was wrapped in `InteractionManager.runAfterInteractions`, with the note: "The synchronous
+  // JSON.parse of a large conversations blob on mount was the source of `SLOW long task @
+  // (tabs)/messages` (~150 ms)... Defer past the transition so first paint carries only the
+  // already-in-store snapshot (or the empty state) and the parse runs one frame later, exactly like
+  // app/(tabs)/profile.tsx and app/chat/[id].tsx."
+  //
+  // The appeal to `(tabs)/profile.tsx` is the part that has not survived. That screen reached the
+  // OPPOSITE conclusion and says so where its own MMKV read happens: "Deferring meant the profile tab
+  // mounted EMPTY, the navigation transition played for ~300 ms over an empty screen, then
+  // `runAfterInteractions` finally fired and the cache materialized. That ~300 ms empty-tab gap was
+  // exactly the 'freeze' users saw." It reads its cache synchronously on mount for that reason.
+  //
+  // Deferring costs more here than it did there, because this screen's empty state is a 48 pt icon and
+  // the words "no chats yet". So the first committed frame of a cold open told the user they had no
+  // conversations, and the real list replaced it a frame or more later — `runAfterInteractions` waits
+  // for every registered interaction handle, not for one frame, so "a frame or more" is unbounded. The
+  // only escape hatch in that empty branch is `activeTab === 'chats' && specialChats`, and
+  // `specialChats` is hard-`null` just above, so it never fires.
+  //
+  // The cost being avoided was also mis-attributed. A conversation row is small — an id, the
+  // participant's name/emoji/username, a preview string and two timestamps — so parsing even a couple
+  // of hundred of them is a few milliseconds, not 150. What costs 150 ms is what happens NEXT:
+  // `setConversations` re-runs the filter/sort memo and the FlatList reconciles the rows. Deferring the
+  // read moved that cost one beat later; it did not remove it, and it bought a false empty state.
+  //
+  // The persist effect below stays deferred: `JSON.stringify` of the whole list has no pixels attached
+  // to it, so an unbounded wait there costs nothing visible.
   useEffect(() => {
     const CONV_KV_KEY = 'conversations_list';
-    const handle = InteractionManager.runAfterInteractions(() => {
-      const hydrate = () => {
-        if (useEntityStore.getState().conversations.length > 0) return;
-        const cached = kvGetJSONSync<any[]>(CONV_KV_KEY, []);
-        if (cached.length > 0) {
-          useEntityStore.getState().setConversations(cached);
-        }
-      };
-      kvWarm([CONV_KV_KEY]).then(hydrate).catch(hydrate);
-    });
-    return () => handle.cancel();
+    const hydrate = () => {
+      if (useEntityStore.getState().conversations.length > 0) return;
+      const cached = kvGetJSONSync<any[]>(CONV_KV_KEY, []);
+      if (cached.length > 0) {
+        useEntityStore.getState().setConversations(cached);
+      }
+    };
+    // Synchronous first, so the first committed frame carries real rows whenever MMKV can answer.
+    hydrate();
+    // Then the AsyncStorage warm, for devices without the MMKV native module. `hydrate` re-checks the
+    // store, so this is a no-op when the synchronous read already worked. No `runAfterInteractions`
+    // wrapper needed: it is a promise, so it cannot land on the mount frame anyway.
+    let cancelled = false;
+    const guarded = () => { if (!cancelled) hydrate(); };
+    kvWarm([CONV_KV_KEY]).then(guarded).catch(guarded);
+    return () => { cancelled = true; };
   }, []);
 
   // Persist the conversation list to MMKV whenever it changes (survives
