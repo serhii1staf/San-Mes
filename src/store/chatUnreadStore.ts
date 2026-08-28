@@ -96,6 +96,32 @@ function persist(counts: CountMap, readAt: ReadAtMap): void {
     kvSetJSON(COUNTS_KEY, counts);
     kvSetJSON(READ_AT_KEY, readAt);
   } catch {}
+  syncChatOsBadge(counts);
+}
+
+// ── UNREAD DMs BELONG ON THE APP ICON TOO ────────────────────────────────────
+//
+// `totalChatUnread` has existed at the bottom of this file since the badge shipped, but nothing ever
+// forwarded it to the OS: `setOsBadgeCount` was called only from `notificationsBadgeStore`, whose count
+// comes from the notifications feed, and that feed is declared `'like' | 'comment' | 'follow'`. Messages
+// are simply not in it. So the icon showed likes and follows and stayed blank for unread messages, which
+// is the case the icon badge was asked for in the first place.
+//
+// Hooked into `persist` rather than into each mutator: every path that changes `counts` already calls it
+// with the authoritative next map — `bump`, both branches of `clear`, and `reconcile` — so a future
+// mutator cannot forget the icon. The dedupe in `osBadge` absorbs the one call where `counts` is
+// unchanged (`clear` on a conversation that was already at 0, which still advances the watermark).
+//
+// Lazy `require` rather than `await import` — see the note in osBadge.ts's `flush` for why the dynamic
+// form is untestable under babel-jest while working fine on device.
+function syncChatOsBadge(counts: CountMap): void {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { setChatBadgePart } = require('../services/osBadge') as typeof import('../services/osBadge');
+    setChatBadgePart(totalChatUnread(counts));
+  } catch {
+    // Never let the icon badge break the in-app badges.
+  }
 }
 
 export const useChatUnread = create<ChatUnreadState>((set, get) => ({
@@ -181,6 +207,11 @@ export const useChatUnread = create<ChatUnreadState>((set, get) => ({
     persist(nextCounts, readAt);
   },
 }));
+
+// Seed the icon from what MMKV restored, once, at import. Without this the chat component stays 0 until
+// the first message arrives or a chat is opened, so a cold start with unread DMs already on disk would
+// show an icon number that is missing them — the same blank icon this change is fixing, just narrower.
+syncChatOsBadge(useChatUnread.getState().counts);
 
 /**
  * Total across conversations — for the messages tab badge, so it can show real message counts

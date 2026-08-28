@@ -91,21 +91,31 @@ function computeUnread(): number {
 // account, including the half that needs a Worker deploy rather than an OTA.
 //
 // Routed through one helper called from every place that changes `unread`, so the icon cannot drift from
-// the in-app badge. Deliberately fire-and-forget: it is an async native call and nothing in the UI waits
-// on it, so awaiting it would only give a state setter a reason to be async.
+// the in-app badge.
 //
-// The `expo-notifications` access is lazily required and try/caught inside `setOsBadgeCount`, which is
-// what keeps this store importable from tests and from an OTA payload whose native build predates the
-// module.
+// ── THIS STORE REPORTS A COMPONENT, NOT THE TOTAL ────────────────────────────
+//
+// It used to call `setOsBadgeCount` directly, which was wrong in two ways, because the count here comes
+// from `computeUnread()` over the notifications feed and that feed's type says what it carries:
+//
+//     export type NotificationKind = 'like' | 'comment' | 'follow';
+//
+// Direct messages are not in it. They live in `chatUnreadStore`. So unread DMs never reached the icon —
+// three unread messages and no likes showed no number at all, which for a messenger is the main case —
+// and `markAllSeen()`'s hard 0 wiped the icon even while messages were still unread.
+//
+// `src/services/osBadge.ts` now owns the number and sums two independently-reported components. This
+// store reports ONLY its own, so it cannot clear the chat contribution. See that file for the rest.
+// Lazy `require` rather than `await import` — see the note in osBadge.ts's `flush` for why the dynamic
+// form is untestable under babel-jest while working fine on device.
 function syncOsBadge(count: number): void {
-  void (async () => {
-    try {
-      const { setOsBadgeCount } = await import('../services/pushNotifications');
-      await setOsBadgeCount(count);
-    } catch {
-      // Never let the icon badge break the in-app badge.
-    }
-  })();
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { setNotificationsBadgePart } = require('../services/osBadge') as typeof import('../services/osBadge');
+    setNotificationsBadgePart(count);
+  } catch {
+    // Never let the icon badge break the in-app badge.
+  }
 }
 
 // Throttle window for the background `refresh()`. Home-tab focus can fire
@@ -174,6 +184,11 @@ export const useNotificationsBadge = create<NotificationsBadgeState>((set) => ({
     });
   },
 }));
+
+// Seed the icon from the value computed synchronously above, once, at import. The initial `unread` is
+// derived from the MMKV cache and no mutator has run yet, so without this the notifications component
+// stays 0 on a cold start until something changes it.
+syncOsBadge(useNotificationsBadge.getState().unread);
 
 // ── THE BADGE DID NOT COME BACK WITH THE APP ─────────────────────────────────
 //
