@@ -1,8 +1,9 @@
 import React, { memo } from 'react';
-import { View, ViewStyle, TextStyle, Text as RNText, Platform, StyleSheet } from 'react-native';
+import { View, ViewStyle, TextStyle, Text as RNText, StyleSheet } from 'react-native';
 import { useTheme } from '../../theme';
 import { Text } from './Text';
 import { CachedImage } from './CachedImage';
+import { emojiTextStyle } from './emojiText';
 
 type AvatarSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
 
@@ -91,15 +92,44 @@ export const Avatar = memo(function Avatar({
   // Emoji avatar — centered inside a soft, deterministic circular container
   if (emoji) {
     const emojiSize = emojiSizeMap[size];
+    // ── THE EMOJI BOX COMES FROM `emojiTextStyle`, NOT FROM ARITHMETIC HERE ───
+    //
+    // This used to hand-roll the metrics:
+    //
+    //     fontSize: emojiSize,
+    //     lineHeight: Platform.OS === 'android' ? emojiSize + 4 : undefined,
+    //     includeFontPadding: false,
+    //     textAlignVertical: 'center',
+    //
+    // which is the four-property recipe in `emojiText.ts` minus the one that file calls load-bearing:
+    // "without an explicit height the view is measured from font metrics that the emoji bitmap exceeds,
+    // and no `lineHeight` can rescue it." There was no `height`, and on iOS there was no `lineHeight`
+    // either.
+    //
+    // The bigger problem was `emojiSize + 4`. An ADDITIVE correction cannot track a glyph whose overflow
+    // scales with the point size, so it diverges as the avatar grows — against the helper's 1.3x box:
+    //
+    //     xs 13pt  ->  17 vs 17   (ok)
+    //     sm 17pt  ->  21 vs 22   (-1)
+    //     md 24pt  ->  28 vs 31   (-3)
+    //     lg 34pt  ->  38 vs 44   (-6)
+    //     xl 50pt  ->  54 vs 65   (-11)
+    //
+    // Which is exactly the reported shape: emoji clipped on Android, worst on the large avatars. Every
+    // box the helper produces still fits its container (xs 17/24, sm 22/32, md 31/44, lg 44/64,
+    // xl 65/96), so nothing overflows the circle.
+    //
+    // This is the most-mounted emoji surface in the app and it was the one site NOT using the helper —
+    // which is the failure mode `emojiText.ts` was created to end. Its own note says twenty-six places
+    // render an emoji and only two had all four properties.
     const innerText = (
       <RNText
         style={{
-          fontSize: emojiSize,
-          lineHeight: Platform.OS === 'android' ? emojiSize + 4 : undefined,
-          includeFontPadding: false,
-          textAlignVertical: 'center',
+          ...emojiTextStyle(emojiSize),
           textAlign: 'center',
         }}
+        // The helper's docs ask for this wherever the glyph sits in a fixed-size cell: an accessibility
+        // text scale would otherwise grow it past a box that is deliberately exact. Already correct here.
         allowFontScaling={false}
       >
         {emoji}

@@ -102,18 +102,43 @@ const NotificationBellBadge = React.memo(function NotificationBellBadge({ accent
   }, [recompute, refresh]));
   if (unread <= 0) return null;
   const label = unread > 99 ? '99+' : String(unread);
+  // ── WHY THE SECOND DIGIT WAS BEING CUT OFF ────────────────────────────────
+  //
+  // Reported: once the count reaches double digits the number does not fit the rounded pill and the
+  // second digit is clipped. The old note here claimed "minWidth+padding lets the pill grow naturally
+  // for 2- and 3-digit counts". Growing was never the problem; the box arithmetic was.
+  //
+  // It was `minWidth: 16, height: 16, paddingHorizontal: 4, borderWidth: 2` around a `lineHeight: 12`
+  // text. React Native sizes a view border-box, so the border is INSIDE the declared height: 16 - 2 - 2
+  // leaves a 12 pt content box for a 12 pt line box. Zero slack in either direction.
+  //
+  // On Android that is already a clip, because `Text` here is the app's wrapper and it does not set
+  // `includeFontPadding: false` (deliberately — the `tight` line-height multiplier is 1.2, and forcing
+  // that off app-wide would start clipping EMOJI in headings, which is the opposite bug). With Android's
+  // font padding left on, a 10 pt glyph measures around 14-15 pt tall and does not fit 12.
+  //
+  // The fixed `height` is the real fault: it makes the pill a container the text cannot push back
+  // against, so any measurement disagreement becomes clipping rather than growth. Replaced with
+  // `minHeight` plus padding, so the pill is sized BY its content and can only ever be too big.
+  //
+  //   minHeight 20 - 4 border = 16 content, against lineHeight 13 + 2 vertical padding = 15. Fits.
+  //   minWidth  20 - 4 border - 10 padding = 6 pt for one digit; two digits grow the box instead.
+  //
+  // `borderRadius: 999` keeps it a pill at whatever height it settles on, instead of an 8 pt radius that
+  // would read as a rounded rectangle the moment the box grew. `includeFontPadding: false` is passed
+  // through `style` (it is part of RN's TextStyle) so it applies HERE, to digits, without touching the
+  // shared wrapper. `numberOfLines={1}` guarantees a count can never wrap to a second line.
   return (
     <View
       style={{
         position: 'absolute',
-        // Anchor to the top-right of the bell. minWidth+padding lets the
-        // pill grow naturally for 2- and 3-digit counts.
         top: -6,
         right: -10,
-        minWidth: 16,
-        height: 16,
-        paddingHorizontal: 4,
-        borderRadius: 8,
+        minWidth: 20,
+        minHeight: 20,
+        paddingHorizontal: 5,
+        paddingVertical: 1,
+        borderRadius: 999,
         backgroundColor: accent,
         alignItems: 'center',
         justifyContent: 'center',
@@ -125,7 +150,16 @@ const NotificationBellBadge = React.memo(function NotificationBellBadge({ accent
         borderColor: bg,
       }}
     >
-      <Text variant="caption" weight="bold" color="#FFFFFF" style={{ fontSize: 10, lineHeight: 12 }}>{label}</Text>
+      <Text
+        variant="caption"
+        weight="bold"
+        color="#FFFFFF"
+        align="center"
+        numberOfLines={1}
+        style={{ fontSize: 10, lineHeight: 13, includeFontPadding: false }}
+      >
+        {label}
+      </Text>
     </View>
   );
 });
