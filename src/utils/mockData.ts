@@ -446,19 +446,53 @@ export const discoverCategories = [
   'Art',
 ];
 
-export function formatTimeAgo(dateString: string): string {
-  const now = new Date();
-  const date = new Date(dateString);
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-  const diffHours = Math.floor(diffMs / 3600000);
-  const diffDays = Math.floor(diffMs / 86400000);
+// ── ONE SHARED FORMATTER, CREATED ON FIRST USE ──────────────────────────────
+//
+// `date.toLocaleDateString()` is specified as constructing a fresh
+// Intl.DateTimeFormat and then formatting with it, so calling it per row pays
+// formatter construction plus the ICU lookup every time. One shared instance
+// with the same (default) locale and options is the documented equivalent.
+//
+// Lazily, not at module scope, for two reasons: the common branches below never
+// reach this at all (only posts older than a week do), and constructing Intl at
+// import time would put the cost on startup for every screen that imports this
+// module. The try/catch falls back to the original call if Intl is unavailable
+// rather than taking a screen down over a date string.
+let _dateOnlyFmt: Intl.DateTimeFormat | null = null;
+function formatDateOnly(ms: number): string {
+  if (_dateOnlyFmt === null) {
+    try {
+      _dateOnlyFmt = new Intl.DateTimeFormat();
+    } catch {
+      return new Date(ms).toLocaleDateString();
+    }
+  }
+  return _dateOnlyFmt.format(ms);
+}
 
+export function formatTimeAgo(dateString: string): string {
+  // `Date.parse` instead of `new Date(...)`: a number, not an allocation. The
+  // old version allocated TWO Date objects per call (one for `now`, one for the
+  // input) and this runs once per list cell.
+  const then = Date.parse(dateString);
+  // Preserve the old output for unparseable input exactly. Without this guard an
+  // invalid string reaches `Intl.DateTimeFormat.format(NaN)`, which THROWS a
+  // RangeError, where `new Date(NaN).toLocaleDateString()` quietly returned
+  // "Invalid Date". A perf change must not turn bad data into a crash.
+  if (!Number.isFinite(then)) return new Date(dateString).toLocaleDateString();
+
+  const diffMs = Date.now() - then;
+  // The divisions are staged behind the early returns rather than all computed
+  // up front: the overwhelmingly common results are "just now" and "Nm ago", and
+  // those no longer pay for the hour and day arithmetic they never use.
+  const diffMins = Math.floor(diffMs / 60000);
   if (diffMins < 1) return 'just now';
   if (diffMins < 60) return `${diffMins}m ago`;
+  const diffHours = Math.floor(diffMs / 3600000);
   if (diffHours < 24) return `${diffHours}h ago`;
+  const diffDays = Math.floor(diffMs / 86400000);
   if (diffDays < 7) return `${diffDays}d ago`;
-  return date.toLocaleDateString();
+  return formatDateOnly(then);
 }
 
 export function formatMessageTime(dateString: string): string {

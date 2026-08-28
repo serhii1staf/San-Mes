@@ -123,10 +123,24 @@ function memCacheSet(url: string, entry: CacheEntry): void {
   }
 }
 
+// ── HOISTED, BECAUSE A REGEX LITERAL IS NOT FREE ────────────────────────────
+//
+// Since ES2015 a regex literal constructs a NEW RegExp object every time the
+// literal is evaluated (ES3 cached them; that was changed deliberately). So the
+// version of `extractFirstUrl` that inlined this pattern allocated and compiled
+// one per call — and it is called from the body of every post card and every
+// comment row, i.e. once per list cell per mount.
+//
+// Safe to share: there is no `g` flag, and `String.prototype.match` with a
+// non-global regex neither reads nor writes `lastIndex`. A `g` flag here WOULD
+// make a shared instance stateful across calls, which is the trap this comment
+// exists to flag for anyone editing the pattern later.
+const FIRST_URL_RE = /https?:\/\/[^\s<>"')]+/i;
+
 /** Extract the first http(s) URL from a string of text, if any. */
 export function extractFirstUrl(text: string | null | undefined): string | null {
   if (!text) return null;
-  const m = text.match(/https?:\/\/[^\s<>"')]+/i);
+  const m = text.match(FIRST_URL_RE);
   return m ? m[0] : null;
 }
 
