@@ -17,6 +17,7 @@ import {
 import { isRepost, parseImageUrls, isImageSpoiler } from '../../lib/supabase';
 import { isActiveThread } from '../../services/activeThread';
 import { useInAppAlert } from '../../store/inAppAlertStore';
+import { isAlertCategoryEnabled } from '../../store/settingsStore';
 import type { Post } from '../../types';
 
 /**
@@ -225,7 +226,12 @@ export function RealtimeAccountBridge(): null {
           // No extra server or hosting cost, which was an explicit requirement: this is a message the
           // client already receives and already parses for the two writes above.
           try {
-            if (isFromOther && !isActiveThread('chat', conversationId)) {
+            // Category preference applies here too, and this is the surface where it fully bites:
+            // the pill is produced from this event, so muting messages genuinely stops it appearing
+            // while the app is open. The unread bump above is deliberately NOT gated — muting an
+            // alert is a statement about being interrupted, not about the message being read, and
+            // silently zeroing the counter would lose the message.
+            if (isFromOther && isAlertCategoryEnabled('message') && !isActiveThread('chat', conversationId)) {
               const previewRaw = String(payload.lastMessage || payload.preview || '');
               const imgs = Array.isArray(payload.imageUrls) ? payload.imageUrls : [];
               const firstImg = typeof imgs[0] === 'string' ? imgs[0] : '';
@@ -350,6 +356,11 @@ export function RealtimeAccountBridge(): null {
           // "followed you" / "commented" / "liked" comes straight from the event name.
           try {
             const kind = name === 'notif.like' ? 'like' : name === 'notif.comment' ? 'comment' : 'follow';
+            // Likes are the case where this toggle is the ONLY control that exists: the like route
+            // publishes a realtime event and sends no push at all, so the pill and the bell badge are
+            // the entire surface. Comments and follows do send pushes, which the handler gates
+            // separately.
+            if (!isAlertCategoryEnabled(kind)) return;
             const actorId = String(
               payload.actorId || payload.actor_id || payload.followerId || payload.follower_id || '',
             );

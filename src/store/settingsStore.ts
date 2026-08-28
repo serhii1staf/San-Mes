@@ -55,6 +55,35 @@ interface SettingsState {
   // re-registration on next launch until turned back on. Local in-app badges
   // are unaffected — this only governs off-screen Expo/APNs/FCM pushes.
   pushNotificationsEnabled: boolean;
+  /**
+   * Per-category alert preferences: messages / comments / follows / likes.
+   *
+   * ── WHAT THESE HONESTLY CONTROL, AND WHAT THEY DO NOT ─────────────────────
+   *
+   * They control everything the app decides: the in-app glass pill, the sound, the banner while the
+   * app is in the FOREGROUND, and the Notification Centre entry. They do NOT stop the server sending
+   * a push, because they cannot — `sendPushToUser` in the Worker reads only "does this user have a
+   * token row", there is no category parameter and `push_tokens` has no preference column, so
+   * per-category muting server-side needs a D1 migration plus a deploy.
+   *
+   * That boundary is stated in the UI rather than hidden: the screen labels this section as in-app
+   * alerts and keeps `pushNotificationsEnabled` as the only switch that truthfully claims "no
+   * pushes at all" (it deletes the token, which makes the Worker's `if (!rows.length) return` the
+   * real stop). Shipping a per-category toggle that silently still shows a lock-screen banner would
+   * be a setting that lies.
+   *
+   * The shape is deliberately forward-compatible: when the Worker gains a preference column, the
+   * same keys get POSTed alongside the token and start suppressing delivery too, with no migration
+   * of this stored value.
+   *
+   * `likes` is included even though likes send no push today (the like route only publishes a
+   * realtime `notif.like`), because the pill and the bell badge ARE fed from that event — so the
+   * toggle does something real immediately.
+   *
+   * No `version` bump needed: zustand's default `merge` layers the persisted object over current
+   * defaults, so existing installs simply take the default for a newly-added key.
+   */
+  notifyCategories: { message: boolean; comment: boolean; follow: boolean; like: boolean };
   // Custom outgoing message color/style: { colors:[c] solid | [c1,c2] gradient,
   // opacity } OR null to follow the theme accent (default). App-wide. The chat
   // screen picks a contrast-aware text color so any style stays readable.
@@ -78,6 +107,7 @@ interface SettingsState {
   clearProfileTabCustom: (key: string) => void;
   setLiquidGlassEnabled: (enabled: boolean) => void;
   setPushNotificationsEnabled: (enabled: boolean) => void;
+  setNotifyCategory: (kind: 'message' | 'comment' | 'follow' | 'like', enabled: boolean) => void;
   setChatBubble: (style: import('../constants/bubbleColors').BubbleStyle | null) => void;
   setChatBubbleIn: (style: import('../constants/bubbleColors').BubbleStyle | null) => void;
 }
@@ -144,6 +174,9 @@ export const useSettingsStore = create<SettingsState>()(
       // Push notifications ON by default — matches the existing behaviour
       // where the app registers a push token after login.
       pushNotificationsEnabled: true,
+      // All categories on, matching today's behaviour exactly — so this field changes nothing until
+      // the user turns something off.
+      notifyCategories: { message: true, comment: true, follow: true, like: true },
       // Null = follow the theme accent (current behaviour).
       chatBubble: null,
       chatBubbleIn: null,
@@ -187,6 +220,8 @@ export const useSettingsStore = create<SettingsState>()(
         }),
       setLiquidGlassEnabled: (liquidGlassEnabled) => set({ liquidGlassEnabled }),
       setPushNotificationsEnabled: (pushNotificationsEnabled) => set({ pushNotificationsEnabled }),
+      setNotifyCategory: (kind, enabled) =>
+        set((s) => ({ notifyCategories: { ...s.notifyCategories, [kind]: enabled } })),
       setChatBubble: (chatBubble) => set({ chatBubble }),
       setChatBubbleIn: (chatBubbleIn) => set({ chatBubbleIn }),
     }),
@@ -230,3 +265,26 @@ export const useSettingsStore = create<SettingsState>()(
     }
   )
 );
+
+/**
+ * Is this alert category enabled?
+ *
+ * A plain function rather than a hook, because both callers are outside React:
+ * `handleNotification` in pushNotifications.ts is a native callback, and the realtime bridge's
+ * handlers are Ably subscriptions. Reads through `getState()` so it always sees the current value
+ * without subscribing anything.
+ *
+ * Fails OPEN on any unexpected shape. An unreadable preference must not silently swallow a
+ * notification — the same rule `shouldPresent` already follows for an unrecognised payload type,
+ * and for the same reason: showing one alert too many is a far smaller failure than never telling
+ * the user something happened.
+ */
+export function isAlertCategoryEnabled(kind: 'message' | 'comment' | 'follow' | 'like'): boolean {
+  try {
+    const cats = useSettingsStore.getState().notifyCategories;
+    if (!cats || typeof cats !== 'object') return true;
+    return cats[kind] !== false;
+  } catch {
+    return true;
+  }
+}

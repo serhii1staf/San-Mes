@@ -2,7 +2,7 @@ import { AppState, Platform } from 'react-native';
 import Constants from 'expo-constants';
 import { apiPost } from './apiClient';
 import { kvGetStringRawSync, kvSetStringRaw } from './kvStore';
-import { useSettingsStore } from '../store/settingsStore';
+import { useSettingsStore, isAlertCategoryEnabled } from '../store/settingsStore';
 import { isActiveThread } from './activeThread';
 
 // ── Push notifications (Expo Push) ──────────────────────────────────────────
@@ -67,6 +67,23 @@ function shouldPresent(notification: any): boolean {
     // screen", and an unknown type must fail OPEN — silently swallowing a notification is a
     // worse failure than showing one banner too many.
     return true;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Does the user still want to hear about this KIND of event?
+ *
+ * Reads the payload's `data.type`, which the Worker sets to `'message' | 'comment' | 'follow'` at its
+ * three `sendPushToUser` call sites. An unrecognised or missing type is allowed through, matching
+ * `shouldPresent`'s fail-open rule: a payload shape we do not understand must not be silently dropped.
+ */
+function categoryAllowed(notification: any): boolean {
+  try {
+    const raw = notification?.request?.content?.data?.type;
+    if (raw !== 'message' && raw !== 'comment' && raw !== 'follow' && raw !== 'like') return true;
+    return isAlertCategoryEnabled(raw);
   } catch {
     return true;
   }
@@ -164,7 +181,20 @@ export function configureNotificationHandler(): void {
         // `handleNotification` is a plain native callback with no component to talk to, which is why
         // the pill is fed through a store. Wrapped in its own try/catch: a failure to show an ambient
         // alert must never change what the OS does with the notification.
-        const present = shouldPresent(notification);
+        // ── PER-CATEGORY PREFERENCE, APPLIED AS A THIRD LAYER ──────────────────
+        //
+        // Suppression order is thread → category → foreground, and the order matters. The thread
+        // check is about redundancy (you are looking at the message), the category check is about
+        // consent (you asked not to be told about this kind), and the foreground check is only about
+        // WHICH surface presents it. A muted category is suppressed on every surface, including the
+        // Notification Centre entry — `shouldShowList` follows it below, because a "muted" event that
+        // still stacks up in the shade is not muted in any sense the user would recognise.
+        //
+        // What this cannot do is stop the push being SENT. See the note on `notifyCategories`: the
+        // Worker has no category parameter and `push_tokens` has no preference column, so while the
+        // app is not running the OS still renders the payload. The settings screen says so rather
+        // than implying otherwise.
+        const present = shouldPresent(notification) && categoryAllowed(notification);
         const inForeground = AppState.currentState === 'active';
         if (present && inForeground) {
           try {
@@ -178,10 +208,15 @@ export function configureNotificationHandler(): void {
           // inactive: unchanged behaviour, the OS banner is the only thing that can be seen.
           shouldShowBanner: present && !inForeground,
           shouldPlaySound: present,
-          // Kept true even when suppressed: the banner is redundant because the user is
-          // looking at the message, but the entry in Notification Centre is the record that
-          // it arrived, and removing that would lose history rather than reduce noise.
-          shouldShowList: true,
+          // Kept true for a THREAD suppression: the banner is redundant because the user is looking
+          // at the message, but the Notification Centre entry is the record that it arrived, and
+          // removing that would lose history rather than reduce noise.
+          //
+          // Dropped for a CATEGORY suppression, which is a different judgement — the user asked not
+          // to be told about this kind at all, so leaving it in the shade would keep exactly the
+          // notification they turned off. `categoryAllowed` is re-evaluated rather than reusing
+          // `present`, so a thread-suppressed message still keeps its history entry.
+          shouldShowList: categoryAllowed(notification),
           shouldSetBadge: false,
         };
       },
