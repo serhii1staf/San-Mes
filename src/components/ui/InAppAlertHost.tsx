@@ -56,10 +56,13 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { router } from 'expo-router';
 import { useTheme } from '../../theme';
 import { Text } from './Text';
 import { GlassCapsule } from './GlassCapsule';
+import { NativeGlassView, useLiquidGlassActive } from './LiquidGlass';
 import { emojiTextStyle } from './emojiText';
+import { useT } from '../../i18n/store';
 import { useInAppAlert, type InAppAlert } from '../../store/inAppAlertStore';
 
 /** Diameter of the phase-one circle, and the capsule's collapsed width/height. */
@@ -77,21 +80,85 @@ const OUT_MS = 200;
 /** Safety cap so one absurd display name cannot push the capsule off-screen. */
 const MAX_WIDTH_RATIO = 0.92;
 
-function actionText(alert: InAppAlert): string {
+/**
+ * Localised action line. Was hard-coded English, which showed English copy to a user running the app in
+ * Russian — reported, and correct: every other string in this app goes through `useT`.
+ *
+ * `useT` takes a key and a DEFAULT, so the English text stays as the fallback and no new locale file is
+ * required for the feature to work; translations land wherever the app's other keys live.
+ *
+ * The media variants exist because "sent you a message" is not what happened when the message was a
+ * photo or a GIF. That distinction costs nothing extra: the realtime payload already carries the preview
+ * text and image list, so the classification happens on data the device has, with no extra request.
+ */
+function useActionText(alert: InAppAlert | null): string {
+  const t = useT();
+  // Accepts null so it can be called ABOVE the `if (!current) return null` bail-out. A hook after an
+  // early return would change hook order between "an alert is showing" and "none is", which is the
+  // rules-of-hooks violation this shape avoids.
+  if (!alert) return '';
   const n = alert.repeat;
   switch (alert.kind) {
     case 'message':
-      return n > 1 ? `sent ${n} messages` : 'sent you a message';
+      if (n > 1) return t('alert.message.many', `sent ${n} messages`).replace('{n}', String(n));
+      if (alert.media === 'photo') return t('alert.message.photo', 'sent you a photo');
+      if (alert.media === 'gif') return t('alert.message.gif', 'sent you a GIF');
+      return t('alert.message.one', 'sent you a message');
     case 'comment':
-      return n > 1 ? `left ${n} comments` : 'commented on your post';
+      return n > 1
+        ? t('alert.comment.many', `left ${n} comments`).replace('{n}', String(n))
+        : t('alert.comment.one', 'commented on your post');
     case 'like':
-      return n > 1 ? `liked ${n} of your posts` : 'liked your post';
+      return n > 1
+        ? t('alert.like.many', `liked ${n} of your posts`).replace('{n}', String(n))
+        : t('alert.like.one', 'liked your post');
     case 'follow':
-      return n > 1 ? `and ${n - 1} others followed you` : 'started following you';
+      return n > 1
+        ? t('alert.follow.many', `and ${n - 1} others followed you`).replace('{n}', String(n - 1))
+        : t('alert.follow.one', 'started following you');
     default:
-      return 'sent you an update';
+      return t('alert.generic', 'sent you an update');
   }
 }
+
+/**
+ * The pill's material. Real system liquid glass where the platform genuinely supports it, the app's
+ * existing BlurView capsule everywhere else.
+ *
+ * The gate is `useLiquidGlassActive()` rather than a Platform check, because `LiquidGlass.tsx`'s own
+ * header is explicit that availability is three conditions, not one: the OS must support the effect, the
+ * design must be compiled into the app, and the runtime API must be present — and it must additionally
+ * stand down when Reduce Transparency is enabled, which is an accessibility requirement, not a
+ * preference. Reaching for `NativeGlassView` without that check is what its header warns against.
+ *
+ * `colorScheme` is passed from the app's own theme rather than left `'auto'`, so the pill follows the
+ * in-app dark/light toggle instead of the system one — the app has its own switch and the two can differ.
+ */
+const GlassShell = memo(function GlassShell({
+  isDark,
+  children,
+}: {
+  isDark: boolean;
+  children: React.ReactNode;
+}) {
+  const liquidGlass = useLiquidGlassActive();
+  if (liquidGlass) {
+    return (
+      <NativeGlassView
+        style={[styles.glass, { borderRadius: CIRCLE / 2 }]}
+        glassStyle="regular"
+        colorScheme={isDark ? 'dark' : 'light'}
+      >
+        {children}
+      </NativeGlassView>
+    );
+  }
+  return (
+    <GlassCapsule borderRadius={CIRCLE / 2} isDark={isDark} pointerEvents="box-none">
+      {children}
+    </GlassCapsule>
+  );
+});
 
 function InAppAlertHostInner() {
   const theme = useTheme();
@@ -187,13 +254,47 @@ function InAppAlertHostInner() {
 
   useEffect(() => clearTimer, []);
 
+  // ── TAPPING THE PILL GOES WHERE THE ALERT POINTS ────────────────────────────
+  //
+  // Requested. Navigation is fired AFTER the exit animation completes, which is the rule
+  // `DynamicOverlayHost` already documents for its own destination taps: kicking off a route change
+  // underneath a still-visible dismissal leaves a closing artifact behind the incoming slide.
+  //
+  // Only kinds with somewhere to go navigate. A like has no natural destination distinct from the post,
+  // and a follow points at the follower's profile — for both, `targetId` is what the producer supplied,
+  // and when it is absent the pill just dismisses rather than guessing a route.
+  const navigate = useCallback((alert: InAppAlert) => {
+    try {
+      if (alert.kind === 'message' && alert.targetId) {
+        router.push(`/chat/${alert.targetId}`);
+        return;
+      }
+      if ((alert.kind === 'comment' || alert.kind === 'like') && alert.targetId) {
+        router.push(`/comments/${alert.targetId}`);
+        return;
+      }
+      if (alert.kind === 'follow') {
+        router.push(alert.actorId ? `/profile/${alert.actorId}` : '/notifications');
+      }
+    } catch {
+      // A route that cannot be resolved must not take the app down from an ambient alert.
+    }
+  }, []);
+
   const onPress = useCallback(() => {
     clearTimer();
+    const target = current;
     opacity.value = withTiming(0, { duration: 140 }, (done) => {
-      if (done) runOnJS(finish)();
+      if (done) {
+        runOnJS(finish)();
+        if (target) runOnJS(navigate)(target);
+      }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [finish]);
+  }, [finish, navigate, current]);
+
+  // Called before the bail-out below so hook order is identical whether or not an alert is showing.
+  const actionLine = useActionText(current);
 
   const capsuleStyle = useAnimatedStyle(() => ({
     width: width.value,
@@ -207,7 +308,7 @@ function InAppAlertHostInner() {
   // `DynamicOverlayHost` follows when dismissed.
   if (!current) return null;
 
-  const action = actionText(current);
+  const action = actionLine;
 
   return (
     <View
@@ -238,7 +339,15 @@ function InAppAlertHostInner() {
       </View>
 
       <Animated.View style={[styles.capsuleWrap, capsuleStyle]}>
-        <GlassCapsule borderRadius={CIRCLE / 2} isDark={theme.isDark} pointerEvents="box-none">
+        {/* ── REAL LIQUID GLASS, NOT A BLUR ──────────────────────────────────────
+            Reported: it must support the actual liquid glass the app uses, not just a blur. It was
+            using `GlassCapsule`, which is a BlurView stack — a good imitation and not the same
+            material. `NativeGlassView` is the real system effect, and `useLiquidGlassActive()` is the
+            gate its own header insists on: it is only safe to render when the OS, the compiled-in
+            design and the runtime API all agree, and it must not be used when Reduce Transparency is
+            on. `GlassCapsule` stays as the fallback for every device that fails that gate, which is
+            all of Android and any older iOS, so the pill looks right everywhere. */}
+        <GlassShell isDark={theme.isDark}>
           <Pressable
             onPress={onPress}
             style={styles.pressable}
@@ -260,7 +369,7 @@ function InAppAlertHostInner() {
               </Text>
             </Animated.View>
           </Pressable>
-        </GlassCapsule>
+        </GlassShell>
       </Animated.View>
     </View>
   );
@@ -306,6 +415,10 @@ const styles = StyleSheet.create({
   measureRow: {
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  glass: {
+    overflow: 'hidden',
+    flex: 1,
   },
 });
 

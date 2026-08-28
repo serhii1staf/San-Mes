@@ -28,6 +28,9 @@ import { create } from 'zustand';
 
 export type InAppAlertKind = 'message' | 'comment' | 'like' | 'follow';
 
+/** What the message actually contained, so the pill can say "sent a photo" rather than only "a message". */
+export type InAppAlertMedia = 'photo' | 'gif' | 'text';
+
 export interface InAppAlert {
   /** Stable identity for the visible pill. Used as a React key so a swap re-runs the text fade only. */
   id: string;
@@ -42,7 +45,38 @@ export interface InAppAlert {
   targetId?: string;
   /** How many identical alerts collapsed into this one. 1 means "just this". */
   repeat: number;
+  /** Only meaningful for `kind: 'message'`. Absent means "not known", which reads as plain text. */
+  media?: InAppAlertMedia;
 }
+
+// ── TWO PRODUCERS, ONE EVENT ─────────────────────────────────────────────────
+//
+// The realtime bridge and the push handler can both learn about the same message, and on iOS both do.
+// Without a guard the store's own coalescing would then turn one message into a pill reading
+// "2 messages", which is worse than either producer alone.
+//
+// The bridge is the PRIMARY producer because it is platform-independent and carries richer data
+// (`senderEmoji`, `senderName`, the preview text — the push payload has none of those, only a title).
+// The push handler is kept as a FALLBACK rather than deleted: the foreground OS banner is stood down in
+// favour of the pill, so if realtime were down and the handler were also silent, the user would get no
+// indication at all.
+//
+// The obvious guard — "ignore the same (kind, actor, target) twice within N seconds" — is WRONG here, and
+// wrong in a way worth recording. Two genuine messages from one person in the same conversation share
+// exactly that triple, so such a window would swallow the second real message and defeat rule 2, whose
+// entire job is to turn it into "2 messages". The two producers also cannot be matched on a message id:
+// Ably carries `message_id`, and the push `data` has only `{ type, conversation_id, sender_id }`.
+//
+// So the rule is precedence, not identity. The bridge is accepted unconditionally and stamps
+// `lastBridgeAt`. A push-sourced alert is accepted only if the bridge has been quiet for
+// `FALLBACK_AFTER_MS` — which is what "realtime is not delivering, fall back" actually means. Genuine
+// repeats from the bridge are never blocked, and a duplicate arriving over push moments after the bridge
+// already reported it is.
+const FALLBACK_AFTER_MS = 8000;
+let lastBridgeAt = 0;
+
+/** Which producer an alert came from. `'push'` is the fallback and yields to a live bridge. */
+export type InAppAlertSource = 'bridge' | 'push';
 
 /** Waiting alerts beyond this are dropped oldest-first. Small on purpose: see rule 1. */
 const MAX_PENDING = 3;
@@ -54,7 +88,7 @@ interface InAppAlertState {
    * Enqueue an alert. Coalesces into the visible one when it is the same kind from the same actor.
    * Safe to call from a native callback or a realtime handler — it never touches React directly.
    */
-  push: (alert: Omit<InAppAlert, 'id' | 'repeat'>) => void;
+  push: (alert: Omit<InAppAlert, 'id' | 'repeat'>, source?: InAppAlertSource) => void;
   /** The visible alert finished (timed out, tapped, or swiped). Promotes the next pending one. */
   advance: () => void;
   /** Drop everything immediately — used when the app backgrounds, so nothing is mid-flight on return. */
@@ -80,7 +114,14 @@ export const useInAppAlert = create<InAppAlertState>((set, get) => ({
   current: null,
   pending: [],
 
-  push: (alert) => {
+  push: (alert, source = 'bridge') => {
+    // Producer precedence — see the note on `FALLBACK_AFTER_MS`.
+    if (source === 'bridge') {
+      lastBridgeAt = Date.now();
+    } else if (Date.now() - lastBridgeAt < FALLBACK_AFTER_MS) {
+      return;
+    }
+
     const { current, pending } = get();
 
     // Rule 2 — collapse a repeat from the same source into the visible pill.
@@ -119,5 +160,8 @@ export const useInAppAlert = create<InAppAlertState>((set, get) => ({
     set({ current: pending[0], pending: pending.slice(1) });
   },
 
-  clear: () => set({ current: null, pending: [] }),
+  clear: () => {
+    lastBridgeAt = 0;
+    set({ current: null, pending: [] });
+  },
 }));
