@@ -10,10 +10,10 @@
 //     stored, otherwise (no persisted id) the Default_Theme `default-dark`
 //     (Req 2.2, 2.3) — including falling back through the auth user's stored
 //     `themeId` and collapsing an unknown stored id to the default.
-//   * Mirrors `appearance.tsx`'s deferred-mount + virtualized-FlatList config:
-//     the carousel mounts only after `InteractionManager` interactions settle
-//     (the `cardsReady` gate), and the FlatList carries the tight
-//     virtualization props (Req 9.4, 2.7).
+//   * Mirrors `appearance.tsx`'s virtualized-FlatList config: the carousel is
+//     mounted on the first render (the old `cardsReady` / InteractionManager
+//     gate is gone) and the FlatList carries the tight virtualization props,
+//     which is what actually keeps the open frame cheap (Req 9.4, 2.7).
 //
 // Library: Jest + react-test-renderer (the repo convention — there is no
 // @testing-library/react-native dependency; see mini-apps.test.tsx and
@@ -205,17 +205,25 @@ function selectedDotIndex(renderer: TestRenderer.ReactTestRenderer): number {
 
 // ─── Tests ─────────────────────────────────────────────────────────────────-
 
-describe('ProfileThemeScreen — deferred-mount + virtualized carousel (Req 9.4, 2.7)', () => {
-  it('defers the carousel behind InteractionManager: spinner first, FlatList after interactions settle', () => {
+describe('ProfileThemeScreen — immediate-mount + virtualized carousel (Req 9.4, 2.7)', () => {
+  // This test used to assert the opposite: that the carousel was withheld behind
+  // `InteractionManager.runAfterInteractions` while an ActivityIndicator stood in for it, and only
+  // mounted once interactions settled. That gate was removed (see the GATE REMOVED note in
+  // profile-theme.tsx); the requirement it claimed to serve — keep the open frame under the long-task
+  // threshold — is met by virtualization, which is asserted in the next test.
+  //
+  // The assertion is inverted rather than deleted so the gate cannot come back unnoticed.
+  it('mounts the carousel on the first render, with no spinner and no InteractionManager deferral', () => {
     const renderer = renderScreen();
 
-    // Before interactions settle: the cards are NOT mounted; a spinner stands
-    // in (the same `cardsReady` gate appearance.tsx uses).
-    expect(renderer.root.findAllByType(FlatList)).toHaveLength(0);
-    expect(renderer.root.findAllByType(ActivityIndicator)).toHaveLength(1);
-    expect(runAfterInteractionsSpy).toHaveBeenCalled();
+    // First render, before anything is flushed: the cards are already there.
+    expect(renderer.root.findAllByType(FlatList)).toHaveLength(1);
+    expect(renderer.root.findAllByType(ActivityIndicator)).toHaveLength(0);
 
-    // After the deferred callback runs: the carousel mounts, spinner gone.
+    // And nothing about the carousel is scheduled behind interactions.
+    expect(runAfterInteractionsSpy).not.toHaveBeenCalled();
+
+    // Flushing interactions is a no-op — there is nothing queued, and the tree is unchanged.
     flushInteractions();
     expect(renderer.root.findAllByType(FlatList)).toHaveLength(1);
     expect(renderer.root.findAllByType(ActivityIndicator)).toHaveLength(0);
