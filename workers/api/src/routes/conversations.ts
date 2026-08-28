@@ -56,6 +56,9 @@ register('GET', '/v1/conversations', async (req, env, _ctx, _params, authedUserI
     other_emoji: string | null;
     other_is_verified: number | null;
     other_badge: string | null;
+    last_message_at: string | null;
+    last_sender_id: string | null;
+    last_message: string | null;
   }
 
   // Find every conversation the user is in, then re-join
@@ -63,6 +66,37 @@ register('GET', '/v1/conversations', async (req, env, _ctx, _params, authedUserI
   // join profiles for that participant's display info.
   const rows = await query<Row>(
     env,
+    // ── THE LIST MUST CARRY ITS LAST MESSAGE ────────────────────────────────
+    //
+    // Reported five times: the app is closed, messages arrive, the app is opened, and neither the
+    // chat-list row badge nor the bottom-bar counter shows anything.
+    //
+    // This query is the reason, and it took three attempts on the client to find it. The client's
+    // `reconcile` decides "unread" by comparing each row's newest-message time against a persisted
+    // read watermark, and its first line is `if (!r?.id || !r.lastMessageAt) continue;`. This response
+    // carried no timestamp at all, so EVERY row was skipped and no count could ever be raised —
+    // regardless of when the pass ran or which user id it ran under. Two client-side fixes changed the
+    // timing of a call whose input was empty by construction.
+    //
+    // `last_message_at` / `last_sender_id` / `last_message` close that. They also fix a second thing
+    // the client was working around locally: `syncConversations` rebuilds every row from participant
+    // fields and `setConversations` replaces the array wholesale, so any timestamp the realtime bridge
+    // had written onto a row was wiped every few minutes. Now the server is the source for it.
+    //
+    // No migration. `messages` already has `sender_id`, `created_at` and `text` — the sibling route in
+    // this same file selects exactly those columns — so this is a read-only change plus a deploy, which
+    // deliberately avoids the D1 migration permission problem that pushed unread counting onto the
+    // client in the first place.
+    //
+    // Shape: a correlated subquery per conversation rather than a GROUP BY join, because the newest
+    // row's AUTHOR is needed alongside its timestamp and `MAX(created_at)` with a bare `sender_id`
+    // would be a bare-column select — SQLite permits it for a simple `MAX` aggregate but it is
+    // fragile, and the client's whole author guard depends on the two describing the SAME message.
+    // `idx_messages_conversation` makes each subquery a single index seek.
+    //
+    // ORDER BY is now last activity, falling back to creation for a conversation with no messages.
+    // That is a free correctness win: the list is recency-ordered on the client anyway, so the old
+    // `c.created_at DESC` meant the LIMIT could cut off the most recently active conversations.
     `SELECT cp.conversation_id                 AS conversation_id,
             c.id                               AS conv_id,
             c.created_at                       AS conv_created_at,
@@ -71,7 +105,16 @@ register('GET', '/v1/conversations', async (req, env, _ctx, _params, authedUserI
             pr.display_name                    AS other_display_name,
             pr.emoji                           AS other_emoji,
             pr.is_verified                     AS other_is_verified,
-            pr.badge                           AS other_badge
+            pr.badge                           AS other_badge,
+            (SELECT m.created_at FROM messages m
+              WHERE m.conversation_id = c.id
+              ORDER BY m.created_at DESC LIMIT 1)  AS last_message_at,
+            (SELECT m.sender_id  FROM messages m
+              WHERE m.conversation_id = c.id
+              ORDER BY m.created_at DESC LIMIT 1)  AS last_sender_id,
+            (SELECT m.text       FROM messages m
+              WHERE m.conversation_id = c.id
+              ORDER BY m.created_at DESC LIMIT 1)  AS last_message
        FROM conversation_participants cp
        JOIN conversations c
          ON c.id = cp.conversation_id
@@ -80,7 +123,9 @@ register('GET', '/v1/conversations', async (req, env, _ctx, _params, authedUserI
         AND other.user_id != cp.user_id
   LEFT JOIN profiles pr ON pr.id = other.user_id
       WHERE cp.user_id = ?
-   ORDER BY c.created_at DESC
+   ORDER BY COALESCE((SELECT m.created_at FROM messages m
+                       WHERE m.conversation_id = c.id
+                       ORDER BY m.created_at DESC LIMIT 1), c.created_at) DESC
       LIMIT ?`,
     // Bounded. This query had NO limit, so it returned every conversation the user
     // has ever had, joined three ways, on every chat-list sync — the result set (and
@@ -92,6 +137,13 @@ register('GET', '/v1/conversations', async (req, env, _ctx, _params, authedUserI
 
   const out = rows.map((row) => ({
     conversation_id: row.conversation_id,
+    // Emitted at the TOP level, not inside `conversations`, because the client's mapper reads
+    // `c.conversations` for the id and treats the rest of the envelope as row-level fields. Nulls are
+    // passed through rather than defaulted: the client distinguishes "no last message" from "a last
+    // message with an empty body", and an empty string for a photo-only message is meaningful.
+    last_message_at: row.last_message_at,
+    last_sender_id: row.last_sender_id,
+    last_message: row.last_message,
     conversations: {
       id: row.conv_id,
       created_at: row.conv_created_at,

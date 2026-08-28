@@ -286,6 +286,50 @@ function runBadgeRefreshPass(): void {
   }
 }
 
+/**
+ * Run the launch pass once auth is actually available.
+ *
+ * ── WHY THE LAUNCH PASS SILENTLY DID NOTHING ────────────────────────────────
+ *
+ * `installNotificationsBadgeForegroundRefresh()` is called at MODULE SCOPE in `app/_layout.tsx`, which
+ * is the earliest possible moment — before `RootLayout` mounts and long before the auth store finishes
+ * rehydrating. `authStore` persists through an AsyncStorage adapter whose `getItem` is `async`, so
+ * hydration completes a native round trip later and signals it via `hasHydrated`.
+ *
+ * `refreshChatUnreadOnResume` opens with `const uid = ...user?.id; if (!uid) return;`. At install time
+ * `user` is still the initial `null`, so the entire pass returned immediately, every launch. The single
+ * `await import()` in front of the read defers by one microtask, which is nowhere near an AsyncStorage
+ * round trip. Nothing logged, nothing threw — it just returned.
+ *
+ * That also silently killed the notifications-feed half, because `refresh({ force: true })` would fire
+ * an unauthenticated fetch.
+ *
+ * So: run now if the id is already there, otherwise subscribe and fire ONCE when it arrives. The
+ * unsubscribe is returned so the disposer can drop it alongside the AppState listener — a subscription
+ * that outlives the install would keep a stale closure alive across an account switch.
+ */
+function runBadgeRefreshPassWhenAuthed(): () => void {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { useAuthStore } = require('./authStore') as typeof import('./authStore');
+    if (useAuthStore.getState().user?.id) {
+      runBadgeRefreshPass();
+      return () => {};
+    }
+    let done = false;
+    const unsub = useAuthStore.subscribe((s: any) => {
+      if (done) return;
+      if (!s?.user?.id) return;
+      done = true;
+      runBadgeRefreshPass();
+      try { unsub(); } catch {}
+    });
+    return () => { done = true; try { unsub(); } catch {} };
+  } catch {
+    return () => {};
+  }
+}
+
 export function installNotificationsBadgeForegroundRefresh(): () => void {
   const sub = AppState.addEventListener('change', (next) => {
     if (next !== 'active') return;
@@ -320,9 +364,18 @@ export function installNotificationsBadgeForegroundRefresh(): () => void {
   // Not gated behind `InteractionManager`: everything it touches is behind a dynamic import and a
   // network call, so nothing here occupies the first frame, and a deferral is what made the equivalent
   // paths elsewhere in this app paint stale empty states.
-  if (AppState.currentState === 'active') runBadgeRefreshPass();
+  // ── AND IT HAS TO WAIT FOR AUTH, WHICH IS WHY THE LAST FIX CHANGED NOTHING ──
+  //
+  // `AppState.currentState === 'active'` was the right guard for the wrong problem. It is usually true
+  // here, so the pass DID run — and then returned on `if (!uid) return;` because this function is
+  // called at module scope, before the auth store has rehydrated from AsyncStorage. See
+  // `runBadgeRefreshPassWhenAuthed`.
+  const cancelAuthWait = AppState.currentState === 'active'
+    ? runBadgeRefreshPassWhenAuthed()
+    : () => {};
 
   return () => {
     try { sub.remove(); } catch {}
+    try { cancelAuthWait(); } catch {}
   };
 }
