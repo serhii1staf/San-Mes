@@ -4,6 +4,86 @@
  * Tracks two FPS streams (JS thread + UI/native thread) plus an event ring
  * buffer (navigation transitions, slow frames, manually recorded events).
  *
+ * ── WHAT THIS MONITOR CANNOT SEE, MEASURED FROM OUTSIDE IT ────────────────────
+ *
+ * Read this before using the panel to decide what to optimise. It is here because
+ * five consecutive rounds of JS-side work produced no perceptible change, and the
+ * reason turned out to be that the dominant cost is invisible to every instrument
+ * in this file.
+ *
+ * Measured on an Android emulator (1080x1920, density 480), native 1.3.0, release
+ * APK, using the OS rather than this module:
+ *
+ *     adb shell dumpsys gfxinfo com.sanmes.app reset
+ *     <8 identical swipes, 540,1400 -> 540,500 over 250 ms, 400 ms apart>
+ *     adb shell dumpsys gfxinfo com.sanmes.app            # jank + percentiles
+ *     adb shell dumpsys gfxinfo com.sanmes.app framestats # per-stage timestamps
+ *
+ * Feed scroll, 548 frames:
+ *
+ *     Janky frames                66 (12.04%)
+ *     50th percentile             31 ms      <- the budget is 16.67 ms
+ *     90th / 95th / 99th          46 / 53 / 85 ms
+ *     Number Missed Vsync         11
+ *     Number High input latency   960
+ *     Number Slow UI thread       66         <- equals the whole jank count
+ *     Number Slow bitmap uploads  0
+ *     GPU, every percentile       1 ms
+ *
+ * The shape matters more than the magnitudes (an emulator inflates UI-thread and
+ * RenderThread work). Almost no frames are DROPPED — 11 missed vsyncs out of 548 —
+ * but half of them take about two frames' worth of time. That is not stutter, it is
+ * a uniformly halved frame rate with late input, which is exactly the report this
+ * module kept failing to explain: "it lags even though you cannot see it lag".
+ * A sampler that counts frames per 500 ms window reads a steady 30 and calls it
+ * healthy; the long-task detector never fires because nothing ever stalls.
+ *
+ * `framestats` localises it (medians over 120 complete frames):
+ *
+ *     input                                    0.00 ms
+ *     animation (Choreographer callbacks)      1.18 ms
+ *     MEASURE + LAYOUT + MOUNT                12.05 ms   <- dominant
+ *     draw record                              0.12 ms
+ *     sync                                     0.71 ms
+ *     RenderThread (issue draw commands)       7.12 ms   <- second
+ *     swap                                     1.58 ms
+ *     TOTAL                                   31.67 ms
+ *     late start (behind before any work)      4.37 ms
+ *
+ * So ~19 of the ~32 ms is UI-thread measure/layout/mount plus RenderThread
+ * display-list building, for a GPU that finishes in 1 ms. None of that is the JS
+ * thread, and none of it is reachable from this file.
+ *
+ * ── ONE HYPOTHESIS ALREADY TESTED AND REFUTED ─────────────────────────────────
+ *
+ * `dumpsys activity top` shows the feed's list wrapped in `ReactSwipeRefreshLayout`
+ * (the `RefreshControl` whose native indicator `(tabs)/index.tsx` deliberately makes
+ * invisible, because it draws its own ring next to the wordmark). An extra ViewGroup
+ * in the measure path, paid for output nobody sees — an obvious suspect.
+ *
+ * It is not the cause. `(tabs)/profile.tsx` uses the same FlashList with NO
+ * RefreshControl and therefore no `ReactSwipeRefreshLayout`; the same swipe script
+ * there gives MEASURE+LAYOUT+MOUNT = 12.06 ms against the feed's 12.05 ms. The cost
+ * is invariant across two structurally different screens, so it belongs to the shell
+ * above the list, not to the list, the cards, or the refresh wrapper.
+ *
+ * For reference, that shell is 13 view levels deep before any screen content:
+ * ReactSurfaceView > SafeAreaProvider > ReactViewGroup > RNGestureHandlerRootView >
+ * EdgeToEdgeReactViewGroup > ScreenStack > ScreensCoordinatorLayout > Screen >
+ * ScreenContentWrapper > ScreenContainer > ScreensFrameLayout > Screen >
+ * ReactViewGroup, and a feed card's text sits at about level 28.
+ *
+ * Two things worth checking next, in this order, and both need the same before/after
+ * `framestats` method rather than this panel:
+ *   1. Whether the per-frame cost is being caused by something in the shell animating
+ *      a LAYOUT property (height/margin/padding) every frame, which forces a full
+ *      measure pass. `app/_layout.tsx` keeps several hosts permanently mounted, and
+ *      `BrowserBottomBand` is documented there as a flex sibling that squeezes every
+ *      screen.
+ *   2. Whether this monitor itself contributes, since its rAF sampler and the
+ *      `PerfMonitorBubble` worklet both run per frame. Measure with the toggle OFF
+ *      before trusting any of the numbers above as the app's floor.
+ *
  * Design constraints:
  * - The monitor itself must NOT cause jank. We sample at 500 ms (not every
  *   frame) and write to a tiny Set<Listener> instead of any state lib that
