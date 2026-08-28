@@ -1004,11 +1004,24 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
   // bubble (24 of them, given `maxItemsInRecyclePool`) whose only purpose was measurement — the
   // profiler billing itself to the thing it profiles. `perfMonitor.markScreenMount` re-checks the
   // flag itself before recording, and a debug toggle has no business re-rendering the transcript.
+  //
+  // ── AND THE NUMBER IT PRODUCED WAS STILL WRONG, FOR A THIRD REASON ─────────
+  //
+  // Keying on `imgReveal` fixed WHICH commit is measured. It did not fix the span. `Date.now()` in
+  // render minus `Date.now()` in the effect is a fair render→commit interval for a single component
+  // and never for a batch, and bubbles arrive as a batch: React renders all of them, commits, then
+  // flushes their effects together, so the first bubble's number contains every later bubble in the
+  // commit and the last bubble's is near zero. Six marks inside one millisecond reading
+  // 128/120/109/69/62/47 were not six expensive mounts, they were one interval measured six times
+  // from six different starting points — and the per-route `avgMountMs` summed them.
+  //
+  // `noteBatchRender` + `markBatchCommit` measure the commit once and report the batch size with it.
+  // See their note in perfMonitor.ts.
   const perfEnabled = useSettingsStore.getState().perfMonitorEnabled;
-  const bodyRenderStart = perfEnabled && hasImages && imgReveal ? Date.now() : 0;
+  if (perfEnabled && hasImages && imgReveal) perfMonitor.noteBatchRender('MessageBubble.media');
   useEffect(() => {
     if (!perfEnabled || !hasImages || !imgReveal) return;
-    perfMonitor.markScreenMount('MessageBubble.media', Date.now() - bodyRenderStart);
+    perfMonitor.markBatchCommit('MessageBubble.media');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [perfEnabled, hasImages, imgReveal]);
   // Photos we've already seen are on disk (their dimensions are remembered):

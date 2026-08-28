@@ -173,11 +173,17 @@ function UserProfilePostCardBase({
   // the decoration pattern, the thumbnails, FormattedText, LinkPreview, the avatar. That commit
   // was never instrumented at all. The label carries .body so old and new numbers cannot be
   // silently compared.
+  //
+  // The span was still wrong for a batch, which is how these cards always arrive. React renders every
+  // card in the commit, commits, then flushes the effects together, so the first card's number
+  // contains all the later ones and the last card's is near zero. The ~24 marks inside one second that
+  // this screen's own note above records were not 24 independent costs. `noteBatchRender` +
+  // `markBatchCommit` measure the commit once and report the batch size with it — see perfMonitor.ts.
   const perfEnabled = useSettingsStore((s) => s.perfMonitorEnabled);
-  const bodyRenderStart = perfEnabled && hydrated ? Date.now() : 0;
+  if (perfEnabled && hydrated) perfMonitor.noteBatchRender('UserProfilePostCard.body');
   useEffect(() => {
     if (!perfEnabled || !hydrated) return;
-    perfMonitor.markScreenMount('UserProfilePostCard.body', Date.now() - bodyRenderStart);
+    perfMonitor.markBatchCommit('UserProfilePostCard.body');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [perfEnabled, hydrated]);
 

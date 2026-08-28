@@ -295,6 +295,10 @@ class PerfMonitor {
   // events. Keyed by route label.
   private _routeStats = new Map<string, RouteStat>();
 
+  // In-flight commit batches for `noteBatchRender` / `markBatchCommit`, keyed by mark label. See the
+  // note on those methods for why per-component mount timing over-reports a co-mounted batch.
+  private _commitBatches = new Map<string, { start: number; count: number; scheduled: boolean }>();
+
   // After a long-task / stall, RAF (and the Reanimated frame callback) deliver
   // "catch-up" bursts where several queued frames fire back-to-back in <16 ms
   // each. The naive `(frameCount * 1000) / elapsed` over a 500 ms window then
@@ -576,6 +580,67 @@ class PerfMonitor {
       route: this._currentRoute,
     });
     this._notify();
+  }
+
+  // ── PER-COMPONENT MOUNT TIMING OVER-REPORTS A CO-MOUNTED BATCH ──────────────
+  //
+  // The list-cell callers of `markScreenMount` all use the same shape: stamp `Date.now()` during
+  // render, subtract it inside a `useEffect`. For ONE component that is a fair render→commit span. For
+  // a batch it is not, and list cells always arrive as a batch.
+  //
+  // React runs every render function in the batch first, then commits, then flushes the passive
+  // effects together. So with six bubbles in one commit, cell #1 stamps earliest and its effect fires
+  // after ALL SIX have rendered and committed — its "mount" number contains the other five. Cell #6
+  // stamps last and reports almost nothing. The numbers are overlapping suffixes of one interval, and
+  // the signature is unmistakable once you look for it: six `MessageBubble.media` marks inside the same
+  // millisecond reading 128, 120, 109, 69, 62, 47, and eight `ProfilePostCard.body` reading 120, 109,
+  // 102, 85, 75, 63, 50, 25. Descending, co-terminating.
+  //
+  // The consequence is that `mountCount` counts cells rather than commits, and `sumMountMs` /
+  // `avgMountMs` add up intervals that are mostly the same milliseconds counted repeatedly. Profile
+  // reporting `mountCount: 88, avgMountMs: 99` does not mean 8.7 seconds of mounting. The per-batch
+  // MAXIMUM was roughly honest all along; the average and the total never were, and several rounds of
+  // this work were aimed using them.
+  //
+  // This pair measures the commit instead:
+  //
+  //   • `noteBatchRender` from render — keeps the EARLIEST start across the batch, counts participants.
+  //   • `markBatchCommit`  from the effect — schedules ONE report, after which the accumulator resets.
+  //
+  // `setTimeout(0)` rather than a microtask on purpose: passive effects are flushed inside a scheduler
+  // task, and a microtask queued from the first effect would run before the later effects in that same
+  // flush had incremented the count. A macrotask is after the whole flush.
+  //
+  // The label carries the batch size (`MessageBubble.media x6`) because that is the number that tells
+  // you whether to attack per-cell cost or how many cells commit together — which the old marks
+  // actively obscured by looking like six separate expensive mounts.
+  noteBatchRender(label: string) {
+    if (!useSettingsStore.getState().perfMonitorEnabled) return;
+    let b = this._commitBatches.get(label);
+    if (!b) {
+      b = { start: 0, count: 0, scheduled: false };
+      this._commitBatches.set(label, b);
+    }
+    // MIN, so a re-render of an already-counted cell cannot move the start later, and so this stays
+    // safe under a double-invoked render.
+    if (b.start === 0) b.start = Date.now();
+    b.count += 1;
+  }
+
+  markBatchCommit(label: string) {
+    if (!useSettingsStore.getState().perfMonitorEnabled) return;
+    const b = this._commitBatches.get(label);
+    if (!b || b.start === 0 || b.scheduled) return;
+    b.scheduled = true;
+    setTimeout(() => {
+      const durationMs = Date.now() - b.start;
+      const count = b.count;
+      b.start = 0;
+      b.count = 0;
+      b.scheduled = false;
+      if (count <= 0) return;
+      this.markScreenMount(count > 1 ? `${label} x${count}` : label, durationMs);
+    }, 0);
   }
 
   /**

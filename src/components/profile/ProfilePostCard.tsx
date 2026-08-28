@@ -139,11 +139,18 @@ function ProfilePostCardBase({ post, authorName, authorEmoji, authorVerified, au
   // the decoration pattern, the thumbnails, FormattedText, LinkPreview, the avatar. That commit
   // was never instrumented at all. The label carries .body so old and new numbers cannot be
   // silently compared.
+  //
+  // The span was still wrong for a batch, which is how these cards always arrive. React renders every
+  // card in the commit, commits, then flushes the effects together, so the first card's number
+  // contains all the later ones and the last card's is near zero. Eight marks in one millisecond
+  // reading 120/109/102/85/75/63/50/25 were one interval measured eight times, and `avgMountMs` was
+  // summing them. `noteBatchRender` + `markBatchCommit` measure the commit once and report the batch
+  // size with it — see their note in perfMonitor.ts.
   const perfEnabled = useSettingsStore((s) => s.perfMonitorEnabled);
-  const bodyRenderStart = perfEnabled && hydrated ? Date.now() : 0;
+  if (perfEnabled && hydrated) perfMonitor.noteBatchRender('ProfilePostCard.body');
   useEffect(() => {
     if (!perfEnabled || !hydrated) return;
-    perfMonitor.markScreenMount('ProfilePostCard.body', Date.now() - bodyRenderStart);
+    perfMonitor.markBatchCommit('ProfilePostCard.body');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [perfEnabled, hydrated]);
 
