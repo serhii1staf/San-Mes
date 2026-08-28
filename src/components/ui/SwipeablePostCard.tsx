@@ -37,6 +37,49 @@ interface SwipeablePostCardProps {
   children: React.ReactNode;
 }
 
+/**
+ * The screenshot affordance, extracted so its animated style is not registered on
+ * rows that never get swiped.
+ *
+ * The `buttonArmed` gate already stopped MOUNTING the three native views at rest —
+ * see the note on it below. But `buttonStyle` was a `useAnimatedStyle` in the
+ * parent, and hooks are unconditional, so every row still paid the registration:
+ * a worklet, a mapper, and a shared-value dependency on `translateX`, for an
+ * opacity ramp feeding an element that is not in the tree. On a forty-row profile
+ * that is forty UI-thread mappers doing nothing.
+ *
+ * Moving it into the component that consumes it makes the gate cover both halves.
+ * At rest the row registers one animated style (`cardStyle`) instead of two; the
+ * second is created on the same commit that mounts the button, which is the commit
+ * a swipe already pays for.
+ */
+const SwipeScreenshotButton = memo(function SwipeScreenshotButton({
+  translateX,
+  fill,
+  onPress,
+}: {
+  translateX: { value: number };
+  fill: { backgroundColor: string };
+  onPress: () => void;
+}) {
+  // Same ramp as before: invisible until the row has travelled 55 pt.
+  const buttonStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(
+      translateX.value,
+      [-BUTTON_WIDTH, -BUTTON_WIDTH + 10, 0],
+      [1, 0, 0],
+      Extrapolation.CLAMP,
+    ),
+  }));
+  return (
+    <Reanimated.View style={[swipeStyles.buttonWrap, buttonStyle]}>
+      <Pressable onPress={onPress} style={[swipeStyles.button, fill]}>
+        <Feather name="camera" size={17} color="#FFFFFF" />
+      </Pressable>
+    </Reanimated.View>
+  );
+});
+
 function SwipeablePostCardBase({ children }: SwipeablePostCardProps) {
   const theme = useTheme();
   // ── The swipe runs entirely on the UI thread ────────────────────────────────
@@ -200,15 +243,8 @@ function SwipeablePostCardBase({ children }: SwipeablePostCardProps) {
   const cardStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: translateX.value }],
   }));
-  // Same ramp the legacy `translateX.interpolate` produced, now evaluated on the UI thread.
-  const buttonStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(
-      translateX.value,
-      [-BUTTON_WIDTH, -BUTTON_WIDTH + 10, 0],
-      [1, 0, 0],
-      Extrapolation.CLAMP,
-    ),
-  }));
+  // `buttonStyle` used to live here. It now lives in `SwipeScreenshotButton`, which is
+  // only mounted once a swipe begins — see the note on that component.
 
   // Memoised so the Pressable below gets a stable `onPress` identity. It was a fresh async closure per
   // render, capturing the whole MediaLibrary / Sharing capture chain, allocated for every row on every
@@ -246,11 +282,7 @@ function SwipeablePostCardBase({ children }: SwipeablePostCardProps) {
   return (
     <View style={swipeStyles.root}>
       {buttonArmed ? (
-        <Reanimated.View style={[swipeStyles.buttonWrap, buttonStyle]}>
-          <Pressable onPress={handleScreenshot} style={[swipeStyles.button, buttonFill]}>
-            <Feather name="camera" size={17} color="#FFFFFF" />
-          </Pressable>
-        </Reanimated.View>
+        <SwipeScreenshotButton translateX={translateX} fill={buttonFill} onPress={handleScreenshot} />
       ) : null}
 
       <GestureDetector gesture={panGesture}>
