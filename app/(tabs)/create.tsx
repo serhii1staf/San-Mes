@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { View, TextInput, Pressable, ViewStyle, ScrollView, Alert, ActivityIndicator, StyleSheet } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -22,9 +22,8 @@ import { sanitizeUserText } from '../../src/utils/sanitizeText';
 import { accountKey } from '../../src/services/cacheService';
 import { FormatHelpModal } from '../../src/components/ui/FormatHelpModal';
 import { useT } from '../../src/i18n/store';
-import { perfMonitor } from '../../src/services/perfMonitor';
-import { useSettingsStore } from '../../src/store/settingsStore';
 import { validatePost } from '../../src/services/moderation/index';
+import { useScreenMountMark } from '../../src/hooks/useScreenMountMark';
 
 const MAX_CHARS = 500;
 const MAX_IMAGES = 6;
@@ -36,6 +35,7 @@ const HEADER_GRADIENT_LOCATIONS = [0, 0.55, 1] as const;
 type Audience = 'public' | 'friends';
 
 export default function CreateScreen() {
+  useScreenMountMark('(tabs)/create');
   const theme = useTheme();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
@@ -44,14 +44,8 @@ export default function CreateScreen() {
   // photo-picker chrome that occasionally lags on cold tab switch; this
   // attribution helps tell whether that lag is in the screen's first
   // render or downstream picker work. Skipped when the monitor is off.
-  const mountStart = useRef(Date.now()).current;
-  // Fire ONCE on first mount. See (tabs)/index.tsx for the same fix
-  // rationale — store-read at effect-time avoids stale-mountStart re-fires.
-  useEffect(() => {
-    if (!useSettingsStore.getState().perfMonitorEnabled) return;
-    perfMonitor.markScreenMount('(tabs)/create', Date.now() - mountStart);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // Mount timing moved to the FIRST hook of this component - see useScreenMountMark.
+  // Measured from here it under-reported: every hook above it fell outside the window.
   // Field-level selectors so the create screen doesn't re-render on every
   // unrelated feed-store mutation (likes, posts list, etc.) coming from the home tab.
   const user = useAuthStore((s) => s.user);

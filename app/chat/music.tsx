@@ -22,9 +22,8 @@ import { useMusicStore } from '../../src/store/musicStore';
 import { kvGetJSONSync, kvSetJSON } from '../../src/services/kvStore';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { useT } from '../../src/i18n/store';
-import { perfMonitor } from '../../src/services/perfMonitor';
-import { useSettingsStore } from '../../src/store/settingsStore';
 import { useChatKeyboardMode } from '../../src/hooks/useChatKeyboardMode';
+import { useScreenMountMark } from '../../src/hooks/useScreenMountMark';
 
 interface MusicMessage { id: string; query: string; track?: Track | null; tracks?: Track[]; ts: number }
 
@@ -44,6 +43,7 @@ const styles = StyleSheet.create({
 });
 
 export default function MusicChatScreen() {
+  useScreenMountMark('chat/music');
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
@@ -53,13 +53,8 @@ export default function MusicChatScreen() {
   // Mount-time marker — perf-monitor panel attributes any open-the-music
   // chat freeze either to navigation overhead or to this commit duration.
   // Skipped at the call site when the monitor is off.
-  const mountStart = useRef(Date.now()).current;
-  const perfEnabled = useSettingsStore((s) => s.perfMonitorEnabled);
-  useEffect(() => {
-    if (!perfEnabled) return;
-    perfMonitor.markScreenMount('chat/music', Date.now() - mountStart);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [perfEnabled]);
+  // Mount timing moved to the FIRST hook of this component - see useScreenMountMark.
+  // Measured from here it under-reported: every hook above it fell outside the window.
   const COMMANDS: CommandDef[] = useMemo(() => [
     { id: 'last', icon: 'rotate-cw', label: t('music_chat.command.last_label'), description: t('music_chat.command.last_desc') },
     { id: 'clear', icon: 'eraser', label: t('music_chat.command.clear_label'), description: t('music_chat.command.clear_desc') },

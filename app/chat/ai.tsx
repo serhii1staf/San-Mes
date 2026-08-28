@@ -24,12 +24,11 @@ import { sendMessage, parseActions, applyAction, AIMessage, ParsedAction, getRem
 import { triggerHaptic } from '../../src/utils/haptics';
 import { useT } from '../../src/i18n/store';
 import { showToast } from '../../src/store/toastStore';
-import { perfMonitor } from '../../src/services/perfMonitor';
-import { useSettingsStore } from '../../src/store/settingsStore';
 import { ThemeIconCarousel } from '../../src/components/pixel-icons/ThemeIconCarousel';
 import { buildMiniAppShareUrl } from '../../src/utils/miniAppShare';
 import { useChatKeyboardMode } from '../../src/hooks/useChatKeyboardMode';
 import { emojiTextStyle } from '../../src/components/ui/emojiText';
+import { useScreenMountMark } from '../../src/hooks/useScreenMountMark';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 
@@ -266,6 +265,7 @@ const keyExtractor = (item: ChatItem) => item.id;
 const LIST_CONTENT_CONTAINER_STYLE = { paddingHorizontal: 16, paddingTop: 8 };
 
 export default function AIChatScreen() {
+  useScreenMountMark('chat/ai');
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
@@ -276,13 +276,8 @@ export default function AIChatScreen() {
   // tell at a glance whether opening the AI chat froze on the JS thread
   // (large initial render) or on the navigation transition itself.
   // Skipped at the call site when the monitor is off.
-  const mountStart = useRef(Date.now()).current;
-  const perfEnabled = useSettingsStore((s) => s.perfMonitorEnabled);
-  useEffect(() => {
-    if (!perfEnabled) return;
-    perfMonitor.markScreenMount('chat/ai', Date.now() - mountStart);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [perfEnabled]);
+  // Mount timing moved to the FIRST hook of this component - see useScreenMountMark.
+  // Measured from here it under-reported: every hook above it fell outside the window.
   const [messages, setMessages] = useState<ChatItem[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);

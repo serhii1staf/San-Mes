@@ -28,9 +28,9 @@ import { updateFeedWidget } from '../../src/services/widgetBridge';
 import { useWidgetSettingsStore } from '../../src/store/widgetSettingsStore';
 import { queueMutation } from '../../src/services/offlineQueue';
 import { useT } from '../../src/i18n/store';
-import { perfMonitor } from '../../src/services/perfMonitor';
 import { useSettingsStore } from '../../src/store/settingsStore';
 import { PixelIcon } from '../../src/components/pixel-icons/PixelIcon';
+import { useScreenMountMark } from '../../src/hooks/useScreenMountMark';
 // The dark scrim gradient is now rendered UNCONDITIONALLY beneath the frosted blur,
 // where it used to be a fallback for when the blur was unavailable
 // (`!isFadingBlurAvailable() && …`).
@@ -320,6 +320,7 @@ function mapRawPost(p: any, postsById: Record<string, any>, viewerId?: string): 
 }
 
 export default function FeedScreen() {
+  useScreenMountMark('(tabs)/index');
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
@@ -327,17 +328,8 @@ export default function FeedScreen() {
   // any time spent here is highly user-visible. Skipped at the call site too
   // when the perf monitor is off so we don't pay the Date.now() + function
   // hop on the cold-start frame.
-  const mountStart = useRef(Date.now()).current;
-  // Fire ONCE on first mount, regardless of whether perfMonitor was on or
-  // off at that moment. Reading `perfMonitorEnabled` from the store at
-  // effect-time means a later toggle doesn't re-fire this effect with the
-  // long-stale `mountStart` (which was producing fake 3-minute durations
-  // in the snapshot panel). Empty deps + lazy store read = correct semantics.
-  useEffect(() => {
-    if (!useSettingsStore.getState().perfMonitorEnabled) return;
-    perfMonitor.markScreenMount('(tabs)/index', Date.now() - mountStart);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // Mount timing moved to the FIRST hook of this component - see useScreenMountMark.
+  // Measured from here it under-reported: every hook above it fell outside the window.
   // Subscribe field-by-field — pulling the whole user object from useAuthStore
   // re-renders the entire feed screen on any unrelated profile change.
   const userId = useAuthStore((s) => s.user?.id);

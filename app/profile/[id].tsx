@@ -42,7 +42,6 @@ import { ScreenshotShield } from '../../src/components/ui/ScreenshotShield';
 import { PanResponder } from 'react-native';
 import { useContextMenuGuard } from '../../src/hooks/useContextMenuGuard';
 import { useT } from '../../src/i18n/store';
-import { perfMonitor } from '../../src/services/perfMonitor';
 import { useSettingsStore } from '../../src/store/settingsStore';
 import { useBlockedUsersStore, useIsBlocked } from '../../src/store/blockedUsersStore';
 import { submitReport } from '../../src/services/moderation';
@@ -62,6 +61,7 @@ import { ProfileThemeScope } from '../../src/components/profile/ProfileThemeScop
 import { ProfileThemeBackground } from '../../src/components/profile/ProfileThemeBackground';
 import { useAmbientAnimationGate } from '../../src/hooks/useAmbientAnimationGate';
 import { ThemedMenuTrigger } from '../../src/components/profile/ThemedMenuTrigger';
+import { useScreenMountMark } from '../../src/hooks/useScreenMountMark';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const SCREEN_HEIGHT = Dimensions.get('window').height;
@@ -508,6 +508,7 @@ function ProfileBlockMenuItem({ profileId, onPress, theme }: { profileId: string
 const ProfileMenuModal = React.memo(ProfileMenuModalImpl);
 
 export default function UserProfileScreen() {
+  useScreenMountMark('profile/[id]');
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
@@ -515,13 +516,8 @@ export default function UserProfileScreen() {
   // complaint; this attribution lets the panel show whether the freeze
   // came from the screen's first render or from downstream image fan-out.
   // Skipped at the call site when the monitor is off.
-  const mountStart = useRef(Date.now()).current;
-  const perfEnabled = useSettingsStore((s) => s.perfMonitorEnabled);
-  useEffect(() => {
-    if (!perfEnabled) return;
-    perfMonitor.markScreenMount('profile/[id]', Date.now() - mountStart);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [perfEnabled]);
+  // Mount timing moved to the FIRST hook of this component - see useScreenMountMark.
+  // Measured from here it under-reported: every hook above it fell outside the window.
   const { id, fromChat } = useLocalSearchParams<{ id: string; fromChat?: string }>();
   // Screen-capture protection: if the VIEWED account turned screenshots off,
   // block capture while their profile is on screen. Per-account flag, read from

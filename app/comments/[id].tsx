@@ -50,11 +50,11 @@ import { showToast } from '../../src/store/toastStore';
 import { useT } from '../../src/i18n/store';
 import { useMediaPanelLabels } from '../../src/components/chat/useMediaPanelLabels';
 import { perfMonitor } from '../../src/services/perfMonitor';
-import { useSettingsStore } from '../../src/store/settingsStore';
 import { useEffectiveBrowserWidgetPosition } from '../../src/lib/browserWidget';
 import { useBrowserStore } from '../../src/store/browserStore';
 import { useIsBlocked } from '../../src/store/blockedUsersStore';
 import { BlockedContentPlaceholder } from '../../src/components/feed/BlockedContentPlaceholder';
+import { useScreenMountMark } from '../../src/hooks/useScreenMountMark';
 const SCREEN_WIDTH = Dimensions.get('window').width;
 
 // Delete one full user-perceived character from the end of a string. Handles
@@ -510,6 +510,7 @@ const CommentField = React.memo(React.forwardRef<CommentFieldHandle, CommentFiel
 }));
 
 export default function CommentsScreen() {
+  useScreenMountMark('comments/[id]');
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
@@ -525,13 +526,8 @@ export default function CommentsScreen() {
   // Mount-time marker — surfaces in the perf-monitor panel as
   // `MOUNT comments/[id] <ms>` so freezes when opening comments have
   // an actionable starting point. Skipped when the monitor is off.
-  const mountStart = useRef(Date.now()).current;
-  const perfEnabled = useSettingsStore((s) => s.perfMonitorEnabled);
-  useEffect(() => {
-    if (!perfEnabled) return;
-    perfMonitor.markScreenMount('comments/[id]', Date.now() - mountStart);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [perfEnabled]);
+  // Mount timing moved to the FIRST hook of this component - see useScreenMountMark.
+  // Measured from here it under-reported: every hook above it fell outside the window.
   const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
 
   // ── Media panel (emoji / GIF) state — mirrors the chat composer. ──────────

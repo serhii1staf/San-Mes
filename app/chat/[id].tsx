@@ -47,6 +47,7 @@ import { PixelIcon } from '../../src/components/pixel-icons/PixelIcon';
 import { uploadChatImage } from '../../src/lib/supabase';
 import { getImageDims, setImageDims } from '../../src/services/imageDimsCache';
 import { useRenderBudget } from '../../src/hooks/useRenderBudget';
+import { useScreenMountMark } from '../../src/hooks/useScreenMountMark';
 import { useEffectiveBrowserWidgetPosition } from '../../src/lib/browserWidget';
 import { composerScrimHeight, headerScrimHeights, SCRIM_LOCATIONS, topSurfaceScrimColors, bottomSurfaceScrimColors } from '../../src/theme/scrim';
 import { kvGetJSONSync, kvSetJSON, kvWarm } from '../../src/services/kvStore';
@@ -1464,6 +1465,9 @@ const VisibilityBubble = React.memo(function VisibilityBubble({ tracker, ...rest
 });
 
 export default function ChatScreen() {
+  // FIRST hook, deliberately. See the note further down where the old local stamp used to live, and
+  // the hook itself for why its position is the whole point of it.
+  useScreenMountMark('chat/[id]');
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
@@ -1646,17 +1650,16 @@ export default function ChatScreen() {
     };
   }, [conversationId, id]);
   // Mount-time marker — captures how long the chat screen took to commit
-  // its first render so the perf-monitor panel can attribute open-the-chat
-  // freezes. Reads `Date.now()` once at first render via useRef so the
-  // measurement starts at the start of the render, not at commit time.
-  // Skipped at the call site when the monitor is off.
-  const mountStart = useRef(Date.now()).current;
-  const perfEnabled = useSettingsStore((s) => s.perfMonitorEnabled);
-  useEffect(() => {
-    if (!perfEnabled) return;
-    perfMonitor.markScreenMount('chat/[id]', Date.now() - mountStart);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [perfEnabled]);
+  // its first render so the perf-monitor panel can attribute open-the-chat freezes.
+  //
+  // ── MOVED TO `useScreenMountMark`, AND MOVED TO THE TOP OF THE COMPONENT ────
+  //
+  // This used to be a local `useRef(Date.now()).current` right here, ~180 lines into the hook list,
+  // read in a passive effect. It reported 36 ms for a render that an on-device log measured inside a
+  // 150 ms long task, because everything above it — `seedMessages`' MMKV read and `JSON.parse`
+  // included — and everything after the first effect fell outside the window. See the hook for the
+  // full account. The call now sits at the very top of this component, which is the only place it can
+  // measure the render it claims to measure.
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
   const [editing, setEditing] = useState<ChatMessage | null>(null);
   // Long-press menu opener — see useContextMenuGuard for the rate-limit/raf
