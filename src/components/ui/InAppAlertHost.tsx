@@ -65,10 +65,32 @@ import { emojiTextStyle } from './emojiText';
 import { useT } from '../../i18n/store';
 import { useInAppAlert, type InAppAlert } from '../../store/inAppAlertStore';
 
+// ── GEOMETRY, AFTER TWO REPORTED DEFECTS ────────────────────────────────────
+//
+// Reported: on Android the emoji can be CLIPPED, and the capsule can be TOO LONG.
+//
+// Both were arithmetic, and both are worth writing down because the numbers have to agree.
+//
+// CLIPPING. `emojiTextStyle(size)` returns a lineHeight of `round(size * 1.3)` — that ratio exists
+// because colour emoji need roughly 1.17-1.25x their nominal size and Android otherwise crops the top.
+// The avatar box was `CIRCLE - PAD_H * 2` = 40 - 20 = 20 px, while `emojiTextStyle(20)` asks for a
+// 26 px line box. A 26 px glyph box inside a 20 px container with `overflow: 'hidden'` on the capsule is
+// exactly the clip. The constants are now derived so the box is always LARGER than the glyph:
+// `EMOJI_SIZE` 18 → line box `round(18 * 1.3)` = 24, and `AVATAR` is 28.
+//
+// TOO LONG. Two separate over-counts. First the target width added `CIRCLE + PAD_H * 2`, but `CIRCLE`
+// already contains its padding, so every pill was ~20 px wider than its content. Second, and much
+// larger: the hidden measuring pass laid the name and the action out in a ROW while the real pill
+// renders them as a COLUMN, so the measured width was `name + action` side by side instead of the wider
+// of the two. A short name with a long action line came out nearly twice too wide.
 /** Diameter of the phase-one circle, and the capsule's collapsed width/height. */
-const CIRCLE = 40;
-/** Horizontal padding inside the expanded capsule, per side. */
-const PAD_H = 10;
+const CIRCLE = 44;
+/** Padding inside the capsule, per side. Also what centres the avatar in the collapsed circle. */
+const PAD_H = 8;
+/** Avatar box. Derived so `CIRCLE = PAD_H + AVATAR + PAD_H` exactly, and > the emoji line box. */
+const AVATAR = CIRCLE - PAD_H * 2;
+/** Emoji point size. `AVATAR` must exceed `round(EMOJI_SIZE * 1.3)`; 18 → 24 < 28. */
+const EMOJI_SIZE = 18;
 /** Gap between the avatar circle and the text column. */
 const GAP = 8;
 /** How long the expanded pill stays before auto-dismissing. */
@@ -226,7 +248,12 @@ function InAppAlertHostInner() {
   // Phase two: once the row has been measured, expand outward and fade the text in behind it.
   useEffect(() => {
     if (!current || contentWidth == null || maxWidth <= 0) return;
-    const target = Math.min(CIRCLE + GAP + contentWidth + PAD_H * 2, maxWidth * MAX_WIDTH_RATIO);
+    // `PAD_H + AVATAR + GAP + text + PAD_H`. Written from the parts rather than from `CIRCLE` so it
+    // cannot double-count the padding `CIRCLE` already includes — that was one of the two over-counts.
+    const target = Math.min(
+      PAD_H + AVATAR + GAP + contentWidth + PAD_H,
+      maxWidth * MAX_WIDTH_RATIO,
+    );
     width.value = withTiming(target, { duration: EXPAND_MS, easing: Easing.out(Easing.cubic) });
     // Text follows the edge rather than racing it, so no glyph is ever clipped by the growing capsule.
     textOpacity.value = withDelay(EXPAND_MS * 0.45, withTiming(1, { duration: 180 }));
@@ -321,19 +348,23 @@ function InAppAlertHostInner() {
     >
       {/* Hidden measuring pass. Absolutely positioned and transparent so it never affects layout, and
           invisible to touches. It exists for one frame per alert, inside the circle phase. */}
+      {/* Hidden measuring pass. This MUST mirror the real text column's layout — it is a COLUMN, not a
+          row. Measuring it as a row summed the two lines' widths instead of taking the wider one, which
+          is what made the capsule far too long. `alignSelf: 'flex-start'` keeps the column shrink-wrapped
+          to its content instead of stretching to the full-width parent, which would measure the screen. */}
       <View style={styles.measure} pointerEvents="none" aria-hidden>
         <View
           onLayout={(e) => {
             const w = Math.ceil(e.nativeEvent.layout.width);
             if (w > 0) setContentWidth((prev) => (prev === w ? prev : w));
           }}
-          style={styles.measureRow}
+          style={styles.measureCol}
         >
           <Text variant="caption" weight="bold" numberOfLines={1}>
             {current.name}
           </Text>
           <Text variant="caption" numberOfLines={1}>
-            {` ${action}`}
+            {action}
           </Text>
         </View>
       </View>
@@ -358,7 +389,7 @@ function InAppAlertHostInner() {
               {/* `emojiTextStyle` rather than a bare fontSize: it supplies the matching lineHeight and
                   the Android `includeFontPadding: false`, which is what stops a colour emoji being
                   clipped at the top. Same helper `Avatar` uses. */}
-              <Text style={emojiTextStyle(20)}>{current.emoji}</Text>
+              <Text style={emojiTextStyle(EMOJI_SIZE)}>{current.emoji}</Text>
             </View>
             <Animated.View style={[styles.textCol, textStyle]}>
               <Text variant="caption" weight="bold" numberOfLines={1}>
@@ -397,8 +428,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: PAD_H,
   },
   avatar: {
-    width: CIRCLE - PAD_H * 2,
-    height: CIRCLE - PAD_H * 2,
+    // 28 px box for a 24 px emoji line box. See the geometry note at the top of the file: this container
+    // must be LARGER than `round(EMOJI_SIZE * 1.3)` or Android crops the glyph.
+    width: AVATAR,
+    height: AVATAR,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -412,9 +445,10 @@ const styles = StyleSheet.create({
     left: 0,
     top: 0,
   },
-  measureRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  measureCol: {
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    alignSelf: 'flex-start',
   },
   glass: {
     overflow: 'hidden',
