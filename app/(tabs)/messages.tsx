@@ -1660,6 +1660,41 @@ export default function MessagesScreen() {
     setComposeOpen(true);
   }, []);
   const closeCompose = useCallback(() => setComposeOpen(false), []);
+
+  // â”€â”€ TWO OVERLAYS THAT BUILT THEMSELVES ON EVERY COLD MOUNT â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  //
+  // `SelectionActionBar` and `ComposeMenu` are both rendered unconditionally at
+  // the bottom of this screen, and both are invisible until the user asks for
+  // them. Invisible is not free:
+  //
+  //   SelectionActionBar  a shared value, an animated style, and FOUR
+  //                       ActionBarButtons -- each a MaterialIcons glyph plus a
+  //                       Text -- plus a GlassBg native view when glass is on,
+  //                       all constructed and then translated off-screen.
+  //   ComposeMenu         useTheme + useT, then SlideUpSheet, which pays FOUR
+  //                       useSharedValue, two refs, a useState, a full
+  //                       Gesture.Pan() with four handlers and two
+  //                       useAnimatedStyle BEFORE its `if (!visible && !mounted)
+  //                       return null`.
+  //
+  // On a screen measured at 867 ms of pure JS mount, that is waste for a state
+  // most sessions never enter.
+  //
+  // Gated on a FIRST-USE LATCH rather than on the visible flag directly, and the
+  // distinction matters: both animate themselves OUT when their flag goes false
+  // (SelectionActionBar springs `progress` to 0, SlideUpSheet runs its exit and
+  // only then calls onClose). Gating on the flag alone would unmount them
+  // mid-exit and the bar would simply vanish. Latching means they cost nothing
+  // until first opened and then stay mounted for the rest of the session, so
+  // every animation behaves exactly as before from the first use onward.
+  const [editBarUsed, setEditBarUsed] = useState(false);
+  useEffect(() => {
+    if (editMode && !editBarUsed) setEditBarUsed(true);
+  }, [editMode, editBarUsed]);
+  const [composeUsed, setComposeUsed] = useState(false);
+  useEffect(() => {
+    if (composeOpen && !composeUsed) setComposeUsed(true);
+  }, [composeOpen, composeUsed]);
   const archived = useChatSettingsStore((s) => s.archived);
   const blocked = useChatSettingsStore((s) => s.blocked);
   const deleted = useChatSettingsStore((s) => s.deleted);
@@ -1997,9 +2032,35 @@ export default function MessagesScreen() {
   //
   // Safe as an effect on every list change: reconcile returns the SAME state object when nothing
   // changed, so it cannot feed itself.
+  // â”€â”€ DEFERRED, BECAUSE IT WRITES TWO WHOLE MAPS TO DISK â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  //
+  // `reconcile` is a BACKSTOP: it raises a 0 to a 1 for conversations whose
+  // newest message predates this device ever seeing it, which is the
+  // "arrived while the app was killed" case. Nothing about it is urgent.
+  //
+  // What it costs when it does change something (`chatUnreadStore.ts`): a
+  // `set({ counts })`, then `persist` -> TWO synchronous `kvSetJSON` calls
+  // serialising the whole counts map and the whole readAt map, then
+  // `syncChatOsBadge` -> a lazy `require` of the osBadge service plus a full
+  // loop over the counts. And the store write hands every row a NEW `item`
+  // object, so the 20-clause row comparator re-runs for every mounted row and
+  // the whole derivation chain (both filters, both sorts) runs again.
+  //
+  // Firing that from a plain mount effect put all of it inside the measured
+  // mount window -- the screen reports worstMountMs 867 with `imgCount: 0`, so
+  // every millisecond of it is JS. Deferring past interactions moves it one
+  // beat after the transition, which is invisible: a badge that appears a frame
+  // later than the row is not a defect, and the row itself is already correct
+  // for every count the device actually observed.
+  //
+  // Same treatment the persist, sync, prefetch and `openedAtForSort` effects on
+  // this screen already have, and for the same stated reason.
   useEffect(() => {
     if (conversations.length === 0) return;
-    reconcileUnread(conversations, user?.id);
+    const handle = InteractionManager.runAfterInteractions(() => {
+      reconcileUnread(conversations, user?.id);
+    });
+    return () => handle.cancel();
   }, [conversations, user?.id, reconcileUnread]);
 
   // ─── Bucket filter (openedAt-INDEPENDENT) ─────────────────────────────────
@@ -2012,6 +2073,35 @@ export default function MessagesScreen() {
   // only re-run when the actual data/bucket inputs change. The per-branch
   // filtering is byte-identical to the previous single memo — only `.sort(...)`
   // was removed from each branch.
+  // â”€â”€ ONE FILTER, TWO CONSUMERS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  //
+  // The `chats` branch of `filteredBase` below and the `activeToday` memo further
+  // down ran the IDENTICAL predicate over the whole conversation list: four Set
+  // lookups per row, excluding archived / chat-blocked / deleted / user-blocked.
+  // Two full O(N) passes per derivation cycle, on the default tab, computing the
+  // same set twice.
+  //
+  // `activeToday` also listed the RAW arrays (`archived`, `blocked`, `deleted`,
+  // `blockedUserIds`) as dependencies rather than the memoised Sets built from
+  // them, so it invalidated on exactly the same events while missing the reason
+  // those Sets exist. The note on `archivedSet` above already made this argument
+  // for the bucket filter; this is the same fix applied to the second consumer.
+  //
+  // Hoisted here so both read one result. Deliberately NOT dependent on
+  // `activeTab` or `searchQuery`: this is "chats the user has not hidden", which
+  // is tab-independent, which is exactly why the header cluster could share it.
+  const visibleChats = useMemo(
+    () =>
+      conversations.filter(
+        (c) =>
+          !archivedSet.has(c.id) &&
+          !blockedSet.has(c.id) &&
+          !deletedSet.has(c.id) &&
+          !blockedUserSet.has(c.participantId),
+      ),
+    [conversations, archivedSet, blockedSet, deletedSet, blockedUserSet],
+  );
+
   const filteredBase = useMemo(() => {
     if (activeTab === 'apps') return [];
     if (searchQuery) {
@@ -2067,8 +2157,9 @@ export default function MessagesScreen() {
     }
     if (activeTab === 'deleted') return conversations.filter(c => deletedSet.has(c.id));
     // 'chats' — exclude archived, blocked (chat or user), deleted.
-    return conversations.filter(c => !archivedSet.has(c.id) && !blockedSet.has(c.id) && !deletedSet.has(c.id) && !blockedUserSet.has(c.participantId));
-  }, [conversations, activeTab, searchQuery, archivedSet, blockedSet, deletedSet, blockedUserSet, locale]);
+    // Byte-identical to the predicate this used to inline -- see `visibleChats`.
+    return visibleChats;
+  }, [conversations, visibleChats, activeTab, searchQuery, archivedSet, blockedSet, deletedSet, blockedUserSet, locale]);
 
   // ─── Recency sort (the ONLY openedAt-dependent step) ──────────────────────
   // Newest activity first. `lastMessageAt`/`openedAt` are ISO strings, so a
@@ -2205,19 +2296,10 @@ export default function MessagesScreen() {
   // the header every minute for a cosmetic detail. It refreshes whenever a
   // message arrives or the screen remounts, which is exactly when it can
   // meaningfully change.
-  const activeToday = useMemo(
-    () =>
-      selectActiveToday(
-        conversations.filter(
-          (c) =>
-            !archivedSet.has(c.id) &&
-            !blockedSet.has(c.id) &&
-            !deletedSet.has(c.id) &&
-            !blockedUserSet.has(c.participantId),
-        ),
-      ),
-    [conversations, archived, blocked, deleted, blockedUserIds],
-  );
+  // Same set as the list is showing on the default tab, computed once. The old
+  // version re-filtered `conversations` here with the same four Set lookups and
+  // keyed on the raw arrays instead of the Sets -- see `visibleChats`.
+  const activeToday = useMemo(() => selectActiveToday(visibleChats), [visibleChats]);
 
   // Stable FlatList callbacks. Both `renderItem` and `ItemSeparatorComponent`
   // were previously inline arrows, so every MessagesScreen re-render (search
@@ -2497,23 +2579,25 @@ export default function MessagesScreen() {
       </GestureDetector>
 
       {/* Compose menu overlay. Trigger is the header's compose button. */}
-      <ComposeMenu open={composeOpen} onClose={closeCompose} />
+      {(composeOpen || composeUsed) && <ComposeMenu open={composeOpen} onClose={closeCompose} />}
 
       {/* Contextual action bar — replaces the tab bar while selecting. */}
-      <SelectionActionBar
-        visible={editMode}
-        count={selectedIds.size}
-        tab={activeTab}
-        bottomInset={insets.bottom}
-        glassActive={glassActive}
-        theme={theme}
-        t={t}
-        onDelete={handleBulkDelete}
-        onArchive={handleBulkArchive}
-        onSelectAll={handleSelectAll}
-        onPin={handleBulkPin}
-        allSelectedPinned={allSelectedPinned}
-      />
+      {(editMode || editBarUsed) && (
+        <SelectionActionBar
+          visible={editMode}
+          count={selectedIds.size}
+          tab={activeTab}
+          bottomInset={insets.bottom}
+          glassActive={glassActive}
+          theme={theme}
+          t={t}
+          onDelete={handleBulkDelete}
+          onArchive={handleBulkArchive}
+          onSelectAll={handleSelectAll}
+          onPin={handleBulkPin}
+          allSelectedPinned={allSelectedPinned}
+        />
+      )}
     </View>
   );
 }
