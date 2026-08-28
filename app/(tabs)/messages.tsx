@@ -37,11 +37,9 @@ import { prefetchRecentChatMedia } from '../../src/services/messagesPrefetch';
 import { kvGetJSONSync, kvSetJSON, kvWarm } from '../../src/services/kvStore';
 import { useMiniAppsStore, type MiniApp } from '../../src/store/miniAppsStore';
 import { useChatSettingsStore, GLOBAL_CHAT_SETTINGS_KEY } from '../../src/store/chatSettingsStore';
-import { useSettingsStore } from '../../src/store/settingsStore';
 import { triggerHaptic } from '../../src/utils/haptics';
 import { useT, t as tStatic, useI18nStore } from '../../src/i18n/store';
 import { Conversation } from '../../src/types';
-import { perfMonitor } from '../../src/services/perfMonitor';
 import { useTabBarStore } from '../../src/store/tabBarStore';
 import { emojiTextStyle } from '../../src/components/ui/emojiText';
 import {
@@ -52,6 +50,7 @@ import {
   ActiveTodayAvatars,
   selectActiveToday,
 } from '../../src/components/messages/ActiveTodayAvatars';
+import { useScreenMountMark } from '../../src/hooks/useScreenMountMark';
 
 // Frozen empty set reused for "nothing selected" so leaving selection mode and
 // re-entering it doesn't allocate, and so the `selected` prop comparison in the
@@ -1345,6 +1344,7 @@ const ConversationItem = React.memo(ConversationItemBase, (prev, next) =>
 );
 
 export default function MessagesScreen() {
+  useScreenMountMark('(tabs)/messages');
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
@@ -1353,14 +1353,8 @@ export default function MessagesScreen() {
   // attributed to the screen's own first render vs. tab-bar transition.
   // Skipped at the call site when the monitor is off so we don't pay
   // Date.now() + the function hop on every tab focus.
-  const mountStart = useRef(Date.now()).current;
-  // Fire ONCE on first mount. See (tabs)/index.tsx for the same fix
-  // rationale — store-read at effect-time avoids stale-mountStart re-fires.
-  useEffect(() => {
-    if (!useSettingsStore.getState().perfMonitorEnabled) return;
-    perfMonitor.markScreenMount('(tabs)/messages', Date.now() - mountStart);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // Mount timing moved to the FIRST hook of this component - see useScreenMountMark.
+  // Measured from here it under-reported: every hook above it fell outside the window.
   // Individual selector — subscribing to the whole store via destructuring
   // would re-render this screen on every unrelated chat-store change (e.g.,
   // typing into a chat input updates messages elsewhere in the store).

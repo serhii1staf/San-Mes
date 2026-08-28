@@ -38,7 +38,6 @@ import { triggerHaptic } from '../../src/utils/haptics';
 import { formatTimeAgo } from '../../src/utils/mockData';
 import { shouldSync, resetThrottle } from '../../src/services/syncThrottle';
 import { useT } from '../../src/i18n/store';
-import { perfMonitor } from '../../src/services/perfMonitor';
 import { useSettingsStore } from '../../src/store/settingsStore';
 import { useLiquidGlassActive, NativeGlassView } from '../../src/components/ui/LiquidGlass';
 import { parseBannerTransform, stripBannerTransform } from '../../src/utils/bannerTransform';
@@ -57,6 +56,7 @@ import { ProfileThemeScope } from '../../src/components/profile/ProfileThemeScop
 import { ProfileThemeBackground } from '../../src/components/profile/ProfileThemeBackground';
 import { useAmbientAnimationGate } from '../../src/hooks/useAmbientAnimationGate';
 import { useActiveProfileThemeId } from '../../src/store/profileThemeStore';
+import { useScreenMountMark } from '../../src/hooks/useScreenMountMark';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const MY_POSTS_CACHE_KEY = '@san:my_posts';
@@ -177,6 +177,7 @@ function ActionPill({ glassActive, theme, onPress, height = 38, square = false, 
 }
 
 export default function ProfileScreen() {
+  useScreenMountMark('(tabs)/profile');
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
@@ -185,16 +186,8 @@ export default function ProfileScreen() {
   // primary surfaces the user wants to attribute. Skipped at the call site
   // when the monitor is off so we don't pay Date.now() + the function hop
   // on the cold tab-focus frame.
-  const mountStart = useRef(Date.now()).current;
-  // Fire ONCE on first mount. Reading `perfMonitorEnabled` from the store at
-  // effect-time (not via subscription) means a later toggle doesn't re-fire
-  // this with a stale `mountStart` — that bug was producing fake 3-minute
-  // mount durations whenever perfMonitor flipped after first paint.
-  useEffect(() => {
-    if (!useSettingsStore.getState().perfMonitorEnabled) return;
-    perfMonitor.markScreenMount('(tabs)/profile', Date.now() - mountStart);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // Mount timing moved to the FIRST hook of this component - see useScreenMountMark.
+  // Measured from here it under-reported: every hook above it fell outside the window.
   // Selectors over destructuring — pulling the whole user object re-rendered
   // the profile screen on every unrelated profile field change (badge sync, etc.)
   const user = useAuthStore((s) => s.user);

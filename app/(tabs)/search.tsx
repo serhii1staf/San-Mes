@@ -16,9 +16,8 @@ import { accountKey } from '../../src/services/cacheService';
 import { kvGetStringRawSync } from '../../src/services/kvStore';
 import { shouldSync } from '../../src/services/syncThrottle';
 import { useT } from '../../src/i18n/store';
-import { perfMonitor } from '../../src/services/perfMonitor';
-import { useSettingsStore } from '../../src/store/settingsStore';
 import { emojiTextStyle } from '../../src/components/ui/emojiText';
+import { useScreenMountMark } from '../../src/hooks/useScreenMountMark';
 
 
 const SEARCH_HISTORY_KEY = '@san:search_history';
@@ -164,20 +163,15 @@ const SearchResultRow = React.memo(function SearchResultRow({
 });
 
 export default function SearchScreen() {
+  useScreenMountMark('(tabs)/search');
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const t = useT();
   // Mount-time marker — search tab is small but still has a synchronous
   // history hydrate. Skip at the call site when the monitor is off so we
   // don't pay the Date.now() + function hop on tab focus.
-  const mountStart = useRef(Date.now()).current;
-  // Fire ONCE on first mount. See (tabs)/index.tsx for the same fix
-  // rationale — store-read at effect-time avoids stale-mountStart re-fires.
-  useEffect(() => {
-    if (!useSettingsStore.getState().perfMonitorEnabled) return;
-    perfMonitor.markScreenMount('(tabs)/search', Date.now() - mountStart);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // Mount timing moved to the FIRST hook of this component - see useScreenMountMark.
+  // Measured from here it under-reported: every hook above it fell outside the window.
   const [isFocused, setIsFocused] = useState(false);
   const [query, setQuery] = useState('');
   // Debounced mirror of `query`. The text input stays fully controlled by
