@@ -19,8 +19,13 @@
  * Reduce Transparency is on.
  *
  * Material 3 Expressive treats a surface as PAPER with a tone. Depth is TONAL ELEVATION — the surface
- * colour shifts through a container ramp rather than casting a shadow or blurring a backdrop. Google
- * documents six dp-based levels expressed mainly as tonal overlays, and a seven-step shape scale.
+ * colour shifts through a container ramp instead of blurring a backdrop. Google documents six dp-based
+ * levels expressed mainly as tonal overlays, and a seven-step shape scale.
+ *
+ * "Mainly" is doing real work in that sentence. An earlier version of this screen told you M3 has no
+ * shadows at all, which is wrong: tone is the mechanism for RESTING surfaces — and the one that still
+ * works in dark theme, where a cast shadow disappears into a dark surface — but container tones are
+ * paired WITH shadows for elements that genuinely float. The depth section shows both, labelled.
  *
  * So "blur on Android" is not a cheaper Liquid Glass, it is the wrong idea for the platform: it asks
  * a paper surface to behave like a lens. That is what the note you were given is pointing at, and it
@@ -97,9 +102,14 @@ type M3Scheme = {
   onSurface: string;
   surfaceVariant: string;
   onSurfaceVariant: string;
+  // FIVE container levels, which is what M3 actually publishes. This screen
+  // originally carried only three, and three was part of why the depth section
+  // failed to read: the ramp was too short to look like a ramp.
+  surfaceContainerLowest: string;
   surfaceContainerLow: string;
   surfaceContainer: string;
   surfaceContainerHigh: string;
+  surfaceContainerHighest: string;
   outline: string;
   outlineVariant: string;
 };
@@ -115,10 +125,15 @@ const M3_LIGHT: M3Scheme = {
   onSurface: '#1D1B20',
   surfaceVariant: '#E7E0EC',
   onSurfaceVariant: '#49454F',
-  // The tonal-elevation ramp. THIS is how M3 expresses depth — a container tone, not a shadow.
+  // The tonal-elevation ramp — M3's PRIMARY depth mechanism for resting surfaces.
+  // Not the only one: container roles can be paired with a shadow to push a
+  // floating element further forward. The demo below shows both, because saying
+  // "M3 has no shadows" was simply wrong.
+  surfaceContainerLowest: '#FFFFFF',
   surfaceContainerLow: '#F7F2FA',
   surfaceContainer: '#F3EDF7',
   surfaceContainerHigh: '#ECE6F0',
+  surfaceContainerHighest: '#E6E0E9',
   outline: '#79747E',
   outlineVariant: '#CAC4D0',
 };
@@ -134,9 +149,11 @@ const M3_DARK: M3Scheme = {
   onSurface: '#E6E0E9',
   surfaceVariant: '#49454F',
   onSurfaceVariant: '#CAC4D0',
+  surfaceContainerLowest: '#0F0D13',
   surfaceContainerLow: '#1D1B20',
   surfaceContainer: '#211F26',
   surfaceContainerHigh: '#2B2930',
+  surfaceContainerHighest: '#36343B',
   outline: '#938F99',
   outlineVariant: '#49454F',
 };
@@ -291,6 +308,94 @@ const M3Button = memo(function M3Button({
   );
 });
 
+/**
+ * Tonal elevation, shown as NESTING rather than as a row of swatches.
+ *
+ * ── WHY THE FIRST VERSION OF THIS DID NOT WORK ──────────────────────────────
+ *
+ * It laid the three container tones out side by side as separate tiles. Adjacent
+ * steps on the M3 ramp differ by only a couple of percent of lightness, so three
+ * of them in a row, each surrounded by the page background, read as three
+ * identical grey rectangles. The section announced "depth" and then showed none.
+ * That was a fair thing to call out.
+ *
+ * Nesting is how the ramp is actually used, and it is also what makes it legible.
+ * Each level sits INSIDE the level below it, so every boundary is a contained
+ * edge with the neighbouring tone directly against it. The eye compares across a
+ * shared border instead of across unrelated background, and a 2% step becomes
+ * obvious. Five levels rather than three for the same reason: a ramp needs
+ * enough rungs to look like one.
+ *
+ * The floating card at the end is the honest correction to what this screen used
+ * to claim. Tonal elevation is M3's mechanism for RESTING surfaces, and it is
+ * especially valuable in dark theme where a shadow would be swallowed. But M3
+ * does pair container tones with shadows for elements that genuinely float, so
+ * "no shadow at all" was an overstatement. Both are shown, labelled.
+ */
+const M3DepthStack = memo(function M3DepthStack({ m3, isDark }: { m3: M3Scheme; isDark: boolean }) {
+  // Outermost first. Each entry nests inside the previous one.
+  const levels: Array<{ key: string; bg: string; label: string }> = [
+    { key: 'lowest', bg: m3.surfaceContainerLowest, label: 'Lowest' },
+    { key: 'low', bg: m3.surfaceContainerLow, label: 'Low' },
+    { key: 'base', bg: m3.surfaceContainer, label: 'Container' },
+    { key: 'high', bg: m3.surfaceContainerHigh, label: 'High' },
+    { key: 'highest', bg: m3.surfaceContainerHighest, label: 'Highest' },
+  ];
+
+  // Built from the inside out so each level can wrap the one already assembled.
+  const nested = levels.reduceRight<React.ReactNode>(
+    (inner, lvl) => (
+      <View
+        key={lvl.key}
+        style={[
+          styles.depthNest,
+          { backgroundColor: lvl.bg, borderColor: m3.outlineVariant },
+        ]}
+      >
+        <Text variant="caption" color={m3.onSurfaceVariant} style={styles.depthNestLabel}>
+          {lvl.label}
+        </Text>
+        {inner}
+      </View>
+    ),
+    null,
+  );
+
+  return (
+    <View>
+      {nested}
+      {/* Tonal AND shadow, together, for something that actually floats. */}
+      <View style={styles.depthFloatRow}>
+        <View
+          style={[
+            styles.depthFloatCard,
+            {
+              backgroundColor: m3.surfaceContainerHigh,
+              // Shadow is deliberately stronger in light theme. In dark theme a
+              // cast shadow is nearly invisible against a dark surface, which is
+              // exactly the reason M3 leans on tone instead.
+              shadowOpacity: isDark ? 0.34 : 0.18,
+              elevation: 6,
+            },
+          ]}
+        >
+          <MaterialIcons name="edit" size={18} color={m3.onSurfaceVariant} />
+          <Text variant="caption" color={m3.onSurfaceVariant}>{'Floating · tone + shadow'}</Text>
+        </View>
+        <View
+          style={[
+            styles.depthFloatCard,
+            { backgroundColor: m3.surfaceContainerHigh, borderColor: m3.outlineVariant, borderWidth: StyleSheet.hairlineWidth },
+          ]}
+        >
+          <MaterialIcons name="layers" size={18} color={m3.onSurfaceVariant} />
+          <Text variant="caption" color={m3.onSurfaceVariant}>{'Resting · tone only'}</Text>
+        </View>
+      </View>
+    </View>
+  );
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // iOS LIQUID GLASS
 // ─────────────────────────────────────────────────────────────────────────────
@@ -329,6 +434,88 @@ const GlassShell = memo(function GlassShell({
     <GlassCapsule borderRadius={radius} isDark={isDark} style={style} pointerEvents="box-none">
       {children}
     </GlassCapsule>
+  );
+});
+
+/**
+ * Glass depth, demonstrated the only way it can be.
+ *
+ * ── WHY THE FIRST VERSION OF THIS DID NOT WORK ──────────────────────────────
+ *
+ * It showed three glass tiles in a row whose only difference was corner radius —
+ * 18, 22, 26 — with the radius printed on each as its label, under a heading
+ * that said "depth". Two things were wrong and both were fair to call out.
+ *
+ * First, radius is not depth. Labelling r18/r22/r26 as elevation levels is a
+ * category error; the tiles were all on the same plane.
+ *
+ * Second and worse: they sat on a flat, single-colour section background. Glass
+ * is a LENS. Its entire visual identity is what it does to what is behind it, so
+ * a lens with nothing behind it renders as a flat grey rectangle — which is
+ * precisely what was on screen. The material was working correctly and had
+ * nothing to work on.
+ *
+ * So this version gives it something to refract, and makes it MOVE. The backdrop
+ * is a horizontally scrollable strip of saturated blocks; the glass band is
+ * pinned across it and does not scroll. Dragging the strip pulls high-contrast
+ * colour and hard edges through the lens, which is when the sampling, the blur
+ * and the edge treatment all become visible at once. Static glass hides its own
+ * behaviour; moving content behind it is the demo.
+ *
+ * The small offset card is the second half of the idea: on iOS depth is read
+ * from LAYERING, not from tone. Two glass surfaces overlapping, each sampling
+ * the layer beneath, is the actual mechanism — the corner where they cross is
+ * the part worth looking at.
+ *
+ * Saturated fixed hues rather than theme colours on purpose: a lens over muted
+ * greys is legible in a spec and invisible on a phone.
+ */
+const GLASS_BACKDROP_BLOCKS = [
+  '#FF3B30', '#FF9500', '#FFCC00', '#34C759',
+  '#00C7BE', '#007AFF', '#5856D6', '#AF52DE',
+  '#FF2D55', '#30B0C7', '#A2845E', '#FF6482',
+] as const;
+
+const GlassDepthStage = memo(function GlassDepthStage({ isDark, hint }: { isDark: boolean; hint: string }) {
+  return (
+    <View style={styles.glassStage}>
+      {/* BEHIND: draggable, high-contrast content for the lens to sample. */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.glassStripContent}
+        style={StyleSheet.absoluteFill}
+      >
+        {GLASS_BACKDROP_BLOCKS.map((c, i) => (
+          <View
+            key={c}
+            style={[
+              styles.glassBlock,
+              {
+                backgroundColor: c,
+                // Varied heights and radii so vertical edges cross the band too.
+                height: i % 3 === 0 ? 128 : i % 3 === 1 ? 96 : 112,
+                borderRadius: i % 2 === 0 ? 10 : 26,
+              },
+            ]}
+          />
+        ))}
+      </ScrollView>
+
+      {/* IN FRONT: the lens. pointerEvents none so the drag reaches the strip. */}
+      <View style={StyleSheet.absoluteFill} pointerEvents="none">
+        <GlassShell isDark={isDark} radius={22} style={styles.glassBand}>
+          <View style={styles.glassBandInner}>
+            <MaterialIcons name="swipe" size={16} color={isDark ? '#FFFFFF' : '#000000'} />
+            <Text variant="caption" color={isDark ? '#FFFFFF' : '#000000'}>{hint}</Text>
+          </View>
+        </GlassShell>
+        {/* Layer two, crossing layer one. */}
+        <GlassShell isDark={isDark} radius={18} style={styles.glassOverlapCard}>
+          <View style={styles.glassBandInner} />
+        </GlassShell>
+      </View>
+    </View>
   );
 });
 
@@ -521,32 +708,23 @@ export default function PlatformDesignConceptScreen() {
           {t('design_lab.section.depth', 'Глубина')}
         </Text>
         {isAndroid ? (
-          <View style={styles.depthRow}>
-            {([
-              ['Low', m3.surfaceContainerLow],
-              ['Base', m3.surfaceContainer],
-              ['High', m3.surfaceContainerHigh],
-            ] as const).map(([label, bg]) => (
-              <View key={label} style={[styles.depthTile, { backgroundColor: bg, borderColor: m3.outlineVariant }]}>
-                <Text variant="caption" color={m3.onSurfaceVariant}>{label}</Text>
-              </View>
-            ))}
-          </View>
+          <M3DepthStack m3={m3} isDark={theme.isDark} />
         ) : (
-          <View style={styles.depthRow}>
-            {[18, 22, 26].map((r) => (
-              <GlassShell key={r} isDark={theme.isDark} radius={r} style={styles.depthGlass}>
-                <View style={styles.depthGlassInner}>
-                  <Text variant="caption" color={theme.colors.text.secondary}>{`r${r}`}</Text>
-                </View>
-              </GlassShell>
-            ))}
-          </View>
+          <GlassDepthStage
+            isDark={theme.isDark}
+            hint={t('design_lab.glass_hint', 'Потяни фон в сторону')}
+          />
         )}
         <Text variant="caption" color={theme.colors.text.tertiary} style={styles.note}>
           {isAndroid
-            ? t('design_lab.note.tonal', 'Три уровня — это три тона одной поверхности. Тени нет вообще: в M3 глубина тональная.')
-            : t('design_lab.note.lens', 'Глубина берётся из того, что за поверхностью. Уровни различаются радиусом и материалом, а не тоном.')}
+            ? t(
+                'design_lab.note.tonal',
+                'Пять уровней — это пять тонов одной поверхности, вложенных друг в друга. Рядом они почти неразличимы, поэтому M3 использует их вложенно: соседний тон стоит прямо по границе. Тон — механизм для лежащих поверхностей, и он особенно выигрывает в тёмной теме, где тень пропадает. Но тень в M3 есть: для действительно парящих элементов тон дополняют тенью — это две карточки внизу.',
+              )
+            : t(
+                'design_lab.note.lens',
+                'Стекло — это линза, и вся его суть в том, что за ним. Поэтому потяни полосу с цветами: она едет, стекло стоит. Глубина на iOS читается из наложения слоёв, а не из тона — смотри угол, где два стекла пересекаются.',
+              )}
         </Text>
 
         {/* Honest limitation, stated in the UI and not only in the code. */}
@@ -646,10 +824,51 @@ const styles = StyleSheet.create({
 
   btnRow: { flexDirection: 'row', gap: 10, marginBottom: 10, flexWrap: 'wrap' },
 
-  depthRow: { flexDirection: 'row', gap: 10 },
-  depthTile: { flex: 1, height: 72, borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, alignItems: 'center', justifyContent: 'center' },
-  depthGlass: { flex: 1, height: 72 },
-  depthGlassInner: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  // Tonal ramp, nested. `alignSelf: stretch` on the wrapper plus uniform padding
+  // makes each level inset itself inside its parent without hard-coded widths, so
+  // the five rungs stay even at any screen width.
+  depthNest: {
+    padding: 12,
+    borderRadius: 18,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  depthNestLabel: { marginBottom: 8 },
+  depthFloatRow: { flexDirection: 'row', gap: 10, marginTop: 14 },
+  depthFloatCard: {
+    flex: 1,
+    borderRadius: 18,
+    paddingVertical: 16,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    // Shadow geometry is shared; only the opacity differs by theme (set inline).
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowRadius: 10,
+  },
+
+  // Glass stage: scrollable colour behind a pinned lens.
+  glassStage: { height: 148, borderRadius: 20, overflow: 'hidden' },
+  glassStripContent: { alignItems: 'center', paddingHorizontal: 8, gap: 8 },
+  glassBlock: { width: 64 },
+  glassBand: {
+    position: 'absolute',
+    left: 14,
+    right: 14,
+    top: 40,
+    height: 52,
+    overflow: 'hidden',
+  },
+  glassBandInner: { flex: 1, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 6 },
+  glassOverlapCard: {
+    position: 'absolute',
+    right: 26,
+    top: 74,
+    width: 84,
+    height: 48,
+    overflow: 'hidden',
+  },
 
   limitCard: { flexDirection: 'row', gap: 10, padding: 14, borderRadius: 16, marginTop: 24, alignItems: 'flex-start' },
   limitText: { flex: 1, lineHeight: 18 },
