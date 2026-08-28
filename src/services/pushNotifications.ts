@@ -1,4 +1,4 @@
-import { Platform } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import Constants from 'expo-constants';
 import { apiPost } from './apiClient';
 import { kvGetStringRawSync, kvSetStringRaw } from './kvStore';
@@ -72,6 +72,69 @@ function shouldPresent(notification: any): boolean {
   }
 }
 
+/**
+ * Translate a notification into an in-app alert and queue it.
+ *
+ * Field mapping is taken from what the Worker actually sends, not from a guess:
+ *   • `routes/messages.ts` → `title: sender.display_name || username || 'New message'`,
+ *                             `data: { type: 'message', conversation_id, sender_id }`
+ *   • `routes/follows.ts`  → `title: followerName`, `data: { type: 'follow', follower_id }`
+ * so `title` is the ACTOR'S NAME rather than a sentence, which is exactly what the pill wants.
+ *
+ * No emoji is sent in the payload, so it is resolved locally from the profile we already hold and
+ * falls back to a neutral glyph. Nothing is fetched to fill it in: an alert is not worth a network
+ * round trip, and the pill reads correctly without one.
+ */
+function enqueueInAppAlert(notification: any): void {
+  const content = notification?.request?.content;
+  const data = content?.data;
+  const rawType = typeof data?.type === 'string' ? data.type : '';
+  const kind =
+    rawType === 'message' || rawType === 'comment' || rawType === 'like' || rawType === 'follow'
+      ? (rawType as 'message' | 'comment' | 'like' | 'follow')
+      : null;
+  // Unknown type: no pill. Unlike the banner decision, which fails OPEN because swallowing a
+  // notification is worse than one banner too many, an ambient pill for an unrecognised event would
+  // have no honest text to show.
+  if (!kind) return;
+
+  const actorId =
+    (typeof data?.sender_id === 'string' && data.sender_id) ||
+    (typeof data?.follower_id === 'string' && data.follower_id) ||
+    undefined;
+
+  const name = typeof content?.title === 'string' && content.title.trim().length > 0
+    ? content.title.trim()
+    : 'Someone';
+
+  let emoji = kind === 'follow' ? '👤' : kind === 'like' ? '❤️' : kind === 'comment' ? '💬' : '✉️';
+  try {
+    if (actorId) {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { useEntityStore } = require('./entityStore') as typeof import('./entityStore');
+      const profile: any = (useEntityStore.getState() as any).profiles?.[actorId];
+      if (profile && typeof profile.emoji === 'string' && profile.emoji.length > 0) {
+        emoji = profile.emoji;
+      }
+    }
+  } catch {
+    // No profile cached, or the store shape changed. The kind-based glyph is a fine answer.
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { useInAppAlert } = require('../store/inAppAlertStore') as typeof import('../store/inAppAlertStore');
+  useInAppAlert.getState().push({
+    kind,
+    emoji,
+    name,
+    actorId,
+    targetId:
+      (typeof data?.conversation_id === 'string' && data.conversation_id) ||
+      (typeof data?.post_id === 'string' && data.post_id) ||
+      undefined,
+  });
+}
+
 /** Foreground presentation: show banner + play sound, don't touch the badge. */
 export function configureNotificationHandler(): void {
   const mods = getModules();
@@ -80,9 +143,32 @@ export function configureNotificationHandler(): void {
   try {
     mods.Notifications.setNotificationHandler({
       handleNotification: async (notification: any) => {
+        // ── IN THE FOREGROUND, THE OS BANNER IS REPLACED BY THE IN-APP PILL ────
+        //
+        // Requested: while the user is inside the app, do not show a push banner — show an in-app
+        // alert instead, starting as the actor's emoji in a circle and expanding outward.
+        //
+        // The thread-level `shouldPresent` check below stays and still runs first, because a message
+        // for the chat already on screen deserves NEITHER a banner nor a pill: the message is being
+        // rendered into the transcript at that same moment, which is the whole argument in the note
+        // above. So suppression is layered — thread first, then foreground.
+        //
+        // `handleNotification` is a plain native callback with no component to talk to, which is why
+        // the pill is fed through a store. Wrapped in its own try/catch: a failure to show an ambient
+        // alert must never change what the OS does with the notification.
         const present = shouldPresent(notification);
+        const inForeground = AppState.currentState === 'active';
+        if (present && inForeground) {
+          try {
+            enqueueInAppAlert(notification);
+          } catch {
+            // An alert that cannot be queued simply does not appear.
+          }
+        }
         return {
-          shouldShowBanner: present,
+          // Foreground: the pill is the presentation, so the OS banner is stood down. Background or
+          // inactive: unchanged behaviour, the OS banner is the only thing that can be seen.
+          shouldShowBanner: present && !inForeground,
           shouldPlaySound: present,
           // Kept true even when suppressed: the banner is redundant because the user is
           // looking at the message, but the entry in Notification Centre is the record that
