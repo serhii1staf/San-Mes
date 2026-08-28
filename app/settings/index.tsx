@@ -531,6 +531,15 @@ export default function SettingsScreen() {
             label="Pixel icons"
             onPress={() => router.push('/settings/pixel-icons' as any)}
           />
+          {/* Concept screen, not a setting: shows Liquid Glass beside Material 3 Expressive so the
+              two platform philosophies can be compared on one device. Changes nothing about the real
+              UI — see the header note in that file. */}
+          <SettingsRow
+            icon="auto-awesome"
+            iconTint="indigo"
+            label={t('settings.platform_design', 'Материал платформы')}
+            onPress={() => router.push('/settings/platform-design' as any)}
+          />
           <SettingsRow
             icon="web-asset"
             iconTint="pink"
