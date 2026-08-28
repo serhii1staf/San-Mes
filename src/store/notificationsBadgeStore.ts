@@ -274,19 +274,54 @@ async function refreshChatUnreadOnResume(): Promise<void> {
   }
 }
 
+function runBadgeRefreshPass(): void {
+  try {
+    const s = useNotificationsBadge.getState();
+    s.recompute();
+    void s.refresh({ force: true });
+    // The chat-list / bottom-bar counter is a separate store with the same resume hole — see above.
+    void refreshChatUnreadOnResume();
+  } catch {
+    // A badge that fails to refresh must never be able to take the app down.
+  }
+}
+
 export function installNotificationsBadgeForegroundRefresh(): () => void {
   const sub = AppState.addEventListener('change', (next) => {
     if (next !== 'active') return;
-    try {
-      const s = useNotificationsBadge.getState();
-      s.recompute();
-      void s.refresh({ force: true });
-      // The chat-list / bottom-bar counter is a separate store with the same resume hole — see above.
-      void refreshChatUnreadOnResume();
-    } catch {
-      // A badge that fails to refresh must never be able to take the app down on resume.
-    }
+    runBadgeRefreshPass();
   });
+
+  // ── A COLD START IS NOT A RESUME, AND ONLY THE RESUME WAS HANDLED ───────────
+  //
+  // Reported four times, each time more precisely: the app is fully closed, messages arrive, the app is
+  // opened — and neither the chat-list row badge nor the bottom-bar counter shows anything. Background
+  // the app and come back and they appear. "It only counts while I am inside the app."
+  //
+  // `AppState.addEventListener('change')` fires on a TRANSITION. On a cold start the app is already
+  // `active` by the time this runs, so no transition occurs and the listener above never fires. Every
+  // path that could notice the missed messages hangs off it:
+  //
+  //   • `reconcile` is called from exactly one place in the codebase — `refreshChatUnreadOnResume`,
+  //     reached only from that listener. On a fresh launch it therefore never runs at all, and
+  //     `reconcile` is the ONLY mechanism that can turn "the newest message is newer than my read
+  //     watermark" into a count. Realtime `bump` cannot: it requires the app to have been listening when
+  //     the message arrived, which is exactly what a closed app was not doing.
+  //   • the bell's `recompute` / forced `refresh` had the same hole, one store over.
+  //
+  // So the counters were not slow or throttled on launch, they were unreachable, and backgrounding the
+  // app was the user's accidental workaround for a missing call.
+  //
+  // Running the same pass once at install fixes both stores with the code that already exists. It is
+  // deliberately the SAME function as the listener body rather than a launch-specific variant — a second
+  // path here is how the two would drift, and the resume version is already correct about throttles
+  // (`resetThrottle` before `syncConversations`) and about ordering (`await` before `reconcile`).
+  //
+  // Not gated behind `InteractionManager`: everything it touches is behind a dynamic import and a
+  // network call, so nothing here occupies the first frame, and a deferral is what made the equivalent
+  // paths elsewhere in this app paint stale empty states.
+  if (AppState.currentState === 'active') runBadgeRefreshPass();
+
   return () => {
     try { sub.remove(); } catch {}
   };

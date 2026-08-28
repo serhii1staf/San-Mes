@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Pressable, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -179,8 +179,15 @@ function UserProfilePostCardBase({
   // contains all the later ones and the last card's is near zero. The ~24 marks inside one second that
   // this screen's own note above records were not 24 independent costs. `noteBatchRender` +
   // `markBatchCommit` measure the commit once and report the batch size with it — see perfMonitor.ts.
+  // The ref keeps `count` equal to "cards newly mounting in this commit". Noting on every render let a
+  // plain re-render stamp a start no effect would drain, and the next mounting card printed the span
+  // since it — which is how a sibling route reported a 3528 ms "mount".
   const perfEnabled = useSettingsStore((s) => s.perfMonitorEnabled);
-  if (perfEnabled && hydrated) perfMonitor.noteBatchRender('UserProfilePostCard.body');
+  const perfNotedRef = useRef(false);
+  if (perfEnabled && hydrated && !perfNotedRef.current) {
+    perfNotedRef.current = true;
+    perfMonitor.noteBatchRender('UserProfilePostCard.body');
+  }
   useEffect(() => {
     if (!perfEnabled || !hydrated) return;
     perfMonitor.markBatchCommit('UserProfilePostCard.body');
