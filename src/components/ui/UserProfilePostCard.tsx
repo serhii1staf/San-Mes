@@ -321,31 +321,59 @@ function UserProfilePostCardBase({
           <PixelIconPattern id={decoration.id} opacity={theme.isDark ? 0.18 : 0.14} />
         ) : null}
         {/* Left: Image grid thumbnail */}
+        {/* ── ANIMATED THUMBNAILS ARE A CONTINUOUS UI-THREAD COST ──────────────
+            Every CachedImage below is 100x100 at most, and the 3/4-up grids are
+            49x49 tiles. Without `autoplay={false}` an animated GIF/WebP in one
+            of these tiles decodes EVERY FRAME, forever, for as long as the cell
+            is retained by the list — including cells scrolled out of view but
+            still inside the render window.
+
+            This is the same defect already fixed in chat and in the comment
+            thread, where it was measured: "a GIF-spam chat had 5-6 visible GIFs
+            all decoding frames continuously -> fps 18" (see the GIF_ANIM_CAP
+            note in app/chat/[id].tsx). The profile lists were never given the
+            same treatment, which is why a perf snapshot on (tabs)/profile shows
+            SUSTAINED degradation rather than a mount spike: worstFps 25,
+            jankCount 3, pendingDecodes 16 with giphy hosts in the IMG log.
+
+            Chat and comments solve it with a visibility tracker because a
+            full-width GIF in a message SHOULD animate once it settles. A 49 px
+            profile tile should not animate at all, so the correct fix here is
+            the static first frame — matching what the dense grids in
+            GifPanel.tsx, settings/stickers.tsx and MediaPanel.tsx already do.
+            `autoplay={false}` also imperatively calls stopAnimating(), which
+            matters for recycled cells (see CachedImage.tsx:256).
+
+            Note for anyone auditing this file against ProfilePostCard: the
+            missing `proxyWidth` on these calls is NOT a bug. CachedImage falls
+            back to `styleW` (CachedImage.tsx:362) and every style here has a
+            numeric width, so the proxy URL and cache key are already identical
+            to the sibling card's explicit values. */}
         {hasImage ? (
           <Pressable onPress={() => onImagePress(postImages[0], post.id, postImages)}>
             <View style={[styles.thumbWrap, themedThumbWrap]}>
               {postImages.length === 1 ? (
-                <CachedImage uri={postImages[0]} style={styles.thumbSingle} resizeMode="cover" priority="low" />
+                <CachedImage uri={postImages[0]} style={styles.thumbSingle} resizeMode="cover" priority="low" autoplay={false} />
               ) : postImages.length === 2 ? (
                 <View style={styles.thumbRow}>
-                  <CachedImage uri={postImages[0]} style={styles.thumbHalf} resizeMode="cover" priority="low" />
+                  <CachedImage uri={postImages[0]} style={styles.thumbHalf} resizeMode="cover" priority="low" autoplay={false} />
                   <View style={styles.spacerH} />
-                  <CachedImage uri={postImages[1]} style={styles.thumbHalf} resizeMode="cover" priority="low" />
+                  <CachedImage uri={postImages[1]} style={styles.thumbHalf} resizeMode="cover" priority="low" autoplay={false} />
                 </View>
               ) : postImages.length === 3 ? (
                 <View style={styles.thumbRow}>
-                  <CachedImage uri={postImages[0]} style={styles.thumbHalf} resizeMode="cover" priority="low" />
+                  <CachedImage uri={postImages[0]} style={styles.thumbHalf} resizeMode="cover" priority="low" autoplay={false} />
                   <View style={styles.spacerH} />
                   <View style={styles.thumbHalfCol}>
-                    <CachedImage uri={postImages[1]} style={styles.thumbQuarter} resizeMode="cover" priority="low" />
+                    <CachedImage uri={postImages[1]} style={styles.thumbQuarter} resizeMode="cover" priority="low" autoplay={false} />
                     <View style={styles.spacerV} />
-                    <CachedImage uri={postImages[2]} style={styles.thumbQuarter} resizeMode="cover" priority="low" />
+                    <CachedImage uri={postImages[2]} style={styles.thumbQuarter} resizeMode="cover" priority="low" autoplay={false} />
                   </View>
                 </View>
               ) : (
                 <View style={styles.thumbGrid4}>
                   {postImages.slice(0, 4).map((imgUri: string, idx: number) => (
-                    <CachedImage key={getMappingKey(imgUri, idx)} uri={imgUri} style={idx === 0 ? styles.grid4Tile0 : idx === 1 ? styles.grid4Tile1 : idx === 2 ? styles.grid4Tile2 : styles.grid4Tile3} resizeMode="cover" priority="low" />
+                    <CachedImage key={getMappingKey(imgUri, idx)} uri={imgUri} style={idx === 0 ? styles.grid4Tile0 : idx === 1 ? styles.grid4Tile1 : idx === 2 ? styles.grid4Tile2 : styles.grid4Tile3} resizeMode="cover" priority="low" autoplay={false} />
                   ))}
                 </View>
               )}
