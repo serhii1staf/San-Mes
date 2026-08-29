@@ -112,6 +112,7 @@ function SettingsRow({
   showChevron = true,
   rightElement,
   isLast,
+  destructive,
 }: {
   icon: keyof typeof MaterialIcons.glyphMap;
   iconTint: IconTint;
@@ -122,6 +123,17 @@ function SettingsRow({
   rightElement?: React.ReactNode;
   isFirst?: boolean;
   isLast?: boolean;
+  /**
+   * Tints the LABEL with the error colour. For the two irreversible account
+   * actions, which used to be hand-built Pressables outside any card.
+   *
+   * A flag on the shared row rather than a bespoke component: the whole point of
+   * moving them in here is that they get the same height, the same icon tile, the
+   * same separators and the same press feedback as every other row. Re-styling
+   * them at the call site would have reintroduced exactly the inconsistency that
+   * made the old pair look out of place.
+   */
+  destructive?: boolean;
 }) {
   const theme = useTheme();
   const tint = ICON_TINTS[iconTint];
@@ -159,7 +171,13 @@ function SettingsRow({
             tiles — which is the opposite of the "they look bigger" quality being asked for. */}
         <MaterialIcons name={icon} size={19} color={tint.on} />
       </View>
-      <Text variant="body" style={{ flex: 1 }}>{label}</Text>
+      <Text
+        variant="body"
+        color={destructive ? theme.colors.status.error : undefined}
+        style={{ flex: 1 }}
+      >
+        {label}
+      </Text>
       {value && (
         <Text variant="caption" color={theme.colors.text.tertiary} style={{ marginRight: 8 }}>
           {value}
@@ -502,21 +520,20 @@ export default function SettingsScreen() {
             label={t('settings.language')}
             onPress={() => router.push('/settings/language' as any)}
           />
-          {/* ── TWO iOS-ONLY ROWS, HIDDEN ON ANDROID ──────────────────────────────
-              Asked for directly: the app-icon section and the widget section are not needed on
-              Android. They were not merely unnecessary there, they were dead ends:
+          {/* ── ONE iOS-ONLY ROW LEFT, AND THE WIDGET ROW IS GONE ─────────────────
+              App icon is `expo-alternate-app-icons`, which is iOS-only — Android has no runtime
+              icon-switching API, so on Android the row opened a modal that could not do anything.
 
-                App icon  — `expo-alternate-app-icons`, which is iOS-only. Android has no
-                            equivalent runtime icon-switching API, so the row opened a modal that
-                            could not do anything.
-                Widget    — the widget is an `@bacons/apple-targets` WidgetKit extension. There is
-                            no Android counterpart in this project at all, so the row led to a
-                            settings screen for something that does not exist on the device.
+              The WIDGET row was here too and has been removed outright, on iOS as well: asked for
+              directly, the settings entry is surplus. The widget itself is untouched — it is an
+              `@bacons/apple-targets` WidgetKit extension and it keeps working exactly as before.
+              This deletes the settings ROW, not the feature. `app/settings/widget.tsx` is left in
+              place and simply unreachable from here, so restoring the entry is one row of JSX if it
+              is ever wanted back.
 
-              `isLast` has to move with them: it marks the row that draws no bottom separator. It
-              used to sit on the widget row, so on Android — where both the widget row and the glass
-              row are absent — the list would have ended on a row still drawing a separator into
-              empty space. It is now computed from what is actually rendered. */}
+              `isLast` moves with it: it marks the row that draws no bottom separator, and it used to
+              sit on the widget row. Without that adjustment the list would end on a row still
+              drawing a separator into empty space. It is computed from what is actually rendered. */}
           {IS_IOS ? (
             <SettingsRow
               icon="apps"
@@ -545,17 +562,8 @@ export default function SettingsScreen() {
             iconTint="pink"
             label={t('settings.mini_app_preview')}
             onPress={() => router.push('/settings/mini-app-preview' as any)}
-            isLast={!IS_IOS && !glassCapable}
+            isLast={!glassCapable}
           />
-          {IS_IOS ? (
-            <SettingsRow
-              icon="widgets"
-              iconTint="teal"
-              label={t('settings.widget')}
-              onPress={() => router.push('/settings/widget' as any)}
-              isLast={!glassCapable}
-            />
-          ) : null}
           {glassCapable && (
             <SettingsRow
               icon="blur-on"
@@ -592,17 +600,68 @@ export default function SettingsScreen() {
             onPress={() => router.push('/settings/privacy' as any)}
             isFirst
           />
+          {/* ── THIS ROW SAID "DEVICES" AND OPENED A SINGLE KEY ───────────────────
+              It was labelled `settings.devices` ("Devices" / "Устройства") and pushed
+              `/settings/device-key`, which shows ONE value — this install's device key, with a copy
+              button. So the label promised a list of sessions and delivered a single string, which is
+              why it read as broken rather than as a different feature.
+              `settings.device_key` already existed in both dictionaries and was simply not used
+              here. Honest label, same screen, no new strings.
+
+              A real device LIST is not a client-side change. The only per-install record the backend
+              keeps is `push_tokens (token, user_id, platform, created_at)`, there is no endpoint that
+              returns it (`workers/api/src/routes/push.ts` has only INSERT and DELETE), and recording
+              anything richer would be new device data collection, which the compliance rules require
+              consent for and forbid deriving a stable device identifier from. The DELETE half needed
+              for "sign this device out" already exists; the missing piece is a list endpoint, and it
+              cannot be deployed without a Cloudflare token. */}
           <SettingsRow
-            icon="devices"
+            icon="vpn-key"
             iconTint="blue"
-            label={t('settings.devices')}
+            label={t('settings.device_key')}
             onPress={() => router.push('/settings/device-key')}
           />
+          {/* ── DELETE ACCOUNT LIVES IN SECURITY NOW, NOT IN A FLOATING BUTTON ────
+              It was one of two hand-built Pressables under the whole list, side by side with Log
+              out: bare rounded rectangles, no icon, no separators, one of them outlined in
+              translucent red. Nothing else on this screen looks like that, which is what made it
+              read badly.
+
+              Inside the Security card it gets the same geometry as every other row and it sits next
+              to the privacy controls it belongs with — which is also where iOS and Telegram both put
+              account deletion. Still one tap away and still behind its confirmation Alert, so it
+              remains discoverable for App Review, which requires in-app account deletion. */}
+          <SettingsRow
+            icon="person-remove"
+            iconTint="red"
+            label={t('settings.delete_account')}
+            onPress={handleDeleteAccount}
+            showChevron={false}
+            destructive
+            isLast
+          />
+        </View>
+
+        {/* ── LEGAL: the two hosted documents, on their own ─────────────────────
+            They were the bottom half of the Security card, directly under the in-app privacy
+            controls and a row about device identity. Two different kinds of thing in one list: three
+            settings that change the app, and two links that leave it.
+
+            Split out, which is where Telegram and iOS Settings both keep them — grouped together,
+            near the bottom, immediately above the version string. Nothing about either link changed;
+            only which card they sit in. */}
+        <View style={sectionTitleStyle}>
+          <Text variant="body" weight="semibold" color={theme.colors.text.secondary}>
+            {t('settings.section.legal')}
+          </Text>
+        </View>
+        <View style={sectionCardStyle}>
           <SettingsRow
             icon="lock"
             iconTint="gray"
             label={t('settings.privacy_policy')}
             onPress={() => Linking.openURL('https://legal.san-m-app.com/privacy.html').catch(() => {})}
+            isFirst
           />
           <SettingsRow
             icon="description"
@@ -641,40 +700,29 @@ export default function SettingsScreen() {
           />
         </View>
 
-        {/* Account actions: Logout + Delete side by side, version below */}
-        <View style={{ flexDirection: 'row', gap: 10, marginTop: 8 }}>
-          <Pressable
+        {/* ── LOG OUT: ONE ROW, IN A CARD, LIKE EVERYTHING ELSE HERE ───────────
+            The pair that used to be here was two hand-rolled Pressables in a flex row — bare
+            rounded rectangles with no icon, no separator and no shared geometry with any other row
+            on the screen, one of them outlined in translucent red and carrying grey text for an
+            irreversible action. That mismatch is what read as bad, not the colours.
+
+            Delete account has moved into Security (see above). Log out stays at the bottom, where a
+            sign-out belongs, but as a real row in a real card: same height, same icon tile, same
+            press feedback. Exactly the shape iOS Settings and Telegram both use for it.
+
+            No chevron: it acts immediately (behind its confirmation Alert) rather than pushing a
+            screen, and a chevron would claim otherwise. */}
+        <View style={[sectionCardStyle, { marginTop: 8 }]}>
+          <SettingsRow
+            icon="logout"
+            iconTint="red"
+            label={t('settings.logout')}
             onPress={handleLogout}
-            style={{
-              flex: 1,
-              paddingVertical: 14,
-              alignItems: 'center',
-              justifyContent: 'center',
-              backgroundColor: theme.colors.background.elevated,
-              borderRadius: 14,
-            }}
-          >
-            <Text variant="body" weight="semibold" color={theme.colors.status.error}>
-              {t('settings.logout')}
-            </Text>
-          </Pressable>
-          <Pressable
-            onPress={handleDeleteAccount}
-            style={{
-              flex: 1,
-              paddingVertical: 14,
-              alignItems: 'center',
-              justifyContent: 'center',
-              backgroundColor: theme.colors.background.elevated,
-              borderRadius: 14,
-              borderWidth: 1,
-              borderColor: theme.colors.status.error + '40',
-            }}
-          >
-            <Text variant="body" weight="semibold" color={theme.colors.text.tertiary}>
-              {t('settings.delete_account')}
-            </Text>
-          </Pressable>
+            showChevron={false}
+            destructive
+            isFirst
+            isLast
+          />
         </View>
 
         {/* App version */}
