@@ -191,8 +191,22 @@ export interface RouteHotspot {
   avgLongMs: number;
   /** Number of sub-30-fps samples (JS or UI thread) recorded on this route. */
   jankCount: number;
-  /** Worst (minimum) FPS observed on this route. 60 if never dipped. */
+  /**
+   * Worst (minimum) FPS observed on this route WHILE IT WAS SETTLED. 60 if never dipped.
+   *
+   * "Settled" means the window did not overlap a navigation into this route — see `_SETTLE_MS`. This
+   * answers "how bad does this screen get while I am using it", which is the question the Hotspots
+   * ranking is for. The cost of OPENING it is a different question and has its own field below.
+   */
   worstFps: number;
+  /**
+   * Worst FPS seen in the window(s) right after navigating here — i.e. the cost of opening the screen.
+   *
+   * Split out rather than dropped. Folding it into `worstFps` is what made every route in the app look
+   * broken at once: a screen mount is a burst of work by definition, `worstFps` is a session minimum
+   * that never decays, so one open pinned every route to its mount window for the rest of the session.
+   */
+  worstOpenFps: number;
   /** Number of component/screen mounts recorded on this route. */
   mountCount: number;
   /** Mean mount duration, ms (0 if none). */
@@ -239,6 +253,7 @@ interface RouteStat {
   sumLongMs: number;
   jankCount: number;
   worstFps: number;
+  worstOpenFps: number;
   mountCount: number;
   sumMountMs: number;
   worstMountMs: number;
@@ -518,9 +533,15 @@ class PerfMonitor {
         this._bumpRouteFps(fps);
         this._frameCount = 0;
         this._lastSampleTs = now;
-        // Sustained jank below 30 fps still gets its own marker so the user
-        // can distinguish a single hitch from a long stutter.
-        if (this._jsHistory.length > 1 && fps < 30) {
+        // Sustained jank below 30 fps still gets its own marker so the user can distinguish a single
+        // hitch from a long stutter.
+        //
+        // Gated on `_isSettled` for the same reason as `worstFps`: a screen mount drives the loop under
+        // 30 by definition, so counting it here labelled every route the user opened as janky. In the
+        // reported snapshot that is precisely the `js<30 @ (tabs)/profile` and `js<30 @ chat/[id]`
+        // entries — both landed within 300 ms of the NAV into those routes. The open cost is not lost:
+        // it is the `NAV` and `MOUNT` durations, and now `worstOpenFps`.
+        if (this._jsHistory.length > 1 && fps < 30 && this._isSettled(now)) {
           this._routeStat(this._currentRoute).jankCount += 1;
           this._record({
             ts: now,
@@ -569,7 +590,10 @@ class PerfMonitor {
     this._uiFps = clamped;
     this._pushHistory(this._uiHistory, now, clamped);
     this._bumpRouteFps(clamped);
-    if (this._uiHistory.length > 1 && clamped < 30) {
+    // Same settle gate as the JS side. This path feeds the identical per-route accumulators, so
+    // leaving it ungated would keep half the defect alive on whichever screen the UI worklet happens
+    // to sample during an open.
+    if (this._uiHistory.length > 1 && clamped < 30 && this._isSettled(now)) {
       this._routeStat(this._currentRoute).jankCount += 1;
       this._record({
         ts: now,
@@ -976,6 +1000,9 @@ class PerfMonitor {
     this._routeStats.forEach((st, route) => {
       const avgLongMs = st.longTaskCount ? Math.round(st.sumLongMs / st.longTaskCount) : 0;
       const avgMountMs = st.mountCount ? Math.round(st.sumMountMs / st.mountCount) : 0;
+      // Only the SETTLED dip feeds the ranking. The open cost is already represented, once, by
+      // `worstMountMs` below — counting it a second time through the fps dip is what floated idle
+      // screens like `settings` (no long tasks, no mounts, no images) up the ranking.
       const fpsDip = st.worstFps < 60 ? (60 - st.worstFps) : 0;
       const score =
         st.longTaskCount * 4 +
@@ -990,6 +1017,7 @@ class PerfMonitor {
         avgLongMs,
         jankCount: st.jankCount,
         worstFps: st.worstFps,
+        worstOpenFps: st.worstOpenFps,
         mountCount: st.mountCount,
         avgMountMs,
         worstMountMs: st.worstMountMs,
@@ -1016,6 +1044,7 @@ class PerfMonitor {
         sumLongMs: 0,
         jankCount: 0,
         worstFps: 60,
+        worstOpenFps: 60,
         mountCount: 0,
         sumMountMs: 0,
         worstMountMs: 0,
@@ -1028,10 +1057,49 @@ class PerfMonitor {
   }
 
   /** Track the worst (minimum) FPS seen on the current route. */
+  /**
+   * How long after a navigation a window is still considered "opening" rather than "in use".
+   *
+   * 1200 ms because the observed opens are `NAV` 100-700 ms with a `MOUNT` inside them, and the
+   * publish window is 500 ms — so the burst can straddle two windows. Erring long here costs a little
+   * sensitivity right after a screen appears; erring short reintroduces the bug this fixes.
+   */
+  private static readonly _SETTLE_MS = 1200;
+
+  /** Is this sample from a screen in use, rather than from the burst of opening one? */
+  private _isSettled(now: number): boolean {
+    return this._lastNavTs === 0 || now - this._lastNavTs >= PerfMonitor._SETTLE_MS;
+  }
+
+  // ── WHY THIS IS SPLIT, AND WHY IT IS A REGRESSION FIX ─────────────────────
+  //
+  // Reported: "приложение стало хуже, теперь везде FPS проседает, практически в каждом разделе". The
+  // snapshot backs the observation and contradicts the conclusion: `worstFps` was 2, 20, 28, 32, 33, 37
+  // across six routes — while `longTaskCount` was ZERO on five of them. A route genuinely running at
+  // 2 fps cannot also have no long tasks.
+  //
+  // What actually happened is mine. Before #212 two guards discarded any sample within 700 ms of a
+  // stall or containing a >50 ms frame gap. Those guards were wrong for the reason #212 gives — they
+  // hid real jank — but they were ALSO, by accident, the only thing keeping screen-mount windows out of
+  // `worstFps`. Removing them let every route's open burst land in a session minimum that never decays,
+  // so one navigation pins that route's number for the rest of the session, on every screen.
+  //
+  // This exact failure is already written up in `PerfMonitorBubble.tsx`: "`settings` — zero long tasks,
+  // zero mounts, zero images, an idle form — reported `worstFps: 3`". It was fixed once, by the guards.
+  // I removed them without asking what else they were holding up.
+  //
+  // So the discrimination is now explicit instead of accidental: opening cost and in-use cost are
+  // recorded separately. Nothing is hidden — `worstOpenFps` keeps the open number, and `NAV` / `MOUNT`
+  // marks already carry their own durations.
   private _bumpRouteFps(fps: number) {
+    const now = Date.now();
     const st = this._routeStat(this._currentRoute);
-    if (fps < st.worstFps) st.worstFps = fps;
-    st.lastTs = Date.now();
+    if (this._isSettled(now)) {
+      if (fps < st.worstFps) st.worstFps = fps;
+    } else if (fps < st.worstOpenFps) {
+      st.worstOpenFps = fps;
+    }
+    st.lastTs = now;
   }
 
   /**

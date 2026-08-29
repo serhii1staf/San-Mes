@@ -205,3 +205,60 @@ describe('perfMonitor sampler-gap classification', () => {
     expect(perfMonitor.classifyGap(gapStart)).toBe('IDLE');
   });
 });
+
+// ── Opening a screen must not be scored as the screen being janky ────────────
+//
+// Regression test. Two guards used to discard samples near a stall; #212 removed them because they
+// hid real jank, which was right — but they were also the only thing keeping screen-MOUNT windows out
+// of `worstFps`, which is a session minimum that never decays. The result was every route in the app
+// reporting a low `worstFps` while reporting zero long tasks: 2, 20, 28, 32, 33, 37 across six routes
+// in the reported snapshot, five of them with `longTaskCount: 0`.
+//
+// The same failure is written up in `PerfMonitorBubble.tsx` for the UI worklet: "`settings` — zero
+// long tasks, zero mounts, zero images, an idle form — reported `worstFps: 3`". It was fixed once by
+// accident and broken again by removing the accident.
+describe('perfMonitor open-vs-in-use split', () => {
+  beforeEach(() => {
+    perfMonitor.clearEvents();
+  });
+
+  it('keeps a dip during the open burst out of worstFps, and reports it as worstOpenFps', () => {
+    const t0 = Date.now();
+    const spy = jest.spyOn(Date, 'now');
+
+    // Navigate somewhere. This stamps the settle window.
+    spy.mockReturnValue(t0);
+    perfMonitor.recordNavigation('route/under-test', 120);
+
+    // A terrible sample 200 ms later — i.e. inside the mount burst.
+    spy.mockReturnValue(t0 + 200);
+    perfMonitor.pushUiFps(3);
+    spy.mockRestore();
+
+    const hs = perfMonitor.getHotspots().find((h) => h.route === 'route/under-test');
+    expect(hs).toBeDefined();
+    // Not attributed to the screen being janky in use...
+    expect(hs!.worstFps).toBe(60);
+    expect(hs!.jankCount).toBe(0);
+    // ...but not hidden either.
+    expect(hs!.worstOpenFps).toBe(3);
+  });
+
+  it('still records a dip once the screen has settled', () => {
+    const t0 = Date.now();
+    const spy = jest.spyOn(Date, 'now');
+
+    spy.mockReturnValue(t0);
+    perfMonitor.recordNavigation('route/settled', 40);
+
+    // Well past the settle window, so this is the screen misbehaving in use.
+    spy.mockReturnValue(t0 + 5000);
+    perfMonitor.pushUiFps(11);
+    spy.mockRestore();
+
+    const hs = perfMonitor.getHotspots().find((h) => h.route === 'route/settled');
+    expect(hs).toBeDefined();
+    expect(hs!.worstFps).toBe(11);
+    expect(hs!.worstOpenFps).toBe(60);
+  });
+});

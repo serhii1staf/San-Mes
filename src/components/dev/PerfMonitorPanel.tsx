@@ -633,7 +633,11 @@ const HotspotRow = React.memo(function HotspotRow({
           <HotspotStat label={t('perf.hs_long', 'Freezes (long tasks)')} value={`${hotspot.longTaskCount}`} />
           <HotspotStat label={t('perf.hs_worst_long', 'Worst freeze')} value={`${hotspot.worstLongMs} ms`} danger={hotspot.worstLongMs > 300} />
           <HotspotStat label={t('perf.hs_avg_long', 'Avg freeze')} value={`${hotspot.avgLongMs} ms`} />
+          {/* Two numbers, because they answer different questions and merging them made every route
+              in the app look broken. "Worst FPS" is the screen IN USE; "Open FPS" is the burst of
+              mounting it, which is expected to be bad and is not a defect of the screen itself. */}
           <HotspotStat label={t('perf.hs_worst_fps', 'Worst FPS')} value={`${hotspot.worstFps}`} danger={hotspot.worstFps < 30} />
+          <HotspotStat label={t('perf.hs_open_fps', 'Open FPS')} value={`${hotspot.worstOpenFps}`} />
           <HotspotStat label={t('perf.hs_jank', 'Sub-30fps samples')} value={`${hotspot.jankCount}`} />
           <HotspotStat label={t('perf.hs_mounts', 'Mounts')} value={`${hotspot.mountCount}`} />
           <HotspotStat label={t('perf.hs_worst_mount', 'Worst mount')} value={`${hotspot.worstMountMs} ms`} danger={hotspot.worstMountMs > 400} />
