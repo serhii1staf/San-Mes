@@ -1335,9 +1335,21 @@ export const CustomTabBar = React.memo(function CustomTabBar({
           style={[
             styles.container,
             {
+              // ── THE LIGHT-THEME BORDER WAS WHITE, ON A NEAR-WHITE FILL ──────────
+              //
+              // Reported: the bottom navigation reads as "practically прозрачная". Two things caused
+              // it and this is the second. `styles.container` carries NO `backgroundColor` — the
+              // GlassBackdrop is the bar's only fill — so in light theme the bar is an ~0.9-alpha
+              // white slab on a light background, and this border was its only remaining definition.
+              // At `rgba(255,255,255,0.5)` that definition was white-on-white, i.e. none.
+              //
+              // A bright rim is right for REAL glass, where it reads as the lip catching light. It is
+              // wrong for a flat tonal fill, which needs a dark edge to have a shape at all. So the
+              // bright rim is kept for `glassActive` (transparent — the native glass draws its own)
+              // and for dark theme, and light theme gets a real hairline.
               borderColor: glassActive
                 ? 'transparent'
-                : isDark ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.5)',
+                : isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.14)',
               shadowColor: isDark ? '#000' : 'rgba(0,0,0,0.15)',
             },
             // When real native glass is active, DON'T hard-clip the bar with
