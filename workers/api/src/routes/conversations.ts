@@ -19,7 +19,6 @@ import { fail, ok } from '../http';
 import { register } from '../router';
 import { exec, normalizeProfile, query, queryOne } from '../db';
 import { parseLimit, parseUuid } from '../util';
-import { readJson } from '../validate';
 
 /**
  * Cap on how many conversations one sync returns.
@@ -233,27 +232,31 @@ register('GET', '/v1/conversations', async (req, env, _ctx, _params, authedUserI
 // counts for messages the user has read. With it, a late arrival is a no-op. This is the same
 // reason `clear()` on the client always advances and never assigns.
 //
-// The body's `at` is optional and clamped to now: a client may pass the timestamp of the newest
-// message it has actually rendered, which is more precise than "now" when a fetch is still in
-// flight, but it must never be able to mark FUTURE messages read. A malformed or future value
-// falls back to now rather than 400 — this is a best-effort call on the client's UI path, and
-// failing it would leave a badge stuck rather than surface anything a user could act on.
+// THE TIMESTAMP IS THE SERVER'S, AND THE REQUEST BODY CANNOT INFLUENCE IT.
+//
+// The first version of this endpoint accepted an optional `at` from the client, clamped to "not in
+// the future", on the reasoning that a client might want to mark read up to the newest message it
+// had actually rendered. Caught in end-to-end verification against the live database: the Android
+// emulator's clock was 3h34m BEHIND real time, the client sent `new Date().toISOString()`, and the
+// watermark landed three and a half hours in the past. Every message from those hours would have
+// counted as unread again the moment the chat list synced — which is the exact bug this whole change
+// exists to fix, reintroduced by the fix, on any device with a skewed clock.
+//
+// That also directly contradicted the rationale in migration 0005: the point of moving read state
+// onto the server was to put the watermark and `messages.created_at` on ONE clock. A client-supplied
+// timestamp gives that away for nothing, because the client's clock is exactly the thing we stopped
+// trusting.
+//
+// So there is no `at` parameter. Marking read means "as of when the server processed this", which is
+// the only value that is guaranteed comparable with the rows it will be compared against. A future
+// "mark read up to message X" feature should pass a MESSAGE ID and let the server look up that
+// message's own `created_at` — never a caller-supplied time.
 register('POST', '/v1/conversations/:id/read', async (req, env, _ctx, params, authedUserId) => {
   if (!authedUserId) return fail(req, 'unauthorised', 401);
   const conversationId = parseUuid(params.id);
   if (!conversationId) return fail(req, 'invalid conversation id', 400);
 
-  const body = await readJson<{ at?: unknown }>(req);
-  // An absent or unparseable body is fine — it means "read as of now".
-  const nowIso = new Date().toISOString();
-  let at = nowIso;
-  if (body.ok && typeof body.value.at === 'string') {
-    const parsed = Date.parse(body.value.at);
-    // Finite AND not in the future. `<=` on the ISO strings rather than on the parsed numbers
-    // so the stored value is byte-comparable with `messages.created_at`, which is how every
-    // other comparison in this file works.
-    if (Number.isFinite(parsed) && body.value.at <= nowIso) at = body.value.at;
-  }
+  const at = new Date().toISOString();
 
   // Explicit participation check, its own round-trip, for the same reason the messages
   // endpoint below does it that way. It also cannot be folded into the UPDATE: `meta.changes`
@@ -280,10 +283,10 @@ register('POST', '/v1/conversations/:id/read', async (req, env, _ctx, params, au
     [at, conversationId, authedUserId, at],
   );
 
-  // Return the watermark that is now in force and what is still unread beneath it, rather than
-  // echoing the request. If the guard above rejected a stale `at`, the caller learns the real
-  // value instead of caching one the server never accepted — and `unread` lets the client
-  // settle its badge from this response without waiting for the next list sync.
+  // Return the watermark that is now in force and what is still unread beneath it. If the
+  // monotonic guard above declined to move it — because a later request already got there — the
+  // caller learns the real value instead of assuming its own. `unread` lets a client settle its
+  // badge from this response without waiting for the next list sync.
   const state = await queryOne<{ last_read_at: string | null; unread: number }>(
     env,
     `SELECT cp.last_read_at AS last_read_at,
