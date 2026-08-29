@@ -155,11 +155,23 @@ CREATE INDEX IF NOT EXISTS idx_cp_conversation_id  ON conversation_participants(
 -- Columns: id, conversation_id, sender_id, text, created_at.
 -- Messages are listed in ascending order by created_at within a
 -- conversation (`getMessages` orders ASC).
+-- Attached images are NOT a column: they ride inside `text` as
+-- `::img::url1|url2::caption` and are parsed client-side.
+--
+-- `img_w` / `img_h` (migration 0006) are the pixel dimensions of the FIRST of
+-- those images, so a receiver can size the bubble before the bytes arrive
+-- instead of mounting a square and relayouting on decode. Only the ratio is
+-- consumed (`fitChatImageBox`), so a sender that measured a resized derivative
+-- is still correct. NULL = unknown, which is every message predating 0006 and
+-- every message whose image was never measured (GIF pastes, clipboard).
+-- Multi-image bubbles render a fixed grid and need no dimensions.
 CREATE TABLE IF NOT EXISTS messages (
   id               TEXT PRIMARY KEY,
   conversation_id  TEXT NOT NULL,
   sender_id        TEXT NOT NULL,
   text             TEXT NOT NULL DEFAULT '',
+  img_w            INTEGER,
+  img_h            INTEGER,
   created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 CREATE INDEX IF NOT EXISTS idx_messages_conv_created ON messages(conversation_id, created_at);

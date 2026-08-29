@@ -716,13 +716,38 @@ const en: Record<string, string> = {
   'admin.badge.creator': 'Content creator',
 
   // ─── Settings → Device key ─────────────────────────────────────────────
-  'device_key.title': 'Devices',
+  // The screen shows ONE key, and this title said "Devices" — which is why the
+  // settings row read as a broken session list. A real device list now exists
+  // separately (devices.*), so the two screens no longer claim the same name.
+  'device_key.title': 'Device key',
   'device_key.subtitle': 'Key to sign in on another device',
   'device_key.description': 'Use this key and your 4-digit PIN to sign in on a new device',
   'device_key.your_key': 'Your key',
   'device_key.copied': 'Copied!',
   'device_key.dont_forget': "Don't forget your PIN",
   'device_key.reminder': 'Sign-in requires the key + 4-digit PIN',
+
+  // ─── Settings → Devices ────────────────────────────────────────────────
+  // The subtitle and note deliberately say "notifications" rather than "sign-ins":
+  // the only per-device record the backend keeps is push_tokens. There is no login
+  // log, the auth token is stateless, and there is nothing else to enumerate.
+  // Promising a session list would be a claim this cannot back up.
+  'devices.subtitle': 'Devices receiving notifications for this account',
+  'devices.note': 'This is not a sign-in log. A device appears here once it allows notifications, and disappears when it signs out.',
+  'devices.empty': 'No devices yet',
+  'devices.empty_hint': 'A device shows up here as soon as it allows notifications',
+  'devices.this_device': 'This device',
+  'devices.registered': 'Added {date}',
+  'devices.registered_unknown': 'Date unknown',
+  'devices.platform_ios': 'iPhone or iPad',
+  'devices.platform_android': 'Android',
+  'devices.platform_unknown': 'Unknown device',
+  'devices.revoke_title': 'Disconnect this device?',
+  'devices.revoke_msg': 'It will stop receiving notifications. The account stays signed in on it — this does not sign it out.',
+  'devices.revoke_current_msg': 'This is the device you are using. Notifications will be turned off here until you enable them again in Settings.',
+  'devices.revoke_action': 'Disconnect',
+  'devices.revoked': 'Device disconnected',
+  'devices.error': "Couldn't load the device list",
 
   // ─── Settings → Mini apps ──────────────────────────────────────────────
   'mini_apps.title': 'Mini apps',

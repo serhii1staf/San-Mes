@@ -312,6 +312,30 @@ export function RealtimeAccountBridge(): null {
               }
             }
 
+            // ── SIZE THE PHOTO BEFORE THE MESSAGE LANDS IN THE STORE ──────────
+            //
+            // This is the backstop path: a message arriving while the recipient is NOT on the chat
+            // screen is written straight into the chat store from here, so when they later open the
+            // chat the bubble renders from this row without any history fetch. Without the
+            // dimensions the newest photo — the one they are most likely to look at immediately —
+            // would be the one that still resizes on decode.
+            //
+            // `img_w` / `img_h` come from the Worker's `notif.message` payload (migration 0006).
+            // Written before `addMessage` because `SingleChatImage` reads the cache in its state
+            // initialisers, so the value has to be there on the first render of the bubble.
+            try {
+              const dw = Number((payload as any).img_w);
+              const dh = Number((payload as any).img_h);
+              const firstUrl = imageUrls && imageUrls.length > 0 ? imageUrls[0] : null;
+              if (firstUrl && Number.isFinite(dw) && Number.isFinite(dh) && dw > 0 && dh > 0) {
+                // eslint-disable-next-line @typescript-eslint/no-var-requires
+                const { setImageDims } = require('../../services/imageDimsCache') as typeof import('../../services/imageDimsCache');
+                setImageDims(firstUrl, dw, dh);
+              }
+            } catch {
+              // A missing dimension only costs the old behaviour: the bubble measures on load.
+            }
+
             if (!existing.some((m: any) => m.id === stableId)) {
               chatStore.addMessage(conversationId, {
                 id: stableId,

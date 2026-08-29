@@ -373,16 +373,31 @@ register('GET', '/v1/conversations/:id/messages', async (req, env, _ctx, params,
   const sinceRaw = url.searchParams.get('since');
   const since = sinceRaw && /^\d{4}-\d{2}-\d{2}T[\d:.]+Z?$/.test(sinceRaw) ? sinceRaw : null;
 
+  // ── `img_w` / `img_h` ARE WHY THIS RESPONSE GREW ────────────────────────
+  //
+  // This is the path the reported bug travels. "Открывает со мной чат, начинает листать вверх, и
+  // контейнеры, где я отправлял гифки и изображения, начинают увеличиваться, уменьшаться" — those
+  // photos reach the reader through this query, and until migration 0006 the response carried no
+  // way to know their shape. A photo bubble sizes with `fitChatImageBox(w, h)`, so with nothing to
+  // go on it mounted `UNKNOWN_IMG_BOX` (a square) and relayouted when `onLoad` finally reported the
+  // decoded size — one layout change per photo, arriving on a scroll frame.
+  //
+  // NULL for anything sent before 0006, which the client already handles: it falls back to measuring
+  // on load exactly as before. So the response is additive and needs no version negotiation.
+  interface MessageRow {
+    id: string;
+    conversation_id: string;
+    sender_id: string;
+    text: string;
+    img_w: number | null;
+    img_h: number | null;
+    created_at: string;
+  }
+
   const rows = since
-    ? await query<{
-        id: string;
-        conversation_id: string;
-        sender_id: string;
-        text: string;
-        created_at: string;
-      }>(
+    ? await query<MessageRow>(
         env,
-        `SELECT id, conversation_id, sender_id, text, created_at
+        `SELECT id, conversation_id, sender_id, text, img_w, img_h, created_at
            FROM messages
           WHERE conversation_id = ?
             AND created_at > ?
@@ -390,15 +405,9 @@ register('GET', '/v1/conversations/:id/messages', async (req, env, _ctx, params,
           LIMIT ?`,
         [conversationId, since, limit],
       )
-    : await query<{
-        id: string;
-        conversation_id: string;
-        sender_id: string;
-        text: string;
-        created_at: string;
-      }>(
+    : await query<MessageRow>(
         env,
-        `SELECT id, conversation_id, sender_id, text, created_at
+        `SELECT id, conversation_id, sender_id, text, img_w, img_h, created_at
            FROM messages
           WHERE conversation_id = ?
        ORDER BY created_at DESC

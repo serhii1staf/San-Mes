@@ -46,6 +46,8 @@ import { ReplyJumpGlow } from '../../src/components/chat/ReplyJumpGlow';
 import { PixelIcon } from '../../src/components/pixel-icons/PixelIcon';
 import { uploadChatImage } from '../../src/lib/supabase';
 import { getImageDims, setImageDims } from '../../src/services/imageDimsCache';
+import { firstImageUrlFromStoredText } from '../../src/utils/chatImageMarker';
+import { reportImageDims } from '../../src/services/imageDimsReporter';
 import { useRenderBudget } from '../../src/hooks/useRenderBudget';
 import { useScreenMountMark } from '../../src/hooks/useScreenMountMark';
 import { useEffectiveBrowserWidgetPosition } from '../../src/lib/browserWidget';
@@ -716,7 +718,7 @@ function fitChatImageBox(natW: number, natH: number): { w: number; h: number } {
 // dimensions once expo-image reports the decoded source size (onLoad) — and
 // remember them so every future open of this chat is jump-free. Own tiny
 // state → the memoized MessageBubble around it is untouched.
-function SingleChatImage({ uri, isVisible, onPress, cutout, uploading }: { uri: string; isVisible?: boolean; onPress: () => void; cutout?: boolean; uploading?: boolean }) {
+function SingleChatImage({ uri, isVisible, onPress, cutout, uploading, reportDimsFor }: { uri: string; isVisible?: boolean; onPress: () => void; cutout?: boolean; uploading?: boolean; reportDimsFor?: string }) {
   const theme = useTheme();
   // Seed from the persisted dimension cache so a previously-seen photo mounts
   // at the correct aspect-ratio box on the very first frame — this removes the
@@ -787,7 +789,22 @@ function SingleChatImage({ uri, isVisible, onPress, cutout, uploading }: { uri: 
     if (!s?.width || !s?.height) return;
     setImageDims(uri, s.width, s.height);
     setSize(fitChatImageBox(s.width, s.height));
-  }, [uri, seeded, setLoading, setSize]);
+    // ── AND TELL THE SERVER, SO NOBODY ELSE HAS TO MEASURE IT ────────────────
+    //
+    // Reaching this line means the box was NOT seeded, i.e. neither the dimension cache nor the
+    // message carried a shape — so this is a photo predating migration 0006, and the measurement just
+    // taken is the only record of its shape that exists anywhere. Sending it back is what fixes
+    // "scroll up through old history and the containers grow and shrink" for the PEER, and for this
+    // device after a reinstall. Without it, 0006 only helps messages sent from now on, which is not
+    // the case that was reported.
+    //
+    // Guarded by `seeded` for free: a photo whose size arrived on the wire never gets here, so a value
+    // the server supplied can never be echoed back to it.
+    //
+    // `reportDimsFor` is the server uuid, passed only when the caller has one. The reporter buffers and
+    // batches, so a scroll through a media-heavy history is one request rather than one per photo.
+    if (reportDimsFor) reportImageDims(reportDimsFor, s.width, s.height);
+  }, [uri, seeded, setLoading, setSize, reportDimsFor]);
   const handleError = useCallback(() => setLoading(false), [setLoading]);
   return (
     <Pressable onPress={onPress}>
@@ -1415,6 +1432,12 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
                       uri={message.imageUrls[0]}
                       isVisible={isVisible}
                       cutout={isStickerLike}
+                      // The server's uuid for this message, so a first-ever measurement can be
+                      // backfilled. `serverId` when the row began life as an optimistic local send,
+                      // otherwise `id` is already the server uuid (history and realtime both store it
+                      // there). The reporter rejects a local `m-<ts>` id itself, so an unsent message
+                      // costs nothing here.
+                      reportDimsFor={message.serverId || message.id}
                       // A local reference means the upload has not completed — the same signal
                       // `healPhotos` keys on. Drives the spinner, nothing else.
                       uploading={!message.imageUrls[0].startsWith('http')}
@@ -3121,6 +3144,36 @@ export default function ChatScreen() {
               serverId: String(row.id),
             }));
 
+          // ── SEED THE DIMENSION CACHE BEFORE THESE ROWS CAN RENDER ──────────
+          //
+          // This is where the reported bug is actually fixed. Scrolling up loads history through this
+          // fetch, and every photo in it was one the device had never decoded — so `SingleChatImage`
+          // seeded `UNKNOWN_IMG_BOX`, `expo-image` reported the real size on load, and the container
+          // relayouted. One size change per photo, landing on a scroll frame.
+          //
+          // Nothing downstream needs to change to consume this. `imageDimsCache` is already read on
+          // the render path in five places — the box seed, the `loading` seed, the `seeded` gate that
+          // suppresses the on-load re-measure, the `singleImgKnown` gate that decides whether the real
+          // image mounts on the first frame, and the deferred placeholder's box. Writing the pair here
+          // makes all five answer correctly the first time.
+          //
+          // ORDER MATTERS: this runs before `setMessages`, so the cache is warm on the very render the
+          // new rows first appear in. `setImageDims` updates its in-memory map synchronously (only the
+          // MMKV flush is debounced), so there is no window where a row is in the store but its size
+          // is not yet known.
+          //
+          // The url is recovered from the stored `::img::` marker rather than from `imageUrls`, which
+          // does not exist yet — `parseMessage` produces that at render time. `firstImageUrlFromStoredText`
+          // searches for the marker instead of testing the start of the string, so a reply that
+          // carried a photo is handled too.
+          for (const row of messages as any[]) {
+            const w = Number(row?.img_w);
+            const h = Number(row?.img_h);
+            if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) continue;
+            const url = firstImageUrlFromStoredText(typeof row.text === 'string' ? row.text : '');
+            if (url) setImageDims(url, w, h);
+          }
+
           let local = (useChatStore.getState().messages[conversationId] || []) as ChatMessage[];
 
           // ── A MESSAGE DELETED ON ANOTHER DEVICE MUST DISAPPEAR HERE TOO ─────
@@ -3961,6 +4014,16 @@ export default function ChatScreen() {
       // a quick subscribe-after-publish race won't add the same row twice.
       const existing = useChatStore.getState().messages[conversationId] || [];
       if (existing.some((m) => m.id === payload.id)) return;
+      // Size the photo before the row enters the store, for the same reason the history mapper does:
+      // `addMessage` triggers the render that mounts the bubble, and `SingleChatImage` reads the
+      // dimension cache in its state initialisers. A frame later is a frame too late — that is the
+      // snap. Here the url is already an array on the payload, so no marker parsing is needed.
+      {
+        const w = Number(payload.imgW);
+        const h = Number(payload.imgH);
+        const first = Array.isArray(payload.imageUrls) ? payload.imageUrls[0] : null;
+        if (first && Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) setImageDims(first, w, h);
+      }
       // Translate the wire payload into our ChatMessage shape. We persist the
       // REAL author uuid (`payload.senderId`, published as the sender's
       // `user.id`) so ownership is computed correctly at render time on any
@@ -3996,6 +4059,15 @@ export default function ChatScreen() {
     const onEdit = (msg: { data?: any }) => {
       const payload = msg?.data;
       if (!payload || typeof payload !== 'object' || !payload.id) return;
+      // An edit can swap which image is attached, so it can also change the shape. Accepts both the
+      // client-published spelling (`imgW`) and the Worker-published one (`img_w`) — this event has two
+      // publishers by design, so that a peer whose socket missed the client's publish still gets it.
+      {
+        const w = Number(payload.imgW ?? payload.img_w);
+        const h = Number(payload.imgH ?? payload.img_h);
+        const first = Array.isArray(payload.imageUrls) ? payload.imageUrls[0] : null;
+        if (first && Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) setImageDims(first, w, h);
+      }
       const current = useChatStore.getState().messages[conversationId] || [];
       const next = current.map((m) =>
         matchesPayload(m, payload.id)
@@ -4377,8 +4449,26 @@ export default function ChatScreen() {
   // Send a GIF (from GIPHY) as a message. We store the remote GIF URL directly in
   // imageUrls — no upload to our storage (zero server load), and it renders +
   // animates through the existing image path (expo-image animates GIFs).
-  const sendGif = useCallback((url: string) => {
+  // ── GIFS NOW CARRY THEIR SHAPE TOO ────────────────────────────────────────
+  //
+  // The report named them explicitly: "контейнеры, где я отправлял эти гифки и изображения". GIFs were
+  // the worse half, and for a different reason than photos: the two gallery paths measure with
+  // `expo-image-manipulator` and stamp `setImageDims` at pick time, but a GIF is deliberately never
+  // manipulated (that would kill the animation), so `pickImages` returns early for `.gif` and nothing
+  // ever measured one. A GIF had no dimensions even on the SENDER'S own device.
+  //
+  // Giphy hands them to us for free. `GiphyItem` already carries `width`/`height` for exactly the
+  // `sendUrl` rendition we send (`src/services/giphy.ts` — `Number(send?.width) || 200`), and
+  // `onPickGif` already holds the whole item; it was just throwing everything but the url away.
+  //
+  // `dims` is optional because the GIF panel is not the only caller shape this could grow, and a
+  // missing pair has to keep behaving exactly as it does today: measure on load.
+  const sendGif = useCallback((url: string, dims?: { w: number; h: number }) => {
     if (!id || !url) return;
+    // Stamp locally FIRST, so the sender's own optimistic bubble mounts at the right box on the frame
+    // it appears — same reason `pickImages` stamps before `setPendingImages`. Without this the sender
+    // would still watch their own GIF snap, even though the peer's copy arrived pre-sized.
+    if (dims) setImageDims(url, dims.w, dims.h);
     playSendSound();
     const currentReply = replyTo;
     setReplyTo(null);
@@ -4423,7 +4513,10 @@ export default function ChatScreen() {
         if (convId) {
           const { data: sentGifData } = await apiPost<{ id: string }>(
             `/v1/conversations/${encodeURIComponent(convId)}/messages`,
-            { text: `::img::${url}::` },
+            // `imgW`/`imgH` (migration 0006) so the recipient sizes this GIF before it downloads.
+            // Undefined when Giphy gave us nothing usable; the Worker drops non-positive values
+            // rather than failing the send, so a missing pair costs the old behaviour and nothing else.
+            { text: `::img::${url}::`, imgW: dims?.w, imgH: dims?.h },
           );
           // Record the server uuid alongside the stable local id so a later history
           // fetch dedupes instead of duplicating the GIF. Deliberately NOT an
@@ -4452,6 +4545,11 @@ export default function ChatScreen() {
                 text: '',
                 createdAt: newMessage.createdAt,
                 imageUrls: [url],
+                // The live path needs the dimensions as much as history does — a peer with the chat
+                // already open receives the GIF here, not from a fetch, so this is the copy that
+                // decides whether their bubble appears at the right size or snaps.
+                imgW: dims?.w,
+                imgH: dims?.h,
                 replyToId: newMessage.replyToId,
                 replyToText: newMessage.replyToText,
                 replyToIsOwn: newMessage.replyToIsOwn,
@@ -4486,7 +4584,11 @@ export default function ChatScreen() {
   }, []);
 
   const onPickGif = useCallback((item: GiphyItem) => {
-    sendGif(item.sendUrl);
+    // `item.width` / `item.height` describe `item.sendUrl` — the exact rendition being sent, not the
+    // grid preview (`previewWidth`/`previewHeight` are the small one). Passing them through is the
+    // whole reason a GIF can now be sized before it downloads; this call site already had the numbers
+    // and dropped them.
+    sendGif(item.sendUrl, { w: item.width, h: item.height });
     setRecentGif(pushRecentGif(item));
     setPanelTab(null);
     setKeepLifted(false);
@@ -4821,8 +4923,13 @@ export default function ChatScreen() {
       const serverId = target.serverId || target.id;
       if (!serverId.startsWith('m-')) {
         const marker = remaining.length > 0 ? `::img::${remaining.join('|')}::` : '';
+        // The dimensions have to move with the photo list. Removing the first of several photos
+        // promotes a DIFFERENT image to `imageUrls[0]`, and that is the one a single-image bubble will
+        // size itself to — so leaving the old pair stored would hand the peer the wrong shape for the
+        // wrong photo. `remaining[0]` (or nothing left, which clears them) is always the correct answer.
+        const remainingDims = remaining.length > 0 ? getImageDims(remaining[0]) : undefined;
         const { apiPatch } = await import('../../src/services/apiClient');
-        const { error } = await apiPatch(`/v1/messages/${encodeURIComponent(serverId)}`, { text: marker + text });
+        const { error } = await apiPatch(`/v1/messages/${encodeURIComponent(serverId)}`, { text: marker + text, imgW: remainingDims?.w, imgH: remainingDims?.h });
         if (error) showToast(t('toast.error_generic'), 'alert-circle');
       }
     } catch {
@@ -4846,7 +4953,7 @@ export default function ChatScreen() {
         // `remaining` is `[]` there, which IS an array, so the peer clears its list. Every render path
         // guards on `imageUrls && imageUrls.length > 0`, so an empty array reads as "no photos"
         // everywhere without a second change.
-        void channel.publish('msg.edit', { id: target.serverId || target.id, text, imageUrls: remaining });
+        void channel.publish('msg.edit', { id: target.serverId || target.id, text, imageUrls: remaining, imgW: getImageDims(remaining[0])?.w, imgH: getImageDims(remaining[0])?.h });
       }
     } catch {}
   }, [viewerMsg, viewerImages, conversationId, pinnedIds, unpinMessage, handleMenuAction, closeImageViewer, setMessages, t]);
@@ -5036,7 +5143,11 @@ export default function ChatScreen() {
           // carry the edited text when its create finally lands.
           if (serverId.startsWith('m-')) return;
           const { apiPatch } = await import('../../src/services/apiClient');
-          const { error } = await apiPatch(`/v1/messages/${encodeURIComponent(serverId)}`, { text });
+          // `finalImages` is resolved above — newly added local images have already been uploaded and
+          // swapped for their remote urls by this point, and `handleSend`'s carry means the dimension
+          // cache is keyed by those remote urls. So the first entry's shape is known here.
+          const editDims = finalImages && finalImages.length > 0 ? getImageDims(finalImages[0]) : undefined;
+          const { error } = await apiPatch(`/v1/messages/${encodeURIComponent(serverId)}`, { text, imgW: editDims?.w, imgH: editDims?.h });
           if (error) showToast(t('toast.error_generic'), 'alert-circle');
         } catch {
           showToast(t('toast.error_generic'), 'alert-circle');
@@ -5056,6 +5167,8 @@ export default function ChatScreen() {
             id: editing.serverId || editing.id,
             text,
             imageUrls: finalImages,
+            imgW: finalImages && finalImages.length > 0 ? getImageDims(finalImages[0])?.w : undefined,
+            imgH: finalImages && finalImages.length > 0 ? getImageDims(finalImages[0])?.h : undefined,
           });
         }
       } catch {}
@@ -5189,9 +5302,25 @@ export default function ChatScreen() {
               }
             : null,
         );
+        // ── SEND THE FIRST PHOTO'S SHAPE, NOT JUST ITS URL ────────────────────
+        //
+        // Everything needed for this was already here and stayed on the device. `setImageDims` is
+        // stamped at pick time from the manipulator result, and the block above deliberately carries
+        // that entry from the local `file://` key onto the uploaded `https://` key before the swap —
+        // with a comment explaining that the carry exists so the SENDER'S bubble does not jump.
+        //
+        // But `imageDimsCache` is per-install MMKV. The recipient had no way to learn any of it, so
+        // they mounted `UNKNOWN_IMG_BOX` (a square) and relayouted when the decode reported the real
+        // size. That is the reported "пузырь одного размера, потом бам — другого".
+        //
+        // `uploadedUrls[0]`, matching the marker: the marker lists the uploaded urls in order and the
+        // dimensions describe the FIRST, which is the only one a single-image bubble sizes to. Read
+        // back out of the cache rather than tracked in a local variable so this cannot disagree with
+        // what the sender's own bubble is using — one source of truth for one number.
+        const firstDims = uploadedUrls.length > 0 ? getImageDims(uploadedUrls[0]) : undefined;
         const { data: sentData } = await apiPost<{ id: string }>(
           `/v1/conversations/${encodeURIComponent(convId)}/messages`,
-          { text: replyMarker + imageMarker + text },
+          { text: replyMarker + imageMarker + text, imgW: firstDims?.w, imgH: firstDims?.h },
         );
         // Reconcile the optimistic row's id with the server's canonical id.
         // The optimistic message was added with a client id (`m-<ts>`), but
@@ -5239,6 +5368,10 @@ export default function ChatScreen() {
               text,
               createdAt: newMessage.createdAt,
               imageUrls: uploadedUrls.length > 0 ? uploadedUrls : undefined,
+              // Same dimensions the POST carried, for the peer who already has this chat open and
+              // therefore receives the message here instead of from a fetch.
+              imgW: firstDims?.w,
+              imgH: firstDims?.h,
               replyToId: newMessage.replyToId,
               replyToText: newMessage.replyToText,
               replyToIsOwn: newMessage.replyToIsOwn,
