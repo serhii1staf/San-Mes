@@ -112,13 +112,49 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
     };
   }
 
+  // ── THE DEPS ARE HONEST NOW, AND THAT MATTERS MORE THAN IT LOOKS ───────────
+  //
+  // This memo used to read `themeColors` and `activeFontFamily` in its body while listing only their
+  // primitive SOURCES in its dependency array, with a comment explaining that the narrowing was
+  // deliberate — both values are rebuilt on every render, so depending on them directly would give the
+  // context value a new identity every time and re-render every consumer.
+  //
+  // The intent was right. The technique was a liability, for one reason: `useTheme()` is consumed in
+  // ~105 files, which makes this object the widest re-render surface in the entire app, and its
+  // stability rested on a dependency array that React's own lint rule would reject.
+  //
+  // `app.json` enables `experiments.reactCompiler`, app-wide and unscoped. A manual `useMemo` whose
+  // declared deps are NARROWER than its inferred deps is exactly the shape React Compiler's
+  // preserve-manual-memoization validation looks at. If it ever resolves that by honouring the
+  // inferred set, this memo re-derives on every render, the context value changes identity every
+  // render, and all ~105 consumers re-render on every ThemeProvider render — an app-wide frame-rate
+  // drop on every screen, which is the reported symptom. I have NOT confirmed the compiler currently
+  // does that, and I am not going to leave a load-bearing invariant resting on the answer.
+  //
+  // The fix removes the question instead of answering it: memoise the two derived values on their own
+  // primitive inputs, then depend on them for real. The deps are complete, the lint rule is satisfied
+  // without suppression, the identity is stable for exactly the same reasons as before, and there is no
+  // longer a narrowing for any compiler to disagree with.
+  const memoThemeColors = useMemo(
+    () => themeColors,
+    // The complete set of primitives `themeColors` is built from above. `baseColors` is derived from
+    // `isDark`, and `accentConfig` from `accent` + `aiThemes`, so these six cover every input.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [mode, accent, isDark, aiThemes],
+  );
+  const memoFontFamily = useMemo(
+    () => activeFontFamily,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selectedFont],
+  );
+
   const theme: Theme = useMemo(() => ({
-    colors: themeColors,
+    colors: memoThemeColors,
     palette: colors,
     spacing,
     borderRadius,
     typography,
-    fontFamily: activeFontFamily,
+    fontFamily: memoFontFamily,
     fontScale,
     shadows,
     getShadow,
@@ -127,19 +163,7 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
       spring: springConfigs,
     },
     isDark,
-  }), [
-    // Re-build theme only when one of the underlying inputs actually changes.
-    // themeColors and activeFontFamily are recomputed on every render so we
-    // depend on their primitive sources instead — gives us a stable theme
-    // reference between renders, which keeps every useTheme() consumer from
-    // re-rendering on unrelated parent updates.
-    mode,
-    accent,
-    selectedFont,
-    fontSize,
-    isDark,
-    aiThemes,
-  ]);
+  }), [memoThemeColors, memoFontFamily, fontScale, isDark]);
 
   return (
     <ThemeContext.Provider value={theme}>

@@ -1033,7 +1033,7 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
   // Swipe-to-reply + press-drag-select gestures are wired by useMessageGestures (extracted for
   // maintainability + testing). The reply-jump glow used to be in there too and is now
   // `ReplyJumpGlow`, mounted below only while `highlighted` — see that file for why.
-  const { bubbleRef, composedGesture, bubbleAnimStyle: swipeTranslateStyle, replyIconAnimStyle } = useMessageGestures({
+  const { bubbleRef, composedGesture, bubbleAnimStyle: swipeTranslateStyle, replyIconAnimStyle, replyIconArmed } = useMessageGestures({
     message,
     onReply,
     onSwipeActive,
@@ -1243,19 +1243,29 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
 
   return (
     <View style={bubbleStyles.row}>
-      <Reanimated.View style={[bubbleStyles.swipeIcon, replyIconAnimStyle]}>
-        {/* Swipe-to-reply icon. Intentionally NOT a NativeGlassView: a glass
-            view is a UIVisualEffectView, one of the most expensive native views
-            to instantiate, and mounting one PER BUBBLE (this icon exists on
-            every message row, just hidden until a swipe) made every row that
-            scrolled into view pay that cost on the scroll frame — a primary
-            cause of the per-message scroll freeze. The icon is a tiny circle
-            shown only mid-swipe, so a flat tinted circle is visually
-            indistinguishable and costs ~nothing to mount. */}
-        <View style={[bubbleStyles.swipeIconCircle, { backgroundColor: theme.colors.accent.primary + '20' }]}>
-          <MaterialIcons name="reply" size={16} color={theme.colors.accent.primary} />
-        </View>
-      </Reanimated.View>
+      {/* ── NOT MOUNTED UNTIL A SWIPE ARMS IT ────────────────────────────────
+          Three native views — the animated wrapper, the tinted circle, the glyph — plus a
+          UI-thread style mapper, on every row, held invisible by an opacity ramp that reads 0
+          at rest. Only ever seen mid-swipe. At `maxItemsInRecyclePool={24}` that was 72 views
+          and 24 mappers allocated on the chat-open commit, i.e. the 257-383 ms one.
+
+          The note that used to sit here argued the icon "costs ~nothing to mount" relative to a
+          `UIVisualEffectView`. True, and the wrong comparison: cheaper than the most expensive
+          native view in the app is not the same as free, and this is multiplied by every row.
+
+          Third application of an argument already made and measured twice in this codebase —
+          `ReplyJumpGlow` right below, and `buttonArmed` in `SwipeablePostCard`. See
+          `replyIconArmed` in `useMessageGestures` for why arming on `onStart` is early enough. */}
+      {replyIconArmed ? (
+        <Reanimated.View style={[bubbleStyles.swipeIcon, replyIconAnimStyle]}>
+          {/* Intentionally NOT a NativeGlassView: a glass view is a UIVisualEffectView, one of
+              the most expensive native views to instantiate. A flat tinted circle is visually
+              indistinguishable here. */}
+          <View style={[bubbleStyles.swipeIconCircle, { backgroundColor: theme.colors.accent.primary + '20' }]}>
+            <MaterialIcons name="reply" size={16} color={theme.colors.accent.primary} />
+          </View>
+        </Reanimated.View>
+      ) : null}
 
       {/* ── THE GESTURE TARGET IS THE ROW, NOT THE BUBBLE ─────────────────────────
           Reported as: a peer sends a message of a few characters and it is very hard to
