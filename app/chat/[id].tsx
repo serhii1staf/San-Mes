@@ -19,6 +19,7 @@ import { FormattedText, hasCodeBlock } from '../../src/components/ui/FormattedTe
 import { LinkPreview } from '../../src/components/ui/LinkPreview';
 import { extractFirstUrl } from '../../src/services/linkPreview';
 import { extractInAppCardUrl, isInAppCardUrl, stripInAppCardUrl } from '../../src/utils/appLinks';
+import { acquireDecodeSlot } from '../../src/utils/decodeGate';
 import { VerifiedBadge } from '../../src/components/ui/VerifiedBadge';
 import { UserBadge } from '../../src/components/ui/UserBadge';
 import { MessageContextMenu, MessageAction, type ActionZone, type MessageContextMenuHandle } from '../../src/components/ui/MessageContextMenu';
@@ -1108,7 +1109,42 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
   // If frame-paced reveal is ever justified again by a measurement, it belongs
   // back in `useStaggeredReveal` where the pumps used to be, not reconstructed
   // here.
-  const imgReveal = hasImages;
+  // ── GIF BUBBLES GO THROUGH A CONCURRENCY GATE, NOT A FRAME PUMP ───────────
+  //
+  // The note above is still accurate about why the two `useStaggeredReveal` hooks were removed, and
+  // nothing here reinstates them. But a snapshot on this route shows what their removal left behind:
+  // ten IMG marks inside a 40 ms window, every one a giphy host, reading
+  // 275/275/279/280/245/282/283/306/270/274 ms. Ten animated first-frame decodes started together.
+  //
+  // They are not 275 ms each because a GIF costs 275 ms. They are 275 ms each because there are ten
+  // of them competing for the same cores — and the UI thread still has to composite and upload every
+  // resulting bitmap, which is the half no JS metric here can see (`uiFps` reads 0 in every snapshot
+  // from this session, so the thread where this hurts most is currently unmeasured).
+  //
+  // The distinction from what was deleted is the whole point, and it is not a nuance:
+  //
+  //   The pumps were TIMED — one image per frame, GIFs every ~90 ms. So they delayed even when
+  //   nothing else was decoding, and their total duration grew with the image count. That is what
+  //   made the chat visibly assemble itself and got reported as it "loading everything every time".
+  //
+  //   `acquireDecodeSlot` is DEMAND-DRIVEN. The first three are granted synchronously, with no
+  //   timer and no skipped frame; the fourth starts the instant one of those three finishes. Under
+  //   three GIFs it is completely inert. Ten GIFs land in a few waves instead of one pile-up, and
+  //   because none of them is starved of CPU the wall-clock total should go DOWN, not up.
+  //
+  // Photos are deliberately not gated — their decode is cheap and cached after the first, and
+  // putting a queue in front of already-fast work is exactly how the pumps became a regression.
+  //
+  // `hasImages` for a non-GIF bubble, so nothing about the photo path changes.
+  const [gifSlotGranted, setGifSlotGranted] = useState(!isGifBubble);
+  useEffect(() => {
+    if (!isGifBubble || !hasImages) return;
+    const release = acquireDecodeSlot(() => setGifSlotGranted(true));
+    // Released on unmount / recycle as well as on load, so a cell scrolled away mid-decode hands its
+    // slot to the next bubble instead of holding it until the safety timeout.
+    return release;
+  }, [isGifBubble, hasImages]);
+  const imgReveal = hasImages && gifSlotGranted;
 
   // ── THIS SCREEN HAD NO MOUNT INSTRUMENTATION AT ALL ───────────────────────
   //
