@@ -312,11 +312,25 @@ export const useChatStore = create<ChatStoreState>()((set) => ({
     // watermark, which is what stops the "at least one new message" reconcile from immediately
     // re-raising a badge for the chat just read.
     try { useChatUnread.getState().clear(conversationId); } catch {}
-    set((state) => ({
-      conversations: state.conversations.map((c) =>
-        c.id === conversationId ? { ...c, unreadCount: 0 } : c
-      ),
-    }));
+    set((state) => {
+      // ── A WRITE THAT CHANGES NOTHING MUST NOT CHANGE IDENTITY ────────────────
+      //
+      // `.map()` allocated a new `conversations` array UNCONDITIONALLY, even when the row was
+      // already at 0 — which is the common case, because this fires on every chat open and the
+      // count was usually cleared the last time. Three container subscriptions on
+      // `(tabs)/messages.tsx` read this array, so every chat open re-rendered the chat list and
+      // re-ran its preview Map build for a value that did not move.
+      //
+      // Same guard, same reasoning as `setMessages` above and `bumpConversationPreview` below,
+      // which both already return the untouched state/array when nothing changed. This was the
+      // one write in the store that did not.
+      const idx = state.conversations.findIndex((c) => c.id === conversationId);
+      if (idx === -1) return state;
+      if (!state.conversations[idx].unreadCount) return state;
+      const conversations = state.conversations.slice();
+      conversations[idx] = { ...conversations[idx], unreadCount: 0 };
+      return { conversations };
+    });
   },
   setLoading: (isLoading) => set({ isLoading }),
 }));

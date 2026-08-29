@@ -16,7 +16,7 @@
 // values/worklets); `runOnJS` is used at most once per gesture phase (never per
 // frame) for haptics, the parent scroll-lock, and the reply/menu callbacks.
 
-import { useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Gesture } from 'react-native-gesture-handler';
 import Animated, {
   useSharedValue,
@@ -89,6 +89,38 @@ export function useMessageGestures<T extends { id: string }>({
   //
   // `highlighted` is consequently no longer a parameter of this hook.
 
+  // ── THE REPLY ICON IS NOT MOUNTED UNTIL A SWIPE STARTS ────────────────────
+  //
+  // The icon is three native views — a `Reanimated.View` carrying an animated opacity, a tinted
+  // circle, and a `MaterialIcons` glyph — and it was mounted on EVERY row, permanently, held
+  // invisible by `replyIconAnimStyle` interpolating to 0 at rest. It is only ever seen mid-swipe.
+  //
+  // With `maxItemsInRecyclePool={24}` that is 72 native views plus 24 UI-thread style mappers
+  // standing by to show nothing, all allocated on the chat-open commit — which is the commit that
+  // measures 257-383 ms.
+  //
+  // This is not a new idea, it is the third application of one this file and its neighbours already
+  // established and measured:
+  //
+  //   `ReplyJumpGlow` — same argument, same file. Its own note: mounted on every row at opacity 0,
+  //   carrying a shadow that forced an offscreen rasterisation pass per bubble, for an animation
+  //   that fires on at most ONE bubble in the screen's lifetime.
+  //
+  //   `buttonArmed` in `SwipeablePostCard` — the camera affordance, gated on pan start for exactly
+  //   this reason: "three native views plus an animated-props node, per row, for something the user
+  //   cannot see and on most rows never will."
+  //
+  // Armed in `onStart`, which is safe by the same margin `buttonArmed` relies on: the pan only
+  // activates after 12 pt of deliberate LEFT travel (`activeOffsetX([-12, 9999])`), and the opacity
+  // ramp keeps the icon invisible until 24 pt (`[-REPLY_THRESHOLD, -24, 0] -> [1, 0, 0]`). So the
+  // commit lands with ~12 pt of finger travel to spare before the first frame it could be seen on.
+  //
+  // Latched for the row's lifetime — it never disappears mid-gesture, and a second swipe on the same
+  // row pays nothing. The cost is one re-render of one row at the instant a deliberate swipe begins,
+  // against a mount cost every row pays on every open and every recycle.
+  const [replyIconArmed, setReplyIconArmed] = useState(false);
+  const armReplyIcon = useCallback(() => setReplyIconArmed(true), []);
+
   // ── Swipe-to-reply: UI-thread Pan ──────────────────────────────────────
   const translateXSV = useSharedValue(0);
   // One-shot guard so the threshold haptic fires exactly once per gesture.
@@ -109,6 +141,9 @@ export function useMessageGestures<T extends { id: string }>({
         .onStart(() => {
           'worklet';
           swipeActiveSV.value = true;
+          // Mount the reply icon now — see the note on `replyIconArmed`. One hop per gesture, not
+          // per frame, and it lands ~12 pt of travel before the icon's opacity ramp leaves zero.
+          runOnJS(armReplyIcon)();
           runOnJS(onSwipeActive)(true);
         })
         .onUpdate((e) => {
@@ -137,7 +172,7 @@ export function useMessageGestures<T extends { id: string }>({
             runOnJS(onSwipeActive)(false);
           }
         }),
-    [message, onReply, onSwipeActive, translateXSV, gateFiredHapticSV, swipeActiveSV],
+    [message, onReply, onSwipeActive, translateXSV, gateFiredHapticSV, swipeActiveSV, armReplyIcon],
   );
 
   // ── Press-drag-release: UI-thread LongPress + drag-to-select ───────────
@@ -211,7 +246,7 @@ export function useMessageGestures<T extends { id: string }>({
     ),
   }));
 
-  return { bubbleRef, composedGesture, bubbleAnimStyle, replyIconAnimStyle };
+  return { bubbleRef, composedGesture, bubbleAnimStyle, replyIconAnimStyle, replyIconArmed };
 }
 
 /**
