@@ -162,6 +162,14 @@ export const useAuthStore = create<AuthStoreState>()(
               try {
                 const { setCacheAccount } = await import('../services/cacheService');
                 setCacheAccount(profile.id);
+                // The namespace pointer just moved. Unread counts and read watermarks were read
+                // under whatever it was before (`anon` on a cold start), so re-read them now —
+                // otherwise `reconcile` can run against empty maps and overwrite the real ones.
+                // See the header of chatUnreadStore.
+                try {
+                  const { useChatUnread } = await import('./chatUnreadStore');
+                  useChatUnread.getState().rehydrate();
+                } catch {}
               } catch {}
               try {
                 const { setThrottleAccount } = await import('../services/syncThrottle');

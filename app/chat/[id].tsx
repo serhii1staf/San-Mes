@@ -486,6 +486,9 @@ const bubbleStyles = StyleSheet.create({
   // square (220×220) so when the real image mounts it occupies the exact same
   // box — the list never jumps. Once loaded, `SingleChatImage` snaps to the
   // photo's aspect ratio exactly as before.
+  // Dead: no call site. Left out of `UNKNOWN_IMG_BOX`'s consolidation deliberately rather than
+  // updated to match it -- a third definition of "unknown photo size" is what caused the disagreement
+  // in the first place. Delete on the next pass through this stylesheet.
   imageSinglePlaceholder: { width: 220, height: 220, borderRadius: 12 },
   imageMulti: { width: 120, height: 120, borderRadius: 12 },
   linkPreviewWrap: { marginTop: 6, width: 280, maxWidth: '100%' },
@@ -650,6 +653,43 @@ function OlderMessagesLoader({ visible, color }: { visible: boolean; color: stri
 const CHAT_IMG_MAX_W = Math.min(Math.round(SCREEN_WIDTH * 0.66), 270, BUBBLE_MAX_W - BUBBLE_H_PADDING);
 const CHAT_IMG_MAX_H = 340;
 
+/**
+ * The box used when a photo's real dimensions are not known yet.
+ *
+ * ── WHY THE OLD 220x220 MADE EVERY PHOTO CHANGE SIZE TWICE ──────────────────
+ *
+ * Reported: scroll up through a chat and the containers holding photos and GIFs "start increasing
+ * and decreasing" — a skeleton at one size, then the image lands at another.
+ *
+ * The seed in `SingleChatImage` (and the placeholder branch below it) fell back to a hardcoded
+ * `{ w: 220, h: 220 }`. But `fitChatImageBox` ALWAYS starts from `w = CHAT_IMG_MAX_W`, which is
+ * `min(66% of screen, 270, bubble max)` — around 257-270 on a normal phone, never 220. So the
+ * WIDTH was guaranteed to change on every single un-measured photo, on top of the height. Two axes
+ * moving at once is what reads as the container growing and shrinking; a height-only settle does
+ * not.
+ *
+ * Worse, this file already had the right answer and did not use it: `fitChatImageBox`'s
+ * degenerate-input guard returns exactly this box. There were two notions of "unknown size" in one
+ * file and they disagreed with each other.
+ *
+ * Now there is one, and it is width-stable against the fitted result. For every landscape or
+ * square photo — where `fitChatImageBox` is width-bound and returns `CHAT_IMG_MAX_W` — the width
+ * no longer moves at all when the real size arrives; only the height settles. A portrait photo is
+ * height-bound and still narrows, which cannot be avoided without knowing the aspect ratio in
+ * advance.
+ *
+ * ── WHAT WOULD ACTUALLY REMOVE THE REMAINING SETTLE ─────────────────────────
+ *
+ * Dimensions on the wire. The SENDER knows them (`setImageDims` is stamped at pick time, and the
+ * send path already carries them across the local->remote uri swap), so a recipient could size
+ * correctly on the first frame if the message carried `w`/`h`. That needs a column on `messages`
+ * plus the Worker returning it — a D1 migration, and this store's own header records that the
+ * available Cloudflare token is rejected for D1 with code 7403. So it is not a change that can be
+ * shipped and verified right now, and shipping only the client half would look like a fix while
+ * changing nothing for history loaded from the server.
+ */
+const UNKNOWN_IMG_BOX = { w: CHAT_IMG_MAX_W, h: Math.min(CHAT_IMG_MAX_W, CHAT_IMG_MAX_H) };
+
 // Fit a photo's natural pixel size into the bubble's max bounds, preserving
 // aspect ratio (no crop). Shared by the live onLoad handler and the
 // remembered-dimensions path so both compute the SAME box.
@@ -660,7 +700,7 @@ function fitChatImageBox(natW: number, natH: number): { w: number; h: number } {
   // guaranteed these were sane: they arrive from MediaLibrary, from expo-image-manipulator and from
   // `onLoad`, and any of the three can report 0 for a file it failed to read.
   if (!Number.isFinite(natW) || !Number.isFinite(natH) || natW <= 0 || natH <= 0) {
-    return { w: CHAT_IMG_MAX_W, h: Math.min(CHAT_IMG_MAX_W, CHAT_IMG_MAX_H) };
+    return UNKNOWN_IMG_BOX;
   }
   const ar = natW / natH;
   let w = CHAT_IMG_MAX_W;
@@ -694,7 +734,7 @@ function SingleChatImage({ uri, isVisible, onPress, cutout, uploading }: { uri: 
   // correct on the first frame the new photo is shown.
   const [size, setSize] = useRecyclingState<{ w: number; h: number }>(() => {
     const d = getImageDims(uri);
-    return d ? fitChatImageBox(d.w, d.h) : { w: 220, h: 220 };
+    return d ? fitChatImageBox(d.w, d.h) : UNKNOWN_IMG_BOX;
   }, [uri]);
   // Skip the spinner when we already know the size AND the bytes are almost
   // certainly disk-cached (we've decoded this exact URL before) — a known
@@ -1386,7 +1426,7 @@ function MessageBubble({ message, isOwn, fontSize, bubbleRadius, fontFamily, lin
                         // known, so the swap placeholder → real image never
                         // changes the bubble height (no layout jump on open).
                         const d = getImageDims(message.imageUrls![0]);
-                        const box = d ? fitChatImageBox(d.w, d.h) : { w: 220, h: 220 };
+                        const box = d ? fitChatImageBox(d.w, d.h) : UNKNOWN_IMG_BOX;
                         // A cut-out reserves its space with nothing in it. The shimmer is an opaque
                         // slab, so on a sticker it painted the grey rectangle this change exists to
                         // remove — just before the sticker itself arrived without one, which reads as
