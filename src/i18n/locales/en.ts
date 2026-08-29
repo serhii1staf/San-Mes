@@ -821,7 +821,11 @@ const en: Record<string, string> = {
   'chat_settings.background': 'Chat background',
   'chat_settings.remove_background': 'Remove background',
   'chat_settings.local_name': 'Local name',
-  'chat_settings.local_name_placeholder': 'e.g. Mom',
+  // Deliberately not "Mom". A placeholder in an empty field reads as an example of what
+  // people put here, and "Mom" in a chat with anyone else looks odd while explaining
+  // nothing about the feature. An invented name shows the shape of the answer and
+  // implies nothing about who you are talking to.
+  'chat_settings.local_name_placeholder': 'e.g. Alex',
   'chat_settings.font_size': 'Text size',
   'chat_settings.bubble_radius': 'Bubble radius',
   'chat_settings.bubble_color': 'Bubble color',

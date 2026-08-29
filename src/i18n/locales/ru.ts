@@ -836,7 +836,11 @@ const ru: Record<string, string> = {
   'chat_settings.background': 'Фон чата',
   'chat_settings.remove_background': 'Убрать фон',
   'chat_settings.local_name': 'Локальное имя',
-  'chat_settings.local_name_placeholder': 'Например, мама',
+  // Подсказка нарочно НЕ «мама». Placeholder в пустом поле читается как пример
+  // того, что сюда пишут, а «мама» в чате с кем угодно другим выглядит странно и
+  // при этом ничего не объясняет про саму функцию. Выдуманное имя показывает
+  // форму ответа и ни на кого не намекает.
+  'chat_settings.local_name_placeholder': 'Например, Алекс',
   'chat_settings.font_size': 'Размер текста',
   'chat_settings.bubble_radius': 'Округление пузыря',
   'chat_settings.bubble_color': 'Цвет пузырей',

@@ -167,7 +167,14 @@ export async function getCachedFeed(): Promise<LocalPost[]> {
   return cacheGet<LocalPost[]>(KEYS.feed, []);
 }
 
-export async function cacheProfile(id: string, profile: LocalProfile): Promise<void> {
+/**
+ * Write a profile to the on-disk cache, or clear it by passing `null`.
+ *
+ * The nullable overload exists so a DELETED account can be purged: leaving the MMKV copy behind means
+ * the next cold start hydrates the deleted person straight back into the entity store, undoing the
+ * removal. See the note in `syncService.syncProfile`.
+ */
+export async function cacheProfile(id: string, profile: LocalProfile | null): Promise<void> {
   await cacheSet(KEYS.profile(id), profile);
 }
 

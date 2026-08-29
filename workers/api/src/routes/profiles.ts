@@ -598,5 +598,22 @@ register('GET', '/v1/profiles/:id', async (req, env, _ctx, params) => {
     `SELECT ${PROFILE_PUBLIC_COLUMNS} FROM profiles WHERE id = ? LIMIT 1`,
     [id],
   );
+  // ── A DELETED PROFILE HAS TO 404, AND THIS IS WHY ───────────────────────
+  //
+  // This used to be `return ok(req, normalizeProfile(row))` with no null check, so a profile that no
+  // longer exists answered HTTP 200 with `{ "data": null, "error": null }`.
+  //
+  // Reported as: "я удалил аккаунт, публикации исчезли, но я открываю этот профиль удалённый, а он
+  // всё равно есть". The account deletion was working correctly the whole time — verified against
+  // production by registering a throwaway account, deleting it, and confirming the row was gone. What
+  // survived was the CLIENT'S CACHE, and this response is what let it survive: `getProfile` maps the
+  // body to `{ profile: null, error: null }`, and with no error to distinguish "this user is gone"
+  // from "the fetch came back with nothing", `app/profile/[id].tsx` fell through to its cached copy
+  // and rendered a deleted person.
+  //
+  // 200-with-null is the wrong answer to "does this resource exist" in any case, but here it was
+  // actively harmful: it made a working deletion look broken, and it made the app display data whose
+  // owner had asked for it to be erased — which the privacy policy promises is removed.
+  if (!row) return fail(req, 'not found', 404);
   return ok(req, normalizeProfile(row));
 });
