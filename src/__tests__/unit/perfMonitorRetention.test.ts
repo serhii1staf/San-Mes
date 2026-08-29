@@ -135,3 +135,73 @@ describe('perfMonitor slow-event retention', () => {
     expect(perfMonitor.snapshot().events).toHaveLength(0);
   });
 });
+
+// ── The rule that decides whether a sampler gap is evidence of anything ──────
+//
+// The detector used to call every gap over 120 ms a JS-thread long task. That produced false
+// positives that were measured, not theorised: the app left idle for 20 s, `dumpsys gfxinfo`
+// reporting 0 frames rendered and 0 missed vsyncs, and the monitor still logging long tasks.
+//
+// The cause is that `requestAnimationFrame` in React Native is a one-shot 1 ms native timer
+// (`Libraries/Core/Timers/JSTimers.js`), not a vsync callback, so a gap means "this timer was
+// serviced late" — which a blocked thread and an idle app produce identically.
+//
+// These tests pin the discriminator: a gap only counts as `LONG` when the app recorded work inside
+// it. They matter because the whole reason to trust a long-task count is this one comparison.
+describe('perfMonitor sampler-gap classification', () => {
+  beforeEach(() => {
+    perfMonitor.clearEvents();
+  });
+
+  it('calls a gap IDLE when no app work was recorded inside it', () => {
+    // No marks at all since the clear, so nothing can vouch for the gap.
+    expect(perfMonitor.classifyGap(Date.now() - 500)).toBe('IDLE');
+  });
+
+  it('calls a gap LONG when app work was recorded inside it', () => {
+    const gapStart = Date.now();
+    const spy = jest.spyOn(Date, 'now');
+    // A mount landing AFTER the gap opened is the corroboration.
+    spy.mockReturnValue(gapStart + 50);
+    perfMonitor.mark('work-inside-the-gap');
+    spy.mockRestore();
+
+    expect(perfMonitor.classifyGap(gapStart)).toBe('LONG');
+  });
+
+  it('does not let work that predates the gap vouch for it', () => {
+    const spy = jest.spyOn(Date, 'now');
+    const past = Date.now();
+    spy.mockReturnValue(past);
+    perfMonitor.mark('work-before-the-gap');
+    spy.mockRestore();
+
+    // Gap opens after that mark, so the mark is not inside it.
+    expect(perfMonitor.classifyGap(past + 10)).toBe('IDLE');
+  });
+
+  it('does not let the monitor\'s own diagnostics corroborate a gap', () => {
+    // `recordError` writes a `slow`/`error` event. If those counted as activity, one long task
+    // would vouch for the next and the false positives would come straight back.
+    const gapStart = Date.now();
+    const spy = jest.spyOn(Date, 'now');
+    spy.mockReturnValue(gapStart + 50);
+    perfMonitor.recordError('boom', 'stack');
+    spy.mockRestore();
+
+    expect(perfMonitor.classifyGap(gapStart)).toBe('IDLE');
+  });
+
+  it('clearEvents forgets the corroboration timestamp', () => {
+    const gapStart = Date.now();
+    const spy = jest.spyOn(Date, 'now');
+    spy.mockReturnValue(gapStart + 50);
+    perfMonitor.mark('work');
+    spy.mockRestore();
+    expect(perfMonitor.classifyGap(gapStart)).toBe('LONG');
+
+    // After a clear, work the user asked to forget must not still vouch for the next gap.
+    perfMonitor.clearEvents();
+    expect(perfMonitor.classifyGap(gapStart)).toBe('IDLE');
+  });
+});

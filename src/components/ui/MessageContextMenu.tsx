@@ -10,6 +10,7 @@ import { CachedImage } from './CachedImage';
 import { LinkPreview } from './LinkPreview';
 import Skeleton from './Skeleton';
 import { extractFirstUrl } from '../../services/linkPreview';
+import { extractInAppCardUrl, isInAppCardUrl, stripInAppCardUrl } from '../../utils/appLinks';
 import { openUrl } from '../../utils/openUrl';
 import { ChatMessage } from '../../types';
 import { useT } from '../../i18n/store';
@@ -298,7 +299,13 @@ export const MessageContextMenu = forwardRef<MessageContextMenuHandle, MessageCo
 
   const hasImages = !!message.imageUrls && message.imageUrls.length > 0;
   const imageCount = hasImages ? message.imageUrls!.length : 0;
-  const link = (!hasImages && !hasCodeBlock(message.text)) ? extractFirstUrl(message.text) : null;
+  // Prefer OUR url over the positional first match, then strip it from the preview body — the same
+  // rule the bubble itself uses. This menu renders a COPY of the held message, so leaving it out
+  // meant holding a shared post showed the bare link that the bubble one layer below had removed.
+  const link = (!hasImages && !hasCodeBlock(message.text))
+    ? extractInAppCardUrl(message.text) ?? extractFirstUrl(message.text)
+    : null;
+  const bodyText = isInAppCardUrl(link) ? stripInAppCardUrl(message.text, link) : (message.text || '');
   // A sticker held on its own gets NO card. Same rule the bubble uses, from the same function, for the
   // same reason: this menu was painting `#FFFFFF` behind a cut-out, so holding a sticker put it on a
   // white rectangle — the exact defect that was just removed from the thread, reappearing on long-press.
@@ -330,8 +337,10 @@ export const MessageContextMenu = forwardRef<MessageContextMenuHandle, MessageCo
       // bleed. It also gets a larger box, because it has no card around it to give it presence — this is
       // the "enlarge the content you are already showing" half of the request.
       const box = cutoutOnly ? 260 : 220;
+      // Spacing keys off `bodyText`, not `message.text`: a message that was nothing but our own share
+      // link renders no text at all now, and the gap below the image should go with it.
       return (
-        <View style={{ marginBottom: message.text ? 6 : 0, alignItems: cutoutOnly ? 'center' : 'flex-start' }}>
+        <View style={{ marginBottom: bodyText ? 6 : 0, alignItems: cutoutOnly ? 'center' : 'flex-start' }}>
           {contentReady ? (
             <CachedImage
               uri={message.imageUrls![0]}
@@ -362,7 +371,7 @@ export const MessageContextMenu = forwardRef<MessageContextMenuHandle, MessageCo
       : imageCount === 3 ? (containerWidth - 2 * gap) / 3
       : (containerWidth - 2 * gap) / 3; // 4–6: 3-column grid auto-wraps to 2 rows
     return (
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap, marginBottom: message.text ? 6 : 0, width: containerWidth }}>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap, marginBottom: bodyText ? 6 : 0, width: containerWidth }}>
         {message.imageUrls!.map((uri, idx) => (
           contentReady ? (
             <CachedImage key={idx} uri={uri} style={{ width: cellSize, height: cellSize, borderRadius: 10 }} resizeMode="cover" proxyWidth={imageProxyWidth} />
@@ -382,8 +391,8 @@ export const MessageContextMenu = forwardRef<MessageContextMenuHandle, MessageCo
         </View>
       ) : null}
       {renderImages()}
-      {message.text ? (
-        <FormattedText color={theme.colors.text.primary} linkColor={theme.colors.accent.primary} style={{ fontSize: 15 }} onLinkPress={handleLinkPress}>{message.text}</FormattedText>
+      {bodyText ? (
+        <FormattedText color={theme.colors.text.primary} linkColor={theme.colors.accent.primary} style={{ fontSize: 15 }} onLinkPress={handleLinkPress}>{bodyText}</FormattedText>
       ) : null}
       {link ? (
         // No fixed height — let the link preview render at its natural size,

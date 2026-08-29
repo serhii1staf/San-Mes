@@ -15,6 +15,7 @@ import { PixelIconPattern } from '../pixel-icons/PixelIconPattern';
 import { parseDecoration } from '../pixel-icons/decoration';
 import { SwipeablePostCard } from '../ui/SwipeablePostCard';
 import { extractFirstUrl } from '../../services/linkPreview';
+import { extractInAppCardUrl, isInAppCardUrl, stripInAppCardUrl } from '../../utils/appLinks';
 import { triggerHaptic } from '../../utils/haptics';
 import { formatTimeAgo } from '../../utils/mockData';
 import { useT } from '../../i18n/store';
@@ -192,9 +193,24 @@ function ProfilePostCardBase({ post, authorName, authorEmoji, authorVerified, au
   // (the image is already the cover; the link preview would not show)
   // AND skip until hydration so the regex never runs on the placeholder
   // commit.
+  // ── OUR OWN LINK WINS THE PREVIEW SLOT, AND LEAVES THE BODY ───────────────
+  //
+  // This card was missed when the feed card and the chat bubble were fixed, and the profile screen
+  // is where it showed: a post sharing a profile rendered `san-m-app.com/profile` as a bare elided
+  // link ABOVE the card that already says the same thing, which is the duplication the report was
+  // about ("везде во всём приложении, чтобы был только сам контейнер").
+  //
+  // Same two-step as `PostCard`, deliberately identical so the surfaces cannot drift again:
+  // prefer OUR url over the positional first match, then remove it from the body when it is us.
   const link = useMemo(
-    () => (!hasImage && hydrated ? extractFirstUrl(content) : null),
+    () => (!hasImage && hydrated ? extractInAppCardUrl(content) ?? extractFirstUrl(content) : null),
     [hasImage, hydrated, content],
+  );
+  // Only strips when a card actually renders below. With an image there IS no card (the image is the
+  // cover), so the link stays as text rather than being silently deleted — matching `PostCard`.
+  const bodyText = useMemo(
+    () => (isInAppCardUrl(link) ? stripInAppCardUrl(content, link) : (content || '')),
+    [content, link],
   );
   const timeAgo = useMemo(() => formatTimeAgo(post.createdAt), [post.createdAt]);
 
@@ -369,7 +385,7 @@ function ProfilePostCardBase({ post, authorName, authorEmoji, authorVerified, au
               <Text variant="caption" color={theme.colors.accent.primary} style={styles.repostFromTextSmall}>{t('post.repost_label')}</Text>
             </View>
           )}
-          {content ? <FormattedText style={styles.bodyText} color={theme.colors.text.secondary}>{content}</FormattedText> : null}
+          {bodyText ? <FormattedText style={styles.bodyText} color={theme.colors.text.secondary}>{bodyText}</FormattedText> : null}
           {link ? (
             // Plain non-interactive View (NOT a nested Pressable): the OUTER
             // card Pressable then owns long-press uniformly across the whole

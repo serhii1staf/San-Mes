@@ -16,6 +16,7 @@ import { PixelIconPattern } from '../pixel-icons/PixelIconPattern';
 import { parseDecoration } from '../pixel-icons/decoration';
 import { SwipeablePostCard } from './SwipeablePostCard';
 import { extractFirstUrl } from '../../services/linkPreview';
+import { extractInAppCardUrl, isInAppCardUrl, stripInAppCardUrl } from '../../utils/appLinks';
 import { triggerHaptic } from '../../utils/haptics';
 import { formatTimeAgo } from '../../utils/mockData';
 import { useT } from '../../i18n/store';
@@ -209,9 +210,16 @@ function UserProfilePostCardBase({
   const content = post.content || origPost?.content || '';
   // Skip URL extraction when the post has an image (cover already shown)
   // and skip until hydration so the regex doesn't run on the placeholder.
+  // Prefer OUR url over the positional first match, then remove it from the body when it is ours —
+  // identical to `ProfilePostCard` and `PostCard`. This card renders in the same list (the "Likes"
+  // tab) and on `profile/[id]`, so leaving it out would have fixed the bug on one tab only.
   const link = useMemo(
-    () => (!hasImage && hydrated ? extractFirstUrl(content) : null),
+    () => (!hasImage && hydrated ? extractInAppCardUrl(content) ?? extractFirstUrl(content) : null),
     [hasImage, hydrated, content],
+  );
+  const bodyText = useMemo(
+    () => (isInAppCardUrl(link) ? stripInAppCardUrl(content, link) : (content || '')),
+    [content, link],
   );
   const timeAgo = useMemo(() => formatTimeAgo(post.createdAt), [post.createdAt]);
 
@@ -406,9 +414,9 @@ function UserProfilePostCardBase({
               <Text variant="caption" color={theme.colors.accent.primary} numberOfLines={1} style={styles.repostFromText}>{t('post.reposted_from', undefined, { name: origPost.authorName })}</Text>
             </View>
           )}
-          {content ? (
+          {bodyText ? (
             <FormattedText style={styles.bodyText} color={theme.colors.text.secondary}>
-              {content}
+              {bodyText}
             </FormattedText>
           ) : null}
           {/* Link preview when the post has no image (Telegram-style, instant from cache).
