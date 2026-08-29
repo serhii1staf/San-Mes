@@ -1056,6 +1056,45 @@ const en: Record<string, string> = {
   'stickers.delete_group_title': 'Delete this whole import?',
   'stickers.delete_group_msg': '{count} items from {date} will be removed. Messages already sent are unchanged.',
   'stickers.view_pack': 'Open “{pack}”',
+
+  // â”€â”€â”€ Keys that were only ever reachable through their Russian fallback â”€â”€â”€â”€â”€â”€â”€
+  //
+  // See the matching block in ru.ts. These 31 keys were missing from both
+  // dictionaries, so `t(key, default)` printed the Russian default even when the
+  // interface language was English -- reported as the Message button on a profile
+  // showing Russian text. Nothing here changes the Russian side.
+  'alerts.title': 'Notifications',
+  'alerts.section.push': 'Push notifications',
+  'alerts.push.enabled': 'Allow push notifications',
+  'alerts.push.hint': 'Turning this off disables push for this device entirely: the token is deleted and the server stops sending them.',
+  'alerts.section.categories': 'In-app alerts',
+  'alerts.categories.hint': 'Controls alerts while the app is open: the pill at the top, the sound, and the entry in your notification centre. While the app is closed the system decides whether to show a banner -- use the switch above to turn that off as well.',
+  'chat.link': 'Link',
+  'chat.reply_label': 'Reply',
+  'profile.message': 'Message',
+  'errors.boundary_title': 'Something went wrong',
+  'errors.boundary_body': 'An unexpected error occurred. Please try again.',
+  'errors.boundary_retry': 'Try again',
+  'mention.not_found_title': 'That user does not seem to exist',
+  'mention.not_found_body': 'Check the username. It may have changed, or the profile may have been deleted.',
+  'settings.chat_settings': 'Chat settings',
+  'settings.stickers': 'Stickers',
+  'settings.platform_design': 'Platform material',
+  'settings.section.chats': 'Chats',
+  'settings.section.data': 'Data and device',
+  'settings.section.legal': 'Legal',
+  'design_lab.title': 'Platform material',
+  'design_lab.section.nav': 'Bottom navigation',
+  'design_lab.section.buttons': 'Buttons',
+  'design_lab.section.depth': 'Depth',
+  'design_lab.glass_hint': 'Drag the background sideways',
+  'design_lab.note.ios': 'A surface is a LENS. It samples and blurs what sits behind it, and depth comes from that optical relationship. Selection is shown by colour rather than by a container; motion is a curve, not a spring.',
+  'design_lab.note.android': 'A surface is toned PAPER. Depth comes from the container tone, not from blurring the backdrop. Selection is shown by a pill-shaped container, pressing changes the corner radius, and the motion is spring-based.',
+  'design_lab.note.iosbtn': 'A glass capsule: the shape stays constant, and the response is a change in translucency plus a slight scale.',
+  'design_lab.note.morph': 'Press and hold: the corner radius travels from a pill to almost a square and springs back. That is shape morphing -- the signature of Expressive, and the one trait a screenshot cannot show.',
+  'design_lab.note.lens': 'Glass is a lens, and its whole identity is what sits behind it. So drag the strip of colours: it moves, the glass stays. Depth on iOS is read from layering rather than from tone -- look at the corner where the two panes cross.',
+  'design_lab.note.tonal': 'Five levels are five tones of one surface, nested inside each other. Side by side they are nearly indistinguishable, which is why M3 nests them: the neighbouring tone sits right along the border. Tone is the mechanism for RESTING surfaces, and it pays off most in dark theme, where a cast shadow disappears. But M3 does use shadow: genuinely floating elements pair tone WITH it, which is the two cards below.',
+  'design_lab.limit': 'The colours on the Android side are the Material 3 BASELINE palette. Real Material You derives the palette from the device wallpaper (Android 12+), which needs a native module and a new build -- it is not OTA-deliverable. The shapes, containers, sizes and motion here are genuine; only the hues are fixed.',
 };
 
 export default en;
