@@ -638,6 +638,8 @@ const HotspotRow = React.memo(function HotspotRow({
               mounting it, which is expected to be bad and is not a defect of the screen itself. */}
           <HotspotStat label={t('perf.hs_worst_fps', 'Worst FPS')} value={`${hotspot.worstFps}`} danger={hotspot.worstFps < 30} />
           <HotspotStat label={t('perf.hs_open_fps', 'Open FPS')} value={`${hotspot.worstOpenFps}`} />
+          {/* `worstFps` is fed by BOTH samplers, so a dead UI sampler silently halves what this
+              column can see. Shown per-snapshot rather than per-route because the count is global. */}
           <HotspotStat label={t('perf.hs_jank', 'Sub-30fps samples')} value={`${hotspot.jankCount}`} />
           <HotspotStat label={t('perf.hs_mounts', 'Mounts')} value={`${hotspot.mountCount}`} />
           <HotspotStat label={t('perf.hs_worst_mount', 'Worst mount')} value={`${hotspot.worstMountMs} ms`} danger={hotspot.worstMountMs > 400} />

@@ -262,3 +262,55 @@ describe('perfMonitor open-vs-in-use split', () => {
     expect(hs!.worstOpenFps).toBe(60);
   });
 });
+
+// ── An absent instrument must not read as a value ────────────────────────────
+//
+// `uiFps` was 0 and `uiP1Min` was 0 in three consecutive device snapshots, and I read that as "the
+// UI thread is at zero" rather than "the UI sampler never reported". It was the second: `_uiFps`
+// initialises to 0, so a dead frame callback and a genuinely stalled thread produce the identical
+// number. The consequence was three rounds of optimising the JS thread while the thread where image
+// decode and bitmap upload actually land stayed unmeasured.
+describe('perfMonitor UI-sampler liveness', () => {
+  beforeEach(() => {
+    perfMonitor.clearEvents();
+  });
+
+  it('reports zero accepted UI samples before anything arrives', () => {
+    // The count is what distinguishes the two cases. It is deliberately NOT reset by clearEvents —
+    // liveness is a property of the session, not of the event ring — so this asserts the shape
+    // rather than a pristine zero.
+    const snap = perfMonitor.snapshot();
+    expect(typeof snap.uiSampleCount).toBe('number');
+  });
+
+  it('counts an accepted sample, so uiFps 0 with a nonzero count means a real reading', () => {
+    const before = perfMonitor.snapshot().uiSampleCount;
+    const spy = jest.spyOn(Date, 'now');
+    // Well clear of any settle window so the sample is accepted rather than filed as open cost.
+    spy.mockReturnValue(Date.now() + 60_000);
+    perfMonitor.pushUiFps(31);
+    spy.mockRestore();
+
+    const snap = perfMonitor.snapshot();
+    expect(snap.uiSampleCount).toBe(before + 1);
+    expect(snap.uiFps).toBe(31);
+  });
+
+  it('does not suppress the UI reading for an uncorroborated idle gap', () => {
+    // An IDLE gap means no instrumented work happened, so there is no heavy commit for the UI
+    // thread to be catching up from. Suppressing on those is what could keep the reading
+    // permanently unpublished, since every suppression pushed the window 700 ms further out.
+    const t = Date.now();
+    const spy = jest.spyOn(Date, 'now');
+    spy.mockReturnValue(t + 60_000);
+    perfMonitor.pushUiFps(44);
+    const after = perfMonitor.snapshot().uiSampleCount;
+    // A second sample immediately after must also land — nothing is holding a suppression window.
+    spy.mockReturnValue(t + 60_100);
+    perfMonitor.pushUiFps(45);
+    spy.mockRestore();
+
+    expect(perfMonitor.snapshot().uiSampleCount).toBe(after + 1);
+    expect(perfMonitor.snapshot().uiFps).toBe(45);
+  });
+});

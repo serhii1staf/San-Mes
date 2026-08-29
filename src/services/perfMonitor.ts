@@ -240,6 +240,15 @@ export interface PerfSnapshot {
    * and they were the bulk of what showed up while the app sat idle.
    */
   idleGapCount: number;
+  /**
+   * UI-thread samples accepted this session. **Read this before trusting `uiFps`.**
+   *
+   * 0 means the Reanimated frame callback never reported — the metric is dead, not zero. Three
+   * consecutive snapshots showed `uiFps: 0` / `uiP1Min: 0` and I read them as a value rather than as
+   * an absent instrument, which left the thread where image decode and bitmap upload actually land
+   * completely unmeasured while I kept tuning the JS thread.
+   */
+  uiSampleCount: number;
   /** Per-route jank ranking, worst-first. Drives the panel's Hotspots view. */
   hotspots: RouteHotspot[];
   /** Date.now() at the moment this snapshot was built. Useful for the JSON snapshot copy. */
@@ -466,10 +475,20 @@ class PerfMonitor {
         // that class of blind spot is more marks at the call sites, not a looser detector here.
         const corroborated = this.classifyGap(lastFrameTs) === 'LONG';
         this._lastLongTaskMs = dur;
-        // The UI-thread reading is still suppressed either way: whatever starved this sampler,
-        // the Reanimated frame callback on the other thread is subject to the same catch-up
-        // behaviour, and that window is the one whose premise still holds.
-        this._uiSuppressFpsUntil = now + PerfMonitor._SUPPRESS_MS;
+        // ── SUPPRESS THE UI READING ONLY FOR A CORROBORATED STALL ─────────────
+        //
+        // This used to fire on EVERY gap, `IDLE` included, with the reasoning that "whatever
+        // starved this sampler, the frame callback on the other thread is subject to the same
+        // catch-up behaviour". That is wrong for precisely the gaps #215 taught us to separate: an
+        // `IDLE` gap means NO instrumented work was happening, so there is no heavy commit for the
+        // UI thread to be catching up from and nothing to protect the reading against.
+        //
+        // It also had a compounding cost. `_uiFps` starts at 0, `pushUiFps` returns early inside
+        // the window, and every suppression pushes the window 700 ms further out — so a stream of
+        // idle gaps can keep the UI reading permanently unpublished, leaving `uiFps: 0` and
+        // `uiP1Min: 0` in every snapshot. Zero is then indistinguishable from a genuine 0 fps,
+        // which is how the UI thread ended up unmeasured while I kept optimising the JS one.
+        if (corroborated) this._uiSuppressFpsUntil = now + PerfMonitor._SUPPRESS_MS;
         if (corroborated) {
           const st = this._routeStat(this._currentRoute);
           st.longTaskCount += 1;
@@ -573,6 +592,17 @@ class PerfMonitor {
     this._started = false;
   }
 
+  /**
+   * How many UI-thread samples have ever been accepted.
+   *
+   * Exposed so a DEAD instrument is distinguishable from a genuinely bad reading. `_uiFps` starts at
+   * 0, so "the frame callback never reported" and "the UI thread ran at 0 fps" produced the identical
+   * number — and for three snapshots running I read the first as the second and went on optimising the
+   * thread I could see. A count of 0 next to a reading of 0 says "do not trust this number", which is
+   * the whole lesson of the last several rounds applied to the one metric that still lacked it.
+   */
+  private _uiSampleCount = 0;
+
   /** Called from the Reanimated frame-callback worklet (via runOnJS). */
   pushUiFps(fps: number) {
     const now = Date.now();
@@ -587,6 +617,7 @@ class PerfMonitor {
     // slightly but never produce a misleading "120 fps" reading from a
     // catch-up burst.
     const clamped = Math.min(60, Math.max(0, fps));
+    this._uiSampleCount += 1;
     this._uiFps = clamped;
     this._pushHistory(this._uiHistory, now, clamped);
     this._bumpRouteFps(clamped);
@@ -944,6 +975,7 @@ class PerfMonitor {
       currentRoute: this._currentRoute,
       lastLongTaskMs: this._lastLongTaskMs,
       idleGapCount: this._idleGapCount,
+      uiSampleCount: this._uiSampleCount,
       hotspots: this.getHotspots(),
       capturedAt: Date.now(),
     };

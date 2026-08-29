@@ -257,7 +257,30 @@ function PerfMonitorBubbleInner() {
       uiFrameCount.value += 1;
       const elapsed = frame.timestamp - uiLastSampleAt.value;
       if (elapsed >= 500) {
-        const spansPause = uiMaxGap.value > 120;
+        // ── THE 120 ms DISCARD THREW AWAY EXACTLY WHAT IT WAS BUILT TO FIND ────
+        //
+        // This used to drop the whole window when `uiMaxGap > 120`, on the reasoning that a window
+        // spanning a pause is not a measurement. The concern is real; the threshold made it useless.
+        //
+        // 120 ms is the same bar the long-task detector uses for "the thread was blocked". So a
+        // window in which the UI thread genuinely stalled — a burst of GIF decodes uploading
+        // bitmaps, a heavy commit — was silently discarded, and only calm windows were ever
+        // published. That is the identical mistake as the JS sampler's suppression guards removed in
+        // #212: a filter meant to prevent over-reporting caused systematic UNDER-reporting of the
+        // one condition the tool exists to detect. Here it went further and produced NOTHING, so
+        // `uiFps` sat at its initial 0 through three snapshots and read as a value rather than as an
+        // absent instrument.
+        //
+        // The legitimate case — a window straddling a disarm, an app backgrounding, a screen
+        // transition that parked the frame loop — is handled at the source instead: the effect below
+        // zeroes `uiLastSampleAt` whenever the callback is armed or disarmed, so the next window
+        // starts from a fresh frame rather than measuring across the gap. That removes the need to
+        // guess from inside the worklet.
+        //
+        // The bar that remains is deliberately absurd: 2000 ms cannot be a rendering stall, only a
+        // pause the reset above failed to catch. Anything below it is published, so a 300 ms UI
+        // block now shows up as the low frame rate it is.
+        const spansPause = uiMaxGap.value > 2000;
         const fps = Math.round((uiFrameCount.value * 1000) / elapsed);
         // Reset the accumulators either way, so the NEXT window starts clean from
         // this frame rather than inheriting the discarded one's span.
@@ -269,7 +292,25 @@ function PerfMonitorBubbleInner() {
     },
     [reportUiFps, uiFrameCount, uiLastSampleAt, uiMaxGap, uiPrevFrameAt],
   );
-  useFrameCallback(sampleUiFps, enabled && isForeground);
+  const uiArmed = enabled && isForeground;
+  useFrameCallback(sampleUiFps, uiArmed);
+  // ── RESET AT THE ARM/DISARM BOUNDARY, WHICH IS WHERE THE PAUSE ACTUALLY IS ──
+  //
+  // `uiLastSampleAt` is a SharedValue, so it SURVIVES a disarm. Without this, the first window after
+  // any resume measured a handful of frames against a wall-clock interval containing the entire
+  // pause — arithmetically impossible as a frame rate, and attributed to whichever route happened to
+  // be current when the loop restarted. That is what the worklet's old 120 ms discard was trying to
+  // paper over from the inside, at the cost of also discarding every genuine UI stall.
+  //
+  // Zeroing it here is the honest fix: the worklet's own `uiLastSampleAt.value === 0` branch then
+  // re-initialises from the first real frame after arming, so no window ever spans the boundary and
+  // the worklet no longer has to guess which large gaps were pauses.
+  useEffect(() => {
+    uiLastSampleAt.value = 0;
+    uiPrevFrameAt.value = 0;
+    uiFrameCount.value = 0;
+    uiMaxGap.value = 0;
+  }, [uiArmed, uiLastSampleAt, uiPrevFrameAt, uiFrameCount, uiMaxGap]);
 
   // Drag gesture moves the bubble; tap gesture opens the panel. They live in
   // a Race composition so a quick press resolves cleanly to "tap" without
