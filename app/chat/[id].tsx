@@ -3721,6 +3721,32 @@ export default function ChatScreen() {
   // The peer's theme accent, for the no-banner case. Falls back to the app accent so this is never
   // undefined; `+ '00'` is a fully transparent stop of the same hue, which fades into the scrim
   // instead of ending on a hard edge.
+  // ── OVER A PHOTO THE PILLS CANNOT STAY OPAQUE ──────────────────────────────
+  //
+  // The back pill, the name pill and the avatar circle fill with
+  // `theme.colors.background.elevated`, which is opaque by design — correct on a flat background,
+  // wrong on a photo, where three solid rectangles read as controls pasted on top of an image rather
+  // than as chrome belonging to it. That is the other half of "непонятно что случилось".
+  //
+  // So when a banner is behind them they become a translucent dark scrim with a bright hairline: the
+  // picture shows through, the white label and the name still hold contrast against the darkening,
+  // and the hairline gives each pill an edge it would otherwise lose against a busy image. Exactly
+  // the treatment `AppBlurView`'s `scrim` role landed on for the profile's floating buttons, for the
+  // same reason and with the same numbers.
+  //
+  // Null when there is no banner, so every call site falls back to its existing opaque style and the
+  // no-banner header is byte-for-byte what it was.
+  const onBannerPillStyle = useMemo(
+    () =>
+      peerBannerUrl
+        ? { backgroundColor: 'rgba(0,0,0,0.34)', borderColor: 'rgba(255,255,255,0.22)' }
+        : null,
+    [peerBannerUrl],
+  );
+  // Text on the pills has to follow the same switch: theme-coloured text on a dark scrim is
+  // unreadable in light mode, and the whole point of the scrim is that it darkens regardless of theme.
+  const onBannerTextColor = peerBannerUrl ? '#FFFFFF' : theme.colors.text.primary;
+
   const peerAccent = useMemo(() => {
     const themeId = (profileData as any)?.theme_id || (cachedProfile as any)?.theme_id || null;
     // `resolveProfileTheme` never throws and never returns undefined — it falls back to the default
@@ -6932,9 +6958,22 @@ export default function ChatScreen() {
             taller header would also eat transcript rows, which is the mistake the composer scrim
             already made once and had to walk back. */}
         {peerBannerUrl ? (
-          <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+          <View pointerEvents="none" style={[StyleSheet.absoluteFill, { overflow: 'hidden' }]}>
             <CachedImage
               uri={peerBannerUrl}
+              // ── EXPLICIT proxyWidth, BECAUSE absoluteFill HAS NO NUMERIC WIDTH ──
+              //
+              // The first version of this passed only `style={StyleSheet.absoluteFill}` and relied on
+              // `CachedImage`'s `styleW` fallback to size the proxy request. `absoluteFill` is
+              // `{position,top,left,right,bottom}` — there is no `width` in it, so nothing could be
+              // derived and the banner was fetched at whatever the proxy does with no width. Reported
+              // immediately: "изображение должно быть в хорошем качестве". Correct, and this is why.
+              //
+              // `SCREEN_WIDTH` is the same value `app/(tabs)/profile.tsx` passes for its own banner,
+              // and that matters beyond sharpness: the proxy width is part of the URL and the URL is
+              // expo-image's cache key, so asking at the SAME width means the bytes the profile
+              // screen already warmed are reused here instead of being re-fetched at a second size.
+              proxyWidth={SCREEN_WIDTH}
               style={StyleSheet.absoluteFill as any}
               resizeMode="cover"
               // Behind the transcript's own images in the queue: the band is decoration, a message
@@ -6943,6 +6982,26 @@ export default function ChatScreen() {
               // An animated banner would decode a frame forever behind chrome nobody is looking at —
               // the same continuous UI-thread cost already fixed in the profile grids.
               autoplay={false}
+            />
+            {/* ── A LEGIBILITY SCRIM, NOT THE BACKGROUND RAMP ──────────────────────
+                The first version put the banner UNDER `topSurfaceScrimColors(bgColor)`, which is a
+                ramp built FROM THE CHAT BACKGROUND COLOUR. Its entire job is to erase what is beneath
+                it so the transcript dissolves into the chrome — so it erased the banner too, and the
+                result was the muddy smear that got reported as "непонятно что случилось".
+
+                Over imagery the scrim has to do the opposite job: darken just enough that white text
+                and the pills hold contrast, while leaving the picture visible. So this is a
+                black-alpha ramp, strongest at the very top where the status bar and the controls sit,
+                clearing by 70% down the band.
+
+                The background-colour ramp is still applied below, but only across the BOTTOM edge —
+                see the note on it. That way the banner still melts into the transcript instead of
+                ending on a hard line, without being wiped out across its whole height. */}
+            <LinearGradient
+              pointerEvents="none"
+              colors={['rgba(0,0,0,0.55)', 'rgba(0,0,0,0.28)', 'rgba(0,0,0,0.0)']}
+              locations={[0, 0.45, 1]}
+              style={StyleSheet.absoluteFill}
             />
           </View>
         ) : (
@@ -6957,15 +7016,31 @@ export default function ChatScreen() {
             style={StyleSheet.absoluteFill}
           />
         )}
-        {/* Shared scrim ramp — see the note on the footer gradient below. Sits ON TOP of the banner
-            so the ramp does its usual job of dissolving the chrome into the transcript, and the
-            banner reads as a backdrop rather than as a photo pasted over the messages. */}
-        <LinearGradient
-          pointerEvents="none"
-          colors={topSurfaceScrimColors(bgColor)}
-          locations={SCRIM_LOCATIONS}
-          style={StyleSheet.absoluteFill}
-        />
+        {/* ── THE BACKGROUND RAMP IS NOW CONDITIONAL ──────────────────────────────
+            Without a banner this is unchanged: the full-height `topSurfaceScrimColors(bgColor)` ramp
+            that has always dissolved the chrome into the transcript.
+
+            WITH a banner it is confined to the BOTTOM THIRD. Applied full-height it wiped the picture
+            out — that ramp is made of the chat background colour and erasing what is under it is
+            precisely its purpose. Confined to the bottom edge it does the one part still needed: the
+            banner fades into the first messages instead of ending on a hard horizontal line, while
+            the upper two thirds stay a visible photo. Legibility up there is handled by the black
+            ramp inside the banner layer above. */}
+        {peerBannerUrl ? (
+          <LinearGradient
+            pointerEvents="none"
+            colors={[bgColor + '00', bgColor + '99', bgColor]}
+            locations={[0, 0.72, 1]}
+            style={StyleSheet.absoluteFill}
+          />
+        ) : (
+          <LinearGradient
+            pointerEvents="none"
+            colors={topSurfaceScrimColors(bgColor)}
+            locations={SCRIM_LOCATIONS}
+            style={StyleSheet.absoluteFill}
+          />
+        )}
         {searchMode ? (
           <View style={[styles.headerContent, { paddingTop: insets.top }]} pointerEvents="auto">
             {glassActive ? (
@@ -7056,9 +7131,9 @@ export default function ChatScreen() {
                   </NativeGlassView>
                 </Pressable>
               ) : (
-                <Pressable onPress={() => router.back()} style={[styles.backPill, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}>
-                  <MaterialIcons name="chevron-left" size={22} color={theme.colors.text.primary} />
-                  <Text variant="caption" weight="semibold" numberOfLines={1} color={theme.colors.text.primary} style={styles.backLabel}>{t('common.back')}</Text>
+                <Pressable onPress={() => router.back()} style={[styles.backPill, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }, onBannerPillStyle]}>
+                  <MaterialIcons name="chevron-left" size={22} color={onBannerTextColor} />
+                  <Text variant="caption" weight="semibold" numberOfLines={1} color={onBannerTextColor} style={styles.backLabel}>{t('common.back')}</Text>
                 </Pressable>
               )}
             </View>
@@ -7099,16 +7174,16 @@ export default function ChatScreen() {
                   onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId, fromChat: '1' } })}
                   onLongPress={openSearch}
                   delayLongPress={300}
-                  style={[styles.headerPill, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }]}
+                  style={[styles.headerPill, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light }, onBannerPillStyle]}
                 >
-                  <Text variant="caption" weight="semibold" numberOfLines={1} style={{ flexShrink: 1 }}>{displayName}</Text>
+                  <Text variant="caption" weight="semibold" numberOfLines={1} color={onBannerTextColor} style={{ flexShrink: 1 }}>{displayName}</Text>
                   {displayVerified && <VerifiedBadge size={12} />}
                   {displayBadge && <UserBadge badge={displayBadge} size="sm" />}
                 </Pressable>
               )}
             </View>
             <View style={[styles.headerSide, { alignItems: 'flex-end' }]}>
-              <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId, fromChat: '1' } })} style={[styles.headerCircle, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light, overflow: 'hidden' }]}>
+              <Pressable onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profileId, fromChat: '1' } })} style={[styles.headerCircle, { backgroundColor: theme.colors.background.elevated, borderColor: theme.colors.border.light, overflow: 'hidden' }, onBannerPillStyle]}>
                 <Avatar emoji={displayEmoji} name={displayName} size="xs" />
               </Pressable>
             </View>
