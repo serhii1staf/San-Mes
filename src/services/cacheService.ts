@@ -40,6 +40,16 @@ export interface LocalConversation {
   participantBadge?: string | null;
   lastMessage?: string;
   lastMessageAt?: string;
+  /**
+   * Author of the newest message. Written by the conversations mapper and by the realtime bridge;
+   * read by unread reconciliation to tell "the peer wrote" from "I wrote".
+   *
+   * Was already being written and read without being declared here — the mapper's object literal
+   * loses freshness through `.map()`, so excess-property checking never caught it.
+   */
+  lastSenderId?: string;
+  /** Server-counted unread for the signed-in user; see `Conversation.serverUnread` in src/types. */
+  serverUnread?: number;
 }
 
 export interface LocalMessage {

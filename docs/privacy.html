@@ -57,6 +57,7 @@
         <li>Username, display name, emoji avatar, and an optional bio that you provide at sign-up.</li>
         <li>The posts, comments, and chat messages you choose to create.</li>
         <li>A salted hash of the 4-digit PIN you set for app unlock — never the PIN itself.</li>
+        <li>For each of your conversations, the time you last read it. This is one timestamp per conversation, and it exists so unread counts are correct on every device you sign in on and survive reinstalling the app. It is not a log of when you opened the app or of which individual messages you looked at.</li>
         <li>An opaque per-install token issued by our authentication backend (Supabase). It is not derived from any device characteristic.</li>
       </ul>
 
@@ -121,6 +122,7 @@
         <li>Юзернейм, отображаемое имя, эмодзи-аватар и биография (по желанию), которые вы указываете при регистрации.</li>
         <li>Посты, комментарии и сообщения, которые вы создаёте.</li>
         <li>Соль и хеш 4-значного PIN, которым вы разблокируете приложение — сам PIN мы не храним.</li>
+        <li>Время последнего прочтения каждого вашего чата. Это одна отметка времени на чат, и она нужна, чтобы счётчики непрочитанного были верными на всех устройствах, где вы входите в аккаунт, и не сбрасывались после переустановки. Это не журнал того, когда вы открывали приложение или какие именно сообщения читали.</li>
         <li>Непрозрачный токен сессии от нашей системы авторизации (Supabase). Он не привязан к характеристикам устройства.</li>
       </ul>
 

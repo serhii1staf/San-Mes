@@ -17,8 +17,9 @@
 
 import { fail, ok } from '../http';
 import { register } from '../router';
-import { normalizeProfile, query, queryOne } from '../db';
+import { exec, normalizeProfile, query, queryOne } from '../db';
 import { parseLimit, parseUuid } from '../util';
+import { readJson } from '../validate';
 
 /**
  * Cap on how many conversations one sync returns.
@@ -59,6 +60,7 @@ register('GET', '/v1/conversations', async (req, env, _ctx, _params, authedUserI
     last_message_at: string | null;
     last_sender_id: string | null;
     last_message: string | null;
+    unread_count: number | null;
   }
 
   // Find every conversation the user is in, then re-join
@@ -97,6 +99,31 @@ register('GET', '/v1/conversations', async (req, env, _ctx, _params, authedUserI
     // ORDER BY is now last activity, falling back to creation for a conversation with no messages.
     // That is a free correctness win: the list is recency-ordered on the client anyway, so the old
     // `c.created_at DESC` meant the LIMIT could cut off the most recently active conversations.
+    //
+    // ── `unread_count`: HOW MANY, NOT WHETHER ───────────────────────────────────────────────
+    //
+    // The three `last_*` subqueries answer "is there anything new". They cannot answer "how
+    // many", which is the whole reason `chatUnreadStore.reconcile` on the client could only ever
+    // write the literal `1` for a conversation this device had not personally witnessed over the
+    // realtime socket. Counting happens here because this is the only place that holds both the
+    // watermark (`cp.last_read_at`, migration 0005) and the messages.
+    //
+    // `m.sender_id != cp.user_id` — my own messages are never unread to me. That guard used to
+    // live on the client as `lastSenderId === myUserId`, comparing against a field that
+    // routinely described a DIFFERENT message than the timestamp sitting beside it; see the long
+    // note in `reconcile` for the four failed attempts that came out of it. Here both facts are
+    // read off one row, so the mismatch is not possible rather than defended against.
+    //
+    // BOUNDED AT 100 ROWS READ, and the inner LIMIT is load-bearing. D1 bills rows read, and an
+    // uncapped `COUNT(*)` over an abandoned conversation holding 10k unread messages reads 10k
+    // rows on every chat-list sync — for a number the pill renders as "99+" either way. The
+    // client caps display at 99, so any value at or above 100 is display-identical; this reads
+    // at most 100 rows per conversation and stops. That matters here specifically because this
+    // endpoint already fans out to `CONVERSATIONS_PAGE_LIMIT` (500) rows per call.
+    //
+    // Served by `idx_messages_conv_created (conversation_id, created_at)`, which already exists —
+    // verified present on the live database before migration 0005 was written. The watermark
+    // comparison is a range scan from the watermark forward, not a scan of the conversation.
     `SELECT cp.conversation_id                 AS conversation_id,
             c.id                               AS conv_id,
             c.created_at                       AS conv_created_at,
@@ -114,7 +141,15 @@ register('GET', '/v1/conversations', async (req, env, _ctx, _params, authedUserI
               ORDER BY m.created_at DESC LIMIT 1)  AS last_sender_id,
             (SELECT m.text       FROM messages m
               WHERE m.conversation_id = c.id
-              ORDER BY m.created_at DESC LIMIT 1)  AS last_message
+              ORDER BY m.created_at DESC LIMIT 1)  AS last_message,
+            -- Unread for THIS participant. See the note above the query for why the inner
+            -- LIMIT is load-bearing rather than cosmetic.
+            (SELECT COUNT(*) FROM (
+               SELECT 1 FROM messages m
+                WHERE m.conversation_id = c.id
+                  AND m.sender_id != cp.user_id
+                  AND (cp.last_read_at IS NULL OR m.created_at > cp.last_read_at)
+                LIMIT 100))                        AS unread_count
        FROM conversation_participants cp
        JOIN conversations c
          ON c.id = cp.conversation_id
@@ -144,6 +179,11 @@ register('GET', '/v1/conversations', async (req, env, _ctx, _params, authedUserI
     last_message_at: row.last_message_at,
     last_sender_id: row.last_sender_id,
     last_message: row.last_message,
+    // Defaulted to 0 rather than passed through as null: unlike `last_message`, where "no last
+    // message" and "an empty body" are genuinely different states the client distinguishes,
+    // there is no meaningful difference between "no unread" and "unknown unread" — both render
+    // as no pill. A number always is one less branch on the client.
+    unread_count: typeof row.unread_count === 'number' ? row.unread_count : 0,
     conversations: {
       id: row.conv_id,
       created_at: row.conv_created_at,
@@ -161,6 +201,110 @@ register('GET', '/v1/conversations', async (req, env, _ctx, _params, authedUserI
       : null,
   }));
   return ok(req, out);
+});
+
+// ── POST /v1/conversations/:id/read ───────────────────────────────────
+//
+// Advance the caller's read watermark for one conversation.
+//
+// WHY THIS ENDPOINT HAS TO EXIST
+//
+// Before it, "read" was a `Date.now()` written into per-install MMKV by
+// `chatUnreadStore.clear`. That has two consequences the user reported as separate bugs and
+// which are really one:
+//
+//   * it is not shared. Read a chat on the phone, the tablet still shows it unread, for ever.
+//     Reinstall, and every conversation is unread again because the watermark map went with the
+//     old install.
+//   * it is on the WRONG CLOCK. The watermark came from the device and was compared against
+//     `messages.created_at`, which the Worker writes. Any skew between the two — and there is
+//     always some — decides whether a message you have already read counts as unread. That
+//     skew is the reason a whole layer of author-guards had to be bolted onto `reconcile`.
+//
+// Storing the watermark next to the messages puts both values on one clock and makes the
+// answer the same on every device the account signs into.
+//
+// MONOTONIC BY CONSTRUCTION
+//
+// The `last_read_at < ?` guard in the WHERE clause is what makes this endpoint safe to call
+// from anywhere, in any order. The client fires it on chat open, on foreground, on leave and on
+// send — four call sites whose responses can arrive out of order over a slow network. Without
+// the guard, a stale in-flight request could move the watermark BACKWARDS and resurrect unread
+// counts for messages the user has read. With it, a late arrival is a no-op. This is the same
+// reason `clear()` on the client always advances and never assigns.
+//
+// The body's `at` is optional and clamped to now: a client may pass the timestamp of the newest
+// message it has actually rendered, which is more precise than "now" when a fetch is still in
+// flight, but it must never be able to mark FUTURE messages read. A malformed or future value
+// falls back to now rather than 400 — this is a best-effort call on the client's UI path, and
+// failing it would leave a badge stuck rather than surface anything a user could act on.
+register('POST', '/v1/conversations/:id/read', async (req, env, _ctx, params, authedUserId) => {
+  if (!authedUserId) return fail(req, 'unauthorised', 401);
+  const conversationId = parseUuid(params.id);
+  if (!conversationId) return fail(req, 'invalid conversation id', 400);
+
+  const body = await readJson<{ at?: unknown }>(req);
+  // An absent or unparseable body is fine — it means "read as of now".
+  const nowIso = new Date().toISOString();
+  let at = nowIso;
+  if (body.ok && typeof body.value.at === 'string') {
+    const parsed = Date.parse(body.value.at);
+    // Finite AND not in the future. `<=` on the ISO strings rather than on the parsed numbers
+    // so the stored value is byte-comparable with `messages.created_at`, which is how every
+    // other comparison in this file works.
+    if (Number.isFinite(parsed) && body.value.at <= nowIso) at = body.value.at;
+  }
+
+  // Explicit participation check, its own round-trip, for the same reason the messages
+  // endpoint below does it that way. It also cannot be folded into the UPDATE: `meta.changes`
+  // is 0 both for "you are not in this conversation" and for "your watermark is already ahead
+  // of this timestamp", and those must not return the same status.
+  const participant = await queryOne<{ x: number }>(
+    env,
+    `SELECT 1 AS x
+       FROM conversation_participants
+      WHERE conversation_id = ?
+        AND user_id = ?
+      LIMIT 1`,
+    [conversationId, authedUserId],
+  );
+  if (!participant) return fail(req, 'forbidden', 403);
+
+  await exec(
+    env,
+    `UPDATE conversation_participants
+        SET last_read_at = ?
+      WHERE conversation_id = ?
+        AND user_id = ?
+        AND (last_read_at IS NULL OR last_read_at < ?)`,
+    [at, conversationId, authedUserId, at],
+  );
+
+  // Return the watermark that is now in force and what is still unread beneath it, rather than
+  // echoing the request. If the guard above rejected a stale `at`, the caller learns the real
+  // value instead of caching one the server never accepted — and `unread` lets the client
+  // settle its badge from this response without waiting for the next list sync.
+  const state = await queryOne<{ last_read_at: string | null; unread: number }>(
+    env,
+    `SELECT cp.last_read_at AS last_read_at,
+            (SELECT COUNT(*) FROM (
+               SELECT 1 FROM messages m
+                WHERE m.conversation_id = cp.conversation_id
+                  AND m.sender_id != cp.user_id
+                  AND (cp.last_read_at IS NULL OR m.created_at > cp.last_read_at)
+                LIMIT 100)) AS unread
+       FROM conversation_participants cp
+      WHERE cp.conversation_id = ?
+        AND cp.user_id = ?
+      LIMIT 1`,
+    [conversationId, authedUserId],
+  );
+
+  return ok(req, {
+    conversation_id: conversationId,
+    last_read_at: state?.last_read_at ?? at,
+    unread_count: typeof state?.unread === 'number' ? state.unread : 0,
+  });
 });
 
 // ── GET /v1/conversations/:id/messages?limit=50 ───────────────────────

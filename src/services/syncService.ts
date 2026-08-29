@@ -269,6 +269,17 @@ export async function syncConversations(userId: string): Promise<void> {
           lastMessageAt: typeof c.last_message_at === 'string' ? c.last_message_at : undefined,
           lastSenderId: typeof c.last_sender_id === 'string' ? c.last_sender_id : undefined,
           lastMessage: typeof c.last_message === 'string' ? c.last_message : undefined,
+          // ── THE COUNT, NOT JUST "SOMETHING IS NEW" ────────────────────────────
+          //
+          // `lastMessageAt` above answers whether anything arrived; it cannot answer how many, and
+          // that is why the unread pill could only ever read `1` for messages that landed while the
+          // app was closed. This is the real number, counted by the Worker against the per-participant
+          // `last_read_at` watermark added in migration 0005.
+          //
+          // `undefined` rather than 0 when the field is absent, and the difference matters: a row
+          // cached by an older build has no opinion about unread, and `reconcile` must fall back to
+          // its watermark comparison for those instead of reading a fabricated zero as "all read".
+          serverUnread: typeof c.unread_count === 'number' ? c.unread_count : undefined,
         };
       });
 

@@ -2014,6 +2014,19 @@ export default function MessagesScreen() {
           // and drops lastSenderId entirely - so the old source went blank every few minutes even
           // when the bridge had filled it in.
           lastSenderId: useLocal ? local!.senderId : (c as any).lastSenderId,
+          // Server-counted unread, straight from GET /v1/conversations, passed through for
+          // `reconcile` to merge with what this device observed over the socket.
+          //
+          // NOT folded into `unreadCount` below. That field is what the row DISPLAYS and it stays
+          // owned by `chatUnreadStore`: the sync behind `serverUnread` is throttled at three
+          // minutes, so rendering it directly would make the pill flip between the live count and
+          // a stale one on every derivation pass. The store merges once, by taking the larger, and
+          // the row reads only the result.
+          //
+          // Read off the entity row rather than the local transcript, unlike the two fields above:
+          // a count of unread messages is not something a local transcript can know. It is exactly
+          // the fact this device could not observe.
+          serverUnread: (c as any).serverUnread,
           unreadCount: unreadCounts[c.id] || 0,
           isOnline: false,
         };

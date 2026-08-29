@@ -125,6 +125,26 @@ export interface Conversation {
    * to the watermark comparison exactly as before.
    */
   lastSenderId?: string;
+  /**
+   * How many messages the SERVER counts as unread for the signed-in user, from
+   * `GET /v1/conversations` (migration 0005 added the `last_read_at` watermark it counts from).
+   *
+   * Distinct from `unreadCount` below on purpose, and the distinction is the whole point:
+   *
+   *   `unreadCount`  — what the row DISPLAYS. Owned by `chatUnreadStore`, which is authoritative
+   *                    while the app runs because a realtime message increments it immediately,
+   *                    long before the next 3-minute conversations sync.
+   *   `serverUnread` — what happened while this device was NOT looking. Authoritative for the
+   *                    app-was-killed case, which the device cannot observe at all.
+   *
+   * `reconcile` merges them by taking the larger, because each is stale in the case the other
+   * covers. Collapsing them into one field would mean a stale sync could erase counts the socket
+   * had just delivered.
+   *
+   * Capped server-side at 100 (the pill renders 99+ above 99), so this is not a total for a
+   * conversation with thousands unread — it is "at least this many, up to 100".
+   */
+  serverUnread?: number;
   unreadCount: number;
   isOnline?: boolean;
 }

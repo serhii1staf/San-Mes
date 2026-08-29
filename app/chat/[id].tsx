@@ -56,6 +56,7 @@ import { TypingIndicator } from '../../src/components/ui/TypingIndicator';
 import { typingChatChannelName, useTypingPublisher } from '../../src/services/realtime/typing';
 import { clearActiveThread, setActiveThread } from '../../src/services/activeThread';
 import { useChatUnread } from '../../src/store/chatUnreadStore';
+import { markConversationRead } from '../../src/services/readState';
 import { mockMessages, mockConversations, formatMessageTime } from '../../src/utils/mockData';
 import { showToast } from '../../src/store/toastStore';
 import { ChatMessage } from '../../src/types';
@@ -1786,12 +1787,28 @@ export default function ChatScreen() {
     try {
       for (const cid of ids) if (cid) useChatUnread.getState().clear(cid);
     } catch {}
+    // ── AND TELL THE SERVER, WHICH IS THE HALF THAT TRAVELS ──────────────────
+    //
+    // `clear` above is local: it zeroes this device's count and stamps a watermark into per-install
+    // MMKV. That is why reading a chat on the phone left it unread on the tablet, and why a
+    // reinstall resurrected every conversation as unread — the watermark went with the install.
+    //
+    // Only `conversationId`, never the route `id`. The two differ when the chat was opened from a
+    // profile, where the route carries the PEER'S USER ID; posting that to a conversation endpoint
+    // is a guaranteed 403 on every chat open. `clear` is called for both because a local map keyed
+    // by either id costs nothing to over-clear; a network call does.
+    //
+    // Throttled and coalesced inside the service, so the three call sites in this effect plus the
+    // one in the send handler cannot turn into four round-trips.
+    markConversationRead(conversationId);
     const sub = AppState.addEventListener('change', (next) => {
       if (next === 'active') {
         setActiveThread('chat', ids);
         try {
           for (const cid of ids) if (cid) useChatUnread.getState().clear(cid);
         } catch {}
+        // Re-foregrounding into an open chat reads whatever arrived while away.
+        markConversationRead(conversationId);
       }
     });
     return () => {
@@ -1812,6 +1829,15 @@ export default function ChatScreen() {
       try {
         for (const cid of ids) if (cid) useChatUnread.getState().clear(cid);
       } catch {}
+      // THE MOST IMPORTANT OF THE THREE, and the reason the service throttles with a TRAILING send
+      // rather than debouncing.
+      //
+      // `bump` deliberately never counts a message that arrives while its thread is on screen — the
+      // user is watching it land. The server has no such notion: its watermark is still at whatever
+      // moment this screen opened, so every message received while the chat was open is unread as far
+      // as it knows. This call is what closes that gap. Drop it and reading a busy chat would leave
+      // the pill showing exactly the messages the user just read.
+      markConversationRead(conversationId);
     };
   }, [conversationId, id]);
   // Mount-time marker — captures how long the chat screen took to commit
@@ -4963,6 +4989,12 @@ export default function ChatScreen() {
     // bridge-side guard — that one requires positive evidence of another sender, this one makes the
     // question moot for the chat you are actually in.
     try { if (conversationId) useChatUnread.getState().clear(conversationId); } catch {}
+    // Replying is reading. Not strictly needed for the message being sent — the server's count
+    // excludes the caller's own messages, so a self-badge is impossible there — but it advances the
+    // watermark past anything the PEER sent while this chat was open, without waiting for the leave
+    // handler. That matters because the leave handler does not run if the app is killed outright, and
+    // a long session in a busy chat would otherwise hand back a pill for messages already read.
+    if (conversationId) markConversationRead(conversationId);
     triggerHaptic('medium');
     playSendSound();
     // Strip dangerous invisible / control / bidi-override chars; keep
