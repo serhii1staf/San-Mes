@@ -1057,7 +1057,7 @@ const en: Record<string, string> = {
   'stickers.delete_group_msg': '{count} items from {date} will be removed. Messages already sent are unchanged.',
   'stickers.view_pack': 'Open “{pack}”',
 
-  // â”€â”€â”€ Keys that were only ever reachable through their Russian fallback â”€â”€â”€â”€â”€â”€â”€
+  // ─── Keys that were only ever reachable through their Russian fallback ───────
   //
   // See the matching block in ru.ts. These 31 keys were missing from both
   // dictionaries, so `t(key, default)` printed the Russian default even when the
